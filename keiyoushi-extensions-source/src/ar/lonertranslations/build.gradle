@@ -1,0 +1,10 @@
+ext {
+    extName = 'Loner Translations'
+    extClass = '.LonerTranslations'
+    themePkg = 'zeistmanga'
+    baseUrl = 'https://loner-tl.blogspot.com'
+    overrideVersionCode = 0
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

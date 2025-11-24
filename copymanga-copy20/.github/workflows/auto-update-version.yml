@@ -1,0 +1,151 @@
+name: Update Extension JSON & Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apk/*.apk"
+  workflow_dispatch:
+
+jobs:
+  update-json:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install packaging
+
+      - name: Extract version, update JSON, prepare release content
+        id: prepare
+        run: |
+          python3 << 'EOF'
+          import os, re, json, base64
+          from packaging.version import Version
+
+          APK_DIR = "apk"
+          README = "README.md"
+          JSON_FILES = ["index.json", "index.min.json"]
+
+          # ---- Step 1: Detect newest APK ----
+          version_pat = re.compile(r"v(\d+\.\d+\.\d+)\.apk")
+          versions = []
+
+          for f in os.listdir(APK_DIR):
+              m = version_pat.search(f)
+              if m:
+                  versions.append(Version(m.group(1)))
+
+          if not versions:
+              print("No APK found")
+              exit(1)
+
+          latest = str(max(versions))
+          apk_file = f"tachiyomi-zh.copymanga-v{latest}.apk"
+          build_code = int(latest.split(".")[-1])
+
+          print(f"::set-output name=version::{latest}")
+          print(f"::set-output name=apk::{apk_file}")
+
+          # ---- Step 2: Update JSON ----
+          changed = False
+          for jf in JSON_FILES:
+              if not os.path.exists(jf):
+                  continue
+              with open(jf, "r", encoding="utf-8") as f:
+                  data = json.load(f)
+
+              entry = data[0]
+
+              if entry["version"] != latest:
+                  changed = True
+
+              entry["version"] = latest
+              entry["code"] = build_code
+              entry["apk"] = apk_file
+
+              with open(jf, "w", encoding="utf-8") as f:
+                  json.dump(data, f, ensure_ascii=False, indent=2)
+
+          if not changed:
+              print("::set-output name=no_update::1")
+          else:
+              print("::set-output name=no_update::0")
+
+          # ---- Step 3: Extract README update section ----
+          content = ""
+          inside = False
+
+          with open(README, "r", encoding="utf-8") as f:
+              for line in f:
+                  # start point
+                  if f"## 最新更新 v{latest}" in line:
+                      inside = True
+                      content += line
+                      continue
+
+                  # stop when next section begins
+                  if inside and line.startswith("## ") and f"v{latest}" not in line:
+                      break
+
+                  if inside:
+                      content += line
+
+          # Base64 encode to avoid YAML issues
+          encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+          print(f"::set-output name=content_b64::{encoded}")
+          EOF
+
+      - name: Commit JSON updates
+        if: steps.prepare.outputs.no_update == '0'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add index.json index.min.json
+          git commit -m "Auto update version to ${{ steps.prepare.outputs.version }}"
+          git push origin main
+
+      - name: Decode content_b64
+        if: steps.prepare.outputs.no_update == '0'
+        id: decode
+        run: |
+          echo "${{ steps.prepare.outputs.content_b64 }}" | base64 --decode > release_content.txt
+
+      - name: Create GitHub Release
+        if: steps.prepare.outputs.no_update == '0'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "v${{ steps.prepare.outputs.version }}"
+          name: "v${{ steps.prepare.outputs.version }}"
+          body: |
+            # Release Notes
+
+            下載點 -> 以後丟下面附加檔案
+
+            若需要舊版本，請在 [old-releases](https://github.com/LittleSurvival/copymanga-copy20/tree/main/old-releases) 下載
+
+            ${{ steps.prepare.outputs.content }}
+
+            > [大陸載點(度盤) 密碼1234 ](https://pan.baidu.com/s/1Msby_oyqDnpC8kZIoLZSIQ?pwd=1234)
+            ** **
+            - **簽名不同**：若無法正常安裝；請先移除舊版本再安裝；更新時記得點選信任
+          files: |
+            apk/${{ steps.prepare.outputs.apk }}
+
+      - name: Force sync main → repo
+        run: |
+          git push origin main:repo --force

@@ -1,0 +1,475 @@
+// 文件路径: src/main/ets/Framework/Managers/ThemeManager.ets
+/**
+ * 主题管理器
+ * 负责应用主题的切换、保存和加载
+ * 采用单例模式，支持主题变化监听
+ */
+
+import { logger } from '../../Utils/Logger';
+import { preferences } from '@kit.ArkData';
+import { Configuration } from '@kit.AbilityKit';
+import { getContext } from '../../GlobalContext';
+
+const TAG = 'ThemeManager';
+
+/**
+ * 主题类型枚举
+ */
+export enum ThemeType {
+  LIGHT = 'light',
+  DARK = 'dark',
+  AUTO = 'auto'
+}
+
+/**
+ * 主题配置接口
+ */
+export interface ThemeConfig {
+  name: string;
+  displayName: string;
+  primaryColor: string;
+  backgroundColor: string;
+  textColor: string;
+  cardColor: string;
+  borderColor: string;
+  shadowColor: string;
+}
+
+/**
+ * 主题配置常量
+ */
+export const THEME_CONFIGS: Record<ThemeType, ThemeConfig> = {
+  [ThemeType.LIGHT]: {
+    name: 'light',
+    displayName: '浅色主题',
+    primaryColor: '#007AFF',
+    backgroundColor: '#FFFFFF',
+    textColor: '#000000',
+    cardColor: '#F8F8F8',
+    borderColor: '#E0E0E0',
+    shadowColor: 'rgba(0, 0, 0, 0.1)'
+  },
+  [ThemeType.DARK]: {
+    name: 'dark',
+    displayName: '深色主题',
+    primaryColor: '#0A84FF',
+    backgroundColor: '#000000',
+    textColor: '#FFFFFF',
+    cardColor: '#1C1C1E',
+    borderColor: '#38383A',
+    shadowColor: 'rgba(255, 255, 255, 0.1)'
+  },
+  [ThemeType.AUTO]: {
+    name: 'auto',
+    displayName: '跟随系统',
+    primaryColor: '#007AFF',
+    backgroundColor: '#FFFFFF',
+    textColor: '#000000',
+    cardColor: '#F8F8F8',
+    borderColor: '#E0E0E0',
+    shadowColor: 'rgba(0, 0, 0, 0.1)'
+  }
+};
+
+/**
+ * 主题变化回调函数类型
+ */
+export type ThemeChangeCallback = (theme: ThemeType) => void;
+
+/**
+ * 主题管理器类
+ */
+export class ThemeManager {
+  private static instance: ThemeManager | null = null;
+  private currentTheme: ThemeType = ThemeType.DARK; // 改为DARK
+  private actualTheme: ThemeType = ThemeType.DARK; // 实际显示的主题
+  private themeChangeCallbacks: Set<ThemeChangeCallback> = new Set();
+  private preferencesStore: preferences.Preferences | null = null;
+  private readonly THEME_KEY = 'app_theme';
+  private isInitialized: boolean = false; // 添加初始化标志
+
+  /**
+   * 私有构造函数
+   */
+  private constructor() {
+    // 延迟初始化，避免在GlobalContext未初始化时访问
+    // 初始化将在第一次使用时进行
+  }
+
+  /**
+   * 获取单例实例
+   */
+  public static getInstance(): ThemeManager {
+    if (!ThemeManager.instance) {
+      ThemeManager.instance = new ThemeManager();
+    }
+    return ThemeManager.instance;
+  }
+
+  /**
+   * 公开的初始化方法
+   * 由SplashPage在适当时机调用，确保主题在UI渲染前完全初始化
+   */
+  public async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return;
+    }
+
+    try {
+      logger.info(TAG, '🎨 开始ThemeManager初始化');
+      
+      // 1. 首先检测系统主题
+      this.detectSystemTheme();
+      logger.info(TAG, `📱 系统主题检测完成: ${this.actualTheme}`);
+      
+      // 2. 初始化首选项存储
+      await this.initializePreferences();
+      
+      // 3. 加载保存的主题设置
+      await this.loadTheme();
+      logger.info(TAG, `💾 用户主题设置: ${this.currentTheme}`);
+      
+      // 4. 确定最终显示的主题
+      const finalTheme = this.getActualThemeSync();
+      logger.info(TAG, `🎯 最终显示主题: ${finalTheme}`);
+      
+      // 5. 如果是AUTO模式，通知主题变化以应用系统主题
+      if (this.currentTheme === ThemeType.AUTO) {
+        logger.info(TAG, `🔄 AUTO模式，应用系统主题: ${this.actualTheme}`);
+        this.notifyThemeChange(this.actualTheme);
+      }
+      
+      this.isInitialized = true;
+      logger.info(TAG, '✅ ThemeManager初始化完成');
+    } catch (error) {
+      logger.error(TAG, 'ThemeManager延迟初始化失败', error);
+      // 即使初始化失败，也设置为已初始化，避免重复尝试
+      this.isInitialized = true;
+    }
+  }
+
+  /**
+   * 延迟初始化方法（内部使用）
+   * 在第一次使用时才进行初始化，确保GlobalContext已经准备好
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (this.isInitialized) {
+      return;
+    }
+    
+    // 如果还没有初始化，调用公开的初始化方法
+    await this.initialize();
+  }
+
+  /**
+   * 初始化首选项存储
+   */
+  private async initializePreferences(): Promise<void> {
+    try {
+      const context = getContext();
+      this.preferencesStore = await preferences.getPreferences(context, 'theme_preferences');
+      logger.info(TAG, '主题首选项存储初始化成功');
+    } catch (error) {
+      logger.error(TAG, '主题首选项存储初始化失败', error);
+      this.currentTheme = ThemeType.AUTO;
+    }
+  }
+
+  /**
+   * 加载保存的主题
+   */
+  private async loadTheme(): Promise<void> {
+    try {
+      if (!this.preferencesStore) {
+        await this.initializePreferences();
+      }
+
+      if (this.preferencesStore) {
+        const savedTheme = await this.preferencesStore.get(this.THEME_KEY, ThemeType.AUTO);
+        this.currentTheme = savedTheme as ThemeType;
+        
+        // 临时重置：如果保存的是特定主题，重置为AUTO以跟随系统
+        // if (this.currentTheme !== ThemeType.AUTO) {
+        //   logger.info(TAG, `重置主题从 ${this.currentTheme} 到 AUTO 以跟随系统主题`);
+        //   this.currentTheme = ThemeType.AUTO;
+        //   await this.saveTheme(ThemeType.AUTO);
+        // }
+        
+        logger.info(TAG, `加载保存的主题: ${this.currentTheme}`);
+      }
+    } catch (error) {
+      logger.error(TAG, '加载主题失败，使用默认主题', error);
+      this.currentTheme = ThemeType.AUTO;
+    }
+  }
+
+  /**
+   * 检测系统主题
+   */
+  private detectSystemTheme(): void {
+    try {
+      const context = getContext();
+      if (context && context.config) {
+        const colorMode = context.config.colorMode;
+        // colorMode: 0=深色模式, 1=浅色模式 (根据HarmonyOS官方文档)
+        this.actualTheme = colorMode === 0 ? ThemeType.DARK : ThemeType.LIGHT;
+        logger.info(TAG, `检测到系统主题: colorMode=${colorMode}, actualTheme=${this.actualTheme}`);
+      } else {
+        logger.warn(TAG, '无法获取系统配置，使用默认 AUTO 主题');
+        this.actualTheme = ThemeType.AUTO;
+      }
+    } catch (error) {
+      logger.error(TAG, '检测系统主题失败，使用默认 AUTO 主题', error);
+      this.actualTheme = ThemeType.AUTO;
+    }
+  }
+
+  /**
+   * 保存主题到首选项
+   */
+  private async saveTheme(theme: ThemeType): Promise<void> {
+    try {
+      if (!this.preferencesStore) {
+        await this.initializePreferences();
+      }
+
+      if (this.preferencesStore) {
+        await this.preferencesStore.put(this.THEME_KEY, theme);
+        await this.preferencesStore.flush();
+        logger.info(TAG, `主题已保存: ${theme}`);
+      }
+    } catch (error) {
+      logger.error(TAG, '保存主题失败', error);
+    }
+  }
+
+  /**
+   * 获取当前主题（异步，确保完全初始化）
+   */
+  public async getCurrentTheme(): Promise<ThemeType> {
+    await this.ensureInitialized();
+    return this.currentTheme;
+  }
+
+  /**
+   * 获取当前主题（同步，用于UI组件快速访问）
+   * 注意：如果ThemeManager未初始化，返回默认值
+   */
+  public getCurrentThemeSync(): ThemeType {
+    return this.currentTheme;
+  }
+
+  /**
+   * 获取实际显示的主题（考虑AUTO模式）（异步）
+   */
+  public async getActualTheme(): Promise<ThemeType> {
+    await this.ensureInitialized();
+    if (this.currentTheme === ThemeType.AUTO) {
+      return this.actualTheme;
+    }
+    return this.currentTheme;
+  }
+
+  /**
+   * 获取实际显示的主题（同步，用于UI组件快速访问）
+   */
+  public getActualThemeSync(): ThemeType {
+    if (this.currentTheme === ThemeType.AUTO) {
+      return this.actualTheme;
+    }
+    return this.currentTheme;
+  }
+
+  /**
+   * 更新系统主题（由系统配置变化调用）
+   */
+  public updateSystemTheme(colorMode: number): void {
+    const newActualTheme = colorMode === 0 ? ThemeType.DARK : ThemeType.LIGHT;
+    
+    if (this.actualTheme !== newActualTheme) {
+      this.actualTheme = newActualTheme;
+      logger.info(TAG, `系统主题更新: colorMode=${colorMode}, actualTheme=${this.actualTheme}`);
+      
+      // 如果当前是AUTO模式，通知主题变化
+      if (this.currentTheme === ThemeType.AUTO) {
+        this.notifyThemeChange(this.actualTheme);
+      }
+    }
+  }
+
+  /**
+   * 设置主题
+   */
+  public async setTheme(theme: ThemeType): Promise<void> {
+    await this.ensureInitialized();
+    
+    if (this.currentTheme === theme) {
+      return;
+    }
+
+    const oldTheme = this.currentTheme;
+    this.currentTheme = theme;
+
+    // 保存主题
+    await this.saveTheme(theme);
+
+    // 通知所有监听器
+    if (theme === ThemeType.AUTO) {
+      // AUTO模式下，通知实际的系统主题
+      this.notifyThemeChange(this.actualTheme);
+      logger.info(TAG, `主题已从 ${oldTheme} 切换到 ${theme}，应用系统主题: ${this.actualTheme}`);
+    } else {
+      // 非AUTO模式下，直接通知设置的主题
+      this.notifyThemeChange(theme);
+      logger.info(TAG, `主题已从 ${oldTheme} 切换到 ${theme}`);
+    }
+  }
+
+  /**
+   * 切换主题（在浅色、深色和自动之间循环）
+   * LIGHT -> DARK -> AUTO -> LIGHT...
+   */
+  public async toggleTheme(): Promise<void> {
+    let newTheme: ThemeType;
+    
+    switch (this.currentTheme) {
+      case ThemeType.LIGHT:
+        newTheme = ThemeType.DARK;
+        break;
+      case ThemeType.DARK:
+        newTheme = ThemeType.AUTO;
+        break;
+      case ThemeType.AUTO:
+      default:
+        newTheme = ThemeType.LIGHT;
+        break;
+    }
+    
+    logger.info(TAG, `主题切换: ${this.currentTheme} -> ${newTheme}`);
+    await this.setTheme(newTheme);
+  }
+
+  /**
+   * 获取主题配置（异步）
+   */
+  public async getThemeConfig(theme?: ThemeType): Promise<ThemeConfig> {
+    const targetTheme = theme || await this.getActualTheme();
+    return THEME_CONFIGS[targetTheme];
+  }
+
+  /**
+   * 获取主题配置（同步）
+   */
+  public getThemeConfigSync(theme?: ThemeType): ThemeConfig {
+    const targetTheme = theme || this.getActualThemeSync();
+    return THEME_CONFIGS[targetTheme];
+  }
+
+  /**
+   * 获取当前主题配置（异步）
+   */
+  public async getCurrentThemeConfig(): Promise<ThemeConfig> {
+    return await this.getThemeConfig();
+  }
+
+  /**
+   * 获取当前主题配置（同步）
+   */
+  public getCurrentThemeConfigSync(): ThemeConfig {
+    return this.getThemeConfigSync();
+  }
+
+  /**
+   * 注册主题变化监听器
+   */
+  public onThemeChange(callback: ThemeChangeCallback): void {
+    this.themeChangeCallbacks.add(callback);
+    logger.debug(TAG, `注册主题变化监听器，当前监听器数量: ${this.themeChangeCallbacks.size}`);
+  }
+
+  /**
+   * 移除主题变化监听器
+   */
+  public offThemeChange(callback: ThemeChangeCallback): void {
+    this.themeChangeCallbacks.delete(callback);
+    logger.debug(TAG, `移除主题变化监听器，当前监听器数量: ${this.themeChangeCallbacks.size}`);
+  }
+
+  /**
+   * 通知所有监听器主题变化
+   */
+  private notifyThemeChange(theme: ThemeType): void {
+    this.themeChangeCallbacks.forEach(callback => {
+      try {
+        callback(theme);
+      } catch (error) {
+        logger.error(TAG, '主题变化回调执行失败', String(error));
+      }
+    });
+  }
+
+  /**
+   * 判断是否为深色主题（异步）
+   */
+  public async isDarkTheme(): Promise<boolean> {
+    return await this.getActualTheme() === ThemeType.DARK;
+  }
+
+  /**
+   * 判断是否为深色主题（同步）
+   */
+  public isDarkThemeSync(): boolean {
+    return this.getActualThemeSync() === ThemeType.DARK;
+  }
+
+  /**
+   * 判断是否为浅色主题（异步）
+   */
+  public async isLightTheme(): Promise<boolean> {
+    return await this.getActualTheme() === ThemeType.LIGHT;
+  }
+
+  /**
+   * 判断是否为浅色主题（同步）
+   */
+  public isLightThemeSync(): boolean {
+    return this.getActualThemeSync() === ThemeType.LIGHT;
+  }
+
+  /**
+   * 获取所有可用主题
+   */
+  public getAvailableThemes(): ThemeType[] {
+    return Object.values(ThemeType);
+  }
+
+  /**
+   * 获取主题显示名称
+   */
+  public getThemeDisplayName(theme?: ThemeType): string {
+    const targetTheme = theme || this.currentTheme;
+    return THEME_CONFIGS[targetTheme].displayName;
+  }
+
+  /**
+   * 重置为默认主题
+   */
+  public async resetToDefault(): Promise<void> {
+    await this.setTheme(ThemeType.AUTO);
+  }
+
+  /**
+   * 清理资源
+   */
+  public destroy(): void {
+    this.themeChangeCallbacks.clear();
+    this.preferencesStore = null;
+    ThemeManager.instance = null;
+    logger.info(TAG, '主题管理器已销毁');
+  }
+}
+
+/**
+ * 导出默认实例（可选）
+ */
+export const themeManager = ThemeManager.getInstance();

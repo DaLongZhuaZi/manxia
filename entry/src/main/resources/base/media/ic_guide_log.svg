@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- 填充型日志文档：右上折角镂空，三条列表镂空 -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M10 6h28v36H10V6Zm24 0l4 4h-4V6ZM16 15h16v2H16v-2Zm0 7h16v2H16v-2Zm0 7h12v2H16v-2Z"/>
+</svg>
+

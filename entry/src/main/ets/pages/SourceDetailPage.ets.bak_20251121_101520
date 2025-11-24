@@ -1,0 +1,122 @@
+/**
+ * 图源详情页面
+ * 显示图源的热门、最新、搜索等内容
+ * 参考Mihon和Komikku的设计
+ */
+
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
+import { logger } from '../Utils/Logger';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
+import { ComicInfo } from '../Framework/Source/SourceExecutor';
+import { DataManager } from '../Framework/Data/DataManager';
+import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
+import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
+import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
+import { MangaDetailPageParams } from './MangaDetailPage';
+import { SourceSettingsPageParams } from './SourceSettingsPage';
+import CookieManager from '../Framework/Managers/CookieManager';
+import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
+import { image } from '@kit.ImageKit';
+import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+
+const TAG = 'SourceDetailPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+
+/**
+ * 导航参数接口
+ */
+interface SourceDetailParams {
+  sourceId: number;
+}
+
+interface MangaDetailParams {
+  sourceId: number;
+  comicId: string;
+  title: string;
+}
+
+class ComicListDataSource implements IDataSource {
+  private items: ComicInfo[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  constructor(items: ComicInfo[]) {
+    this.items = items;
+  }
+
+  totalCount(): number {
+    return this.items.length;
+  }
+
+  getData(index: number): ComicInfo {
+    return this.items[index];
+  }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (this.listeners.indexOf(listener) < 0) {
+      this.listeners.push(listener);
+    }
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const pos = this.listeners.indexOf(listener);
+    if (pos >= 0) {
+      this.listeners.splice(pos, 1);
+    }
+  }
+
+  updateItems(items: ComicInfo[]): void {
+    this.items = items;
+    this.notifyDataReload();
+  }
+
+  notifyDataReload(): void {
+    this.listeners.forEach(listener => {
+      listener.onDataReloaded();
+    });
+  }
+}
+/**
+ * 标签页类型
+ */
+enum TabType {
+  POPULAR = 0,
+  LATEST = 1,
+  SEARCH = 2
+}
+
+@Component
+export struct SourceDetailPage {
+  @Consume('NavPathStack') pathStack: NavPathStack;
+  
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State sourceInfo: SourceInfo | null = null;
+  @State currentTab: TabType = TabType.POPULAR;
+  @State comicList: ComicInfo[] = [];
+  @State isLoading: boolean = false;
+  @State searchKeyword: string = '';
+  @State currentPage: number = 1;
+  @State hasMore: boolean = true;
+  @State useWebView: boolean = false; // 是否使用WebView系统
+  @State webViewReady: boolean = false; // WebView是否就绪
+  @State webViewControllerAttached: boolean = false; // WebView控制器是否已附加
+
+  private sourceId: number = 0;
+  private sourceManager: SourceManager = SourceManager.getInstance();
+  private dataManager: DataManager = DataManager.getInstance();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = `SourceDetailPage_${Date.now()}`;
+  private scroller: Scroller = new Scroller();
+  @State comicDataSource: ComicListDataSource = new ComicListDataSource([]);
+  @State private coverPixelMaps: Map<string, image.PixelMap> = new Map();
+  
+  // WebView相关
+  private webViewController: webview.WebviewController = new webview.WebviewController();
+  private mangaSourceEngine: MangaSourceEngine | null = null;
+  private webViewSourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
+
+  // ... 原文件完整内容备份
+

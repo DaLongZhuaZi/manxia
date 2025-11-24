@@ -1,0 +1,8 @@
+ext {
+    extName = 'Bakai'
+    extClass = '.Bakai'
+    extVersionCode = 13
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

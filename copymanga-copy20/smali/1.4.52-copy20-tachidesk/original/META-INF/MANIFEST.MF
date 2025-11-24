@@ -1,0 +1,34 @@
+Manifest-Version: 1.0
+Built-By: Signflinger
+Created-By: Android Gradle 7.4.1
+
+Name: AndroidManifest.xml
+SHA-256-Digest: qOqVQQz5m0eJcUXG2ghbsU1RTieHshwQELRiL+o5WoE=
+
+Name: META-INF/com/android/build/gradle/app-metadata.properties
+SHA-256-Digest: /SQZ9Ujx9VYIUzBkC2vSBQu7QN3GqLIGSAz8BV/uN/c=
+
+Name: classes.dex
+SHA-256-Digest: YH9nCo+Q9EV0udY5zZ/pgwzlrw4a5NtXUji2H+YgGB4=
+
+Name: kotlin-tooling-metadata.json
+SHA-256-Digest: 6Yp9jPAOcMRpUC1T/qNrnbwKD3bSTLCaggO86rKQzmQ=
+
+Name: res/CG.png
+SHA-256-Digest: pGRK0S5DF3qd86FsI4FFcRNpJ3wZ58fBAtrBD2j423Q=
+
+Name: res/D2.png
+SHA-256-Digest: pYXx1q0lYLkanN7N7DD1o6T8ZrIHpFClCyKF7Cf/Xk8=
+
+Name: res/SD.png
+SHA-256-Digest: 1kzqxNb8Xorj6KmVoaRLKp0Qr+6Hh+Xz+XOwAcjgYKI=
+
+Name: res/jy.png
+SHA-256-Digest: CxPWh4Ryu+37U4LAByzTTAnZps1936kJvJB/oi6vgpg=
+
+Name: res/u3.png
+SHA-256-Digest: wdPKhcLuaxc0lcvw9ExOoDYqZqqtsdy34f4+f9RCe6A=
+
+Name: resources.arsc
+SHA-256-Digest: DftZcG5iQp+6I6OO4yiW31x7vjZ7T+MeQHK2Re+S8/I=
+

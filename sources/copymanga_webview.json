@@ -1,0 +1,669 @@
+{
+  "metadata": {
+    "id": "copymanga_webview",
+    "name": "拷贝漫画 (WebView)",
+    "version": "2.0.0",
+    "language": "zh-CN",
+    "baseUrl": "https://www.2025copy.com",
+    "description": "拷贝漫画 WebView版本 - 使用DOM提取，支持域名切换和Cookie管理",
+    "author": "ManXia Team",
+    "nsfw": true,
+    "tags": ["chinese", "webview", "popular"],
+    "alternativeUrls": {
+      "copy2025": "https://www.2025copy.com",
+      "copy20": "https://www.copy20.com"
+    }
+  },
+
+  "capabilities": {
+    "urlResolver": true,
+    "chineseConverter": true,
+    "pagination": true,
+    "userAgentRotation": false,
+    "errorRetry": true,
+    "sessionManagement": true,
+    "loginSupport": true
+  },
+
+  "login": {
+    "url": "https://www.2025copy.com/web/login/loginByAccount?url=person%2Fhome",
+    "method": "manual",
+    "description": "用户需要手动完成登录，完成后点击确认按钮保存Cookie"
+  },
+
+  "network": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "timeout": 30000,
+    "retryCount": 3,
+    "retryDelay": 2000
+  },
+
+  "settings": {
+    "domain": {
+      "type": "select",
+      "name": "访问域名",
+      "description": "选择可用的访问域名",
+      "default": "copy2025",
+      "options": [
+        {"value": "copy2025", "label": "2025Copy (首选)"},
+        {"value": "copy20", "label": "Copy20 (备用)"}
+      ]
+    },
+    "imageQuality": {
+      "type": "select",
+      "name": "图片质量",
+      "description": "选择图片质量",
+      "default": "800",
+      "options": [
+        {"value": "800", "label": "标准 (800px)"},
+        {"value": "1200", "label": "高清 (1200px)"},
+        {"value": "1500", "label": "超清 (1500px)"}
+      ]
+    },
+    "loadImages": {
+      "type": "boolean",
+      "name": "加载图片",
+      "description": "浏览时是否加载图片（关闭可提升速度）",
+      "default": true
+    },
+    "filterOrdering": {
+      "type": "select",
+      "name": "排序",
+      "description": "筛选排序方式",
+      "default": "-datetime_updated",
+      "options": [
+        {"value": "-datetime_updated", "label": "按时间-从新到旧"},
+        {"value": "datetime_updated", "label": "按时间-从旧到新"},
+        {"value": "-popular", "label": "按热度-从高到低"},
+        {"value": "popular", "label": "按热度-从低到高"}
+      ]
+    },
+    "filterRegion": {
+      "type": "select",
+      "name": "地区",
+      "description": "筛选地区",
+      "default": "all",
+      "options": [
+        {"value": "all", "label": "全部"},
+        {"value": "0", "label": "日漫"},
+        {"value": "1", "label": "韩漫"},
+        {"value": "2", "label": "美漫"}
+      ]
+    },
+    "filterTheme": {
+      "type": "select",
+      "name": "题材",
+      "description": "筛选题材",
+      "default": "all",
+      "options": [
+        {"value": "all", "label": "全部"},
+        {"value": "aiqing", "label": "愛情"},
+        {"value": "huanlexiang", "label": "歡樂向"},
+        {"value": "maoxian", "label": "冒險"},
+        {"value": "qihuan", "label": "奇幻"},
+        {"value": "baihe", "label": "百合"},
+        {"value": "xiaoyuan", "label": "校园"},
+        {"value": "kehuan", "label": "科幻"},
+        {"value": "dongfang", "label": "東方"},
+        {"value": "danmei", "label": "耽美"},
+        {"value": "shenghuo", "label": "生活"},
+        {"value": "gedou", "label": "格鬥"},
+        {"value": "qingxiaoshuo", "label": "轻小说"},
+        {"value": "qita", "label": "其他"},
+        {"value": "xuanyi", "label": "悬疑"},
+        {"value": "teenslove", "label": "TL"},
+        {"value": "mengxi", "label": "萌系"},
+        {"value": "shengui", "label": "神鬼"},
+        {"value": "zhichang", "label": "职场"},
+        {"value": "zhiyu", "label": "治愈"},
+        {"value": "jiecao", "label": "节操"},
+        {"value": "sige", "label": "四格"},
+        {"value": "changtiao", "label": "長條"},
+        {"value": "jianniang", "label": "舰娘"},
+        {"value": "gaoxiao", "label": "搞笑"},
+        {"value": "jingji", "label": "竞技"},
+        {"value": "weiniang", "label": "伪娘"},
+        {"value": "mohuan", "label": "魔幻"},
+        {"value": "rexue", "label": "热血"},
+        {"value": "xingzhuanhuan", "label": "性转换"},
+        {"value": "meishi", "label": "美食"},
+        {"value": "lizhi", "label": "励志"},
+        {"value": "COLOR", "label": "彩色"},
+        {"value": "hougong", "label": "後宮"},
+        {"value": "zhentan", "label": "侦探"},
+        {"value": "jingsong", "label": "惊悚"},
+        {"value": "aa", "label": "AA"},
+        {"value": "yinyuewudao", "label": "音乐舞蹈"},
+        {"value": "yishijie", "label": "异世界"},
+        {"value": "zhanzheng", "label": "战争"},
+        {"value": "lishi", "label": "历史"},
+        {"value": "jizhan", "label": "机战"},
+        {"value": "dushi", "label": "都市"},
+        {"value": "chuanyue", "label": "穿越"},
+        {"value": "chongsheng", "label": "重生"},
+        {"value": "kongbu", "label": "恐怖"},
+        {"value": "shengcun", "label": "生存"},
+        {"value": "wuxia", "label": "武侠"},
+        {"value": "zhaixi", "label": "宅系"},
+        {"value": "zhuansheng", "label": "转生"},
+        {"value": "fate", "label": "FATE"},
+        {"value": "Uncensored", "label": "無修正"},
+        {"value": "xianxia", "label": "仙侠"},
+        {"value": "loveLive", "label": "LoveLive"}
+      ]
+    }
+  },
+
+  "workflows": {
+    "popular": {
+      "description": "获取热门漫画",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/recommend",
+          "timeout": 10000,
+          "description": "导航到热门推荐页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待DOM渲染完成"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1200);",
+          "description": "滚动到第二行触发懒加载（6个漫画/行，滚动到第12个）"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待懒加载触发"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 2400);",
+          "description": "继续滚动到第4行，确保12个漫画都加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待DOM更新"
+        },
+        {
+          "type": "extract",
+          "selector": ".exemptComic_Item",
+          "multiple": true,
+          "description": "提取前12个热门漫画",
+          "fields": {
+            "id": "a::attr(href)",
+            "title": ".exemptComicItem-txt p::text",
+            "cover": "img::attr(data-src)",
+            "author": ".exemptComicItem-txt-span a::text"
+          }
+        }
+      ]
+    },
+
+    "latest": {
+      "description": "获取最新更新",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/newest",
+          "timeout": 10000,
+          "description": "导航到最新更新页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待DOM渲染完成"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1200);",
+          "description": "滚动到第二行触发懒加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待懒加载触发"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 2400);",
+          "description": "继续滚动到第4行，确保12个漫画都加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待DOM更新"
+        },
+        {
+          "type": "extract",
+          "selector": ".exemptComic_Item",
+          "multiple": true,
+          "description": "提取最新更新漫画",
+          "fields": {
+            "id": "a::attr(href)",
+            "title": ".exemptComicItem-txt p::text",
+            "cover": "img::attr(data-src)",
+            "author": ".exemptComicItem-txt-span a::text"
+          }
+        }
+      ]
+    },
+
+    "search": {
+      "description": "搜索漫画",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/search?q={{query}}&q_type=",
+          "timeout": 10000,
+          "description": "导航到搜索结果页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待DOM渲染完成"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1200);",
+          "description": "滚动到第二行触发懒加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待懒加载触发"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 2400);",
+          "description": "继续滚动到第4行，确保12个漫画都加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待DOM更新"
+        },
+        {
+          "type": "extract",
+          "selector": ".exemptComic_Item",
+          "multiple": true,
+          "description": "提取搜索结果",
+          "fields": {
+            "id": "a::attr(href)",
+            "title": ".exemptComicItem-txt p::text",
+            "cover": "img::attr(data-src)",
+            "author": ".exemptComicItem-txt-span a::text"
+          }
+        }
+      ]
+    },
+
+    "filter": {
+      "description": "筛选漫画（支持排序、地区、题材组合）",
+      "actions": [
+        {
+          "type": "script",
+          "code": "const ordering = '{{filterOrdering}}' || '-datetime_updated'; const region = '{{filterRegion}}' || 'all'; const theme = '{{filterTheme}}' || 'all'; let url = 'https://www.2025copy.com/comics?'; const params = []; params.push('ordering=' + ordering); if (region !== 'all') { params.push('region=' + region); } if (theme !== 'all') { params.push('theme=' + theme); } url += params.join('&'); console.log('[筛选] 构建URL: ' + url); url;",
+          "description": "动态构建筛选URL"
+        },
+        {
+          "type": "navigate",
+          "url": "{{scriptResult}}",
+          "timeout": 10000,
+          "description": "导航到筛选结果页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待DOM渲染完成"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1200);",
+          "description": "滚动到第二行触发懒加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待懒加载触发"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 2400);",
+          "description": "继续滚动到第4行，确保12个漫画都加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待DOM更新"
+        },
+        {
+          "type": "extract",
+          "selector": ".exemptComic_Item",
+          "multiple": true,
+          "description": "提取筛选结果",
+          "fields": {
+            "id": "a::attr(href)",
+            "title": ".exemptComicItem-txt p::text",
+            "cover": "img::attr(data-src)",
+            "author": ".exemptComicItem-txt-span a::text"
+          }
+        }
+      ]
+    },
+
+    "favorites": {
+      "description": "获取用户收藏（需要登录）",
+      "requiresLogin": true,
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/web/person/shujia",
+          "timeout": 10000,
+          "description": "导航到收藏页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待DOM渲染完成"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1200);",
+          "description": "滚动触发懒加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待懒加载"
+        },
+        {
+          "type": "extract",
+          "selector": "section[data-v-55713050]",
+          "multiple": true,
+          "description": "提取收藏漫画",
+          "fields": {
+            "id": "a:first-child::attr(href)",
+            "title": "h3::text",
+            "cover": "img::attr(src)",
+            "author": "h4::text"
+          }
+        }
+      ]
+    },
+
+    "history": {
+      "description": "获取浏览记录（需要登录）",
+      "requiresLogin": true,
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/web/person/liulan",
+          "timeout": 10000,
+          "description": "导航到浏览记录页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待DOM渲染完成"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1200);",
+          "description": "滚动触发懒加载"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待懒加载"
+        },
+        {
+          "type": "extract",
+          "selector": "section[data-v-55713050]",
+          "multiple": true,
+          "description": "提取浏览记录",
+          "fields": {
+            "id": "a:first-child::attr(href)",
+            "title": "h3::text",
+            "cover": "img::attr(src)",
+            "author": "h4::text"
+          }
+        }
+      ]
+    },
+
+    "getUserAvatar": {
+      "description": "获取用户头像（需要登录）",
+      "requiresLogin": true,
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/web/person/home",
+          "timeout": 10000,
+          "description": "导航到用户个人主页"
+        },
+        {
+          "type": "wait",
+          "condition": "element",
+          "selector": "img[src*='user/cover']",
+          "timeout": 8000,
+          "description": "等待头像元素加载"
+        },
+        {
+          "type": "extract",
+          "selector": "img[src*='user/cover']",
+          "fields": {
+            "avatarUrl": "@src"
+          },
+          "description": "提取用户头像URL"
+        }
+      ]
+    },
+
+    "getMangaDetail": {
+      "description": "获取漫画详情",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/comic/{{mangaId}}",
+          "timeout": 10000,
+          "description": "导航到漫画详情页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待详情页加载（优化：页面FMP约500ms，1.5秒足够）"
+        },
+        {
+          "type": "script",
+          "code": "(() => { const result = { id: '{{mangaId}}', title: document.querySelector('.comicParticulars-title h6')?.textContent?.trim() || '', cover: document.querySelector('.comicParticulars-left-img img')?.getAttribute('data-src') || document.querySelector('.comicParticulars-left-img img')?.src || '', author: document.querySelector('.comicParticulars-title li:nth-child(3) a')?.textContent?.trim() || '', status: document.querySelector('.comicParticulars-title li:nth-child(6) .comicParticulars-right-txt')?.textContent?.trim() || '', description: document.querySelector('.comicParticulars-synopsis p.intro')?.textContent?.trim() || '', genres: Array.from(document.querySelectorAll('.comicParticulars-left-theme-all a')).map(a => a.textContent?.trim()).filter(t => t).join(','), updateTime: document.querySelector('.comicParticulars-title li:nth-child(5) .comicParticulars-right-txt')?.textContent?.trim() || '' }; console.log('[漫画详情] 提取结果:', result); return JSON.stringify(result); })();",
+          "description": "使用脚本精确提取漫画详情（避免选择器解析问题）"
+        }
+      ]
+    },
+
+    "getMangaDetailWithChapters": {
+      "description": "一次性获取漫画详情和章节列表（优化：避免重复导航）",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/comic/{{mangaId}}",
+          "timeout": 10000,
+          "description": "导航到漫画详情页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1500,
+          "description": "等待详情页加载"
+        },
+        {
+          "type": "script",
+          "code": "(() => { const result = { id: '{{mangaId}}', title: document.querySelector('.comicParticulars-title h6')?.textContent?.trim() || '', cover: document.querySelector('.comicParticulars-left-img img')?.getAttribute('data-src') || document.querySelector('.comicParticulars-left-img img')?.src || '', author: document.querySelector('.comicParticulars-title li:nth-child(3) a')?.textContent?.trim() || '', status: document.querySelector('.comicParticulars-title li:nth-child(6) .comicParticulars-right-txt')?.textContent?.trim() || '', description: document.querySelector('.comicParticulars-synopsis p.intro')?.textContent?.trim() || '', genres: Array.from(document.querySelectorAll('.comicParticulars-left-theme-all a')).map(a => a.textContent?.trim()).filter(t => t).join(','), updateTime: document.querySelector('.comicParticulars-title li:nth-child(5) .comicParticulars-right-txt')?.textContent?.trim() || '' }; console.log('[漫画详情] 提取结果:', result); return JSON.stringify(result); })();",
+          "description": "提取漫画详情"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1500);",
+          "description": "滚动到章节列表区域"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待章节列表渲染"
+        },
+        {
+          "type": "script",
+          "code": "(() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['.chapter-list-1 ul li a', '.chapter-list ul li a', 'ul.chapter-list li a', 'a[href*=\"/chapter/\"]']; for(let selector of selectors) { const links = document.querySelectorAll(selector); console.log(`[章节提取] 选择器 \"${selector}\" 找到 ${links.length} 个链接`); if(links.length > 0) { links.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/chapter/') && title && title !== '開始閱讀' && title !== '开始阅读') { chapters.push({id: href, title: title}); } }); if(chapters.length > 0) { console.log(`[章节提取] 使用选择器 \"${selector}\" 成功提取 ${chapters.length} 个章节`); break; } } } console.log(`[章节提取] 最终提取到 ${chapters.length} 个章节`); return JSON.stringify(chapters); })();",
+          "description": "提取章节列表"
+        }
+      ]
+    },
+
+    "getChapterList": {
+      "description": "获取章节列表",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "https://www.2025copy.com/comic/{{mangaId}}",
+          "timeout": 8000,
+          "description": "导航到漫画详情页"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 1000,
+          "description": "等待页面加载（优化：页面FMP约400ms，1秒足够）"
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, 1500);",
+          "description": "滚动到章节列表区域"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 500,
+          "description": "等待章节列表加载（优化：滚动后立即可见）"
+        },
+        {
+          "type": "script",
+          "code": "(() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['.chapter-list-1 ul li a', '.chapter-list ul li a', 'ul.chapter-list li a', 'a[href*=\"/chapter/\"]']; for(let selector of selectors) { const links = document.querySelectorAll(selector); console.log(`[章节提取] 选择器 \"${selector}\" 找到 ${links.length} 个链接`); if(links.length > 0) { links.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/chapter/') && title && title !== '開始閱讀' && title !== '开始阅读') { chapters.push({id: href, title: title}); } }); if(chapters.length > 0) { console.log(`[章节提取] 使用选择器 \"${selector}\" 成功提取 ${chapters.length} 个章节`); break; } } } if(chapters.length === 0) { console.log('[章节提取] 所有选择器都未找到章节，返回调试信息'); const allLinks = document.querySelectorAll('a'); console.log(`[章节提取] 页面共有 ${allLinks.length} 个链接`); const chapterLinks = []; for(let i=0; i<Math.min(10, allLinks.length); i++) { const href = allLinks[i].getAttribute('href'); chapterLinks.push(href || 'null'); } return JSON.stringify([{id: 'DEBUG', title: `Total:${allLinks.length} Samples:${chapterLinks.join('|')}`}]); } console.log(`[章节提取] 最终提取到 ${chapters.length} 个章节`); return JSON.stringify(chapters); })();",
+          "description": "提取章节列表"
+        }
+      ]
+    },
+
+    "getPageList": {
+      "description": "获取章节页面列表（智能滚动收集所有图片）",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "{{baseUrl}}{{chapterId}}",
+          "description": "导航到章节阅读页（chapterId已包含完整路径）"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 2000,
+          "description": "等待页面初始化"
+        },
+        {
+          "type": "script",
+          "code": "(() => { console.log('[getPageList] 开始提取'); const totalCount = document.querySelector('.comicCount'); const totalPages = totalCount ? parseInt(totalCount.textContent.trim()) : 0; console.log(`[getPageList] 总页数=${totalPages}`); const collectedUrls = new Set(); const scrollHeight = document.body.scrollHeight; const steps = Math.max(50, Math.ceil(totalPages * 1.5)); let lastCollectedCount = 0; let unchangedCount = 0; function collectImages() { const imgs = document.querySelectorAll('img[data-src]'); imgs.forEach(img => { const src = img.getAttribute('data-src'); if (src && src.startsWith('http')) { collectedUrls.add(src); } }); } let currentStep = 0; function scrollAndCollect() { if (currentStep > steps) { finishCollection(); return; } const scrollPos = (scrollHeight / steps) * currentStep; window.scrollTo(0, scrollPos); collectImages(); if (collectedUrls.size === lastCollectedCount) { unchangedCount++; } else { unchangedCount = 0; lastCollectedCount = collectedUrls.size; } if (collectedUrls.size >= totalPages && unchangedCount >= 20) { console.log(`[getPageList] 提前终止: 已收集${collectedUrls.size}/${totalPages}张，进度${Math.round((currentStep/steps)*100)}%`); finishCollection(); return; } if (currentStep % 20 === 0) { console.log(`[getPageList] 进度${Math.round((currentStep/steps)*100)}%: 已收集${collectedUrls.size}张`); } currentStep++; setTimeout(scrollAndCollect, 30); } function finishCollection() { const pages = Array.from(collectedUrls).map((url, index) => ({ imageUrl: url, page: index })); console.log(`[getPageList] 提取完成: ${pages.length}/${totalPages}张图片`); if (pages.length < totalPages) { console.warn(`⚠️ 警告：缺失${totalPages - pages.length}张图片`); } else { console.log('✅ 成功提取所有图片！'); } window.__pageListResult = JSON.stringify({ totalPages: totalPages, pages: pages }); } scrollAndCollect(); return 'ASYNC_COLLECTION_STARTED'; })();",
+          "description": "同步启动异步收集：使用setTimeout链式调用避免async/await问题"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 5000,
+          "description": "等待异步收集完成（最多5秒）"
+        },
+        {
+          "type": "script",
+          "code": "(() => { const result = window.__pageListResult || JSON.stringify({ totalPages: 0, pages: [] }); delete window.__pageListResult; console.log('[getPageList] 返回结果:', result.substring(0, 200)); return result; })();",
+          "description": "获取收集结果"
+        }
+      ]
+    },
+
+    "loadMorePages": {
+      "description": "预加载模式：所有图片已在getPageList中提取完成",
+      "actions": [
+        {
+          "type": "script",
+          "code": "(() => { console.log('[loadMorePages] 所有图片已在getPageList中提取，无需额外加载'); return JSON.stringify({ currentPage: 0, totalPages: 0, pages: [] }); })();",
+          "description": "返回空结果（所有图片已提取）"
+        }
+      ]
+    },
+
+    "getImageUrl": {
+      "description": "获取图片URL（直接返回）",
+      "actions": [
+        {
+          "type": "script",
+          "code": "return '{{imageUrl}}';",
+          "description": "直接返回图片URL"
+        }
+      ]
+    }
+  },
+
+  "errorHandling": {
+    "retry": {
+      "enabled": true,
+      "maxAttempts": 3,
+      "strategy": "exponential",
+      "baseDelay": 2000,
+      "maxDelay": 10000,
+      "retryOn": {
+        "statusCodes": [408, 429, 500, 502, 503, 504],
+        "errors": ["TIMEOUT", "NETWORK_ERROR", "ELEMENT_NOT_FOUND"]
+      }
+    },
+    "fallback": {
+      "enabled": true,
+      "strategies": [
+        {
+          "type": "alternativeUrl",
+          "url": "https://www.copy20.com"
+        },
+        {
+          "type": "retry",
+          "maxAttempts": 2
+        }
+      ]
+    }
+  },
+
+  "notes": [
+    "WebView版本 - 使用DOM选择器提取数据",
+    "支持两个可用域名：www.2025copy.com (首选) 和 www.copy20.com (备用)",
+    "自动管理Cookie会话",
+    "支持懒加载内容的滚动加载",
+    "如遇到加载问题，请尝试切换域名"
+  ]
+}

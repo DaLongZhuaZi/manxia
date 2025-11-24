@@ -1,0 +1,6 @@
+Backup summary for MainMenuPage recent reading fixes
+Changed: imports (add image/fs), add CoverOrientation/CoverAspectInfo, add recentCoverAspectInfos state
+Changed: loadRecentReadingList updates cover aspect infos
+Changed: buildHomeContent removed height('100%') to enable scrolling
+Changed: buildRecentReadingWaterfall uses getAdaptiveCoverAspect
+Added: helper methods clampAspect/findCoverAspectInfo/getAdaptiveCoverAspect/getImageAspectRatioForCover/updateRecentCoverAspectInfos

@@ -1,0 +1,10 @@
+ext {
+    extName = 'Mangasushi'
+    extClass = '.Mangasushi'
+    themePkg = 'madara'
+    baseUrl = 'https://mangasushi.org'
+    overrideVersionCode = 3
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

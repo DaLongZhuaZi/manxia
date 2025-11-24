@@ -1,0 +1,158 @@
+{
+  "metadata": {
+    "id": "zaimanhua",
+    "name": "再漫画 (API)",
+    "version": "1.0.0",
+    "author": "ManXia Team",
+    "description": "再漫画图源 - 使用REST API模式",
+    "baseUrl": "https://manhua.zaimanhua.com",
+    "language": "zh-CN"
+  },
+  
+  "settings": {
+    "enableJavaScript": false,
+    "enableImages": false,
+    "enableCookies": true,
+    "bypassCloudflare": false,
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  },
+  
+  "api": {
+    "type": "rest",
+    "endpoint": "https://v4api.zaimanhua.com/app/v1",
+    "headers": {
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    }
+  },
+  
+  "workflows": {
+    "search": {
+      "type": "api",
+      "method": "GET",
+      "url": "{{api.endpoint}}/search/index",
+      "params": {
+        "keyword": "{{searchKeyword}}",
+        "page": "{{page}}",
+        "source": "0",
+        "size": "20"
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.list",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "cover",
+          "author": "authors",
+          "status": "status",
+          "genres": "types"
+        }
+      }
+    },
+    
+    "getMangaDetail": {
+      "type": "api",
+      "method": "GET",
+      "url": "{{api.endpoint}}/comic/detail/{{mangaId}}",
+      "params": {
+        "_v": "2.2.5"
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.data",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "cover",
+          "author": "authors[0].tag_name",
+          "description": "description",
+          "status": "status[0].tag_name",
+          "genres": "types[*].tag_name"
+        }
+      }
+    },
+    
+    "getChapterList": {
+      "type": "api",
+      "method": "GET",
+      "url": "{{api.endpoint}}/comic/detail/{{mangaId}}",
+      "params": {
+        "_v": "2.2.5"
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.data.chapters[*].data[*]",
+        "fields": {
+          "id": "chapter_id",
+          "title": "chapter_title",
+          "url": "chapter_id",
+          "publishTime": "updatetime"
+        }
+      }
+    },
+    
+    "getPageList": {
+      "type": "api",
+      "method": "GET",
+      "url": "{{api.endpoint}}/comic/chapter/{{mangaId}}/{{chapterId}}",
+      "params": {
+        "_v": "2.2.5"
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.data.page_url_hd[*]",
+        "fields": {
+          "imageUrl": ""
+        }
+      }
+    },
+    
+    "getImageUrl": {
+      "type": "direct",
+      "url": "{{imageUrl}}"
+    },
+    
+    "popular": {
+      "type": "api",
+      "method": "GET",
+      "url": "{{api.endpoint}}/comic/rank/list",
+      "params": {
+        "tag_id": "0",
+        "page": "{{page}}"
+      },
+      "extract": {
+        "type": "json",
+        "path": "data",
+        "fields": {
+          "id": "comic_id",
+          "title": "title",
+          "cover": "cover",
+          "author": "authors",
+          "description": "",
+          "status": "status",
+          "genres": "types"
+        }
+      }
+    },
+    
+    "latest": {
+      "type": "api",
+      "method": "GET",
+      "url": "{{api.endpoint}}/comic/update/list/0/{{page}}",
+      "extract": {
+        "type": "json",
+        "path": "data",
+        "fields": {
+          "id": "comic_id",
+          "title": "title",
+          "cover": "cover",
+          "author": "authors",
+          "description": "",
+          "status": "status",
+          "genres": "types"
+        }
+      }
+    }
+  }
+}

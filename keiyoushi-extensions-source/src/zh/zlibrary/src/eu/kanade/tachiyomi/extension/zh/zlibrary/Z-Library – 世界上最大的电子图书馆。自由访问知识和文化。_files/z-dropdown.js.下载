@@ -1,0 +1,414 @@
+class Dropdown extends HTMLElement {
+    static get observedAttributes() {
+        return ['selected'];
+    }
+
+    pointerStyle() {
+        return `
+            @media(min-width: 769px){
+                .content label.checked{
+                    background: var(--blue-color);
+                    background: #337ab7;
+                    color: #fff;
+                }
+            }
+            @media(max-width: 768px){
+                .content label input{
+                    position: absolute;
+                    right: 16px;
+                    top: 0;
+                    bottom: 0;
+                    margin: auto;
+                    display: block;
+                    width: 16px;
+                    height: 16px;
+                    visibility: visible;
+                    border-radius: 20px;
+                    border: 3px solid var(--card-bg-color);
+                    box-shadow: 0 0 0 2px #a2a4b2;
+                }
+                .content label input:checked{
+                    background: var(--blue-color);
+                    box-shadow: 0 0 0 2px var(--blue-color);
+                }
+            }
+        `
+    }
+    style() {
+        return `
+            :host{
+                position: relative;
+                font-size: 14px;
+            }
+            .head{
+                display: inline-flex;
+                align-items: center;
+                color: var(--primary-color);
+                cursor: pointer;
+                height: 24px;
+            }
+            .head .icon{
+                position: relative;
+                font-size: 16px;
+                margin-right: 6px;
+            }
+            #dropdown-title{
+                display: inline-flex;
+                align-items: center;
+            }
+            #dropdown-title input{
+                position: absolute;
+            }
+            .head .icon.null{
+                margin-right: 0;
+            }
+            .head span{
+                margin-right: 6px;
+                text-decoration: underline;
+                white-space: nowrap;
+            }
+            .arrow{
+                width: 0;
+                height: 0;
+                border-top: 4px solid var(--primary-color);
+                border-right: 4px solid transparent;
+                border-left: 4px solid transparent;
+            }
+            .arrow{
+                width: 0;
+                height: 0;
+                margin-right: 0;
+                border-top: 4px solid var(--primary-color);
+                border-right: 4px solid transparent;
+                border-left: 4px solid transparent;
+            }
+            .badge{
+                position: absolute;
+                background-color: var(--error, #FF4D4F);
+                width: 6px;
+                height: 6px;
+                border-radius: 50px;
+                top: 1px;
+                right: 0px;
+            }
+            i{
+                display: inline-block;
+            }
+            .content-wrap{
+                position: absolute;
+                z-index: 1000;
+                display: none;
+                right: 0;
+            }
+            .content-wrap.active{
+                display: block;
+            }
+            .content-wrap.active.start .content{
+                transform: translateY(4px);
+                opacity: 0;
+                
+            }
+            .content-wrap.end .content{
+                transform: translateY(4px);
+                opacity: 0;
+                transition: all var(--transition);
+            }
+            .content{
+                overflow: auto;
+                transition: all var(--transition-hover);
+                display: flex;
+                flex-direction: column;
+                background-color: var(--card-bg-color);
+                padding: 4px 0;
+                border-radius: 4px;
+                box-shadow: var(--box-shadow);
+                max-height: 400px;
+            }
+            .content a, .content div, .content label{
+                padding: 7px 16px;
+                white-space: nowrap;
+                text-decoration: none;
+                color: var(--gray-9);
+                display: flex;
+                align-items: center;
+                cursor: pointer;
+            }
+            .content label > i{
+                margin: 0 12px 2px 0;
+            }
+            .content a:hover{
+                background: var(--gray-dropdown-hover);
+            }
+            .content{
+                backdrop-filter: var(--card-backdrop-filter);
+            }
+            
+
+            @media (min-width: 787px){
+                .dropdown.top .content-wrap{
+                    bottom: 26px;
+                }
+            }
+            @media (max-width: 786px){
+                .content-wrap{
+                    padding: 8px;
+                    position: fixed; 
+                    bottom: 0;
+                    left: 0;
+                    width: 100%;
+                    box-sizing: border-box;
+                }
+                .content{
+                    margin: auto;
+                    max-width: 500px;
+                    width: 100%;
+                    transition: all .4s ease !important;
+                    max-height: 80vh;
+                }
+                .content a, .content div, .content label{
+                    padding: 12px 16px;
+                    border-bottom: 1px solid var(--gray-5);
+                }
+                .content a:last-of-type, .content div:last-of-type, .content label:last-of-type{
+                    border: none;
+                }
+                .content-wrap.active.start .content{
+                    transform: translateY(250px);
+                    opacity: 0;
+                }
+                .content-wrap.end .content{
+                    transform: translateY(250px);
+                    opacity: 0;
+                
+                }
+            }
+            input[type="checkbox"]{
+                -webkit-appearence: none;
+                -moz-appearence: none;
+                appearance: none;
+                width: var(--input-checkbox-size);
+                height: var(--input-checkbox-size);
+                border: var(--input-border);
+                margin: 0 12px 3px 0;
+                border-radius: 3px;
+            }
+            input[type="checkbox"]:checked{
+                background: var(--input-checked-bg);
+                background-size: cover;
+                border: none;
+            }
+            input[type="radio"]{
+                -webkit-appearence: none;
+                -moz-appearence: none;
+                appearance: none;
+                margin: 0;
+                width: 0;
+                height: 0;
+                visibility: hidden;
+            }
+            label{
+                position: relative;
+                z-index: 0;
+            }
+            input + span{
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                left: 0;
+                top: 0;
+                z-index: -1;
+            }
+            input[type="radio"]:checked + span{
+                background-color: #eee;
+            }
+            
+            .dropdown{
+                display: inline-block;
+                position: relative;
+                top: 1px;
+            }
+            .dropdown.top .arrow{
+                transform: scale(1, -1);
+            }
+            hr{
+                margin: 0 0 3px 0;
+                width: 99%;
+                border-top: 1px solid var(--gray-5);
+                border-bottom: none;
+            }
+            .share-button{
+                width: 22px;
+                display: flex;
+                height: 22px;
+                align-items: center;
+                justify-content: center;
+                margin-right: 6px !important;
+                font-size: 18px;
+                border-radius: 2px;
+                color: #fff;
+            }
+            .content label:hover{
+                background-color: var(--gray-dropdown-hover);
+            }
+            
+            /* test */
+            #dropdown-title .colortag{
+                box-shadow: 0 0 0 2px var(--gray-1), 0 0 0 3px var(--gray-7);
+            }
+            .colortag{
+                width: 18px;
+                height: 18px;
+                border-radius: 50px;
+                margin-right: 8px;
+            }
+            .colortag.colorAll{background: url(data:image/png;base64,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); background-size: cover;}
+            .colortag.color0{background: linear-gradient(180deg, #84DDEA 0%, #56B1BE 100%);}
+            .colortag.color1{background: linear-gradient(180deg, #ECCEF8 0%, #B18DE1 100%);}
+            .colortag.color2{background: linear-gradient(180deg, #B1C1EE 0%, #6E8FF0 100%);}
+            .colortag.color3{background: linear-gradient(180deg, #94E2BD 0%, #55B693 100%);}
+            .colortag.color4{background: linear-gradient(180deg, #FAD279 0%, #F4B13C 100%);}
+            .colortag.color5{background: linear-gradient(180deg, #E39797 0%, #E86B6B 100%);}
+        `
+    }
+
+    checkDirection() {
+        const windowHeight = Math.max(
+            document.body.scrollHeight,
+            document.body.offsetHeight,
+            document.documentElement.clientHeight,
+            document.documentElement.scrollHeight,
+            document.documentElement.offsetHeight
+        );
+        const scrollPosition = this.offsetTop;
+        if (windowHeight - scrollPosition < 350) {
+            // У вас осталось менее 350 пикселей до конца страницы
+            this.shadowRoot.querySelector('.dropdown').classList.add('top')
+        }
+    }
+
+    connectedCallback() {
+        if (this.shadowRoot) return
+        const shadow = this.attachShadow({ mode: 'open' });
+        const parent = this
+        const title = this.hasAttribute('topic') ? this.getAttribute('topic') : this.hasAttribute('title') ? this.getAttribute('title') : null
+        // this.search = this.getAttribute('search')
+        const showArrow = this.hasAttribute('arrow')
+        const icon = this.getAttribute('icon')
+        const type = this.hasAttribute('multiselect') ? 'checkbox' : 'radio'
+        let selected = this.hasAttribute('selected') ? this.getAttribute('selected') : false
+        let badge = this.hasAttribute('badge') || undefined
+        // let badge = type == 'radio' && !this.childNodes[0].hasAttribute('checked')
+        let items = [...this.childNodes].filter(el => el.nodeType < 2).map((el, index) => {
+            if (el.nodeName == 'HR' || el.nodeName == 'LINK' || el.nodeName == 'STYLE') {
+                return el.outerHTML
+            }
+            let text = el.innerHTML
+            let value = el.hasAttribute('value') ? el.getAttribute('value') : el.getAttribute('href')
+            let onclick = el.getAttribute('onclick')
+            if (el.hasAttribute('checked')) {
+                selected = text
+                if (type == 'radio' && badge == undefined && index !== 0) { badge = true }
+            }
+            if (type == 'checkbox' && badge == undefined && !el.hasAttribute('checked')) {
+                badge = true
+            }
+            if (el.nodeName == 'A' && el.hasAttribute("href")) {
+                return `<a ${el.hasAttribute('style') ? `style="${el.getAttribute('style')}"` : ``} href="${value}" ${onclick ? `onclick="${onclick}"` : ''}><input name="group" type="${type}" value="${value}" ${el.hasAttribute('checked') ? `checked` : ``} />${text}</a>`
+            } else {
+                return `<label  ${el.hasAttribute('style') ? `style="${el.getAttribute('style')}"` : ``} class="${el.hasAttribute('checked') ? `checked` : ``}" ${onclick ? `onclick="${onclick}"` : ''}><input name="group" type="${type}" value="${value}" ${el.hasAttribute('checked') ? `checked` : ``} />${text}</label>`
+            }
+        });
+        shadow.innerHTML = `
+            <style>${this.style()}</style><link rel="stylesheet" href="/resources/fonts/zlibicons.css?${ZLibrary._.version}">
+            ${this.hasAttribute('check-point') ? `<style>` + this.pointerStyle() + `</style>` : ``}
+            <div class="dropdown">
+                <div class="head">
+                    <i class="icon ${icon}">
+                        ${icon && badge ? `<i class="badge"></i>` : ''}
+                    </i>
+                    <span id="dropdown-title">${title ? title : selected}</span>
+                    ${showArrow ? `<span class="arrow"></span>` : ``}
+                </div>
+                <div class="content-wrap">
+                    <div class="content">
+                        ${items.join('')}
+                    </div>
+                </div>
+            </div>
+        `
+
+
+        for (let input of shadow.querySelectorAll('input')) {
+            input.addEventListener('change', function () {
+                if (this.type == 'radio') {
+                    if (!title) {
+                        const newTitle = this.parentElement.innerHTML
+                        shadow.getElementById("dropdown-title").innerHTML = newTitle
+                    }
+                    close()
+                }
+                parent.dispatchEvent(new CustomEvent('change', {
+                    detail: {
+                        value: this.type == 'radio' ? this.getAttribute('value') : [...this.parentNode.parentNode.childNodes].filter(el => el.nodeType < 3 && el.querySelector('input').checked).map(el => el.querySelector('input').getAttribute('value'))
+                    }
+                }));
+            })
+        }
+        const contentwrap = shadow.querySelector('.content-wrap')
+        const close = () => {
+            window.ZLibrary.DOM.overlay = false
+            window.ZLibrary.DOM.scroll = true
+            contentwrap.classList.add('end')
+            setTimeout(() => {
+                contentwrap.classList.remove('active')
+                contentwrap.classList.remove('end')
+            }, 300)
+        }
+        const open = () => {
+            window.ZLibrary.DOM.overlay = 'dropdown'
+            if (window.innerWidth < 786) {
+                window.ZLibrary.DOM.scroll = false
+            }
+            contentwrap.classList.add('active')
+            contentwrap.classList.add('start')
+            setTimeout(() => {
+                contentwrap.classList.remove('start')
+                document.addEventListener('click', checkOutside)
+            })
+        }
+        const toggleShow = () => {
+            contentwrap.classList.contains('active') ? close() : open()
+        }
+
+        const checkOutside = (event) => {
+            if (!contentwrap.contains(event.target)) {
+                close()
+            }
+            document.removeEventListener('click', checkOutside)
+        }
+
+        shadow.querySelector('.head').addEventListener('click', toggleShow)
+        window.addEventListener('modalClose', close)
+        ZLibrary.dispatch('ready', this)
+
+        setTimeout(() => {
+            this.checkDirection()
+        }, 0)
+    }
+    disconnect() {
+        this.remove();
+    }
+    attributeChangedCallback(name, oldValue, value) {
+        switch (name) {
+            case 'selected':                
+                this.shadowRoot?.querySelectorAll('.content > label input').forEach(el => {
+                    if (el.value == value) {
+                        el.click()
+                    }
+                })
+
+                break;
+        }
+    }
+}
+customElements.define('z-dropdown', Dropdown)

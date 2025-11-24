@@ -1,0 +1,10 @@
+ext {
+    extName = 'X-Manga'
+    extClass = '.XManga'
+    themePkg = 'madara'
+    baseUrl = 'https://x-manga.org'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

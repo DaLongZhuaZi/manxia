@@ -1,0 +1,10 @@
+ext {
+    extName = 'Coco Rip'
+    extClass = '.CocoRip'
+    themePkg = 'madara'
+    baseUrl = 'https://cocorip.net'
+    overrideVersionCode = 0
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

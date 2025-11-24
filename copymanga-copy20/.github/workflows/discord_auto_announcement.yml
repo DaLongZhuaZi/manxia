@@ -1,0 +1,21 @@
+# .github/workflows/discord_auto_announcement.yml
+name: Discord Auto Announcement
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord Notification
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          method: POST
+          contentType: 'application/json'
+          data: |
+            {
+              "content": "@everyone 更新${{ github.event.release.tag_name }} (倉庫更新約有五分鐘延遲)\n\n${{ github.event.release.body }}\n\n下載 APK：${{ github.event.release.assets[0].browser_download_url }}"
+            }

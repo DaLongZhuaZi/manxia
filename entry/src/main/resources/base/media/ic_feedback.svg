@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 填充型对话气泡，内部三条镂空横线，适配统一填充主题色 -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M4 4h16v11H10l-3 3v-3H4V4Zm3 3h10v1H7V7Zm0 3h10v1H7v-1Zm0 3h6v1H7v-1Z"/>
+</svg>
+

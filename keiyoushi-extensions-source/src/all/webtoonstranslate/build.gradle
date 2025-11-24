@@ -1,0 +1,8 @@
+ext {
+    extName = 'Webtoons.com Translations'
+    extClass = '.WebtoonsTranslateFactory'
+    extVersionCode = 9
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

@@ -1,0 +1,10 @@
+ext {
+    extName = 'Azora'
+    extClass = '.Azora'
+    themePkg = 'madara'
+    baseUrl = 'https://azoramoon.com'
+    overrideVersionCode = 8
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

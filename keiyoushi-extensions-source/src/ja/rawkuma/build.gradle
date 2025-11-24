@@ -1,0 +1,10 @@
+ext {
+    extName = 'Rawkuma'
+    extClass = '.Rawkuma'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://old.rawkuma.net'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

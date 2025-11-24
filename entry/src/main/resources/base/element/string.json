@@ -1,0 +1,40 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "漫匣"
+    },
+    {
+      "name": "read_media_reason",
+      "value": "应用需要读取本地文件来加本地漫画。"
+    },
+    {
+      "name": "write_media_reason",
+      "value": "应用需要下载漫画到本地。"
+    },
+    {
+      "name": "get_network_info_reason",
+      "value": "应用需要检查网络状态以上传错误报告或下载更新。"
+    },
+    {
+      "name": "get_internet_reason",
+      "value": "应用需要访问网络来获取在线漫画内容。"
+    },
+    {
+      "name": "get_notification_reason",
+      "value": "应用需要通知权限来展示下载状态和漫画更新情况。"
+    },
+    {
+      "name": "get_vibrate_reason",
+      "value": "应用需要震动权限来增强用户交互体验"
+    }
+  ]
+}

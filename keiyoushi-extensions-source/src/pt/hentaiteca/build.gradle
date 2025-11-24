@@ -1,0 +1,14 @@
+ext {
+    extName = 'Hentai Teca'
+    extClass = '.HentaiTeca'
+    themePkg = 'madara'
+    baseUrl = 'https://hentaiteca.net'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation project(':lib:randomua')
+}

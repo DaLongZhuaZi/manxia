@@ -1,0 +1,8 @@
+ext {
+    extName = 'Hitomi'
+    extClass = '.HitomiFactory'
+    extVersionCode = 41
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

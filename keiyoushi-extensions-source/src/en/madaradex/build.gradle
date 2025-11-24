@@ -1,0 +1,10 @@
+ext {
+    extName = 'MadaraDex'
+    extClass = '.MadaraDex'
+    themePkg = 'madara'
+    baseUrl = 'https://madaradex.org'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

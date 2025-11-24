@@ -1,0 +1,30 @@
+Backup of buildBatchStrategyDialog before off-screen fix:
+
+...
+      }
+      .width('85%')
+      .padding(24)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(16)
+      .border({
+        width: 1,
+        color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: 20,
+        color: 'rgba(0, 0, 0, 0.3)',
+        offsetX: 0,
+        offsetY: 4
+      })
+      .onClick(() => {
+        // 阻止点击事件冒泡到遮罩层
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .position({ x: 0, y: 0 })
+    .zIndex(999)
+  }
+...

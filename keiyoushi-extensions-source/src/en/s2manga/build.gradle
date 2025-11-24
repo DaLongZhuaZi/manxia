@@ -1,0 +1,10 @@
+ext {
+    extName = 'S2Manga'
+    extClass = '.S2Manga'
+    themePkg = 'madara'
+    baseUrl = 'https://s2manga.com'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

@@ -1,0 +1,10 @@
+ext {
+    extName = 'Mangalek'
+    extClass = '.Mangalek'
+    themePkg = 'madara'
+    baseUrl = 'https://lekmanga.net'
+    overrideVersionCode = 8
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

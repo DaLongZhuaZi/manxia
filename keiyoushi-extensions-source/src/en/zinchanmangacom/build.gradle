@@ -1,0 +1,10 @@
+ext {
+    extName = 'ZinChanManga.com'
+    extClass = '.ZinChanMangaCom'
+    themePkg = 'madara'
+    baseUrl = 'https://zinchangmanga.com'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

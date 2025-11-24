@@ -1,0 +1,15 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 图源图标：代表数据源/插件的概念，使用拼图块设计 -->
+  <path d="M19 3H5C3.89 3 3 3.89 3 5V19C3 20.11 3.89 21 5 21H19C20.11 21 21 20.11 21 19V5C21 3.89 20.11 3 19 3Z" stroke="#8A8A8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- 拼图凸起部分（顶部） -->
+  <path d="M12 3V5C12 5.55 11.55 6 11 6H10C9.45 6 9 5.55 9 5V3" stroke="#8A8A8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- 拼图凹陷部分（右侧） -->
+  <path d="M21 12H19C18.45 12 18 11.55 18 11V10C18 9.45 18.45 9 19 9H21" stroke="#8A8A8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- 内部代码符号 -->
+  <path d="M8 10L10 12L8 14" stroke="#8A8A8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M16 10L14 12L16 14" stroke="#8A8A8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <line x1="11" y1="16" x2="13" y2="8" stroke="#8A8A8A" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

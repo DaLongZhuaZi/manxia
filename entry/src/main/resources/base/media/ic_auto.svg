@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="none" stroke="#000000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 环形箭头表示“自动循环” -->
+    <path d="M12 4a8 8 0 1 0 7.2 4.8"/>
+    <path d="M19.2 8.8l-3.2-0.6 1.6-2.8"/>
+  </g>
+  <!-- 内部播放三角形，表示自动播放/自动进行 -->
+  <path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor"/>
+</svg>

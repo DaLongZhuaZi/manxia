@@ -1,0 +1,10 @@
+ext {
+    extName = 'Hunters Scans'
+    extClass = '.HuntersScans'
+    themePkg = 'madara'
+    baseUrl = 'https://readhunters.xyz'
+    overrideVersionCode = 8
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

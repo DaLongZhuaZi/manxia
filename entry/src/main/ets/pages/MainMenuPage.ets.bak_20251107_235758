@@ -1,0 +1,1361 @@
+// 文件路径: src/main/ets/pages/MainMenuPage.ets
+// 职责: 漫画阅读应用主入口页面，采用底部导航栏设计，参考Mihon、komikku等现代漫画阅读软件
+
+import { logger } from '../Utils/Logger';
+import { common } from '@kit.AbilityKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
+
+// 主题相关导入
+import { ComicConverter } from '../Framework/Utils/ComicConverter';
+import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+
+// 导入页面组件
+import { TestManagementPage } from './TestManagementPage';
+import { DataManagementPage } from './DataManagementPage';
+import { MangaReaderPage } from './MangaReaderPage';
+import { MangaDetailPage, MangaDetailPageParams } from './MangaDetailPage';
+import { WebViewConfigurableSystemTestPage } from './WebViewConfigurableSystemTestPage';
+import { MangaSourceTestPage } from './MangaSourceTestPage';
+import { DummyPage } from './DummyPage';
+import { SystemAnimationDemoPage } from './SystemAnimationDemoPage';
+import { SystemResourceDemoPage } from './SystemResourceDemoPage';
+import { HelloWorldPage } from './HelloWorldPage';
+import { SystemStatusPage } from './SystemStatusPage';
+import { SearchPage } from './SearchPage';
+import { MangaSettingsPage } from './MangaSettingsPage';
+import { GlobalSettingsPage } from './GlobalSettingsPage';
+import { DownloadManagerPage } from './DownloadManagerPage';
+import { AboutPage } from './AboutPage';
+import { MangaReportPage } from './MangaReportPage';
+import { LogManagerPage } from './LogManagerPage';
+
+// 导入示例数据
+import { SAMPLE_MANGA, createSampleMangaList, getDefaultTestManga } from '../Data/SampleMangaData';
+import { MangaReaderPageParams } from './MangaReaderPage';
+import { Manga, MangaChapter, MangaMetadata, ReadingProgress, ReadingSettings, ImageSourceType,
+  ReadingMode,
+  ReadingDirection} from '../Models/MangaModels';
+import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from '../Framework/Types/StatusEnums';
+
+// 导入数据管理器
+import { DataManager, ComicInfo } from '../Framework/Data/DataManager';
+import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { DataService } from '../Framework/Services/DataService';
+
+// 导入事件总线
+import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload } from '../Framework/EventBus';
+
+const TAG = 'MainMenuPage';
+
+/**
+ * 导航路径参数接口
+ */
+interface NavigationPathParam {
+  fromPage: string;
+  timestamp: number;
+}
+
+/**
+ * 导航路径接口
+ */
+interface NavigationPath {
+  name: string;
+  param: NavigationPathParam;
+}
+
+/**
+ * 底部导航标签页枚举
+ */
+enum TabIndex {
+  HOME = 0,
+  LIBRARY = 1,
+  DISCOVER = 2,
+  SETTINGS = 3
+}
+
+/**
+ * 导航标签配置接口
+ */
+interface TabConfig {
+  title: string;
+  icon: ResourceStr;
+  selectedIcon: ResourceStr;
+  index: TabIndex;
+}
+
+/**
+ * Toast配置接口
+ */
+interface ToastConfig {
+  message: string;
+  duration: number;
+  bottom: number;
+}
+
+interface bannerData {
+  title: string;
+  subtitle: string;
+  image: ResourceStr;
+  backgroundColor: string;
+}
+
+interface GeneratedTypeLiteralInterface_1 {
+  title: string;
+  subtitle: string;
+  image: ResourceStr;
+  backgroundColor: string;
+}
+
+@Entry
+@Component
+struct MainMenuPage {
+  // 全局上下文
+  private uiContext: UIContext = this.getUIContext();
+  
+  // 创建并提供 pathStack 给子页面使用
+  @Provide('NavPathStack') pathStack: NavPathStack = new NavPathStack();
+
+  // 主题相关状态
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'MainMenuPage';
+
+  // 底部导航状态
+  @State currentTabIndex: number = TabIndex.HOME;
+  private tabsController: TabsController = new TabsController();
+
+  // 轮播相关状态
+  @State currentBannerIndex: number = 0;
+  private swiperController: SwiperController = new SwiperController();
+
+  // 漫画列表相关状态
+  @State mangaList: Manga[] = [];
+  @State isLoadingMangaList: boolean = false;
+  @State isRefreshing: boolean = false;
+  private dataManager: DataManager = DataManager.getInstance();
+  private dataService: DataService = DataService.getInstance();
+
+  // 轮播内容数据
+  private bannerData: Array<bannerData> = [
+    {
+      title: '欢迎使用漫匣',
+      subtitle: '发现精彩的漫画世界',
+      image: $r('app.media.ic_comic_banner'),
+      backgroundColor: '#FF6B6B'
+    },
+    {
+      title: '海量漫画资源',
+      subtitle: '热门连载，经典完结作品',
+      image: $r('app.media.EVA'),
+      backgroundColor: '#4ECDC4'
+    },
+    {
+      title: '个性化推荐',
+      subtitle: '根据你的喜好推荐精彩内容',
+      image: $r('app.media.ic_theme'),
+      backgroundColor: '#45B7D1'
+    }
+  ];
+
+  // 系统初始化状态
+  @State private isSystemInitialized: boolean = false;
+  @State private initializationProgress: string = '正在初始化...';
+
+  // 版本信息
+  @State public appVersion: string = '0.0.1';
+  @State public systemVersion: string = '';
+
+  // 导航标签配置
+  private tabConfigs: TabConfig[] = [
+    {
+      title: '首页',
+      icon: $r('app.media.ic_home_normal'),
+      selectedIcon: $r('app.media.ic_home_selected'),
+      index: TabIndex.HOME
+    },
+    {
+      title: '书库',
+      icon: $r('app.media.ic_library_normal'),
+      selectedIcon: $r('app.media.ic_library_selected'),
+      index: TabIndex.LIBRARY
+    },
+    {
+      title: '发现',
+      icon: $r('app.media.ic_discover_normal'),
+      selectedIcon: $r('app.media.ic_discover_selected'),
+      index: TabIndex.DISCOVER
+    },
+    {
+      title: '设置',
+      icon: $r('app.media.ic_settings_normal'),
+      selectedIcon: $r('app.media.ic_settings_selected'),
+      index: TabIndex.SETTINGS
+    }
+  ];
+
+  aboutToAppear() {
+    logger.lifecycle(TAG, '🚀 漫画阅读应用启动');
+
+    // 初始化主题感知
+    ThemeAwareHelper.initializeThemeAware(
+      this.componentId,
+      this.themeState,
+      (newTheme: ThemeType) => {
+        logger.info(TAG, `主题已切换到: ${newTheme}`);
+      },
+      (newState: ThemeAwareState) => {
+        // 重新赋值整个themeState对象以触发UI更新
+        this.themeState = newState;
+      }
+    );
+
+    // 订阅漫画导入完成事件
+    eventBus.subscribe(GameEvent.MANGA_IMPORT_COMPLETED, (payload: IEventPayload) => {
+      const mangaPayload = payload as MangaImportCompletedPayload;
+      logger.info(TAG, `收到漫画导入完成事件，成功导入 ${mangaPayload.importedCount} 个漫画`);
+      // 刷新漫画列表
+      this.loadMangaList();
+    });
+
+    this.initializeSystem();
+    this.loadVersionInfo();
+    this.loadMangaList();
+  }
+
+  aboutToDisappear() {
+    logger.lifecycle(TAG, '应用主页面即将销毁');
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    // 取消订阅漫画导入完成事件
+    // 取消订阅漫画导入完成事件
+    eventBus.unsubscribe(GameEvent.MANGA_IMPORT_COMPLETED, (payload: IEventPayload) => {
+      const mangaPayload = payload as MangaImportCompletedPayload;
+      logger.info(TAG, `收到漫画导入完成事件，成功导入 ${mangaPayload.importedCount} 个漫画`);
+      // 刷新漫画列表
+      this.loadMangaList();
+    });
+  }
+
+  /**
+   * 刷新指示器Builder
+   */
+  @Builder
+  refreshBuilder() {
+    Row({ space: 8 }) {
+      LoadingProgress()
+        .width(20)
+        .height(20)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      
+      Text('正在刷新...')
+        .fontSize(14)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .justifyContent(FlexAlign.Center)
+    .width('100%')
+    .height(60)
+  }
+
+  /**
+   * 初始化系统
+   */
+  private async initializeSystem(): Promise<void> {
+    try {
+      logger.info(TAG, '开始系统初始化...');
+      
+      // 设置全局UIContext
+      AppStorage.setOrCreate('uiContext', this.uiContext);
+      AppStorage.setOrCreate('GlobalNavStack', this.pathStack);
+      
+      this.isSystemInitialized = true;
+      logger.info(TAG, '✅ 系统初始化完成');
+      
+    } catch (error) {
+      logger.error(TAG, '❌ 系统初始化失败', String(error));
+      this.initializationProgress = '初始化失败';
+    }
+  }
+
+  /**
+   * 加载版本信息
+   */
+  private loadVersionInfo(): void {
+    try {
+      this.systemVersion = deviceInfo.displayVersion;
+      logger.info(TAG, `系统版本信息已获取: ${this.systemVersion}`);
+    } catch (error) {
+      logger.error(TAG, '获取系统版本信息失败', String(error));
+      this.systemVersion = 'Unknown';
+    }
+  }
+
+  /**
+   * 加载漫画列表
+   */
+  private async loadMangaList(): Promise<void> {
+    try {
+      this.isLoadingMangaList = true;
+      logger.info(TAG, '开始加载漫画列表...');
+      
+      const comicInfoList = await this.dataManager.getAllComics();
+      logger.info(TAG, `从数据库获取到 ${comicInfoList.length} 条漫画记录`);
+      
+      // 转换漫画基本信息
+      const mangaList = comicInfoList.map(comic => ComicConverter.convertComicInfoToManga(comic));
+      
+      // 为每个漫画加载章节信息
+      for (const manga of mangaList) {
+        try {
+          const chapters = await this.dataManager.getComicChapters(manga.id);
+          if (chapters && chapters.length > 0) {
+            // 转换章节信息为MangaChapter格式
+            manga.chapters = chapters.map(chapterInfo => ({
+              id: chapterInfo.id,
+              title: chapterInfo.title,
+              chapterNumber: chapterInfo.index, // 正确映射：ChapterInfo.index -> MangaChapter.chapterNumber
+              pages: [], // 页面信息在阅读时加载
+              publishDate: chapterInfo.publishTime || Date.now(),
+              language: 'zh-CN',
+              scanlationGroup: '',
+              isDownloaded: chapterInfo.isDownloaded || false,
+              downloadStatus: chapterInfo.isDownloaded ? DownloadStatus.COMPLETED : DownloadStatus.PENDING,
+              downloadProgress: chapterInfo.isDownloaded ? 100 : 0,
+              localPath: chapterInfo.downloadPath
+            } as MangaChapter));
+            logger.debug(TAG, `漫画 "${manga.title}" 加载了 ${manga.chapters.length} 个章节`);
+          } else {
+            manga.chapters = [];
+            logger.debug(TAG, `漫画 "${manga.title}" 没有章节信息`);
+          }
+        } catch (chapterError) {
+          logger.warn(TAG, `加载漫画 "${manga.title}" 的章节信息失败: ${chapterError}`);
+          manga.chapters = [];
+        }
+      }
+      
+      this.mangaList = mangaList;
+      logger.info(TAG, `成功加载 ${this.mangaList.length} 部漫画`);
+      
+      // 如果数据库为空，添加一些示例数据用于测试
+      if (this.mangaList.length === 0) {
+        logger.info(TAG, '数据库为空，使用示例数据');
+        this.mangaList = createSampleMangaList();
+      }
+    } catch (error) {
+      logger.error(TAG, '加载漫画列表失败', String(error));
+      // 如果加载失败，使用示例数据作为后备
+      this.mangaList = createSampleMangaList();
+      logger.info(TAG, '使用示例数据作为后备');
+    } finally {
+      this.isLoadingMangaList = false;
+    }
+  }
+
+  /**
+    * 获取EVA漫画示例对象
+    */
+   private getEvaMangaExample(): Manga {
+     const defaultMetadata: MangaMetadata = {
+       authors: ['庵野秀明'],
+       publisher: '角川书店',
+       publicationYear: 1995,
+       genres: ['科幻', '机甲', '心理'],
+       artists: ['贞本义行'],
+       themes: ['成长', '心理', '末世'],
+       demographics: ['青年']
+     };
+
+     const defaultReadingProgress: ReadingProgress = {
+       currentChapterId: 'eva-chapter-12',
+       currentPageIndex: 0,
+       lastReadAt: Date.now(),   
+       readingStatus: ReadingStatus.READING,
+       totalReadingTime: 3600000, // 1小时
+       readingPercentage: 75
+     };
+
+     const defaultReadingSettings: ReadingSettings = {
+       readingDirection: ReadingDirection.LEFT_TO_RIGHT,
+       keepScreenOn: true,
+       readingMode: ReadingMode.SINGLE_PAGE,
+       brightness: 0,
+       pageSpacing: 0,
+       showPageInfo: false,
+       showPageIndicator: false,
+       fitMode: '',
+       autoPageTurnInterval: 0,
+      filterSettings: {
+        enabled: false,
+        brightness: 0,
+        contrast: 0,
+        saturation: 0,
+        hue: 0,
+        invert: false,
+        grayscale: false,
+        blur: 0,
+        gamma: 0,
+        sepia: 0
+      },
+       fullscreen: false,
+       volumeKeyNavigation: false
+     };
+
+     return {
+       id: 'eva-manga-001',
+       title: '新世纪福音战士',
+       alternativeTitles: ['Neon Genesis Evangelion', 'エヴァンゲリオン'],
+       description: '在第三次冲击后的世界，14岁的碇真嗣被父亲召唤到第三新东京市，驾驶巨大的人造人EVA与神秘的使徒战斗。',
+       coverImagePath: '',
+       coverSourceType: ImageSourceType.RESOURCE,
+       status: MangaStatus.COMPLETED,
+       metadata: defaultMetadata,
+       chapters: [], // 章节信息需要单独加载
+       readingProgress: defaultReadingProgress,
+       bookmarks: [],
+       readingSettings: defaultReadingSettings,
+       isFavorite: true,
+       addedToLibraryAt: Date.now() - 86400000, // 1天前
+       lastUpdatedAt: Date.now(),
+       sourceInfo: {
+         sourceId: 'local-eva',
+         sourceName: '本地导入',
+         sourceUrl: '',
+         sourceLanguage: 'zh-CN',
+         requiresLogin: false
+       }
+     };
+   }
+
+   /**
+    * 刷新漫画列表
+    */
+   public async refreshMangaList(): Promise<void> {
+     if (this.isRefreshing || this.isLoadingMangaList) {
+       return; // 避免重复刷新
+     }
+     
+     this.isRefreshing = true;
+     try {
+       await this.loadMangaList();
+     } catch (error) {
+       logger.error(TAG, `刷新漫画列表失败: ${error}`);
+       this.showToast('刷新失败，请稍后重试');
+     } finally {
+       this.isRefreshing = false;
+     }
+   }
+
+  /**
+   * 显示Toast提示
+   */
+  private showToast(message: string, duration: number = 2000): void {
+    try {
+      const toastConfig: ToastConfig = {
+        message: message,
+        duration: duration,
+        bottom: 100
+      };
+      this.getUIContext().getPromptAction().showToast(toastConfig);
+    } catch (error) {
+      logger.warn(TAG, `Toast显示失败: ${message}`);
+    }
+  }
+
+  /**
+   * 显示更多选项菜单
+   */
+  private showMoreOptions(): void {
+    try {
+      this.getUIContext().getPromptAction().showActionMenu({
+        title: '更多选项',
+        buttons: [
+          { text: '主题切换', color: '#007DFF' },
+          { text: '设置', color: '#007DFF' },
+          { text: '测试管理', color: '#007DFF' },
+          { text: '关于应用', color: '#007DFF' }
+        ]
+      }, (err, data) => {
+        if (err) {
+          logger.error(TAG, '显示更多选项菜单失败', String(err));
+          this.showToast('菜单显示失败');
+          return;
+        }
+        
+        switch (data.index) {
+          case 0:
+            this.themeManager.toggleTheme();
+            this.showToast('主题已切换');
+            break;
+          case 1:
+            this.currentTabIndex = TabIndex.SETTINGS;
+            this.tabsController.changeIndex(this.currentTabIndex);
+            break;
+          case 2:
+            this.pathStack.pushPath({ name: 'TestManagementPage' });
+            break;
+          case 3:
+            this.showToast(`漫画阅读器 v${this.systemVersion}`);
+            break;
+        }
+      });
+    } catch (error) {
+      logger.error(TAG, '显示更多选项菜单失败', String(error));
+      this.showToast('菜单显示失败');
+    }
+  }
+
+  /**
+   * 构建顶部标题栏
+   */
+  @Builder
+  buildTopBar() {
+    Row() {
+      // 标题
+      Text(this.getPageTitle())
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .layoutWeight(1)
+
+      // 搜索按钮
+      Button() {
+        Image($r('app.media.ic_search'))
+          .width(24)
+          .height(24)
+          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+      .type(ButtonType.Circle)
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        // 导航到搜索页面
+        try {
+          this.pathStack.pushPath({ name: 'SearchPage' });
+          logger.info(TAG, '导航到搜索页面');
+        } catch (error) {
+          const message: string = error instanceof Error ? error.message : String(error);
+          logger.error(TAG, '导航到搜索页面失败', message);
+          this.showToast('打开搜索页面失败');
+        }
+      })
+      .margin({ right: 8 })
+
+      // 更多选项按钮
+      Button() {
+        Image($r('app.media.ic_more'))
+          .width(24)
+          .height(24)
+          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+      .type(ButtonType.Circle)
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.showMoreOptions();
+      })
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 16, right: 16 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+    .shadow({
+      radius: 4,
+      color: ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme),
+      offsetY: 2
+    })
+  }
+
+  /**
+   * 获取当前页面标题
+   */
+  private getPageTitle(): string {
+    const titles = ['漫匣', '我的书库', '发现', '设置'];
+    return titles[this.currentTabIndex] || '漫画阅读器';
+  }
+
+  /**
+   * 构建自定义底部导航栏
+   */
+  @Builder
+  buildCustomTabBar(config: TabConfig) {
+    Column({ space: 4 }) {
+      Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
+        .width(24)
+        .height(24)
+        .fillColor(this.currentTabIndex === config.index ? 
+          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+      Text(config.title)
+        .fontSize(12)
+        .fontColor(this.currentTabIndex === config.index ? 
+          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
+    }
+    .width('100%')
+    .height(56)
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      this.currentTabIndex = config.index;
+      this.tabsController.changeIndex(this.currentTabIndex);
+      logger.info(TAG, `切换到标签页: ${config.title}`);
+    })
+  }
+
+  /**
+   * 构建轮播横幅
+   */
+  @Builder
+  buildBannerSwiper() {
+    Swiper(this.swiperController) {
+      ForEach(this.bannerData, (item: GeneratedTypeLiteralInterface_1, index: number) => {
+        Row() {
+          Column({ space: 8 }) {
+            Text(item.title)
+              .fontSize(24)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Color.White)
+
+            Text(item.subtitle)
+              .fontSize(16)
+              .fontColor(Color.White)
+              .opacity(0.9)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Image(item.image)
+            .width(80)
+            .height(80)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(8)
+        }
+        .width('100%')
+        .height(120)
+        .padding(16)
+        .backgroundColor(item.backgroundColor)
+        .borderRadius(12)
+      })
+    }
+    .width('100%')
+    .height(120)
+    .autoPlay(true)
+    .interval(4000)
+    .indicator(
+      new DotIndicator()
+        .itemWidth(8)
+        .itemHeight(8)
+        .selectedItemWidth(16)
+        .selectedItemHeight(8)
+        .color(Color.White)
+        .selectedColor(Color.White)
+    )
+    .onChange((index: number) => {
+      this.currentBannerIndex = index;
+    })
+  }
+
+  /**
+   * 构建首页内容
+   */
+  @Builder
+  buildHomeContent() {
+    Column({ space: 16 }) {
+      // 轮播横幅
+      this.buildBannerSwiper()
+
+      // 最近阅读
+      Column({ space: 12 }) {
+        Row() {
+          Text('最近阅读')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          
+          Blank()
+          
+          Text('查看全部')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.currentTabIndex = TabIndex.LIBRARY;
+              this.tabsController.changeIndex(this.currentTabIndex);
+            })
+        }
+        .width('100%')
+
+        // EVA漫画示例
+        Row({ space: 12 }) {
+          Image($r('app.media.EVA'))
+            .width(80)
+            .height(120)
+            .objectFit(ImageFit.Contain) // 改为Contain避免裁剪
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)) // 添加背景色
+            .borderRadius(8)
+            .shadow({
+              radius: 8,
+              color: '#1F000000',
+              offsetY: 4
+            })
+
+          Column({ space: 8 }) {
+            Text('新世纪福音战士')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Text('已读至第12话')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+            Text('2077-01-01 00:00')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+            Button('继续阅读')
+              .fontSize(14)
+              .height(32)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .onClick(() => {
+                this.showToast('即将进入阅读页面...');
+                const evaManga = this.getEvaMangaExample();
+                this.openMangaReader(evaManga);
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onClick(() => {
+          this.showToast('即将进入漫画详情页面...');
+          const evaManga = this.getEvaMangaExample();
+          this.openMangaDetail(evaManga);
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
+  }
+
+  /**
+   * 构建书库内容
+   */
+  @Builder
+  buildLibraryContent() {
+    Column({ space: 16 }) {
+      // 筛选栏
+      Row({ space: 12 }) {
+        Button('全部')
+          .fontSize(14)
+          .height(36)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+
+        Button('未读')
+          .fontSize(14)
+          .height(36)
+          .type(ButtonType.Normal)
+          .backgroundColor(Color.Transparent)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Button('已完结')
+          .fontSize(14)
+          .height(36)
+          .type(ButtonType.Normal)
+          .backgroundColor(Color.Transparent)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Blank()
+
+        Button() {
+          Image($r('app.media.ic_filter'))
+            .width(20)
+            .height(20)
+            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .type(ButtonType.Circle)
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+      }
+      .width('100%')
+
+      // 漫画列表
+      if (this.isLoadingMangaList) {
+        // 加载状态
+        Column({ space: 16 }) {
+          LoadingProgress()
+            .width(40)
+            .height(40)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          
+          Text('正在加载漫画列表...')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else if (this.mangaList.length === 0) {
+        // 空状态
+        Column({ space: 16 }) {
+          Image($r('app.media.ic_library_empty'))
+            .width(80)
+            .height(80)
+            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          
+          Text('书库为空')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          
+          Text('导入一些漫画开始阅读吧')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          
+          Button('导入漫画')
+            .fontSize(14)
+            .height(36)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .onClick(() => {
+              this.currentTabIndex = TabIndex.SETTINGS;
+              this.tabsController.changeIndex(TabIndex.SETTINGS);
+            })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        // 漫画列表
+        Refresh({ refreshing: $$this.isRefreshing, builder: this.refreshBuilder }) {
+          List({ space: 16 }) {
+            ForEach(this.mangaList, (manga: Manga, index: number) => {
+              ListItem() {
+                this.buildMangaCard(manga)
+              }
+            })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Auto)
+        }
+        .onRefreshing(() => {
+          this.refreshMangaList();
+        })
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+  }
+
+  /**
+   * 构建漫画卡片
+   */
+  @Builder
+  buildMangaCard(manga: Manga) {
+    Row({ space: 12 }) {
+      // 封面图片
+      Image($r('app.media.EVA')) // 暂时使用EVA图片作为占位符
+        .width(80)
+        .height(120)
+        .objectFit(ImageFit.Contain) // 改为Contain避免裁剪
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)) // 添加背景色
+        .borderRadius(8)
+        .shadow({
+          radius: 8,
+          color: '#1F000000',
+          offsetY: 4
+        })
+
+      // 漫画信息
+      Column({ space: 8 }) {
+        Text(manga.title)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(`${manga.chapters.length}话 · ${StatusConverter.mangaStatusToDisplayText(manga.status)}`)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Text(manga.description)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Blank()
+          .height(10)
+
+        // 操作按钮
+        Row({ space: 8 }) {
+          Button('继续阅读')
+            .fontSize(12)
+            .height(32)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .border({
+              width: 1,
+              color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            })
+            .onClick(() => {
+              this.openMangaReader(manga);
+            })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .onClick(() => {
+      this.openMangaDetail(manga);
+    })
+    .width('100%')
+    .height(140)
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .shadow({
+      radius: 4,
+      color: '#0F000000',
+      offsetY: 2
+    })
+  }
+
+  /**
+   * 打开漫画详情页
+   */
+  private openMangaDetail(manga: Manga) {
+    try {
+      const params: MangaDetailPageParams = {
+        mangaId: manga.id
+      };
+
+      this.pathStack.pushPathByName('MangaDetailPage', params);
+      logger.info(TAG, `打开漫画详情页: ${manga.title}`);
+    } catch (error) {
+      logger.error(TAG, '打开漫画详情页失败', error);
+      this.showToast('打开漫画详情页失败');
+    }
+  }
+
+  /**
+   * 打开漫画阅读器
+   */
+  private async openMangaReader(manga: Manga) {
+    try {
+      // 基于阅读历史确定恢复目标
+      let targetChapterId: string | undefined = undefined;
+      let targetPageIndex: number = 0;
+
+      const historyList = await this.dataService.getReadingHistory(200);
+      for (let i: number = 0; i < historyList.length; i++) {
+        const h = historyList[i];
+        if (h.comicId === manga.id) {
+          targetChapterId = h.chapterId;
+          targetPageIndex = h.pageIndex;
+          break;
+        }
+      }
+
+      // 若没有历史记录或历史章节失效，则查询数据库中的第一章
+      if (!targetChapterId) {
+        const chapterInfos = await this.dataManager.getComicChapters(manga.id);
+        if (chapterInfos && chapterInfos.length > 0) {
+          const firstChapterId: string = chapterInfos[0].id;
+          targetChapterId = firstChapterId;
+          targetPageIndex = 0;
+          logger.info(TAG, `无阅读历史，默认从第一章开始。chapterId=${String(targetChapterId)}`);
+        } else {
+          logger.warn(TAG, `漫画(${manga.title})未找到章节，无法进入阅读器`);
+          this.showToast('未找到章节，无法进入阅读器');
+          return;
+        }
+      } else {
+        logger.info(TAG, `恢复阅读：chapterId=${String(targetChapterId)}, pageIndex=${String(targetPageIndex)}`);
+      }
+
+      const params: MangaReaderPageParams = {
+        mangaId: manga.id,
+        chapterId: targetChapterId,
+        pageIndex: targetPageIndex,
+        fromPage: 'MainMenuPage'
+      } as MangaReaderPageParams;
+
+      this.pathStack.pushPathByName('MangaReaderPage', params);
+      logger.info(TAG, `打开漫画阅读器: ${manga.title}`);
+    } catch (error) {
+      const errMsg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '打开漫画阅读器失败', errMsg);
+      this.showToast('打开漫画阅读器失败');
+    }
+  }
+
+  /**
+   * 构建发现内容
+   */
+  @Builder
+  buildDiscoverContent() {
+    Column({ space: 16 }) {
+      // 搜索栏
+      Row() {
+        TextInput({ placeholder: '搜索漫画、作者...' })
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Button() {
+          Image($r('app.media.ic_search'))
+            .width(20)
+            .height(20)
+            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .margin({ left: 8 })
+      }
+      .width('100%')
+
+      // 分类标签
+      Scroll(new Scroller()) {
+        Row({ space: 12 }) {
+          ForEach(['国漫', '日漫', '韩漫', '美漫', 'Pixiv', 'Cosplay'], (category: string) => {
+            Text(category)
+              .fontSize(14)
+              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .borderRadius(16)
+              .onClick(() => {
+                this.showToast(`搜索 ${category} 类漫画`);
+              })
+          })
+        }
+        .padding({ left: 16, right: 16 })
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+
+      // 推荐内容
+      Column() {
+        // 默认图源网格
+        Grid() {
+          ForEach([1, 2, 3, 4, 5, 6], (index: number) => {
+            GridItem() {
+              Column({ space: 4 }) {
+                Image($r('app.media.ic_theme'))
+                  .width(48)
+                  .height(48)
+                  .borderRadius(8)
+                  .objectFit(ImageFit.Cover)
+
+                Text(`图源${index}`)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(12)
+            }
+            .aspectRatio(1)
+          })
+
+          // 新增的“本地图源”项
+          GridItem() {
+            Column({ space: 4 }) {
+              Image($r('app.media.ic_image_placeholder'))
+                .width(48)
+                .height(48)
+                .borderRadius(8)
+                .objectFit(ImageFit.Cover)
+
+              Text('本地图源')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(12)
+          }
+          .aspectRatio(1)
+        }
+        .columnsTemplate('1fr 1fr 1fr')
+        .rowsGap(12)
+        .columnsGap(12)
+        .width('100%')
+        .margin({ bottom: 24 })
+
+        Text('功能开发中，敬请期待')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
+  }
+
+  /**
+   * 构建设置内容
+   */
+  @Builder
+  buildSettingsContent() {
+    Column({ space: 0 }) {
+      // 用户信息区域
+      Row() {
+        Image($r('app.media.ic_user_avatar'))
+          .width(60)
+          .height(60)
+          .borderRadius(30)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+
+        Column({ space: 4 }) {
+          Text('漫画报告')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          Text('根据您的阅读记录，生成漫画报告')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .margin({ left: 16 })
+
+        Image($r('app.media.ic_arrow_right'))
+          .width(20)
+          .height(20)
+          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+      .margin({ bottom: 16 })
+      .onClick(() => {
+        this.showToast('登录功能开发中...');
+      })
+
+      // 设置选项列表
+      Column() {
+        this.buildSettingItem('阅读设置', '字体、背景、翻页方式', $r('app.media.ic_reading_settings'))
+        this.buildSettingItem('下载管理', '离线下载、存储管理', $r('app.media.ic_download'))
+        this.buildSettingItem('关于应用', `版本 ${this.appVersion}`, $r('app.media.ic_info'))
+        this.buildSettingItem('NGF', '测试和调试工具', $r('app.media.ic_system'), () => {
+          // 导航到TestManagementPage
+          const navigationPath: NavigationPath = {
+            name: 'TestManagementPage',
+            param: {
+              fromPage: 'MainMenuPage',
+              timestamp: Date.now()
+            }
+          };
+          this.pathStack.pushPath(navigationPath);
+        })
+        this.buildSettingItem('数据管理', '导入/导出配置及Mihon本地漫画', $r('app.media.ic_data_management'), () => {
+          try {
+            const navigationPath: NavigationPath = {
+              name: 'DataManagementPage',
+              param: {
+                fromPage: 'MainMenuPage',
+                timestamp: Date.now()
+              }
+            };
+            this.pathStack.pushPath(navigationPath);
+            logger.info(TAG, '导航到数据管理页面');
+          } catch (error) {
+            logger.error(TAG, '导航到数据管理页面失败', error);
+            this.showToast('打开数据管理页面失败');
+          }
+        })
+      }
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
+  }
+
+  /**
+   * 构建设置项
+   */
+  @Builder
+  buildSettingItem(title: string, subtitle: string, icon: ResourceStr, onClick?: () => void) {
+    Row() {
+      Image(icon)
+        .width(24)
+        .height(24)
+        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .textAlign(TextAlign.Start)
+          .width('100%')
+
+        Text(subtitle)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .textAlign(TextAlign.Start)
+          .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 16 })
+
+      Image($r('app.media.ic_arrow_right'))
+        .width(20)
+        .height(20)
+        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .height(64)
+    .padding({ left: 16, right: 16 })
+    .onClick(() => {
+      if (onClick) {
+        onClick();
+      } else {
+        this.showToast(`${title}功能开发中...`);
+      }
+    })
+  }
+
+  /**
+   * 构建导航目标页面
+   */
+  @Builder
+  buildNavDestination(name: string, param: Object) {
+    if (name === 'TestManagementPage') {
+      TestManagementPage()
+    } else if (name === 'DataManagementPage') {
+      DataManagementPage()
+    } else if (name === 'MangaReaderPage') {
+      MangaReaderPage()
+    } else if (name === 'MangaDetailPage') {
+      MangaDetailPage()
+    } else if (name === 'MangaSettingsPage') {
+      MangaSettingsPage()
+    } else if (name === 'SearchPage') {
+      SearchPage()
+    } else if (name === 'WebViewConfigurableSystemTestPage') {
+      WebViewConfigurableSystemTestPage()
+    } else if (name === 'MangaSourceTestPage') {
+      MangaSourceTestPage()
+    } else if (name === 'DummyPage') {
+      DummyPage()
+    } else if (name === 'SystemAnimationDemoPage') {
+      SystemAnimationDemoPage()
+    } else if (name === 'SystemResourceDemoPage') {
+      SystemResourceDemoPage()
+    } else if (name === 'HelloWorldPage') {
+      HelloWorldPage()
+    } else if (name === 'SystemStatusPage') {
+      SystemStatusPage()
+    } else if (name === 'GlobalSettingsPage') {
+      GlobalSettingsPage()
+    } else if (name === 'DownloadManagerPage') {
+      DownloadManagerPage()
+    } else if (name === 'AboutPage') {
+      AboutPage()
+    } else if (name === 'MangaReportPage') {
+      MangaReportPage()
+    } else if (name === 'LogManagerPage') {
+      LogManagerPage()
+    }
+  }
+
+  build() {
+    Navigation(this.pathStack) {
+      Stack() {
+        // 背景层 - 扩展到系统栏区域，实现完全沉浸式背景
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+
+        // 主内容区域
+        Column() {
+          // 顶部标题栏
+          this.buildTopBar()
+
+          // 主要内容区域 - 使用Tabs实现底部导航
+          Tabs({
+            barPosition: BarPosition.End,
+            controller: this.tabsController
+          }) {
+            // 首页标签
+            TabContent() {
+              this.buildHomeContent()
+            }
+            .tabBar(this.buildCustomTabBar(this.tabConfigs[0]))
+
+            // 书库标签
+            TabContent() {
+              this.buildLibraryContent()
+            }
+            .tabBar(this.buildCustomTabBar(this.tabConfigs[1]))
+
+            // 发现标签
+            TabContent() {
+              this.buildDiscoverContent()
+            }
+            .tabBar(this.buildCustomTabBar(this.tabConfigs[2]))
+
+            // 设置标签
+            TabContent() {
+              this.buildSettingsContent()
+            }
+            .tabBar(this.buildCustomTabBar(this.tabConfigs[3]))
+          }
+          .layoutWeight(1)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+          .barBackgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .onChange((index: number) => {
+            this.currentTabIndex = index;
+            logger.info(TAG, `标签页切换到索引: ${index}`);
+          })
+        }
+        .width('100%')
+        .height('100%')
+      }
+    }
+    .navDestination(this.buildNavDestination)
+    .mode(NavigationMode.Stack)
+    .width('100%')
+    .height('100%')
+    .hideTitleBar(true)
+  }
+}
+
+export { MainMenuPage };

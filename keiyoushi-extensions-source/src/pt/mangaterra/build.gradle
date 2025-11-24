@@ -1,0 +1,10 @@
+ext {
+    extName = 'Manga Terra'
+    extClass = '.MangaTerra'
+    themePkg = 'terrascan'
+    baseUrl = 'https://manga-terra.com'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

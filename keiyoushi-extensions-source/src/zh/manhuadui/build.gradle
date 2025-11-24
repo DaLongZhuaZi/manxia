@@ -1,0 +1,10 @@
+ext {
+    extName = 'YKMH'
+    extClass = '.YKMH'
+    themePkg = 'sinmh'
+    baseUrl = 'https://www.ykmh.net'
+    overrideVersionCode = 18
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

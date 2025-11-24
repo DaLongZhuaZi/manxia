@@ -1,0 +1,7 @@
+ext {
+    extName = 'Iqiyi'
+    extClass = '.Iqiyi'
+    extVersionCode = 3
+}
+
+apply from: "$rootDir/common.gradle"

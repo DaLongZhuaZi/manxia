@@ -1,0 +1,10 @@
+ext {
+    extName = 'MangaPanda.onl'
+    extClass = '.MangaPandaOnl'
+    themePkg = 'mangahub'
+    baseUrl = 'https://mangapanda.onl'
+    overrideVersionCode = 0
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

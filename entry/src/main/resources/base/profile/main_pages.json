@@ -1,0 +1,7 @@
+{
+  "src": [
+    "pages/SplashPage",
+    "pages/WelcomeGuidePage",
+    "pages/MainMenuPage"
+  ]
+}

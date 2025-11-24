@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 填充型下载：箭头与托盘，避免统一填充下的线条丢失 -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M11 4h2v7h3l-4 4-4-4h3V4Zm-6 12h14v3H5v-3Z"/>
+</svg>

@@ -1,0 +1,10 @@
+ext {
+    extName = 'Arc-Relight'
+    extClass = '.ArcRelight'
+    themePkg = 'mangadventure'
+    baseUrl = 'https://arc-relight.com'
+    overrideVersionCode = 0
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

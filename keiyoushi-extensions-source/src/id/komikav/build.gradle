@@ -1,0 +1,10 @@
+ext {
+    extName = 'APKOMIK'
+    extClass = '.Apkomik'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://apkomik.cc'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

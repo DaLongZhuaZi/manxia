@@ -1,0 +1,12 @@
+ext {
+    extName = 'DoujinDesu'
+    extClass = '.DoujinDesu'
+    extVersionCode = 10
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:randomua"))
+}

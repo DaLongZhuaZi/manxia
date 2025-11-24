@@ -1,0 +1,8 @@
+ext {
+    extName = 'Yaoi Manga Online'
+    extClass = '.YaoiMangaOnline'
+    extVersionCode = 4
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

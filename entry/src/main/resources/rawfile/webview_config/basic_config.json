@@ -1,0 +1,69 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "name": "WebView基础配置",
+    "description": "WebView系统的基础配置文件",
+    "author": "WebView配置系统",
+    "created": "2024-01-01T00:00:00Z",
+    "updated": "2024-01-01T00:00:00Z"
+  },
+  "webview": {
+    "basic": {
+      "userAgent": "HarmonyOS WebView/1.0 (compatible; ArkTS/API18)",
+      "enableJavaScript": true,
+      "enableDomStorage": true,
+      "enableFileAccess": false,
+      "enableFileAccessFromFileURLs": false,
+      "enableUniversalAccessFromFileURLs": false,
+      "allowFileAccessFromFileURLs": false,
+      "allowUniversalAccessFromFileURLs": false,
+      "mixedContentMode": "NEVER_ALLOW",
+      "cacheMode": "DEFAULT",
+      "textZoom": 100,
+      "initialScale": 100,
+      "minimumFontSize": 8,
+      "defaultFontSize": 16,
+      "defaultFixedFontSize": 13,
+      "loadsImagesAutomatically": true,
+      "blockNetworkImage": false,
+      "blockNetworkLoads": false,
+      "javaScriptCanOpenWindowsAutomatically": false,
+      "mediaPlaybackRequiresUserGesture": true,
+      "standardFontFamily": "sans-serif",
+      "fixedFontFamily": "monospace",
+      "serifFontFamily": "serif",
+      "sansSerifFontFamily": "sans-serif",
+      "cursiveFontFamily": "cursive",
+      "fantasyFontFamily": "fantasy",
+      "defaultTextEncodingName": "UTF-8"
+    },
+    "network": {
+      "connectTimeout": 30000,
+      "readTimeout": 30000,
+      "maxRedirects": 5,
+      "followRedirects": true,
+      "userAgentOverride": "",
+      "customHeaders": {},
+      "proxySettings": {
+        "enabled": false,
+        "host": "",
+        "port": 0,
+        "username": "",
+        "password": ""
+      }
+    },
+    "cache": {
+      "enabled": true,
+      "maxSize": 104857600,
+      "location": "cache/webview",
+      "strategy": "LRU",
+      "expireTime": 86400000,
+      "cleanupInterval": 3600000
+    },
+    "extensions": {
+      "customProtocols": [],
+      "customSchemes": [],
+      "pluginConfigs": {}
+    }
+  }
+}

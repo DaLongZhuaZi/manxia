@@ -1,0 +1,180 @@
+import { bundleManager } from '@kit.AbilityKit';
+import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
+import { logger } from '../../Utils/Logger';
+
+interface AppBaseInfo {
+  bundleName: string;
+  appId: string;
+  versionName: string;
+  versionCode: number;
+  label: string;
+  targetApi: number;
+  compatibleApi: number;
+}
+
+export class AppInfoManager {
+  private static instance: AppInfoManager | null = null;
+  private cachedBundleInfo: bundleManager.BundleInfo | undefined = undefined;
+  private cacheTimestamp: number = 0;
+
+  private constructor() {}
+
+  public static getInstance(): AppInfoManager {
+    if (!AppInfoManager.instance) {
+      AppInfoManager.instance = new AppInfoManager();
+    }
+    return AppInfoManager.instance;
+  }
+
+  public resetCache(): void {
+    this.cachedBundleInfo = undefined;
+    this.cacheTimestamp = 0;
+  }
+
+  private async ensureBundleInfo(): Promise<bundleManager.BundleInfo> {
+    if (this.cachedBundleInfo) {
+      return this.cachedBundleInfo as bundleManager.BundleInfo;
+    }
+    try {
+      const flags: number = bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION |
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_METADATA |
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_HAP_MODULE;
+      const info = await bundleManager.getBundleInfoForSelf(flags);
+      this.cachedBundleInfo = info as bundleManager.BundleInfo;
+      this.cacheTimestamp = Date.now();
+      logger.info('AppInfoManager', '应用BundleInfo已加载');
+      return info as bundleManager.BundleInfo;
+    } catch (error) {
+      const e = error as BusinessError;
+      logger.error('AppInfoManager', '获取BundleInfo失败: ' + e.message);
+      throw new Error('获取BundleInfo失败');
+    }
+  }
+
+  public async getVersionName(): Promise<string> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const name = info.versionName !== undefined ? info.versionName as string : '';
+      return name;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取版本名失败: ' + e.message);
+      return '';
+    }
+  }
+
+  public async getVersionCode(): Promise<number> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const code = info.versionCode !== undefined ? info.versionCode as number : 0;
+      return code;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取版本号失败: ' + e.message);
+      return 0;
+    }
+  }
+
+  public async getBundleName(): Promise<string> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const name = info.bundleName !== undefined ? info.bundleName as string : '';
+      return name;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取bundleName失败: ' + e.message);
+      return '';
+    }
+  }
+
+  public async getLabel(): Promise<string> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const keys = Object.keys(info);
+      const hasDirect = keys.includes('label');
+      if (hasDirect) {
+        return info.label as string;
+      }
+      const hasAppInfo = keys.includes('applicationInfo');
+      if (hasAppInfo) {
+        const appInfo = info.applicationInfo as bundleManager.ApplicationInfo;
+        const appKeys = Object.keys(appInfo);
+        const hasAppLabel = appKeys.includes('label');
+        if (hasAppLabel) {
+          return appInfo.label as string;
+        }
+      }
+      return '';
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取应用名称失败: ' + e.message);
+      return '';
+    }
+  }
+
+  public async getTargetApi(): Promise<number> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const target = info.targetApi !== undefined ? info.targetApi as number : 0;
+      return target;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取targetApi失败: ' + e.message);
+      return 0;
+    }
+  }
+
+  public async getCompatibleApi(): Promise<number> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const comp = info.compatibleApi !== undefined ? info.compatibleApi as number : 0;
+      return comp;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取compatibleApi失败: ' + e.message);
+      return 0;
+    }
+  }
+
+  public async getAppBaseInfo(): Promise<AppBaseInfo> {
+    try {
+      const info = await this.ensureBundleInfo();
+      const base: AppBaseInfo = {
+        bundleName: info.bundleName !== undefined ? info.bundleName as string : '',
+        appId: info.appId !== undefined ? info.appId as string : '',
+        versionName: info.versionName !== undefined ? info.versionName as string : '',
+        versionCode: info.versionCode !== undefined ? info.versionCode as number : 0,
+        label: info.label !== undefined ? info.label as string : '',
+        targetApi: info.targetApi !== undefined ? info.targetApi as number : 0,
+        compatibleApi: info.compatibleApi !== undefined ? info.compatibleApi as number : 0
+      } as AppBaseInfo;
+      return base;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取基础信息失败: ' + e.message);
+      const base: AppBaseInfo = {
+        bundleName: '',
+        appId: '',
+        versionName: '',
+        versionCode: 0,
+        label: '',
+        targetApi: 0,
+        compatibleApi: 0
+      } as AppBaseInfo;
+      return base;
+    }
+  }
+
+  public getSystemDisplayVersion(): string {
+    try {
+      const ver = deviceInfo.displayVersion as string;
+      return ver;
+    } catch (error) {
+      const e = error as Error;
+      logger.error('AppInfoManager', '获取系统版本失败: ' + e.message);
+      return '';
+    }
+  }
+}
+
+export const appInfoManager = AppInfoManager.getInstance();

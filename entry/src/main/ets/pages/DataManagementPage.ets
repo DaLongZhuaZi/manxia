@@ -1,0 +1,3902 @@
+// 文件路径：entry/src/main/ets/pages/DataManagementPage.ets
+/**
+ * 数据管理页面
+ * 提供漫画文件导入、解压缩、XML解析和数据库导入功能
+ */
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { logger } from '../Utils/Logger';
+import { ThemeToggle } from '../Framework/Components/ThemeToggle';
+
+import { picker } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
+
+import { DataManager, ComicInfoInput, ChapterInfoInput, PageInfoInput, ComicInfo as ComicRecord, ChapterInfo as ChapterRecord, PageInfo as PageRecord } from '../Framework/Data/DataManager';
+import { DataService } from '../Framework/Services/DataService';
+import { DownloadStatus, MangaStatus, StatusConverter } from '../Framework/Types/StatusEnums';
+import { Manga, MangaChapter } from '../Models/MangaModels';
+import { CompressionUtils, ExtractionResult, RecursiveExtractionResult } from '../Utils/CompressionUtils';
+import { ComicInfoParser, ComicInfo } from '../Utils/ComicInfoParser';
+import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
+import { eventBus, GameEvent, MangaImportCompletedPayload, FileImportRequestedPayload, IEventPayload } from '../Framework/EventBus';
+
+import fs from '@ohos.file.fs';
+import { fileIo } from '@kit.CoreFileKit';
+
+import { UpdateRecordData } from '../Framework/Database/DatabaseTypes';
+import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions } from '../Framework/Components/UniversalDialog';
+import { EBook, EBookMetadata } from '../Models/EBookModels';
+import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
+import { generateUUID } from '../Framework/Utils/UUIDGenerator';
+import { TxtEBookParser } from '../Framework/Parsers/TxtEBookParser';
+import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookMetadataDialog } from '../Framework/Components/EBookMetadataDialog';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { image } from '@kit.ImageKit';
+import { AvifTranscoder, AvifTranscodeResult } from '../Utils/AvifTranscoder';
+
+const TAG = 'DataManagementPage';
+// 定义标题栏最小高度，用于内容占位
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+
+// NavDestinationContext接口定义
+interface NavDestinationContext {
+  pathStack: NavPathStack;
+}
+
+/**
+ * 导入状态枚举
+ */
+enum ImportStatus {
+  IDLE = 'idle',
+  SELECTING = 'selecting',
+  EXTRACTING = 'extracting',
+  PARSING = 'parsing',
+  PROCESSING = 'processing',
+  IMPORTING = 'importing',
+  COMPLETED = 'completed',
+  ERROR = 'error'
+}
+
+/**
+ * 导入进度信息接口
+ */
+interface ImportProgress {
+  status: ImportStatus;
+  message: string;
+  progress: number; // 0-100
+  currentFile?: string;
+  totalFiles?: number;
+  processedFiles?: number;
+}
+
+/**
+ * 导入结果详情接口
+ */
+interface ImportResultDetail {
+  fileName: string;
+  success: boolean;
+  errorMessage?: string;
+  comicInfo?: ComicInfo;
+  mangaId?: string;
+  chapterId?: string;
+  xmlFound?: boolean;
+  xmlParsed?: boolean;
+  extractedFileCount?: number;
+  databaseStored?: boolean;
+  filesOrganized?: boolean;
+  // 合并与重复检测信息（可选，用于结果展示与后续UI拓展）
+  mergeMode?: MergeMode;
+  matchStrength?: MatchStrength;
+  mergeAction?: MergeAction;
+  duplicateReasons?: DuplicateReason[];
+  duplicateTargetMangaId?: string;
+}
+
+/**
+ * 导入合并模式
+ */
+enum MergeMode {
+  StrictNew = 'StrictNew',
+  AutoRecommend = 'AutoRecommend',
+  ManualCustom = 'ManualCustom'
+}
+
+/**
+ * 匹配强度分级
+ */
+enum MatchStrength {
+  BELOW = 'BELOW',
+  WEAK = 'WEAK',
+  LIKELY = 'LIKELY',
+  STRONG = 'STRONG',
+  EXACT = 'EXACT'
+}
+
+/**
+ * 合并动作
+ */
+enum MergeAction {
+  MERGE_TO_EXISTING = 'MERGE_TO_EXISTING',
+  CREATE_NEW = 'CREATE_NEW',
+  SKIP = 'SKIP'
+}
+
+/**
+ * 重复原因
+ */
+enum DuplicateReason {
+  TITLE_EXACT = 'TITLE_EXACT',
+  AUTHOR_EXACT = 'AUTHOR_EXACT',
+  TITLE_SIMILAR = 'TITLE_SIMILAR',
+  AUTHOR_SIMILAR = 'AUTHOR_SIMILAR',
+  TAGS_OVERLAP = 'TAGS_OVERLAP'
+}
+
+/**
+ * 候选重复项
+ */
+interface DuplicateCandidate {
+  record: ComicRecord;
+  score: number;
+  strength: MatchStrength;
+  reasons: DuplicateReason[];
+}
+
+/**
+ * 重复检测结果
+ */
+interface DuplicateCheckResult {
+  candidates: DuplicateCandidate[];
+  best?: DuplicateCandidate;
+}
+
+/**
+ * 合并决策
+ */
+interface MergeDecision {
+  mode: MergeMode;
+  action: MergeAction;
+  targetMangaId?: string;
+  strength?: MatchStrength;
+  reasons?: DuplicateReason[];
+}
+
+/**
+ * 图片文件信息接口
+ */
+interface ImageFileInfo {
+  path: string;
+  name: string;
+  size: number;
+  width?: number;
+  height?: number;
+  fileSize: number;
+}
+
+/**
+ * 处理单个文件返回结果接口
+ */
+interface ProcessSingleFileResult {
+  comicInfo: ComicInfo;
+  mangaId: string;
+  chapterId: string;
+}
+
+/**
+ * 导入漫画到数据库返回结果接口
+ */
+interface ImportComicToDatabaseResult {
+  mangaId: string;
+  chapterId: string;
+  // 合并与重复检测信息（便于向上层记录与展示）
+  mergeMode?: MergeMode;
+  mergeAction?: MergeAction;
+  matchStrength?: MatchStrength;
+  duplicateReasons?: DuplicateReason[];
+  mergedToMangaId?: string;
+}
+
+/**
+ * 漫画合并弹窗数据接口（新 UniversalDialog 用）
+ */
+interface MergeDialogData {
+  sourceTitle: string;
+  sourceAuthor: string;
+  candidates: MergeDialogCandidate[];
+  defaultTargetId: string;
+}
+
+/**
+ * 漫画合并候选项接口（新 UniversalDialog 用）
+ */
+interface MergeDialogCandidate {
+  id: string;
+  title: string;
+  author: string;
+  strength?: MatchStrength;
+  reasons?: DuplicateReason[];
+}
+
+/**
+ * 章节合并弹窗数据接口（新 UniversalDialog 用）
+ */
+interface ChapterMergeDialogData {
+  mangaTitle: string;
+  existingChapterTitle: string;
+  newChapterTitle: string;
+}
+
+
+/**
+ * 构建漫画合并弹窗的自定义内容
+ */
+@Builder
+function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareState, selectedTargetId: string, onRadioChange: (id: string) => void): void {
+  Column({ space: 12 }) {
+    Text('检测到可能的重复漫画')
+      .fontSize(18)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+
+    Column({ space: 4 }) {
+      Text(`待导入：${data.sourceTitle}`)
+        .fontSize(14)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+      Text(`作者：${data.sourceAuthor}`)
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+    }
+    .width('100%')
+
+    if (data.candidates.length > 0) {
+      Column({ space: 8 }) {
+        Text('请选择要合并到的已有漫画：')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+
+        Scroll() {
+          Column({ space: 8 }) {
+            ForEach(data.candidates, (c: MergeDialogCandidate) => {
+              Row({ space: 8 }) {
+                Radio({ value: c.id, group: 'mergeTarget' })
+                  .onChange((checked: boolean) => {
+                    if (checked) {
+                      onRadioChange(c.id);
+                    }
+                  })
+                Column({ space: 2 }) {
+                  Text(`${c.title}`)
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+                  Text(`作者：${c.author}｜匹配：${getMatchStrengthLabel(c.strength)}｜原因：${getDuplicateReasonsLabel(c.reasons)}`)
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+                }
+                .layoutWeight(1)
+              }
+              .width('100%')
+              .padding({ left: 4, right: 4, top: 6, bottom: 6 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 6 })
+            })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height(180)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 8 })
+      }
+      .width('100%')
+    } else {
+      Text('未找到可用的合并候选项，将作为新漫画导入。')
+        .fontSize(13)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+    }
+  }
+  .width('100%')
+  .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
+  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 10 })
+}
+
+/**
+ * 构建章节合并弹窗的自定义内容
+ */
+@Builder
+function buildChapterMergeDialogContent(data: ChapterMergeDialogData, themeState: ThemeAwareState): void {
+  Column({ space: 12 }) {
+    Text('检测到重复章节')
+      .fontSize(18)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+
+    Column({ space: 4 }) {
+      Text(`漫画：${data.mangaTitle}`)
+        .fontSize(14)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
+      Text(`已有章节：${data.existingChapterTitle}`)
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+      Text(`新导入：${data.newChapterTitle}`)
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
+    }
+    .width('100%')
+  }
+  .width('100%')
+  .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', themeState.currentTheme))
+  .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', themeState.currentTheme), radius: 10 })
+}
+
+/**
+ * 匹配强度文本映射
+ */
+function getMatchStrengthLabel(strength?: MatchStrength): string {
+  if (!strength) { return '未知'; }
+  switch (strength) {
+    case MatchStrength.BELOW: return '低于阈值';
+    case MatchStrength.WEAK: return '较弱';
+    case MatchStrength.LIKELY: return '可能';
+    case MatchStrength.STRONG: return '强';
+    case MatchStrength.EXACT: return '完全匹配';
+    default: return '未知';
+  }
+}
+
+/**
+ * 重复原因文本映射
+ */
+function getDuplicateReasonsLabel(reasons?: DuplicateReason[]): string {
+  if (!reasons || reasons.length === 0) { return '无'; }
+  const labels: string[] = [];
+  for (let i = 0; i < reasons.length; i++) {
+    const r: DuplicateReason = reasons[i];
+    switch (r) {
+      case DuplicateReason.TITLE_EXACT: labels.push('标题完全相同'); break;
+      case DuplicateReason.AUTHOR_EXACT: labels.push('作者完全相同'); break;
+      case DuplicateReason.TITLE_SIMILAR: labels.push('标题相似'); break;
+      case DuplicateReason.AUTHOR_SIMILAR: labels.push('作者相似'); break;
+      case DuplicateReason.TAGS_OVERLAP: labels.push('标签有交集'); break;
+      default: labels.push('其他'); break;
+    }
+  }
+  return labels.join('，');
+}
+
+/**
+ * 用户选择跳过导入的信号错误，用于流程中断但不计为系统错误
+ */
+class UserSkipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserSkipError';
+  }
+}
+
+
+@CustomDialog
+export struct MergeDecisionDialog {
+  controller: CustomDialogController;
+  @Prop data: MergeDialogData;
+  @Prop themeState: ThemeAwareState;
+  @State private selectedTargetId: string = '';
+  // 回调函数不能使用@Prop装饰器
+  onMerge: (targetId: string) => void = (t: string) => {};
+  onCreateNew: () => void = () => {};
+  onSkip: () => void = () => {};
+
+  build() {
+    Column({ space: 12 }) {
+      // 标题
+      Text('检测到可能的重复漫画')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+
+      // 源信息
+      Column({ space: 4 }) {
+        Text(`待导入：${this.data.sourceTitle}`)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        Text(`作者：${this.data.sourceAuthor}`)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      // 候选列表
+      if (this.data.candidates.length > 0) {
+        Column({ space: 8 }) {
+          Text('请选择要合并到的已有漫画：')
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+
+          // 限制高度，避免对话框过高
+          Scroll() {
+            Column({ space: 8 }) {
+              ForEach(this.data.candidates, (c: MergeDialogCandidate) => {
+                // 单选项
+                Row({ space: 8 }) {
+                  Radio({ value: c.id, group: 'mergeTarget' })
+                    .onChange((checked: boolean) => {
+                      if (checked) {
+                        this.selectedTargetId = c.id;
+                      }
+                    })
+                  Column({ space: 2 }) {
+                    Text(`${c.title}`)
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+                    Text(`作者：${c.author}｜匹配：${this.getMatchStrengthLabel(c.strength)}｜原因：${this.getDuplicateReasonsLabel(c.reasons)}`)
+                      .fontSize(12)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  }
+                  .layoutWeight(1)
+                }
+                .width('100%')
+                .padding({ left: 4, right: 4, top: 6, bottom: 6 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme), radius: 6 })
+              })
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .height(180)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme), radius: 8 })
+        }
+        .width('100%')
+      } else {
+        Text('未找到可用的合并候选项，将作为新漫画导入。')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+
+      // 操作按钮
+      Row({ space: 12 }) {
+        Button('合并到所选')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onClick(() => {
+            const targetId: string = this.selectedTargetId && this.selectedTargetId.length > 0
+              ? this.selectedTargetId
+              : (this.data.defaultTargetId ? this.data.defaultTargetId : '');
+            if (targetId.length > 0) {
+              this.onMerge(targetId);
+              this.controller.close();
+            }
+          })
+
+        Button('创建新漫画')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onClick(() => {
+            this.onCreateNew();
+            this.controller.close();
+          })
+
+        Button('跳过')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onClick(() => {
+            this.onSkip();
+            this.controller.close();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme), radius: 10 })
+  }
+
+  // 以下两个方法复用页面中的映射逻辑，为避免引用顺序问题，简单复制一份轻量映射
+  private getMatchStrengthLabel(strength?: MatchStrength): string {
+    if (!strength) { return '未知'; }
+    switch (strength) {
+      case MatchStrength.BELOW: return '低于阈值';
+      case MatchStrength.WEAK: return '较弱';
+      case MatchStrength.LIKELY: return '可能';
+      case MatchStrength.STRONG: return '强';
+      case MatchStrength.EXACT: return '完全匹配';
+      default: return '未知';
+    }
+  }
+
+  private getDuplicateReasonsLabel(reasons?: DuplicateReason[]): string {
+    if (!reasons || reasons.length === 0) { return '无'; }
+    const labels: string[] = [];
+    for (let i = 0; i < reasons.length; i++) {
+      const r: DuplicateReason = reasons[i];
+      switch (r) {
+        case DuplicateReason.TITLE_EXACT: labels.push('标题完全相同'); break;
+        case DuplicateReason.AUTHOR_EXACT: labels.push('作者完全相同'); break;
+        case DuplicateReason.TITLE_SIMILAR: labels.push('标题相似'); break;
+        case DuplicateReason.AUTHOR_SIMILAR: labels.push('作者相似'); break;
+        case DuplicateReason.TAGS_OVERLAP: labels.push('标签有交集'); break;
+        default: labels.push('其他'); break;
+      }
+    }
+    return labels.join('，');
+  }
+}
+
+@CustomDialog
+export struct ChapterMergeDialog {
+  controller: CustomDialogController;
+  @Prop data: ChapterMergeDialogData;
+  @Prop themeState: ThemeAwareState;
+  // 回调函数不能使用@Prop装饰器
+  onMerge: () => void = () => {};
+  onCreateNew: () => void = () => {};
+  onSkip: () => void = () => {};
+
+  build() {
+    Column({ space: 12 }) {
+      Text('检测到重复章节')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+
+      Column({ space: 4 }) {
+        Text(`漫画：${this.data.mangaTitle}`)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        Text(`已有章节：${this.data.existingChapterTitle}`)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Text(`新导入：${this.data.newChapterTitle}`)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Row({ space: 12 }) {
+        Button('合并到已有章节')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onClick(() => { this.onMerge(); this.controller.close(); })
+
+        Button('创建新章节')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onClick(() => { this.onCreateNew(); this.controller.close(); })
+
+        Button('跳过')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onClick(() => { this.onSkip(); this.controller.close(); })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 16, bottom: 16 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme), radius: 10 })
+  }
+}
+
+@Component
+struct DataManagementPage {
+  // 创建一个 Scroller 实例，用于联动滚动效果
+  private scroller: Scroller = new Scroller();
+  
+  private sandboxManager: SandboxManager = SandboxManager.getInstance();
+  
+  // 状态变量
+  @State pathStack: NavPathStack = new NavPathStack();
+  
+  // 主题相关状态
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'DataManagementPage';
+  
+  // 沉浸式显示状态
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200; // 内容最大宽度
+  @State responsive_isLandscape: boolean = false;
+  
+  // 导入相关状态
+  @State importProgress: ImportProgress = {
+    status: ImportStatus.IDLE,
+    message: '准备就绪',
+    progress: 0
+  };
+  
+  @State selectedFiles: string[] = [];
+  @State importResults: string[] = [];
+  @State importResultDetails: ImportResultDetail[] = [];
+  @State showResults: boolean = false;
+  // 测试运行状态与结果展示已移除
+  // 合并模式（默认自动推荐）。后续可通过设置入口或UI进行调整。
+  @State private mergeMode: MergeMode = MergeMode.AutoRecommend;
+  
+  // 批量导入策略
+  @State private batchImportStrategy: 'ask' | 'merge_all' | 'create_all' = 'ask'; // 默认每次询问
+  @State private showBatchStrategyDialog: boolean = false;
+  
+  // 计算属性：是否正在处理
+  private isProcessing(): boolean {
+    return this.importProgress.status !== ImportStatus.IDLE && 
+           this.importProgress.status !== ImportStatus.COMPLETED && 
+           this.importProgress.status !== ImportStatus.ERROR;
+  }
+  
+  // 管理器实例
+  private dataManager: DataManager = DataManager.getInstance();
+  private compressionUtils: CompressionUtils = CompressionUtils.getInstance();
+  private comicInfoParser: ComicInfoParser = new ComicInfoParser();
+  private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private uiContext: UIContext | undefined = undefined;
+  // 弹窗控制器每次使用时按需创建，避免持久状态泄漏
+  private ebookMetadataDialogController: CustomDialogController | null = null;
+
+
+  /**
+   * 展示漫画级合并弹窗并返回用户决策（UniversalDialog 重构版）
+   */
+  private async resolveUserMergeDecision(mode: MergeMode, check: DuplicateCheckResult, input: ComicInfoInput): Promise<MergeDecision> {
+    // 无候选则直接新建
+    if (!check.best || check.candidates.length === 0) {
+      return { mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision;
+    }
+    
+    // 根据批量导入策略自动决策
+    if (this.batchImportStrategy === 'merge_all' && check.best) {
+      logger.info(TAG, `批量策略：全部合并 - 自动合并到 ${check.best.record.title}`);
+      return { 
+        mode: mode, 
+        action: MergeAction.MERGE_TO_EXISTING, 
+        targetMangaId: check.best.record.id, 
+        strength: check.best.strength, 
+        reasons: check.best.reasons 
+      } as MergeDecision;
+    }
+    
+    if (this.batchImportStrategy === 'create_all') {
+      logger.info(TAG, `批量策略：全部新建 - 作为新漫画导入`);
+      return { mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision;
+    }
+
+    // 准备候选列表（最多取前5个按score排序）
+    const candidates: MergeDialogCandidate[] = [];
+    const raw: DuplicateCandidate[] = check.candidates;
+    // 复制数组进行排序以避免修改原数组
+    const sorted: DuplicateCandidate[] = [];
+    for (let i = 0; i < raw.length; i++) { sorted.push(raw[i]); }
+    for (let i = 0; i < sorted.length - 1; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (sorted[i].score < sorted[j].score) {
+          const tmp: DuplicateCandidate = sorted[i];
+          sorted[i] = sorted[j];
+          sorted[j] = tmp;
+        }
+      }
+    }
+    const takeCount: number = sorted.length > 5 ? 5 : sorted.length;
+    for (let k = 0; k < takeCount; k++) {
+      const c: DuplicateCandidate = sorted[k];
+      candidates.push({ id: c.record.id, title: c.record.title, author: c.record.author, strength: c.strength, reasons: c.reasons } as MergeDialogCandidate);
+    }
+
+    const defaultId: string = check.best ? check.best.record.id : '';
+    const data: MergeDialogData = { sourceTitle: input.title, sourceAuthor: input.author, candidates: candidates, defaultTargetId: defaultId };
+
+    // 使用 UniversalDialogManager 展示通用弹窗
+    return await new Promise<MergeDecision>((resolve) => {
+      let selectedTargetId: string = defaultId; // 默认选中最佳候选
+
+      const dialogOptions: UniversalDialogOptions = {
+        title: `合并漫画：${input.title}（候选 ${candidates.length}）`,
+        customBuilder: () => {
+          buildMergeDialogContent(data, this.themeState, selectedTargetId, (id: string) => {
+            selectedTargetId = id;
+          });
+        },
+        buttons: [
+          {
+            text: '取消',
+            style: ButtonStyle.SECONDARY,
+            action: () => {
+              resolve({ mode: mode, action: MergeAction.SKIP } as MergeDecision);
+            }
+          },
+          {
+            text: '作为新漫画导入',
+            style: ButtonStyle.PRIMARY,
+            action: () => {
+              resolve({ mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision);
+            }
+          },
+          {
+            text: '合并到选中漫画',
+            style: ButtonStyle.PRIMARY,
+            action: () => {
+              if (selectedTargetId === '') {
+                logger.warn(TAG, '用户未选择合并目标，忽略合并操作');
+                return;
+              }
+              // 找到对应候选项以携带强度与原因
+              let selectedStrength: MatchStrength | undefined = undefined;
+              let selectedReasons: DuplicateReason[] | undefined = undefined;
+              for (let i = 0; i < sorted.length; i++) {
+                const cand: DuplicateCandidate = sorted[i];
+                if (cand.record.id === selectedTargetId) {
+                  selectedStrength = cand.strength;
+                  selectedReasons = cand.reasons;
+                  break;
+                }
+              }
+              resolve({ mode: mode, action: MergeAction.MERGE_TO_EXISTING, targetMangaId: selectedTargetId, strength: selectedStrength, reasons: selectedReasons } as MergeDecision);
+            }
+          }
+        ],
+        themeState: this.themeState
+      };
+
+      logger.info(TAG, '准备显示合并漫画选择对话框');
+      setTimeout((): void => {
+        const ctx: UIContext | undefined = this.uiContext;
+        if (!ctx) {
+          logger.warn(TAG, 'UIContext 未就绪，回退使用通用控制器');
+          UniversalDialogManager.show(dialogOptions);
+          return;
+        }
+        UniversalDialogManager.showWithContext(ctx as UIContext, dialogOptions);
+        logger.info(TAG, 'UniversalDialogManager.showWithContext 已调用，等待用户选择');
+      }, 0);
+    });
+  }
+
+  /**
+   * 展示章节级合并弹窗并返回用户选择（UniversalDialog 重构版）
+   */
+  private async resolveUserChapterMergeDecision(mangaTitle: string, chapterInput: ChapterInfoInput, duplicateChapter: ChapterRecord): Promise<MergeAction> {
+    const data: ChapterMergeDialogData = {
+      mangaTitle: mangaTitle,
+      existingChapterTitle: duplicateChapter.title,
+      newChapterTitle: chapterInput.title
+    } as ChapterMergeDialogData;
+
+    // 使用 UniversalDialogManager 展示通用弹窗
+    return await new Promise<MergeAction>((resolve) => {
+      const dialogOptions: UniversalDialogOptions = {
+        title: `章节合并：${chapterInput.title}（所属：${mangaTitle}）`,
+        customBuilder: () => {
+          buildChapterMergeDialogContent(data, this.themeState);
+        },
+        buttons: [
+          {
+            text: '跳过',
+            style: ButtonStyle.SECONDARY,
+            action: () => {
+              resolve(MergeAction.SKIP);
+            }
+          },
+          {
+            text: '替换已有章节',
+            style: ButtonStyle.DESTRUCTIVE,
+            action: () => {
+              resolve(MergeAction.MERGE_TO_EXISTING);
+            }
+          },
+          {
+            text: '保留两者',
+            style: ButtonStyle.PRIMARY,
+            action: () => {
+              resolve(MergeAction.CREATE_NEW);
+            }
+          }
+        ],
+        themeState: this.themeState
+      };
+
+      logger.info(TAG, '准备显示章节合并选择对话框');
+      setTimeout((): void => {
+        const ctx: UIContext | undefined = this.uiContext;
+        if (!ctx) {
+          logger.warn(TAG, 'UIContext 未就绪，回退使用通用控制器');
+          UniversalDialogManager.show(dialogOptions);
+          return;
+        }
+        UniversalDialogManager.showWithContext(ctx as UIContext, dialogOptions);
+        logger.info(TAG, 'UniversalDialogManager.showWithContext 已调用，等待用户选择');
+      }, 0);
+    });
+  }
+
+  /**
+   * 验证数据库存储完整性
+   */
+  private async validateDatabaseStorage(mangaId: string, chapterId: string, expectedPageCount: number): Promise<void> {
+    try {
+      logger.info(TAG, '开始验证数据库存储完整性');
+
+      // 验证漫画信息是否存在
+      const comicInfo = await this.dataManager.getComicInfo(mangaId);
+      if (!comicInfo) {
+        throw new Error(`漫画信息验证失败：未找到ID为 ${mangaId} 的漫画`);
+        logger.error(TAG, `漫画信息验证失败：未找到ID为 ${mangaId} 的漫画`);
+      }
+      logger.debug(TAG, `漫画信息验证通过: ${comicInfo.title}`);
+
+      // 验证章节信息是否存在
+      const chapterInfo = await this.dataManager.getChapterInfo(chapterId);
+      if (!chapterInfo) {
+        throw new Error(`章节信息验证失败：未找到ID为 ${chapterId} 的章节`);
+        logger.error(TAG, `章节信息验证失败：未找到ID为 ${chapterId} 的章节`);
+      }
+      logger.debug(TAG, `章节信息验证通过: ${chapterInfo.title}`);
+
+      // 验证页面信息数量
+      const pageInfoList = await this.dataManager.getPageInfoList(chapterId);
+      const actualPageCount = pageInfoList ? pageInfoList.length : 0;
+      
+      if (actualPageCount !== expectedPageCount) {
+        logger.warn(TAG, `页面信息数量不匹配：期望 ${expectedPageCount}，实际 ${actualPageCount}`);
+      } else {
+        logger.debug(TAG, `页面信息验证通过: ${actualPageCount} 页`);
+      }
+
+      // 验证页面信息的完整性
+      if (pageInfoList && pageInfoList.length > 0) {
+        for (const pageInfo of pageInfoList) {
+          if (!pageInfo.imageUrl || pageInfo.imageUrl.trim() === '') {
+            throw new Error(`页面信息验证失败：第 ${pageInfo.index} 页缺少图片路径`);
+            logger.error(TAG, `页面信息验证失败：第 ${pageInfo.index} 页缺少图片路径`);
+          }
+        }
+        logger.debug(TAG, '所有页面信息路径验证通过');
+      }
+
+      logger.info(TAG, '数据库存储完整性验证通过');
+
+    } catch (error) {
+      logger.error(TAG, '数据库存储验证失败', String(error instanceof Error ? error.message : error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 解析标签字符串，将其拆分成多个标签
+   */
+  private parseGenreTags(genre?: string): string[] {
+    if (!genre) {
+      return [];
+    }
+    
+    // 移除首尾空格并检查是否为空
+    const trimmedGenre = genre.trim();
+    if (!trimmedGenre) {
+      return [];
+    }
+    
+    // 使用多种分隔符拆分标签：逗号、分号、斜杠、竖线
+    const tags = trimmedGenre
+      .split(/[,;/|]/)
+      .map(tag => tag.trim())
+      .filter(tag => tag.length > 0);
+    
+    // 如果没有找到分隔符，返回原字符串作为单个标签
+    return tags.length > 0 ? tags : [trimmedGenre];
+  }
+
+  /**
+   * 页面显示时的回调
+   */
+  aboutToAppear(): void {
+    logger.lifecycle(TAG, 'aboutToAppear');
+    this.uiContext = this.getUIContext();
+    
+    // 使用ThemeAwareHelper统一管理主题
+    ThemeAwareHelper.initializeThemeAware(TAG, this.themeState, (theme: ThemeType) => {
+      logger.info(TAG, `主题已切换: ${theme}`);
+    });
+    
+    // 初始化响应式布局
+    this.initializeResponsiveLayout();
+
+    // 订阅文件导入请求事件
+    this.subscribeFileImportEvent();
+
+    // 检查是否有待导入的文件（从外部打开）
+    this.checkPendingFileImport();
+  }
+
+  /**
+   * 检查并处理待导入的文件
+   */
+  private checkPendingFileImport(): void {
+    try {
+      // 优先检查系统分享导入
+      const shareImportPending = AppStorage.get<boolean>('shareImportPending');
+      if (shareImportPending) {
+        logger.info(TAG, '📤 检测到系统分享导入');
+        this.checkPendingShareImport();
+        return;
+      }
+
+      // 检查普通文件导入
+      const fileImportPending = AppStorage.get<boolean>('fileImportPending');
+      
+      if (fileImportPending) {
+        logger.info(TAG, '📁 检测到待处理的文件导入');
+        
+        // 清除标记
+        AppStorage.delete('fileImportPending');
+        
+        // 获取文件信息
+        const pendingFileUri = AppStorage.get<string>('pendingFileUri');
+        const pendingFileType = AppStorage.get<string>('pendingFileType');
+        
+        if (pendingFileUri) {
+          logger.info(TAG, `准备处理文件: ${pendingFileUri}`);
+          
+          // 清除文件信息
+          AppStorage.delete('pendingFileUri');
+          AppStorage.delete('pendingFileType');
+          
+          // 延迟处理，确保UI完全渲染
+          setTimeout(() => {
+            this.handlePendingFile(pendingFileUri, pendingFileType || '');
+          }, 800);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, '检查待导入文件失败', String(error));
+    }
+  }
+
+  /**
+   * 检查并处理系统分享导入的文件
+   */
+  private checkPendingShareImport(): void {
+    try {
+      // 清除标记
+      AppStorage.delete('shareImportPending');
+
+      // 获取分享文件信息
+      const pendingShareFiles = AppStorage.get<string[]>('pendingShareFiles');
+      const pendingShareType = AppStorage.get<string>('pendingShareType');
+
+      if (!pendingShareFiles || !Array.isArray(pendingShareFiles) || pendingShareFiles.length === 0) {
+        logger.warn(TAG, '未找到分享文件数据');
+        return;
+      }
+
+      logger.info(TAG, `准备处理 ${pendingShareFiles.length} 个分享文件`);
+
+      // 清除分享信息
+      AppStorage.delete('pendingShareFiles');
+      AppStorage.delete('pendingShareType');
+      AppStorage.delete('pendingShareSource');
+
+      // 延迟处理，确保UI完全渲染
+      setTimeout(() => {
+        this.handlePendingShareFiles(pendingShareFiles, pendingShareType || 'comic');
+      }, 800);
+
+    } catch (error) {
+      logger.error(TAG, '检查系统分享文件失败', String(error));
+    }
+  }
+
+  /**
+   * 处理系统分享导入的多个文件
+   */
+  private async handlePendingShareFiles(fileUris: string[], fileType: string): Promise<void> {
+    try {
+      logger.info(TAG, `开始处理 ${fileUris.length} 个分享文件`);
+
+      // 根据文件类型处理
+      if (fileType === 'comic') {
+        // 将文件URI添加到选中文件列表
+        this.selectedFiles = [...fileUris];
+
+        // 更新状态
+        this.updateProgress(ImportStatus.IDLE, `已接收 ${fileUris.length} 个文件（系统分享）`, 10);
+
+        // 显示成功提示
+        logger.info(TAG, `✅ 已接收 ${fileUris.length} 个漫画文件，准备导入`);
+
+        // 延迟自动开始导入，给用户查看的时间
+        setTimeout(async () => {
+          await this.startImport();
+        }, 1000);
+      } else {
+        logger.warn(TAG, `不支持的分享文件类型: ${fileType}`);
+      }
+
+    } catch (error) {
+      logger.error(TAG, '处理分享文件失败', String(error));
+      this.updateProgress(ImportStatus.ERROR, `处理分享文件失败: ${error}`, 0);
+    }
+  }
+
+  /**
+   * 处理待导入的文件
+   */
+  private async handlePendingFile(fileUri: string, fileType: string): Promise<void> {
+    try {
+      logger.info(TAG, `开始处理待导入文件: ${fileUri}`);
+      
+      // 从URI提取文件扩展名（如果fileType为空）
+      let actualFileType = fileType;
+      if (!actualFileType || actualFileType.trim() === '') {
+        const decodedUri = decodeURIComponent(fileUri);
+        const lastDotIndex = decodedUri.lastIndexOf('.');
+        if (lastDotIndex > 0) {
+          actualFileType = decodedUri.substring(lastDotIndex).toLowerCase();
+          logger.info(TAG, `从URI提取文件扩展名: ${actualFileType}`);
+        }
+      }
+      
+      // 根据文件类型处理
+      const lowerType = actualFileType.toLowerCase();
+      if (lowerType.includes('cbz') || lowerType.includes('.cbz') || 
+          lowerType.includes('zip') || lowerType.includes('.zip')) {
+        // 漫画文件
+        await this.handleExternalComicImport(fileUri);
+      } else if (lowerType.includes('epub') || lowerType.includes('.epub') ||
+                 lowerType.includes('pdf') || lowerType.includes('.pdf') || 
+                 lowerType.includes('txt') || lowerType.includes('.txt')) {
+        // 电子书文件
+        await this.handleExternalEBookImport(fileUri);
+      } else {
+        logger.warn(TAG, `不支持的文件类型: ${actualFileType}`);
+      }
+    } catch (error) {
+      logger.error(TAG, '处理待导入文件失败', String(error));
+    }
+  }
+
+  /**
+   * 订阅文件导入请求事件
+   */
+  private subscribeFileImportEvent(): void {
+    eventBus.subscribe(GameEvent.FILE_IMPORT_REQUESTED, (payload: IEventPayload) => {
+      const filePayload = payload as FileImportRequestedPayload;
+      logger.info(TAG, `收到文件导入请求: ${filePayload.fileUri}, 类型: ${filePayload.fileType}`);
+      
+      // 根据文件类型处理导入
+      if (filePayload.fileType === 'comic') {
+        this.handleExternalComicImport(filePayload.fileUri);
+      } else if (filePayload.fileType === 'ebook') {
+        this.handleExternalEBookImport(filePayload.fileUri);
+      }
+    });
+  }
+
+  /**
+   * 处理外部漫画文件导入
+   */
+  private async handleExternalComicImport(fileUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `处理外部漫画文件导入: ${fileUri}`);
+      
+      // 将文件URI添加到选中文件列表
+      this.selectedFiles = [fileUri];
+      
+      // 更新状态
+      this.updateProgress(ImportStatus.IDLE, '已选择 1 个文件（从外部打开）', 10);
+      
+      // 自动开始导入
+      await this.startImport();
+    } catch (error) {
+      logger.error(TAG, '处理外部漫画文件导入失败', String(error instanceof Error ? error.message : error));
+      this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
+    }
+  }
+
+  /**
+   * 处理外部电子书文件导入
+   */
+  private async handleExternalEBookImport(fileUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `处理外部电子书文件导入: ${fileUri}`);
+      
+      // 直接调用导入电子书方法
+      await this.importEBook(fileUri);
+    } catch (error) {
+      logger.error(TAG, '处理外部电子书文件导入失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
+   * 初始化响应式布局
+   */
+  private initializeResponsiveLayout(): void {
+    try {
+      // 更新响应式参数
+      this.updateResponsiveParams();
+
+      // 创建并注册设备变化监听器
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
+        this.updateResponsiveParams();
+      };
+      
+      this.deviceManager.addListener(this.deviceChangeListener);
+      
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  /**
+   * 更新响应式布局参数
+   */
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    
+    // 根据断点设置内容最大宽度
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        break;
+    }
+    
+    logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
+  }
+
+  /**
+   * 页面隐藏时的回调
+   */
+  aboutToDisappear(): void {
+    logger.lifecycle(TAG, 'aboutToDisappear');
+    ThemeAwareHelper.cleanupThemeAware(TAG);
+    
+    // 移除设备变化监听器
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+  }
+
+  /**
+   * 选择电子书文件
+   */
+  private async selectEBooks(): Promise<void> {
+    try {
+      logger.info(TAG, '开始选择电子书文件');
+      
+      // 获取UIAbilityContext
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        throw new Error('无法获取应用上下文');
+      }
+
+      // 创建文档选择器
+      const documentPicker = new picker.DocumentViewPicker(context);
+      
+      // 设置选择选项 - 电子书格式
+      const selectOptions: picker.DocumentSelectOptions = {
+        maxSelectNumber: 10, // 最多选择10个文件
+        fileSuffixFilters: ['.txt', '.epub', '.mobi', '.azw', '.azw3', '.pdf'],
+      };
+
+      // 选择文件
+      const selectResult = await documentPicker.select(selectOptions);
+      
+      if (!selectResult || selectResult.length === 0) {
+        logger.info(TAG, '未选择任何电子书文件');
+        return;
+      }
+
+      logger.info(TAG, `选择了 ${selectResult.length} 个电子书文件`);
+      
+      // 逐个导入电子书
+      for (const fileUri of selectResult) {
+        await this.importEBook(fileUri);
+      }
+
+    } catch (error) {
+      logger.error(TAG, '选择电子书文件失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
+   * 导入电子书
+   */
+  private async importEBook(fileUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `开始导入电子书: ${fileUri}`);
+      
+      // 1. 创建解析器
+      const parser = EBookParserFactory.createParser(fileUri);
+      if (!parser) {
+        throw new Error('不支持的电子书格式');
+      }
+
+      // 2. 解析电子书
+      const ebook = await parser.parse();
+      logger.info(TAG, `电子书解析完成: ${ebook.metadata.title}`);
+
+      // 3. 检查是否需要补充元数据
+      if (this.needsMetadataCompletion(ebook.metadata)) {
+        logger.info(TAG, '电子书信息不完整，显示补充对话框');
+        await this.showEBookMetadataDialog(ebook);
+      } else {
+        // 4. 直接保存到数据库
+        await this.ebookDataManager.saveEBook(ebook);
+        logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
+      }
+
+    } catch (error) {
+      logger.error(TAG, '导入电子书失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
+   * 检查是否需要补充元数据
+   */
+  private needsMetadataCompletion(metadata: EBookMetadata): boolean {
+    // 检查关键字段是否为空或默认值
+    const needsCompletion = 
+      metadata.title === '未知书名' ||
+      metadata.title.length === 0 ||
+      metadata.author === '未知作者' ||
+      metadata.author.length === 0;
+
+    return needsCompletion;
+  }
+
+  /**
+   * 显示电子书元数据补充对话框
+   */
+  private async showEBookMetadataDialog(ebook: EBook): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.ebookMetadataDialogController = new CustomDialogController({
+        builder: EBookMetadataDialog({
+          themeState: this.themeState,
+          initialMetadata: ebook.metadata,
+          onConfirm: async (metadata: EBookMetadata) => {
+            logger.info(TAG, '用户确认补充元数据');
+            // 更新电子书元数据
+            ebook.metadata = metadata;
+            // 保存到数据库
+            await this.ebookDataManager.saveEBook(ebook);
+            logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
+            resolve();
+          },
+          onCancel: () => {
+            logger.info(TAG, '用户取消补充元数据');
+            resolve();
+          }
+        }),
+        autoCancel: false,
+        customStyle: true
+      });
+
+      this.ebookMetadataDialogController.open();
+    });
+  }
+
+  /**
+   * 选择本地文件
+   */
+  private async selectFiles(): Promise<void> {
+    try {
+      logger.info(TAG, '开始选择本地文件');
+      this.updateProgress(ImportStatus.SELECTING, '选择文件中...', 0);
+
+      // 获取UIAbilityContext
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        throw new Error('无法获取应用上下文');
+      }
+
+      // 创建文档选择器
+      const documentPicker = new picker.DocumentViewPicker(context);
+      
+      // 设置选择选项
+      const selectOptions: picker.DocumentSelectOptions = {
+        maxSelectNumber: 50, // 最多选择50个文件（优化性能，避免卡死）
+        fileSuffixFilters: ['.zip', '.cbz'], // 只允许选择ZIP和CBZ文件
+      };
+
+      // 选择文件
+      const selectResult = await documentPicker.select(selectOptions);
+      
+      if (!selectResult || selectResult.length === 0) {
+        this.updateProgress(ImportStatus.IDLE, '未选择任何文件', 0);
+        return;
+      }
+
+      logger.info(TAG, `选择了 ${selectResult.length} 个文件`);
+      this.selectedFiles = selectResult;
+      this.updateProgress(ImportStatus.IDLE, `已选择 ${selectResult.length} 个文件`, 10);
+
+    } catch (error) {
+      logger.error(TAG, '选择文件失败', String(error instanceof Error ? error.message : error));
+      this.updateProgress(ImportStatus.ERROR, `选择文件失败: ${error}`, 0);
+    }
+  }
+
+  /**
+   * 开始导入流程
+   */
+  private async startImport(): Promise<void> {
+    if (this.selectedFiles.length === 0) {
+      this.updateProgress(ImportStatus.ERROR, '请先选择要导入的文件', 0);
+      return;
+    }
+
+    // 如果选择了多个文件（2个或以上），显示批量策略选择对话框
+    if (this.selectedFiles.length >= 2) {
+      this.showBatchStrategyDialog = true;
+      // 等待用户选择策略后继续
+      return;
+    }
+
+    // 单个文件直接导入
+    await this.executeBatchImport();
+  }
+  
+  /**
+   * 执行批量导入（在用户选择策略后调用）
+   * 优化：使用分批异步处理，避免UI阻塞
+   */
+  private async executeBatchImport(): Promise<void> {
+    try {
+      this.importResults = [];
+      this.importResultDetails = [];
+      this.showResults = false;
+      
+      const totalFiles = this.selectedFiles.length;
+      let processedFiles = 0;
+      let successfulImports = 0;
+
+      logger.info(TAG, `开始批量导入，共 ${totalFiles} 个文件，策略: ${this.batchImportStrategy}`);
+
+      // 批量处理配置
+      const BATCH_SIZE = 5; // 每批处理5个文件
+      const BATCH_DELAY = 100; // 每批之间延迟100ms，让UI线程有时间响应
+      
+      // 分批处理文件
+      for (let i = 0; i < this.selectedFiles.length; i += BATCH_SIZE) {
+        const batch = this.selectedFiles.slice(i, Math.min(i + BATCH_SIZE, this.selectedFiles.length));
+        
+        logger.debug(TAG, `处理第 ${Math.floor(i / BATCH_SIZE) + 1} 批，共 ${batch.length} 个文件`);
+        
+        // 处理当前批次
+        for (const fileUri of batch) {
+        const result = await this.processFile(fileUri, processedFiles + 1, totalFiles);
+        if (result) {
+          successfulImports++;
+        }
+        processedFiles++;
+        }
+        
+        // 批次间延迟，避免UI阻塞
+        if (i + BATCH_SIZE < this.selectedFiles.length) {
+          await new Promise<void>((resolve: (value: void) => void) => setTimeout(resolve, BATCH_DELAY));
+        }
+      }
+
+      this.updateProgress(ImportStatus.COMPLETED, `导入完成，共处理 ${processedFiles} 个文件`, 100);
+      this.showResults = true;
+      
+      // 发布漫画导入完成事件，通知书库页面刷新
+      if (successfulImports > 0) {
+        logger.info(TAG, `发布漫画导入完成事件，成功导入 ${successfulImports} 个漫画`);
+        eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successfulImports, totalFiles));
+      }
+      
+      // 重置批量策略为默认值
+      this.batchImportStrategy = 'ask';
+      
+    } catch (error) {
+      logger.error(TAG, '导入过程失败', String(error instanceof Error ? error.message : error));
+      this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
+      this.batchImportStrategy = 'ask';
+    }
+  }
+
+  /**
+   * 处理单个文件
+   */
+  private async processFile(fileUri: string, currentIndex: number, totalFiles: number): Promise<boolean> {
+    const fileName = this.getFileNameFromUri(fileUri);
+
+    try {
+      logger.info(TAG, `处理文件: ${fileUri}`);
+      
+      // 更新进度
+      this.updateProgress(
+        ImportStatus.EXTRACTING, 
+        `处理文件 ${currentIndex}/${totalFiles}: ${fileName}`, 
+        20 + (currentIndex - 1) / totalFiles * 60
+      );
+
+      // 处理单个文件并获取详细信息（详细信息在processSingleFileWithDetails中实时更新）
+      const importInfo = await this.processSingleFileWithDetails(fileUri);
+      
+      // 补充合并信息摘要
+      let mergeSuffix: string = '';
+      const detailIndex: number = this.importResultDetails.findIndex(item => item.fileName === fileName);
+      if (detailIndex >= 0) {
+        const d: ImportResultDetail = this.importResultDetails[detailIndex];
+        const parts: string[] = [];
+        if (d.mergeMode) {
+          parts.push(`模式=${this.getMergeModeLabel(d.mergeMode as MergeMode)}`);
+        }
+        if (d.mergeAction) {
+          parts.push(`动作=${this.getMergeActionLabel(d.mergeAction as MergeAction)}`);
+        }
+        if (d.matchStrength) {
+          parts.push(`匹配=${this.getMatchStrengthLabel(d.matchStrength as MatchStrength)}`);
+        }
+        if (d.duplicateTargetMangaId) {
+          parts.push(`目标ID=${d.duplicateTargetMangaId}`);
+        }
+        if (d.duplicateReasons && d.duplicateReasons.length > 0) {
+          parts.push(`原因=${this.getDuplicateReasonsLabel(d.duplicateReasons as DuplicateReason[])}`);
+        }
+        if (parts.length > 0) {
+          mergeSuffix = `（合并：${parts.join('，')}）`;
+        }
+      }
+      
+      this.importResults.push(`✅ ${fileName}: 处理成功${mergeSuffix}`);
+      logger.info(TAG, `文件处理成功: ${fileName}`);
+      
+      return true; // 处理成功
+      
+    } catch (error) {
+      if (error instanceof UserSkipError) {
+        this.importResults.push(`⚠️ ${fileName}: 已跳过（用户选择）`);
+        logger.info(TAG, `文件已跳过: ${fileName}`);
+        return false; // 跳过不计为成功
+      }
+      this.importResults.push(`❌ ${fileName}: 处理失败 - ${error}`);
+      logger.error(TAG, `文件处理失败: ${fileName}`, String(error instanceof Error ? error.message : error));
+      return false; // 处理失败
+    }
+  }
+
+  /**
+   * 处理单个文件并返回详细信息
+   */
+  private async processSingleFileWithDetails(fileUri: string): Promise<ProcessSingleFileResult> {
+    const fileName = this.getFileNameFromUri(fileUri);
+    let extractedPath: string = '';
+    let recursiveResult: RecursiveExtractionResult | null = null; // 声明在外部以便清理
+    
+    // 创建详细结果对象，用于实时更新显示
+    const resultDetail: ImportResultDetail = {
+      fileName: fileName,
+      success: false,
+      xmlFound: false,
+      xmlParsed: false,
+      extractedFileCount: 0,
+      databaseStored: false,
+      filesOrganized: false
+    };
+
+    try {
+      logger.info(TAG, `开始处理单个文件: ${fileUri}`);
+
+      // 1. 递归解压缩文件并查找ComicInfo.xml（支持嵌套压缩包和多层文件夹）
+      this.updateProgress(ImportStatus.EXTRACTING, `正在递归解压缩: ${fileName}`, 0);
+      recursiveResult = await this.compressionUtils.extractRecursivelyAndFindComicInfo(fileUri);
+
+      resultDetail.extractedFileCount = recursiveResult.totalFiles;
+      extractedPath = recursiveResult.finalPath;
+      resultDetail.xmlFound = recursiveResult.foundXml;
+      const comicInfoContent = recursiveResult.comicInfoContent;
+      
+      // 记录递归解压信息
+      if (recursiveResult.recursionDepth > 0) {
+        logger.info(TAG, `递归解压深度: ${recursiveResult.recursionDepth}, 总文件数: ${recursiveResult.totalFiles}`);
+      }
+      
+      // 记录警告信息
+      if (recursiveResult.warnings.length > 0) {
+        for (const warning of recursiveResult.warnings) {
+          logger.warn(TAG, `解压警告: ${warning}`);
+        }
+      }
+      
+      // 实时更新显示
+      const newResultDetail: ImportResultDetail = {
+        fileName: resultDetail.fileName,
+        success: resultDetail.success,
+        extractedFileCount: resultDetail.extractedFileCount,
+        xmlFound: resultDetail.xmlFound,
+        comicInfo: resultDetail.comicInfo
+      };
+      this.importResultDetails.push(newResultDetail);
+      
+      logger.info(TAG, `解压缩成功: ${recursiveResult.totalFiles} 个文件`);
+
+      // 2. 解析ComicInfo.xml（如果存在）
+      let comicInfo: ComicInfo;
+      
+      if (comicInfoContent) {
+        try {
+          this.updateProgress(ImportStatus.PROCESSING, `正在解析XML: ${fileName}`, 25);
+          comicInfo = this.comicInfoParser.parseXmlString(comicInfoContent);
+          resultDetail.xmlParsed = true;
+          resultDetail.comicInfo = comicInfo;
+          
+          // 更新显示，显示解析到的XML信息
+          const index = this.importResultDetails.findIndex(item => item.fileName === fileName);
+          if (index >= 0) {
+            const updatedResultDetail: ImportResultDetail = {
+              fileName: resultDetail.fileName,
+              success: resultDetail.success,
+              extractedFileCount: resultDetail.extractedFileCount,
+              xmlFound: resultDetail.xmlFound,
+              xmlParsed: resultDetail.xmlParsed,
+              comicInfo: resultDetail.comicInfo
+            };
+            this.importResultDetails[index] = updatedResultDetail;
+          }
+          
+          logger.info(TAG, '成功解析ComicInfo.xml', JSON.stringify(comicInfo));
+        } catch (error) {
+          logger.warn(TAG, '解析ComicInfo.xml失败，使用默认信息', String(error instanceof Error ? error.message : error));
+          comicInfo = this.createDefaultComicInfo(this.getFileNameFromUri(fileUri));
+          resultDetail.xmlParsed = false;
+          resultDetail.comicInfo = comicInfo;
+        }
+      } else {
+        logger.info(TAG, '未找到ComicInfo.xml，使用默认信息');
+        comicInfo = this.createDefaultComicInfo(this.getFileNameFromUri(fileUri));
+        resultDetail.xmlParsed = false;
+        resultDetail.comicInfo = comicInfo;
+      }
+
+      // 3. 导入到数据库并获取ID
+      this.updateProgress(ImportStatus.PROCESSING, `正在存储到数据库: ${fileName}`, 50);
+      
+      // 构造ExtractionResult对象（从RecursiveExtractionResult转换）
+      // 注意：我们需要扫描extractedPath来获取文件列表和大小
+      const extractedFiles: string[] = [];
+      let totalSize: number = 0;
+      
+      try {
+        const files = await this.sandboxManager.listDirectory(extractedPath);
+        for (const file of files) {
+          extractedFiles.push(file);
+        }
+        // 暂时不计算总大小（性能考虑）
+        totalSize = 0;
+      } catch (error) {
+        logger.warn(TAG, '获取解压文件列表失败', String(error instanceof Error ? error.message : error));
+      }
+      
+      const extractionResult: ExtractionResult = {
+        success: true,
+        extractedPath: extractedPath,
+        extractedFiles: extractedFiles,
+        fileCount: recursiveResult.totalFiles,
+        totalSize: totalSize,
+        warnings: recursiveResult.warnings
+      };
+      
+      const importIds = await this.importComicToDatabaseWithIds(comicInfo, extractionResult);
+      
+      resultDetail.mangaId = importIds.mangaId;
+      resultDetail.chapterId = importIds.chapterId;
+      resultDetail.databaseStored = true;
+      // 合并与重复检测信息记录
+      resultDetail.mergeMode = importIds.mergeMode;
+      resultDetail.matchStrength = importIds.matchStrength;
+      resultDetail.mergeAction = importIds.mergeAction;
+      resultDetail.duplicateReasons = importIds.duplicateReasons;
+      resultDetail.duplicateTargetMangaId = importIds.mergedToMangaId;
+      
+      // 更新显示
+      const index2 = this.importResultDetails.findIndex(item => item.fileName === fileName);
+      if (index2 >= 0) {
+        const updatedResultDetail2: ImportResultDetail = {
+          fileName: resultDetail.fileName,
+          success: resultDetail.success,
+          extractedFileCount: resultDetail.extractedFileCount,
+          xmlFound: resultDetail.xmlFound,
+          xmlParsed: resultDetail.xmlParsed,
+          comicInfo: resultDetail.comicInfo,
+          mangaId: resultDetail.mangaId,
+          chapterId: resultDetail.chapterId,
+          databaseStored: resultDetail.databaseStored,
+          mergeMode: resultDetail.mergeMode,
+          matchStrength: resultDetail.matchStrength,
+          mergeAction: resultDetail.mergeAction,
+          duplicateReasons: resultDetail.duplicateReasons,
+          duplicateTargetMangaId: resultDetail.duplicateTargetMangaId
+        };
+        this.importResultDetails[index2] = updatedResultDetail2;
+      }
+
+      // 4. 验证数据库存储完整性
+      this.updateProgress(ImportStatus.PROCESSING, `正在验证数据库存储: ${fileName}`, 65);
+      try {
+        // 验证已经在importComicToDatabaseWithIds中完成，这里只是确认
+        logger.info(TAG, `数据库存储验证通过: ${fileName}`);
+      } catch (validationError) {
+        resultDetail.success = false;
+        resultDetail.errorMessage = `数据库验证失败: ${validationError}`;
+        
+        // 更新失败状态
+        const validationIndex = this.importResultDetails.findIndex(item => item.fileName === fileName);
+        if (validationIndex >= 0) {
+          const failedResultDetail: ImportResultDetail = {
+            fileName: resultDetail.fileName,
+            success: resultDetail.success,
+            extractedFileCount: resultDetail.extractedFileCount,
+            xmlFound: resultDetail.xmlFound,
+            xmlParsed: resultDetail.xmlParsed,
+            comicInfo: resultDetail.comicInfo,
+            mangaId: resultDetail.mangaId,
+            chapterId: resultDetail.chapterId,
+            databaseStored: resultDetail.databaseStored,
+            errorMessage: resultDetail.errorMessage,
+            mergeMode: resultDetail.mergeMode,
+            matchStrength: resultDetail.matchStrength,
+            mergeAction: resultDetail.mergeAction,
+            duplicateReasons: resultDetail.duplicateReasons,
+            duplicateTargetMangaId: resultDetail.duplicateTargetMangaId
+          };
+          this.importResultDetails[validationIndex] = failedResultDetail;
+        }
+        
+        throw validationError as Error;
+      }
+
+      // 5. 清理临时文件（包括递归解压产生的所有临时目录）
+      this.updateProgress(ImportStatus.PROCESSING, `正在整理文件: ${fileName}`, 75);
+      if (recursiveResult) {
+        await this.compressionUtils.cleanupRecursiveExtractionResult(recursiveResult);
+      }
+      
+      resultDetail.filesOrganized = true;
+      resultDetail.success = true;
+      
+      // 最终更新显示
+      const finalIndex = this.importResultDetails.findIndex(item => item.fileName === fileName);
+      if (finalIndex >= 0) {
+        const finalResultDetail: ImportResultDetail = {
+          fileName: resultDetail.fileName,
+          success: resultDetail.success,
+          extractedFileCount: resultDetail.extractedFileCount,
+          xmlFound: resultDetail.xmlFound,
+          xmlParsed: resultDetail.xmlParsed,
+          comicInfo: resultDetail.comicInfo,
+          mangaId: resultDetail.mangaId,
+          chapterId: resultDetail.chapterId,
+          databaseStored: resultDetail.databaseStored,
+          filesOrganized: resultDetail.filesOrganized,
+          mergeMode: resultDetail.mergeMode,
+          matchStrength: resultDetail.matchStrength,
+          mergeAction: resultDetail.mergeAction,
+          duplicateReasons: resultDetail.duplicateReasons,
+          duplicateTargetMangaId: resultDetail.duplicateTargetMangaId
+        };
+        this.importResultDetails[finalIndex] = finalResultDetail;
+      }
+
+      logger.info(TAG, `文件处理完成: ${fileUri}`);
+      // 导入完成后触发封面选择导航
+      try {
+        const coverInput: ComicInfoInput = {
+        title: comicInfo.series || comicInfo.title || '未知标题',
+        author: comicInfo.writer || '未知作者',
+        description: comicInfo.summary || '',
+        coverUrl: '',
+        sourceId: 'local_import',
+        externalId: `local_${generateUUID()}`,  // 本地导入使用生成的UUID
+        status: MangaStatus.ONGOING,
+        tags: [],
+        rating: 0,
+        chapterCount: 0,
+        lastUpdateTime: 0
+        };
+        logger.info(TAG, `准备导航到封面选择页面：mangaId=${importIds.mangaId}, chapterId=${importIds.chapterId}`);
+        await this.promptUserSelectCover(importIds.mangaId, coverInput as ComicInfoInput, importIds.chapterId);
+        logger.info(TAG, '封面选择导航已触发');
+      } catch (navErr) {
+        const msg: string = navErr instanceof Error ? navErr.message : String(navErr);
+        logger.warn(TAG, `封面选择导航触发失败：${msg}`);
+      }
+
+      return {
+        comicInfo: comicInfo,
+        mangaId: importIds.mangaId,
+        chapterId: importIds.chapterId
+      } as ProcessSingleFileResult;
+
+    } catch (error) {
+      resultDetail.success = false;
+      resultDetail.errorMessage = String(error instanceof Error ? error.message : error);
+      // 若为用户跳过或发生错误，清理临时目录但不作为系统错误处理
+      if (error instanceof UserSkipError) {
+        logger.info(TAG, '用户跳过导入，清理临时目录');
+      }
+      
+      // 尝试清理递归解压产生的所有临时目录
+      if (recursiveResult) {
+        try {
+          await this.compressionUtils.cleanupRecursiveExtractionResult(recursiveResult);
+          logger.info(TAG, '已清理所有递归解压的临时目录');
+        } catch (cleanupErr) {
+          logger.warn(TAG, '清理临时目录失败', String(cleanupErr instanceof Error ? cleanupErr.message : cleanupErr));
+        }
+      } else if (extractedPath && extractedPath.length > 0) {
+        // 如果没有递归结果，尝试清理提取的路径
+        try {
+          await this.compressionUtils.cleanupExtractionDirectory(extractedPath);
+        } catch (cleanupErr) {
+          logger.warn(TAG, '清理临时目录失败', String(cleanupErr instanceof Error ? cleanupErr.message : cleanupErr));
+        }
+      }
+      
+      // 更新失败状态
+      const errorIndex = this.importResultDetails.findIndex(item => item.fileName === fileName);
+      if (errorIndex >= 0) {
+        const errorResultDetail: ImportResultDetail = {
+          fileName: resultDetail.fileName,
+          success: resultDetail.success,
+          extractedFileCount: resultDetail.extractedFileCount,
+          xmlFound: resultDetail.xmlFound,
+          xmlParsed: resultDetail.xmlParsed,
+          comicInfo: resultDetail.comicInfo,
+          mangaId: resultDetail.mangaId,
+          chapterId: resultDetail.chapterId,
+          databaseStored: resultDetail.databaseStored,
+          filesOrganized: resultDetail.filesOrganized,
+          errorMessage: resultDetail.errorMessage,
+          mergeMode: resultDetail.mergeMode,
+          matchStrength: resultDetail.matchStrength,
+          mergeAction: resultDetail.mergeAction,
+          duplicateReasons: resultDetail.duplicateReasons,
+          duplicateTargetMangaId: resultDetail.duplicateTargetMangaId
+        };
+        this.importResultDetails[errorIndex] = errorResultDetail;
+      } else {
+        const newErrorResultDetail: ImportResultDetail = {
+          fileName: resultDetail.fileName,
+          success: resultDetail.success,
+          extractedFileCount: resultDetail.extractedFileCount,
+          xmlFound: resultDetail.xmlFound,
+          xmlParsed: resultDetail.xmlParsed,
+          comicInfo: resultDetail.comicInfo,
+          mangaId: resultDetail.mangaId,
+          chapterId: resultDetail.chapterId,
+          databaseStored: resultDetail.databaseStored,
+          filesOrganized: resultDetail.filesOrganized,
+          errorMessage: resultDetail.errorMessage,
+          mergeMode: resultDetail.mergeMode,
+          matchStrength: resultDetail.matchStrength,
+          mergeAction: resultDetail.mergeAction,
+          duplicateReasons: resultDetail.duplicateReasons,
+          duplicateTargetMangaId: resultDetail.duplicateTargetMangaId
+        };
+        this.importResultDetails.push(newErrorResultDetail);
+      }
+      
+      if (error instanceof UserSkipError) {
+        logger.info(TAG, `用户跳过单个文件: ${fileUri}`);
+        throw error as Error;
+      } else {
+        logger.error(TAG, `处理单个文件失败: ${fileUri}`, String(error instanceof Error ? error.message : error));
+        throw error as Error;
+      }
+    }
+  }
+  private async processSingleFile(fileUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `开始处理单个文件: ${fileUri}`);
+
+      // 1. 解压缩文件并查找ComicInfo.xml
+      const extractionData = await this.compressionUtils.extractAndFindComicInfo(fileUri);
+      const result = extractionData.result;
+      const comicInfoContent = extractionData.comicInfoContent;
+
+      if (!result.success) {
+        throw new Error(result.error || '解压缩失败');
+      }
+
+      logger.info(TAG, `解压缩成功: ${result.fileCount} 个文件`);
+
+      // 2. 解析ComicInfo.xml（如果存在）
+      let comicInfo: ComicInfo;
+      
+      if (comicInfoContent) {
+        try {
+          comicInfo = this.comicInfoParser.parseXmlString(comicInfoContent);
+          logger.info(TAG, '成功解析ComicInfo.xml');
+        } catch (error) {
+          logger.warn(TAG, '解析ComicInfo.xml失败，使用默认信息', String(error instanceof Error ? error.message : error));
+          comicInfo = this.createDefaultComicInfo(this.getFileNameFromUri(fileUri));
+        }
+      } else {
+        logger.info(TAG, '未找到ComicInfo.xml，使用默认信息');
+        comicInfo = this.createDefaultComicInfo(this.getFileNameFromUri(fileUri));
+      }
+
+      // 3. 导入到数据库（统一采用整理后再入库的流程，确保页面路径与转码一致）
+      await this.importComicToDatabaseWithIds(comicInfo, result);
+
+      // 4. 清理临时文件
+      await this.compressionUtils.cleanupExtractionDirectory(result.extractedPath);
+
+      logger.info(TAG, `文件处理完成: ${fileUri}`);
+
+    } catch (error) {
+      logger.error(TAG, `处理单个文件失败: ${fileUri}`, String(error instanceof Error ? error.message : error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 创建默认漫画信息
+   */
+  private createDefaultComicInfo(fileName: string): ComicInfo {
+    return {
+      title: fileName.replace(/\.(zip|cbz|rar|cbr)$/i, ''),
+      series: fileName.replace(/\.(zip|cbz|rar|cbr)$/i, ''),
+      number: '1',
+      summary: '通过本地文件导入',
+      writer: '未知作者',
+      genre: '未分类',
+      web: '',
+      publishingStatus: 'Unknown',
+      source: '本地导入'
+    };
+  }
+
+  /**
+   * 规范化名称用于重复检测
+   */
+  private normalizeName(name: string): string {
+    const value: string = name || '';
+    return value.trim().toLowerCase();
+  }
+
+  /**
+   * 将名称分词，用于相似度计算
+   */
+  private tokenizeName(value: string): string[] {
+    const v: string = this.normalizeName(value);
+    // 仅提取字母数字片段
+    const parts: string[] = v.split(/[^a-z0-9\u4e00-\u9fa5]+/g);
+    const tokens: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const p: string = parts[i];
+      if (p && p.length > 0) {
+        tokens.push(p);
+      }
+    }
+    return tokens;
+  }
+
+  /**
+   * 计算Jaccard相似度
+   */
+  private jaccardSimilarity(a: string[], b: string[]): number {
+    if (a.length === 0 && b.length === 0) {
+      return 1;
+    }
+    const setA: string[] = [];
+    for (let i = 0; i < a.length; i++) { if (!setA.includes(a[i])) { setA.push(a[i]); } }
+    const setB: string[] = [];
+    for (let j = 0; j < b.length; j++) { if (!setB.includes(b[j])) { setB.push(b[j]); } }
+    let intersection: number = 0;
+    for (let x = 0; x < setA.length; x++) {
+      const token: string = setA[x];
+      if (setB.includes(token)) { intersection++; }
+    }
+    const unionSize: number = setA.length + setB.length - intersection;
+    if (unionSize === 0) { return 0; }
+    return intersection / unionSize;
+  }
+
+  private computeTitleSimilarity(a: string, b: string): number {
+    const tokensA: string[] = this.tokenizeName(a);
+    const tokensB: string[] = this.tokenizeName(b);
+    return this.jaccardSimilarity(tokensA, tokensB);
+  }
+
+  private computeAuthorSimilarity(a: string, b: string): number {
+    const na: string = this.normalizeName(a);
+    const nb: string = this.normalizeName(b);
+    if (na.length === 0 || nb.length === 0) {
+      return 0;
+    }
+    if (na === nb) {
+      return 1;
+    }
+    const tokensA: string[] = this.tokenizeName(na);
+    const tokensB: string[] = this.tokenizeName(nb);
+    return this.jaccardSimilarity(tokensA, tokensB);
+  }
+
+  private estimateStrength(score: number, titleSim: number, authorSim: number): MatchStrength {
+    if (titleSim >= 0.98 && authorSim >= 0.98) {
+      return MatchStrength.EXACT;
+    }
+    if (score >= 0.9) {
+      return MatchStrength.STRONG;
+    }
+    if (score >= 0.75) {
+      return MatchStrength.LIKELY;
+    }
+    if (score >= 0.6) {
+      return MatchStrength.WEAK;
+    }
+    return MatchStrength.BELOW;
+  }
+
+  private collectReasons(titleSim: number, authorSim: number, tagsOverlap: boolean): DuplicateReason[] {
+    const reasons: DuplicateReason[] = [];
+    if (titleSim >= 0.98) { reasons.push(DuplicateReason.TITLE_EXACT); }
+    else if (titleSim >= 0.75) { reasons.push(DuplicateReason.TITLE_SIMILAR); }
+    if (authorSim >= 0.98) { reasons.push(DuplicateReason.AUTHOR_EXACT); }
+    else if (authorSim >= 0.75) { reasons.push(DuplicateReason.AUTHOR_SIMILAR); }
+    if (tagsOverlap) { reasons.push(DuplicateReason.TAGS_OVERLAP); }
+    return reasons;
+  }
+
+  /**
+   * 检测重复候选项（基于本地导入源）
+   */
+  private async checkDuplicateCandidates(comicInput: ComicInfoInput): Promise<DuplicateCheckResult> {
+    const keyword: string = comicInput.title;
+    const candidates: ComicRecord[] = await this.dataManager.searchComics(keyword, 'local_import');
+    const results: DuplicateCandidate[] = [];
+    const titleA: string = comicInput.title;
+    const authorA: string = comicInput.author;
+    const tagsA: string[] = comicInput.tags;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const rec: ComicRecord = candidates[i];
+      const titleSim: number = this.computeTitleSimilarity(titleA, rec.title);
+      const authorSim: number = this.computeAuthorSimilarity(authorA, rec.author);
+
+      // 70%标题 + 30%作者
+      const score: number = 0.7 * titleSim + 0.3 * authorSim;
+      // 标签是否有交集
+      let tagsOverlap: boolean = false;
+      for (let t = 0; t < tagsA.length; t++) {
+        const tag: string = this.normalizeName(tagsA[t]);
+        if (this.normalizeName(tag).length > 0 && rec.tags.map((x: string) => this.normalizeName(x)).includes(tag)) {
+          tagsOverlap = true;
+          break;
+        }
+      }
+
+      const strength: MatchStrength = this.estimateStrength(score, titleSim, authorSim);
+      const reasons: DuplicateReason[] = this.collectReasons(titleSim, authorSim, tagsOverlap);
+      const item: DuplicateCandidate = { record: rec, score: score, strength: strength, reasons: reasons };
+      results.push(item);
+    }
+
+    // 选择最高分
+    let best: DuplicateCandidate | undefined = undefined;
+    for (let k = 0; k < results.length; k++) {
+      const c: DuplicateCandidate = results[k];
+      if (!best || c.score > best.score) {
+        best = c;
+      }
+    }
+
+    return { candidates: results, best: best } as DuplicateCheckResult;
+  }
+
+  /**
+   * 根据模式做出合并决策
+   */
+  private decideMerge(mode: MergeMode, check: DuplicateCheckResult): MergeDecision {
+    if (!check.best) {
+      return { mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision;
+    }
+    const best: DuplicateCandidate = check.best as DuplicateCandidate;
+    if (mode === MergeMode.StrictNew) {
+      return { mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision;
+    }
+    if (mode === MergeMode.AutoRecommend) {
+      if (best.strength === MatchStrength.EXACT || best.strength === MatchStrength.STRONG || best.strength === MatchStrength.LIKELY) {
+        return { mode: mode, action: MergeAction.MERGE_TO_EXISTING, targetMangaId: best.record.id, strength: best.strength, reasons: best.reasons } as MergeDecision;
+      }
+      return { mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision;
+    }
+    // ManualCustom 当前阶段按自动推荐处理，待UI接入后可用户确认
+    if (best.strength === MatchStrength.EXACT || best.strength === MatchStrength.STRONG || best.strength === MatchStrength.LIKELY) {
+      return { mode: mode, action: MergeAction.MERGE_TO_EXISTING, targetMangaId: best.record.id, strength: best.strength, reasons: best.reasons } as MergeDecision;
+    }
+    return { mode: mode, action: MergeAction.CREATE_NEW } as MergeDecision;
+  }
+
+  /**
+   * 查找是否已存在相同（本地导入源）的漫画记录
+   */
+  private async findExistingComicForLocalImport(title: string, author: string): Promise<ComicRecord | null> {
+    const keyword: string = title;
+    const candidates: ComicRecord[] = await this.dataManager.searchComics(keyword, 'local_import');
+    const targetTitle: string = this.normalizeName(title);
+    const targetAuthor: string = this.normalizeName(author);
+    for (let i = 0; i < candidates.length; i++) {
+      const item: ComicRecord = candidates[i];
+      if (this.normalizeName(item.title) === targetTitle && this.normalizeName(item.author) === targetAuthor) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 查找是否已存在同一漫画下重复章节（按章节序号或标题匹配）
+   */
+  private async findExistingChapter(comicId: string, chapterIndex: number, chapterTitle: string): Promise<ChapterRecord | null> {
+    const chapters: ChapterRecord[] = await this.dataManager.getComicChapters(comicId);
+    const normalizedTitle: string = this.normalizeName(chapterTitle);
+    for (let i = 0; i < chapters.length; i++) {
+      const c: ChapterRecord = chapters[i];
+      if (c.index === chapterIndex) {
+        return c;
+      }
+      if (this.normalizeName(c.title) === normalizedTitle) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 导入漫画信息到数据库并返回ID
+   */
+  private async importComicToDatabaseWithIds(comicInfo: ComicInfo, extractionResult: ExtractionResult): Promise<ImportComicToDatabaseResult> {
+    try {
+      logger.info(TAG, '开始导入漫画信息到数据库');
+
+      // 创建漫画信息输入对象
+      // 注意：根据ComicInfo.xml标准，Series是漫画名称，Title是章节名称
+      const comicInfoInput: ComicInfoInput = {
+        title: comicInfo.series || comicInfo.title || '未知标题', // 优先使用series作为漫画名称
+        author: comicInfo.writer || '未知作者',
+        description: comicInfo.summary || '',
+        coverUrl: '', // 稍后从提取的图片中选择封面
+        sourceId: 'local_import', // 本地导入源ID
+        externalId: `local_${generateUUID()}`,  // 本地导入使用生成的UUID
+        status: this.convertToMangaStatus(comicInfo.publishingStatus),
+        tags: this.parseGenreTags(comicInfo.genre),
+        rating: 0,
+        chapterCount: 1,
+        lastUpdateTime: Date.now()
+      };
+
+      // 重名检测与合并决策（改为用户交互，禁止自动合并）
+      let mangaId: string;
+      const dupCheck: DuplicateCheckResult = await this.checkDuplicateCandidates(comicInfoInput);
+      const decision: MergeDecision = await this.resolveUserMergeDecision(this.mergeMode, dupCheck, comicInfoInput);
+      if (decision.action === MergeAction.SKIP) {
+        logger.info(TAG, '用户选择跳过该漫画的导入');
+        throw new UserSkipError('用户跳过导入');
+      }
+      if (decision.action === MergeAction.MERGE_TO_EXISTING && decision.targetMangaId) {
+        mangaId = decision.targetMangaId;
+        logger.info(TAG, `用户选择合并到已有漫画，目标ID: ${mangaId}`);
+      } else {
+        // 新建
+        mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+        logger.info(TAG, `漫画信息已添加，ID: ${mangaId}`);
+      }
+
+      // 在导入阶段设置收藏状态（避免后续读取isFavorited为空导致的错误）
+      // 仅在未收藏时添加，避免重复
+      const dataService = DataService.getInstance();
+      const alreadyFavorited: boolean = await dataService.isFavorited(mangaId);
+      if (!alreadyFavorited) {
+        await dataService.addToFavorites(mangaId, comicInfoInput.tags);
+        logger.info(TAG, `导入阶段已设置收藏: ${mangaId}`);
+      }
+
+      // 验证漫画信息是否成功存储
+      if (!mangaId) {
+        throw new Error('漫画信息存储失败：未获得有效的漫画ID');
+      }
+
+      // 创建章节信息输入对象
+      // 注意：根据ComicInfo.xml标准，Title是章节名称
+      const chapterInfoInput: ChapterInfoInput = {
+        comicId: mangaId,
+        title: comicInfo.title || `第${comicInfo.number || '1'}话`, // 使用title作为章节名称
+        index: this.parseChapterNumber(comicInfo.number),
+        pageCount: extractionResult.fileCount,
+        isDownloaded: true,
+        downloadPath: extractionResult.extractedPath,
+        publishTime: this.getPublishTimestamp(comicInfo),
+        externalId: `local_chapter_${generateUUID()}`  // 本地导入章节使用生成的UUID
+      };
+
+      // 检查重复章节
+      const duplicateChapter: ChapterRecord | null = await this.findExistingChapter(mangaId, chapterInfoInput.index, chapterInfoInput.title);
+      let chapterId: string;
+      if (duplicateChapter) {
+        // 弹窗让用户选择章节处理方式
+        const chapterAction: MergeAction = await this.resolveUserChapterMergeDecision(comicInfoInput.title, chapterInfoInput, duplicateChapter);
+        if (chapterAction === MergeAction.SKIP) {
+          logger.info(TAG, '用户选择跳过该章节的导入');
+          throw new UserSkipError('用户跳过导入章节');
+        }
+        if (chapterAction === MergeAction.MERGE_TO_EXISTING) {
+          chapterId = duplicateChapter.id;
+          logger.info(TAG, `用户选择合并到已有章节（ID: ${chapterId}）`);
+        } else {
+          chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+          logger.info(TAG, `章节信息已添加，ID: ${chapterId}`);
+        }
+      } else {
+        // 添加章节信息到数据库
+        chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+        logger.info(TAG, `章节信息已添加，ID: ${chapterId}`);
+      }
+
+      // 验证章节信息是否成功存储
+      if (!chapterId) {
+        throw new Error('章节信息存储失败：未获得有效的章节ID');
+      }
+
+      // 先将文件移动到分层存储目录，再添加页面信息
+      const organizedPath = await this.organizeImportedFiles(comicInfoInput, chapterInfoInput, extractionResult);
+      
+      if (!organizedPath) {
+        throw new Error('文件组织失败：未获得有效的组织路径');
+      }
+
+      logger.info(TAG, `文件已组织到: ${organizedPath}`);
+
+      // 更新章节的下载路径为新的组织路径
+      await this.updateChapterDownloadPath(chapterId, organizedPath);
+
+      // 现在使用正式存储路径扫描并添加页面信息（合并策略：若已存在页面则避免重复添加）
+      let pageCount: number = 0;
+      const existingPages: PageRecord[] = await this.dataManager.getPageInfoList(chapterId);
+      if (existingPages.length === 0) {
+        pageCount = await this.addPageInfoToDatabaseFromPath(chapterId, organizedPath);
+        logger.info(TAG, `成功添加 ${pageCount} 个页面信息`);
+      } else {
+        // 若已有页面记录中包含AVIF路径，则执行迁移：删除旧记录并按组织后的目录重建（WebP优先）
+        let hasAvif: boolean = false;
+        for (let i: number = 0; i < existingPages.length; i++) {
+          const p: PageRecord = existingPages[i];
+          const imageUrl: string = p.imageUrl ? p.imageUrl.toLowerCase() : '';
+          const localPath: string = p.localPath ? p.localPath.toLowerCase() : '';
+          if ((imageUrl.endsWith('.avif')) || (localPath.endsWith('.avif'))) {
+            hasAvif = true;
+            break;
+          }
+        }
+
+        if (hasAvif) {
+          logger.warn(TAG, `检测到章节页面存在AVIF路径，执行迁移修复: ${existingPages.length} 条`);
+          await this.dataManager.removeChapterPages(chapterId);
+          pageCount = await this.addPageInfoToDatabaseFromPath(chapterId, organizedPath);
+          logger.info(TAG, `迁移完成，重建 ${pageCount} 个页面信息（WebP优先）`);
+        } else {
+          logger.info(TAG, `检测到章节已有 ${existingPages.length} 个页面（无AVIF），跳过重复添加`);
+          pageCount = existingPages.length;
+        }
+      }
+
+      // 验证页面信息是否成功存储
+      if (pageCount === 0) {
+        logger.warn(TAG, '警告：未添加任何页面信息，可能是图片文件扫描失败');
+      }
+
+      // 最终验证：确保所有数据都正确存储
+      await this.validateDatabaseStorage(mangaId, chapterId, pageCount);
+
+      logger.info(TAG, `成功导入漫画: ${comicInfoInput.title}`);
+
+      return {
+        mangaId: mangaId,
+        chapterId: chapterId,
+        mergeMode: this.mergeMode,
+        mergeAction: decision.action,
+        matchStrength: decision.strength ? decision.strength : (dupCheck.best ? dupCheck.best.strength : undefined),
+        duplicateReasons: decision.reasons ? decision.reasons : (dupCheck.best ? dupCheck.best.reasons : undefined),
+        mergedToMangaId: decision.targetMangaId
+      } as ImportComicToDatabaseResult;
+
+    } catch (error) {
+      logger.error(TAG, '导入数据库失败', String(error instanceof Error ? error.message : error));
+      throw error as Error;
+    }
+  }
+  private async importComicToDatabase(comicInfo: ComicInfo, extractionResult: ExtractionResult): Promise<void> {
+    try {
+      logger.info(TAG, '开始导入漫画信息到数据库');
+
+      // 创建漫画信息输入对象
+      // 注意：根据ComicInfo.xml标准，Series是漫画名称，Title是章节名称
+      const comicInfoInput: ComicInfoInput = {
+        title: comicInfo.series || comicInfo.title || '未知标题', // 优先使用series作为漫画名称
+        author: comicInfo.writer || '未知作者',
+        description: comicInfo.summary || '',
+        coverUrl: '', // 稍后从提取的图片中选择封面
+        sourceId: 'local_import', // 本地导入源ID
+        externalId: `local_${generateUUID()}`,  // 本地导入使用生成的UUID
+        status: this.convertToMangaStatus(comicInfo.publishingStatus),
+        tags: this.parseGenreTags(comicInfo.genre),
+        rating: 0,
+        chapterCount: 1,
+        lastUpdateTime: Date.now()
+      };
+
+      // 添加漫画信息到数据库
+      const mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+      logger.info(TAG, `漫画信息已添加，ID: ${mangaId}`);
+
+      // 在导入阶段设置收藏状态，避免favorite缺失
+      const dataService = DataService.getInstance();
+      const alreadyFavorited: boolean = await dataService.isFavorited(mangaId);
+      if (!alreadyFavorited) {
+        await dataService.addToFavorites(mangaId, comicInfoInput.tags);
+        logger.info(TAG, `导入阶段已设置收藏: ${mangaId}`);
+      }
+
+      // 创建章节信息输入对象
+      // 注意：根据ComicInfo.xml标准，Title是章节名称
+      const chapterInfoInput: ChapterInfoInput = {
+        comicId: mangaId,
+        title: comicInfo.title || `第${comicInfo.number || '1'}话`, // 使用title作为章节名称
+        index: this.parseChapterNumber(comicInfo.number),
+        pageCount: extractionResult.fileCount,
+        isDownloaded: true,
+        downloadPath: extractionResult.extractedPath,
+        publishTime: this.getPublishTimestamp(comicInfo),
+        externalId: `local_chapter_${generateUUID()}`  // 本地导入章节使用生成的UUID
+      };
+
+      // 添加章节信息到数据库
+      const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+      logger.info(TAG, `章节信息已添加，ID: ${chapterId}`);
+
+      // 扫描并添加页面信息
+      await this.addPageInfoToDatabase(chapterId, extractionResult);
+
+      // 导入成功后，将文件移动到分层存储目录
+      const organizedPath = await this.organizeImportedFiles(comicInfoInput, chapterInfoInput, extractionResult);
+      
+      // 更新章节的下载路径为新的组织路径
+      if (organizedPath) {
+        await this.updateChapterDownloadPath(chapterId, organizedPath);
+        logger.info(TAG, `文件已组织到: ${organizedPath}`);
+      }
+
+      // 显示封面选择弹窗（前三张图片），根据用户选择复制为 cover 并更新数据库
+      await this.promptUserSelectCover(mangaId, comicInfoInput, chapterId);
+
+      logger.info(TAG, `成功导入漫画: ${comicInfoInput.title}`);
+
+    } catch (error) {
+      logger.error(TAG, '导入数据库失败', String(error instanceof Error ? error.message : error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 转换发布状态为MangaStatus枚举
+   */
+  private convertToMangaStatus(publishingStatus?: string): MangaStatus {
+    if (!publishingStatus) {
+      return MangaStatus.UNKNOWN;
+    }
+    
+    switch (publishingStatus.toLowerCase()) {
+      case 'ongoing':
+      case 'continuing':
+        return MangaStatus.ONGOING;
+      case 'completed':
+      case 'finished':
+        return MangaStatus.COMPLETED;
+      case 'paused':
+      case 'hiatus':
+        return MangaStatus.HIATUS;
+      default:
+        return MangaStatus.UNKNOWN;
+    }
+  }
+
+  /**
+   * 获取发布时间戳
+   */
+  private getPublishTimestamp(comicInfo: ComicInfo): number {
+    if (comicInfo.year && comicInfo.month && comicInfo.day) {
+      return new Date(comicInfo.year, comicInfo.month - 1, comicInfo.day).getTime();
+    } else if (comicInfo.year) {
+      return new Date(comicInfo.year, 0, 1).getTime();
+    }
+    return Date.now();
+  }
+
+  /**
+   * 安全解析章节号
+   */
+  private parseChapterNumber(numberValue?: string): number {
+    if (!numberValue) {
+      return 1;
+    }
+    
+    const parsed = parseInt(numberValue, 10);
+    if (isNaN(parsed) || parsed < 1) {
+      return 1;
+    }
+    
+    return parsed;
+  }
+
+  /**
+   * 组织导入的文件到分层存储结构
+   * 目录结构：图源/漫画名称/章节名称/
+   */
+  private async organizeImportedFiles(
+    comicInfo: ComicInfoInput, 
+    chapterInfo: ChapterInfoInput, 
+    extractionResult: ExtractionResult
+  ): Promise<string | null> {
+    try {
+      logger.info(TAG, '开始组织导入文件到分层存储');
+
+      // 清理文件名中的非法字符
+      const sourceName = this.sanitizeFileName(comicInfo.sourceId || 'local_import');
+      const comicName = this.sanitizeFileName(comicInfo.title);
+      const chapterName = this.sanitizeFileName(chapterInfo.title);
+
+      // 构建目标目录路径：comics/图源/漫画名称/章节名称/
+      const comicsDir = this.sandboxManager.getDirectory('comics');
+      const targetPath = `${comicsDir}/${sourceName}/${comicName}/${chapterName}`;
+
+      // 创建目标目录
+      await this.sandboxManager.createDirectory(targetPath);
+      logger.debug(TAG, `创建目标目录: ${targetPath}`);
+
+      // 移动解压后的文件到目标目录
+      await this.moveDirectoryContents(extractionResult.extractedPath, targetPath);
+      
+      // 清理临时解压目录
+      await this.sandboxManager.deleteDirectory(extractionResult.extractedPath);
+      logger.debug(TAG, `清理临时目录: ${extractionResult.extractedPath}`);
+
+      logger.info(TAG, `文件组织完成: ${targetPath}`);
+      return targetPath;
+
+    } catch (error) {
+      logger.error(TAG, '文件组织失败', String(error instanceof Error ? error.message : error));
+      return null;
+    }
+  }
+
+  /**
+   * 清理文件名中的非法字符
+   */
+  private sanitizeFileName(fileName: string): string {
+    // 移除或替换非法字符
+    return fileName
+      .replace(/[<>:"/\\|?*]/g, '_')  // 替换Windows非法字符
+      .replace(/\s+/g, '_')          // 替换空格为下划线
+      .replace(/_{2,}/g, '_')        // 合并多个下划线
+      .replace(/^_|_$/g, '')         // 移除首尾下划线
+      .substring(0, 100);            // 限制长度
+  }
+
+  /**
+   * 提示用户选择封面并保存到漫画目录（重命名为 cover.<ext>）
+   */
+  private async promptUserSelectCover(mangaId: string, comicInfoInput: ComicInfoInput, chapterId: string): Promise<void> {
+    try {
+      logger.info(TAG, `准备选择封面：mangaId=${mangaId}, chapterId=${chapterId}, 漫画=${comicInfoInput.title}`);
+      const pages: PageRecord[] = await this.dataManager.getChapterPages(chapterId);
+      if (!pages || pages.length === 0) {
+        logger.warn(TAG, '章节页面为空，无法选择封面');
+        return;
+      }
+
+      // 取前三张图片的本地路径优先
+      const candidates: string[] = [];
+      const maxCount: number = pages.length > 3 ? 3 : pages.length;
+      logger.debug(TAG, `章节页面数量=${pages.length}，取前${maxCount}张作为候选`);
+      for (let i = 0; i < maxCount; i++) {
+        const p: PageRecord = pages[i];
+        const local: string | undefined = p.localPath;
+        const image: string = local && local.length > 0 ? local : p.imageUrl;
+        if (image && image.length > 0) {
+          candidates.push(image);
+        }
+      }
+      logger.debug(TAG, `封面候选数量=${candidates.length}`);
+      for (let i = 0; i < candidates.length; i++) {
+        logger.debug(TAG, `候选${i + 1}: ${candidates[i]}`);
+      }
+      if (candidates.length === 0) {
+        logger.warn(TAG, '未找到可用的图片候选');
+        return;
+      }
+
+      const dialogData: CoverSelectionData = {
+        title: comicInfoInput.title,
+        candidatePaths: candidates
+      } as CoverSelectionData;
+
+      logger.info(TAG, '显示封面选择页面');
+      // 使用显式接口并构造具名对象，确保路由参数可序列化
+      interface CoverSelectionNavParams {
+        mangaId: string;
+        chapterId: string;
+        candidatePaths: string[];
+        fromPage: string;
+      }
+      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (globalStack) {
+        const navParam: CoverSelectionNavParams = {
+          mangaId: mangaId,
+          chapterId: chapterId,
+          candidatePaths: candidates,
+          fromPage: 'DataManagementPage'
+        } as CoverSelectionNavParams;
+        logger.debug(TAG, `导航到 CoverSelectionPage（全局栈），候选数=${navParam.candidatePaths.length}, mangaId=${navParam.mangaId}, chapterId=${navParam.chapterId}`);
+        globalStack.pushPath({ name: 'CoverSelectionPage', param: navParam as Object });
+      } else {
+        logger.warn(TAG, '无法获取GlobalNavStack，尝试使用本地pathStack');
+        const localParam: CoverSelectionNavParams = {
+          mangaId: mangaId,
+          chapterId: chapterId,
+          candidatePaths: candidates,
+          fromPage: 'DataManagementPage'
+        } as CoverSelectionNavParams;
+        logger.debug(TAG, `导航到 CoverSelectionPage（本地栈），候选数=${localParam.candidatePaths.length}, mangaId=${localParam.mangaId}, chapterId=${localParam.chapterId}`);
+        this.pathStack.pushPath({ name: 'CoverSelectionPage', param: localParam as Object });
+      }
+
+      let handled: boolean = false;
+      const onCoverSelected = (payload: IEventPayload): void => {
+        // 使用显式载荷类型，避免索引访问
+        interface CoverSelectionResultPayload { mangaId: string; chapterId: string; selectedPath: string; }
+        const result = payload as CoverSelectionResultPayload;
+        const selPath: string = result.selectedPath;
+        const pid: string = result.chapterId;
+        const mid: string = result.mangaId;
+        if (!handled && selPath && mid === mangaId && pid === chapterId) {
+          handled = true;
+          logger.info(TAG, `用户已选择封面：${selPath}`);
+          const selectedPath: string = selPath as string;
+          
+          // 原有复制与数据库更新逻辑
+          const comicsDir: string = this.sandboxManager.getDirectory('comics');
+          const sourceName: string = this.sanitizeFileName(comicInfoInput.sourceId || 'local_import');
+          const comicName: string = this.sanitizeFileName(comicInfoInput.title);
+          const comicRoot: string = `${comicsDir}/${sourceName}/${comicName}`;
+          this.sandboxManager.createDirectory(comicRoot).then(() => {
+            const ext: string = this.getFileExtension(selectedPath);
+            const coverTarget: string = `${comicRoot}/cover.${ext}`;
+            fileIo.copyFile(selectedPath, coverTarget).then(() => {
+              logger.info(TAG, `封面已复制到：${coverTarget}`);
+              this.dataManager.updateComicCoverUrl(mangaId, coverTarget).then(() => {
+                logger.info(TAG, '数据库封面URL已更新');
+              }).catch((err: Error) => {
+                logger.error(TAG, '更新数据库封面URL失败', err.message);
+              });
+            }).catch((err: Error) => {
+              logger.error(TAG, '复制封面文件失败', err.message);
+            });
+          }).catch((err: Error) => {
+            logger.error(TAG, '创建漫画目录失败', err.message);
+          }).finally(() => {
+            eventBus.unsubscribe(GameEvent.COVER_SELECTION_COMPLETED, onCoverSelected);
+          });
+        }
+      };
+      eventBus.subscribe(GameEvent.COVER_SELECTION_COMPLETED, onCoverSelected);
+      // 后续复制与数据库更新由事件回调完成；此处不再进行重复操作
+    } catch (error) {
+      const msg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `设置封面失败: ${msg}`);
+    }
+  }
+
+  /**
+   * 提取文件扩展名（不包含点）。未知则返回空字符串。
+   */
+  private getFileExtension(path: string): string {
+    const idx: number = path.lastIndexOf('.');
+    if (idx < 0 || idx >= path.length - 1) {
+      return '';
+    }
+    const ext: string = path.substring(idx + 1).toLowerCase();
+    // 合法图片扩展
+    const allowed: string[] = ['jpg', 'jpeg', 'png', 'webp', 'avif'];
+    for (let i = 0; i < allowed.length; i++) {
+      if (ext === allowed[i]) {
+        return ext;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * 移动目录内容到目标目录
+   */
+  private async moveDirectoryContents(sourcePath: string, targetPath: string): Promise<void> {
+    try {
+      // 获取源目录中的所有文件
+      const files = await this.sandboxManager.listDirectory(sourcePath);
+      
+      for (const file of files) {
+        const sourceFilePath = `${sourcePath}/${file}`;
+        const targetFilePath = `${targetPath}/${file}`;
+        const lowerName: string = file.toLowerCase();
+        const dotIndex: number = lowerName.lastIndexOf('.');
+        const ext: string = dotIndex >= 0 ? lowerName.substring(dotIndex) : '';
+        
+        // 对AVIF文件：在组织阶段直接转码到目标目录为WebP，且不保存原AVIF
+        if (ext === '.avif') {
+          logger.debug(TAG, `检测到AVIF文件，执行组织阶段转码: ${sourceFilePath}`);
+          const transcodeResult: AvifTranscodeResult = await AvifTranscoder.getInstance().transcodeToTargetDirectory(sourceFilePath, targetPath);
+          if (transcodeResult.success && transcodeResult.webpPath) {
+            logger.info(TAG, `组织阶段转码成功，已保存为WebP并跳过原AVIF: ${transcodeResult.webpPath}`);
+            // 不移动原始AVIF，避免在正式目录中保存不可兼容格式
+            continue;
+          } else {
+            // 转码失败，跳过该文件的移动，保持正式目录不包含AVIF，并记录详细错误
+            this.logTranscodeFailure('组织阶段', sourceFilePath, transcodeResult);
+            continue;
+          }
+        }
+        
+        // 移动文件
+        await this.sandboxManager.moveFile(sourceFilePath, targetFilePath);
+        logger.debug(TAG, `移动文件: ${sourceFilePath} -> ${targetFilePath}`);
+      }
+      
+      logger.info(TAG, `成功移动 ${files.length} 个文件`);
+    } catch (error) {
+      logger.error(TAG, '移动目录内容失败', String(error instanceof Error ? error.message : error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 在组织阶段为单个AVIF源文件执行转码，并将WebP写入目标目录
+   * 若设备不支持AVIF或转码失败，则返回undefined并记录日志
+   */
+  private async transcodeAvifFileToWebpAtTarget(sourcePath: string, targetDir: string): Promise<ImageFileInfo | undefined> {
+    try {
+      const transcodeResult: AvifTranscodeResult = await AvifTranscoder.getInstance().transcodeToTargetDirectory(sourcePath, targetDir);
+      if (transcodeResult.success && transcodeResult.webpPath && transcodeResult.fileSize !== undefined) {
+        const converted: ImageFileInfo = {
+          path: transcodeResult.webpPath,
+          name: transcodeResult.webpPath.substring(transcodeResult.webpPath.lastIndexOf('/') + 1),
+          size: transcodeResult.fileSize,
+          width: transcodeResult.width,
+          height: transcodeResult.height,
+          fileSize: transcodeResult.fileSize
+        } as ImageFileInfo;
+        return converted;
+      }
+      this.logTranscodeFailure('组织阶段', sourcePath, transcodeResult);
+      return undefined;
+    } catch (error) {
+      logger.warn(TAG, `组织阶段AVIF转码异常: ${sourcePath}`, String(error instanceof Error ? error.message : error));
+      return undefined;
+    }
+  }
+
+  /**
+   * 更新章节的下载路径
+   */
+  private async updateChapterDownloadPath(chapterId: string, newPath: string): Promise<void> {
+    try {
+      await this.dataManager.updateChapterInfo(chapterId, { downloadPath: newPath });
+      logger.debug(TAG, `更新章节下载路径: ${chapterId} -> ${newPath}`);
+    } catch (error) {
+      logger.error(TAG, '更新章节下载路径失败', String(error instanceof Error ? error.message : error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 从指定路径添加页面信息到数据库
+   * 用于在文件移动到正式目录后添加页面信息
+   */
+  private async addPageInfoToDatabaseFromPath(chapterId: string, directoryPath: string): Promise<number> {
+    try {
+      logger.info(TAG, `开始从路径添加页面信息到数据库: ${directoryPath}`);
+
+      // 扫描指定目录中的图片文件
+      const imageFiles = await this.scanImageFiles(directoryPath);
+      
+      if (imageFiles.length === 0) {
+        logger.warn(TAG, '未找到任何图片文件');
+        return 0;
+      }
+
+      let addedCount = 0;
+      
+      for (let i = 0; i < imageFiles.length; i++) {
+        const imageFile = imageFiles[i];
+        
+        const pageInfoInput: PageInfoInput = {
+          chapterId: chapterId,
+          index: i + 1,
+          imageUrl: imageFile.path, // 使用正式存储路径
+          localPath: imageFile.path, // 本地文件路径
+          width: Math.floor(imageFile.width || 0), // 确保为整数
+          height: Math.floor(imageFile.height || 0), // 确保为整数
+          fileSize: Math.floor(imageFile.fileSize || imageFile.size || 0), // 确保为整数，优先使用fileSize
+          pageNumber: i + 1
+        };
+
+        try {
+          logger.debug(TAG, `准备添加页面信息: chapterId=${chapterId}, index=${pageInfoInput.index}, path=${imageFile.path}, fileSize=${pageInfoInput.fileSize}`);
+          await this.dataManager.addPageInfo(pageInfoInput);
+          addedCount++;
+          logger.debug(TAG, `添加页面信息成功: ${imageFile.path}`);
+        } catch (error) {
+          logger.error(TAG, `添加页面信息失败: ${imageFile.path}`, String(error instanceof Error ? error.message : error));
+        }
+      }
+
+      logger.info(TAG, `成功添加 ${addedCount}/${imageFiles.length} 个页面信息`);
+      return addedCount;
+
+    } catch (error) {
+      logger.error(TAG, '从路径添加页面信息失败', String(error instanceof Error ? error.message : error));
+      return 0;
+    }
+  }
+
+  /**
+   * 添加页面信息到数据库（原方法，保留用于兼容性）
+   */
+  private async addPageInfoToDatabase(chapterId: string, extractionResult: ExtractionResult): Promise<number> {
+    try {
+      logger.info(TAG, '开始添加页面信息到数据库');
+
+      // 扫描解压目录中的图片文件
+      const imageFiles = await this.scanImageFiles(extractionResult.extractedPath);
+      
+      if (imageFiles.length === 0) {
+        logger.warn(TAG, '未找到任何图片文件');
+        return 0;
+      }
+
+      let addedCount = 0;
+      
+      for (let i = 0; i < imageFiles.length; i++) {
+        const imageFile = imageFiles[i];
+        
+        const pageInfoInput: PageInfoInput = {
+          chapterId: chapterId,
+          index: i + 1,
+          imageUrl: imageFile.path,
+          localPath: imageFile.path, // 本地文件路径
+          width: Math.floor(imageFile.width || 0), // 确保为整数
+          height: Math.floor(imageFile.height || 0), // 确保为整数
+          fileSize: Math.floor(imageFile.fileSize || imageFile.size || 0), // 确保为整数，优先使用fileSize
+          pageNumber: i + 1
+        };
+
+        try {
+          logger.debug(TAG, `准备添加页面信息: chapterId=${chapterId}, index=${pageInfoInput.index}, path=${imageFile.path}, fileSize=${pageInfoInput.fileSize}`);
+          await this.dataManager.addPageInfo(pageInfoInput);
+          addedCount++;
+          logger.debug(TAG, `添加页面信息成功: ${imageFile.path}`);
+        } catch (error) {
+          logger.error(TAG, `添加页面信息失败: ${imageFile.path}`, String(error instanceof Error ? error.message : error));
+        }
+      }
+
+      logger.info(TAG, `成功添加 ${addedCount}/${imageFiles.length} 个页面信息`);
+      return addedCount;
+
+    } catch (error) {
+      logger.error(TAG, '添加页面信息失败', String(error instanceof Error ? error.message : error));
+      return 0;
+    }
+  }
+
+  /**
+   * 扫描图片文件
+   */
+  private async scanImageFiles(directoryPath: string): Promise<ImageFileInfo[]> {
+    try {
+      logger.info(TAG, `扫描目录: ${directoryPath}`);
+      
+      const imageFiles: ImageFileInfo[] = [];
+      // 扩展支持AVIF检测，后续将进行导入时转码到WebP
+      const supportedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif'];
+      
+      // 使用HarmonyOS官方fs模块扫描目录
+      // fs模块已在文件顶部导入
+      
+      try {
+        // 读取目录内容
+        const files = await fs.listFile(directoryPath);
+        
+        for (const fileName of files) {
+          const filePath = `${directoryPath}/${fileName}`;
+          
+          // 检查文件扩展名
+          const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
+          if (supportedExtensions.includes(extension)) {
+            
+            try {
+              // 获取文件信息
+              const stat = await fs.stat(filePath);
+              
+              const imageFileInfo: ImageFileInfo = {
+                path: filePath,
+                name: fileName,
+                size: stat.size || 0,
+                width: undefined,
+                height: undefined,
+                fileSize: stat.size || 0
+              };
+              
+              imageFiles.push(imageFileInfo);
+              logger.debug(TAG, `找到图片文件: ${fileName}`);
+              
+            } catch (statError) {
+              logger.warn(TAG, `获取文件信息失败: ${fileName}`, String(statError instanceof Error ? statError.message : statError));
+            }
+          }
+        }
+        
+        // 按文件名排序，确保页面顺序正确
+        imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+        // 统计原始文件的类型分布
+        let avifCount: number = 0;
+        let nonAvifCount: number = 0;
+        for (let i: number = 0; i < imageFiles.length; i++) {
+          const nameLower: string = imageFiles[i].name.toLowerCase();
+          const dotIndex: number = nameLower.lastIndexOf('.');
+          const ext: string = dotIndex >= 0 ? nameLower.substring(dotIndex) : '';
+          if (ext === '.avif') {
+            avifCount++;
+          } else {
+            nonAvifCount++;
+          }
+        }
+
+        // 对AVIF文件进行预处理：尝试转码到WebP，以确保后续显示兼容
+        const processedFiles = await this.convertAvifFilesToWebpIfNeeded(imageFiles);
+
+        // 若仅包含AVIF且全部转码失败，给出明确原因日志
+        if (processedFiles.length === 0 && avifCount > 0 && nonAvifCount === 0) {
+          logger.warn(TAG, '目录仅包含AVIF文件，且设备不支持AVIF解码或转码失败，无法生成可显示页面');
+        }
+
+        logger.info(TAG, `扫描完成，找到 ${processedFiles.length} 个图片文件（含AVIF兼容处理）`);
+        return processedFiles;
+        
+      } catch (listError) {
+        logger.error(TAG, `读取目录失败: ${directoryPath}`, String(listError instanceof Error ? listError.message : listError));
+        return [];
+      }
+      
+    } catch (error) {
+      logger.error(TAG, '扫描图片文件失败', String(error instanceof Error ? error.message : error));
+      return [];
+    }
+  }
+
+  /**
+   * 将列表中的AVIF文件尝试转码为WebP以提升兼容性
+   * 若转码失败，则保留原AVIF条目并记录日志，不中断导入流程
+   */
+  private async convertAvifFilesToWebpIfNeeded(files: ImageFileInfo[]): Promise<ImageFileInfo[]> {
+    const result: ImageFileInfo[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const fileInfo = files[i];
+      const lowerName = fileInfo.name.toLowerCase();
+      const dotIndex = lowerName.lastIndexOf('.');
+      const ext = dotIndex >= 0 ? lowerName.substring(dotIndex) : '';
+      if (ext === '.avif') {
+        try {
+          const transcodeResult: AvifTranscodeResult = await AvifTranscoder.getInstance().transcodeToSameDirectory(fileInfo.path);
+          if (transcodeResult.success && transcodeResult.webpPath && transcodeResult.fileSize !== undefined) {
+            const converted: ImageFileInfo = {
+              path: transcodeResult.webpPath,
+              name: transcodeResult.webpPath.substring(transcodeResult.webpPath.lastIndexOf('/') + 1),
+              size: transcodeResult.fileSize,
+              width: transcodeResult.width,
+              height: transcodeResult.height,
+              fileSize: transcodeResult.fileSize
+            } as ImageFileInfo;
+            result.push(converted);
+            logger.info(TAG, `AVIF转码为WebP成功: ${fileInfo.name} → ${converted.name}`);
+          } else {
+            // 转码失败时不写入AVIF条目，避免后续阅读器加载不可兼容格式
+            // 仅记录日志并跳过该文件，保持类型安全与兼容性，输出完整错误
+            this.logTranscodeFailure('预处理阶段', fileInfo.path, transcodeResult);
+          }
+        } catch (error) {
+          // 异常情况下同样跳过AVIF文件，避免不可显示的页面被写入数据库
+          logger.error(TAG, `AVIF转码异常，跳过文件: ${fileInfo.name}`, String(error instanceof Error ? error.message : error));
+        }
+      } else {
+        result.push(fileInfo);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 尝试将单个AVIF文件转码为WebP并返回新的文件信息
+   * 使用@kit.ImageKit进行解码，如设备不支持AVIF则返回undefined
+   */
+  private async tryTranscodeAvifToWebp(fileInfo: ImageFileInfo): Promise<ImageFileInfo | undefined> {
+    try {
+      const transcodeResult: AvifTranscodeResult = await AvifTranscoder.getInstance().transcodeToSameDirectory(fileInfo.path);
+      if (transcodeResult.success && transcodeResult.webpPath && transcodeResult.fileSize !== undefined) {
+        const converted: ImageFileInfo = {
+          path: transcodeResult.webpPath,
+          name: transcodeResult.webpPath.substring(transcodeResult.webpPath.lastIndexOf('/') + 1),
+          size: transcodeResult.fileSize,
+          width: transcodeResult.width,
+          height: transcodeResult.height,
+          fileSize: transcodeResult.fileSize
+        } as ImageFileInfo;
+        return converted;
+      }
+      this.logTranscodeFailure('预处理阶段', fileInfo.path, transcodeResult);
+      return undefined;
+    } catch (error) {
+      logger.warn(TAG, `AVIF转码异常: ${fileInfo.name}`, String(error instanceof Error ? error.message : error));
+      return undefined;
+    }
+  }
+
+  /**
+   * 输出 AvifTranscoder 返回的完整错误信息
+   */
+  private logTranscodeFailure(context: string, sourcePath: string, result: AvifTranscodeResult): void {
+    const hasErr: boolean = !!(result && result.error);
+    if (!hasErr) {
+      logger.warn(TAG, `${context}AVIF转码失败（无详细错误），跳过文件: ${sourcePath}`);
+      return;
+    }
+    const err = result.error;
+    const nameStr: string = err && err.name ? String(err.name) : '';
+    const msgStr: string = err && err.message ? String(err.message) : '';
+    const stageStr: string = err && err.stage ? String(err.stage) : 'UNKNOWN';
+    let headerStr: string = '';
+    if (err && err.header) {
+      const major: string = err.header.majorBrand ? String(err.header.majorBrand) : '';
+      const brands: string[] = err.header.compatibleBrands ? err.header.compatibleBrands as string[] : ([] as string[]);
+      const brandsStr: string = brands.length > 0 ? brands.join(',') : '';
+      headerStr = `, majorBrand=${major}, compat=[${brandsStr}]`;
+    }
+    logger.warn(TAG, `${context}AVIF转码失败: ${sourcePath}`, `stage=${stageStr}, ${nameStr}: ${msgStr}${headerStr}`);
+    if (err && err.stack) {
+      logger.debug(TAG, '异常堆栈', String(err.stack));
+    }
+  }
+
+
+
+  /**
+   * 解析ComicInfo.xml文件
+   */
+  private async parseComicInfo(extractedPath: string): Promise<ComicInfo> {
+    try {
+      // 查找ComicInfo.xml文件
+      const comicInfoPath = `${extractedPath}/ComicInfo.xml`;
+      
+      // 检查ComicInfo.xml文件是否存在
+      try {
+        const stat = fs.statSync(comicInfoPath);
+        if (!stat.isFile()) {
+          logger.warn(TAG, `ComicInfo.xml不是文件: ${comicInfoPath}`);
+          return this.getDefaultComicInfo();
+        }
+      } catch (statError) {
+        logger.warn(TAG, `ComicInfo.xml文件不存在: ${comicInfoPath}`);
+        return this.getDefaultComicInfo();
+      }
+
+      // 读取XML文件内容
+      const xmlContent = fs.readTextSync(comicInfoPath, { encoding: 'utf-8' });
+      logger.info(TAG, `读取ComicInfo.xml成功，内容长度: ${xmlContent.length}`);
+
+      // 使用ComicInfoParser解析XML内容
+      const parser = new ComicInfoParser();
+      const comicInfo = parser.parseXmlString(xmlContent);
+      
+      logger.info(TAG, `解析ComicInfo.xml成功: 标题=${comicInfo.title}, 系列=${comicInfo.series}`);
+      return comicInfo;
+      
+    } catch (error) {
+      logger.error(TAG, 'ComicInfo.xml解析失败', String(error instanceof Error ? error.message : error));
+      return this.getDefaultComicInfo();
+    }
+  }
+
+  /**
+   * 获取默认的漫画信息
+   */
+  private getDefaultComicInfo(): ComicInfo {
+    return {
+      title: '未知标题',
+      series: '未知系列',
+      number: '1',
+      summary: '暂无描述',
+      writer: '未知作者',
+      genre: '未分类',
+      web: '',
+      publishingStatus: 'Unknown',
+      source: '本地导入'
+    } as ComicInfo;
+  }
+
+  /**
+   * 构建测试功能区域（已移除）
+   */
+  // 测试功能区域已移除
+  // 测试构建区域内容已删除
+  // 测试功能区域已移除
+
+  // 基础测试方法已移除
+
+  // 完整流程测试方法已移除
+
+  // UI功能测试方法已移除
+
+  // 清除测试结果方法已移除
+
+  /**
+   * 从URI中提取文件名
+   */
+  private getFileNameFromUri(uri: string): string {
+    try {
+      const parts = uri.split('/');
+      let fileName = parts[parts.length - 1] || 'unknown_file';
+      
+      // 解码URL编码的文件名
+      fileName = decodeURIComponent(fileName);
+      
+      return fileName;
+    } catch (error) {
+      logger.warn(TAG, `解析文件名失败: ${uri}`, String(error instanceof Error ? error.message : error));
+      return 'unknown_file';
+    }
+  }
+
+  /**
+   * 更新导入进度
+   */
+  private updateProgress(status: ImportStatus, message: string, progress: number): void {
+    this.importProgress = {
+      status: status,
+      message: message,
+      progress: Math.min(100, Math.max(0, progress))
+    };
+  }
+
+  /**
+   * 返回上一页
+   */
+  private goBack(): void {
+    try {
+      logger.info(TAG, '用户点击返回按钮');
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, '返回失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+  
+  /**
+   * 构建批量导入策略选择对话框
+   */
+  @Builder
+  buildBatchStrategyDialog() {
+    Stack() {
+      // 半透明遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .onClick(() => {
+          this.showBatchStrategyDialog = false;
+        })
+      
+      // 对话框内容
+      Column({ space: 20 }) {
+        // 标题
+        Text(`批量导入 ${this.selectedFiles.length} 个文件`)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+        
+        Scroll() {
+          Column() {
+            Column({ space: 8 }) {
+              Text('检测到多个文件，请选择处理策略：')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .width('100%')
+              Text('• 逐个询问：每个文件遇到重复时都会询问')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .width('100%')
+              Text('• 全部合并：自动合并到最匹配的已有漫画')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .width('100%')
+              Text('• 全部新建：所有文件都作为新漫画导入')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .width('100%')
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+
+            Column({ space: 12 }) {
+              this.buildStrategyOption(
+                '逐个询问',
+                '每个文件遇到重复都会弹窗确认',
+                '💬',
+                'ask'
+              )
+              this.buildStrategyOption(
+                '全部合并',
+                '自动合并到最匹配的已有漫画',
+                '🔗',
+                'merge_all'
+              )
+              this.buildStrategyOption(
+                '全部新建',
+                '所有文件都作为新漫画导入',
+                '➕',
+                'create_all'
+              )
+            }
+            .width('100%')
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+        .scrollable(ScrollDirection.Vertical)
+        .scrollBar(BarState.Auto)
+        
+        // 操作按钮
+        Row({ space: 12 }) {
+          Button({ stateEffect: true }) {
+            Text('取消')
+          }
+            .width('48%')
+            .height(44)
+            .onClick(() => {
+              this.showBatchStrategyDialog = false;
+              this.batchImportStrategy = 'ask';
+            })
+
+          Button({ stateEffect: true }) {
+            Text('开始导入')
+          }
+            .width('48%')
+            .height(44)
+            .onClick(() => {
+              this.showBatchStrategyDialog = false;
+              this.executeBatchImport();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+      }
+      .width('85%')
+      .height('80%')
+      .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+      .padding(24)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(16)
+      .border({
+        width: 1,
+        color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      })
+      .shadow({
+        radius: 20,
+        color: 'rgba(0, 0, 0, 0.3)',
+        offsetX: 0,
+        offsetY: 4
+      })
+      .onClick(() => {
+        // 阻止点击事件冒泡到遮罩层
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .align(Alignment.Center)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .position({ x: 0, y: 0 })
+    .zIndex(999)
+  }
+  
+  /**
+   * 构建策略选项
+   */
+  @Builder
+  buildStrategyOption(title: string, description: string, icon: string, strategy: 'ask' | 'merge_all' | 'create_all') {
+    Row({ space: 12 }) {
+      Text(icon)
+        .fontSize(24)
+      
+      Column({ space: 4 }) {
+        Text(title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text(description)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      
+      Radio({ value: strategy, group: 'batchStrategy' })
+        .checked(this.batchImportStrategy === strategy)
+        .onChange((checked: boolean) => {
+          if (checked) {
+            this.batchImportStrategy = strategy;
+            logger.info(TAG, `选择批量策略: ${strategy}`);
+          }
+        })
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(
+      this.batchImportStrategy === strategy 
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
+    )
+    .borderRadius(8)
+    .border({
+      width: this.batchImportStrategy === strategy ? 2 : 1,
+      color: this.batchImportStrategy === strategy
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+    })
+    .onClick(() => {
+      this.batchImportStrategy = strategy;
+      logger.info(TAG, `点击选择批量策略: ${strategy}`);
+    })
+  }
+
+  /**
+   * 构建进度指示器
+   */
+  @Builder
+  buildProgressIndicator() {
+    Column({ space: 12 }) {
+      // 状态文本
+      Text(this.importProgress.message)
+        .fontSize(14)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .textAlign(TextAlign.Center)
+
+      // 进度条 - 条件渲染
+      Column() {
+        Progress({
+          value: this.importProgress.progress,
+          total: 100,
+          type: ProgressType.Linear
+        })
+        .width('100%')
+        .height(4)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      }
+      .visibility(this.importProgress.status !== ImportStatus.ERROR && this.importProgress.status !== ImportStatus.COMPLETED ? Visibility.Visible : Visibility.None)
+
+      // 完成状态图标
+      Text('✅ 导入完成')
+        .fontSize(16)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+        .visibility(this.importProgress.status === ImportStatus.COMPLETED ? Visibility.Visible : Visibility.None)
+
+      // 错误状态图标
+      Text('❌ 导入失败')
+        .fontSize(16)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+        .visibility(this.importProgress.status === ImportStatus.ERROR ? Visibility.Visible : Visibility.None)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+    .margin({ bottom: 16 })
+    .visibility(this.importProgress.status !== ImportStatus.IDLE ? Visibility.Visible : Visibility.None)
+  }
+
+  /**
+   * 构建导入结果
+   */
+  @Builder
+  buildImportResults() {
+    Column({ space: 12 }) {
+      Text('导入结果')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .margin({ bottom: 8 })
+
+      // 显示简要结果
+      ForEach(this.importResults, (result: string, index: number) => {
+        Text(result)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      })
+
+      // 显示详细的漫画信息
+      if (this.importResultDetails.length > 0) {
+        Text('导入处理详情')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .margin({ top: 16, bottom: 8 })
+
+        ForEach(this.importResultDetails, (detail: ImportResultDetail, index: number) => {
+          this.buildMangaDetailCard(detail)
+        })
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+    .visibility(this.showResults && this.importResults.length > 0 ? Visibility.Visible : Visibility.None)
+  }
+
+  /**
+   * 构建漫画详情卡片
+   */
+  @Builder
+  buildMangaDetailCard(detail: ImportResultDetail) {
+    Column({ space: 12 }) {
+      // 文件名和状态头部
+      Row({ space: 8 }) {
+        Text(`📁 ${detail.fileName}`)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+
+        // 状态指示器
+        Row({ space: 4 }) {
+          if (detail.success) {
+            Text('✅')
+              .fontSize(12)
+            Text('成功')
+              .fontSize(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('success_text', this.themeState.currentTheme))
+          } else {
+            Text('❌')
+              .fontSize(12)
+            Text('失败')
+              .fontSize(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
+          }
+        }
+      }
+      .width('100%')
+
+      // 处理步骤状态
+      Column({ space: 6 }) {
+        Text('处理步骤:')
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Row({ space: 12 }) {
+          this.buildStepIndicator('解压', detail.extractedFileCount !== undefined && detail.extractedFileCount > 0)
+          this.buildStepIndicator('XML', detail.xmlFound === true)
+          this.buildStepIndicator('解析', detail.xmlParsed === true)
+          this.buildStepIndicator('存储', detail.databaseStored === true)
+          this.buildStepIndicator('整理', detail.filesOrganized === true)
+        }
+        .width('100%')
+      }
+
+      // 提取信息
+      if (detail.extractedFileCount !== undefined) {
+        Row({ space: 8 }) {
+          Text('📦')
+            .fontSize(12)
+          Text(`提取了 ${detail.extractedFileCount} 个文件`)
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+
+      // XML信息区域
+      if (detail.xmlFound !== undefined) {
+        Column({ space: 6 }) {
+          Row({ space: 8 }) {
+            Text('📄')
+              .fontSize(12)
+            Text(`ComicInfo.xml: ${detail.xmlFound ? '已找到' : '未找到'}`)
+              .fontSize(11)
+              .fontColor(detail.xmlFound ? 
+                ThemeAwareHelper.getTestManagementThemedColor('success_text', this.themeState.currentTheme) :
+                ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
+          }
+
+          if (detail.xmlFound && detail.xmlParsed && detail.comicInfo) {
+            // XML解析成功，显示详细漫画信息
+            Column({ space: 8 }) {
+              Text('📖 从XML中解析到的漫画信息:')
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+              // 漫画详细信息网格
+              Column({ space: 4 }) {
+                if (detail.comicInfo.title) {
+                  this.buildInfoRow('标题', detail.comicInfo.title, '📚')
+                }
+                if (detail.comicInfo.writer) {
+                  this.buildInfoRow('作者', detail.comicInfo.writer, '✍️')
+                }
+                if (detail.comicInfo.summary) {
+                  this.buildInfoRow('简介', detail.comicInfo.summary, '📝', true)
+                }
+                if (detail.comicInfo.genre) {
+                  this.buildInfoRow('类型', detail.comicInfo.genre, '🏷️')
+                }
+                if (detail.comicInfo.publishingStatus) {
+                  this.buildInfoRow('状态', detail.comicInfo.publishingStatus, '📊')
+                }
+                if (detail.comicInfo.number) {
+                  this.buildInfoRow('章节号', detail.comicInfo.number, '📑')
+                }
+                if (detail.comicInfo.web) {
+                  this.buildInfoRow('网址', detail.comicInfo.web, '🌐')
+                }
+                if (detail.comicInfo.source) {
+                  this.buildInfoRow('来源', detail.comicInfo.source, '🔗')
+                }
+              }
+              .width('100%')
+              .padding({ left: 8, top: 8, bottom: 8 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(4)
+            }
+          } else if (detail.xmlFound && !detail.xmlParsed) {
+            Text('⚠️ XML文件解析失败，使用默认信息')
+              .fontSize(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
+              .padding({ left: 8 })
+          } else if (!detail.xmlFound) {
+            Text('ℹ️ 未找到XML文件，使用文件名生成默认信息')
+              .fontSize(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .padding({ left: 8 })
+          }
+        }
+      }
+
+      // 数据库存储信息
+      if (detail.databaseStored && (detail.mangaId || detail.chapterId)) {
+        Column({ space: 4 }) {
+          Text('💾 数据库存储信息:')
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          if (detail.mangaId) {
+            this.buildInfoRow('漫画ID', detail.mangaId, '🆔')
+          }
+          if (detail.chapterId) {
+            this.buildInfoRow('章节ID', detail.chapterId, '📑')
+          }
+        }
+        .padding({ left: 8, top: 8, bottom: 8 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(4)
+      }
+
+      // 合并与重复检测信息
+      if (detail.mergeMode || detail.mergeAction || detail.matchStrength || detail.duplicateTargetMangaId || (detail.duplicateReasons && detail.duplicateReasons.length > 0)) {
+        Column({ space: 4 }) {
+          Text('🔗 合并与重复检测:')
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          if (detail.mergeMode) {
+            this.buildInfoRow('合并模式', this.getMergeModeLabel(detail.mergeMode as MergeMode), '🧩')
+          }
+          if (detail.mergeAction) {
+            this.buildInfoRow('合并动作', this.getMergeActionLabel(detail.mergeAction as MergeAction), '➡️')
+          }
+          if (detail.matchStrength) {
+            this.buildInfoRow('匹配强度', this.getMatchStrengthLabel(detail.matchStrength as MatchStrength), '📈')
+          }
+          if (detail.duplicateTargetMangaId) {
+            this.buildInfoRow('目标漫画ID', detail.duplicateTargetMangaId, '🎯')
+          }
+          if (detail.duplicateReasons && detail.duplicateReasons.length > 0) {
+            this.buildInfoRow('重复原因', this.getDuplicateReasonsLabel(detail.duplicateReasons as DuplicateReason[]), '🧠', true)
+          }
+        }
+        .padding({ left: 8, top: 8, bottom: 8 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(4)
+      }
+
+      // 错误信息
+      if (!detail.success && detail.errorMessage) {
+        Column({ space: 4 }) {
+          Text('❌ 错误信息:')
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
+
+          Text(detail.errorMessage)
+            .fontSize(10)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
+            .width('100%')
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(4)
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('error_border', this.themeState.currentTheme)
+        })
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+    .borderRadius(8)
+    .border({
+      width: 1,
+      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+    })
+    .margin({ bottom: 12 })
+  }
+
+  /**
+   * 构建步骤指示器
+   */
+  @Builder
+  buildStepIndicator(stepName: string, completed: boolean) {
+    Column({ space: 2 }) {
+      Text(completed ? '✅' : '⏳')
+        .fontSize(10)
+      Text(stepName)
+        .fontSize(9)
+        .fontColor(completed ? 
+          ThemeAwareHelper.getTestManagementThemedColor('success_text', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /**
+   * 构建信息行
+   */
+  @Builder
+  buildInfoRow(label: string, value: string, icon: string, multiline: boolean = false) {
+    Row({ space: 6 }) {
+      Text(icon)
+        .fontSize(10)
+      Text(`${label}:`)
+        .fontSize(10)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width(50)
+      Text(value)
+        .fontSize(10)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .layoutWeight(1)
+        .maxLines(multiline ? 3 : 1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+  }
+
+  /**
+   * 合并与重复检测辅助：枚举到中文标签
+   */
+  private getMergeModeLabel(mode?: MergeMode): string {
+    if (!mode) {
+      return '未知';
+    }
+    switch (mode) {
+      case MergeMode.StrictNew:
+        return '严格新建';
+      case MergeMode.AutoRecommend:
+        return '自动推荐';
+      case MergeMode.ManualCustom:
+        return '手动自定义';
+      default:
+        return '未知';
+    }
+  }
+
+  private getMatchStrengthLabel(strength?: MatchStrength): string {
+    if (!strength) {
+      return '未知';
+    }
+    switch (strength) {
+      case MatchStrength.BELOW:
+        return '低于阈值';
+      case MatchStrength.WEAK:
+        return '较弱';
+      case MatchStrength.LIKELY:
+        return '可能';
+      case MatchStrength.STRONG:
+        return '强';
+      case MatchStrength.EXACT:
+        return '完全匹配';
+      default:
+        return '未知';
+    }
+  }
+
+  private getMergeActionLabel(action?: MergeAction): string {
+    if (!action) {
+      return '未知';
+    }
+    switch (action) {
+      case MergeAction.MERGE_TO_EXISTING:
+        return '合并至已有';
+      case MergeAction.CREATE_NEW:
+        return '新建';
+      case MergeAction.SKIP:
+        return '跳过';
+      default:
+        return '未知';
+    }
+  }
+
+  private getDuplicateReasonsLabel(reasons?: DuplicateReason[]): string {
+    if (!reasons || reasons.length === 0) {
+      return '无';
+    }
+    const labels: string[] = [];
+    for (let i = 0; i < reasons.length; i++) {
+      const reason: DuplicateReason = reasons[i];
+      switch (reason) {
+        case DuplicateReason.TITLE_EXACT:
+          labels.push('标题完全相同');
+          break;
+        case DuplicateReason.AUTHOR_EXACT:
+          labels.push('作者完全相同');
+          break;
+        case DuplicateReason.TITLE_SIMILAR:
+          labels.push('标题相似');
+          break;
+        case DuplicateReason.AUTHOR_SIMILAR:
+          labels.push('作者相似');
+          break;
+        case DuplicateReason.TAGS_OVERLAP:
+          labels.push('标签重叠');
+          break;
+        default:
+          labels.push('其他');
+          break;
+      }
+    }
+    return labels.join('、');
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        // 背景层
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .animation(ThemeAwareHelper.getThemeTransitionAnimation())
+
+        // 内容层（响应式：大屏居中显示）
+        Scroll(this.scroller) {
+          Column({ space: 24 }) {
+            // [修复] 添加Blank占位符，防止内容与标题栏重叠
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
+
+
+            // 功能说明
+            Column({ space: 12 }) {
+              Text('文件导入')
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+              Text('支持导入多种格式的内容，包括漫画压缩包和电子书。请在下方选择对应的导入类型。')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .lineHeight(20)
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+
+            // 漫画导入区域
+            Column({ space: 16 }) {
+              Row() {
+                Text('📚 漫画导入')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .layoutWeight(1)
+
+                Text(`已选择: ${this.selectedFiles.length} 个`)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .width('100%')
+
+              Text('支持导入ZIP、CBZ格式的漫画压缩包，自动解析ComicInfo.xml元数据。')
+                .fontSize(13)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .lineHeight(18)
+
+              Button({ stateEffect: true }) {
+                Text('选择漫画文件')
+              }
+                .width('100%')
+                .height(48)
+                .onClick(() => {
+                  this.selectFiles();
+                })
+
+              Column({ space: 4 }) {
+                ForEach(this.selectedFiles.slice(0, 3), (file: string, index: number) => {
+                  Text(`📁 ${this.getFileNameFromUri(file)}`)
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .width('100%')
+                })
+
+                Text(`... 还有 ${this.selectedFiles.length - 3} 个文件`)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .visibility(this.selectedFiles.length > 3 ? Visibility.Visible : Visibility.None)
+              }
+              .width('100%')
+              .padding(12)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(6)
+              .visibility(this.selectedFiles.length > 0 ? Visibility.Visible : Visibility.None)
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+
+            // 电子书导入区域
+            // Column({ space: 16 }) {
+            //   Row() {
+            //     Text('📖 电子书导入')
+            //       .fontSize(18)
+            //       .fontWeight(FontWeight.Bold)
+            //       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            //       .layoutWeight(1)
+            //   }
+            //   .width('100%')
+
+            //   Text('支持导入TXT、EPUB、MOBI、AZW/AZW3、PDF格式的电子书，自动识别章节。')
+            //     .fontSize(13)
+            //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            //     .lineHeight(18)
+
+            //   Button({ stateEffect: true }) {
+            //     Text('选择电子书')
+            //   }
+            //     .width('100%')
+            //     .height(48)
+            //     .onClick(() => {
+            //       this.selectEBooks();
+            //     })
+            // }
+            // .width('100%')
+            // .padding(16)
+            // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            // .borderRadius(8)
+
+            // 进度指示器
+            this.buildProgressIndicator()
+
+            // 导入操作区域
+            Column({ space: 16 }) {
+              Button({ stateEffect: true }) {
+                Text('开始导入')
+              }
+                .width('100%')
+                .height(48)
+                .enabled(!(this.selectedFiles.length === 0 ||
+                  (this.importProgress.status !== ImportStatus.IDLE &&
+                   this.importProgress.status !== ImportStatus.COMPLETED &&
+                   this.importProgress.status !== ImportStatus.ERROR)))
+                .onClick(() => {
+                  this.startImport();
+                })
+
+              Button({ stateEffect: true }) {
+                Text('清空选择')
+              }
+                .backgroundColor(Color.Red)
+                .width('100%')
+                .height(40)
+                .onClick(() => {
+                  this.selectedFiles = [];
+                  this.importProgress = {
+                    status: ImportStatus.IDLE,
+                    message: '准备就绪',
+                    progress: 0
+                  } as ImportProgress;
+                  this.showResults = false;
+                  this.importResults = [];
+                })
+              .visibility(this.selectedFiles.length > 0 ? Visibility.Visible : Visibility.None)
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+
+            // 导入结果
+            this.buildImportResults()
+
+            // 底部间距
+            Blank().height(20)
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth }) // 响应式最大宽度
+          .padding({ bottom: 20 })
+        }
+        .width('100%')
+        .height('100%')
+        .align(Alignment.TopStart) // 响应式：大屏居中对齐
+        .padding({ 
+          top: this.statusBarHeight, 
+          bottom: this.navigationBarHeight,
+          left: this.responsive_contentPadding,
+          right: this.responsive_contentPadding
+        })
+        
+        // 批量导入策略选择对话框
+        if (this.showBatchStrategyDialog) {
+          this.buildBatchStrategyDialog()
+        }
+      }
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(2),
+        end: LengthMetrics.vp(2)
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(20)
+        },
+        originalStyle: {
+          backgroundStyle: {
+            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          },
+          contentStyle: {
+            titleStyle: { 
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
+              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
+            },
+            menuStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            },
+            backIconStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.LIGHT ? 
+              '#E6FFFFFF' : '#E6000000',
+          },
+          contentStyle: {
+            titleStyle: { 
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
+              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
+            },
+            menuStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            },
+            backIconStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            }
+          }
+        }
+      },
+      content: {
+        title: {
+          mainTitle: "数据管理",
+        }
+      }
+    })
+    .onReady((context: NavDestinationContext) => {
+      logger.info(TAG, 'HdsNavDestination.onReady 已触发');
+      this.pathStack = context.pathStack;
+    })
+    .backgroundColor(Color.Transparent)
+  }
+}
+
+export { DataManagementPage };

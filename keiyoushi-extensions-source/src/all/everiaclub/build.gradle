@@ -1,0 +1,8 @@
+ext {
+    extName = 'Everia.club'
+    extClass = '.EveriaClub'
+    extVersionCode = 9
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

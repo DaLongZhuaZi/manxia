@@ -1,0 +1,10 @@
+ext {
+    extName = 'Violet Scans'
+    extClass = '.VioletScans'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://violetscans.com'
+    overrideVersionCode = 2
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

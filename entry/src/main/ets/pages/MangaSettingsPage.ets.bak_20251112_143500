@@ -1,0 +1,1708 @@
+// 文件路径: entry/src/main/ets/pages/MangaSettingsPage.ets
+/*
+职责: 漫画设置页面，提供针对单部漫画的阅读设置配置（独立页面，不再复用阅读设置对话框）
+*/
+
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { picker } from '@kit.CoreFileKit';
+import fs from '@ohos.file.fs';
+import { common } from '@kit.AbilityKit';
+import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
+import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
+import { logger } from '../Utils/Logger';
+import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, FilterSettings, Manga, ImageSourceType } from '../Models/MangaModels';
+import { DataManager, ComicInfo, ChapterInfo, PageInfo } from '../Framework/Data/DataManager';
+import { DataService } from '../Framework/Services/DataService';
+import { ComicConverter } from '../Framework/Utils/ComicConverter';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
+import { eventBus, GameEvent, MangaDeletedPayload, CoverSelectionCompletedPayload, IEventPayload } from '../Framework/EventBus';
+import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
+import { CoverSelectionPageParams } from './CoverSelectionPage';
+
+const TAG: string = 'MangaSettingsPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+const MAX_PRELOAD_PAGES: number = 50; // 最大预加载页数
+
+// 页面导航参数
+export interface MangaSettingsPageParams {
+  mangaId: string;
+  fromPage?: string;
+}
+
+// 导航路径接口（用于类型安全的 pushPath 调用）
+interface NavigationPath {
+  name: string;
+  param: MangaSettingsPageParams;
+}
+
+@Component
+struct MangaSettingsPage {
+  @State pathStack: NavPathStack = new NavPathStack();
+  private scroller: Scroller = new Scroller();
+  private uiContext: UIContext | undefined = undefined;
+
+  // 主题相关
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+
+  // 读取和编辑的设置状态（针对当前漫画）
+  @State readingSettings: ReadingSettings = DEFAULT_READING_SETTINGS;
+  
+  // 漫画信息
+  @State currentManga: Manga | null = null;
+  @State coverImagePath: string = '';
+  @State isLoadingManga: boolean = true;
+
+  // 预加载页数设置
+  @State preloadPagesCount: number = 3;
+  @State preloadAllPages: boolean = false;
+
+  // 滤镜设置展开状态
+  @State filterSettingsExpanded: boolean = true;
+
+  // 高级设置展开状态
+  @State advancedSettingsExpanded: boolean = true;
+
+  // 删除确认对话框状态
+  @State showDeleteConfirmDialog: boolean = false;
+  @State isDeleting: boolean = false;
+
+  // 当前页面参数
+  private pageParams: MangaSettingsPageParams = { mangaId: '', fromPage: 'Unknown' } as MangaSettingsPageParams;
+
+  // DataManager和DataService实例
+  private dataManager: DataManager = DataManager.getInstance();
+  private dataService: DataService = DataService.getInstance();
+  // 封面选择事件处理器（用于页面跳转后的结果回传）
+  private onCoverSelectedHandler: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    const cs: CoverSelectionCompletedPayload = payload as CoverSelectionCompletedPayload;
+    // 仅处理当前漫画的封面选择
+    if (!cs || !cs.mangaId || cs.mangaId !== this.pageParams.mangaId || !cs.selectedPath) {
+      return;
+    }
+    const mangaId: string = this.pageParams.mangaId as string;
+    const selectedPath: string = cs.selectedPath as string;
+    try {
+      const sandbox: SandboxManager = SandboxManager.getInstance();
+      const comicsDir: string = sandbox.getDirectory('comics');
+      const sourceId: string = (this.currentManga && this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceId)
+        ? (this.currentManga.sourceInfo.sourceId as string)
+        : 'local_import';
+      const safeSource: string = this.sanitizeFileName(sourceId);
+      const comicTitle: string = this.currentManga ? this.currentManga.title : mangaId;
+      const safeTitle: string = this.sanitizeFileName(comicTitle);
+      const comicRoot: string = `${comicsDir}/${safeSource}/${safeTitle}`;
+      sandbox.createDirectory(comicRoot).then(() => {
+        const ext: string = this.getFileExtension(selectedPath);
+        const coverTarget: string = `${comicRoot}/cover${ext.length > 0 ? '.' + ext : ''}`;
+        sandbox.exists(coverTarget).then(async (exists: boolean) => {
+          if (exists) {
+            await sandbox.deleteFile(coverTarget);
+          }
+          await sandbox.copyFile(selectedPath, coverTarget);
+          await this.dataManager.updateComicCoverUrl(mangaId, coverTarget);
+          this.coverImagePath = coverTarget;
+          this.showToast('封面已更新');
+          logger.info(TAG, `封面选择事件已处理，更新路径: ${coverTarget}`);
+        }).catch((err: Error) => {
+          logger.error(TAG, `封面文件处理失败: ${err.message}`);
+        });
+      }).catch((err: Error) => {
+        logger.error(TAG, `创建漫画目录失败: ${err.message}`);
+      });
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `处理封面选择事件失败: ${errorMessage}`);
+    }
+  };
+
+  /**
+   * 对齐 MangaReaderPage 的实现：在页面显示时从 AppStorage 绑定全局导航栈，并解析最新参数
+   */
+  onPageShow() {
+    logger.lifecycle(TAG, '漫画设置页面开始显示');
+    try {
+      const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (stack) {
+        this.pathStack = stack;
+        logger.debug(TAG, '✅ 成功获取GlobalNavStack');
+
+        const paramList = this.pathStack.getParamByName('MangaSettingsPage') as MangaSettingsPageParams[];
+        logger.debug(TAG, `📋 获取到参数数组，长度: ${paramList ? paramList.length : 0}`);
+
+        if (paramList && paramList.length > 0) {
+          const latestParam = paramList[paramList.length - 1] as MangaSettingsPageParams;
+          if (latestParam && typeof latestParam === 'object' &&
+              (Object.keys(latestParam).includes('mangaId'))) {
+            this.pageParams = latestParam;
+            logger.info(TAG, `📖 参数解析成功: mangaId=${latestParam.mangaId}, fromPage=${latestParam.fromPage || '未指定'}`);
+          } else {
+            logger.error(TAG, '❌ 参数格式不正确或缺少必需的 mangaId 属性');
+          }
+        } else {
+          logger.error(TAG, '❌ 未找到页面参数，参数数组为空或不存在');
+        }
+      } else {
+        logger.error(TAG, '❌ 无法从 AppStorage 获取 GlobalNavStack!');
+      }
+    } catch (err) {
+      const errorMessage: string = err instanceof Error ? err.message : String(err);
+      logger.error(TAG, '❌ AppStorage.get 异常', errorMessage);
+    }
+    logger.lifecycle(TAG, '漫画设置页面显示完成');
+  }
+
+  onReady(context: NavDestinationContext) {
+    logger.info(TAG, 'HdsNavDestination.onReady 已触发');
+    
+    // 获取UIContext
+    this.uiContext = this.getUIContext();
+    
+    // 初始化响应式布局
+    this.initResponsiveLayout();
+    
+    // 保持与全局栈一致：若 onPageShow 已绑定全局栈，则此处仅作为兜底兼容
+    this.pathStack = context.pathStack;
+    const params = context.pathInfo.param as MangaSettingsPageParams;
+    if (params && typeof params === 'object' && Object.keys(params).includes('mangaId')) {
+      this.pageParams = params;
+      logger.info(TAG, `接收到页面参数: mangaId=${params.mangaId}, fromPage=${params.fromPage || '未指定'}`);
+    } else {
+      logger.warn(TAG, '未接收到有效的页面参数，使用默认设置');
+    }
+
+    // 初始化主题感知
+    ThemeAwareHelper.initializeThemeAware(
+      TAG,
+      this.themeState,
+      (newTheme: ThemeType) => {
+        logger.info(TAG, `主题切换到: ${newTheme}`);
+      }
+    );
+
+    // 加载当前漫画的阅读设置
+    this.loadMangaAndSettings();
+
+    // 订阅封面选择完成事件（用于从 CoverSelectionPage 回传结果）
+    eventBus.subscribe(GameEvent.COVER_SELECTION_COMPLETED, this.onCoverSelectedHandler);
+  }
+
+  aboutToDisappear() {
+    // 清理主题感知
+    ThemeAwareHelper.cleanupThemeAware(TAG);
+    
+    // 移除设备变化监听器
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+
+    // 取消订阅封面选择事件，避免泄漏
+    eventBus.unsubscribe(GameEvent.COVER_SELECTION_COMPLETED, this.onCoverSelectedHandler);
+  }
+
+  /**
+   * 初始化响应式布局
+   */
+  private initResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  /**
+   * 更新响应式布局参数
+   */
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        break;
+    }
+  }
+
+  /**
+   * 加载漫画信息和设置
+   */
+  private async loadMangaAndSettings(): Promise<void> {
+    this.isLoadingManga = true;
+    try {
+      logger.info(TAG, `开始加载漫画信息: ${this.pageParams.mangaId}`);
+      
+      // 加载漫画信息（使用异步转换方法，自动从数据库加载阅读设置和进度）
+      const comicInfo = await this.dataManager.getComicById(this.pageParams.mangaId);
+      if (comicInfo) {
+        this.currentManga = await ComicConverter.convertComicInfoToMangaAsync(comicInfo);
+        this.coverImagePath = this.currentManga.coverImagePath;
+        
+        // 使用从数据库加载的阅读设置
+        this.readingSettings = this.currentManga.readingSettings;
+        logger.info(TAG, `从数据库加载的阅读设置: mode=${this.readingSettings.readingMode}`);
+        
+        // 加载预加载设置（从数据库优先，回退到AppStorage）
+        try {
+          const preloadCountJson = await this.dataManager.getUserSetting('default_user', `preload_count_${this.pageParams.mangaId}`);
+          if (preloadCountJson) {
+            this.preloadPagesCount = parseInt(preloadCountJson);
+          }
+          
+          const preloadAllJson = await this.dataManager.getUserSetting('default_user', `preload_all_${this.pageParams.mangaId}`);
+          if (preloadAllJson) {
+            this.preloadAllPages = preloadAllJson === 'true';
+          }
+        } catch (err) {
+          logger.warn(TAG, `从数据库加载预加载设置失败，尝试从AppStorage加载: ${String(err)}`);
+          // 回退到AppStorage
+          const savedPreloadCount = AppStorage.get<number>(`preload_count_${this.pageParams.mangaId}`);
+          if (savedPreloadCount !== undefined) {
+            this.preloadPagesCount = savedPreloadCount;
+          }
+          
+          const savedPreloadAll = AppStorage.get<boolean>(`preload_all_${this.pageParams.mangaId}`);
+          if (savedPreloadAll !== undefined) {
+            this.preloadAllPages = savedPreloadAll;
+          }
+        }
+        
+        logger.info(TAG, `漫画信息加载完成: ${this.currentManga.title}`);
+      } else {
+        logger.error(TAG, '未找到漫画信息');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `加载漫画信息失败: ${errorMessage}`);
+    } finally {
+      this.isLoadingManga = false;
+    }
+  }
+
+  /**
+   * 保存设置
+   */
+  private saveSettings(): void {
+    try {
+      logger.info(TAG, '开始保存设置到数据库');
+      
+      // 保存阅读设置到数据库（使用ComicConverter的静态方法）
+      ComicConverter.saveReadingSettings(this.pageParams.mangaId, this.readingSettings).then(() => {
+        logger.info(TAG, `阅读设置已保存到数据库: mode=${this.readingSettings.readingMode}`);
+      }).catch((error: Error) => {
+        logger.error(TAG, `保存阅读设置到数据库失败: ${error.message}`);
+      });
+      
+      // 保存预加载设置到数据库
+      this.dataManager.saveUserSetting('default_user', `preload_count_${this.pageParams.mangaId}`, String(this.preloadPagesCount))
+        .then(() => {
+          logger.info(TAG, '预加载页数设置已保存到数据库');
+        })
+        .catch((error: Error) => {
+          logger.error(TAG, `保存预加载页数失败: ${error.message}`);
+        });
+      
+      this.dataManager.saveUserSetting('default_user', `preload_all_${this.pageParams.mangaId}`, String(this.preloadAllPages))
+        .then(() => {
+          logger.info(TAG, '预加载全部设置已保存到数据库');
+        })
+        .catch((error: Error) => {
+          logger.error(TAG, `保存预加载全部设置失败: ${error.message}`);
+        });
+      
+      // 同时保存到AppStorage作为缓存（快速访问）
+      AppStorage.setOrCreate(`manga_settings_${this.pageParams.mangaId}`, JSON.stringify(this.readingSettings));
+      AppStorage.setOrCreate(`preload_count_${this.pageParams.mangaId}`, this.preloadPagesCount);
+      AppStorage.setOrCreate(`preload_all_${this.pageParams.mangaId}`, this.preloadAllPages);
+      
+      const info: string = `保存设置成功: 模式=${this.readingSettings.readingMode}, 方向=${this.readingSettings.readingDirection}`;
+      logger.info(TAG, info);
+      
+      // 显示保存成功提示
+      // TODO: 可以添加Toast提示
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `保存设置失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 判断图片路径来源类型（与 MangaDetailPage 一致）
+   */
+  private detectImageSourceType(path: string): ImageSourceType {
+    const src: string = path;
+    if (src.indexOf('http://') === 0 || src.indexOf('https://') === 0) {
+      return ImageSourceType.NETWORK;
+    }
+    if (src.indexOf('$rawfile(') === 0) {
+      return ImageSourceType.RAWFILE;
+    }
+    return ImageSourceType.LOCAL;
+  }
+
+  /**
+   * 规范化用于 UI 显示的图片路径：本地文件补充 file:// 前缀，并记录详细诊断日志
+   */
+  private normalizeDisplayPath(rawPath: string, sourceType: ImageSourceType): string {
+    if (!rawPath || rawPath.length === 0) {
+      return '';
+    }
+    let displayPath: string = rawPath;
+    if (sourceType === ImageSourceType.LOCAL) {
+      const hasScheme: boolean = rawPath.indexOf('file://') === 0;
+      if (!hasScheme) {
+        displayPath = 'file://' + rawPath;
+      }
+
+      try {
+        const actualPath: string = hasScheme ? rawPath.substring(7) : rawPath;
+        const stat: fs.Stat = fs.statSync(actualPath);
+        logger.debug(TAG, `设置页封面路径规范化成功: raw='${rawPath}', display='${displayPath}', size=${stat.size}`);
+      } catch (statErr) {
+        logger.warn(TAG, `设置页封面路径规范化检查失败: raw='${rawPath}', display='${displayPath}', 原始错误=${String(statErr)}`);
+      }
+    } else {
+      logger.debug(TAG, `设置页封面来源类型=${sourceType}, 原样使用路径: '${rawPath}'`);
+    }
+    return displayPath;
+  }
+
+  /**
+   * 提供设置页封面图片的 UI 渲染源：返回规范化后的路径或资源占位图
+   */
+  private getCoverImageSourceForUI(): string | ResourceStr {
+    const raw: string = this.coverImagePath;
+    if (raw && raw.length > 0) {
+      const srcType: ImageSourceType = this.currentManga && this.currentManga.coverSourceType !== undefined
+        ? (this.currentManga.coverSourceType as ImageSourceType)
+        : this.detectImageSourceType(raw);
+      const normalized: string = this.normalizeDisplayPath(raw, srcType);
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+    return $r('app.media.mangabook');
+  }
+
+  /**
+   * 用于日志的设置页封面显示路径（规范化后的字符串），若使用资源占位返回空字符串
+   */
+  private getCoverDisplayPathForLog(): string {
+    const raw: string = this.coverImagePath;
+    if (raw && raw.length > 0) {
+      const srcType: ImageSourceType = this.currentManga && this.currentManga.coverSourceType !== undefined
+        ? (this.currentManga.coverSourceType as ImageSourceType)
+        : this.detectImageSourceType(raw);
+      return this.normalizeDisplayPath(raw, srcType);
+    }
+    return '';
+  }
+
+  /**
+   * 返回上一页
+   */
+  private goBack(): void {
+    try {
+      // 统一使用全局栈回退逻辑
+      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (globalStack) {
+        globalStack.pop();
+      } else {
+        // 兜底使用本地栈
+        this.pathStack.pop();
+      }
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `返回失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 保存并返回
+   */
+  private saveAndGoBack(): void {
+    this.saveSettings();
+    this.goBack();
+  }
+
+  /**
+   * 显示删除确认对话框
+   */
+  private showMangaDeleteConfirmDialog(): void {
+    this.showDeleteConfirmDialog = true;
+  }
+
+  /**
+   * 删除漫画
+   */
+  private async deleteManga(): Promise<void> {
+    if (!this.currentManga) {
+      logger.warn(TAG, '当前漫画信息为空，无法删除');
+      return;
+    }
+
+    this.isDeleting = true;
+    try {
+      logger.info(TAG, `开始删除漫画: ${this.currentManga.title} (${this.pageParams.mangaId})`);
+      
+      // 调用DataManager的deleteComic方法
+      await this.dataManager.deleteComic(this.pageParams.mangaId);
+      
+      logger.info(TAG, `漫画删除成功: ${this.currentManga.title}`);
+      
+      // 关闭对话框
+      this.showDeleteConfirmDialog = false;
+      
+      // 显示成功提示
+      this.showToast('漫画已删除');
+      
+      // 发布漫画删除事件，通知书库刷新
+      eventBus.publish(GameEvent.MANGA_DELETED, new MangaDeletedPayload(this.pageParams.mangaId));
+      
+      // 延迟返回到书库，让用户看到提示
+      setTimeout(() => {
+        // 返回到书库页面
+        try {
+          const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+          if (globalStack) {
+            // 清空导航栈，回到主页面（书库标签）
+            globalStack.clear();
+            logger.info(TAG, '已返回书库页面');
+          } else {
+            // 兜底逻辑
+            this.goBack();
+          }
+        } catch (error) {
+          logger.error(TAG, `返回书库失败: ${String(error)}`);
+          this.goBack();
+        }
+      }, 1000);
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `删除漫画失败: ${errorMessage}`);
+      this.showToast('删除失败，请稍后重试');
+      this.showDeleteConfirmDialog = false;
+    } finally {
+      this.isDeleting = false;
+    }
+  }
+
+  /**
+   * 显示Toast提示
+   */
+  private showToast(message: string, duration: number = 2000): void {
+    try {
+      if (this.uiContext) {
+        this.uiContext.getPromptAction().showToast({
+          message: message,
+          duration: duration,
+          bottom: 100
+        });
+      }
+    } catch (error) {
+      logger.warn(TAG, `Toast显示失败: ${message}`);
+    }
+  }
+
+  /**
+   * 选择封面图片
+   */
+  private async selectCoverImage(): Promise<void> {
+    try {
+      logger.info(TAG, '开始选择封面图片');
+      
+      // 获取UIAbilityContext
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        throw new Error('无法获取应用上下文');
+      }
+
+      // 创建图片选择器
+      const photoSelectOptions = new picker.PhotoSelectOptions();
+      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      photoSelectOptions.maxSelectNumber = 1;
+
+      const photoPicker = new picker.PhotoViewPicker(context);
+      const selectResult = await photoPicker.select(photoSelectOptions);
+      
+      if (!selectResult || selectResult.photoUris.length === 0) {
+        logger.info(TAG, '未选择图片');
+        return;
+      }
+
+      const selectedUri: string = selectResult.photoUris[0] as string;
+      logger.info(TAG, `选择了图片: ${selectedUri}`);
+
+      // 复制到漫画根目录并重命名为 cover.<ext>
+      if (!this.pageParams || !this.pageParams.mangaId) {
+        this.showToast('缺少漫画ID');
+        return;
+      }
+      const mangaId: string = this.pageParams.mangaId as string;
+      const sandbox: SandboxManager = SandboxManager.getInstance();
+      const comicsDir: string = sandbox.getDirectory('comics');
+      const sourceId: string = (this.currentManga && this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceId)
+        ? (this.currentManga.sourceInfo.sourceId as string)
+        : 'local_import';
+      const safeSource: string = this.sanitizeFileName(sourceId);
+      const comicTitle: string = this.currentManga ? this.currentManga.title : mangaId;
+      const safeTitle: string = this.sanitizeFileName(comicTitle);
+      const comicRoot: string = `${comicsDir}/${safeSource}/${safeTitle}`;
+      await sandbox.createDirectory(comicRoot);
+
+      const ext: string = this.getFileExtension(selectedUri);
+      const coverTarget: string = `${comicRoot}/cover${ext.length > 0 ? '.' + ext : ''}`;
+      if (await sandbox.exists(coverTarget)) {
+        await sandbox.deleteFile(coverTarget);
+      }
+      await sandbox.copyFile(selectedUri, coverTarget);
+
+      // 更新数据库与页面状态
+      await this.dataManager.updateComicCoverUrl(mangaId, coverTarget);
+      this.coverImagePath = coverTarget;
+      this.showToast('封面已更新');
+      logger.info(TAG, '封面图片更新成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `选择封面图片失败: ${errorMessage}`);
+      this.showToast('选择封面失败');
+    }
+  }
+
+  /**
+   * 从当前漫画的页面中选取前三张图片，弹窗选择并设置为封面
+   */
+  private async selectCoverFromMangaPages(): Promise<void> {
+    try {
+      if (!this.pageParams || !this.pageParams.mangaId) {
+        this.showToast('缺少漫画ID');
+        return;
+      }
+      const mangaId: string = this.pageParams.mangaId;
+      // 获取章节列表，取第一章
+      const chapters: ChapterInfo[] = await this.dataManager.getComicChapters(mangaId);
+      if (!chapters || chapters.length === 0) {
+        this.showToast('未找到章节，无法设置封面');
+        return;
+      }
+      const firstChapterId: string = chapters[0].id;
+      const pages: PageInfo[] = await this.dataManager.getPageInfoList(firstChapterId);
+      if (!pages || pages.length === 0) {
+        this.showToast('章节内无图片，无法设置封面');
+        return;
+      }
+
+      // 取前三张图片的路径（优先本地路径）
+      const candidates: string[] = [];
+      const maxCount: number = pages.length > 3 ? 3 : pages.length;
+      for (let i = 0; i < maxCount; i++) {
+        const p: PageInfo = pages[i];
+        const path: string = (p.localPath && p.localPath.length > 0) ? (p.localPath as string) : p.imageUrl;
+        if (path && path.length > 0) {
+          candidates.push(path);
+        }
+      }
+      if (candidates.length === 0) {
+        this.showToast('未找到可用图片');
+        return;
+      }
+
+      // 跳转到封面选择页面，交由 CoverSelectionPage 处理选择逻辑
+      const navParam: CoverSelectionPageParams = {
+        mangaId: mangaId,
+        chapterId: firstChapterId,
+        candidatePaths: candidates,
+        fromPage: 'MangaSettingsPage'
+      } as CoverSelectionPageParams;
+
+      // 优先使用全局栈，确保由 MainMenuPage 的路由容器渲染 CoverSelectionPage
+      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (globalStack) {
+        logger.debug(TAG, `导航到 CoverSelectionPage（全局栈），候选数=${candidates.length}, mangaId=${mangaId}, chapterId=${firstChapterId}`);
+        globalStack.pushPath({ name: 'CoverSelectionPage', param: navParam as Object });
+      } else {
+        logger.debug(TAG, `导航到 CoverSelectionPage（本地栈），候选数=${candidates.length}, mangaId=${mangaId}, chapterId=${firstChapterId}`);
+        this.pathStack.pushPath({ name: 'CoverSelectionPage', param: navParam as Object });
+      }
+    } catch (error) {
+      const errMsg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `从漫画页面设置封面失败: ${errMsg}`);
+      this.showToast('设置封面失败');
+    }
+  }
+
+  // 与导入页一致的文件名清理
+  private sanitizeFileName(fileName: string): string {
+    return fileName
+      .replace(/\s+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .substring(0, 100);
+  }
+
+  private getFileExtension(path: string): string {
+    const idx: number = path.lastIndexOf('.');
+    if (idx < 0 || idx >= path.length - 1) {
+      return '';
+    }
+    const ext: string = path.substring(idx + 1).toLowerCase();
+    const allowed: string[] = ['jpg', 'jpeg', 'png', 'webp', 'avif'];
+    for (let i = 0; i < allowed.length; i++) {
+      if (ext === allowed[i]) {
+        return ext;
+      }
+    }
+    return '';
+  }
+
+  // 显式更新方法
+  private setReadingDirection(direction: ReadingDirection): void {
+    this.readingSettings.readingDirection = direction;
+  }
+
+  private setReadingMode(mode: ReadingMode): void {
+    this.readingSettings.readingMode = mode;
+  }
+
+  private setShowPageInfo(isOn: boolean): void {
+    this.readingSettings.showPageInfo = isOn;
+  }
+
+  private setShowPageIndicator(isOn: boolean): void {
+    this.readingSettings.showPageIndicator = isOn;
+  }
+
+  private setKeepScreenOn(isOn: boolean): void {
+    this.readingSettings.keepScreenOn = isOn;
+  }
+
+  private setVolumeKeyNavigation(isOn: boolean): void {
+    this.readingSettings.volumeKeyNavigation = isOn;
+  }
+
+  private setBrightness(value: number): void {
+    this.readingSettings.brightness = Math.max(0, Math.min(100, value));
+  }
+
+  private setPageSpacing(value: number): void {
+    this.readingSettings.pageSpacing = Math.max(0, Math.min(50, value));
+  }
+
+  private setAutoPageTurnInterval(value: number): void {
+    this.readingSettings.autoPageTurnInterval = Math.max(0, Math.min(60, value));
+  }
+
+  private setPreloadPagesCount(value: number): void {
+    this.preloadPagesCount = Math.max(1, Math.min(MAX_PRELOAD_PAGES, value));
+  }
+
+  private setFilterEnabled(isOn: boolean): void {
+    this.readingSettings.filterSettings.enabled = isOn;
+  }
+
+  private setFilterBrightness(value: number): void {
+    this.readingSettings.filterSettings.brightness = Math.max(0, Math.min(200, value));
+  }
+
+  private setFilterContrast(value: number): void {
+    this.readingSettings.filterSettings.contrast = Math.max(0, Math.min(200, value));
+  }
+
+  private setFilterSaturation(value: number): void {
+    this.readingSettings.filterSettings.saturation = Math.max(0, Math.min(200, value));
+  }
+
+  private setFilterGrayscale(isOn: boolean): void {
+    this.readingSettings.filterSettings.grayscale = isOn;
+  }
+
+  private setFilterInvert(isOn: boolean): void {
+    this.readingSettings.filterSettings.invert = isOn;
+  }
+
+  /**
+   * 判断是否禁用从上到下阅读方向
+   * 双页模式下不支持TTB方向
+   */
+  private isTTBDisabled(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
+  }
+
+  /**
+   * 处理阅读模式变更时的逻辑
+   * 当切换到双页模式时，如果当前方向是TTB，则自动切换到LTR
+   */
+  private handleReadingModeChange(mode: ReadingMode): void {
+    const oldMode = this.readingSettings.readingMode;
+    this.setReadingMode(mode);
+    
+    // 如果切换到双页模式且当前方向是TTB，则自动切换到LTR
+    if (mode === ReadingMode.DOUBLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      logger.info(TAG, `切换到双页模式，自动将阅读方向从TTB改为LTR`);
+      this.setReadingDirection(ReadingDirection.LEFT_TO_RIGHT);
+    }
+  }
+
+  // 构建封面和基本信息区域
+  @Builder
+  buildMangaInfoSection() {
+    Column({ space: 16 }) {
+      Text('漫画信息')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      if (this.isLoadingManga) {
+        Column() {
+          LoadingProgress()
+            .width(40)
+            .height(40)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          
+          Text('加载中...')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .height(200)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.currentManga) {
+        Row({ space: 16 }) {
+          // 封面图片区域：让 Image 占据 Stack 大部分空间
+          Stack() {
+            Image(this.getCoverImageSourceForUI())
+              .width('100%')
+              .height('100%')
+              .borderRadius(8)
+              .objectFit(ImageFit.Auto)
+              .backgroundColor(Color.Transparent)
+              .onError(() => {
+                const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
+                logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
+              })
+            
+          }
+          .width('40%')
+          .height('60%')
+
+          // 漫画详细信息
+          Column({ space: 8 }) {
+            Text(this.currentManga.title)
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            if (this.currentManga.metadata.authors.length > 0) {
+              Row({ space: 4 }) {
+                Text('作者:')
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                
+                Text(this.currentManga.metadata.authors.join(', '))
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+              }
+              .width('100%')
+            }
+
+            if (this.currentManga.metadata.genres.length > 0) {
+              Row({ space: 4 }) {
+                Text('标签:')
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                
+                Text(this.currentManga.metadata.genres.slice(0, 3).join(', '))
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+              }
+              .width('100%')
+            }
+
+            Row({ space: 8 }) {
+              Text(`章节: ${this.currentManga.chapters.length}`)
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              
+              Text(`状态: ${this.currentManga.status}`)
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+
+            // 操作区：从漫画页面选择封面
+            Column({ space: 8 }) {
+              Button('从漫画页面选择封面')
+                .type(ButtonType.ROUNDED_RECTANGLE)
+                .height(40)
+                .onClick(() => { this.selectCoverFromMangaPages(); })
+
+              Button('从相册选择封面')
+                .type(ButtonType.ROUNDED_RECTANGLE)
+                .height(40)
+                .onClick(() => { this.selectCoverImage(); })
+            }
+            .position({ x: '0%', y: '37%' })
+            .markAnchor({ x: 1, y: 1 })
+            .align(Alignment.BottomEnd)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .padding(16)
+
+        Blank(36)
+
+        // 描述
+        if (this.currentManga.description && this.currentManga.description.length > 0) {
+          Column({ space: 8 }) {
+            Text('简介')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+            
+            Text(this.currentManga.description)
+              .fontSize(13)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .lineHeight(20)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 16 })
+        }
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建设置项：阅读方向
+  @Builder
+  buildReadingDirectionSettings() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('阅读方向')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        // 当双页模式时显示提示信息
+        if (this.isTTBDisabled()) {
+          Text('双页模式不支持从上到下')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        Column() {
+          Button({ stateEffect: !this.isTTBDisabled() }) {
+            Text('从上到下')
+              .fontSize(14)
+              .fontColor(
+                this.isTTBDisabled() 
+                  ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme)
+              )
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .enabled(!this.isTTBDisabled())
+            .opacity(this.isTTBDisabled() ? 0.5 : 1.0)
+            .onClick(() => {
+              if (!this.isTTBDisabled()) {
+                this.setReadingDirection(ReadingDirection.TOP_TO_BOTTOM)
+              }
+            })
+        }.layoutWeight(1)
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('从左到右')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingDirection === ReadingDirection.LEFT_TO_RIGHT
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.setReadingDirection(ReadingDirection.LEFT_TO_RIGHT))
+        }.layoutWeight(1)
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('从右到左')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.setReadingDirection(ReadingDirection.RIGHT_TO_LEFT))
+        }.layoutWeight(1)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建设置项：阅读模式
+  @Builder
+  buildReadingModeSettings() {
+    Column({ space: 12 }) {
+      Text('阅读模式')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 第一行：单页模式
+      Row({ space: 8 }) {
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('单页')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.handleReadingModeChange(ReadingMode.SINGLE_PAGE))
+        }.layoutWeight(1)
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('双页')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.handleReadingModeChange(ReadingMode.DOUBLE_PAGE))
+        }.layoutWeight(1)
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('连续滚动')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.handleReadingModeChange(ReadingMode.CONTINUOUS_SCROLL))
+        }.layoutWeight(1)
+      }
+      .width('100%')
+
+      // 第二行：条漫模式
+      Row({ space: 8 }) {
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('条漫')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingMode === ReadingMode.WEBTOON
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.handleReadingModeChange(ReadingMode.WEBTOON))
+        }.layoutWeight(1)
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('垂直滚动')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(36)
+            .backgroundColor(
+              this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+            )
+            .borderRadius(8)
+            .onClick(() => this.handleReadingModeChange(ReadingMode.CONTINUOUS_VERTICAL))
+        }.layoutWeight(1)
+
+        Blank().layoutWeight(1)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建设置项：基础开关
+  @Builder
+  buildBasicSettings() {
+    Column({ space: 16 }) {
+      Text('基础设置')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Row() {
+        Text('显示页码信息')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.showPageInfo })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setShowPageInfo(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      Row() {
+        Text('显示页面指示器')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.showPageIndicator })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setShowPageIndicator(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      Row() {
+        Text('保持屏幕常亮')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.keepScreenOn })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setKeepScreenOn(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      Row() {
+        Text('音量键翻页')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.volumeKeyNavigation })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setVolumeKeyNavigation(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建设置项：预加载设置
+  @Builder
+  buildPreloadSettings() {
+    Column({ space: 16 }) {
+      Text('预加载设置')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Row() {
+        Text('预加载当前章所有页')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Toggle({ type: ToggleType.Switch, isOn: this.preloadAllPages })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.preloadAllPages = isOn;
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      if (!this.preloadAllPages) {
+        Column({ space: 8 }) {
+          Row() {
+            Text('预加载页数')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text(`${this.preloadPagesCount}`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+
+          Slider({
+            value: this.preloadPagesCount,
+            min: 1,
+            max: MAX_PRELOAD_PAGES,
+            step: 1,
+            style: SliderStyle.InSet
+          })
+            .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .trackThickness(4)
+            .onChange((value: number) => {
+              this.setPreloadPagesCount(Math.round(value));
+            })
+
+          Text(`当前设置: 提前加载 ${this.preloadPagesCount} 页 (最大${MAX_PRELOAD_PAGES}页)`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .width('100%')
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建设置项：高级设置（可展开）
+  @Builder
+  buildAdvancedSettings() {
+    Column({ space: 16 }) {
+      Row() {
+        Text('高级设置')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        Text(this.advancedSettingsExpanded ? '收起' : '展开')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onClick(() => {
+            this.advancedSettingsExpanded = !this.advancedSettingsExpanded;
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 16 })
+
+      if (this.advancedSettingsExpanded) {
+        Column({ space: 16 }) {
+          // 屏幕亮度
+          Column({ space: 8 }) {
+            Row() {
+              Text('屏幕亮度')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text(`${this.readingSettings.brightness}%`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+
+            Slider({
+              value: this.readingSettings.brightness,
+              min: 0,
+              max: 100,
+              step: 1,
+              style: SliderStyle.InSet
+            })
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .trackThickness(4)
+              .onChange((value: number) => {
+                this.setBrightness(Math.round(value));
+              })
+          }
+          .width('100%')
+
+          // 页面间距
+          Column({ space: 8 }) {
+            Row() {
+              Text('页面间距')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text(`${this.readingSettings.pageSpacing}px`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+
+            Slider({
+              value: this.readingSettings.pageSpacing,
+              min: 0,
+              max: 50,
+              step: 1,
+              style: SliderStyle.InSet
+            })
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .trackThickness(4)
+              .onChange((value: number) => {
+                this.setPageSpacing(Math.round(value));
+              })
+          }
+          .width('100%')
+
+          // 自动翻页间隔
+          Column({ space: 8 }) {
+            Row() {
+              Text('自动翻页间隔')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text(this.readingSettings.autoPageTurnInterval === 0 ? '禁用' : `${this.readingSettings.autoPageTurnInterval}秒`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+
+            Slider({
+              value: this.readingSettings.autoPageTurnInterval,
+              min: 0,
+              max: 60,
+              step: 1,
+              style: SliderStyle.InSet
+            })
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .trackThickness(4)
+              .onChange((value: number) => {
+                this.setAutoPageTurnInterval(Math.round(value));
+              })
+            
+            Text('设置为0将禁用自动翻页')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .width('100%')
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 16 })
+      }
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建设置项：滤镜设置（可展开）
+  @Builder
+  buildFilterSettings() {
+    Column({ space: 16 }) {
+      Row() {
+        Text('滤镜设置')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.filterSettings.enabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.setFilterEnabled(isOn);
+          })
+        
+        Text(this.filterSettingsExpanded ? '收起' : '展开')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.filterSettingsExpanded = !this.filterSettingsExpanded;
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 16 })
+      // 根据需求：默认展开，但内部不显示任何内容
+      if (this.filterSettingsExpanded) {
+        Column() {}
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 16 })
+      }
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  // 构建操作按钮区域
+  @Builder
+  buildActionButtons() {
+    Column({ space: 12 }) {
+      // 第一行：主要操作按钮
+      Row({ space: 12 }) {
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('重置默认')
+              .fontSize(16)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(44)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme))
+            .borderRadius(12)
+            .onClick(() => {
+              this.readingSettings = DEFAULT_READING_SETTINGS;
+              this.preloadPagesCount = 3;
+              this.preloadAllPages = false;
+              logger.info(TAG, '已重置为默认设置');
+            })
+        }.width('30%')
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('保存')
+              .fontSize(16)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(44)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+            .borderRadius(12)
+            .onClick(() => this.saveSettings())
+        }.layoutWeight(1)
+
+        Column() {
+          Button({ stateEffect: true }) {
+            Text('保存并返回')
+              .fontSize(16)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          }
+            .width('100%')
+            .height(44)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .borderRadius(12)
+            .onClick(() => this.saveAndGoBack())
+        }.layoutWeight(1)
+      }
+      .width('100%')
+
+      // 第二行：删除漫画按钮
+      Row() {
+        Button({ stateEffect: true }) {
+          Text('删除漫画')
+            .fontSize(16)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        }
+          .width('100%')
+          .height(44)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => this.showMangaDeleteConfirmDialog())
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ top: 16, bottom: 24 })
+  }
+
+  // 构建删除确认对话框
+  @Builder
+  buildDeleteConfirmDialog() {
+    Stack({ alignContent: Alignment.Center }) {
+      // 半透明遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#80000000')
+        .onClick(() => {
+          if (!this.isDeleting) {
+            this.showDeleteConfirmDialog = false;
+          }
+        })
+
+      // 确认对话框
+      Column({ space: 20 }) {
+        Text('确认删除')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Column({ space: 12 }) {
+          Text('您确定要删除这部漫画吗？')
+            .fontSize(16)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          
+          if (this.currentManga) {
+            Text(this.currentManga.title)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          
+          Text('此操作将删除漫画的所有数据和文件，包括阅读进度、书签等，且不可恢复。')
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .lineHeight(20)
+        }
+        .width('100%')
+
+        Row({ space: 12 }) {
+          Column() {
+            Button({ stateEffect: true }) {
+              Text('取消')
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
+              .width('100%')
+              .height(44)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .enabled(!this.isDeleting)
+              .onClick(() => {
+                if (!this.isDeleting) {
+                  this.showDeleteConfirmDialog = false;
+                }
+              })
+          }.layoutWeight(1)
+
+          Column() {
+            Button({ stateEffect: true }) {
+              Text(this.isDeleting ? '删除中...' : '确认删除')
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .height(44)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+            .borderRadius(8)
+            .enabled(!this.isDeleting)
+            .onClick(() => {
+              if (!this.isDeleting) {
+                this.deleteManga();
+              }
+            })
+          }.layoutWeight(1)
+        }
+        .width('100%')
+      }
+      .width('85%')
+      .padding(24)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(16)
+      .shadow({ radius: 24, color: '#40000000', offsetX: 0, offsetY: 4 })
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(2000)
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        // 背景层
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+
+        // 内容层
+        Scroll(this.scroller) {
+          Column({ space: 16 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
+
+            // 漫画信息区域
+            this.buildMangaInfoSection()
+            
+            // 阅读方向设置
+            this.buildReadingDirectionSettings()
+            
+            // 阅读模式设置
+            this.buildReadingModeSettings()
+            
+            // 基础设置
+            this.buildBasicSettings()
+            
+            // 预加载设置
+            this.buildPreloadSettings()
+            
+            // 高级设置
+            this.buildAdvancedSettings()
+            
+            // 滤镜设置
+            this.buildFilterSettings()
+            
+            // 操作按钮
+            this.buildActionButtons()
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth }) // 响应式最大宽度
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+        }
+        .width('100%')
+        .height('100%')
+        .align(Alignment.TopStart) // 响应式：大屏居中对齐
+        .edgeEffect(EdgeEffect.Spring)
+        .scrollBar(BarState.Auto)
+
+        // 删除确认对话框
+        if (this.showDeleteConfirmDialog) {
+          this.buildDeleteConfirmDialog()
+        }
+      }
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
+        originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+          },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '漫画设置' },
+        menu: {
+          value: [{
+            content: {
+              label: '切换主题',
+              icon: $r('app.media.SculptureLargeAnimalistA'),
+              isEnabled: true,
+              action: () => { this.themeManager.toggleTheme(); }
+            }
+          }]
+        }
+      }
+    })
+    .onReady((context: NavDestinationContext) => {
+      this.onReady(context);
+    })
+    .backgroundColor(Color.Transparent)
+  }
+}
+
+export { MangaSettingsPage }

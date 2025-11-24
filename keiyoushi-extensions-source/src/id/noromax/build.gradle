@@ -1,0 +1,10 @@
+ext {
+    extName = 'Noromax'
+    extClass = '.Noromax'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://noromax01.my.id'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

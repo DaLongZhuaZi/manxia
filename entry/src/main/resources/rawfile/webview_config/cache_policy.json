@@ -1,0 +1,85 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "name": "WebView缓存策略配置",
+    "description": "WebView系统的缓存策略配置文件",
+    "author": "WebView缓存系统",
+    "created": "2024-01-01T00:00:00Z",
+    "updated": "2024-01-01T00:00:00Z"
+  },
+  "cache": {
+    "level": "AGGRESSIVE",
+    "strategy": "LRU_WITH_TTL",
+    "maxSize": 209715200,
+    "maxEntries": 10000,
+    "defaultTTL": 86400000,
+    "cleanupInterval": 3600000,
+    "compressionEnabled": true,
+    "encryptionEnabled": false,
+    "persistToDisk": true,
+    "diskCacheLocation": "cache/webview/disk",
+    "memoryCacheSize": 52428800,
+    "rules": [
+      {
+        "pattern": "*.js",
+        "ttl": 604800000,
+        "priority": "HIGH",
+        "compression": true,
+        "encryption": false
+      },
+      {
+        "pattern": "*.css",
+        "ttl": 604800000,
+        "priority": "HIGH",
+        "compression": true,
+        "encryption": false
+      },
+      {
+        "pattern": "*.png",
+        "ttl": 2592000000,
+        "priority": "MEDIUM",
+        "compression": false,
+        "encryption": false
+      },
+      {
+        "pattern": "*.jpg",
+        "ttl": 2592000000,
+        "priority": "MEDIUM",
+        "compression": false,
+        "encryption": false
+      },
+      {
+        "pattern": "*.html",
+        "ttl": 3600000,
+        "priority": "LOW",
+        "compression": true,
+        "encryption": false
+      },
+      {
+        "pattern": "api/*",
+        "ttl": 300000,
+        "priority": "LOW",
+        "compression": true,
+        "encryption": true
+      }
+    ],
+    "evictionPolicy": {
+      "strategy": "LRU",
+      "maxAge": 2592000000,
+      "maxIdleTime": 604800000,
+      "memoryPressureThreshold": 0.8
+    },
+    "preloadRules": [
+      {
+        "pattern": "critical/*.js",
+        "priority": "CRITICAL",
+        "preloadOnStartup": true
+      },
+      {
+        "pattern": "fonts/*",
+        "priority": "HIGH",
+        "preloadOnStartup": false
+      }
+    ]
+  }
+}

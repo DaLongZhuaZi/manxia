@@ -1,0 +1,70 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\13359\\.ohos\\config\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A35C13E2FA87C6E8E98F822506F42A6D0BF8086F067DC94CC10BD2C0C536F0804144A4E67C477",
+          "profile": "C:\\Users\\13359\\.ohos\\config\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\13359\\.ohos\\config\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.p12",
+          "storePassword": "0000001A57148C1FE8E62AA84F64F22682720FD296F1EC7A022B39348DE2F531D7F16A7FEE3C978290DD"
+        }
+      },
+      {
+        "name": "release",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "F:/DevEcoStudioKey/manxia/manxia.p12",
+          "storePassword": "00000018C1D35676ABF40D112BFEE3B6CD78BE289F1BCFA9DEE30D49D4F6EF99B145D29537EAB6B9",
+          "keyAlias": "manxia",
+          "keyPassword": "0000001892F6F265EEEDCAFD3B682F1302D951D7804B5781323778D6DD51C0394CB1DF1C01B7AD3E",
+          "signAlg": "SHA256withECDSA",
+          "profile": "F:/DevEcoStudioKey/manxia/manxiaDebug.p7b",
+          "certpath": "F:/DevEcoStudioKey/manxia/漫匣.cer"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "5.1.1(19)",
+        "compatibleSdkVersion": "5.1.0(18)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          },
+          "nativeCompiler": "BiSheng"
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

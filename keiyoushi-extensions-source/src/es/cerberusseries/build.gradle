@@ -1,0 +1,10 @@
+ext {
+    extName = 'Cerberus Series'
+    extClass = '.CerberusSeries'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://legionscans.com/wp'
+    overrideVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

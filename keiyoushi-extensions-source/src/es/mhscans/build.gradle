@@ -1,0 +1,10 @@
+ext {
+    extName = 'MHScans'
+    extClass = '.MHScans'
+    themePkg = 'madara'
+    baseUrl = 'https://curiosidadtop.com'
+    overrideVersionCode = 6
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

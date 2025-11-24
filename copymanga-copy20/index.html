@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CopyManga Copy20 插件 – 專案概覽與指南</title>
+    <style>
+        /* CSS variables to keep colours consistent */
+        :root {
+            --bg: #f5f7fa;
+            --card-bg: #ffffff;
+            --primary: #4f46e5;
+            --secondary: #6d28d9;
+            --text: #1f2937;
+            --muted: #6b7280;
+            --border: #e5e7eb;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: var(--text);
+            background-color: var(--bg);
+        }
+
+        header {
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            color: #fff;
+            padding: 60px 20px;
+            text-align: center;
+        }
+
+        header h1 {
+            margin: 0 0 10px;
+            font-size: 2.5rem;
+            line-height: 1.2;
+        }
+
+        header p {
+            margin: 0 0 20px;
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        header a.button {
+            display: inline-block;
+            background: #fff;
+            color: var(--primary);
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background 0.2s ease;
+        }
+
+        header a.button:hover {
+            background: #f0f0ff;
+        }
+
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        section {
+            margin-bottom: 40px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .card h2 {
+            margin-top: 0;
+            font-size: 1.6rem;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+        }
+
+        .card h2 .icon {
+            margin-right: 8px;
+            font-size: 1.4rem;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 6px;
+        }
+
+        pre {
+            background: #f0f4ff;
+            border-radius: 6px;
+            padding: 12px;
+            overflow-x: auto;
+        }
+
+        footer {
+            text-align: center;
+            color: var(--muted);
+            padding: 20px;
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+        }
+
+        @media (max-width: 600px) {
+            header h1 {
+                font-size: 1.8rem;
+            }
+            header p {
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>CopyManga Copy20 &amp; Tachiyomi</h1>
+        <p>A modern fork of the stevenyomi/copymanga extension, updated to support the new domain <strong>copy20.com</strong> and compatible with recent Tachiyomi variants.</p>
+        <a class="button" href="https://github.com/LittleSurvival/copymanga-copy20" target="_blank" rel="noopener">拜託打顆星星吧 ⭐ ~</a>
+    </header>
+    <main>
+        <section id="about">
+            <div class="card">
+                <h2><span class="icon">🧩</span> 說明</h2>
+                <p><strong>CopyManga Copy20</strong> 是 <a href="https://github.com/stevenyomi/copymanga" target="_blank">stevenyomi/copymanga</a> 的延伸版，由於原作者已一年以上未更新，敝人基於其插件進行逆向與修補，使擴充套件能夠支援新域名 <strong>copy20.com</strong>，讓使用者能夠繼續從 CopyManga 平台閱讀漫畫。</p>
+                <p>該專案正在積極維護中，請考慮為儲存庫加星以表示您的支持！</p>
+            </div>
+        </section>
+
+        <section id="usage">
+            <div class="card">
+                <h2><span class="icon">🔧</span> 用法</h2>
+                <p>若要在 Tachiyomi 或其分支版本（Tachiyomi J2K、Suwayomi、Tachidesk 等）中安裝 CopyManga Copy20 擴充套件，請按照以下步驟操作：</p>
+                <ol>
+                    <li>
+                        <strong>使用倉庫更新地址。</strong> 在 Tachiyomi 中，打開 <em>瀏覽</em> 選項卡 > <em>擴充套件</em> > 點擊 <em>三點菜單</em> 並選擇 <em>「新增擴充套件倉庫」</em>。將以下 URL 貼到倉庫欄位中：
+                        <pre><code>https://raw.githubusercontent.com/LittleSurvival/copymanga-copy20/repo/index.min.json</code></pre>
+                        這會告訴 Tachiyomi 直接從 GitHub 獲取 CopyManga Copy20 擴充套件。
+                    </li>
+                    <li>
+                        <strong>安裝擴充套件。</strong> 新增倉庫後，在擴充套件列表中搜尋「CopyManga Copy20」並點擊「安裝」。擴充套件將會下載並啟用。
+                    </li>
+                    <li>
+                        <strong>備用方案：下載 APK。</strong> 如果新增倉庫對您不起作用，您可以從專案的 <a href="https://github.com/LittleSurvival/copymanga-copy20/releases" target="_blank">發布頁面</a> 手動下載 APK 並安裝到您的設備上。
+                    </li>
+                </ol>
+            </div>
+        </section>
+
+        <section id="tachiyomi">
+            <div class="card">
+                <h2><span class="icon">📖</span> 什麼是 Tachiyomi?</h2>
+                <p><strong>Tachiyomi</strong> 是一款適用於 Android 的免費開源漫畫閱讀器。它讓您可以從各種來源線上閱讀漫畫或離線閱讀已下載的章節。以下是它的一些顯著功能：</p>
+                <ul>
+                    <li>從許多不同來源線上閱讀，以及離線閱讀已下載的內容。</li>
+                    <li>可配置的閱讀器，具有多種檢視器、閱讀方向和其他設定。</li>
+                    <li>與流行的追蹤服務整合，例如 MyAnimeList、AniList、Kitsu、Shikimori 和 Manga Updates。</li>
+                    <li>用於組織您的圖書館的類別以及自動淺色/深色主題。</li>
+                    <li>預定的圖書館更新以及建立本地或雲端備份的功能。</li>
+                </ul>
+                <p>CopyManga Copy20 作為一個來源插入 Tachiyomi。安裝後，您可以直接在應用程式中瀏覽、搜尋和閱讀來自 CopyManga/HotManga 網站的漫畫。</p>
+            </div>
+        </section>
+
+        <section id="updates">
+            <div class="card">
+                <h2><span class="icon">🆕</span> 最新更新 v1.4.73</h2>
+                <p>該專案定期更新。目前版本為 <strong>v1.4.73</strong>。近期更新包括：</p>
+                <ul>
+                    <li>新版本與Tachidesk/Suwayomi最新版本兼容。</li>
+                    <li>現已支持熱辣漫畫 (可在插鍵設定更改api域名切換)。</li>
+                    <li>修復拷貝更新導致的解析失敗問題。</li>
+                    <li>拉高搜索限頻，改進搜索被限情況。</li>
+                    <li>增加防範不支持對應功能(例如非Andriod端使用章末吐槽)導致app崩潰的措施。</li>
+                    <li>修復部分移動端存在無法使用WebView登入問題 (目前可能無法支持ios)。</li>
+                    <li>篩選漫畫功能中，添加獲取拷貝/熱辣源站書櫃漫畫選項 (需登入，此功能意在使用戶能方便遷移在拷貝中收藏的漫畫)。</li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="faq">
+            <div class="card">
+                <h2><span class="icon">❓</span> Q&nbsp;&amp;&nbsp;A</h2>
+                <p>README 也提供了一些常見問題和疑難排解提示：</p>
+                <ul>
+                    <li><strong>[New] : 為何把熱辣源併進拷貝，不做獨立新源?</strong> 由於兩者後端和漫畫存儲模式近乎一模一樣，且搬遷會導致某些無端麻煩，不如直接用api域名併入。</li>
+                    <li><strong>舊單行本下載檔案無法識別。</strong> 目前唯一解為解除收藏 -> "進階>清除資料庫" -> 刷新章節 -> "進階>重新索引下載位置"，但這也會導致閱讀紀錄被清除，不推薦。</li>
+                    <li><strong>普通章節檔案無法識別可能是簡繁轉換導致無法匹配。</strong></li>
+                    <li><strong>關於只能看五頁，請嘗試更換User-Agent(包括插件設定以及Mihon本身自帶的UA設定)。</strong></li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="community">
+            <div class="card">
+                <h2><span class="icon">🤝</span> 社群與支援</h2>
+                <p>如果您有問題、需要幫助或想與其他使用者聊天，可以透過 Discord 或 QQ 加入社群：</p>
+                <ul>
+                    <li>Discord: <a href="https://discord.gg/kE2VAZk2pd" target="_blank">加入 Discord 伺服器</a></li>
+                    <li>QQ 群: <a href="https://qm.qq.com/q/uPGMxTrBIe" target="_blank">516631221</a></li>
+                </ul>
+                <p>您也可以在 GitHub 上關注專案以獲取更新，並提交問題或拉取請求。您的回饋有助於改進擴充套件！</p>
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2025 CopyManga Copy20 擴充套件。此頁面為非官方指南，不隸屬於 CopyManga 平台。</p>
+    </footer>
+</body>
+</html>

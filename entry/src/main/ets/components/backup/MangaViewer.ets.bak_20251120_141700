@@ -1,0 +1,35 @@
+private async ensurePixelMapLoaded(page: MangaPage): Promise<void> {
+  const existed: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
+  if (existed) {
+    return;
+  }
+  const fsPath: string | undefined = this.getFsPathFromPage(page);
+  if (!fsPath) {
+    return;
+  }
+  try {
+    const src: image.ImageSource = image.createImageSource(fsPath);
+    const decodingOptions: image.DecodingOptions = { desiredPixelFormat: image.PixelMapFormat.RGBA_8888 } as image.DecodingOptions;
+    const pm: image.PixelMap = await src.createPixelMap(decodingOptions);
+    this.pagePixelMaps.set(page.id, pm);
+    this.pagePixelMaps = new Map(this.pagePixelMaps);
+    try {
+      const statInfo = await fs.stat(fsPath);
+      const sizeNum: number = statInfo.size ? (statInfo.size as number) : 0;
+      this.pagePixelMapMeta.set(page.id, { path: fsPath, size: sizeNum } as PixelMapMeta);
+    } catch (_e) {}
+    this.incrementPixelMapEpoch(page.id);
+    const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+    const newState: ImageLoadState = {
+      isLoading: false,
+      isLoaded: true,
+      dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+      error: undefined
+    } as ImageLoadState;
+    this.imageLoadStates.set(page.id, newState);
+    this.imageLoadStates = new Map(this.imageLoadStates);
+    logger.debug(TAG, `PixelMap加载完成: id=${page.id}, path=${fsPath}, epoch=${this.getPixelMapEpoch(page.id)}`);
+  } catch (err) {
+    this.logDetailedLoadError(page, err as BusinessError);
+  }
+}

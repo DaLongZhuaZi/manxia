@@ -1,0 +1,10 @@
+ext {
+    extName = 'AsmHentai'
+    extClass = '.ASMHFactory'
+    themePkg = 'galleryadults'
+    baseUrl = 'https://asmhentai.com'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

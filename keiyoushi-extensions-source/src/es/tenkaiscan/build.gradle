@@ -1,0 +1,8 @@
+ext {
+    extName = 'Falco Scan'
+    extClass = '.FalcoScan'
+    extVersionCode = 37
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

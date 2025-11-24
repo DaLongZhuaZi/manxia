@@ -1,0 +1,389 @@
+{
+  "metadata": {
+    "id": "komiic",
+    "name": "Komiic",
+    "version": "5.0.0",
+    "author": "ManXia Team",
+    "description": "Komiic漫画图源 - 基于Kotlin版本移植，支持JWT Token认证和自动刷新",
+    "baseUrl": "https://komiic.com",
+    "language": "zh-TW",
+    "nsfw": false,
+    "tags": ["graphql", "jwt", "chinese", "taiwanese"]
+  },
+  
+  "capabilities": {
+    "urlResolver": false,
+    "chineseConverter": false,
+    "pagination": true,
+    "userAgentRotation": false,
+    "errorRetry": true,
+    "sessionManagement": true,
+    "authentication": true
+  },
+
+  "settings": {
+    "enableJavaScript": true,
+    "enableImages": false,
+    "enableCookies": true,
+    "bypassCloudflare": true,
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "chapterFilter": "all",
+    "checkApiLimit": true
+  },
+
+  "userSettings": [
+    {
+      "key": "chapterFilter",
+      "type": "list",
+      "title": "章節列表顯示",
+      "description": "注：部分漫畫小概率會有章節缺失，僅顯示章節就沒法通過看卷的內容來補充了。建議不要僅顯示卷，會導致無法獲取及時章節更新",
+      "default": "all",
+      "options": [
+        {"value": "all", "label": "同時顯示卷和章節"},
+        {"value": "chapter", "label": "僅顯示章節"},
+        {"value": "book", "label": "僅顯示卷"}
+      ]
+    },
+    {
+      "key": "checkApiLimit",
+      "type": "boolean",
+      "title": "自動檢查 API 狀態",
+      "description": "點擊單個章節請求漫畫圖片時，自動檢查一次圖片API是否達到今日請求上限。若已達上限，則終止後續操作（注：關閉后仍會檢查API，只是不再終止操作）",
+      "default": true
+    }
+  ],
+  
+  "network": {
+    "timeout": 30000,
+    "retryCount": 3,
+    "retryDelay": 1000,
+    "headers": {
+      "Content-Type": "application/json",
+      "Accept": "*/*",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Accept-Language": "zh-CN,zh-HK;q=0.9,zh;q=0.8,zh-TW;q=0.7",
+      "User-Agent": "{{settings.userAgent}}",
+      "Origin": "https://komiic.com",
+      "Referer": "https://komiic.com",
+      "DNT": "1",
+      "Sec-CH-UA": "\"Chromium\";v=\"142\", \"Google Chrome\";v=\"142\", \"Not_A Brand\";v=\"99\"",
+      "Sec-CH-UA-Mobile": "?0",
+      "Sec-CH-UA-Platform": "\"Windows\"",
+      "Sec-Fetch-Dest": "empty",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Site": "same-origin"
+    }
+  },
+
+  "authentication": {
+    "required": false,
+    "type": "webview",
+    "loginUrl": "https://komiic.com/login",
+    "successUrlPattern": "https://komiic.com/",
+    "cookieNames": ["komiic-access-token"],
+    "tokenRefresh": {
+      "enabled": true,
+      "endpoint": "/auth/refresh",
+      "method": "POST",
+      "checkInterval": 3600000,
+      "beforeExpire": 3600000,
+      "tokenFormat": "jwt",
+      "tokenLocation": "cookie",
+      "tokenName": "komiic-access-token"
+    }
+  },
+
+  "pagination": {
+    "type": "offset",
+    "pageSize": 30,
+    "maxPages": 100,
+    "offsetParam": "offset",
+    "limitParam": "limit"
+  },
+
+  "errorHandling": {
+    "retry": {
+      "enabled": true,
+      "maxAttempts": 3,
+      "strategy": "exponential",
+      "baseDelay": 1000,
+      "maxDelay": 10000,
+      "retryOn": {
+        "statusCodes": [408, 429, 500, 502, 503, 504],
+        "errors": ["TIMEOUT", "NETWORK_ERROR"]
+      }
+    },
+    "imageLimit": {
+      "enabled": true,
+      "checkField": "reachedImageLimit",
+      "errorMessage": "今日圖片讀取次數已達上限，請登录或明天再來！"
+    }
+  },
+
+  "api": {
+    "type": "graphql",
+    "endpoint": "https://komiic.com/api/query",
+    "headers": {
+      "Content-Type": "application/json",
+      "Accept": "*/*",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Accept-Language": "zh-CN,zh-HK;q=0.9,zh;q=0.8,zh-TW;q=0.7",
+      "User-Agent": "{{settings.userAgent}}",
+      "Origin": "https://komiic.com",
+      "Referer": "https://komiic.com",
+      "DNT": "1",
+      "Sec-CH-UA": "\"Chromium\";v=\"142\", \"Google Chrome\";v=\"142\", \"Not_A Brand\";v=\"99\"",
+      "Sec-CH-UA-Mobile": "?0",
+      "Sec-CH-UA-Platform": "\"Windows\"",
+      "Sec-Fetch-Dest": "empty",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Site": "same-origin"
+    }
+  },
+  
+  "workflows": {
+    "initialize": [
+      {
+        "type": "http",
+        "method": "GET",
+        "url": "{{baseUrl}}",
+        "description": "预热站点以建立基础Cookie"
+      },
+      {
+        "type": "http",
+        "method": "POST",
+        "url": "{{baseUrl}}/auth/refresh",
+        "headers": "{{api.headers}}",
+        "body": {},
+        "description": "刷新会话以获取sid Cookie"
+      }
+    ],
+    "latest": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query recentUpdate($pagination: Pagination!) { recentUpdate(pagination: $pagination) { id title description status imageUrl authors { id name } categories { id name } dateUpdated } }",
+        "variables": {
+          "pagination": {
+            "limit": 30,
+            "offset": "{{offset}}",
+            "orderBy": "DATE_UPDATED",
+            "asc": false
+          }
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.recentUpdate",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "imageUrl",
+          "author": "authors[0].name",
+          "description": "description",
+          "status": "status",
+          "genres": "categories[*].name",
+          "url": "https://komiic.com/comic/{{id}}"
+        }
+      }
+    },
+    
+    "popular": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query hotComics($pagination: Pagination!) { hotComics(pagination: $pagination) { id title description status imageUrl authors { id name } categories { id name } monthViews } }",
+        "variables": {
+          "pagination": {
+            "limit": 30,
+            "offset": "{{offset}}",
+            "orderBy": "MONTH_VIEWS",
+            "asc": false
+          }
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.hotComics",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "imageUrl",
+          "author": "authors[0].name",
+          "description": "description",
+          "status": "status",
+          "genres": "categories[*].name",
+          "url": "https://komiic.com/comic/{{id}}"
+        }
+      }
+    },
+    
+    "search": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query searchComicAndAuthorQuery($keyword: String!) { searchComicsAndAuthors(keyword: $keyword) { comics { id title description status imageUrl authors { id name } categories { id name } } } allCategory { id name } }",
+        "variables": {
+          "keyword": "{{keyword}}"
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.searchComicsAndAuthors.comics",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "imageUrl",
+          "author": "authors[0].name",
+          "description": "description",
+          "status": "status",
+          "genres": "categories[*].name",
+          "url": "https://komiic.com/comic/{{id}}"
+        }
+      }
+    },
+
+    "searchById": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query comicByIds($comicIds: [ID]!) { comics: comicByIds(comicIds: $comicIds) { id title description status imageUrl authors { id name } categories { id name } } }",
+        "variables": {
+          "comicIds": ["{{comicId}}"]
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.comics",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "imageUrl",
+          "author": "authors[0].name",
+          "description": "description",
+          "status": "status",
+          "genres": "categories[*].name",
+          "url": "https://komiic.com/comic/{{id}}"
+        }
+      }
+    },
+
+    "filter": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query comicByCategories($categoryId: [ID!]!, $pagination: Pagination!) { comics: comicByCategories(categoryId: $categoryId, pagination: $pagination) { id title description status imageUrl authors { id name } categories { id name } } allCategory { id name } }",
+        "variables": {
+          "categoryId": "{{categoryId}}",
+          "pagination": {
+            "limit": 30,
+            "offset": "{{offset}}",
+            "orderBy": "{{orderBy}}",
+            "asc": false,
+            "status": "{{status}}",
+            "sexyLevel": "{{sexyLevel}}"
+          }
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.comics",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "imageUrl",
+          "author": "authors[0].name",
+          "description": "description",
+          "status": "status",
+          "genres": "categories[*].name",
+          "url": "https://komiic.com/comic/{{id}}"
+        }
+      }
+    },
+    
+    "getMangaDetail": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query chapterByComicId($comicId: ID!) { comicById(comicId: $comicId) { id title description status imageUrl authors { id name } categories { id name } } chaptersByComicId(comicId: $comicId) { id serial type size dateCreated } }",
+        "variables": {
+          "comicId": "{{mangaId}}"
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.comicById",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "cover": "imageUrl",
+          "author": "authors[0].name",
+          "description": "description",
+          "status": "status",
+          "genres": "categories[*].name"
+        }
+      }
+    },
+    
+    "getChapterList": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query chapterByComicId($comicId: ID!) { chaptersByComicId(comicId: $comicId) { id serial type size dateCreated } }",
+        "variables": {
+          "comicId": "{{mangaId}}"
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.chaptersByComicId",
+        "fields": {
+          "id": "id",
+          "title": "serial",
+          "type": "type",
+          "size": "size",
+          "publishTime": "dateCreated"
+        }
+      }
+    },
+    
+    "getPageList": {
+      "type": "api",
+      "method": "POST",
+      "url": "{{api.endpoint}}",
+      "headers": "{{api.headers}}",
+      "body": {
+        "query": "query imagesByChapterId($chapterId: ID!) { reachedImageLimit imagesByChapterId(chapterId: $chapterId) { kid } }",
+        "variables": {
+          "chapterId": "{{chapterId}}"
+        }
+      },
+      "extract": {
+        "type": "json",
+        "path": "data.imagesByChapterId",
+        "fields": {
+          "kid": "kid"
+        }
+      }
+    },
+    
+    "getImageUrl": {
+      "type": "direct",
+      "url": "https://komiic.com/api/image/{{kid}}"
+    }
+  }
+}
