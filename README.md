@@ -62,26 +62,185 @@ cd manxia
 
 ```
 manxia/
+├── AppScope/                       # 应用全局配置
+│   ├── app.json5                   # 应用配置文件
+│   └── resources/                  # 全局资源
 ├── entry/                          # 主模块
 │   └── src/main/
 │       ├── ets/                    # ArkTS 源代码
-│       │   ├── Framework/          # 核心框架
-│       │   │   ├── WebView/        # WebView 图源引擎
+│       │   ├── entryability/       # 应用入口能力
+│       │   │   └── EntryAbility.ets
+│       │   ├── Framework/          # 核心框架层
+│       │   │   ├── Adapters/       # 适配器层
+│       │   │   ├── Animation/      # 动画系统
+│       │   │   ├── Authentication/ # 认证系统
+│       │   │   ├── Cache/          # 缓存管理
+│       │   │   │   ├── CoverCacheManager.ets        # 封面缓存
+│       │   │   │   ├── ImageCacheManager.ets        # 图片缓存
+│       │   │   │   ├── OnlineImageLoader.ets        # 在线图片加载
+│       │   │   │   ├── PermanentImageCacheManager.ets # 永久缓存
+│       │   │   │   └── WebViewDataCacheManager.ets  # WebView数据缓存
+│       │   │   ├── Components/     # 通用UI组件
+│       │   │   │   ├── ConsolePanel.ets             # 控制台面板
+│       │   │   │   ├── CoverSelectionDialog.ets     # 封面选择对话框
+│       │   │   │   ├── EBookMetadataDialog.ets      # 电子书元数据对话框
+│       │   │   │   ├── EBookReadingSettingsPanel.ets # 电子书阅读设置
+│       │   │   │   ├── GlobalBackgroundLayer.ets    # 全局背景层
+│       │   │   │   ├── GuideOverlay.ets             # 引导遮罩
+│       │   │   │   ├── PdfViewerComponent.ets       # PDF查看器
+│       │   │   │   ├── PerformanceChart.ets         # 性能图表
+│       │   │   │   ├── ReaderKitViewerComponent.ets # 阅读器组件
+│       │   │   │   ├── ThemeAware.ets               # 主题感知
+│       │   │   │   ├── ThemeToggle.ets              # 主题切换
+│       │   │   │   └── UniversalDialog.ets          # 通用对话框
+│       │   │   ├── Compress/       # 压缩/解压系统
+│       │   │   │   └── ComicArchiveManager.ets      # 漫画压缩包管理
+│       │   │   ├── Core/           # 核心功能
+│       │   │   │   └── ErrorHandler.ets             # 错误处理
+│       │   │   ├── Data/           # 数据管理层
+│       │   │   │   ├── DataManager.ets              # 数据管理器
+│       │   │   │   └── EBookDataManager.ets         # 电子书数据管理
+│       │   │   ├── Database/       # 数据库层
+│       │   │   │   ├── DatabaseManager.ets          # 数据库管理器
+│       │   │   │   ├── DatabaseSchema.ets           # 数据库架构
+│       │   │   │   ├── DatabaseTypes.ets            # 数据库类型定义
+│       │   │   │   └── MigrationScripts.ets         # 数据迁移脚本
+│       │   │   ├── Debug/          # 调试工具
+│       │   │   │   ├── ConsolePanel.ets             # 调试控制台
+│       │   │   │   ├── HidebugPerformanceCollector.ets # 性能收集
+│       │   │   │   ├── LogCollector.ets             # 日志收集
+│       │   │   │   └── PerformanceAnalyzer.ets      # 性能分析
+│       │   │   ├── Diagnostics/    # 诊断系统
+│       │   │   │   ├── StartupController.ets        # 启动控制器
+│       │   │   │   ├── StartupDiagnostics.ets       # 启动诊断
+│       │   │   │   ├── StartupRecovery.ets          # 启动恢复
+│       │   │   │   └── StartupTest.ets              # 启动测试
+│       │   │   ├── Download/       # 下载管理
+│       │   │   │   └── DownloadManager.ets          # 下载管理器
 │       │   │   ├── ImageProcessing/# 图片处理系统
-│       │   │   ├── Data/           # 数据管理
+│       │   │   │   └── ImageDescramblerInitializer.ets # 图片解扰初始化
+│       │   │   ├── Initialization/ # 初始化系统
+│       │   │   │   └── DataInitializer.ets          # 数据初始化
+│       │   │   ├── Loading/        # 加载状态管理
+│       │   │   │   └── LoadingStateManager.ets      # 加载状态管理器
 │       │   │   ├── Managers/       # 系统管理器
-│       │   │   └── Components/     # UI 组件
-│       │   ├── Pages/              # 页面组件
-│       │   └── Utils/              # 工具类
-│       └── resources/              # 资源文件
+│       │   │   │   ├── AppInfoManager.ets           # 应用信息管理
+│       │   │   │   ├── Component.ets                # 组件管理
+│       │   │   │   ├── CookieManager.ets            # Cookie管理
+│       │   │   │   ├── DeviceAdaptationManager.ets  # 设备适配管理
+│       │   │   │   ├── MangaDataLoader.ets          # 漫画数据加载
+│       │   │   │   ├── NotificationManager.ets      # 通知管理
+│       │   │   │   ├── SearchHistoryManager.ets     # 搜索历史管理
+│       │   │   │   └── SettingsManager.ets          # 设置管理
+│       │   │   ├── Parsers/        # 解析器
+│       │   │   │   └── EBookParser.ets              # 电子书解析器
+│       │   │   ├── Plugin/         # 插件系统
+│       │   │   ├── Services/       # 服务层
+│       │   │   ├── Source/         # 图源系统
+│       │   │   ├── Storage/        # 存储管理
+│       │   │   ├── Types/          # 类型定义
+│       │   │   │   └── StatusEnums.ets              # 状态枚举
+│       │   │   ├── Utils/          # 框架工具类
+│       │   │   │   ├── DataValidator.ets            # 数据验证
+│       │   │   │   └── ResponsiveLayout.ets         # 响应式布局
+│       │   │   ├── WebView/        # WebView 图源引擎
+│       │   │   │   ├── ConfigurationParser.ets      # 配置解析器
+│       │   │   │   ├── MangaSourceActionEngine.ets  # 图源动作引擎
+│       │   │   │   ├── MangaSourceAPIEngine.ets     # 图源API引擎
+│       │   │   │   ├── WebViewImageLoader.ets       # WebView图片加载
+│       │   │   │   └── doc/                         # WebView文档
+│       │   │   ├── Workflow/       # 工作流系统
+│       │   │   ├── DependencyContainer.ets          # 依赖注入容器
+│       │   │   └── EventBus.ets                     # 事件总线
+│       │   ├── pages/              # 页面组件
+│       │   │   ├── AboutPage.ets                    # 关于页面
+│       │   │   ├── CoverSelectionPage.ets           # 封面选择页面
+│       │   │   ├── DataManagementPage.ets           # 数据管理页面
+│       │   │   ├── DownloadManagerPage.ets          # 下载管理页面
+│       │   │   ├── EBookDetailPage.ets              # 电子书详情页
+│       │   │   ├── EBookReaderPage.ets              # 电子书阅读页
+│       │   │   ├── GlobalSearchPage.ets             # 全局搜索页面
+│       │   │   ├── GlobalSettingsPage.ets           # 全局设置页面
+│       │   │   ├── LogManagerPage.ets               # 日志管理页面
+│       │   │   ├── MainMenuPage.ets                 # 主菜单页面
+│       │   │   ├── MangaDetailPage.ets              # 漫画详情页
+│       │   │   ├── MangaFeedbackPage.ets            # 漫画反馈页面
+│       │   │   ├── MangaReaderPage.ets              # 漫画阅读页
+│       │   │   ├── MangaSettingsPage.ets            # 漫画设置页面
+│       │   │   ├── MangaSourceTestPage.ets          # 图源测试页面
+│       │   │   ├── ReadingAnalyticsPage.ets         # 阅读分析页面
+│       │   │   ├── SearchPage.ets                   # 搜索页面（旧）
+│       │   │   ├── SourceDetailPage.ets             # 图源详情页
+│       │   │   ├── SourceGuidePage.ets              # 图源引导页
+│       │   │   ├── SourceLoginPage.ets              # 图源登录页
+│       │   │   ├── SourceManagementPage.ets         # 图源管理页面
+│       │   │   ├── SourceSettingsPage.ets           # 图源设置页面
+│       │   │   ├── SpecialEventPage.ets             # 特殊事件页面
+│       │   │   ├── SplashPage.ets                   # 启动页
+│       │   │   ├── StorageManagementPage.ets        # 存储管理页面
+│       │   │   ├── SystemAnimationDemoPage.ets      # 系统动画演示
+│       │   │   ├── SystemResourceDemoPage.ets       # 系统资源演示
+│       │   │   ├── SystemStatusPage.ets             # 系统状态页面
+│       │   │   ├── TestManagementPage.ets           # 测试管理页面
+│       │   │   ├── ThemeSettingsPage.ets            # 主题设置页面
+│       │   │   ├── WebViewConfigurableSystemTestPage.ets # WebView配置测试
+│       │   │   ├── WelcomeGuidePage.ets             # 欢迎引导页
+│       │   │   └── helpers/                         # 页面辅助工具
+│       │   ├── components/         # 业务组件
+│       │   │   ├── MangaInteractionOverlay.ets      # 漫画交互遮罩
+│       │   │   ├── MangaQuickSettings.ets           # 漫画快速设置
+│       │   │   ├── MangaReaderChapterList.ets       # 章节列表
+│       │   │   ├── MangaReaderSettings.ets          # 阅读器设置
+│       │   │   └── MangaViewer.ets                  # 漫画查看器
+│       │   ├── Models/             # 数据模型
+│       │   │   ├── EBookModels.ets                  # 电子书模型
+│       │   │   ├── MangaModels.ets                  # 漫画模型
+│       │   │   └── TempMangaModels.ets              # 临时漫画模型
+│       │   ├── Utils/              # 工具类
+│       │   │   ├── AvifTranscoder.ets               # AVIF转码器（未实现）
+│       │   │   ├── ComicInfoParser.ets              # 漫画信息解析
+│       │   │   ├── CompressionUtils.ets             # 压缩工具
+│       │   │   ├── DeviceInfo.ets                   # 设备信息
+│       │   │   ├── LogFloatingWindow.ets            # 日志浮窗
+│       │   │   ├── Logger.ets                       # 日志工具
+│       │   │   ├── NativeModuleManager.ets          # 原生模块管理
+│       │   │   └── WindowManager.ets                # 窗口管理
+│       │   ├── Data/               # 测试数据
+│       │   │   ├── ResourceMap.ets                  # 资源映射
+│       │   │   ├── SampleMangaData.ets              # 示例漫画数据
+│       │   │   └── TestData.ets                     # 测试数据
+│       │   ├── ShareExtAbility/    # 分享扩展能力
+│       │   ├── GlobalContext.ets   # 全局上下文
+│       │   └── MyAbilityStage.ets  # 应用生命周期
+│       ├── resources/              # 资源文件
+│       │   ├── base/               # 基础资源
+│       │   ├── dark/               # 深色主题资源
+│       │   └── rawfile/            # 原始文件
+│       └── module.json5            # 模块配置文件
 ├── sources/                        # 图源配置文件
+│   ├── copymanga_api.json          # 拷贝漫画 API配置
+│   ├── copymanga_webview.json      # 拷贝漫画 WebView配置
+│   ├── jinmantiantang_webview.json # 禁漫天堂 webview配置
+│   ├── komiic_api.json             # Komiic API配置
+│   ├── komiic_webview.json         # Komiic WebView配置
+│   ├── source-schema.json          # 图源配置架构
+│   └── *.md                        # 图源开发文档
 ├── docs/                           # 文档目录
 │   ├── development/                # 开发文档
 │   ├── analysis/                   # 分析报告
-│   └── logs/                       # 日志文件
+│   ├── architecture/               # 架构文档
+│   ├── guides/                     # 使用指南
+│   ├── tools/                      # 工具文档
+│   ├── troubleshooting/            # 故障排除
+│   ├── ui/                         # UI设计文档
+│   └── webview/                    # WebView相关文档
 ├── keiyoushi-extensions-source/    # Keiyoushi 扩展源参考
 ├── copymanga-copy20/               # 拷贝漫画源参考
-└── manxia-extensions-source/       # 漫匣自定义扩展源
+├── manxia-extensions-source/       # 漫匣自定义扩展源
+├── hvigor/                         # 构建工具配置
+├── build-profile.json5             # 构建配置
+├── hvigorfile.ts                   # 构建脚本
+└── oh-package.json5                # 依赖包配置
 
 ```
 
@@ -166,10 +325,10 @@ manxia/
 - **说明**: Keiyoushi 是 Tachiyomi 的社区维护版本，提供了大量的漫画图源扩展。本项目参考了其扩展架构设计和部分图源的实现逻辑，并根据 HarmonyOS 平台的WebView特性进行了重新实现。
 
 #### 2. CopyManga Copy20
-- **项目地址**: https://github.com/stevenyomi/copymanga-copy20
+- **项目地址**: https://github.com/LittleSurvival/copymanga-copy20/
 - **使用内容**: 拷贝漫画图源的 API 接口分析和实现参考
-- **许可证**: MIT License
-- **说明**: 该项目提供了拷贝漫画的 API 接口文档和实现示例，本项目参考了其 API 调用方式和数据结构设计。
+- **许可证**: 未明确声明（该项目基于 stevenyomi/copymanga 的延伸版本）
+- **说明**: 该项目是 stevenyomi/copymanga 的社区维护版本，提供了拷贝漫画的 API 接口文档和实现示例。本项目参考了其 API 调用方式和数据结构设计，并根据 HarmonyOS 平台特性进行了重新实现。
 
 ### 技术栈
 
@@ -259,5 +418,5 @@ SOFTWARE.
 ---
 
 <div align="center">
-Made with ❤️ by ManXia Team
+Made with ❤️ by DaLongzhuazi
 </div>
