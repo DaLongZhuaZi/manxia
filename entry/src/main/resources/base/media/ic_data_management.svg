@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 参照ic_settings：数据库圆柱采用填充型轮廓，通过两条水平镂空带体现分层数据，避免统一填充后变成实心块 -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M5 6c0-1.8 3.8-3 7-3s7 1.2 7 3v10c0 1.8-3.8 3-7 3s-7-1.2-7-3V6Zm2 4h10v1H7v-1Zm0 3h10v1H7v-1Z"/>
+</svg>

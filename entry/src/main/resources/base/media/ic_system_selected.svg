@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 系统图标 - 选中状态 (齿轮) -->
+  <!-- 齿轮外轮廓 - 填充 -->
+  <path d="M12 2L14 4.5L17 4L17.5 7L20.5 8.5L19 11.5L20.5 14.5L17.5 16L17 19L14 18.5L12 21L10 18.5L7 19L6.5 16L3.5 14.5L5 11.5L3.5 8.5L6.5 7L7 4L10 4.5L12 2Z" stroke="#007DFF" stroke-width="2" stroke-linejoin="round" fill="#E6F2FF"/>
+  <!-- 中心圆 - 填充 -->
+  <circle cx="12" cy="11.5" r="3.5" stroke="#007DFF" stroke-width="2" fill="#007DFF" opacity="0.5"/>
+</svg>
+

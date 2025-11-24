@@ -1,0 +1,10 @@
+ext {
+    extName = 'MikoRoku'
+    extClass = '.MikoRoku'
+    themePkg = 'zeistmanga'
+    baseUrl = 'https://www.mikoroku.com'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

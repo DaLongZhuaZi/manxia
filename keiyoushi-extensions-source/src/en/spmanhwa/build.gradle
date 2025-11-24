@@ -1,0 +1,10 @@
+ext {
+    extName = 'Spmanhwa'
+    extClass = '.Spmanhwa'
+    themePkg = 'madara'
+    baseUrl = 'https://spmanhwa.online'
+    overrideVersionCode = 0
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

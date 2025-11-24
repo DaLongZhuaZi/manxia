@@ -1,0 +1,8 @@
+ext {
+    extName = 'Manwa'
+    extClass = '.Manwa'
+    extVersionCode = 13
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

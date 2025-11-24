@@ -1,0 +1,10 @@
+ext {
+    extName = '3asq'
+    extClass = '.Manga3asq'
+    themePkg = 'madara'
+    baseUrl = 'https://3asq.org'
+    overrideVersionCode = 2
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

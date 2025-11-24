@@ -1,0 +1,626 @@
+/**
+ * 图源仓库管理器
+ * 负责管理extensions-source文件夹下的图源仓库
+ */
+
+import { logger } from '../../Utils/Logger';
+import { fileIo } from '@kit.CoreFileKit';
+import { Context } from '@kit.AbilityKit';
+import { SourceManager, ImportResult } from './SourceManager';
+import { http } from '@kit.NetworkKit';
+
+const TAG = 'SourceRepositoryManager';
+
+/**
+ * 图源子条目
+ */
+export interface SourceSubEntry {
+  name: string;         // 图源显示名称
+  lang: string;         // 语言
+  id: string;           // 图源ID
+  baseUrl: string;      // 基础URL
+}
+
+/**
+ * 图源仓库条目（参考Tachiyomi格式）
+ */
+export interface SourceRepositoryEntry {
+  name: string;           // 图源名称
+  pkg: string;            // 包名
+  apk?: string;           // APK文件名（可选）
+  lang: string;           // 语言
+  code: number;           // 版本代码
+  version: string;        // 版本号
+  nsfw: number;           // 是否NSFW (0/1)
+  sources: SourceSubEntry[];
+}
+
+/**
+ * 图源仓库索引文件（index.main.json）
+ */
+export interface SourceRepositoryIndex {
+  version: string;                          // 仓库版本
+  lastUpdate: number;                       // 最后更新时间
+  sources: SourceRepositoryEntry[];         // 图源列表
+}
+
+/**
+ * 已保存的仓库配置
+ */
+export interface SavedRepository {
+  id: string;             // 仓库ID
+  name: string;           // 仓库名称
+  url: string;            // 仓库URL
+  lastSync: number;       // 最后同步时间
+  sourceCount: number;    // 图源数量
+}
+
+/**
+ * 同步结果接口
+ */
+export interface SyncResult {
+  success: boolean;
+  message: string;
+  sourceCount?: number;
+}
+
+/**
+ * 图源仓库管理器类
+ */
+export class SourceRepositoryManager {
+  private static instance: SourceRepositoryManager | null = null;
+  private context: Context | null = null;
+  private repositoryDir: string = '';
+  private indexFilePath: string = '';
+  private savedRepositoriesPath: string = '';
+  private sourceManager: SourceManager;
+  
+  private decodeToString(buffer: ArrayBuffer, length: number): string {
+    const bytes: Uint8Array = new Uint8Array(buffer, 0, length);
+    let out: string = '';
+    let i: number = 0;
+    const len: number = bytes.length;
+    while (i < len) {
+      const b0: number = bytes[i++];
+      if ((b0 & 0x80) === 0) {
+        out += String.fromCharCode(b0);
+      } else if ((b0 & 0xe0) === 0xc0 && i < len) {
+        const b1: number = bytes[i++];
+        const code: number = ((b0 & 0x1f) << 6) | (b1 & 0x3f);
+        out += String.fromCharCode(code);
+      } else if ((b0 & 0xf0) === 0xe0 && i + 1 < len) {
+        const b1: number = bytes[i++];
+        const b2: number = bytes[i++];
+        const code: number = ((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f);
+        out += String.fromCharCode(code);
+      } else if ((b0 & 0xf8) === 0xf0 && i + 2 < len) {
+        const b1: number = bytes[i++];
+        const b2: number = bytes[i++];
+        const b3: number = bytes[i++];
+        let codePoint: number = ((b0 & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f);
+        codePoint -= 0x10000;
+        out += String.fromCharCode(0xd800 + ((codePoint >> 10) & 0x3ff));
+        out += String.fromCharCode(0xdc00 + (codePoint & 0x3ff));
+      } else {
+        out += '\uFFFD';
+      }
+    }
+    return out;
+  }
+
+  private constructor() {
+    this.sourceManager = SourceManager.getInstance();
+  }
+
+  private async ensureSavedRepositoriesFileExists(): Promise<void> {
+    try {
+      const exists = fileIo.accessSync(this.savedRepositoriesPath);
+      if (!exists) {
+        this.writeSavedRepositoriesToFile([]);
+        logger.info(TAG, '创建空的 saved_repositories.json');
+      }
+    } catch (_) {
+      this.writeSavedRepositoriesToFile([]);
+      logger.info(TAG, '创建空的 saved_repositories.json');
+    }
+  }
+
+  /**
+   * 获取单例实例
+   */
+  static getInstance(): SourceRepositoryManager {
+    if (!SourceRepositoryManager.instance) {
+      SourceRepositoryManager.instance = new SourceRepositoryManager();
+    }
+    return SourceRepositoryManager.instance;
+  }
+
+  /**
+   * 初始化仓库管理器
+   */
+  async initialize(context: Context): Promise<void> {
+    try {
+      this.context = context;
+      
+      // 设置仓库目录路径
+      const filesDir = context.filesDir;
+      this.repositoryDir = `${filesDir}/extensions-source`;
+      this.indexFilePath = `${this.repositoryDir}/index.main.json`;
+      this.savedRepositoriesPath = `${this.repositoryDir}/saved_repositories.json`;
+      
+      // 创建目录
+      await this.ensureDirectoryExists(this.repositoryDir);
+      
+      // 初始化索引文件
+      await this.ensureIndexFileExists();
+      await this.ensureSavedRepositoriesFileExists();
+      
+      logger.info(TAG, `仓库管理器初始化完成: ${this.repositoryDir}`);
+    } catch (error) {
+      const errorMsg = `初始化仓库管理器失败: ${String(error)}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+  }
+
+  /**
+   * 确保目录存在
+   */
+  private async ensureDirectoryExists(dirPath: string): Promise<void> {
+    try {
+      const exists = fileIo.accessSync(dirPath);
+      if (!exists) {
+        fileIo.mkdirSync(dirPath);
+        logger.info(TAG, `创建目录: ${dirPath}`);
+      }
+    } catch (error) {
+      // 目录不存在，创建它
+      try {
+        fileIo.mkdirSync(dirPath);
+        logger.info(TAG, `创建目录: ${dirPath}`);
+      } catch (mkdirError) {
+        const errorMsg = `创建目录失败: ${dirPath} - ${String(mkdirError)}`;
+        logger.error(TAG, errorMsg);
+        throw new Error(errorMsg);
+      }
+    }
+  }
+
+  /**
+   * 确保索引文件存在
+   */
+  private async ensureIndexFileExists(): Promise<void> {
+    try {
+      const exists = fileIo.accessSync(this.indexFilePath);
+      if (!exists) {
+        // 创建空的索引文件
+        const emptyIndex: SourceRepositoryIndex = {
+          version: '1.0.0',
+          lastUpdate: Date.now(),
+          sources: []
+        };
+        await this.saveIndexFile(emptyIndex);
+        logger.info(TAG, '创建空索引文件');
+      }
+    } catch (error) {
+      // 文件不存在，创建它
+      const emptyIndex: SourceRepositoryIndex = {
+        version: '1.0.0',
+        lastUpdate: Date.now(),
+        sources: []
+      };
+      await this.saveIndexFile(emptyIndex);
+      logger.info(TAG, '创建空索引文件');
+    }
+  }
+
+  /**
+   * 保存索引文件
+   */
+  private async saveIndexFile(index: SourceRepositoryIndex): Promise<void> {
+    try {
+      const jsonContent = JSON.stringify(index, null, 2);
+      const file = fileIo.openSync(this.indexFilePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, jsonContent);
+      fileIo.closeSync(file);
+      logger.info(TAG, '索引文件保存成功');
+    } catch (error) {
+      const errorMsg = `保存索引文件失败: ${String(error)}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+  }
+
+  /**
+   * 读取索引文件
+   */
+  async readIndexFile(): Promise<SourceRepositoryIndex> {
+    try {
+      const file = fileIo.openSync(this.indexFilePath, fileIo.OpenMode.READ_ONLY);
+      const buffer = new ArrayBuffer(10 * 1024 * 1024); // 10MB
+      const readLen = fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+
+      const jsonContent: string = this.decodeToString(buffer, readLen);
+
+      return JSON.parse(jsonContent) as SourceRepositoryIndex;
+    } catch (error) {
+      logger.error(TAG, '读取索引文件失败', String(error));
+      // 返回空索引
+      return {
+        version: '1.0.0',
+        lastUpdate: Date.now(),
+        sources: []
+      };
+    }
+  }
+
+  /**
+   * 从URL同步仓库
+   */
+  async syncRepositoryFromUrl(url: string, repositoryName?: string): Promise<SyncResult> {
+    try {
+      logger.info(TAG, `开始同步仓库: ${url}`);
+
+      // 下载仓库索引文件
+      const httpRequest = http.createHttp();
+      const response = await httpRequest.request(url, {
+        method: http.RequestMethod.GET,
+        connectTimeout: 30000,
+        readTimeout: 30000,
+        header: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.responseCode !== 200) {
+        throw new Error(`HTTP请求失败: ${response.responseCode}`);
+      }
+
+      const responseData = response.result as string;
+      const repositoryData = JSON.parse(responseData) as SourceRepositoryEntry[];
+
+      // 下载每个图源的实际配置文件
+      const sourceConfigs: Record<string, string> = {};
+      for (const entry of repositoryData) {
+        const sourceConfigUrl = this.resolveSourceConfigUrl(url, entry.pkg);
+        try {
+          const configResponse = await httpRequest.request(sourceConfigUrl, {
+            method: http.RequestMethod.GET,
+            connectTimeout: 30000,
+            readTimeout: 30000,
+            header: {
+              'Content-Type': 'application/json'
+            }
+          });
+
+          if (configResponse.responseCode !== 200 || !configResponse.result) {
+            logger.warn(TAG, `下载图源配置失败: ${entry.pkg}, code: ${configResponse.responseCode}`);
+            continue;
+          }
+
+          sourceConfigs[entry.pkg] = configResponse.result as string;
+        } catch (error) {
+          logger.warn(TAG, `下载图源配置异常: ${entry.pkg}`, String(error));
+        }
+      }
+
+      // 读取当前索引
+      const currentIndex = await this.readIndexFile();
+
+      // 合并图源（去重）
+      const existingIds = new Set(currentIndex.sources.map(s => s.pkg));
+      let addedCount = 0;
+      let updatedCount = 0;
+
+      const sourcesToImport: SourceRepositoryEntry[] = [];
+      for (const newSource of repositoryData) {
+        if (existingIds.has(newSource.pkg)) {
+          // 更新现有图源
+          const index = currentIndex.sources.findIndex(s => s.pkg === newSource.pkg);
+          if (index !== -1) {
+            currentIndex.sources[index] = newSource;
+            updatedCount++;
+          }
+        } else {
+          // 添加新图源
+          currentIndex.sources.push(newSource);
+          addedCount++;
+          sourcesToImport.push(newSource);
+        }
+      }
+
+      // 更新索引文件
+      currentIndex.lastUpdate = Date.now();
+      await this.saveIndexFile(currentIndex);
+
+      // 保存仓库配置
+      await this.saveRepositoryConfig(url, repositoryName || this.deriveRepositoryName(url), repositoryData.length);
+
+      // 保存各个图源的JSON文件
+      await this.saveSourceFiles(sourceConfigs);
+
+      // 导入新增的图源
+      if (sourcesToImport.length > 0) {
+        await this.importNewSources(sourcesToImport);
+      }
+
+      // 对于更新的图源，也需要重新导入到数据库
+      if (updatedCount > 0) {
+        logger.info(TAG, `检测到${updatedCount}个图源更新，重新导入到数据库`);
+        for (const source of repositoryData) {
+          if (existingIds.has(source.pkg)) {
+            try {
+              // 先删除旧的图源（如果存在）
+              const existingSources = await this.sourceManager.getAllSources();
+              const existingSource = existingSources.find(s => s.name === source.name);
+              if (existingSource) {
+                await this.sourceManager.deleteSource(existingSource.id);
+                logger.info(TAG, `删除旧图源: ${source.name}`);
+              }
+              
+              // 重新导入
+              const result = await this.importSourceFromRepository(source.pkg);
+              if (result.success) {
+                logger.info(TAG, `更新图源已重新导入: ${source.name}`);
+              } else {
+                logger.warn(TAG, `重新导入图源失败: ${source.name}`, result.error ?? '未知错误');
+              }
+            } catch (error) {
+              logger.warn(TAG, `重新导入图源异常: ${source.name}`, String(error));
+            }
+          }
+        }
+      }
+
+      logger.info(TAG, `仓库同步成功: 新增${addedCount}个, 更新${updatedCount}个图源`);
+
+      return {
+        success: true,
+        message: `同步成功！新增${addedCount}个图源，更新${updatedCount}个图源`,
+        sourceCount: repositoryData.length
+      };
+    } catch (error) {
+      logger.error(TAG, '同步仓库失败', String(error));
+      return {
+        success: false,
+        message: `同步失败: ${String(error)}`
+      };
+    }
+  }
+
+  /**
+   * 保存各个图源的JSON文件
+   */
+  private async saveSourceFiles(sourceConfigs: Record<string, string>): Promise<void> {
+    const entries: Array<[string, string]> = Object.entries(sourceConfigs);
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const pkg = entry[0];
+      const config = entry[1];
+      try {
+        const fileName = `${pkg}.json`;
+        const filePath = `${this.repositoryDir}/${fileName}`;
+
+        const file = fileIo.openSync(
+          filePath,
+          fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+        );
+        fileIo.writeSync(file.fd, config);
+        fileIo.closeSync(file);
+        logger.info(TAG, `图源文件保存成功: ${fileName}`);
+      } catch (error) {
+        logger.warn(TAG, `保存图源文件失败: ${pkg}`, String(error));
+      }
+    }
+  }
+
+  /**
+   * 保存仓库配置
+   */
+  private async saveRepositoryConfig(url: string, name: string, sourceCount: number): Promise<void> {
+    try {
+      const savedRepos = await this.getSavedRepositories();
+      
+      // 生成仓库ID
+      const repoId = this.generateRepositoryId(url);
+      
+      // 检查是否已存在
+      const existingIndex = savedRepos.findIndex(r => r.id === repoId);
+      const newRepo: SavedRepository = {
+        id: repoId,
+        name: name,
+        url: url,
+        lastSync: Date.now(),
+        sourceCount: sourceCount
+      };
+
+      if (existingIndex !== -1) {
+        savedRepos[existingIndex] = newRepo;
+      } else {
+        savedRepos.push(newRepo);
+      }
+
+      // 保存
+      this.writeSavedRepositoriesToFile(savedRepos);
+      logger.info(TAG, `已保存仓库配置, 总数: ${savedRepos.length}`);
+    } catch (error) {
+      logger.error(TAG, '保存仓库配置失败', String(error));
+    }
+  }
+
+  /**
+   * 获取已保存的仓库列表
+   */
+  async getSavedRepositories(): Promise<SavedRepository[]> {
+    try {
+      await this.ensureSavedRepositoriesFileExists();
+      const exists = fileIo.accessSync(this.savedRepositoriesPath);
+      if (!exists) {
+        return [];
+      }
+
+      const file = fileIo.openSync(this.savedRepositoriesPath, fileIo.OpenMode.READ_ONLY);
+      const buffer = new ArrayBuffer(1024 * 1024); // 1MB
+      const readLen = fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+
+      const jsonContent: string = this.decodeToString(buffer, readLen);
+
+      return JSON.parse(jsonContent) as SavedRepository[];
+    } catch (error) {
+      logger.warn(TAG, '读取已保存仓库失败', String(error));
+      return [];
+    }
+  }
+
+  /**
+   * 删除已保存的仓库
+   */
+  async deleteRepository(repoId: string): Promise<boolean> {
+    try {
+      const savedRepos = await this.getSavedRepositories();
+      const filteredRepos = savedRepos.filter(r => r.id !== repoId);
+      
+      this.writeSavedRepositoriesToFile(filteredRepos);
+      
+      return true;
+    } catch (error) {
+      logger.error(TAG, '删除仓库失败', String(error));
+      return false;
+    }
+  }
+
+  /**
+   * 生成仓库ID
+   */
+  private generateRepositoryId(url: string): string {
+    // 简单的哈希函数
+    let hash = 0;
+    for (let i = 0; i < url.length; i++) {
+      const char = url.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return `repo_${Math.abs(hash)}`;
+  }
+
+  /**
+   * 从仓库导入图源到应用
+   */
+  async importSourceFromRepository(pkg: string): Promise<ImportResult> {
+    try {
+      const filePath = `${this.repositoryDir}/${pkg}.json`;
+      const exists = fileIo.accessSync(filePath);
+      
+      if (!exists) {
+        return {
+          success: false,
+          error: '图源文件不存在'
+        };
+      }
+
+      // 读取图源文件
+      const file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      const buffer = new ArrayBuffer(1024 * 1024); // 1MB
+      const readLen = fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+
+      const jsonContent: string = this.decodeToString(buffer, readLen);
+
+      // 使用SourceManager导入
+      return await this.sourceManager.importFromJSON(jsonContent);
+    } catch (error) {
+      logger.error(TAG, '从仓库导入图源失败', String(error));
+      return {
+        success: false,
+        error: String(error)
+      };
+    }
+  }
+
+  /**
+   * 获取仓库中的所有图源
+   */
+  async getRepositorySources(): Promise<SourceRepositoryEntry[]> {
+    const index = await this.readIndexFile();
+    return index.sources;
+  }
+
+  /**
+   * 搜索仓库中的图源
+   */
+  async searchRepositorySources(keyword: string): Promise<SourceRepositoryEntry[]> {
+    const allSources = await this.getRepositorySources();
+    const lowerKeyword = keyword.toLowerCase();
+    
+    return allSources.filter(source => 
+      source.name.toLowerCase().includes(lowerKeyword) ||
+      source.pkg.toLowerCase().includes(lowerKeyword) ||
+      source.sources.some(s => s.name.toLowerCase().includes(lowerKeyword))
+    );
+  }
+
+  private writeSavedRepositoriesToFile(repos: SavedRepository[]): void {
+    const jsonContent = JSON.stringify(repos, null, 2);
+    const file = fileIo.openSync(
+      this.savedRepositoriesPath,
+      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+    );
+    fileIo.writeSync(file.fd, jsonContent);
+    fileIo.closeSync(file);
+  }
+
+  private async importNewSources(sources: SourceRepositoryEntry[]): Promise<void> {
+    for (const source of sources) {
+      try {
+        const result = await this.importSourceFromRepository(source.pkg);
+        if (result.success) {
+          logger.info(TAG, `新增图源已导入: ${source.name}`);
+        } else {
+          logger.warn(TAG, `导入图源失败: ${source.name}`, result.error ?? '未知错误');
+        }
+      } catch (error) {
+        logger.warn(TAG, `导入图源异常: ${source.name}`, String(error));
+      }
+    }
+  }
+
+  private resolveSourceConfigUrl(indexUrl: string, pkg: string): string {
+    if (!indexUrl) {
+      return `${pkg}.json`;
+    }
+    const queryIndex = indexUrl.indexOf('?');
+    const cleanUrl = queryIndex >= 0 ? indexUrl.substring(0, queryIndex) : indexUrl;
+    const lastSlashIndex = cleanUrl.lastIndexOf('/');
+    if (lastSlashIndex === -1) {
+      return `${cleanUrl}/${pkg}.json`;
+    }
+    const base = cleanUrl.substring(0, lastSlashIndex + 1);
+    return `${base}${pkg}.json`;
+  }
+
+  private deriveRepositoryName(url: string): string {
+    if (!url) {
+      return '在线仓库';
+    }
+
+    // 移除协议
+    let remainder = url;
+    const protocolSeparatorIndex = remainder.indexOf('://');
+    if (protocolSeparatorIndex >= 0) {
+      remainder = remainder.substring(protocolSeparatorIndex + 3);
+    }
+
+    if (remainder.length === 0) {
+      return '在线仓库';
+    }
+
+    // 主机名在第一个 '/' 之前
+    const slashIndex = remainder.indexOf('/');
+    if (slashIndex >= 0) {
+      return remainder.substring(0, slashIndex) || '在线仓库';
+    }
+    return remainder;
+  }
+}

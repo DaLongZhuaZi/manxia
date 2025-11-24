@@ -1,0 +1,10 @@
+ext {
+    extName = 'Catharsis World'
+    extClass = '.CatharsisWorld'
+    themePkg = 'madara'
+    baseUrl = 'https://catharsisworld.dig-it.info'
+    overrideVersionCode = 7
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

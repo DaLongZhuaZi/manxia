@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "name": "WebView安全策略配置",
+    "description": "WebView系统的安全策略配置文件",
+    "author": "WebView安全系统",
+    "created": "2024-01-01T00:00:00Z",
+    "updated": "2024-01-01T00:00:00Z"
+  },
+  "security": {
+    "csp": {
+      "enabled": true,
+      "defaultSrc": ["'self'"],
+      "scriptSrc": ["'self'", "'unsafe-inline'"],
+      "styleSrc": ["'self'", "'unsafe-inline'"],
+      "imgSrc": ["'self'", "data:", "https:"],
+      "connectSrc": ["'self'"],
+      "fontSrc": ["'self'"],
+      "objectSrc": ["'none'"],
+      "mediaSrc": ["'self'"],
+      "frameSrc": ["'none'"],
+      "childSrc": ["'self'"],
+      "formAction": ["'self'"],
+      "frameAncestors": ["'none'"],
+      "baseUri": ["'self'"],
+      "upgradeInsecureRequests": true,
+      "blockAllMixedContent": true,
+      "reportUri": "/csp-report",
+      "reportOnly": false
+    },
+    "antiCrawler": {
+      "enabled": true,
+      "userAgentBlacklist": [
+        "bot",
+        "crawler",
+        "spider",
+        "scraper"
+      ],
+      "ipBlacklist": [],
+      "rateLimiting": {
+        "enabled": true,
+        "maxRequestsPerMinute": 60,
+        "maxRequestsPerHour": 1000,
+        "blockDuration": 300000
+      },
+      "captchaVerification": {
+        "enabled": false,
+        "threshold": 10,
+        "provider": "recaptcha"
+      }
+    },
+    "domainControl": {
+      "enabled": true,
+      "allowedDomains": [
+        "*.example.com",
+        "trusted-site.org"
+      ],
+      "blockedDomains": [
+        "malicious-site.com",
+        "*.spam-domain.net"
+      ],
+      "defaultPolicy": "BLOCK",
+      "subdomainPolicy": "INHERIT",
+      "redirectPolicy": "FOLLOW_ALLOWED"
+    }
+  }
+}

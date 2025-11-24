@@ -1,0 +1,10 @@
+ext {
+    extName = 'IMHentai'
+    extClass = '.IMHentaiFactory'
+    themePkg = 'galleryadults'
+    baseUrl = 'https://imhentai.xxx'
+    overrideVersionCode = 15
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

@@ -1,0 +1,79 @@
+document.addEventListener("DOMContentLoaded", () => {
+    window.ZLibrary.registerAll();
+
+    const modules = ['contextmenu']
+
+    const overlay = document.createElement('div');
+    overlay.classList.add('dark-overlay')
+    document.body.appendChild(overlay)
+    overlay.addEventListener('click', () => {
+        window.ZLibrary.DOM.overlay = false
+        window.ZLibrary.DOM.scroll = true
+        window.ZLibrary.DOM.lightbox = ''
+        window.dispatchEvent(new Event('modalClose'))
+    })
+    const lightbox = document.createElement('div');
+    const lightboxImg = document.createElement('img');
+    const lightboxClose = document.createElement('div');
+    lightbox.innerHTML = ZLibrary.getSpinner()
+    lightbox.appendChild(lightboxImg)
+    lightbox.appendChild(lightboxClose)
+    lightboxImg.addEventListener('load', function(){
+        lightbox.classList.add('ready')
+    })
+    lightbox.classList.add('lightbox')
+    lightboxClose.classList.value = 'zlibicon-modal-closer close'
+    lightboxClose.addEventListener('click', ()=>{
+        window.ZLibrary.DOM.overlay = false
+        window.ZLibrary.DOM.scroll = true
+        window.ZLibrary.DOM.lightbox = ''
+    })
+    document.body.appendChild(lightbox)
+    window.ZLibrary.DOM = new Proxy({ overlay: false, scroll: true, lightbox: ''},
+        {
+            set(target, prop, val, receiver) {
+                switch(prop){
+                    case 'overlay':
+                        if (val) {
+                            overlay.classList.add('show', val)
+                        } else {
+                            overlay.classList.value = 'dark-overlay'
+                        }
+                        break;
+                    case 'scroll':
+                        if (val) {
+                            document.body.classList.remove('no-scroll')
+                        } else {
+                            document.body.classList.add('no-scroll')
+                        }
+                        break;
+                    case 'lightbox':
+                        if(val){
+                            lightboxImg.src = val
+                            lightbox.classList.add('show')
+                            overlay.classList.add('show', 'lightbox-overlay')
+                        }else{
+                            lightbox.classList.value = 'lightbox'
+                            setTimeout(()=>{lightboxImg.src = ''}, 300)
+                        }
+                        break;
+                }
+                return true
+            }
+        }
+    )
+
+    for (let input of document.querySelectorAll('input[search]')) {
+        input.setAttribute('type', 'text');
+        if(!input.hasAttribute('value')){
+            input.setAttribute('value', '');
+        }
+        input.outerHTML = `<div class="input-wrap search-input-wrap"><form onsubmit="${input.getAttribute('onsubmit').split('(')[0]}(event.target.childNodes[0].value)" action="javascript:void(0);">${input.outerHTML}<button type="reset" class="search-input-reset" onclick="${input.getAttribute('onreset').split('(')[0]}('')"><span class="zlibicon-cross"></span></button><button type="submit" class="search-input-button"><span class="zlibicon-search-bold"></span></button></form></div>`;
+    }
+
+    
+    const tooltips = document.querySelectorAll('[data-tooltip]')
+    tooltips.forEach(tooltip => {
+        tooltip.addEventListener('mouseenter', ZLibrary.showTooltip);
+    })
+});

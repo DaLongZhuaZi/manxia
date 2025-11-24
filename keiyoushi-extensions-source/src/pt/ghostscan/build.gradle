@@ -1,0 +1,10 @@
+ext {
+    extName = 'Ghost Scan'
+    extClass = '.GhostScan'
+    themePkg = 'madara'
+    baseUrl = 'https://ghostscan.xyz'
+    overrideVersionCode = 1
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

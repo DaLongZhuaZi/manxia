@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 参照ic_settings：采用填充型轮廓，并用evenodd镂空内部细节避免“糊成一团” -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M5 3h10.5l3.5 3.5V21H5V3Zm9.2 0l3.3 3.3H14.2V3ZM7 8h9v1H7V8Zm0 3h9v1H7v-1Zm0 3h9v1H7v-1Z"/>
+</svg>

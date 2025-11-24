@@ -1,0 +1,10 @@
+ext {
+    extName = 'Cerise Scan'
+    extClass = '.CeriseScan'
+    themePkg = 'madara'
+    baseUrl = 'https://loverstoon.com'
+    overrideVersionCode = 9
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

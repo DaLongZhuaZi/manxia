@@ -1,0 +1,982 @@
+/**
+ * 漫画图源引擎类型定义
+ * 定义JSON驱动的WebView自动化系统的所有类型接口
+ */
+
+// ==================== 基础类型定义 ====================
+
+/**
+ * 图源元数据
+ */
+export interface MangaSourceMetadata {
+  /** 图源名称 */
+  name: string;
+  /** 版本号 */
+  version: string;
+  /** 作者 */
+  author: string;
+  /** 描述 */
+  description: string;
+  /** 基础URL */
+  baseUrl: string;
+  /** 语言 */
+  language: string;
+  /** 创建时间 */
+  created: string;
+  /** 更新时间 */
+  updated: string;
+}
+
+/**
+ * 图源设置
+ */
+export interface MangaSourceSettings {
+  /** 自定义User-Agent */
+  userAgent?: string;
+  /** 超时时间(毫秒) */
+  timeout: number;
+  /** 重试次数 */
+  retryCount: number;
+  /** 启用JavaScript */
+  enableJavaScript: boolean;
+  /** 启用图片加载 */
+  enableImages: boolean;
+  /** 启用Cookie */
+  enableCookies: boolean;
+  /** 绕过Cloudflare */
+  bypassCloudflare: boolean;
+}
+
+// ==================== 选择器系统 ====================
+
+/**
+ * 选择器类型
+ */
+export enum SelectorType {
+  CSS = 'css',
+  XPATH = 'xpath',
+  TEXT = 'text',
+  ATTRIBUTE = 'attribute',
+  REGEX = 'regex',
+  COMPOSITE = 'composite'
+}
+
+/**
+ * 文本匹配类型
+ */
+export enum TextMatchType {
+  EXACT = 'exact',
+  CONTAINS = 'contains',
+  STARTS_WITH = 'starts_with',
+  ENDS_WITH = 'ends_with',
+  REGEX = 'regex'
+}
+
+/**
+ * CSS选择器
+ */
+export interface CSSSelector {
+  type: SelectorType.CSS;
+  value: string;
+  textMatch?: TextMatchType;
+  attribute?: string;
+}
+
+/**
+ * XPath选择器
+ */
+export interface XPathSelector {
+  type: SelectorType.XPATH;
+  value: string;
+  textMatch?: TextMatchType;
+  attribute?: string;
+}
+
+/**
+ * 文本匹配选择器
+ */
+export interface TextSelector {
+  type: SelectorType.TEXT;
+  value: string;
+  exact: boolean;
+  textMatch?: TextMatchType;
+}
+
+/**
+ * 属性匹配选择器
+ */
+export interface AttributeSelector {
+  type: SelectorType.ATTRIBUTE;
+  attribute: string;
+  value: string;
+  textMatch?: TextMatchType;
+}
+
+/**
+ * 正则表达式选择器
+ */
+export interface RegexSelector {
+  type: SelectorType.REGEX;
+  /** 正则表达式模式 */
+  pattern: string;
+  /** 正则标志 */
+  flags?: string;
+  /** 捕获组索引 */
+  group?: number;
+}
+
+/**
+ * 组合选择器
+ */
+export interface CompositeSelector {
+  type: SelectorType.COMPOSITE;
+  /** 组合操作符 */
+  operator: 'AND' | 'OR' | 'NOT';
+  /** 子选择器列表 */
+  selectors: Selector[];
+}
+
+/**
+ * 选择器联合类型
+ */
+export type Selector = CSSSelector | XPathSelector | TextSelector | AttributeSelector | 
+                       RegexSelector | CompositeSelector;
+
+// ==================== 操作类型定义 ====================
+
+/**
+ * 操作类型枚举
+ */
+export enum ActionType {
+  NAVIGATE = 'navigate',
+  WAIT = 'wait',
+  CLICK = 'click',
+  INPUT = 'input',
+  EXTRACT = 'extract',
+  CONDITION = 'condition',
+  SCRIPT = 'script',
+  CLOUDFLARE_BYPASS = 'cloudflareBypass',
+  CAPTCHA = 'captcha',
+  IP_BLOCK = 'ipBlock',
+  // 新增操作类型
+  LOOP = 'loop',
+  PARALLEL = 'parallel',
+  SCROLL = 'scroll',
+  HOVER = 'hover',
+  SELECT = 'select',
+  VARIABLE_SET = 'variableSet',
+  VARIABLE_GET = 'variableGet',
+  COOKIE_SET = 'cookieSet',
+  // API相关操作类型
+  API_REQUEST = 'api',
+  HTTP_REQUEST = 'http',
+  COOKIE_GET = 'cookieGet',
+  STORAGE_SET = 'storageSet',
+  STORAGE_GET = 'storageGet',
+  SCREENSHOT = 'screenshot'
+}
+
+/**
+ * 等待条件类型
+ */
+export enum WaitCondition {
+  ELEMENT = 'element',
+  TIME = 'time',
+  NETWORK_IDLE = 'networkidle',
+  LOAD = 'load'
+}
+
+/**
+ * 错误恢复策略
+ */
+export interface ErrorRecovery {
+  /** 最大重试次数 */
+  maxRetries: number;
+  /** 重试延迟(毫秒) */
+  retryDelay: number;
+  /** 降级操作 */
+  fallbackActions?: Action[];
+  /** 出错时跳过 */
+  skipOnError?: boolean;
+}
+
+/**
+ * 基础操作接口
+ */
+export interface BaseAction {
+  type: ActionType;
+  /** 操作描述 */
+  description?: string;
+  /** 是否可选操作 */
+  optional?: boolean;
+  /** 操作后等待时间 */
+  waitAfter?: number;
+  /** 错误恢复策略 */
+  errorRecovery?: ErrorRecovery;
+}
+
+/**
+ * 导航操作
+ */
+export interface NavigateAction extends BaseAction {
+  type: ActionType.NAVIGATE;
+  url: string;
+  waitFor?: WaitCondition;
+  timeout?: number;
+}
+
+/**
+ * 等待操作
+ */
+export interface WaitAction extends BaseAction {
+  type: ActionType.WAIT;
+  condition: WaitCondition;
+  selector?: string;
+  duration?: number;
+  timeout?: number;
+}
+
+/**
+ * 点击操作
+ */
+export interface ClickAction extends BaseAction {
+  type: ActionType.CLICK;
+  selector: string;
+}
+
+/**
+ * 输入操作
+ */
+export interface InputAction extends BaseAction {
+  type: ActionType.INPUT;
+  selector: string;
+  value: string;
+  clear?: boolean;
+}
+
+/**
+ * 数据提取字段定义
+ */
+export interface ExtractField {
+  /** 字段名 */
+  field: string;
+  /** 选择器 */
+  selector: string;
+  /** 提取属性 */
+  attribute: string;
+  /** 数据转换 */
+  transform?: string;
+  /** 正则表达式 */
+  regex?: string;
+  /** 正则分组 */
+  group?: number;
+}
+
+/**
+ * 提取操作
+ */
+export interface ExtractAction extends BaseAction {
+  type: ActionType.EXTRACT;
+  /** 选择器（从DOM提取时使用） */
+  selector?: string;
+  /** 数据源类型：selector(默认), variable, script */
+  source?: 'selector' | 'variable' | 'script';
+  /** 变量名（source为variable时使用） */
+  variable?: string;
+  /** 是否提取多个结果 */
+  multiple?: boolean;
+  /** 字段映射 */
+  fields: Record<string, string> | ExtractField[];
+  /** 数据验证规则 */
+  validation?: ValidationRule[];
+}
+
+/**
+ * 条件判断操作
+ */
+export interface ConditionAction extends BaseAction {
+  type: ActionType.CONDITION;
+  selector: string;
+  exists?: boolean;
+  text?: string;
+  then: Action[];
+  else?: Action[];
+}
+
+/**
+ * 脚本执行操作
+ */
+export interface ScriptAction extends BaseAction {
+  type: ActionType.SCRIPT;
+  code: string;
+}
+
+/**
+ * Cloudflare绕过操作
+ */
+export interface CloudflareBypassAction extends BaseAction {
+  type: ActionType.CLOUDFLARE_BYPASS;
+  method: 'wait' | 'solve';
+  maxWaitTime?: number;
+  indicators?: string[];
+}
+
+/**
+ * 验证码处理操作
+ */
+export interface CaptchaAction extends BaseAction {
+  type: ActionType.CAPTCHA;
+  selector: string;
+  method: 'manual' | 'auto';
+  timeout?: number;
+}
+
+/**
+ * IP限制处理操作
+ */
+export interface IPBlockAction extends BaseAction {
+  type: ActionType.IP_BLOCK;
+  indicators: string[];
+  action: 'retry' | 'abort';
+  delay?: number;
+}
+
+/**
+ * 循环跳出条件
+ */
+export interface LoopBreakCondition {
+  selector: string;
+  exists: boolean;
+}
+
+/**
+ * 循环操作
+ */
+export interface LoopAction extends BaseAction {
+  type: ActionType.LOOP;
+  /** 循环的元素选择器（可选，用于遍历元素） */
+  selector?: string;
+  /** 最大循环次数 */
+  maxIterations?: number;
+  /** 每次循环执行的操作 */
+  actions: Action[];
+  /** 跳出条件 */
+  breakCondition?: LoopBreakCondition;
+}
+
+/**
+ * 并行操作
+ */
+export interface ParallelAction extends BaseAction {
+  type: ActionType.PARALLEL;
+  /** 并行执行的操作组 */
+  actions: Action[][];
+  /** 是否等待所有完成 */
+  waitAll: boolean;
+  /** 最大并发数 */
+  maxConcurrent?: number;
+}
+
+/**
+ * 滚动操作
+ */
+export interface ScrollAction extends BaseAction {
+  type: ActionType.SCROLL;
+  /** 滚动方向 */
+  direction: 'up' | 'down' | 'left' | 'right' | 'top' | 'bottom';
+  /** 滚动距离（像素） */
+  distance?: number;
+  /** 滚动到元素 */
+  toElement?: string;
+  /** 平滑滚动 */
+  smooth?: boolean;
+}
+
+/**
+ * 悬停操作
+ */
+export interface HoverAction extends BaseAction {
+  type: ActionType.HOVER;
+  selector: string;
+  /** 悬停持续时间 */
+  duration?: number;
+}
+
+/**
+ * 下拉选择操作
+ */
+export interface SelectAction extends BaseAction {
+  type: ActionType.SELECT;
+  selector: string;
+  /** 选择的值 */
+  value: string;
+  /** 选择方式 */
+  by: 'value' | 'text' | 'index';
+}
+
+/**
+ * 变量设置操作
+ */
+export interface VariableSetAction extends BaseAction {
+  type: ActionType.VARIABLE_SET;
+  /** 变量名 */
+  name: string;
+  /** 变量值 */
+  value: string;
+  /** 值来源 */
+  source?: 'constant' | 'selector' | 'script';
+  /** 如果source是selector，指定选择器 */
+  selector?: string;
+  /** 如果source是selector，指定属性 */
+  attribute?: string;
+}
+
+/**
+ * 变量获取操作
+ */
+export interface VariableGetAction extends BaseAction {
+  type: ActionType.VARIABLE_GET;
+  /** 变量名 */
+  name: string;
+}
+
+/**
+ * Cookie设置操作
+ */
+export interface CookieSetAction extends BaseAction {
+  type: ActionType.COOKIE_SET;
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+}
+
+/**
+ * Cookie获取操作
+ */
+export interface CookieGetAction extends BaseAction {
+  type: ActionType.COOKIE_GET;
+  /** Cookie名称，不指定则获取所有 */
+  name?: string;
+  /** 存储到变量 */
+  variable: string;
+}
+
+/**
+ * Storage设置操作
+ */
+export interface StorageSetAction extends BaseAction {
+  type: ActionType.STORAGE_SET;
+  storageType: 'localStorage' | 'sessionStorage';
+  key: string;
+  value: string;
+}
+
+/**
+ * Storage获取操作
+ */
+export interface StorageGetAction extends BaseAction {
+  type: ActionType.STORAGE_GET;
+  storageType: 'localStorage' | 'sessionStorage';
+  key: string;
+  /** 存储到变量 */
+  variable: string;
+}
+
+/**
+ * 截图操作
+ */
+export interface ScreenshotAction extends BaseAction {
+  type: ActionType.SCREENSHOT;
+  /** 截取特定元素 */
+  selector?: string;
+  /** 全页截图 */
+  fullPage?: boolean;
+  /** 保存路径 */
+  savePath: string;
+}
+
+/**
+ * 操作联合类型
+ */
+export type Action = NavigateAction | WaitAction | ClickAction | InputAction | 
+                    ExtractAction | ConditionAction | ScriptAction | 
+                    CloudflareBypassAction | CaptchaAction | IPBlockAction |
+                    LoopAction | ParallelAction | ScrollAction | HoverAction | SelectAction |
+                    VariableSetAction | VariableGetAction | 
+                    CookieSetAction | CookieGetAction |
+                    StorageSetAction | StorageGetAction | ScreenshotAction |
+                    APIRequestAction | HTTPRequestAction;
+
+// ==================== 工作流程定义 ====================
+
+/**
+ * 工作流程类型
+ */
+export enum WorkflowType {
+  INITIALIZE = 'initialize',
+  SEARCH = 'search',
+  SEARCH_BY_ID = 'searchById',
+  FILTER = 'filter',
+  GET_MANGA_LIST = 'getMangaList',
+  GET_MANGA_DETAIL = 'getMangaDetail',
+  GET_CHAPTER_LIST = 'getChapterList',
+  GET_PAGE_LIST = 'getPageList',
+  LOAD_MORE_PAGES = 'loadMorePages',
+  GET_IMAGE_URL = 'getImageUrl',
+  POPULAR = 'popular',
+  LATEST = 'latest',
+  FAVORITES = 'favorites',
+  HISTORY = 'history',
+  GET_USER_AVATAR = 'getUserAvatar'
+}
+
+/**
+ * 工作流程定义
+ */
+export interface Workflow {
+  [WorkflowType.INITIALIZE]?: Action[];
+  [WorkflowType.SEARCH]?: Action[];
+  [WorkflowType.SEARCH_BY_ID]?: Action[];
+  [WorkflowType.FILTER]?: Action[];
+  [WorkflowType.GET_MANGA_LIST]?: Action[];
+  [WorkflowType.GET_MANGA_DETAIL]?: Action[];
+  [WorkflowType.GET_CHAPTER_LIST]?: Action[];
+  [WorkflowType.GET_PAGE_LIST]?: Action[];
+  [WorkflowType.LOAD_MORE_PAGES]?: Action[];
+  [WorkflowType.GET_IMAGE_URL]?: Action[];
+  [WorkflowType.POPULAR]?: Action[];
+  [WorkflowType.LATEST]?: Action[];
+  [WorkflowType.FAVORITES]?: Action[];
+  [WorkflowType.HISTORY]?: Action[];
+  [WorkflowType.GET_USER_AVATAR]?: Action[];
+}
+
+// ==================== 错误处理和重试 ====================
+
+/**
+ * 重试策略
+ */
+export interface RetryStrategy {
+  /** 最大重试次数 */
+  maxAttempts: number;
+  /** 延迟时间 */
+  delay: number;
+  /** 退避策略 */
+  backoff: 'linear' | 'exponential';
+  /** 重试条件 */
+  conditions: string[];
+}
+
+/**
+ * 降级策略
+ */
+export interface FallbackStrategy {
+  /** 备用选择器 */
+  selector?: string;
+  /** 备用工作流程 */
+  workflow?: string;
+}
+
+// ==================== 性能和缓存 ====================
+
+/**
+ * 缓存配置
+ */
+export interface CacheConfig {
+  /** 启用缓存 */
+  enabled: boolean;
+  /** 生存时间(毫秒) */
+  ttl: number;
+  /** 缓存键 */
+  keys: string[];
+  /** 缓存策略 */
+  strategy?: 'LRU' | 'FIFO' | 'LFU';
+  /** 最大缓存大小(字节) */
+  maxSize?: number;
+  /** 最大缓存条目数 */
+  maxEntries?: number;
+}
+
+/**
+ * 并发控制
+ */
+export interface ConcurrencyConfig {
+  /** 最大并发数 */
+  maxConcurrent: number;
+  /** 延迟时间 */
+  delay: number;
+}
+
+/**
+ * 性能阈值配置
+ */
+export interface PerformanceThresholds {
+  loadTime?: number;
+  memoryUsage?: number;
+  networkLatency?: number;
+}
+
+/**
+ * 性能监控配置
+ */
+export interface PerformanceConfig {
+  /** 启用性能监控 */
+  enabled: boolean;
+  /** 监控指标 */
+  metrics: ('timing' | 'memory' | 'network' | 'fps')[];
+  /** 报告间隔(毫秒) */
+  reportInterval?: number;
+  /** 性能阈值警告 */
+  thresholds?: PerformanceThresholds;
+}
+
+/**
+ * 数据验证规则
+ */
+export interface ValidationRule {
+  /** 字段名 */
+  field: string;
+  /** 验证类型 */
+  type: 'required' | 'format' | 'range' | 'custom';
+  /** 格式模式(正则) */
+  pattern?: string;
+  /** 最小值 */
+  min?: number;
+  /** 最大值 */
+  max?: number;
+  /** 自定义验证函数 */
+  validator?: string;
+  /** 错误消息 */
+  message?: string;
+}
+
+// ==================== 调试和日志 ====================
+
+/**
+ * 调试配置
+ */
+export interface DebugConfig {
+  /** 启用调试 */
+  enabled: boolean;
+  /** 日志级别 */
+  level: 'debug' | 'info' | 'warn' | 'error';
+  /** 记录操作 */
+  logActions: boolean;
+  /** 记录选择器 */
+  logSelectors: boolean;
+}
+
+/**
+ * 截图配置
+ */
+export interface ScreenshotConfig {
+  /** 错误时截图 */
+  onError: boolean;
+  /** 成功时截图 */
+  onSuccess: boolean;
+  /** 截图路径 */
+  path: string;
+}
+
+// ==================== 扩展系统 ====================
+
+/**
+ * 自定义操作
+ */
+export interface CustomAction {
+  type: string;
+  code: string;
+}
+
+/**
+ * 插件配置
+ */
+export interface PluginConfig {
+  name: string;
+  enabled: boolean;
+  config: Record<string, Object>;
+}
+
+// ==================== 主配置接口 ====================
+
+/**
+ * 漫画图源配置
+ */
+export interface MangaSourceConfig {
+  /** 元数据 */
+  metadata: MangaSourceMetadata;
+  /** 设置 */
+  settings: MangaSourceSettings;
+  /** 工作流程 */
+  workflows: Workflow;
+  /** 变量定义 */
+  variables?: Record<string, string>;
+  /** 重试策略 */
+  retry?: RetryStrategy;
+  /** 降级策略 */
+  fallback?: FallbackStrategy;
+  /** 缓存配置 */
+  cache?: CacheConfig;
+  /** 并发控制 */
+  concurrency?: ConcurrencyConfig;
+  /** 调试配置 */
+  debug?: DebugConfig;
+  /** 截图配置 */
+  screenshot?: ScreenshotConfig;
+  /** 性能监控配置 */
+  performance?: PerformanceConfig;
+  /** 数据验证规则 */
+  validation?: ValidationRule[];
+  /** 自定义操作 */
+  customActions?: Record<string, CustomAction>;
+  /** 插件配置 */
+  plugins?: PluginConfig[];
+  /** 反爬虫配置 */
+  antiCrawler?: AntiCrawlerConfig;
+}
+
+// ==================== 执行结果类型 ====================
+
+/**
+ * 操作执行结果
+ */
+export interface ActionResult {
+  /** 是否成功 */
+  success: boolean;
+  /** 结果数据 */
+  data?: Object;
+  /** 错误信息 */
+  error?: string;
+  /** 执行时间 */
+  duration: number;
+}
+
+/**
+ * 工作流程执行结果
+ */
+export interface WorkflowResult {
+  /** 工作流程类型 */
+  type: WorkflowType;
+  /** 是否成功 */
+  success: boolean;
+  /** 结果数据 */
+  data?: Object;
+  /** 错误信息 */
+  error?: string;
+  /** 执行时间 */
+  duration: number;
+  /** 操作结果列表 */
+  actions: ActionResult[];
+}
+
+// ==================== 漫画数据类型 ====================
+
+/**
+ * 漫画信息
+ */
+export interface MangaInfo {
+  /** 漫画ID */
+  id?: string;
+  /** 标题 */
+  title: string;
+  /** URL */
+  url: string;
+  /** 封面图 */
+  cover: string;
+  /** 作者 */
+  author?: string;
+  /** 状态 */
+  status?: string;
+  /** 描述 */
+  description?: string;
+  /** 类型标签 */
+  genres?: string[];
+  /** 更新时间 */
+  updated?: string;
+}
+
+/**
+ * 章节信息
+ */
+export interface ChapterInfo {
+  /** 章节ID */
+  id?: string;
+  /** 外部章节ID（从API获取的原始ID，用于构造请求URL和Referer） */
+  externalId?: string;
+  /** 标题 */
+  title: string;
+  /** URL */
+  url: string;
+  /** 章节号 */
+  number?: number;
+  /** 发布时间 */
+  publishTime?: string;
+  /** 页数 */
+  pageCount?: number;
+}
+
+/**
+ * 页面信息
+ */
+export interface PageInfo {
+  /** 页码 */
+  page: number;
+  /** 图片URL */
+  imageUrl: string;
+  /** 图片宽度 */
+  width?: number;
+  /** 图片高度 */
+  height?: number;
+}
+
+// ==================== 错误类型定义 ====================
+
+/**
+ * 反爬虫配置类型定义
+ */
+
+/**
+ * Cloudflare配置
+ */
+export interface CloudflareConfig {
+  enabled?: boolean;
+  indicators?: string[];
+  bypassMethod?: 'wait' | 'click' | 'refresh';
+  maxWaitTime?: number;
+  maxRetries?: number;
+  retryCount?: number;
+  timeout?: number;
+}
+
+/**
+ * 验证码配置
+ */
+export interface CaptchaConfig {
+  enabled?: boolean;
+  indicators?: string[];
+  autoSolve?: boolean;
+  solverType?: 'manual' | 'api' | 'ai';
+  apiKey?: string;
+  timeout?: number;
+}
+
+/**
+ * IP封禁配置
+ */
+export interface IpBlockConfig {
+  enabled?: boolean;
+  indicators?: string[];
+  delay?: number;
+  maxRetries?: number;
+  retryDelay?: number;
+}
+
+/**
+ * User-Agent轮换配置
+ */
+export interface UserAgentRotationConfig {
+  enabled: boolean;
+  agents: string[];
+  rotateInterval?: number;
+}
+
+/**
+ * 反爬虫配置
+ */
+export interface AntiCrawlerConfig {
+  cloudflare?: CloudflareConfig;
+  captcha?: CaptchaConfig;
+  ipBlock?: IpBlockConfig;
+  userAgentRotation?: UserAgentRotationConfig;
+}
+
+/**
+ * 图源引擎错误码
+ */
+export enum MangaSourceErrorCode {
+  INVALID_CONFIG = 'INVALID_CONFIG',
+  CONFIG_NOT_LOADED = 'CONFIG_NOT_LOADED',
+  ACTION_FAILED = 'ACTION_FAILED',
+  DATA_NOT_FOUND = 'DATA_NOT_FOUND',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+  TIMEOUT_ERROR = 'TIMEOUT_ERROR',
+  ELEMENT_NOT_FOUND = 'ELEMENT_NOT_FOUND',
+  EXTRACTION_FAILED = 'EXTRACTION_FAILED',
+  SELECTOR_ERROR = 'SELECTOR_ERROR',
+  INVALID_SELECTOR = 'INVALID_SELECTOR',
+  VARIABLE_NOT_FOUND = 'VARIABLE_NOT_FOUND',
+  CLOUDFLARE_BLOCKED = 'CLOUDFLARE_BLOCKED',
+  CAPTCHA_REQUIRED = 'CAPTCHA_REQUIRED',
+  CAPTCHA_FAILED = 'CAPTCHA_FAILED',
+  IP_BLOCKED = 'IP_BLOCKED',
+  SCRIPT_ERROR = 'SCRIPT_ERROR',
+  UNKNOWN_ERROR = 'UNKNOWN_ERROR'
+}
+
+/**
+ * 图源引擎错误
+ */
+// ==================== API操作类型 ====================
+
+/**
+ * 数据提取配置
+ */
+export interface ExtractConfig {
+  /** 数据路径（JSONPath格式） */
+  path?: string;
+  /** 字段映射 */
+  fields?: Record<string, string>;
+}
+
+/**
+ * API请求操作
+ */
+export interface APIRequestAction extends BaseAction {
+  type: ActionType.API_REQUEST;
+  /** 请求方法 */
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  /** 请求URL */
+  url: string;
+  /** 查询参数 */
+  params?: Record<string, string>;
+  /** 请求头 */
+  headers?: Record<string, string>;
+  /** 请求体 */
+  body?: ESObject;
+  /** 响应数据提取配置 */
+  extract?: ExtractConfig;
+}
+
+/**
+ * HTTP请求操作（通用）
+ */
+export interface HTTPRequestAction extends BaseAction {
+  type: ActionType.HTTP_REQUEST;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  url: string;
+  headers?: Record<string, string>;
+  body?: string | ESObject;
+  timeout?: number;
+}
+
+// ==================== 错误处理 ====================
+
+export class MangaSourceError extends Error {
+  code: MangaSourceErrorCode;
+  details?: Object;
+
+  constructor(
+    code: MangaSourceErrorCode,
+    message: string,
+    details?: Object
+  ) {
+    super(message);
+    this.name = 'MangaSourceError';
+    this.code = code;
+    this.details = details;
+  }
+}

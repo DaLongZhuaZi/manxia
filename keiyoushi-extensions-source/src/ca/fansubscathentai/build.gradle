@@ -1,0 +1,10 @@
+ext {
+    extName = 'Hentai.cat'
+    extClass = '.HentaiCat'
+    themePkg = 'fansubscat'
+    baseUrl = 'https://manga.hentai.cat'
+    overrideVersionCode = 0
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

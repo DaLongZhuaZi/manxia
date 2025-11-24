@@ -1,0 +1,100 @@
+{
+  "app": {
+    "defaultSpeed": 1.0,
+    "maxSpeed": 4.0,
+    "minSpeed": 0.1,
+    "autosaveInterval": 300,
+    "language": "zh-CN",
+    "difficulty": "normal"
+  },
+  "graphics": {
+    "resolution": {
+      "width": 1920,
+      "height": 1080
+    },
+    "fullscreen": false,
+    "vsync": true,
+    "targetFPS": 60,
+    "renderQuality": "high",
+    "showFPS": false,
+    "enableAntialiasing": true
+  },
+  "audio": {
+    "masterVolume": 1.0,
+    "musicVolume": 0.8,
+    "soundEffectVolume": 0.9,
+    "uiSoundVolume": 0.7,
+    "muteWhenInactive": true
+  },
+  "controls": {
+    "mouseSensitivity": 1.0,
+    "keyBindings": {
+      "pause": "Space",
+      "menu": "Escape",
+      "debug": "F3",
+      "debugPanel": "D",
+      "speedUp": "Plus",
+      "speedDown": "Minus",
+      "screenshot": "F12"
+    },
+    "enableKeyboardShortcuts": true,
+    "enableMouseControls": true
+  },
+  "ui": {
+    "theme": "dark",
+    "fontSize": "medium",
+    "showTooltips": true,
+    "animationSpeed": 1.0,
+    "transparency": 0.8,
+    "showNotifications": true,
+    "notificationDuration": 3000
+  },
+  "debug": {
+    "enableDebugMode": false,
+    "enablePerformanceAnalyzer": true,
+    "showDebugInfo": false,
+    "logLevel": "info",
+    "enableProfiler": false,
+    "maxLogEntries": 1000,
+    "performanceThresholds": {
+      "minFPS": 30,
+      "maxFrameTime": 33.33,
+      "maxMemory": 512,
+      "maxSystemTime": 16.67,
+      "maxCPUUsage": 80
+    }
+  },
+  "gameplay": {
+    "pauseOnFocusLoss": true,
+    "enableAutosave": true,
+    "maxAutosaveFiles": 5,
+    "showTutorials": true,
+    "enableHints": true,
+    "difficultySettings": {
+      "resourceScarcity": 1.0,
+      "eventFrequency": 1.0,
+      "threatLevel": 1.0
+    }
+  },
+  "accessibility": {
+    "enableColorBlindSupport": false,
+    "highContrast": false,
+    "largeText": false,
+    "enableScreenReader": false,
+    "reduceMotion": false
+  },
+  "network": {
+    "enableCloudSave": false,
+    "autoSync": false,
+    "connectionTimeout": 30000,
+    "enableTelemetry": false
+  },
+  "advanced": {
+    "enableExperimentalFeatures": false,
+    "enableModSupport": false,
+    "maxConcurrentTasks": 4,
+    "memoryPoolSize": 256,
+    "enableGarbageCollection": true,
+    "gcInterval": 60000
+  }
+}

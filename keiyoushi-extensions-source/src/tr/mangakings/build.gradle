@@ -1,0 +1,10 @@
+ext {
+    extName = 'Manga Kings'
+    extClass = '.MangaKings'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://mangakings.com.tr'
+    overrideVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

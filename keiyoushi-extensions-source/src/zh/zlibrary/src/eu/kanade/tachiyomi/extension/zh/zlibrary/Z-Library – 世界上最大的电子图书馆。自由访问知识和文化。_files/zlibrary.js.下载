@@ -1,0 +1,226 @@
+// function openParent(node) {
+//     node.parentNode.classList.contains("active") ? node.parentNode.classList.remove("active") : node.parentNode.classList.add("active")
+// }
+Math.easeInOutQuad = function (t, b, c, d) {
+    t /= d / 2;
+    if (t < 1) return (c / 2) * t * t + b;
+    t--;
+    return (-c / 2) * (t * (t - 2) - 1) + b;
+};
+window.ZLibrary = {
+    _: {
+        downloaded: { byId: {}, byIsbn: {} },
+    },
+    customElements: [],
+    connect: (component) => {
+        if (!ZLibrary._.version && document.head.querySelector('meta[name="version"]')) {
+            ZLibrary._.version = document.head.querySelector('meta[name="version"]').getAttribute("value")
+        }
+        component = component.toUpperCase();
+        if (typeof Cover == 'function' && component == 'Z-COVER') return
+        if (window.ZLibrary.customElements.indexOf(component) !== -1) return true;
+
+        window.ZLibrary.customElements.push(component);
+        var script = document.createElement("script");
+        script.src = '/components/' + component.toLocaleLowerCase() + '.js?' + ZLibrary._.version;
+        document.head.appendChild(script);
+
+        return script;
+    },
+    connectAsync: async (component) => {
+        return await new Promise((res, rej) => {
+            const registerResult = window.ZLibrary.connect(component);
+            if (registerResult === true) res(true)
+            else {
+                registerResult.onload = (() => res(true));
+                registerResult.onerror = (() => rej(false));
+            }
+        })
+    },
+    escape: (text) => {
+        if (!text || text == 'undefined') { return '' }
+        var map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            '\n': '<br />',
+            '\r': '<br />',
+            '\r\n': '<br />',
+            '\n\r': '<br />',
+        };
+        return text.replace(/[&<>"'\n\r]/g, function (m) { return map[m]; });
+    },
+    removeHTML: (text) => {
+        return text?.replace(/<[^>]*>/g, '');
+    },
+    fontAdaptor: (node, minsize) => {
+        node.style.opacity = 0
+        if (!minsize) minsize = 10
+        setTimeout(() => {
+            if (node.scrollWidth > node.offsetWidth) {
+                let size = window.getComputedStyle(node).getPropertyValue('font-size')
+                size = size.slice(0, -2) - 1
+                node.style.fontSize = size + 'px'
+                if (size > minsize) {
+                    window.ZLibrary.fontAdaptor(node, minsize)
+                } else {
+                    node.style.opacity = 1
+                }
+                // scaling     node.style.transform = `scale(${(node.offsetWidth - 20) / node.scrollWidth})`
+            } else {
+                node.style.opacity = 1
+            }
+        })
+    },
+    mutateURL: (key, value, uri) => {
+        let urlObj = new URL(uri || window.location);
+        let pathname = urlObj.pathname.split('/')
+        let indexOfKey = pathname.indexOf(key)
+        if(indexOfKey !== -1){
+            pathname.splice(2)
+            urlObj = new URL(urlObj.origin + pathname.join('/') + urlObj.search)
+        }
+        if (value !== null) {
+            if (typeof value == 'string') { 
+                if(value == ''){
+                    urlObj.searchParams.delete(key); 
+                }else{
+                    urlObj.searchParams.set(key, value); 
+                }
+            }
+            if (typeof value == 'object') {
+                removeSearchParam()
+                value.forEach(el => {
+                    urlObj.searchParams.append(key + '[]', el);
+                })
+            }
+        } else {
+            removeSearchParam()
+        }
+
+        // need to remove all search params with array values like key[0], key[1],... etc.
+        function removeSearchParam() {
+            urlObj.searchParams.toString().split("&").forEach((e) => {
+                let param = decodeURI(e.split("=")[0])
+                if (param.match(new RegExp(`${key}`))) urlObj.searchParams.delete(param)
+            })
+        }
+
+        return urlObj.toString();
+    },
+    dispatch: (event, details) => {
+        switch (event) {
+            case "ready":
+                details.classList.add('ready')
+                if (details.nodeName !== 'Z-COVER') {
+                    const tooltips = details.shadowRoot.querySelectorAll('[data-tooltip]')
+                    tooltips.forEach(tooltip => {
+                        tooltip.addEventListener('mouseenter', ZLibrary.showTooltip);
+                    })
+                }
+                document.dispatchEvent(new CustomEvent('componentReady', { detail: { tag: details.nodeName } }))
+                break
+            case "componentUpdated":
+                const tooltips = details.shadowRoot.querySelectorAll('[data-tooltip]')
+                tooltips.forEach(tooltip => {
+                    tooltip.addEventListener('mouseenter', ZLibrary.showTooltip);
+                })
+                break
+            case "marksLoaded":
+                ZLibrary._.downloaded = details
+                document.dispatchEvent(new Event('marksLoaded'))
+                break
+            default:
+                document.dispatchEvent(new Event(event))
+                break
+        }
+    },
+    registerAll: () => {
+        const HTMLCollections = document.body.getElementsByTagName('*');
+        for (let component of HTMLCollections) {
+            if (component.nodeName[0] === "Z") {
+                window.ZLibrary.connect(component.nodeName, null);
+            }
+        }
+    },
+    checkIsDownloaded: (id, isbn13, isbn10) => {
+        if (ZLibrary._.downloaded) {
+            return id in ZLibrary._.downloaded.byId || isbn13 in ZLibrary._.downloaded.byIsbn || isbn10 in ZLibrary._.downloaded.byIsbn;
+        }
+    },
+    isTouchDevice: () => {
+        return 'ontouchstart' in window && screen.width < 1200;
+    },
+    showTooltip: (event) => {
+        const node = event.target
+        const tooltipText = node.dataset.tooltip;
+        if (!tooltipText) { return }
+        const tooltipElement = document.createElement('div');
+        const tooltipInner = document.createElement('div');
+        const tooltipArrow = document.createElement('div');
+        tooltipElement.classList.add('zlibrary-tooltip');
+        tooltipInner.classList.add('zlibrary-tooltip-inner');
+        tooltipArrow.classList.add('zlibrary-tooltip-arrow');
+        tooltipElement.appendChild(tooltipInner);
+        tooltipElement.appendChild(tooltipArrow);
+        tooltipInner.textContent = tooltipText;
+        node.addEventListener('mouseleave', hideTooltip);
+        window.addEventListener('touchmove', hideTooltip);
+        document.body.appendChild(tooltipElement);
+        if (window.innerWidth < 568 && tooltipElement.getBoundingClientRect().width > 214) { tooltipElement.style.width = "214px" }
+        const triggerRect = node.getBoundingClientRect();
+        triggerRect.center = triggerRect.left + triggerRect.width / 2;
+
+        tooltipElement.style.top = `${triggerRect.bottom + window.scrollY + 5}px`;
+        tooltipElement.style.left = `${triggerRect.left + triggerRect.width / 2 - tooltipElement.offsetWidth / 2}px`;
+
+        tooltipElement.classList.add("show");
+
+        if (tooltipElement.getBoundingClientRect().right > window.screen.width) { // Если правый край подсказки выходит за правый край экрана
+            tooltipElement.style.left = `${window.screen.width - tooltipElement.offsetWidth - 10}px`; // Перемещаем подсказку влево, чтобы не выходить за пределы экрана
+        }
+        if (tooltipElement.getBoundingClientRect().left <= 0) {
+            tooltipElement.style.left = `10px`; // Перемещаем подсказку вправо, чтобы не выходить за пределы экрана
+        }
+
+        tooltipArrow.style.left = (triggerRect.center - tooltipElement.getBoundingClientRect().left) + 'px';
+        function hideTooltip() {
+            if (tooltipElement) {
+                tooltipElement.classList.remove("show")
+                setTimeout(() => {
+                    try {
+                        document.body.removeChild(tooltipElement);
+                    } catch { }
+                }, 200)
+            }
+        }
+    },
+    share: (network, domain) => {
+        if (network.detail) {
+            network = network.detail.value
+        }
+        const url = (domain ? window.location.protocol + '//' + domain : window.location.origin) + window.location.pathname
+        const title = document.title + ' ' + url
+        const summary = document.title + ' | Download books for free. Find books'
+        const text = 'Hey! This is what you were looking for: ' + document.title + ' ' + url
+        if (network == 'copy' || network == 'chains') {
+            navigator.clipboard.writeText(url).then(function () {
+                new ZLibraryNotify().info(i18next.t('Copied to clipboard'))
+            });
+        } else {
+            const uriform = { facebook: "https://facebook.com/sharer.php?u=%url%", twitter: "https://twitter.com/share?url=%url%&text=%title%", whatsapp: "https://api.whatsapp.com/send?text=%text%", messenger: "fb-messenger://share/?link=%url%&app_id=%app_id%", telegram: "https://telegram.me/share/url?url=%url%&text=%text%", linkedin: "https://www.linkedin.com/sharing/share-offsite?mini=true&url=%url%&title=%title%&ro=false&summary=%summary%", "send-email": "mailto:?subject=%subject%&body=%text%", "envelope": "mailto:?subject=%subject%&body=%text%" }
+            const shareURL = (uriform[network].replace("%url%", encodeURIComponent(url)).replace("%title%", encodeURIComponent(title)).replace("%text%", encodeURIComponent(text)).replace("%summary%", encodeURIComponent(summary)));
+            window.open(shareURL, "popup", "width=640,height=480")
+        }
+    },
+    copy: (text, message) => {
+        navigator.clipboard.writeText(text).then(function () {
+            new ZLibraryNotify().info(message ? message : i18next.t('Copied to clipboard'))
+        });
+    },
+    getSpinner: (className) => {
+        return `<svg class="z-spinner ${className ? className : ''}" viewBox="0 0 50 50"><circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle></svg>`
+    }
+};

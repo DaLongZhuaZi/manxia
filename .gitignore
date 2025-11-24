@@ -1,0 +1,46 @@
+# HarmonyOS
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+/.gradle
+/.vscode
+
+# IDE
+.cursor/
+.windsurf/
+.kiro/
+
+# Logs
+*.log
+docs/logs/*.txt
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+*.hap
+*.app
+/entry/build/
+/AppScope/build/
+
+# Test
+/test-repository/
+
+# Large log files
+komiic_api_log.txt

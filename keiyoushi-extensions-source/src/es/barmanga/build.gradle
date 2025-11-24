@@ -1,0 +1,10 @@
+ext {
+    extName = 'BarManga'
+    extClass = '.BarManga'
+    themePkg = 'madara'
+    baseUrl = 'https://libribar.com'
+    overrideVersionCode = 4
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

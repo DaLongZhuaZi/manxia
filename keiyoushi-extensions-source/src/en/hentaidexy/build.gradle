@@ -1,0 +1,8 @@
+ext {
+    extName = 'Hentaidexy'
+    extClass = '.Hentaidexy'
+    extVersionCode = 34
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

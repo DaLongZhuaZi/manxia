@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Log - selected -->
+  <path d="M7 4H14L18 8V20C18 20.55 17.55 21 17 21H7C6.45 21 6 20.55 6 20V5C6 4.45 6.45 4 7 4Z" stroke="#007DFF" stroke-width="2" fill="#E6F2FF"/>
+  <path d="M14 4V8H18" stroke="#007DFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M9 12H15" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+  <path d="M9 16H13" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,10 @@
+ext {
+    extName = 'Luna Scans'
+    extClass = '.LunaScans'
+    themePkg = 'madara'
+    baseUrl = 'https://tuhafscans.com'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

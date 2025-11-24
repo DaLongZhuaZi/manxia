@@ -1,0 +1,9 @@
+ext {
+    extName = 'Hentai Slayer'
+    extClass = '.HentaiSlayer'
+    themePkg = 'fuzzydoodle'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

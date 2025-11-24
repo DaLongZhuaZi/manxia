@@ -1,0 +1,8 @@
+ext {
+    extName = "Ung Ty Comics"
+    extClass = ".UngTyComics"
+    extVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

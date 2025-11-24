@@ -1,0 +1,1056 @@
+/**
+ * 通用解压缩工具类
+ * 用于数据管理功能中的文件解压缩操作
+ */
+
+import { zlib } from '@kit.BasicServicesKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { logger } from './Logger';
+import { SandboxManager } from '../Framework/Storage/SandboxManager';
+import { BusinessError } from '@kit.BasicServicesKit';
+
+const TAG = 'CompressionUtils';
+
+/**
+ * 解压缩选项接口
+ */
+export interface ExtractionOptions {
+  /** 目标目录，如果不指定则自动生成 */
+  targetDirectory?: string;
+  /** 是否覆盖已存在的文件 */
+  overwrite?: boolean;
+  /** 是否创建子目录（以压缩文件名命名） */
+  createSubDirectory?: boolean;
+  /** 文件过滤器，返回true表示提取该文件 */
+  fileFilter?: (fileName: string) => boolean;
+  /** 最大提取文件数量限制 */
+  maxFiles?: number;
+  /** 最大提取文件大小限制（字节） */
+  maxTotalSize?: number;
+}
+
+/**
+ * 解压缩结果接口
+ */
+export interface ExtractionResult {
+  /** 解压缩是否成功 */
+  success: boolean;
+  /** 解压缩目标目录 */
+  extractedPath: string;
+  /** 提取的文件列表 */
+  extractedFiles: string[];
+  /** 提取的文件总数 */
+  fileCount: number;
+  /** 提取的文件总大小 */
+  totalSize: number;
+  /** 错误信息（如果失败） */
+  error?: string;
+  /** 警告信息 */
+  warnings: string[];
+}
+
+/**
+ * 文件信息接口
+ */
+export interface ExtractedFileInfo {
+  /** 文件名 */
+  fileName: string;
+  /** 完整路径 */
+  filePath: string;
+  /** 文件大小 */
+  fileSize: number;
+  /** 文件类型 */
+  mimeType: string;
+  /** 是否为图片文件 */
+  isImage: boolean;
+  /** 是否为XML文件 */
+  isXml: boolean;
+}
+
+/**
+ * 包含ComicInfo.xml内容的解压缩结果接口
+ */
+export interface ExtractionResultWithComicInfo {
+  /** 解压缩结果 */
+  result: ExtractionResult;
+  /** ComicInfo.xml文件内容 */
+  comicInfoContent?: string;
+}
+
+/**
+ * 递归解压结果接口
+ */
+export interface RecursiveExtractionResult {
+  /** 最终解压路径（最底层有效目录） */
+  finalPath: string;
+  /** 是否找到XML文件 */
+  foundXml: boolean;
+  /** ComicInfo.xml文件内容 */
+  comicInfoContent?: string;
+  /** 解压的总文件数 */
+  totalFiles: number;
+  /** 递归解压的层数 */
+  recursionDepth: number;
+  /** 临时目录列表（需要清理） */
+  tempDirectories: string[];
+  /** 警告信息 */
+  warnings: string[];
+}
+
+/**
+ * 递归解压内部结果接口
+ */
+interface RecursiveExtractionInternalResult {
+  /** 解压路径 */
+  extractedPath: string;
+  /** 总文件数 */
+  totalFiles: number;
+  /** 递归深度 */
+  recursionDepth: number;
+}
+
+/**
+ * 通用解压缩工具类
+ */
+export class CompressionUtils {
+  private static instance: CompressionUtils | null = null;
+  private sandboxManager: SandboxManager;
+
+  // 支持的压缩文件格式
+  private readonly supportedArchiveFormats = [
+    '.zip',
+    '.cbz',
+    '.cbr', // 注意：CBR需要特殊处理，这里暂时列出
+  ];
+
+  // 支持的图片格式
+  private readonly supportedImageFormats = [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'image/bmp'
+  ];
+
+  // 默认解压缩选项
+  private readonly defaultOptions: ExtractionOptions = {
+    overwrite: true,
+    createSubDirectory: true,
+    maxFiles: 1000,
+    maxTotalSize: 500 * 1024 * 1024 // 500MB
+  };
+
+  private constructor() {
+    this.sandboxManager = SandboxManager.getInstance();
+  }
+
+  /**
+   * 获取单例实例
+   */
+  public static getInstance(): CompressionUtils {
+    if (!CompressionUtils.instance) {
+      CompressionUtils.instance = new CompressionUtils();
+    }
+    return CompressionUtils.instance;
+  }
+
+  /**
+   * 解压缩文件到指定目录
+   * @param archivePath 压缩文件路径
+   * @param options 解压缩选项
+   * @returns 解压缩结果
+   */
+  public async extractArchive(
+    archivePath: string,
+    options?: Partial<ExtractionOptions>
+  ): Promise<ExtractionResult> {
+    // 修复扩展运算符错误：使用显式属性赋值替代扩展运算符
+    const mergedOptions: ExtractionOptions = {
+      targetDirectory: options?.targetDirectory || this.defaultOptions.targetDirectory,
+      overwrite: options?.overwrite !== undefined ? options.overwrite : this.defaultOptions.overwrite!,
+      createSubDirectory: options?.createSubDirectory !== undefined ? options.createSubDirectory : this.defaultOptions.createSubDirectory!,
+      fileFilter: options?.fileFilter || this.defaultOptions.fileFilter,
+      maxFiles: options?.maxFiles || this.defaultOptions.maxFiles!,
+      maxTotalSize: options?.maxTotalSize || this.defaultOptions.maxTotalSize!
+    };
+
+    const result: ExtractionResult = {
+      success: false,
+      extractedPath: '',
+      extractedFiles: [],
+      fileCount: 0,
+      totalSize: 0,
+      warnings: []
+    };
+
+    try {
+      logger.info(TAG, `开始解压缩文件: ${archivePath}`);
+
+      // 验证输入文件并获取实际文件路径
+      const actualFilePath = await this.validateArchiveFile(archivePath);
+
+      // 准备解压缩目录
+      const targetDir = await this.prepareExtractionDirectory(archivePath, mergedOptions);
+      result.extractedPath = targetDir;
+
+      // 执行解压缩
+      await this.performExtraction(actualFilePath, targetDir, mergedOptions, result);
+
+      // 扫描解压缩后的文件
+      const fileInfos = await this.scanExtractedFiles(targetDir, mergedOptions);
+      result.extractedFiles = fileInfos.map(info => info.filePath);
+      result.fileCount = fileInfos.length;
+      result.totalSize = fileInfos.reduce((sum, info) => sum + info.fileSize, 0);
+
+      result.success = true;
+      logger.info(TAG, `解压缩完成: ${result.fileCount} 个文件, 总大小: ${result.totalSize} 字节`);
+
+      // 如果使用了临时文件，清理它
+      if (actualFilePath !== archivePath) {
+        try {
+          await this.sandboxManager.deleteFile(actualFilePath);
+          logger.debug(TAG, `清理临时文件: ${actualFilePath}`);
+        } catch (cleanupError) {
+          const cleanupErrorStr = String(cleanupError);
+          logger.warn(TAG, `清理临时文件失败: ${actualFilePath}`, cleanupErrorStr);
+        }
+      }
+
+    } catch (error) {
+      result.error = String(error);
+      const errorStr = String(error);
+      logger.error(TAG, '解压缩失败', errorStr);
+    }
+
+    return result;
+  }
+
+  /**
+   * 解压缩并查找ComicInfo.xml文件
+   * @param archivePath 压缩文件路径
+   * @param options 解压缩选项
+   * @returns 解压缩结果和ComicInfo.xml内容
+   */
+  public async extractAndFindComicInfo(
+    archivePath: string,
+    options?: Partial<ExtractionOptions>
+  ): Promise<ExtractionResultWithComicInfo> {
+    try {
+      // 修复扩展运算符错误：使用显式属性赋值替代扩展运算符
+      const extractOptions: Partial<ExtractionOptions> = {
+        targetDirectory: options?.targetDirectory,
+        overwrite: options?.overwrite,
+        createSubDirectory: options?.createSubDirectory,
+        maxFiles: options?.maxFiles,
+        maxTotalSize: options?.maxTotalSize,
+        fileFilter: (fileName: string) => {
+          const lowerName = fileName.toLowerCase();
+          return lowerName.endsWith('.xml') || 
+                 lowerName.endsWith('.jpg') || 
+                 lowerName.endsWith('.jpeg') || 
+                 lowerName.endsWith('.png') || 
+                 lowerName.endsWith('.webp') || 
+                 lowerName.endsWith('.gif') || 
+                 lowerName.endsWith('.bmp');
+        }
+      };
+
+      const result = await this.extractArchive(archivePath, extractOptions);
+
+      if (!result.success) {
+        const returnResult: ExtractionResultWithComicInfo = { result };
+        return returnResult;
+      }
+
+      // 查找ComicInfo.xml文件
+      const comicInfoPath = await this.findComicInfoFile(result.extractedPath);
+      let comicInfoContent: string | undefined;
+
+      if (comicInfoPath) {
+        try {
+          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          logger.info(TAG, `找到ComicInfo.xml文件: ${comicInfoPath}`);
+        } catch (error) {
+          result.warnings.push(`读取ComicInfo.xml失败: ${error}`);
+          const errorStr = String(error);
+          logger.warn(TAG, '读取ComicInfo.xml失败', errorStr);
+        }
+      } else {
+        result.warnings.push('未找到ComicInfo.xml文件');
+        logger.warn(TAG, '未找到ComicInfo.xml文件');
+      }
+
+      const returnResult: ExtractionResultWithComicInfo = { result, comicInfoContent };
+      return returnResult;
+
+    } catch (error) {
+      const errorStr = String(error);
+      logger.error(TAG, '解压缩并查找ComicInfo.xml失败', errorStr);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 将URI路径转换为本地文件系统路径或处理URI访问
+   * @param uriPath URI格式的路径
+   * @returns 本地文件系统路径或URI
+   */
+  private convertUriToLocalPath(uriPath: string): string {
+    try {
+      // 如果是file://协议的URI，需要转换为本地路径
+      if (uriPath.startsWith('file://')) {
+        // 移除file://前缀
+        let localPath = uriPath.substring(7);
+        
+        // 解码URL编码的字符
+        localPath = decodeURIComponent(localPath);
+        
+        // 在HarmonyOS中，file://协议通常指向沙箱路径
+        // 需要根据实际情况调整路径映射
+        logger.debug(TAG, `URI转换: ${uriPath} -> ${localPath}`);
+        
+        return localPath;
+      }
+      
+      // 如果不是URI格式，直接返回
+      return uriPath;
+    } catch (error) {
+      const errorStr = String(error);
+      logger.warn(TAG, `URI路径转换失败: ${uriPath}`, errorStr);
+      return uriPath;
+    }
+  }
+
+  /**
+   * 复制URI文件到临时目录
+   * @param uriPath URI路径
+   * @returns 临时文件路径
+   */
+  private async copyUriFileToTemp(uriPath: string): Promise<string> {
+    try {
+      // 生成临时文件路径
+      const fileName = this.getFileNameFromUri(uriPath);
+      const timestamp = Date.now();
+      const tempDir = this.sandboxManager.getDirectory('temp');
+      const tempFilePath = `${tempDir}/temp_${timestamp}_${fileName}`;
+      
+      // 确保临时目录存在
+      await this.sandboxManager.createDirectory(tempDir);
+      
+      // 使用fs.openSync打开URI文件（只读模式）
+      const sourceFile = fileIo.openSync(uriPath, fileIo.OpenMode.READ_ONLY);
+      
+      try {
+        // 获取文件大小
+        const stat = fileIo.statSync(sourceFile.fd);
+        const fileSize = stat.size;
+        
+        if (fileSize === 0) {
+          throw new Error('选择的文件为空');
+        }
+        
+        // 检查文件大小限制（最大1GB）
+        const maxFileSize = 1024 * 1024 * 1024; // 1GB
+        if (fileSize > maxFileSize) {
+          throw new Error(`文件过大: ${(fileSize / 1024 / 1024).toFixed(2)}MB，最大支持: 1GB`);
+        }
+        
+        // 创建缓冲区读取文件内容
+        const buffer = new ArrayBuffer(fileSize);
+        const readLength = fileIo.readSync(sourceFile.fd, buffer);
+        
+        if (readLength !== fileSize) {
+          throw new Error(`文件读取不完整: 期望 ${fileSize} 字节，实际读取 ${readLength} 字节`);
+        }
+        
+        // 创建目标文件并写入内容
+        const targetFile = fileIo.openSync(tempFilePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        
+        try {
+          fileIo.writeSync(targetFile.fd, buffer);
+          logger.debug(TAG, `URI文件复制到临时目录: ${uriPath} -> ${tempFilePath}, 大小: ${readLength} bytes`);
+          return tempFilePath;
+        } finally {
+          fileIo.closeSync(targetFile);
+        }
+      } finally {
+        fileIo.closeSync(sourceFile);
+      }
+    } catch (error) {
+      const errorStr = String(error);
+      logger.error(TAG, `复制URI文件失败: ${uriPath}`, errorStr);
+      
+      // 提供更友好的错误信息
+      if (errorStr.includes('Permission denied') || errorStr.includes('Operation not permitted')) {
+        throw new Error(`没有权限访问文件: ${this.getFileNameFromUri(uriPath)}`);
+      } else if (errorStr.includes('No such file')) {
+        throw new Error(`文件不存在或已被移动: ${this.getFileNameFromUri(uriPath)}`);
+      } else if (errorStr.includes('No space left')) {
+        throw new Error('设备存储空间不足，无法复制文件');
+      } else {
+        throw new Error(`无法访问文件: ${this.getFileNameFromUri(uriPath)} (${errorStr})`);
+      }
+    }
+  }
+
+  /**
+   * 从URI中提取文件名
+   * @param uri URI路径
+   * @returns 文件名
+   */
+  private getFileNameFromUri(uri: string): string {
+    try {
+      const parts = uri.split('/');
+      let fileName = parts[parts.length - 1] || 'unknown_file';
+      
+      // 解码URL编码的文件名
+      fileName = decodeURIComponent(fileName);
+      
+      return fileName;
+    } catch (error) {
+      const errorStr = String(error);
+      logger.warn(TAG, `解析文件名失败: ${uri}`, errorStr);
+      return 'unknown_file';
+    }
+  }
+
+  /**
+   * 验证压缩文件
+   * @param archivePath 压缩文件路径
+   */
+  private async validateArchiveFile(archivePath: string): Promise<string> {
+    let actualFilePath: string = archivePath; // 初始化为原始路径
+    let isTemporaryFile: boolean = false; // 标记是否为临时文件
+    
+    try {
+      // 如果是URI路径，先复制到临时目录
+      if (archivePath.startsWith('file://')) {
+        actualFilePath = await this.copyUriFileToTemp(archivePath);
+        isTemporaryFile = true;
+      }
+      
+      // 检查文件是否存在
+      if (!await this.sandboxManager.exists(actualFilePath)) {
+        throw new Error(`压缩文件不存在: ${archivePath}`);
+      }
+
+      // 检查文件扩展名
+      const extension = this.getFileExtension(actualFilePath);
+      if (!this.supportedArchiveFormats.includes(extension)) {
+        throw new Error(`不支持的压缩文件格式: ${extension}`);
+      }
+
+      // 检查文件大小
+      const fileInfo = await this.sandboxManager.getFileInfo(actualFilePath);
+      if (fileInfo.size === 0) {
+        throw new Error('压缩文件为空');
+      }
+
+      // 检查文件大小限制（最大1GB）
+      const maxFileSize = 1024 * 1024 * 1024; // 1GB
+      if (fileInfo.size > maxFileSize) {
+        throw new Error(`压缩文件过大: ${fileInfo.size} 字节，最大支持: ${maxFileSize} 字节`);
+      }
+      
+      return actualFilePath;
+    } catch (error) {
+      // 如果复制了临时文件但验证失败，清理临时文件
+      if (isTemporaryFile && actualFilePath !== archivePath) {
+        try {
+          await this.sandboxManager.deleteFile(actualFilePath);
+          logger.debug(TAG, `已清理临时文件: ${actualFilePath}`);
+        } catch (cleanupError) {
+          const cleanupErrorStr = String(cleanupError);
+          logger.warn(TAG, `清理临时文件失败: ${actualFilePath}`, cleanupErrorStr);
+        }
+      }
+      
+      // 提供更友好的错误信息
+      const errorStr = String(error);
+      const fileName = this.getFileNameFromUri(archivePath);
+      
+      if (errorStr.includes('压缩文件不存在')) {
+        throw new Error(`找不到文件: ${fileName}`);
+      } else if (errorStr.includes('不支持的压缩文件格式')) {
+        const extension = this.getFileExtension(actualFilePath);
+        throw new Error(`不支持的文件格式: ${extension}，请选择 ${this.supportedArchiveFormats.join(', ')} 格式的文件`);
+      } else if (errorStr.includes('压缩文件为空')) {
+        throw new Error(`文件为空: ${fileName}`);
+      } else if (errorStr.includes('压缩文件过大')) {
+        throw new Error(`文件过大: ${fileName}，最大支持 1GB`);
+      } else {
+        throw error as Error;
+      }
+    }
+  }
+
+  /**
+   * 准备解压缩目录
+   * @param archivePath 压缩文件路径
+   * @param options 解压缩选项
+   * @returns 目标目录路径
+   */
+  private async prepareExtractionDirectory(
+    archivePath: string,
+    options: ExtractionOptions
+  ): Promise<string> {
+    let targetDir: string;
+
+    if (options.targetDirectory) {
+      targetDir = options.targetDirectory;
+    } else {
+      // 转换URI路径为本地路径以获取正确的文件名
+      const localPath = this.convertUriToLocalPath(archivePath);
+      
+      // 自动生成目录名
+      const fileName = this.getFileNameWithoutExtension(localPath);
+      const timestamp = Date.now();
+      const baseDir = this.sandboxManager.getDirectory('temp');
+      
+      if (options.createSubDirectory) {
+        targetDir = `${baseDir}/extracted_${fileName}_${timestamp}`;
+      } else {
+        targetDir = `${baseDir}/extracted_${timestamp}`;
+      }
+    }
+
+    // 创建目录
+    if (await this.sandboxManager.exists(targetDir)) {
+      if (options.overwrite) {
+        await this.sandboxManager.deleteDirectory(targetDir, true);
+      } else {
+        throw new Error(`目标目录已存在: ${targetDir}`);
+      }
+    }
+
+    await this.sandboxManager.createDirectory(targetDir);
+    logger.debug(TAG, `准备解压缩目录: ${targetDir}`);
+
+    return targetDir;
+  }
+
+  /**
+   * 执行解压缩操作
+   * @param archivePath 压缩文件路径（已经是实际的本地路径）
+   * @param targetDir 目标目录
+   * @param options 解压缩选项
+   * @param result 结果对象
+   */
+  private async performExtraction(
+    archivePath: string,
+    targetDir: string,
+    options: ExtractionOptions,
+    result: ExtractionResult
+  ): Promise<void> {
+    try {
+      // 使用zlib解压缩（archivePath已经是实际的本地路径）
+      await zlib.decompressFile(archivePath, targetDir);
+      logger.debug(TAG, `解压缩完成: ${archivePath} -> ${targetDir}`);
+
+    } catch (error) {
+      const businessError = error as BusinessError;
+      logger.error(TAG, `解压缩失败: ${businessError.code} - ${businessError.message}`);
+      
+      // 提供更友好的错误信息
+      if (businessError.code === 401) {
+        throw new Error('压缩文件格式不正确或已损坏');
+      } else if (businessError.code === 13900002) {
+        throw new Error('解压缩过程中发生IO错误');
+      } else {
+        throw new Error(`解压缩失败: ${businessError.message}`);
+      }
+    }
+  }
+
+  /**
+   * 扫描解压缩后的文件
+   * @param directory 目录路径
+   * @param options 解压缩选项
+   * @returns 文件信息列表
+   */
+  private async scanExtractedFiles(
+    directory: string,
+    options: ExtractionOptions
+  ): Promise<ExtractedFileInfo[]> {
+    const fileInfos: ExtractedFileInfo[] = [];
+
+    try {
+      const files = await this.sandboxManager.listDirectory(directory);
+      
+      for (const fileName of files) {
+        const filePath = `${directory}/${fileName}`;
+        
+        // 应用文件过滤器
+        if (options.fileFilter && !options.fileFilter(fileName)) {
+          continue;
+        }
+
+        // 检查文件数量限制
+        if (options.maxFiles && fileInfos.length >= options.maxFiles) {
+          logger.warn(TAG, `达到最大文件数量限制: ${options.maxFiles}`);
+          break;
+        }
+
+        try {
+          const fileInfo = await this.sandboxManager.getFileInfo(filePath);
+          const mimeType = this.getMimeTypeFromExtension(fileName);
+          
+          const extractedFileInfo: ExtractedFileInfo = {
+            fileName: fileName,
+            filePath: filePath,
+            fileSize: fileInfo.size,
+            mimeType: mimeType,
+            isImage: this.supportedImageFormats.includes(mimeType),
+            isXml: fileName.toLowerCase().endsWith('.xml')
+          };
+
+          fileInfos.push(extractedFileInfo);
+
+          // 检查总大小限制
+          const currentTotalSize = fileInfos.reduce((sum, info) => sum + info.fileSize, 0);
+          if (options.maxTotalSize && currentTotalSize > options.maxTotalSize) {
+            logger.warn(TAG, `达到最大总大小限制: ${options.maxTotalSize} 字节`);
+            break;
+          }
+
+        } catch (error) {
+          const errorStr = String(error);
+          logger.warn(TAG, `获取文件信息失败: ${fileName}`, errorStr);
+        }
+      }
+
+    } catch (error) {
+      const errorStr = String(error);
+      logger.error(TAG, '扫描解压缩文件失败', errorStr);
+      throw error as Error;
+    }
+
+    return fileInfos;
+  }
+
+  /**
+   * 查找ComicInfo.xml文件（支持递归搜索多层目录）
+   * @param directory 目录路径
+   * @param maxDepth 最大递归深度，默认5层
+   * @returns ComicInfo.xml文件路径，如果未找到则返回null
+   */
+  private async findComicInfoFile(directory: string, maxDepth: number = 5): Promise<string | null> {
+    return await this.findComicInfoFileRecursive(directory, 0, maxDepth);
+  }
+
+  /**
+   * 递归查找ComicInfo.xml文件
+   * @param directory 当前目录路径
+   * @param currentDepth 当前递归深度
+   * @param maxDepth 最大递归深度
+   * @returns ComicInfo.xml文件路径，如果未找到则返回null
+   */
+  private async findComicInfoFileRecursive(
+    directory: string, 
+    currentDepth: number, 
+    maxDepth: number
+  ): Promise<string | null> {
+    try {
+      if (currentDepth > maxDepth) {
+        logger.warn(TAG, `达到最大递归深度 ${maxDepth}，停止搜索`);
+        return null;
+      }
+
+      const files = await this.sandboxManager.listDirectory(directory);
+      
+      // 首先在当前目录查找ComicInfo.xml
+      for (const fileName of files) {
+        if (fileName.toLowerCase() === 'comicinfo.xml') {
+          const filePath = `${directory}/${fileName}`;
+          logger.info(TAG, `找到ComicInfo.xml: ${filePath}`);
+          return filePath;
+        }
+      }
+
+      // 如果当前目录没有，递归查找子目录
+      for (const fileName of files) {
+        const filePath = `${directory}/${fileName}`;
+        
+        try {
+          const fileInfo = await this.sandboxManager.getFileInfo(filePath);
+          
+          // 判断是否为目录（通过尝试列出目录内容）
+          const isDirectory = await this.isDirectory(filePath);
+          
+          if (isDirectory) {
+            const result = await this.findComicInfoFileRecursive(filePath, currentDepth + 1, maxDepth);
+            if (result) {
+              return result;
+            }
+          }
+        } catch (error) {
+          // 忽略无法访问的文件/目录
+          continue;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      const errorStr = String(error);
+      logger.error(TAG, `递归查找ComicInfo.xml失败: ${directory}`, errorStr);
+      return null;
+    }
+  }
+
+  /**
+   * 判断路径是否为目录
+   * @param path 路径
+   * @returns 是否为目录
+   */
+  private async isDirectory(path: string): Promise<boolean> {
+    try {
+      // 使用底层stat检查目录属性，避免通过列目录判断造成误判与日志污染
+      const stat = await fileIo.stat(path);
+      return stat.isDirectory();
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * 获取文件扩展名
+   * @param filePath 文件路径
+   * @returns 文件扩展名（包含点号）
+   */
+  private getFileExtension(filePath: string): string {
+    const lastDot = filePath.lastIndexOf('.');
+    return lastDot > 0 ? filePath.substring(lastDot).toLowerCase() : '';
+  }
+
+  /**
+   * 获取不含扩展名的文件名
+   * @param filePath 文件路径
+   * @returns 不含扩展名的文件名
+   */
+  private getFileNameWithoutExtension(filePath: string): string {
+    const fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
+    const lastDot = fileName.lastIndexOf('.');
+    return lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
+  }
+
+  /**
+   * 根据文件扩展名获取MIME类型
+   * @param fileName 文件名
+   * @returns MIME类型
+   */
+  private getMimeTypeFromExtension(fileName: string): string {
+    const extension = this.getFileExtension(fileName).substring(1); // 去掉点号
+    
+    const mimeMap: Record<string, string> = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'webp': 'image/webp',
+      'gif': 'image/gif',
+      'bmp': 'image/bmp',
+      'xml': 'application/xml',
+      'txt': 'text/plain',
+      'json': 'application/json'
+    };
+
+    return mimeMap[extension] || 'application/octet-stream';
+  }
+
+  /**
+   * 清理解压缩目录
+   * @param directory 要清理的目录路径
+   */
+  public async cleanupExtractionDirectory(directory: string): Promise<void> {
+    try {
+      if (await this.sandboxManager.exists(directory)) {
+        await this.sandboxManager.deleteDirectory(directory, true);
+        logger.debug(TAG, `清理解压缩目录: ${directory}`);
+      }
+    } catch (error) {
+      const errorStr = String(error);
+      logger.warn(TAG, `清理解压缩目录失败: ${directory}`, errorStr);
+    }
+  }
+
+  /**
+   * 检查是否为支持的压缩文件
+   * @param filePath 文件路径
+   * @returns 是否支持
+   */
+  public isSupportedArchive(filePath: string): boolean {
+    // 转换URI路径为本地路径
+    const localPath = this.convertUriToLocalPath(filePath);
+    const extension = this.getFileExtension(localPath);
+    return this.supportedArchiveFormats.includes(extension);
+  }
+
+  /**
+   * 递归解压并查找ComicInfo.xml（支持嵌套压缩包和多层文件夹）
+   * @param archivePath 压缩文件路径
+   * @param maxRecursionDepth 最大递归深度，默认3层
+   * @returns 递归解压结果
+   */
+  public async extractRecursivelyAndFindComicInfo(
+    archivePath: string,
+    maxRecursionDepth: number = 3
+  ): Promise<RecursiveExtractionResult> {
+    const tempDirectories: string[] = [];
+    const warnings: string[] = [];
+    let totalFiles = 0;
+
+    try {
+      logger.info(TAG, `开始递归解压: ${archivePath}, 最大深度: ${maxRecursionDepth}`);
+      
+      const result = await this.extractRecursivelyInternal(
+        archivePath,
+        0,
+        maxRecursionDepth,
+        tempDirectories,
+        warnings
+      );
+
+      totalFiles = result.totalFiles;
+
+      // 查找最底层的有效目录（包含图片文件的目录）
+      const finalPath = await this.findDeepestValidDirectory(result.extractedPath);
+      
+      // 在最底层目录查找ComicInfo.xml
+      const comicInfoPath = await this.findComicInfoFile(finalPath);
+      let comicInfoContent: string | undefined;
+      let foundXml = false;
+
+      if (comicInfoPath) {
+        try {
+          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          foundXml = true;
+          logger.info(TAG, `找到ComicInfo.xml: ${comicInfoPath}`);
+        } catch (error) {
+          warnings.push(`读取ComicInfo.xml失败: ${error}`);
+          logger.warn(TAG, '读取ComicInfo.xml失败', String(error));
+        }
+      } else {
+        warnings.push('未找到ComicInfo.xml文件');
+        logger.warn(TAG, '未找到ComicInfo.xml文件');
+      }
+
+      return {
+        finalPath: finalPath,
+        foundXml: foundXml,
+        comicInfoContent: comicInfoContent,
+        totalFiles: totalFiles,
+        recursionDepth: result.recursionDepth,
+        tempDirectories: tempDirectories,
+        warnings: warnings
+      };
+
+    } catch (error) {
+      logger.error(TAG, '递归解压失败', String(error));
+      
+      // 清理所有临时目录
+      await this.cleanupTempDirectories(tempDirectories);
+      
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 递归解压内部实现
+   * @param path 当前路径（文件或目录）
+   * @param currentDepth 当前递归深度
+   * @param maxDepth 最大递归深度
+   * @param tempDirectories 临时目录列表
+   * @param warnings 警告信息列表
+   * @returns 解压结果
+   */
+  private async extractRecursivelyInternal(
+    path: string,
+    currentDepth: number,
+    maxDepth: number,
+    tempDirectories: string[],
+    warnings: string[]
+  ): Promise<RecursiveExtractionInternalResult> {
+    if (currentDepth > maxDepth) {
+      logger.warn(TAG, `达到最大递归深度 ${maxDepth}`);
+      warnings.push(`达到最大递归深度 ${maxDepth}，停止解压`);
+      const maxDepthResult: RecursiveExtractionInternalResult = {
+        extractedPath: path,
+        totalFiles: 0,
+        recursionDepth: currentDepth
+      };
+      return maxDepthResult;
+    }
+
+    // 如果是压缩文件，解压它
+    if (this.isSupportedArchive(path)) {
+      logger.info(TAG, `解压层级 ${currentDepth}: ${path}`);
+      
+      const extractResult = await this.extractArchive(path);
+      
+      if (!extractResult.success) {
+        throw new Error(`解压失败: ${extractResult.error}`);
+      }
+
+      tempDirectories.push(extractResult.extractedPath);
+      let totalFiles = extractResult.fileCount;
+      let maxRecursionDepth = currentDepth;
+
+      // 扫描解压后的内容
+      const files = await this.sandboxManager.listDirectory(extractResult.extractedPath);
+      
+      // 检查是否有嵌套的压缩包
+      const nestedArchives: string[] = [];
+      for (const fileName of files) {
+        const filePath = `${extractResult.extractedPath}/${fileName}`;
+        if (this.isSupportedArchive(filePath)) {
+          nestedArchives.push(filePath);
+        }
+      }
+
+      // 如果有嵌套压缩包，继续递归解压
+      if (nestedArchives.length > 0) {
+        logger.info(TAG, `发现 ${nestedArchives.length} 个嵌套压缩包，继续递归解压`);
+        
+        // 处理第一个嵌套压缩包（通常每层只有一个压缩包）
+        const nestedResult = await this.extractRecursivelyInternal(
+          nestedArchives[0],
+          currentDepth + 1,
+          maxDepth,
+          tempDirectories,
+          warnings
+        );
+        
+        totalFiles += nestedResult.totalFiles;
+        maxRecursionDepth = Math.max(maxRecursionDepth, nestedResult.recursionDepth);
+        
+        const nestedFinalResult: RecursiveExtractionInternalResult = {
+          extractedPath: nestedResult.extractedPath,
+          totalFiles: totalFiles,
+          recursionDepth: maxRecursionDepth
+        };
+        return nestedFinalResult;
+      }
+
+      const extractFinalResult: RecursiveExtractionInternalResult = {
+        extractedPath: extractResult.extractedPath,
+        totalFiles: totalFiles,
+        recursionDepth: currentDepth
+      };
+      return extractFinalResult;
+    }
+
+    // 如果不是压缩文件，假设是目录，直接返回
+    const directoryResult: RecursiveExtractionInternalResult = {
+      extractedPath: path,
+      totalFiles: 0,
+      recursionDepth: currentDepth
+    };
+    return directoryResult;
+  }
+
+  /**
+   * 查找最深的有效目录（包含图片文件的目录）
+   * @param startPath 起始路径
+   * @returns 最深的有效目录路径
+   */
+  private async findDeepestValidDirectory(startPath: string): Promise<string> {
+    try {
+      const files = await this.sandboxManager.listDirectory(startPath);
+      
+      // 检查当前目录是否包含图片文件
+      const hasImages = await this.hasImageFiles(startPath);
+      
+      // 如果当前目录有图片，返回当前目录
+      if (hasImages) {
+        logger.info(TAG, `找到有效目录（包含图片）: ${startPath}`);
+        return startPath;
+      }
+
+      // 如果当前目录只有一个子目录，递归进入
+      if (files.length === 1) {
+        const singleItem = `${startPath}/${files[0]}`;
+        const isDir = await this.isDirectory(singleItem);
+        
+        if (isDir) {
+          logger.debug(TAG, `进入单一子目录: ${singleItem}`);
+          return await this.findDeepestValidDirectory(singleItem);
+        }
+      }
+
+      // 查找所有子目录
+      const subDirs: string[] = [];
+      for (const fileName of files) {
+        const filePath = `${startPath}/${fileName}`;
+        const isDir = await this.isDirectory(filePath);
+        
+        if (isDir) {
+          subDirs.push(filePath);
+        }
+      }
+
+      // 递归检查子目录，找到第一个包含图片的目录
+      for (const subDir of subDirs) {
+        const hasImagesInSub = await this.hasImageFiles(subDir);
+        if (hasImagesInSub) {
+          logger.info(TAG, `在子目录中找到有效目录: ${subDir}`);
+          return await this.findDeepestValidDirectory(subDir);
+        }
+      }
+
+      // 如果都没有图片，返回当前目录
+      logger.info(TAG, `使用当前目录作为有效目录: ${startPath}`);
+      return startPath;
+
+    } catch (error) {
+      logger.error(TAG, `查找有效目录失败: ${startPath}`, String(error));
+      return startPath;
+    }
+  }
+
+  /**
+   * 检查目录是否包含图片文件
+   * @param directory 目录路径
+   * @returns 是否包含图片文件
+   */
+  private async hasImageFiles(directory: string): Promise<boolean> {
+    try {
+      const files = await this.sandboxManager.listDirectory(directory);
+      
+      for (const fileName of files) {
+        const extension = this.getFileExtension(fileName).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'].includes(extension)) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      logger.error(TAG, `检查图片文件失败: ${directory}`, String(error));
+      return false;
+    }
+  }
+
+  /**
+   * 清理临时目录列表
+   * @param tempDirectories 临时目录列表
+   */
+  private async cleanupTempDirectories(tempDirectories: string[]): Promise<void> {
+    logger.info(TAG, `开始清理 ${tempDirectories.length} 个临时目录`);
+    
+    for (const dir of tempDirectories) {
+      try {
+        await this.cleanupExtractionDirectory(dir);
+      } catch (error) {
+        logger.warn(TAG, `清理临时目录失败: ${dir}`, String(error));
+      }
+    }
+  }
+
+  /**
+   * 清理递归解压结果（清理所有临时目录）
+   * @param result 递归解压结果
+   */
+  public async cleanupRecursiveExtractionResult(result: RecursiveExtractionResult): Promise<void> {
+    await this.cleanupTempDirectories(result.tempDirectories);
+  }
+}

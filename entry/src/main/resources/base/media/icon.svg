@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- 漫匣应用图标：打开的书本与漫画面板 -->
+  <defs>
+    <linearGradient id="bookGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- 背景圆形 -->
+  <circle cx="64" cy="64" r="60" fill="url(#bookGradient)" opacity="0.15"/>
+  
+  <!-- 打开的书本 -->
+  <path d="M30 40 L30 88 L64 80 L98 88 L98 40 L64 48 Z" 
+        fill="url(#bookGradient)" 
+        stroke="currentColor" 
+        stroke-width="3" 
+        stroke-linejoin="round"/>
+  
+  <!-- 书脊分割线 -->
+  <line x1="64" y1="48" x2="64" y2="80" 
+        stroke="currentColor" 
+        stroke-width="2.5" 
+        stroke-linecap="round"
+        opacity="0.6"/>
+  
+  <!-- 左侧页面装饰线 -->
+  <line x1="38" y1="55" x2="56" y2="53" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  <line x1="38" y1="62" x2="56" y2="60" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  <line x1="38" y1="69" x2="52" y2="67" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  
+  <!-- 右侧页面装饰线 -->
+  <line x1="72" y1="53" x2="90" y2="55" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  <line x1="72" y1="60" x2="90" y2="62" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  <line x1="76" y1="67" x2="90" y2="69" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  
+  <!-- 漫画气泡装饰 -->
+  <circle cx="48" cy="50" r="3" fill="currentColor" opacity="0.4"/>
+  <circle cx="80" cy="52" r="3" fill="currentColor" opacity="0.4"/>
+</svg>
+

@@ -1,0 +1,10 @@
+ext {
+    extName = 'MAGCOMI'
+    extClass = '.MagComi'
+    themePkg = 'gigaviewer'
+    baseUrl = 'https://magcomi.com'
+    overrideVersionCode = 2
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

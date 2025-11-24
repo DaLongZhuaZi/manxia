@@ -1,0 +1,10 @@
+ext {
+    extName = 'Lavinia Fansub'
+    extClass = '.LaviniaFansub'
+    themePkg = 'madara'
+    baseUrl = 'https://laviniafansub.site'
+    overrideVersionCode = 2
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

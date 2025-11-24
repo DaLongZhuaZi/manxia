@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 性能图标 - 选中状态 (仪表盘) -->
+  <!-- 仪表盘外圈 - 填充 -->
+  <path d="M20 12C20 16.4183 16.4183 20 12 20C7.58172 20 4 16.4183 4 12C4 7.58172 7.58172 4 12 4C16.4183 4 20 7.58172 20 12Z" stroke="#007DFF" stroke-width="2" fill="#E6F2FF"/>
+  <!-- 刻度线 -->
+  <line x1="12" y1="4" x2="12" y2="6" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="18.66" y1="7.34" x2="17.25" y2="8.75" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="20" y1="12" x2="18" y2="12" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="5.34" y1="7.34" x2="6.75" y2="8.75" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+  <line x1="4" y1="12" x2="6" y2="12" stroke="#007DFF" stroke-width="2" stroke-linecap="round"/>
+  <!-- 指针 - 红色强调 -->
+  <line x1="12" y1="12" x2="16" y2="8" stroke="#FF3B30" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="12" cy="12" r="2" fill="#FF3B30"/>
+</svg>
+

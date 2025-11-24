@@ -1,0 +1,30 @@
+{
+  "data_localization": {
+    "type": "JSON",
+    "path": "localization/zh_CN.json",
+    "priority": 8,
+    "preload": true,
+    "persistent": true,
+    "dependencies": [],
+    "locale": "zh_CN",
+    "metadata": {
+      "description": "中文本地化文件",
+      "language": "Chinese",
+      "region": "CN"
+    }
+  },
+  "image_logo": {
+    "type": "IMAGE",
+    "path": "app.media.logo",
+    "priority": 9,
+    "preload": true,
+    "persistent": true,
+    "dependencies": [],
+    "metadata": {
+      "description": "应用主Logo",
+      "format": "svg",
+      "maxWidth": 512,
+      "maxHeight": 512
+    }
+  }
+}

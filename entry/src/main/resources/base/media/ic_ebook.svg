@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 填充型电子书：外框填充，书脊与文字行采用镂空 -->
+  <path fill="currentColor" fill-rule="evenodd"
+        d="M4 2h16v20H4V2Zm4 0v20H8V2Zm2 5h7v1h-7V7Zm0 3h7v1h-7v-1Zm0 3h7v1h-7v-1Zm0 3h5v1h-5v-1Z"/>
+</svg>
+

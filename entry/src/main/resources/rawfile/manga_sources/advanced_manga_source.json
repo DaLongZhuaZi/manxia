@@ -1,0 +1,616 @@
+{
+  "metadata": {
+    "name": "高级漫画网站",
+    "version": "2.1.0",
+    "author": "高级开发者",
+    "description": "展示高级功能的漫画图源配置，包含反爬虫、动态加载等复杂场景",
+    "baseUrl": "https://advanced-manga.net",
+    "language": "zh-CN",
+    "nsfw": true,
+    "tags": ["漫画", "高级", "反爬虫", "动态加载"],
+    "icon": "https://advanced-manga.net/icon.png",
+    "supportedFeatures": [
+      "search",
+      "detail",
+      "chapters",
+      "pages",
+      "favorites",
+      "history",
+      "download"
+    ]
+  },
+  "settings": {
+    "timeout": 45000,
+    "retryCount": 5,
+    "retryDelay": 2000,
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "headers": {
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,ja;q=0.7",
+      "Accept-Encoding": "gzip, deflate, br",
+      "DNT": "1",
+      "Connection": "keep-alive",
+      "Upgrade-Insecure-Requests": "1",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Site": "none",
+      "Sec-Fetch-User": "?1",
+      "Cache-Control": "max-age=0"
+    },
+    "cookies": {
+      "enabled": true,
+      "domain": ".advanced-manga.net",
+      "secure": true,
+      "sameSite": "lax"
+    },
+    "proxy": {
+      "enabled": false,
+      "type": "http",
+      "host": "",
+      "port": 0,
+      "auth": {
+        "username": "",
+        "password": ""
+      }
+    }
+  },
+  "workflows": {
+    "initialize": {
+      "name": "高级初始化",
+      "description": "处理复杂的初始化流程，包括多层弹窗和验证",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "{baseUrl}",
+          "waitFor": "load",
+          "timeout": 20000
+        },
+        {
+          "type": "cloudflare_bypass",
+          "indicators": [
+            ".cf-browser-verification",
+            "#cf-wrapper",
+            ".cf-checking-browser",
+            "Checking your browser"
+          ],
+          "maxWaitTime": 30000
+        },
+        {
+          "type": "condition",
+          "selector": ".age-gate, .adult-warning",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".age-confirm, #adult-confirm, .enter-site",
+              "waitAfter": 2000
+            }
+          ]
+        },
+        {
+          "type": "condition",
+          "selector": ".cookie-notice, .gdpr-notice",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".accept-cookies, .accept-all",
+              "optional": true,
+              "waitAfter": 1000
+            }
+          ]
+        },
+        {
+          "type": "condition",
+          "selector": ".popup-ad, .overlay-ad",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".close-ad, .skip-ad, .ad-close",
+              "optional": true,
+              "waitAfter": 1000
+            }
+          ]
+        },
+        {
+          "type": "script",
+          "code": "localStorage.setItem('visited', 'true'); sessionStorage.setItem('initialized', Date.now());"
+        }
+      ]
+    },
+    "search": {
+      "name": "高级搜索",
+      "description": "支持多种搜索方式和过滤条件",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "{baseUrl}/search",
+          "waitFor": "load",
+          "timeout": 15000
+        },
+        {
+          "type": "input",
+          "selector": "#search-input, .search-box input",
+          "value": "{searchKeyword}",
+          "clear": true
+        },
+        {
+          "type": "condition",
+          "selector": ".search-filters",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".filter-genre[data-genre='all']",
+              "optional": true
+            },
+            {
+              "type": "click",
+              "selector": ".filter-status[data-status='all']",
+              "optional": true
+            }
+          ]
+        },
+        {
+          "type": "click",
+          "selector": ".search-btn, #search-submit",
+          "waitAfter": 2000
+        },
+        {
+          "type": "wait",
+          "condition": "element",
+          "selector": ".search-results, .manga-grid",
+          "timeout": 10000
+        },
+        {
+          "type": "condition",
+          "selector": ".load-more, .pagination .next",
+          "exists": true,
+          "then": [
+            {
+              "type": "script",
+              "code": "let loadMore = document.querySelector('.load-more'); if(loadMore) { loadMore.scrollIntoView(); setTimeout(() => loadMore.click(), 1000); }"
+            },
+            {
+              "type": "wait",
+              "condition": "time",
+              "duration": 3000
+            }
+          ]
+        },
+        {
+          "type": "extract",
+          "selector": ".manga-card, .search-item",
+          "multiple": true,
+          "fields": {
+            "id": "a@href",
+            "title": ".manga-title, .title h3",
+            "author": ".manga-author, .author-name",
+            "coverUrl": ".manga-cover img@src, .cover img@data-src",
+            "description": ".manga-desc, .summary",
+            "status": ".manga-status, .status-badge",
+            "lastUpdate": ".last-update, .update-time",
+            "url": "a@href",
+            "tags": ".manga-tags .tag, .genre-list .genre",
+            "rating": ".rating .score, .star-rating@data-rating",
+            "views": ".view-count, .popularity"
+          }
+        }
+      ]
+    },
+    "getMangaDetail": {
+      "name": "获取详细信息",
+      "description": "获取漫画的完整详细信息",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "{mangaId}",
+          "waitFor": "load",
+          "timeout": 20000
+        },
+        {
+          "type": "condition",
+          "selector": ".loading-spinner, .skeleton-loader",
+          "exists": true,
+          "then": [
+            {
+              "type": "wait",
+              "condition": "element",
+              "selector": ".manga-detail:not(.loading)",
+              "timeout": 15000
+            }
+          ]
+        },
+        {
+          "type": "script",
+          "code": "window.scrollTo(0, document.querySelector('.manga-description')?.offsetTop || 500);"
+        },
+        {
+          "type": "condition",
+          "selector": ".description-expand, .show-more",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".description-expand, .show-more",
+              "waitAfter": 1000
+            }
+          ]
+        },
+        {
+          "type": "extract",
+          "selector": ".manga-detail, .manga-info-container",
+          "multiple": false,
+          "fields": {
+            "id": "@data-manga-id, meta[property='manga:id']@content",
+            "title": ".manga-title h1, .title-main",
+            "alternativeTitles": ".alternative-titles .alt-title",
+            "author": ".manga-author, .author-list .author",
+            "artist": ".manga-artist, .artist-name",
+            "description": ".manga-description, .summary-content",
+            "coverUrl": ".manga-cover img@src, .cover-image@src",
+            "status": ".manga-status, .publication-status",
+            "tags": ".manga-tags .tag, .genre-tags .genre",
+            "lastUpdate": ".last-update, .latest-chapter-date",
+            "chapterCount": ".chapter-count, .total-chapters",
+            "rating": ".rating-average, .score-value",
+            "ratingCount": ".rating-count, .vote-count",
+            "views": ".view-count, .total-views",
+            "favorites": ".favorite-count, .bookmark-count",
+            "language": ".language, .original-language",
+            "year": ".publication-year, .release-year",
+            "publisher": ".publisher, .magazine"
+          }
+        }
+      ]
+    },
+    "getChapterList": {
+      "name": "获取章节列表",
+      "description": "获取完整的章节列表，处理分页和动态加载",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "{mangaId}/chapters",
+          "waitFor": "load",
+          "timeout": 15000
+        },
+        {
+          "type": "condition",
+          "selector": ".chapter-sort, .sort-options",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".sort-desc, [data-sort='desc']",
+              "optional": true,
+              "waitAfter": 2000
+            }
+          ]
+        },
+        {
+          "type": "script",
+          "code": "let loadAllBtn = document.querySelector('.load-all-chapters, .show-all'); if(loadAllBtn) loadAllBtn.click();"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 2000
+        },
+        {
+          "type": "condition",
+          "selector": ".infinite-scroll, .lazy-load",
+          "exists": true,
+          "then": [
+            {
+              "type": "script",
+              "code": "let chapters = []; let lastCount = 0; const loadMore = () => { window.scrollTo(0, document.body.scrollHeight); setTimeout(() => { const currentCount = document.querySelectorAll('.chapter-item').length; if(currentCount > lastCount && currentCount < 1000) { lastCount = currentCount; loadMore(); } }, 2000); }; loadMore();"
+            },
+            {
+              "type": "wait",
+              "condition": "time",
+              "duration": 10000
+            }
+          ]
+        },
+        {
+          "type": "extract",
+          "selector": ".chapter-item, .chapter-row",
+          "multiple": true,
+          "fields": {
+            "id": "a@href, @data-chapter-id",
+            "title": ".chapter-title, .chapter-name",
+            "number": ".chapter-number, @data-number",
+            "url": "a@href",
+            "publishTime": ".publish-date, .chapter-date",
+            "isVip": ".vip-badge, .premium-icon",
+            "isLocked": ".lock-icon, .locked-chapter",
+            "views": ".chapter-views, .read-count",
+            "pages": ".page-count, @data-pages"
+          }
+        }
+      ]
+    },
+    "getPageList": {
+      "name": "获取页面列表",
+      "description": "获取章节的所有页面，处理懒加载和防盗链",
+      "actions": [
+        {
+          "type": "navigate",
+          "url": "{chapterId}",
+          "waitFor": "load",
+          "timeout": 20000
+        },
+        {
+          "type": "condition",
+          "selector": ".reader-loading, .chapter-loading",
+          "exists": true,
+          "then": [
+            {
+              "type": "wait",
+              "condition": "element",
+              "selector": ".reader-container:not(.loading)",
+              "timeout": 15000
+            }
+          ]
+        },
+        {
+          "type": "script",
+          "code": "document.querySelector('.reader-mode-single, .single-page')?.click();"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 2000
+        },
+        {
+          "type": "script",
+          "code": "const preloadImages = () => { const images = document.querySelectorAll('img[data-src]'); images.forEach((img, index) => { setTimeout(() => { img.src = img.dataset.src; img.scrollIntoView(); }, index * 500); }); }; preloadImages();"
+        },
+        {
+          "type": "condition",
+          "selector": ".load-all-pages, .show-all-images",
+          "exists": true,
+          "then": [
+            {
+              "type": "click",
+              "selector": ".load-all-pages, .show-all-images",
+              "waitAfter": 3000
+            }
+          ]
+        },
+        {
+          "type": "script",
+          "code": "let scrollCount = 0; const scrollToLoad = () => { if(scrollCount < 20) { window.scrollBy(0, window.innerHeight); scrollCount++; setTimeout(scrollToLoad, 1000); } }; scrollToLoad();"
+        },
+        {
+          "type": "wait",
+          "condition": "time",
+          "duration": 5000
+        },
+        {
+          "type": "extract",
+          "selector": ".page-image, .manga-page",
+          "multiple": true,
+          "fields": {
+            "index": "@data-page, @data-index",
+            "imageUrl": "img@src, img@data-src, img@data-original",
+            "url": "img@src, img@data-src",
+            "width": "img@width, img@data-width",
+            "height": "img@height, img@data-height"
+          }
+        }
+      ]
+    },
+    "getImageUrl": {
+      "name": "获取图片URL",
+      "description": "获取特定页面的高质量图片URL",
+      "actions": [
+        {
+          "type": "condition",
+          "selector": ".page-container[data-page='{pageIndex}']",
+          "exists": true,
+          "then": [
+            {
+              "type": "script",
+              "code": "document.querySelector('.page-container[data-page=\"{pageIndex}\"]')?.scrollIntoView();"
+            },
+            {
+              "type": "wait",
+              "condition": "time",
+              "duration": 2000
+            },
+            {
+              "type": "extract",
+              "selector": ".page-container[data-page='{pageIndex}']",
+              "multiple": false,
+              "fields": {
+                "imageUrl": "img@src, img@data-src, img@data-original",
+                "originalUrl": "img@data-original, img@data-full",
+                "thumbnailUrl": "img@data-thumb",
+                "width": "img@data-width",
+                "height": "img@data-height"
+              }
+            }
+          ],
+          "else": [
+            {
+              "type": "script",
+              "code": "const allImages = document.querySelectorAll('.manga-page img, .page-image img'); const targetImage = allImages[{pageIndex}]; return targetImage ? { imageUrl: targetImage.src || targetImage.dataset.src, originalUrl: targetImage.dataset.original } : null;"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "errorHandling": {
+    "retry": {
+      "maxAttempts": 5,
+      "delay": 2000,
+      "backoff": "exponential",
+      "maxDelay": 30000,
+      "conditions": [
+        "timeout",
+        "network_error",
+        "element_not_found",
+        "cloudflare_blocked",
+        "rate_limited"
+      ]
+    },
+    "fallback": {
+      "enabled": true,
+      "strategies": [
+        {
+          "condition": "cloudflare_blocked",
+          "action": "cloudflare_bypass",
+          "maxAttempts": 3
+        },
+        {
+          "condition": "ip_blocked",
+          "action": "wait_and_retry",
+          "delay": 300000
+        },
+        {
+          "condition": "captcha_required",
+          "action": "manual_intervention",
+          "timeout": 300000
+        },
+        {
+          "condition": "rate_limited",
+          "action": "exponential_backoff",
+          "baseDelay": 5000,
+          "maxDelay": 300000
+        }
+      ]
+    }
+  },
+  "performance": {
+    "cache": {
+      "enabled": true,
+      "ttl": 600000,
+      "maxSize": 500,
+      "compression": true
+    },
+    "concurrency": {
+      "maxConcurrent": 2,
+      "delay": 1000,
+      "respectRateLimit": true
+    },
+    "optimization": {
+      "preloadImages": true,
+      "compressRequests": true,
+      "reuseConnections": true,
+      "enableHttp2": true,
+      "enableGzip": true
+    }
+  },
+  "debugging": {
+    "logging": {
+      "enabled": true,
+      "level": "debug",
+      "includeTimestamp": true,
+      "includeStackTrace": true,
+      "maxLogSize": 10485760
+    },
+    "screenshots": {
+      "enabled": true,
+      "onError": true,
+      "onSuccess": false,
+      "quality": 80,
+      "format": "jpeg"
+    },
+    "networkLogs": {
+      "enabled": true,
+      "includeHeaders": true,
+      "includeBody": false,
+      "maxBodySize": 1024
+    },
+    "performance": {
+      "enabled": true,
+      "trackMemory": true,
+      "trackTiming": true
+    }
+  },
+  "antiCrawler": {
+    "cloudflare": {
+      "enabled": true,
+      "indicators": [
+        ".cf-browser-verification",
+        "#cf-wrapper",
+        ".cf-checking-browser",
+        "Checking your browser",
+        "DDoS protection by Cloudflare",
+        "Ray ID"
+      ],
+      "maxWaitTime": 45000,
+      "bypassMethod": "wait",
+      "retryCount": 3
+    },
+    "captcha": {
+      "enabled": true,
+      "indicators": [
+        ".captcha-container",
+        "#captcha",
+        ".recaptcha",
+        ".hcaptcha",
+        "Please complete the security check",
+        "Verify you are human"
+      ],
+      "method": "manual",
+      "timeout": 300000,
+      "autoSolve": false
+    },
+    "ipBlock": {
+      "enabled": true,
+      "indicators": [
+        "访问频率过高",
+        "IP被限制",
+        "请稍后再试",
+        "Access denied",
+        "Rate limit exceeded",
+        "Too many requests",
+        "Blocked by administrator",
+        "Your IP has been blocked"
+      ],
+      "action": "retry",
+      "delay": 60000,
+      "maxRetries": 5
+    },
+    "userAgentRotation": {
+      "enabled": true,
+      "agents": [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      ],
+      "rotateInterval": 300000
+    },
+    "headerSpoofing": {
+      "enabled": true,
+      "randomizeOrder": true,
+      "includeCommonHeaders": true
+    }
+  },
+  "extensions": {
+    "customActions": [
+      {
+        "name": "smart_scroll",
+        "description": "智能滚动加载",
+        "code": "function smartScroll() { /* 自定义滚动逻辑 */ }"
+      }
+    ],
+    "plugins": [
+      {
+        "name": "image_optimizer",
+        "version": "1.0.0",
+        "enabled": true
+      }
+    ],
+    "hooks": {
+      "beforeRequest": "function(request) { /* 请求前处理 */ }",
+      "afterResponse": "function(response) { /* 响应后处理 */ }",
+      "onError": "function(error) { /* 错误处理 */ }"
+    }
+  }
+}

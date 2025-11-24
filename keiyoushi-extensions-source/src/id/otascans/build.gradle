@@ -1,0 +1,10 @@
+ext {
+    extName = 'Ota Scans'
+    extClass = '.OtaScans'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://yurilabs.my.id'
+    overrideVersionCode = 1
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

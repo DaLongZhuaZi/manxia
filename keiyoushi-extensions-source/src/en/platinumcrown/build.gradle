@@ -1,0 +1,10 @@
+ext {
+    extName = 'Platinum Crown'
+    extClass = '.PlatinumCrown'
+    themePkg = 'madara'
+    baseUrl = 'https://platinumscans.com'
+    overrideVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

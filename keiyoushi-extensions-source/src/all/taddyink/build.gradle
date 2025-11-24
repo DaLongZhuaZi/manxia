@@ -1,0 +1,7 @@
+ext {
+    extName = 'Taddy INK (Webtoons)'
+    extClass = '.TaddyInkFactory'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"

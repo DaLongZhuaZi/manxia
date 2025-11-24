@@ -1,0 +1,10 @@
+ext {
+    extName = 'Manhua Zonghe'
+    extClass = '.ManhuaZonghe'
+    themePkg = 'madara'
+    baseUrl = 'https://www.manhuazonghe.com'
+    overrideVersionCode = 1
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

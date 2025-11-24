@@ -1,0 +1,10 @@
+ext {
+    extName = 'Comicaso'
+    extClass = '.Comicaso'
+    themePkg = 'mangathemesia'
+    baseUrl = 'https://comicaso.space'
+    overrideVersionCode = 3
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"

@@ -1,0 +1,10 @@
+ext {
+    extName = 'ManhuaPlus (unoriginal)'
+    extClass = '.ManhuaPlusOrg'
+    themePkg = 'liliana'
+    baseUrl = 'https://manhuaplus.org'
+    overrideVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
