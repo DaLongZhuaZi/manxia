@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 漫匣 (ManXia)
 
 <div align="center">
@@ -35,12 +34,12 @@
 - **网络请求**: HTTP Client + WebView
 - **图片处理**: Image Kit + 自定义解扰算法
 
-## 🚀 快速开始
+## 🚀 快速开始(由于本项目仍处于早期开发阶段，暂不建议作为学习对象)
 
 ### 环境要求
 
 - DevEco Studio 5.0.0 或更高版本
-- HarmonyOS Next SDK (API 19)
+- HarmonyOS Next SDK (API 18)
 - Node.js 16.0.0 或更高版本
 
 ### 安装步骤
@@ -51,16 +50,11 @@ git clone https://github.com/DaLongZhuaZi/manxia.git
 cd manxia
 ```
 
-2. 安装依赖
-```bash
-ohpm install
-```
-
-3. 打开项目
+2. 打开项目
 - 使用 DevEco Studio 打开项目
-- 等待依赖下载完成
+- 配置证书，编译项目
 
-4. 运行项目
+3. 运行项目
 - 连接 HarmonyOS Next 设备或启动模拟器
 - 点击运行按钮
 
@@ -87,7 +81,7 @@ manxia/
 │   └── logs/                       # 日志文件
 ├── keiyoushi-extensions-source/    # Keiyoushi 扩展源参考
 ├── copymanga-copy20/               # 拷贝漫画源参考
-└── manxia-extensions-source/       # 自定义扩展源
+└── manxia-extensions-source/       # 漫匣自定义扩展源
 
 ```
 
@@ -169,7 +163,7 @@ manxia/
 - **项目地址**: https://github.com/keiyoushi/extensions
 - **使用内容**: 图源扩展架构设计、部分图源实现参考
 - **许可证**: Apache License 2.0
-- **说明**: Keiyoushi 是 Tachiyomi 的社区维护版本，提供了大量的漫画图源扩展。本项目参考了其扩展架构设计和部分图源的实现逻辑，并根据 HarmonyOS 平台特性进行了重新实现。
+- **说明**: Keiyoushi 是 Tachiyomi 的社区维护版本，提供了大量的漫画图源扩展。本项目参考了其扩展架构设计和部分图源的实现逻辑，并根据 HarmonyOS 平台的WebView特性进行了重新实现。
 
 #### 2. CopyManga Copy20
 - **项目地址**: https://github.com/stevenyomi/copymanga-copy20
@@ -267,6 +261,3 @@ SOFTWARE.
 <div align="center">
 Made with ❤️ by ManXia Team
 </div>
-=======
-# 漫匣
->>>>>>> fcebfc6841662c6267b2eb97be23e4e9771025ea
