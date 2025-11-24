@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 漫匣 (ManXia)
 
 <div align="center">
@@ -266,3 +267,6 @@ SOFTWARE.
 <div align="center">
 Made with ❤️ by ManXia Team
 </div>
+=======
+# 漫匣
+>>>>>>> fcebfc6841662c6267b2eb97be23e4e9771025ea
