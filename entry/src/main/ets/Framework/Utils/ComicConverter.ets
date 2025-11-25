@@ -221,8 +221,10 @@ export class ComicConverter {
       autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
       skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
       pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
-      volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation
+      volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
+      curlBackOpacity: 0
     };
     return fallbackSettings;
   }

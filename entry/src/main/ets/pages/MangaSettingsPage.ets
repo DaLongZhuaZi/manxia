@@ -13,8 +13,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
-import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, FilterSettings, Manga, ImageSourceType } from '../Models/MangaModels';
-import { DataManager, ComicInfo, ChapterInfo, PageInfo } from '../Framework/Data/DataManager';
+import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, FilterSettings, Manga, ImageSourceType, PageTurnAnimationType } from '../Models/MangaModels';
+import { DataManager, ComicInfo, ChapterInfo, PageInfo, ComicBasicInfoUpdate } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -65,6 +65,15 @@ struct MangaSettingsPage {
   @State coverImagePath: string = '';
   @State isLoadingManga: boolean = true;
 
+  // 漫画基础信息编辑状态
+  @State editingTitle: string = '';
+  @State editingDescription: string = '';
+  @State editingAuthors: string = '';
+  @State editingGenres: string = '';
+  @State editingStatus: string = '';
+  @State isEditingBasicInfo: boolean = false;
+  @State basicInfoExpanded: boolean = true;
+
   // 预加载页数设置
   @State preloadPagesCount: number = 3;
   @State preloadAllPages: boolean = false;
@@ -78,6 +87,9 @@ struct MangaSettingsPage {
   // 删除确认对话框状态
   @State showDeleteConfirmDialog: boolean = false;
   @State isDeleting: boolean = false;
+  
+  // 保存状态
+  @State isSavingBasicInfo: boolean = false;
 
   // 当前页面参数
   private pageParams: MangaSettingsPageParams = { mangaId: '', fromPage: 'Unknown' } as MangaSettingsPageParams;
@@ -273,6 +285,9 @@ struct MangaSettingsPage {
         // 使用从数据库加载的阅读设置
         this.readingSettings = this.currentManga.readingSettings;
         logger.info(TAG, `从数据库加载的阅读设置: mode=${this.readingSettings.readingMode}`);
+        
+        // 初始化编辑状态
+        this.initEditingState();
         
         // 加载预加载设置（从数据库优先，回退到AppStorage）
         try {
@@ -725,6 +740,33 @@ struct MangaSettingsPage {
     this.readingSettings.autoPageTurnInterval = Math.max(0, Math.min(60, value));
   }
 
+  private setPageTurnAnimation(animationType: PageTurnAnimationType): void {
+    this.readingSettings.pageTurnAnimation = animationType;
+    logger.info(TAG, `翻页动画设置更新为: ${animationType}`);
+  }
+  
+  /**
+   * 判断当前阅读模式是否支持卷页动画
+   * 卷页动画只支持：单页模式 + 从左到右/从右到左阅读方向
+   */
+  private isCurlAnimationSupported(): boolean {
+    const mode = this.readingSettings.readingMode;
+    const direction = this.readingSettings.readingDirection;
+    
+    // 单页从右到左模式
+    if (mode === ReadingMode.SINGLE_PAGE_RTL) {
+      return true;
+    }
+    
+    // 单页模式 + 从左到右或从右到左方向
+    if (mode === ReadingMode.SINGLE_PAGE) {
+      return direction === ReadingDirection.LEFT_TO_RIGHT || 
+             direction === ReadingDirection.RIGHT_TO_LEFT;
+    }
+    
+    return false;
+  }
+
   private setPreloadPagesCount(value: number): void {
     this.preloadPagesCount = Math.max(1, Math.min(MAX_PRELOAD_PAGES, value));
   }
@@ -751,6 +793,69 @@ struct MangaSettingsPage {
 
   private setFilterInvert(isOn: boolean): void {
     this.readingSettings.filterSettings.invert = isOn;
+  }
+
+  /**
+   * 初始化编辑状态
+   */
+  private initEditingState(): void {
+    if (this.currentManga) {
+      this.editingTitle = this.currentManga.title;
+      this.editingDescription = this.currentManga.description || '';
+      this.editingAuthors = this.currentManga.metadata.authors.join(', ');
+      this.editingGenres = this.currentManga.metadata.genres.join(', ');
+      this.editingStatus = this.currentManga.status;
+    }
+  }
+
+  /**
+   * 开始编辑基础信息
+   */
+  private startEditingBasicInfo(): void {
+    this.initEditingState();
+    this.isEditingBasicInfo = true;
+  }
+
+  /**
+   * 取消编辑基础信息
+   */
+  private cancelEditingBasicInfo(): void {
+    this.initEditingState();
+    this.isEditingBasicInfo = false;
+  }
+
+  /**
+   * 保存基础信息
+   */
+  private async saveBasicInfo(): Promise<void> {
+    if (!this.currentManga) {
+      return;
+    }
+    
+    this.isSavingBasicInfo = true;
+    try {
+      // 更新漫画对象
+      this.currentManga.title = this.editingTitle.trim();
+      this.currentManga.description = this.editingDescription.trim();
+      this.currentManga.metadata.authors = this.editingAuthors.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      this.currentManga.metadata.genres = this.editingGenres.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      
+      // 保存到数据库
+      const updateInfo: ComicBasicInfoUpdate = {
+        title: this.currentManga.title,
+        description: this.currentManga.description,
+        authors: this.currentManga.metadata.authors,
+        genres: this.currentManga.metadata.genres
+      };
+      await this.dataManager.updateComicBasicInfo(this.pageParams.mangaId, updateInfo);
+      
+      logger.info(TAG, `漫画基础信息保存成功: ${this.currentManga.title}`);
+      this.isEditingBasicInfo = false;
+    } catch (error) {
+      logger.error(TAG, `保存漫画基础信息失败: ${String(error)}`);
+    } finally {
+      this.isSavingBasicInfo = false;
+    }
   }
 
   /**
@@ -980,6 +1085,149 @@ struct MangaSettingsPage {
             .padding({ left: 16, right: 16, bottom: 16 })
           }
         }
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建基础信息编辑区域
+   */
+  @Builder
+  buildBasicInfoEditSection() {
+    Column({ space: 16 }) {
+      // 标题行
+      Row() {
+        Text('编辑基础信息')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        // 展开/收起按钮
+        Button() {
+          Text(this.basicInfoExpanded ? '▲' : '▼')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.basicInfoExpanded = !this.basicInfoExpanded;
+        })
+      }
+      .width('100%')
+
+      if (this.basicInfoExpanded && this.currentManga) {
+        Column({ space: 12 }) {
+          // 标题编辑
+          Column({ space: 4 }) {
+            Text('漫画标题')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+            
+            TextInput({ text: this.editingTitle, placeholder: '请输入漫画标题' })
+              .width('100%')
+              .height(44)
+              .fontSize(14)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .onChange((value: string) => {
+                this.editingTitle = value;
+              })
+          }
+          .width('100%')
+
+          // 作者编辑
+          Column({ space: 4 }) {
+            Text('作者（多个用逗号分隔）')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+            
+            TextInput({ text: this.editingAuthors, placeholder: '例如: 作者A, 作者B' })
+              .width('100%')
+              .height(44)
+              .fontSize(14)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .onChange((value: string) => {
+                this.editingAuthors = value;
+              })
+          }
+          .width('100%')
+
+          // 标签编辑
+          Column({ space: 4 }) {
+            Text('标签（多个用逗号分隔）')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+            
+            TextInput({ text: this.editingGenres, placeholder: '例如: 冒险, 奇幻, 热血' })
+              .width('100%')
+              .height(44)
+              .fontSize(14)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .onChange((value: string) => {
+                this.editingGenres = value;
+              })
+          }
+          .width('100%')
+
+          // 简介编辑
+          Column({ space: 4 }) {
+            Text('漫画简介')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+            
+            TextArea({ text: this.editingDescription, placeholder: '请输入漫画简介...' })
+              .width('100%')
+              .height(100)
+              .fontSize(14)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(8)
+              .onChange((value: string) => {
+                this.editingDescription = value;
+              })
+          }
+          .width('100%')
+
+          // 操作按钮
+          Row({ space: 12 }) {
+            Button('重置')
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.initEditingState();
+              })
+
+            Button(this.isSavingBasicInfo ? '保存中...' : '保存修改')
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .enabled(!this.isSavingBasicInfo)
+              .onClick(() => {
+                this.saveBasicInfo();
+              })
+          }
+          .width('100%')
+          .margin({ top: 8 })
+        }
+        .width('100%')
       }
     }
     .width('100%')
@@ -1382,37 +1630,6 @@ struct MangaSettingsPage {
 
       if (this.advancedSettingsExpanded) {
         Column({ space: 16 }) {
-          // 屏幕亮度
-          Column({ space: 8 }) {
-            Row() {
-              Text('屏幕亮度')
-                .fontSize(14)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Text(`${this.readingSettings.brightness}%`)
-                .fontSize(14)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.SpaceBetween)
-
-            Slider({
-              value: this.readingSettings.brightness,
-              min: 0,
-              max: 100,
-              step: 1,
-              style: SliderStyle.InSet
-            })
-              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-              .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-              .trackThickness(4)
-              .onChange((value: number) => {
-                this.setBrightness(Math.round(value));
-              })
-          }
-          .width('100%')
-
           // 页面间距
           Column({ space: 8 }) {
             Row() {
@@ -1477,6 +1694,157 @@ struct MangaSettingsPage {
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .width('100%')
+          }
+          .width('100%')
+
+          // 翻页动画
+          Column({ space: 8 }) {
+            Text('翻页动画')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .width('100%')
+
+            Row() {
+              // 无动画
+              Column() {
+                Text('无')
+                  .fontSize(12)
+                  .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.NONE ? 
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                    ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .padding(10)
+              .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.NONE ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.NONE))
+
+              // 滑动
+              Column() {
+                Text('滑动')
+                  .fontSize(12)
+                  .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                    ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .padding(10)
+              .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.SLIDE))
+
+              // 淡入淡出
+              Column() {
+                Text('淡入淡出')
+                  .fontSize(12)
+                  .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.FADE ? 
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                    ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .padding(10)
+              .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.FADE ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.FADE))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+
+            Row() {
+              // 立方体
+              Column() {
+                Text('立方体')
+                  .fontSize(12)
+                  .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CUBE ? 
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                    ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .padding(10)
+              .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CUBE ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.CUBE))
+
+              // 覆盖
+              Column() {
+                Text('覆盖')
+                  .fontSize(12)
+                  .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.COVER ? 
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                    ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .padding(10)
+              .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.COVER ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.COVER))
+
+              // 景深
+              Column() {
+                Text('景深')
+                  .fontSize(12)
+                  .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.DEPTH ? 
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                    ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .padding(10)
+              .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.DEPTH ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.DEPTH))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+            .margin({ top: 8 })
+
+            Row() {
+              // 卷页（只有单页LTR/RTL模式可用）
+              if (this.isCurlAnimationSupported()) {
+                Column() {
+                  Text('卷页')
+                    .fontSize(12)
+                    .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL ? 
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+                      ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
+                .layoutWeight(1)
+                .padding(10)
+                .backgroundColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL ? 
+                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) : Color.Transparent)
+                .borderRadius(8)
+                .onClick(() => this.setPageTurnAnimation(PageTurnAnimationType.CURL))
+              } else {
+                // 禁用状态的卷页按钮
+                Column() {
+                  Text('卷页')
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  Text('(仅单页左右)')
+                    .fontSize(9)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
+                .layoutWeight(1)
+                .padding(10)
+                .backgroundColor(Color.Transparent)
+                .borderRadius(8)
+                .opacity(0.5)
+              }
+              
+              // 占位
+              Column()
+                .layoutWeight(1)
+              Column()
+                .layoutWeight(1)
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+            .margin({ top: 8 })
           }
           .width('100%')
         }
@@ -1728,6 +2096,7 @@ struct MangaSettingsPage {
               Column({ space: 16 }) {
                 Blank().height(TITLE_BAR_HEIGHT_MINI)
                 
+                this.buildBasicInfoEditSection()
                 this.buildReadingDirectionSettings()
                 this.buildReadingModeSettings()
                 this.buildBasicSettings()
@@ -1754,6 +2123,7 @@ struct MangaSettingsPage {
               Blank().height(TITLE_BAR_HEIGHT_MINI)
 
               this.buildMangaInfoSection()
+              this.buildBasicInfoEditSection()
               this.buildReadingDirectionSettings()
               this.buildReadingModeSettings()
               this.buildBasicSettings()

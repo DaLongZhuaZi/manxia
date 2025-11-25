@@ -140,14 +140,38 @@ export interface ReadingProgress {
 
 /**
  * 翻页动画类型枚举
+ * 
+ * 可用动画：
+ * - NONE: 无动画
+ * - SLIDE: 滑动
+ * - FADE: 淡入淡出
+ * - CURL: 卷页效果（Canvas 3D卷曲）
+ * - CUBE: 立方体旋转
+ * - COVER: 覆盖滑入
+ * - DEPTH: 景深推进
+ * 
+ * 已废弃（映射到其他效果）：
+ * - ZOOM: 已废弃，映射到DEPTH
+ * - FLIP: 已废弃，映射到CUBE
  */
 export enum PageTurnAnimationType {
   NONE = 'NONE',                    // 无动画
   SLIDE = 'SLIDE',                  // 滑动
   FADE = 'FADE',                    // 淡入淡出
-  CURL = 'CURL',                    // 卷页效果
-  ZOOM = 'ZOOM',                    // 缩放
-  FLIP = 'FLIP'                     // 翻转
+  CURL = 'CURL',                    // 卷页效果（Canvas 3D卷曲）
+  ZOOM = 'ZOOM',                    // [已废弃] 缩放 -> 映射到DEPTH
+  FLIP = 'FLIP',                    // [已废弃] 翻转 -> 映射到CUBE
+  CUBE = 'CUBE',                    // 立方体旋转（3D）
+  COVER = 'COVER',                  // 覆盖滑入
+  DEPTH = 'DEPTH'                   // 景深推进（3D）
+}
+
+/**
+ * 双页竖屏组合方式枚举
+ */
+export enum DoublePagePortraitLayout {
+  VERTICAL = 'VERTICAL',            // 上下组合（页码小的在上）
+  HORIZONTAL = 'HORIZONTAL'         // 左右组合（根据阅读方向决定位置）
 }
 
 /**
@@ -176,10 +200,14 @@ export interface ReadingSettings {
   skipIntroPages: number;
   /** 翻页动画类型 */
   pageTurnAnimation: PageTurnAnimationType;
+  /** 双页竖屏组合方式 */
+  doublePagePortraitLayout: DoublePagePortraitLayout;
   /** 滤镜设置 */
   filterSettings: FilterSettings;
   /** 音量键翻页 */
   volumeKeyNavigation: boolean;
+  /** 卷页背面透明度（0-100，100为完全不透明） */
+  curlBackOpacity: number;
 }
 
 /**
@@ -338,7 +366,7 @@ export interface MangaReaderState {
 export const DEFAULT_READING_SETTINGS: ReadingSettings = {
   readingMode: ReadingMode.SINGLE_PAGE,
   readingDirection: ReadingDirection.LEFT_TO_RIGHT,
-  brightness: 50,
+  brightness: 1.0,  // 范围 0.1-2.0，1.0 为默认亮度（对应系统亮度 0.5）
   keepScreenOn: true,
   pageSpacing: 0,
   showPageInfo: true,
@@ -347,6 +375,7 @@ export const DEFAULT_READING_SETTINGS: ReadingSettings = {
   autoPageTurnInterval: 0,
   skipIntroPages: 0,
   pageTurnAnimation: PageTurnAnimationType.SLIDE,
+  doublePagePortraitLayout: DoublePagePortraitLayout.VERTICAL,
   filterSettings: {
     enabled: false,
     contrast: 100,
@@ -359,7 +388,8 @@ export const DEFAULT_READING_SETTINGS: ReadingSettings = {
     sepia: 0,
     brightness: 100
   },
-  volumeKeyNavigation: false
+  volumeKeyNavigation: false,
+  curlBackOpacity: 90  // 默认90%不透明
 };
 
 /**

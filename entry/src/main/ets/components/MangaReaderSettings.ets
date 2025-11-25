@@ -18,10 +18,11 @@ import {
   ReadingSettings,
   FilterSettings,
   PageTurnAnimationType,
+  DoublePagePortraitLayout,
   DEFAULT_READING_SETTINGS,
   DEFAULT_FILTER_SETTINGS
 } from '../Models/MangaModels';
-import { curves, UIContext } from '@kit.ArkUI';
+import { curves, UIContext, display } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 
@@ -66,13 +67,18 @@ export struct MangaReaderSettings {
     autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
     skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
     pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+    doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
     filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
-    volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation
+    volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
+    curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity
   };
   @State private panelOpacity: number = 0;
   @State private panelTranslateY: number = 300;
   @State private backdropOpacity: number = 0;
   @State private themeState: ThemeAwareState = new ThemeAwareState();
+  @State private isLandscape: boolean = false;
+  @State private screenWidth: number = 360;
+  @State private screenHeight: number = 640;
 
   // 动画系统
   private animationManager: GlobalAnimationManager = globalAnimationManager;
@@ -87,12 +93,32 @@ export struct MangaReaderSettings {
       logger.error(TAG, '获取UIContext失败');
     }
     
+    // 初始化屏幕方向检测
+    this.detectScreenOrientation();
+    
     // 初始化主题感知
     ThemeAwareHelper.initializeThemeAware('MangaReaderSettings', this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `MangaReaderSettings 主题切换: ${theme}`);
     });
+  }
+  
+  /**
+   * 检测屏幕方向
+   */
+  private detectScreenOrientation(): void {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      if (displayInfo) {
+        this.screenWidth = displayInfo.width / (displayInfo.densityPixels || 1);
+        this.screenHeight = displayInfo.height / (displayInfo.densityPixels || 1);
+        this.isLandscape = this.screenWidth > this.screenHeight;
+        logger.info(TAG, `屏幕方向检测: ${this.isLandscape ? '横屏' : '竖屏'}, ${this.screenWidth}x${this.screenHeight}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `屏幕方向检测失败: ${String(error)}`);
+    }
     
-    // 复制阅读设置
+    // 复制阅读设置（确保所有字段都被复制）
     this.currentSettings.readingMode = this.readingSettings.readingMode;
     this.currentSettings.readingDirection = this.readingSettings.readingDirection;
     this.currentSettings.brightness = this.readingSettings.brightness;
@@ -102,8 +128,14 @@ export struct MangaReaderSettings {
     this.currentSettings.showPageIndicator = this.readingSettings.showPageIndicator;
     this.currentSettings.fitMode = this.readingSettings.fitMode;
     this.currentSettings.autoPageTurnInterval = this.readingSettings.autoPageTurnInterval;
+    this.currentSettings.skipIntroPages = this.readingSettings.skipIntroPages;
+    this.currentSettings.pageTurnAnimation = this.readingSettings.pageTurnAnimation;
+    this.currentSettings.doublePagePortraitLayout = this.readingSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL;
     this.currentSettings.filterSettings = this.readingSettings.filterSettings;
     this.currentSettings.volumeKeyNavigation = this.readingSettings.volumeKeyNavigation;
+    this.currentSettings.curlBackOpacity = this.readingSettings.curlBackOpacity ?? DEFAULT_READING_SETTINGS.curlBackOpacity;
+    
+    logger.debug(TAG, `复制阅读设置: pageTurnAnimation=${this.currentSettings.pageTurnAnimation}, curlBackOpacity=${this.currentSettings.curlBackOpacity}`);
     
     // 延迟执行动画，确保组件完全渲染后再播放
     if (this.isVisible) {
@@ -220,8 +252,10 @@ export struct MangaReaderSettings {
       autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
       skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
       pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
-      volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation
+      volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
+      curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity
     };
     this.applySettings();
   }
@@ -296,6 +330,7 @@ export struct MangaReaderSettings {
    * 更新翻页动画类型（立即应用）
    */
   private updatePageTurnAnimation(animationType: PageTurnAnimationType): void {
+    logger.info(TAG, `更新翻页动画: ${this.currentSettings.pageTurnAnimation} -> ${animationType}`);
     this.currentSettings.pageTurnAnimation = animationType;
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(this.currentSettings);
@@ -617,13 +652,304 @@ export struct MangaReaderSettings {
   }
 
   /**
-   * 构建亮度调节器
+   * 构建滤镜开关
+   */
+  @Builder
+  buildFilterToggle() {
+    Row() {
+      Text('启用滤镜')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+      
+      Blank()
+      
+      Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.filterSettings.enabled })
+        .selectedColor($r('app.color.accent'))
+        .onChange((isOn: boolean) => {
+          this.updateFilterSettings('enabled', isOn);
+          if (this.callbacks.onSettingsChange) {
+            this.callbacks.onSettingsChange(this.currentSettings);
+          }
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 16 })
+  }
+
+  /**
+   * 构建亮度调节器（滤镜亮度）
+   */
+  @Builder
+  buildFilterBrightnessControl() {
+    Column() {
+      Row() {
+        Text('滤镜亮度')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+
+        Blank()
+
+        Text(`${this.currentSettings.filterSettings.brightness}%`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Slider({
+        value: this.currentSettings.filterSettings.brightness,
+        min: 0,
+        max: 200,
+        step: 5
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateFilterSettings('brightness', value);
+          if (this.callbacks.onSettingsChange) {
+            this.callbacks.onSettingsChange(this.currentSettings);
+          }
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+    .opacity(this.currentSettings.filterSettings.enabled ? 1.0 : 0.5)
+  }
+
+  /**
+   * 构建对比度调节器
+   */
+  @Builder
+  buildContrastControl() {
+    Column() {
+      Row() {
+        Text('对比度')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+
+        Blank()
+
+        Text(`${this.currentSettings.filterSettings.contrast}%`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Slider({
+        value: this.currentSettings.filterSettings.contrast,
+        min: 0,
+        max: 200,
+        step: 5
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateFilterSettings('contrast', value);
+          if (this.callbacks.onSettingsChange) {
+            this.callbacks.onSettingsChange(this.currentSettings);
+          }
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+    .opacity(this.currentSettings.filterSettings.enabled ? 1.0 : 0.5)
+  }
+
+  /**
+   * 构建饱和度调节器
+   */
+  @Builder
+  buildSaturationControl() {
+    Column() {
+      Row() {
+        Text('饱和度')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+
+        Blank()
+
+        Text(`${this.currentSettings.filterSettings.saturation}%`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Slider({
+        value: this.currentSettings.filterSettings.saturation,
+        min: 0,
+        max: 200,
+        step: 5
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateFilterSettings('saturation', value);
+          if (this.callbacks.onSettingsChange) {
+            this.callbacks.onSettingsChange(this.currentSettings);
+          }
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+    .opacity(this.currentSettings.filterSettings.enabled ? 1.0 : 0.5)
+  }
+
+  /**
+   * 构建棕褐色滤镜调节器
+   */
+  @Builder
+  buildSepiaControl() {
+    Column() {
+      Row() {
+        Text('复古色调')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+
+        Blank()
+
+        Text(`${this.currentSettings.filterSettings.sepia}%`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Slider({
+        value: this.currentSettings.filterSettings.sepia,
+        min: 0,
+        max: 100,
+        step: 5
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateFilterSettings('sepia', value);
+          if (this.callbacks.onSettingsChange) {
+            this.callbacks.onSettingsChange(this.currentSettings);
+          }
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+    .opacity(this.currentSettings.filterSettings.enabled ? 1.0 : 0.5)
+  }
+
+  /**
+   * 构建特殊滤镜开关（灰度、反色）
+   */
+  @Builder
+  buildSpecialFilters() {
+    Column() {
+      // 灰度模式
+      Row() {
+        Text('灰度模式')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+        
+        Blank()
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.filterSettings.grayscale })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateFilterSettings('grayscale', isOn);
+            if (this.callbacks.onSettingsChange) {
+              this.callbacks.onSettingsChange(this.currentSettings);
+            }
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      // 反色模式
+      Row() {
+        Text('反色模式')
+          .fontSize(14)
+          .fontColor($r('app.color.text_primary'))
+        
+        Blank()
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.filterSettings.invert })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateFilterSettings('invert', isOn);
+            if (this.callbacks.onSettingsChange) {
+              this.callbacks.onSettingsChange(this.currentSettings);
+            }
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ bottom: 16 })
+    .opacity(this.currentSettings.filterSettings.enabled ? 1.0 : 0.5)
+  }
+
+  /**
+   * 构建滤镜重置按钮
+   */
+  @Builder
+  buildFilterResetButton() {
+    Button('重置滤镜')
+      .fontSize(14)
+      .fontColor($r('app.color.accent'))
+      .backgroundColor(Color.Transparent)
+      .borderWidth(1)
+      .borderColor($r('app.color.accent'))
+      .borderRadius(8)
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .onClick(() => {
+        // 重置滤镜设置为默认值
+        this.currentSettings.filterSettings = {
+          enabled: false,
+          brightness: 100,
+          contrast: 100,
+          saturation: 100,
+          hue: 0,
+          gamma: 1.0,
+          sepia: 0,
+          invert: false,
+          grayscale: false,
+          blur: 0
+        };
+        if (this.callbacks.onSettingsChange) {
+          this.callbacks.onSettingsChange(this.currentSettings);
+        }
+      })
+  }
+
+  /**
+   * 构建完整的滤镜设置面板
+   */
+  @Builder
+  buildFilterSettingsPanel() {
+    Column() {
+      this.buildFilterToggle()
+      this.buildFilterBrightnessControl()
+      this.buildContrastControl()
+      this.buildSaturationControl()
+      this.buildSepiaControl()
+      this.buildSpecialFilters()
+      this.buildFilterResetButton()
+    }
+    .width('100%')
+    .margin({ bottom: 24 })
+  }
+
+  /**
+   * 构建亮度调节器（屏幕亮度）
    */
   @Builder
   buildBrightnessControl() {
     Column() {
       Row() {
-        Text('亮度')
+        Text('屏幕亮度')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
@@ -845,6 +1171,156 @@ export struct MangaReaderSettings {
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween)
+      .margin({ bottom: 8 })
+      
+      // 第三行：新增3种动画
+      Row() {
+        // 立方体
+        Column() {
+          Text('立方体')
+            .fontSize(12)
+            .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.CUBE ? 
+              $r('app.color.accent') : $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(12)
+        .backgroundColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.CUBE ? 
+          $r('app.color.accent_background') : Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updatePageTurnAnimation(PageTurnAnimationType.CUBE))
+
+        // 覆盖
+        Column() {
+          Text('覆盖')
+            .fontSize(12)
+            .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.COVER ? 
+              $r('app.color.accent') : $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(12)
+        .backgroundColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.COVER ? 
+          $r('app.color.accent_background') : Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updatePageTurnAnimation(PageTurnAnimationType.COVER))
+
+        // 景深
+        Column() {
+          Text('景深')
+            .fontSize(12)
+            .fontColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.DEPTH ? 
+              $r('app.color.accent') : $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(12)
+        .backgroundColor(this.currentSettings.pageTurnAnimation === PageTurnAnimationType.DEPTH ? 
+          $r('app.color.accent_background') : Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updatePageTurnAnimation(PageTurnAnimationType.DEPTH))
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      
+      // 卷页透明度滑动条（仅在选择卷页动画时显示）
+      if (this.currentSettings.pageTurnAnimation === PageTurnAnimationType.CURL) {
+        Column() {
+          Row() {
+            Text('卷页背面透明度')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+            Text(`${this.currentSettings.curlBackOpacity ?? 90}%`)
+              .fontSize(14)
+              .fontColor($r('app.color.accent'))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+          .margin({ top: 16, bottom: 8 })
+          
+          Slider({
+            value: this.currentSettings.curlBackOpacity ?? 90,
+            min: 0,
+            max: 100,
+            step: 5,
+            style: SliderStyle.OutSet
+          })
+            .blockColor($r('app.color.accent'))
+            .trackColor($r('app.color.background_secondary'))
+            .selectedColor($r('app.color.accent'))
+            .onChange((value: number) => {
+              this.updateCurlBackOpacity(value);
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
+      }
+    }
+    .width('100%')
+    .margin({ bottom: 24 })
+  }
+  
+  /**
+   * 更新卷页背面透明度
+   */
+  private updateCurlBackOpacity(opacity: number): void {
+    logger.info(TAG, `更新卷页透明度: ${this.currentSettings.curlBackOpacity} -> ${opacity}`);
+    this.currentSettings.curlBackOpacity = opacity;
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(this.currentSettings);
+    }
+  }
+  
+  /**
+   * 更新双页竖屏组合方式
+   */
+  private updateDoublePagePortraitLayout(layout: DoublePagePortraitLayout): void {
+    logger.info(TAG, `更新双页竖屏组合方式: ${this.currentSettings.doublePagePortraitLayout} -> ${layout}`);
+    this.currentSettings.doublePagePortraitLayout = layout;
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(this.currentSettings);
+    }
+  }
+  
+  /**
+   * 构建双页竖屏组合方式设置
+   */
+  @Builder
+  buildDoublePagePortraitLayoutSettings() {
+    Column() {
+      Text('双页竖屏组合')
+        .fontSize(16)
+        .fontColor($r('app.color.text_primary'))
+        .margin({ bottom: 12 })
+      
+      Row({ space: 8 }) {
+        // 上下组合
+        Column() {
+          Text('上下组合')
+            .fontSize(12)
+            .fontColor((this.currentSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL) === DoublePagePortraitLayout.VERTICAL ? 
+              $r('app.color.accent') : $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(12)
+        .backgroundColor((this.currentSettings.doublePagePortraitLayout || DoublePagePortraitLayout.VERTICAL) === DoublePagePortraitLayout.VERTICAL ? 
+          $r('app.color.accent_background') : Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updateDoublePagePortraitLayout(DoublePagePortraitLayout.VERTICAL))
+        
+        // 左右组合
+        Column() {
+          Text('左右组合')
+            .fontSize(12)
+            .fontColor(this.currentSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ? 
+              $r('app.color.accent') : $r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .padding(12)
+        .backgroundColor(this.currentSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ? 
+          $r('app.color.accent_background') : Color.Transparent)
+        .borderRadius(8)
+        .onClick(() => this.updateDoublePagePortraitLayout(DoublePagePortraitLayout.HORIZONTAL))
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
     }
     .width('100%')
     .margin({ bottom: 24 })
@@ -852,22 +1328,31 @@ export struct MangaReaderSettings {
 
   /**
    * 构建开关设置项
+   * 注意：showPageInfo 控制页面信息显示，showPageIndicator 控制页面指示器
    */
   @Builder
   buildToggleSettings() {
     Column() {
-      // 显示页面指示器
+      // 显示页面信息（页码等）
       Row() {
-        Text('显示页面指示器')
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
+        Column() {
+          Text('显示页面信息')
+            .fontSize(16)
+            .fontColor($r('app.color.text_primary'))
+          Text('在页面上显示当前页码')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
 
-        Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.showPageIndicator })
+        Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.showPageInfo })
           .selectedColor($r('app.color.accent'))
           .onChange((isOn: boolean) => {
+            this.currentSettings.showPageInfo = isOn;
+            // 同步更新 showPageIndicator
             this.currentSettings.showPageIndicator = isOn;
-            // 立即应用，但不关闭面板
             if (this.callbacks.onSettingsChange) {
               this.callbacks.onSettingsChange(this.currentSettings);
             }
@@ -881,16 +1366,22 @@ export struct MangaReaderSettings {
 
       // 保持屏幕常亮
       Row() {
-        Text('保持屏幕常亮')
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
+        Column() {
+          Text('保持屏幕常亮')
+            .fontSize(16)
+            .fontColor($r('app.color.text_primary'))
+          Text('阅读时防止屏幕自动关闭')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.keepScreenOn })
           .selectedColor($r('app.color.accent'))
           .onChange((isOn: boolean) => {
             this.currentSettings.keepScreenOn = isOn;
-            // 立即应用，但不关闭面板
             if (this.callbacks.onSettingsChange) {
               this.callbacks.onSettingsChange(this.currentSettings);
             }
@@ -899,28 +1390,6 @@ export struct MangaReaderSettings {
       .width('100%')
       .padding({ top: 12, bottom: 12 })
 
-      Divider()
-        .color($r('app.color.divider'))
-
-      // 音量键翻页
-      Row() {
-        Text('音量键翻页')
-          .fontSize(16)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.volumeKeyNavigation })
-          .selectedColor($r('app.color.accent'))
-          .onChange((isOn: boolean) => {
-            this.currentSettings.volumeKeyNavigation = isOn;
-            // 立即应用，但不关闭面板
-            if (this.callbacks.onSettingsChange) {
-              this.callbacks.onSettingsChange(this.currentSettings);
-            }
-          })
-      }
-      .width('100%')
-      .padding({ top: 12, bottom: 12 })
     }
     .width('100%')
     .margin({ bottom: 24 })
@@ -955,6 +1424,307 @@ export struct MangaReaderSettings {
     .width('100%')
   }
 
+  /**
+   * 构建横屏设置面板（从右侧滑入，双列布局）
+   */
+  @Builder
+  buildLandscapeSettingsPanel() {
+    Row() {
+      // 左侧空白区域（点击关闭）
+      Column()
+        .layoutWeight(1)
+        .height('100%')
+        .onClick(() => this.hidePanel())
+
+      // 右侧设置面板
+      Column() {
+        // 面板标题
+        Row() {
+          Text('高级设置')
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
+          Button() {
+            Image($r('app.media.ic_close'))
+              .width(20)
+              .height(20)
+              .fillColor($r('app.color.text_secondary'))
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => this.hidePanel())
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        // 滚动内容 - 横屏使用更紧凑的布局
+        Scroll() {
+          Column() {
+            // 横屏布局：滤镜设置
+            this.buildLandscapeFilterSettings()
+            
+            Divider()
+              .margin({ top: 12, bottom: 12 })
+              .color($r('app.color.divider'))
+            
+            // 翻页动画（横向紧凑布局）
+            this.buildLandscapePageTurnAnimation()
+            
+            Divider()
+              .margin({ top: 12, bottom: 12 })
+              .color($r('app.color.divider'))
+            
+            // 开关设置（横向布局）
+            this.buildLandscapeToggleSettings()
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+        .scrollable(ScrollDirection.Vertical)
+        .scrollBar(BarState.Off)
+
+        // 操作按钮
+        Row() {
+          Button('重置')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .backgroundColor($r('app.color.background_secondary'))
+            .layoutWeight(1)
+            .height(36)
+            .onClick(() => this.resetToDefaults())
+
+          Blank().width(8)
+
+          Button('关闭')
+            .fontSize(12)
+            .fontColor($r('app.color.text_on_accent'))
+            .backgroundColor($r('app.color.accent'))
+            .layoutWeight(1)
+            .height(36)
+            .onClick(() => this.hidePanel())
+        }
+        .width('100%')
+      }
+      .width(320)
+      .height('100%')
+      .padding(16)
+      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+      .borderRadius({ topLeft: 16, bottomLeft: 16 })
+      .opacity(this.panelOpacity)
+      .hitTestBehavior(HitTestMode.Default)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /**
+   * 横屏滤镜设置（紧凑布局）
+   */
+  @Builder
+  buildLandscapeFilterSettings() {
+    Column() {
+      Text('显示设置')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      // 滤镜开关
+      Row() {
+        Text('启用滤镜')
+          .fontSize(12)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.filterSettings.enabled })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.updateFilterSettings('enabled', isOn);
+            if (this.callbacks.onSettingsChange) {
+              this.callbacks.onSettingsChange(this.currentSettings);
+            }
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  /**
+   * 横屏翻页动画设置（紧凑网格布局）
+   */
+  @Builder
+  buildLandscapePageTurnAnimation() {
+    Column() {
+      Text('翻页动画')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      // 3x3 网格布局
+      Column() {
+        Row() {
+          this.buildCompactAnimButton('无', PageTurnAnimationType.NONE)
+          this.buildCompactAnimButton('滑动', PageTurnAnimationType.SLIDE)
+          this.buildCompactAnimButton('淡入', PageTurnAnimationType.FADE)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+        .margin({ bottom: 4 })
+
+        Row() {
+          this.buildCompactAnimButton('立方体', PageTurnAnimationType.CUBE)
+          this.buildCompactAnimButton('覆盖', PageTurnAnimationType.COVER)
+          this.buildCompactAnimButton('景深', PageTurnAnimationType.DEPTH)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+        .margin({ bottom: 4 })
+
+        Row() {
+          this.buildCompactAnimButton('卷页', PageTurnAnimationType.CURL)
+          // 占位
+          Column().width('31%')
+          Column().width('31%')
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  /**
+   * 紧凑动画按钮
+   */
+  @Builder
+  buildCompactAnimButton(label: string, type: PageTurnAnimationType) {
+    Text(label)
+      .fontSize(10)
+      .fontColor(this.currentSettings.pageTurnAnimation === type ? 
+        $r('app.color.accent') : $r('app.color.text_secondary'))
+      .width('31%')
+      .height(28)
+      .textAlign(TextAlign.Center)
+      .backgroundColor(this.currentSettings.pageTurnAnimation === type ? 
+        $r('app.color.accent_background') : Color.Transparent)
+      .borderRadius(4)
+      .onClick(() => this.updatePageTurnAnimation(type))
+  }
+
+  /**
+   * 横屏开关设置（横向布局）
+   */
+  @Builder
+  buildLandscapeToggleSettings() {
+    Column() {
+      Text('其他设置')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      // 页面间距（紧凑布局）
+      Row() {
+        Text('页间距')
+          .fontSize(11)
+          .fontColor($r('app.color.text_primary'))
+          .width(40)
+        
+        Slider({
+          value: this.currentSettings.pageSpacing,
+          min: 0,
+          max: 50,
+          step: 5
+        })
+          .layoutWeight(1)
+          .trackColor($r('app.color.divider'))
+          .selectedColor($r('app.color.accent'))
+          .onChange((value: number) => this.updatePageSpacing(value))
+        
+        Text(`${this.currentSettings.pageSpacing}px`)
+          .fontSize(10)
+          .fontColor($r('app.color.text_secondary'))
+          .width(35)
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      // 两列布局
+      Row() {
+        // 左列
+        Column() {
+          Row() {
+            Text('页面信息')
+              .fontSize(11)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.showPageInfo })
+              .selectedColor($r('app.color.accent'))
+              .onChange((isOn: boolean) => {
+                this.currentSettings.showPageInfo = isOn;
+                this.currentSettings.showPageIndicator = isOn;
+                if (this.callbacks.onSettingsChange) {
+                  this.callbacks.onSettingsChange(this.currentSettings);
+                }
+              })
+          }
+          .width('100%')
+          .margin({ bottom: 6 })
+
+          Row() {
+            Text('屏幕常亮')
+              .fontSize(11)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.keepScreenOn })
+              .selectedColor($r('app.color.accent'))
+              .onChange((isOn: boolean) => {
+                this.currentSettings.keepScreenOn = isOn;
+                if (this.callbacks.onSettingsChange) {
+                  this.callbacks.onSettingsChange(this.currentSettings);
+                }
+              })
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+        .margin({ right: 8 })
+
+        // 右列
+        Column() {
+          Row() {
+            Text('音量翻页')
+              .fontSize(11)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.currentSettings.volumeKeyNavigation })
+              .selectedColor($r('app.color.accent'))
+              .onChange((isOn: boolean) => {
+                this.currentSettings.volumeKeyNavigation = isOn;
+                if (this.callbacks.onSettingsChange) {
+                  this.callbacks.onSettingsChange(this.currentSettings);
+                }
+              })
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
   build() {
     if (this.isVisible) {
       Stack() {
@@ -969,83 +1739,104 @@ export struct MangaReaderSettings {
             this.hidePanel();
           })
 
-        // 设置面板 - 允许内部交互
-        Column() {
-          // 面板标题
-          Row() {
-            Column() {
-              Text('自动功能设置')
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              Text('滤镜、高级功能等详细配置')
-                .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
-                .margin({ top: 4 })
-            }
-            .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
+        // 根据屏幕方向选择不同布局
+        if (this.isLandscape) {
+          this.buildLandscapeSettingsPanel()
+        } else {
+          // 竖屏设置面板
+          Column() {
+            // 面板标题
+            Row() {
+              Column() {
+                Text('显示效果设置')
+                .fontSize(20)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+                Text('滤镜等显示效果配置')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_secondary'))
+                  .margin({ top: 4 })
+              }
+              .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
 
-            Button() {
-              Image($r('app.media.ic_close'))
-                .width(24)
-                .height(24)
-                .fillColor($r('app.color.text_secondary'))
-            }
-            .width(40)
-            .height(40)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => this.hidePanel())
-          }
-          .width('100%')
-          .padding({ bottom: 20 })
-
-          // 滚动内容
-          Scroll() {
-            Column() {
-              // ===== 滤镜设置 =====
-              this.buildSectionTitle('滤镜设置')
-              this.buildBrightnessControl()
-              
-              Divider()
-                .margin({ top: 16, bottom: 16 })
-                .color($r('app.color.divider'))
-              
-              // ===== 高级功能 =====
-              this.buildSectionTitle('高级功能')
-              // ===== 阅读快捷 =====
-              this.buildSkipIntroSettings()
-              // ===== 翻页动画 =====
-              this.buildPageTurnAnimationSettings()
-              // ===== 页面间距 =====
-              this.buildPageSpacingControl()
-              // ===== 其他设置 =====
-              this.buildToggleSettings()
+              Button() {
+                Image($r('app.media.ic_close'))
+                  .width(24)
+                  .height(24)
+                  .fillColor($r('app.color.text_secondary'))
+              }
+              .width(40)
+              .height(40)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => this.hidePanel())
             }
             .width('100%')
-          }
-          .layoutWeight(1)
-          .scrollable(ScrollDirection.Vertical)
-          .scrollBar(BarState.Off)
+            .padding({ bottom: 20 })
 
-          // 操作按钮
-          this.buildActionButtons()
+            // 滚动内容
+            Scroll() {
+              Column() {
+                // ===== 滤镜设置 =====
+                this.buildSectionTitle('图像滤镜')
+                this.buildFilterSettingsPanel()
+                
+                Divider()
+                  .margin({ top: 16, bottom: 16 })
+                  .color($r('app.color.divider'))
+                
+                // ===== 翻页动画设置 =====
+                this.buildSectionTitle('翻页动画')
+                this.buildPageTurnAnimationSettings()
+                
+                Divider()
+                  .margin({ top: 16, bottom: 16 })
+                  .color($r('app.color.divider'))
+                
+                // ===== 页面间距 =====
+                this.buildPageSpacingControl()
+                
+                // ===== 显示设置 =====
+                this.buildToggleSettings()
+              }
+              .width('100%')
+            }
+            .layoutWeight(1)
+            .scrollable(ScrollDirection.Vertical)
+            .scrollBar(BarState.Off)
+
+            // 操作按钮
+            this.buildActionButtons()
+          }
+          .width('100%')
+          .height('80%')
+          .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+          .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+          .borderRadius({ topLeft: 16, topRight: 16 })
+          .padding(20)
+          .opacity(this.panelOpacity)
+          .translate({ x: 0, y: this.panelTranslateY })
+          .position({ x: 0, y: '100%' })
+          .translate({ x: 0, y: '-100%' })
+          .hitTestBehavior(HitTestMode.Default)
         }
-        .width('100%')
-        .height('80%')
-        .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-        .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-        .borderRadius({ topLeft: 16, topRight: 16 })
-        .padding(20)
-        .opacity(this.panelOpacity)
-        .translate({ x: 0, y: this.panelTranslateY })
-        .position({ x: 0, y: '100%' })
-        .translate({ x: 0, y: '-100%' })
-        .hitTestBehavior(HitTestMode.Default)
       }
       .width('100%')
       .height('100%')
       .position({ x: 0, y: 0 })
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        const newWidth = Number(newValue.width);
+        const newHeight = Number(newValue.height);
+        if (newWidth > 0 && newHeight > 0) {
+          const wasLandscape = this.isLandscape;
+          this.isLandscape = newWidth > newHeight;
+          this.screenWidth = newWidth;
+          this.screenHeight = newHeight;
+          if (wasLandscape !== this.isLandscape) {
+            logger.info(TAG, `屏幕方向变化: ${this.isLandscape ? '横屏' : '竖屏'}`);
+          }
+        }
+      })
     }
   }
 }

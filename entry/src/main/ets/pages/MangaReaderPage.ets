@@ -30,7 +30,8 @@ import {
   ReadingSettings,
   DEFAULT_READING_SETTINGS,
   ImageSourceType,
-  MangaSourceInfo
+  MangaSourceInfo,
+  DoublePagePortraitLayout
 } from '../Models/MangaModels';
 import { MangaViewer } from '../components/MangaViewer';
 import { MangaReaderSettings } from '../components/MangaReaderSettings';
@@ -48,6 +49,12 @@ import { MangaSourceEngine, EngineResult } from '../Framework/WebView/MangaSourc
 import { PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
 import { webview } from '@kit.ArkWeb';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { fileUri } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
+import { KeyCode, inputConsumer } from '@kit.InputKit';
+import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { window } from '@kit.ArkUI';
 
 const TAG = 'MangaReaderPage';
 
@@ -315,13 +322,32 @@ export struct MangaReaderPage {
   @State debugClickX: number = 0;
   @State debugClickY: number = 0;
   
-  // 设置面板动画状态（交由子组件内部处理，页面层避免重复动画以防闪烁）
-  @State settingsPanelOpacity: number = 0; // 保留但不再驱动动画
-  @State settingsPanelScale: number = 0.8; // 保留但不再驱动动画
-  @State settingsPanelTranslateY: number = 50; // 保留但不再驱动动画
+  // 设置面板动画状态
+  @State settingsPanelOpacity: number = 0;
+  @State settingsPanelScale: number = 0.95;
+  @State settingsPanelTranslateY: number = 20;
+  // 更多菜单动画状态
   @State moreMenuOpacity: number = 0;
   @State moreMenuScale: number = 0.95;
   @State moreMenuTranslateY: number = -10;
+  // 快速设置面板动画状态
+  @State quickSettingsOpacity: number = 0;
+  @State quickSettingsScale: number = 0.95;
+  @State quickSettingsTranslateY: number = 20;
+  // 自动翻页设置面板动画状态
+  @State autoPageTurnSettingsOpacity: number = 0;
+  @State autoPageTurnSettingsScale: number = 0.95;
+  @State autoPageTurnSettingsTranslateY: number = 20;
+  // 翻页动画设置面板状态
+  @State showPageTurnAnimationSettings: boolean = false;
+  @State pageTurnAnimationSettingsOpacity: number = 0;
+  @State pageTurnAnimationSettingsScale: number = 0.95;
+  @State pageTurnAnimationSettingsTranslateY: number = 20;
+  // 跳转页面对话框状态
+  @State showJumpToPageDialog: boolean = false;
+  @State jumpToPageInput: string = '';
+  @State jumpToPageDialogOpacity: number = 0;
+  @State jumpToPageDialogScale: number = 0.9;
   
   // 屏幕尺寸
   @State screenWidth: number = 0;
@@ -345,6 +371,12 @@ export struct MangaReaderPage {
   @State isDragging: boolean = false;
   @State lastTapTime: number = 0;
   @State tapCount: number = 0;
+  private singleTapTimer: number = -1; // 单击延迟定时器，用于双击检测时取消单击
+  
+  // 音量键翻页回调函数（用于inputConsumer注册/注销）
+  private volumeUpCallback: ((event: InputKeyEvent) => void) | null = null;
+  private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
+  private isVolumeKeyListenerRegistered: boolean = false;
 
   onPageShow() {
     logger.lifecycle(TAG, '漫画阅读器页面开始显示');
@@ -481,6 +513,14 @@ export struct MangaReaderPage {
     // 设置全屏阅读模式的状态栏
     this.setupFullscreenMode();
     
+    // 应用屏幕常亮设置
+    this.applyKeepScreenOnSetting();
+    
+    // 亮度设置已移除，不再应用
+    
+    // 注册音量键监听（如果启用了音量键翻页）
+    this.updateVolumeKeyListener();
+    
     // 启动阅读器流程
     this.startReaderFlow();
     
@@ -488,6 +528,91 @@ export struct MangaReaderPage {
     setTimeout(() => {
       this.startEntranceAnimation();
     }, 100);
+  }
+  
+  /**
+   * 应用屏幕常亮设置
+   */
+  private applyKeepScreenOnSetting(): void {
+    try {
+      const keepScreenOn = this.readingSettings.keepScreenOn;
+      logger.info(TAG, `应用屏幕常亮设置: ${keepScreenOn}`);
+      
+      // 获取当前窗口并设置屏幕常亮
+      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+        windowStage.setWindowKeepScreenOn(keepScreenOn).then(() => {
+          logger.info(TAG, `屏幕常亮设置成功: ${keepScreenOn}`);
+        }).catch((err: BusinessError) => {
+          logger.error(TAG, `设置屏幕常亮失败: ${err.message}`);
+        });
+      }).catch((err: BusinessError) => {
+        logger.error(TAG, `获取窗口失败: ${err.message}`);
+      });
+    } catch (error) {
+      logger.error(TAG, `应用屏幕常亮设置异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 应用亮度设置
+   * brightness 范围: 0.1 - 2.0，其中 1.0 为默认亮度
+   * 窗口亮度 API 范围: 0.0 - 1.0 或 -1.0（系统默认）
+   */
+  private applyBrightnessSetting(): void {
+    try {
+      let brightness = this.readingSettings.brightness;
+      
+      // 兼容旧数据：如果亮度值大于2.0，说明是旧的百分比格式（0-100或更大）
+      // 将其转换为新格式（0.1-2.0）
+      if (brightness > 2.0) {
+        // 旧格式：50 表示 50%，对应新格式的 1.0
+        brightness = brightness / 50.0;
+        brightness = Math.max(0.1, Math.min(2.0, brightness));
+        logger.info(TAG, `亮度值格式转换: 旧值=${this.readingSettings.brightness}, 新值=${brightness}`);
+        // 更新设置中的亮度值
+        this.readingSettings.brightness = brightness;
+      }
+      
+      // 将 0.1-2.0 的范围映射到 0.0-1.0
+      // brightness = 1.0 对应窗口亮度 0.5（中间值）
+      // brightness = 0.1 对应窗口亮度 0.05
+      // brightness = 2.0 对应窗口亮度 1.0
+      const windowBrightness = Math.max(0.0, Math.min(1.0, brightness / 2.0));
+      
+      logger.info(TAG, `应用亮度设置: readingBrightness=${brightness.toFixed(2)}, windowBrightness=${windowBrightness.toFixed(2)}`);
+      
+      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+        windowStage.setWindowBrightness(windowBrightness).then(() => {
+          logger.info(TAG, `窗口亮度设置成功: ${windowBrightness.toFixed(2)}`);
+        }).catch((err: BusinessError) => {
+          logger.error(TAG, `设置窗口亮度失败: ${err.message}`);
+        });
+      }).catch((err: BusinessError) => {
+        logger.error(TAG, `获取窗口失败: ${err.message}`);
+      });
+    } catch (error) {
+      logger.error(TAG, `应用亮度设置异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 恢复默认亮度
+   */
+  private restoreBrightnessSetting(): void {
+    try {
+      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+        // 设置为 -1 表示使用系统默认亮度
+        windowStage.setWindowBrightness(-1).then(() => {
+          logger.info(TAG, '窗口亮度已恢复为系统默认');
+        }).catch((err: BusinessError) => {
+          logger.error(TAG, `恢复窗口亮度失败: ${err.message}`);
+        });
+      }).catch((err: BusinessError) => {
+        logger.error(TAG, `获取窗口失败: ${err.message}`);
+      });
+    } catch (error) {
+      logger.error(TAG, `恢复亮度设置异常: ${String(error)}`);
+    }
   }
 
   /**
@@ -549,6 +674,20 @@ export struct MangaReaderPage {
       clearTimeout(this.overlayDismissTimer);
       this.overlayDismissTimer = -1;
     }
+    
+    if (this.singleTapTimer !== -1) {
+      clearTimeout(this.singleTapTimer);
+      this.singleTapTimer = -1;
+    }
+
+    // 恢复屏幕常亮设置（关闭常亮）
+    this.restoreKeepScreenOnSetting();
+    
+    // 恢复系统默认亮度
+    this.restoreBrightnessSetting();
+    
+    // 注销音量键监听
+    this.unregisterVolumeKeyListener();
 
     // 恢复正常状态栏模式
     this.restoreNormalMode();
@@ -557,9 +696,29 @@ export struct MangaReaderPage {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     logger.lifecycle(TAG, '漫画阅读器页面即将消失');
   }
+  
+  /**
+   * 恢复屏幕常亮设置（离开页面时关闭常亮）
+   */
+  private restoreKeepScreenOnSetting(): void {
+    try {
+      window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
+        windowStage.setWindowKeepScreenOn(false).then(() => {
+          logger.info(TAG, '屏幕常亮已关闭');
+        }).catch((err: BusinessError) => {
+          logger.error(TAG, `关闭屏幕常亮失败: ${err.message}`);
+        });
+      }).catch((err: BusinessError) => {
+        logger.error(TAG, `获取窗口失败: ${err.message}`);
+      });
+    } catch (error) {
+      logger.error(TAG, `恢复屏幕常亮设置异常: ${String(error)}`);
+    }
+  }
 
   /**
    * 初始化屏幕尺寸
+   * 注意：统一使用vp单位，确保与ClickEvent.displayX/displayY坐标系统一致
    */
   private initScreenSize(): void {
     let displayClass: display.Display | null = null;
@@ -567,20 +726,27 @@ export struct MangaReaderPage {
       // 获取屏幕显示信息
       displayClass = display.getDefaultDisplaySync();
       if (displayClass) {
-        this.screenWidth = displayClass.width;
-        this.screenHeight = displayClass.height;
-        logger.debug(TAG, `屏幕尺寸初始化: ${this.screenWidth}x${this.screenHeight}`);
+        // 获取物理像素尺寸和屏幕密度
+        const physicalWidth = displayClass.width;
+        const physicalHeight = displayClass.height;
+        const densityPixels = displayClass.densityPixels || 1.0;
+        
+        // 转换为vp单位（ClickEvent.displayX/displayY使用vp单位）
+        // vp = px / densityPixels
+        this.screenWidth = physicalWidth / densityPixels;
+        this.screenHeight = physicalHeight / densityPixels;
+        logger.debug(TAG, `屏幕尺寸初始化: ${physicalWidth}x${physicalHeight}px -> ${this.screenWidth.toFixed(0)}x${this.screenHeight.toFixed(0)}vp (density=${densityPixels})`);
       } else {
-        // 使用默认值
-        this.screenWidth = 1080;
-        this.screenHeight = 2340;
-        logger.warn(TAG, '无法获取屏幕尺寸，使用默认值');
+        // 使用默认值（vp单位）
+        this.screenWidth = 360;
+        this.screenHeight = 780;
+        logger.warn(TAG, '无法获取屏幕尺寸，使用默认值(vp)');
       }
     } catch (exception) {
-      // 使用默认值
-      this.screenWidth = 1080;
-      this.screenHeight = 2340;
-      logger.error(TAG, `获取屏幕尺寸失败，使用默认值. Code: ${(exception as BusinessError).code}, message: ${(exception as BusinessError).message}`);
+      // 使用默认值（vp单位）
+      this.screenWidth = 360;
+      this.screenHeight = 780;
+      logger.error(TAG, `获取屏幕尺寸失败，使用默认值(vp). Code: ${(exception as BusinessError).code}, message: ${(exception as BusinessError).message}`);
     }
   }
   
@@ -731,7 +897,8 @@ export struct MangaReaderPage {
 
   private areMenusVisible(): boolean {
     return this.showTopToolbar || this.showBottomToolbar || this.showSettingsPanel ||
-      this.showQuickSettings || this.showMoreMenu || this.showChapterList || this.showAutoPageTurnSettings;
+      this.showQuickSettings || this.showMoreMenu || this.showChapterList || 
+      this.showAutoPageTurnSettings || this.showPageTurnAnimationSettings || this.showJumpToPageDialog;
   }
 
   private pauseAutoPageTurnAndResetTimer(reason: string): void {
@@ -767,8 +934,59 @@ export struct MangaReaderPage {
    * 自动翻页设置面板开关
    */
   private toggleAutoPageTurnSettings(): void {
-    this.showAutoPageTurnSettings = !this.showAutoPageTurnSettings;
+    if (this.showAutoPageTurnSettings) {
+      this.hideAutoPageTurnSettingsWithAnimation();
+    } else {
+      this.showAutoPageTurnSettingsWithAnimation();
+    }
     this.handleMenusVisibilityChange();
+  }
+  
+  /**
+   * 显示自动翻页设置面板（带动画）
+   */
+  private showAutoPageTurnSettingsWithAnimation(): void {
+    // 设置初始状态
+    this.autoPageTurnSettingsOpacity = 0;
+    this.autoPageTurnSettingsScale = 0.95;
+    this.autoPageTurnSettingsTranslateY = 20;
+    this.showAutoPageTurnSettings = true;
+    
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 200,
+        curve: Curve.EaseOut
+      }, () => {
+        this.autoPageTurnSettingsOpacity = 1;
+        this.autoPageTurnSettingsScale = 1;
+        this.autoPageTurnSettingsTranslateY = 0;
+      });
+    } else {
+      this.autoPageTurnSettingsOpacity = 1;
+      this.autoPageTurnSettingsScale = 1;
+      this.autoPageTurnSettingsTranslateY = 0;
+    }
+  }
+  
+  /**
+   * 隐藏自动翻页设置面板（带动画）
+   */
+  private hideAutoPageTurnSettingsWithAnimation(): void {
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 150,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.showAutoPageTurnSettings = false;
+        }
+      }, () => {
+        this.autoPageTurnSettingsOpacity = 0;
+        this.autoPageTurnSettingsScale = 0.95;
+        this.autoPageTurnSettingsTranslateY = 20;
+      });
+    } else {
+      this.showAutoPageTurnSettings = false;
+    }
   }
 
   /**
@@ -2399,6 +2617,7 @@ export struct MangaReaderPage {
   }
   /**
    * 启动入场动画
+   * 修复：使用animateTo在回调中直接修改状态，确保动画和状态同步
    */
   private startEntranceAnimation(): void {
     this.isVisible = true;
@@ -2409,50 +2628,44 @@ export struct MangaReaderPage {
       // 直接设置最终状态，跳过动画
       this.contentOpacity = 1;
       this.titleTranslateY = 0;
+      // 仅在阅读设置已就绪时显示交互提示
+      if (this.isReadingSettingsReady) {
+        this.showInteractionOverlay = true;
+        this.showInteractionOverlayWithAnimation();
+      }
       return;
     }
     
-    // 设置UIContext给动画管理器
-    this.animationManager.setUIContext(this.uiContext);
+    // 设置初始状态
+    this.contentOpacity = 0;
+    this.titleTranslateY = -20;
     
-    // 使用AnimationManager播放入场动画
-    this.animationManager.playAnimation(
-      AnimationType.FADE_IN,
-      this.animationManager.createFadeInState(),
-        { duration: 300, type: AnimationType.FADE_IN }
-    ).then(() => {
-      this.contentOpacity = 1;
-      // 入场动画完成后，仅在阅读设置已就绪时显示交互提示
-      if (this.isReadingSettingsReady) {
-        this.showInteractionOverlay = true;
-        this.showInteractionOverlayWithAnimation();
-      } else {
-        logger.debug(TAG, '入场动画完成，但阅读设置尚未就绪，延迟显示Overlay');
+    // 使用animateTo执行淡入动画
+    this.uiContext.animateTo({
+      duration: 300,
+      curve: Curve.EaseOut,
+      onFinish: () => {
+        // 入场动画完成后，仅在阅读设置已就绪时显示交互提示
+        if (this.isReadingSettingsReady) {
+          this.showInteractionOverlay = true;
+          this.showInteractionOverlayWithAnimation();
+        } else {
+          logger.debug(TAG, '入场动画完成，但阅读设置尚未就绪，延迟显示Overlay');
+        }
       }
-    }).catch((error: Error) => {
-      logger.error(TAG, '淡入动画失败', error.message);
-      // 动画失败时直接设置最终状态
+    }, () => {
       this.contentOpacity = 1;
-      // 动画失败也仅在阅读设置已就绪时显示交互提示
-      if (this.isReadingSettingsReady) {
-        this.showInteractionOverlay = true;
-        this.showInteractionOverlayWithAnimation();
-      } else {
-        logger.debug(TAG, '淡入动画失败后内容已可见，但阅读设置尚未就绪，延迟显示Overlay');
-      }
     });
 
-    this.animationManager.playAnimation(
-      AnimationType.SLIDE_IN_DOWN,
-      this.animationManager.createSlideInState('down'),
-      { duration: 400, type: AnimationType.SLIDE_IN_DOWN }
-    ).then(() => {
-      this.titleTranslateY = 0;
-    }).catch((error: Error) => {
-      logger.error(TAG, '滑入动画失败', error.message);
-      // 动画失败时直接设置最终状态
+    // 标题滑入动画
+    this.uiContext.animateTo({
+      duration: 400,
+      curve: Curve.EaseOut
+    }, () => {
       this.titleTranslateY = 0;
     });
+    
+    logger.debug(TAG, '入场动画已启动');
   }
 
   /**
@@ -2487,97 +2700,106 @@ export struct MangaReaderPage {
 
   /**
    * 处理页面点击
+   * 简化版：移除双击检测，单击立即响应
+   * 注：双击缩放功能已禁用，如需恢复请使用GestureGroup处理
    */
   private handlePageTap(event: ClickEvent): void {
-    const currentTime = Date.now();
-    
-    // 双击检测
-    if (currentTime - this.lastTapTime < 300) {
-      this.tapCount++;
-      if (this.tapCount === 2) {
-        this.handleDoubleTap(event);
-        this.tapCount = 0;
-      }
-    } else {
-      this.tapCount = 1;
-      setTimeout(() => {
-        if (this.tapCount === 1) {
-          this.handleSingleTap(event);
-        }
-        this.tapCount = 0;
-      }, 300);
-    }
-    
-    this.lastTapTime = currentTime;
+    // 直接处理单击，无延迟
+    this.handleSingleTap(event);
     // 交互触发：暂停自动翻页1s
     this.delayAutoPageTurnForInteraction();
   }
 
   /**
    * 显示工具栏动画
+   * 修复：使用animateTo在回调中直接修改状态，确保动画和状态同步
    */
   private showToolbarsWithAnimation(): void {
+    // 先设置可见性，让组件渲染出来
+    this.showTopToolbar = true;
+    this.showBottomToolbar = true;
+    
     if (this.uiContext) {
-      this.animationManager.setUIContext(this.uiContext);
-      this.animationManager.playAnimation(
-        AnimationType.FADE_IN,
-        this.animationManager.createFadeInState(),
-        { duration: 200, easing: AnimationEasing.EASE_OUT, type: AnimationType.FADE_IN }
-      ).then(() => {
-        this.showTopToolbar = true;
-        this.showBottomToolbar = true;
+      // 使用animateTo执行淡入动画
+      this.uiContext.animateTo({
+        duration: 200,
+        curve: Curve.EaseOut
+      }, () => {
         this.toolbarOpacity = 1.0;
-        this.handleMenusVisibilityChange();
-      }).catch((error: Error) => {
-        logger.error(TAG, '显示工具栏动画失败', error.message);
-        this.showTopToolbar = true;
-        this.showBottomToolbar = true;
-        this.toolbarOpacity = 1.0;
-        this.handleMenusVisibilityChange();
+        this.toolbarTranslateY = 0;
       });
     } else {
-      this.showTopToolbar = true;
-      this.showBottomToolbar = true;
+      // 无动画直接设置
       this.toolbarOpacity = 1.0;
-      this.handleMenusVisibilityChange();
+      this.toolbarTranslateY = 0;
     }
+    this.handleMenusVisibilityChange();
+    logger.debug(TAG, '显示工具栏动画');
   }
 
   /**
    * 隐藏工具栏动画
+   * 修复：使用animateTo在回调中直接修改状态，动画完成后隐藏组件
    */
   private hideToolbarsWithAnimation(): void {
     if (this.uiContext) {
-      this.animationManager.setUIContext(this.uiContext);
-      this.animationManager.playAnimation(
-        AnimationType.FADE_OUT,
-        this.animationManager.createFadeOutState(),
-        { duration: 200, easing: AnimationEasing.EASE_IN, type: AnimationType.FADE_OUT }
-      ).then(() => {
-        this.showTopToolbar = false;
-        this.showBottomToolbar = false;
+      // 使用animateTo执行淡出动画
+      this.uiContext.animateTo({
+        duration: 200,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          // 动画完成后隐藏组件
+          this.showTopToolbar = false;
+          this.showBottomToolbar = false;
+          this.handleMenusVisibilityChange();
+        }
+      }, () => {
         this.toolbarOpacity = 0.0;
-        this.handleMenusVisibilityChange();
-      }).catch((error: Error) => {
-        logger.error(TAG, '隐藏工具栏动画失败', error.message);
-        this.showTopToolbar = false;
-        this.showBottomToolbar = false;
-        this.toolbarOpacity = 0.0;
-        this.handleMenusVisibilityChange();
       });
     } else {
+      // 无动画直接设置
       this.showTopToolbar = false;
       this.showBottomToolbar = false;
       this.toolbarOpacity = 0.0;
       this.handleMenusVisibilityChange();
     }
+    logger.debug(TAG, '隐藏工具栏动画');
+  }
+
+  /**
+   * 判断当前阅读模式是否支持卷页动画
+   * 卷页动画只支持：单页模式 + 从左到右/从右到左阅读方向
+   */
+  private isCurlAnimationSupported(): boolean {
+    const mode = this.readingSettings.readingMode;
+    const direction = this.readingSettings.readingDirection;
+    
+    // 单页从右到左模式
+    if (mode === ReadingMode.SINGLE_PAGE_RTL) {
+      return true;
+    }
+    
+    // 单页模式 + 从左到右或从右到左方向
+    if (mode === ReadingMode.SINGLE_PAGE) {
+      return direction === ReadingDirection.LEFT_TO_RIGHT || 
+             direction === ReadingDirection.RIGHT_TO_LEFT;
+    }
+    
+    return false;
   }
 
   /**
    * 处理设置变更
    */
   private handleSettingsChange(settings: ReadingSettings): void {
-    logger.info(TAG, '阅读设置已更新');
+    logger.info(TAG, `阅读设置已更新: pageTurnAnimation=${settings.pageTurnAnimation}, brightness=${settings.brightness}`);
+    
+    // 检查屏幕常亮设置是否变更
+    const keepScreenOnChanged = this.readingSettings.keepScreenOn !== settings.keepScreenOn;
+    // 检查亮度设置是否变更（在更新前检测，使用容差比较浮点数）
+    const brightnessChanged = Math.abs(this.readingSettings.brightness - settings.brightness) > 0.01;
+    // 检查音量键翻页设置是否变更
+    const volumeKeyChanged = this.readingSettings.volumeKeyNavigation !== settings.volumeKeyNavigation;
     
     // 保存设置到数据库和AppStorage（针对当前漫画）
     if (this.readerState.currentManga) {
@@ -2602,21 +2824,32 @@ export struct MangaReaderPage {
     // 立即更新当前阅读设置
     this.readingSettings = settings;
     
+    // 如果屏幕常亮设置变更，立即应用
+    if (keepScreenOnChanged) {
+      this.applyKeepScreenOnSetting();
+    }
+    
+    // 亮度设置已移除，不再处理亮度变更
+    
+    // 如果音量键翻页设置变更，更新监听状态
+    if (volumeKeyChanged) {
+      logger.info(TAG, `音量键翻页设置变更: ${settings.volumeKeyNavigation}`);
+      this.updateVolumeKeyListener();
+    }
+    
     // 更新自动翻页配置
     this.updateAutoPageTurnConfig();
 
-    // 根据间隔自动启动/停止自动翻页，确保设置变更立即生效
-    const shouldEnableAutoPageTurn: boolean = this.readingSettings.autoPageTurnInterval > 0;
-    if (this.autoPageTurnController) {
+    // 注意：不要在设置变更时自动启动/停止自动翻页
+    // 自动翻页的启用/停止应该由用户通过自动翻页设置面板明确控制
+    // 只有当用户明确禁用（间隔设为0）时才停止
+    if (this.autoPageTurnController && this.readingSettings.autoPageTurnInterval === 0) {
       const currentState: AutoPageTurnState = this.autoPageTurnController.getState();
-      if (shouldEnableAutoPageTurn && currentState === AutoPageTurnState.STOPPED) {
-        this.autoPageTurnController.start();
-        this.autoPageTurnState = AutoPageTurnState.RUNNING;
-        logger.info(TAG, '设置变更触发：自动翻页已启动');
-      } else if (!shouldEnableAutoPageTurn && currentState !== AutoPageTurnState.STOPPED) {
+      if (currentState !== AutoPageTurnState.STOPPED) {
         this.autoPageTurnController.stop();
         this.autoPageTurnState = AutoPageTurnState.STOPPED;
-        logger.info(TAG, '设置变更触发：自动翻页已停止');
+        this.autoPageTurnEnabled = false;
+        logger.info(TAG, '设置变更触发：自动翻页间隔为0，已停止');
       }
     }
     
@@ -2625,6 +2858,7 @@ export struct MangaReaderPage {
   
   /**
    * 显示快速设置面板
+   * 修复：添加真正的动画效果
    */
   private showQuickSettingsWithAnimation(): void {
     // 关闭其他面板
@@ -2633,50 +2867,128 @@ export struct MangaReaderPage {
     this.showChapterList = false;
     this.handleMenusVisibilityChange();
     
+    // 重置动画初始状态
+    this.quickSettingsOpacity = 0;
+    this.quickSettingsScale = 0.95;
+    this.quickSettingsTranslateY = 20;
+    
     // 显示快速设置
     this.showQuickSettings = true;
     this.handleMenusVisibilityChange();
+    
+    // 执行入场动画
+    if (this.uiContext) {
+      setTimeout(() => {
+        this.uiContext!.animateTo({
+          duration: 200,
+          curve: Curve.EaseOut
+        }, () => {
+          this.quickSettingsOpacity = 1;
+          this.quickSettingsScale = 1;
+          this.quickSettingsTranslateY = 0;
+        });
+      }, 0);
+    } else {
+      this.quickSettingsOpacity = 1;
+      this.quickSettingsScale = 1;
+      this.quickSettingsTranslateY = 0;
+    }
     logger.info(TAG, '显示快速设置面板');
   }
   
   /**
    * 隐藏快速设置面板
+   * 修复：添加真正的动画效果
    */
   private hideQuickSettingsWithAnimation(): void {
-    this.showQuickSettings = false;
-    this.handleMenusVisibilityChange();
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 160,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.showQuickSettings = false;
+          this.handleMenusVisibilityChange();
+        }
+      }, () => {
+        this.quickSettingsOpacity = 0;
+        this.quickSettingsScale = 0.95;
+        this.quickSettingsTranslateY = 20;
+      });
+    } else {
+      this.quickSettingsOpacity = 0;
+      this.quickSettingsScale = 0.95;
+      this.quickSettingsTranslateY = 20;
+      this.showQuickSettings = false;
+      this.handleMenusVisibilityChange();
+    }
     logger.info(TAG, '隐藏快速设置面板');
   }
 
   /**
    * 设置面板显示动画
+   * 修复：添加真正的动画效果
    */
   private showSettingsPanelWithAnimation(): void {
     // 打开阅读设置前，关闭其他面板
     this.showQuickSettings = false;
-      this.showMoreMenu = false;
+    this.showMoreMenu = false;
     this.showChapterList = false;
     this.handleMenusVisibilityChange();
     
-    // 仅切换可见性，动画交由 MangaReaderSettings 内部处理，避免重复动画引发闪烁
+    // 重置动画初始状态
+    this.settingsPanelOpacity = 0;
+    this.settingsPanelScale = 0.95;
+    this.settingsPanelTranslateY = 20;
+    
+    // 显示设置面板
     this.showSettingsPanel = true;
     this.handleMenusVisibilityChange();
+    
+    // 执行入场动画
+    if (this.uiContext) {
+      setTimeout(() => {
+        this.uiContext!.animateTo({
+          duration: 250,
+          curve: Curve.EaseOut
+        }, () => {
+          this.settingsPanelOpacity = 1;
+          this.settingsPanelScale = 1;
+          this.settingsPanelTranslateY = 0;
+        });
+      }, 0);
+    } else {
+      this.settingsPanelOpacity = 1;
+      this.settingsPanelScale = 1;
+      this.settingsPanelTranslateY = 0;
+    }
     logger.info(TAG, '显示完整设置面板');
   }
 
   /**
    * 设置面板隐藏动画
+   * 修复：添加真正的动画效果
    */
   private hideSettingsPanelWithAnimation(): void {
-    // 立即隐藏面板，停止接收事件，避免事件穿透
-    this.showSettingsPanel = false;
-    this.handleMenusVisibilityChange();
-    
-    // 重置动画状态
-    this.settingsPanelOpacity = 0;
-    this.settingsPanelScale = 0.8;
-    this.settingsPanelTranslateY = 50;
-    
+    if (this.uiContext) {
+      this.uiContext.animateTo({
+        duration: 180,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.showSettingsPanel = false;
+          this.handleMenusVisibilityChange();
+        }
+      }, () => {
+        this.settingsPanelOpacity = 0;
+        this.settingsPanelScale = 0.95;
+        this.settingsPanelTranslateY = 20;
+      });
+    } else {
+      this.settingsPanelOpacity = 0;
+      this.settingsPanelScale = 0.95;
+      this.settingsPanelTranslateY = 20;
+      this.showSettingsPanel = false;
+      this.handleMenusVisibilityChange();
+    }
     logger.info(TAG, '设置面板已关闭');
   }
 
@@ -2733,6 +3045,248 @@ export struct MangaReaderPage {
   }
 
   /**
+   * 显示翻页动画设置面板
+   */
+  private showPageTurnAnimationSettingsWithAnimation(): void {
+    // 关闭其他面板
+    this.showSettingsPanel = false;
+    this.showMoreMenu = false;
+    this.showQuickSettings = false;
+    this.showChapterList = false;
+    this.handleMenusVisibilityChange();
+    
+    this.showPageTurnAnimationSettings = true;
+    this.handleMenusVisibilityChange();
+    if (this.uiContext) {
+      setTimeout(() => {
+        const animateOptions: AnimationConfig = { duration: 200, curve: Curve.EaseOut };
+        this.uiContext!.animateTo(animateOptions, () => {
+          this.pageTurnAnimationSettingsOpacity = 1;
+          this.pageTurnAnimationSettingsScale = 1;
+          this.pageTurnAnimationSettingsTranslateY = 0;
+        });
+      }, 0);
+    } else {
+      this.pageTurnAnimationSettingsOpacity = 1;
+      this.pageTurnAnimationSettingsScale = 1;
+      this.pageTurnAnimationSettingsTranslateY = 0;
+    }
+  }
+
+  /**
+   * 注册音量键监听（使用inputConsumer API拦截系统音量调节）
+   * 这是实现音量键翻页的正确方式，可以阻止系统音量条弹出
+   */
+  private registerVolumeKeyListener(): void {
+    if (this.isVolumeKeyListenerRegistered) {
+      logger.debug(TAG, '音量键监听已注册，跳过');
+      return;
+    }
+    
+    if (!this.readingSettings.volumeKeyNavigation) {
+      logger.debug(TAG, '音量键翻页未启用，不注册监听');
+      return;
+    }
+    
+    try {
+      // 音量上键配置
+      const volumeUpConfig: inputConsumer.KeyPressedConfig = {
+        key: KeyCode.KEYCODE_VOLUME_UP,
+        action: 1, // 按下按键的行为
+        isRepeat: false // 优先消费掉按键事件，不上报给系统
+      };
+      
+      // 音量下键配置
+      const volumeDownConfig: inputConsumer.KeyPressedConfig = {
+        key: KeyCode.KEYCODE_VOLUME_DOWN,
+        action: 1,
+        isRepeat: false
+      };
+      
+      // 音量上键回调
+      this.volumeUpCallback = (event: InputKeyEvent) => {
+        logger.info(TAG, '音量键翻页: 上一页 (inputConsumer)');
+        if (!this.areMenusVisible()) {
+          this.goToPreviousPage();
+        }
+      };
+      
+      // 音量下键回调
+      this.volumeDownCallback = (event: InputKeyEvent) => {
+        logger.info(TAG, '音量键翻页: 下一页 (inputConsumer)');
+        if (!this.areMenusVisible()) {
+          this.goToNextPage();
+        }
+      };
+      
+      // 注册监听
+      inputConsumer.on('keyPressed', volumeUpConfig, this.volumeUpCallback);
+      inputConsumer.on('keyPressed', volumeDownConfig, this.volumeDownCallback);
+      
+      this.isVolumeKeyListenerRegistered = true;
+      logger.info(TAG, '✅ 音量键翻页监听已注册');
+    } catch (error) {
+      logger.error(TAG, `注册音量键监听失败: ${JSON.stringify(error)}`);
+    }
+  }
+  
+  /**
+   * 注销音量键监听
+   */
+  private unregisterVolumeKeyListener(): void {
+    if (!this.isVolumeKeyListenerRegistered) {
+      return;
+    }
+    
+    try {
+      if (this.volumeUpCallback) {
+        inputConsumer.off('keyPressed', this.volumeUpCallback);
+        this.volumeUpCallback = null;
+      }
+      if (this.volumeDownCallback) {
+        inputConsumer.off('keyPressed', this.volumeDownCallback);
+        this.volumeDownCallback = null;
+      }
+      
+      this.isVolumeKeyListenerRegistered = false;
+      logger.info(TAG, '✅ 音量键翻页监听已注销');
+    } catch (error) {
+      logger.error(TAG, `注销音量键监听失败: ${JSON.stringify(error)}`);
+    }
+  }
+  
+  /**
+   * 更新音量键监听状态（根据设置启用/禁用）
+   */
+  private updateVolumeKeyListener(): void {
+    if (this.readingSettings.volumeKeyNavigation) {
+      this.registerVolumeKeyListener();
+    } else {
+      this.unregisterVolumeKeyListener();
+    }
+  }
+
+  /**
+   * 处理音量键翻页（备用方法，用于onKeyEvent）
+   * @param keyCode 按键码
+   * @returns 是否消费了该按键事件
+   */
+  private handleVolumeKeyPageTurn(keyCode: number): boolean {
+    logger.debug(TAG, `按键事件: keyCode=${keyCode}, volumeKeyNavigation=${this.readingSettings.volumeKeyNavigation}`);
+    
+    // 检查是否启用音量键翻页
+    if (!this.readingSettings.volumeKeyNavigation) {
+      logger.debug(TAG, '音量键翻页未启用');
+      return false;
+    }
+    
+    // 如果有菜单打开，不处理翻页
+    if (this.areMenusVisible()) {
+      logger.debug(TAG, '菜单可见，不处理音量键翻页');
+      return false;
+    }
+    
+    // KeyCode.KEYCODE_VOLUME_UP = 16, KeyCode.KEYCODE_VOLUME_DOWN = 17
+    if (keyCode === KeyCode.KEYCODE_VOLUME_UP || keyCode === 16) {
+      // 音量上键 - 上一页
+      logger.info(TAG, '音量键翻页: 上一页');
+      this.goToPreviousPage();
+      return true;
+    } else if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN || keyCode === 17) {
+      // 音量下键 - 下一页
+      logger.info(TAG, '音量键翻页: 下一页');
+      this.goToNextPage();
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * 隐藏翻页动画设置面板
+   */
+  private hidePageTurnAnimationSettingsWithAnimation(): void {
+    if (this.uiContext) {
+      const animateOptions: AnimationConfig = { duration: 160, curve: Curve.EaseIn };
+      this.uiContext.animateTo(animateOptions, () => {
+        this.pageTurnAnimationSettingsOpacity = 0;
+        this.pageTurnAnimationSettingsScale = 0.95;
+        this.pageTurnAnimationSettingsTranslateY = 20;
+      });
+      setTimeout(() => {
+        this.showPageTurnAnimationSettings = false;
+      }, 160);
+    } else {
+      this.pageTurnAnimationSettingsOpacity = 0;
+      this.pageTurnAnimationSettingsScale = 0.95;
+      this.pageTurnAnimationSettingsTranslateY = 20;
+      this.showPageTurnAnimationSettings = false;
+    }
+  }
+
+  /**
+   * 显示跳转页面对话框（带动画）
+   */
+  private showJumpToPageDialogWithAnimation(): void {
+    this.showJumpToPageDialog = true;
+    this.jumpToPageInput = '';
+    this.jumpToPageDialogOpacity = 0;
+    this.jumpToPageDialogScale = 0.9;
+    
+    if (this.uiContext) {
+      setTimeout(() => {
+        const animateOptions: AnimationConfig = { duration: 200, curve: Curve.EaseOut };
+        this.uiContext!.animateTo(animateOptions, () => {
+          this.jumpToPageDialogOpacity = 1;
+          this.jumpToPageDialogScale = 1;
+        });
+      }, 0);
+    } else {
+      this.jumpToPageDialogOpacity = 1;
+      this.jumpToPageDialogScale = 1;
+    }
+  }
+
+  /**
+   * 隐藏跳转页面对话框（带动画）
+   */
+  private hideJumpToPageDialogWithAnimation(): void {
+    if (this.uiContext) {
+      const animateOptions: AnimationConfig = { duration: 150, curve: Curve.EaseIn };
+      this.uiContext.animateTo(animateOptions, () => {
+        this.jumpToPageDialogOpacity = 0;
+        this.jumpToPageDialogScale = 0.9;
+      });
+      setTimeout(() => {
+        this.showJumpToPageDialog = false;
+        this.jumpToPageInput = '';
+      }, 150);
+    } else {
+      this.showJumpToPageDialog = false;
+      this.jumpToPageInput = '';
+    }
+  }
+
+  /**
+   * 跳转到指定页面
+   */
+  private jumpToPage(pageNumber: number): void {
+    const totalPages = this.readerState.currentChapter?.pages.length || 0;
+    if (pageNumber >= 1 && pageNumber <= totalPages) {
+      const targetIndex = pageNumber - 1;
+      logger.info(TAG, `跳转到页面: ${pageNumber}/${totalPages}`);
+      this.readerState.currentPageIndex = targetIndex;
+      this.hideJumpToPageDialogWithAnimation();
+      // 保存进度
+      this.saveReadingProgressInternal('jumpToPage').catch((error: Error) => {
+        logger.error(TAG, '跳转页面后保存进度失败', error.message);
+      });
+    } else {
+      logger.warn(TAG, `无效的页码: ${pageNumber}, 总页数: ${totalPages}`);
+    }
+  }
+
+  /**
    * 页面切换动画
    */
   private animatePageTransition(direction: 'next' | 'previous'): void {
@@ -2750,6 +3304,86 @@ export struct MangaReaderPage {
       { duration: 280, easing: AnimationEasing.EASE_IN_OUT, type: animationType },
       this.uiContext
     );
+  }
+
+  /**
+   * 保存当前页面到图库
+   * 使用photoAccessHelper的showAssetsCreationDialog方式，无需申请权限
+   */
+  private async saveCurrentPageToGallery(): Promise<void> {
+    try {
+      const chapter = this.readerState.currentChapter;
+      const pageIndex = this.readerState.currentPageIndex;
+      
+      if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
+        logger.error(TAG, '无法保存：当前页面无效');
+        AlertDialog.show({ message: '无法保存：当前页面无效' });
+        return;
+      }
+      
+      const currentPage = chapter.pages[pageIndex];
+      let imagePath = currentPage.imagePath;
+      
+      // 如果是网络图片，需要先下载到沙箱
+      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        logger.info(TAG, `保存网络图片到图库: ${imagePath}`);
+        AlertDialog.show({ message: '网络图片暂不支持直接保存，请先下载章节' });
+        return;
+      }
+      
+      // 本地图片路径
+      if (!imagePath.startsWith('/')) {
+        logger.error(TAG, `无效的图片路径: ${imagePath}`);
+        AlertDialog.show({ message: '无法保存：图片路径无效' });
+        return;
+      }
+      
+      const context = getContext(this);
+      
+      // 获取文件后缀名
+      const lastDotIndex = imagePath.lastIndexOf('.');
+      const fileExtension = lastDotIndex > 0 ? imagePath.substring(lastDotIndex + 1) : 'jpg';
+      
+      // 转换为沙箱文件URI
+      const sandboxUri = fileUri.getUriFromPath(imagePath);
+      
+      // 创建photoAccessHelper
+      const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+      
+      // 准备保存配置
+      const srcFileUris: Array<string> = [sandboxUri];
+      const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
+        title: `manga_page_${pageIndex + 1}`,
+        fileNameExtension: fileExtension,
+        photoType: photoAccessHelper.PhotoType.IMAGE,
+        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+      }];
+      
+      // 显示保存对话框让用户确认
+      const desFileUris: Array<string> = await phAccessHelper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs);
+      
+      if (desFileUris.length > 0) {
+        // 打开目标文件和源文件
+        const destFile = await fs.open(desFileUris[0], fs.OpenMode.WRITE_ONLY);
+        const srcFile = await fs.open(sandboxUri, fs.OpenMode.READ_ONLY);
+        
+        // 复制文件内容
+        await fs.copyFile(srcFile.fd, destFile.fd);
+        
+        // 关闭文件
+        fs.closeSync(destFile);
+        fs.closeSync(srcFile);
+        
+        logger.info(TAG, `图片保存成功: ${desFileUris[0]}`);
+        AlertDialog.show({ message: '图片已保存到图库' });
+      } else {
+        logger.info(TAG, '用户取消保存');
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `保存图片到图库失败: ${errorMsg}`);
+      AlertDialog.show({ message: `保存失败: ${errorMsg}` });
+    }
   }
 
   /**
@@ -3141,60 +3775,50 @@ export struct MangaReaderPage {
    *    - 条漫模式：点击任意位置切换工具栏（滚动翻页）
    */
   private handleSingleTap(event: ClickEvent): void {
-    const currentTime = Date.now();
-    
-    // 双击检测
-    if (currentTime - this.lastTapTime < 300) {
-      this.tapCount++;
-      if (this.tapCount === 2) {
-        this.handleDoubleTap(event);
-        this.tapCount = 0;
-        return; // 双击处理完成后直接返回
-      }
-    } else {
-      this.tapCount = 1;
-      setTimeout(() => {
-        if (this.tapCount === 1) {
-          this.processSingleTap(event);
-        }
-        this.tapCount = 0;
-      }, 300);
-    }
-    
-    this.lastTapTime = currentTime;
-    // 交互触发：暂停自动翻页1s
-    this.delayAutoPageTurnForInteraction();
+    // 注意：双击检测已在handlePageTap中处理，这里直接处理单击逻辑
+    // 不再重复进行双击检测，避免300ms延迟叠加导致响应迟钝
+    this.processSingleTap(event);
   }
 
   /**
    * 处理单击事件的具体逻辑
+   * 注意：ClickEvent.displayX/displayY 返回的是vp单位的坐标
+   * 因此所有区域计算都必须使用vp单位
    */
   private processSingleTap(event: ClickEvent): void {
-    // 使用显示坐标（相对于组件的坐标）
+    // 使用显示坐标（vp单位，相对于窗口的坐标）
     const clickX = event.displayX;
     const clickY = event.displayY;
     
     // 获取显示区域的实际尺寸和设备方向
+    // 关键修复：统一使用vp单位，与ClickEvent坐标系统一致
     let displayWidth: number;
     let displayHeight: number;
     let aspectRatio: number;
     let deviceOrientation: 'portrait' | 'landscape' | 'square';
     
     try {
-      displayWidth = display.getDefaultDisplaySync().width;
-      displayHeight = display.getDefaultDisplaySync().height;
+      const displayInfo = display.getDefaultDisplaySync();
+      // 获取物理像素尺寸和屏幕密度
+      const physicalWidth = displayInfo.width;
+      const physicalHeight = displayInfo.height;
+      const densityPixels = displayInfo.densityPixels || 1.0;
+      
+      // 转换为vp单位（与ClickEvent.displayX/displayY一致）
+      displayWidth = physicalWidth / densityPixels;
+      displayHeight = physicalHeight / densityPixels;
       aspectRatio = displayWidth / displayHeight;
       deviceOrientation = this.getDeviceOrientation();
     } catch (error) {
       logger.error(TAG, `获取屏幕尺寸失败: ${String(error)}`);
-      // 使用备用值
+      // 使用备用值（已经是vp单位）
       displayWidth = this.screenWidth;
       displayHeight = this.screenHeight;
       aspectRatio = displayWidth / displayHeight;
       deviceOrientation = 'portrait';
     }
     
-    logger.debug(TAG, `✋ 单击事件: displayX=${clickX.toFixed(2)}, displayY=${clickY.toFixed(2)}, 屏幕=${displayWidth}x${displayHeight}, 宽高比=${aspectRatio.toFixed(2)}, 设备类型=${deviceOrientation}`);
+    logger.debug(TAG, `✋ 单击事件: displayX=${clickX.toFixed(2)}vp, displayY=${clickY.toFixed(2)}vp, 屏幕=${displayWidth.toFixed(0)}x${displayHeight.toFixed(0)}vp, 宽高比=${aspectRatio.toFixed(2)}, 设备类型=${deviceOrientation}`);
     
     // 规则1：首次点击隐藏交互提示
     if (this.showInteractionOverlay) {
@@ -3278,7 +3902,7 @@ export struct MangaReaderPage {
       const topZoneEnd = effectiveHeight * sideAreaRatio;
       const bottomZoneStart = effectiveHeight * (1 - sideAreaRatio);
       
-      logger.debug(TAG, `双页TTB模式区域划分: 实际高度=${this.componentHeight.toFixed(2)}px, 有效高度=${effectiveHeight.toFixed(2)}px, topZoneEnd=${topZoneEnd.toFixed(2)}, bottomZoneStart=${bottomZoneStart.toFixed(2)}, clickY=${clickY.toFixed(2)}`);
+      logger.debug(TAG, `双页TTB模式区域划分: 组件高度=${this.componentHeight.toFixed(0)}vp, 有效高度=${effectiveHeight.toFixed(0)}vp, topZoneEnd=${topZoneEnd.toFixed(0)}vp, bottomZoneStart=${bottomZoneStart.toFixed(0)}vp, clickY=${clickY.toFixed(0)}vp`);
       
       if (clickY < topZoneEnd) {
         // 上侧区域：上一页
@@ -3299,7 +3923,7 @@ export struct MangaReaderPage {
       const leftZoneEnd = effectiveWidth * sideAreaRatio;
       const rightZoneStart = effectiveWidth * (1 - sideAreaRatio);
       
-      logger.debug(TAG, `双页模式区域划分: 实际宽度=${this.componentWidth.toFixed(2)}px, 有效宽度=${effectiveWidth.toFixed(2)}px, leftZoneEnd=${leftZoneEnd.toFixed(2)}, rightZoneStart=${rightZoneStart.toFixed(2)}, clickX=${clickX.toFixed(2)}, 方向=${isRTL ? 'RTL' : 'LTR'}`);
+      logger.debug(TAG, `双页模式区域划分: 组件宽度=${this.componentWidth.toFixed(0)}vp, 有效宽度=${effectiveWidth.toFixed(0)}vp, leftZoneEnd=${leftZoneEnd.toFixed(0)}vp, rightZoneStart=${rightZoneStart.toFixed(0)}vp, clickX=${clickX.toFixed(0)}vp, 方向=${isRTL ? 'RTL' : 'LTR'}`);
       
       if (clickX < leftZoneEnd) {
         // 左侧区域
@@ -3342,7 +3966,7 @@ export struct MangaReaderPage {
       const topZoneEnd = effectiveHeight * sideAreaRatio;
       const bottomZoneStart = effectiveHeight * (1 - sideAreaRatio);
       
-      logger.debug(TAG, `垂直模式区域划分: 实际高度=${this.componentHeight.toFixed(2)}px, 有效高度=${effectiveHeight.toFixed(2)}px, topZoneEnd=${topZoneEnd.toFixed(2)}, bottomZoneStart=${bottomZoneStart.toFixed(2)}, clickY=${clickY.toFixed(2)}`);
+      logger.debug(TAG, `垂直模式区域划分: 组件高度=${this.componentHeight.toFixed(0)}vp, 有效高度=${effectiveHeight.toFixed(0)}vp, topZoneEnd=${topZoneEnd.toFixed(0)}vp, bottomZoneStart=${bottomZoneStart.toFixed(0)}vp, clickY=${clickY.toFixed(0)}vp`);
       
       if (clickY < topZoneEnd) {
         this.goToPreviousPage();
@@ -3387,7 +4011,7 @@ export struct MangaReaderPage {
     const isLTR: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.LEFT_TO_RIGHT);
     
-    logger.debug(TAG, `${deviceOrientation}模式区域划分: 实际宽度=${this.componentWidth.toFixed(2)}px, 有效宽度=${effectiveWidth.toFixed(2)}px, leftZoneEnd=${leftZoneEnd.toFixed(2)}, rightZoneStart=${rightZoneStart.toFixed(2)}, clickX=${clickX.toFixed(2)}, isRTL=${isRTL}, isLTR=${isLTR}`);
+    logger.debug(TAG, `${deviceOrientation}模式区域划分: 组件宽度=${this.componentWidth.toFixed(0)}vp, 有效宽度=${effectiveWidth.toFixed(0)}vp, leftZoneEnd=${leftZoneEnd.toFixed(0)}vp, rightZoneStart=${rightZoneStart.toFixed(0)}vp, clickX=${clickX.toFixed(0)}vp, isRTL=${isRTL}, isLTR=${isLTR}`);
     
     if (clickX < leftZoneEnd) {
       // 左侧区域
@@ -3855,6 +4479,29 @@ export struct MangaReaderPage {
   }
 
   /**
+   * 构建翻页动画按钮
+   */
+  @Builder
+  buildAnimButton(label: string, type: PageTurnAnimationType) {
+    Column() {
+      Text(label)
+        .fontSize(12)
+        .fontColor(this.readingSettings.pageTurnAnimation === type ? 
+          $r('app.color.accent') : $r('app.color.text_secondary'))
+    }
+    .width('31%')
+    .padding(10)
+    .backgroundColor(this.readingSettings.pageTurnAnimation === type ? 
+      $r('app.color.accent_background') : Color.Transparent)
+    .borderRadius(8)
+    .onClick(() => {
+      this.readingSettings.pageTurnAnimation = type;
+      this.handleSettingsChange(this.readingSettings);
+      logger.info(TAG, `翻页动画已更改为: ${type}`);
+    })
+  }
+
+  /**
    * 构建顶部工具栏
    */
   @Builder
@@ -3974,12 +4621,12 @@ export struct MangaReaderPage {
 
         Blank()
 
-        // 阅读设置按钮
+        // 阅读模式快捷设置按钮
         Button() {
           Image($r('app.media.ic_book'))
             .width(24)
             .height(24)
-            .fillColor(Color.Transparent)
+            .fillColor($r('app.color.text_primary'))
         }
         .width(48)
         .height(48)
@@ -3990,18 +4637,33 @@ export struct MangaReaderPage {
 
         Blank()
 
-        // 自动功能设置按钮
+        // 翻页动画设置按钮
         Button() {
-          Image($r('app.media.ic_system_normal'))
+          Image($r('app.media.ic_page_turn_animation'))
             .width(24)
             .height(24)
-            .fillColor(Color.Transparent)
+            .fillColor($r('app.color.text_primary'))
         }
         .width(48)
         .height(48)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          // 打开“自动功能设置”面板（使用完整设置面板承载自动相关配置）
+          this.showPageTurnAnimationSettingsWithAnimation();
+        })
+
+        Blank()
+
+        // 显示效果设置按钮
+        Button() {
+          Image($r('app.media.ic_brightness_high'))
+            .width(24)
+            .height(24)
+            .fillColor($r('app.color.text_primary'))
+        }
+        .width(48)
+        .height(48)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
           this.showSettingsPanelWithAnimation();
         })
 
@@ -4012,7 +4674,7 @@ export struct MangaReaderPage {
           Image(this.getAutoPageTurnIconResource())
             .width(24)
             .height(24)
-            .fillColor(Color.Transparent)
+            .fillColor($r('app.color.text_primary'))
         }
         .width(48)
         .height(48)
@@ -4280,15 +4942,15 @@ export struct MangaReaderPage {
         this.handlePageTap(event);
       })
       .onAreaChange((oldArea: Area, newArea: Area) => {
-        // 获取组件实际渲染尺寸（像素单位）
-        // Area.width和Area.height返回的是像素值
-        const widthPx = Number(newArea.width);
-        const heightPx = Number(newArea.height);
+        // 获取组件实际渲染尺寸（vp单位）
+        // Area.width和Area.height返回的是vp值，与ClickEvent.displayX/displayY一致
+        const widthVp = Number(newArea.width);
+        const heightVp = Number(newArea.height);
         
-        if (widthPx > 0 && heightPx > 0) {
-          this.componentWidth = widthPx;
-          this.componentHeight = heightPx;
-          logger.debug(TAG, `📐 组件尺寸更新: ${widthPx.toFixed(0)}x${heightPx.toFixed(0)}px`);
+        if (widthVp > 0 && heightVp > 0) {
+          this.componentWidth = widthVp;
+          this.componentHeight = heightVp;
+          logger.debug(TAG, `📐 组件尺寸更新: ${widthVp.toFixed(0)}x${heightVp.toFixed(0)}vp`);
         }
       })
     }
@@ -4363,7 +5025,7 @@ export struct MangaReaderPage {
           .zIndex(100)
         }
 
-        // 快速设置面板
+        // 快速设置面板（带动画）
         if (this.showQuickSettings) {
           MangaQuickSettings({
             readingSettings: this.readingSettings,
@@ -4381,10 +5043,13 @@ export struct MangaReaderPage {
               }
             }
           })
+          .opacity(this.quickSettingsOpacity)
+          .scale({ x: this.quickSettingsScale, y: this.quickSettingsScale })
+          .translate({ y: this.quickSettingsTranslateY })
           .zIndex(1000)
         }
         
-        // 完整设置面板
+        // 完整设置面板（带动画）
         if (this.showSettingsPanel) {
           MangaReaderSettings({
             readingSettings: this.readingSettings,
@@ -4398,46 +5063,64 @@ export struct MangaReaderPage {
               }
             }
           })
+          .opacity(this.settingsPanelOpacity)
+          .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
+          .translate({ y: this.settingsPanelTranslateY })
           .zIndex(1000)
         }
 
-        // 悬浮式自动翻页设置面板（底部右侧）
+        // 自动翻页设置面板（居中弹窗样式，类似翻页动画设置）
         if (this.showAutoPageTurnSettings) {
           Stack() {
-            // 点击遮罩关闭
+            // 遮罩
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor(Color.Transparent)
+              .backgroundColor($r('app.color.background_overlay'))
+              .opacity(0.5)
               .onClick(() => {
-                this.toggleAutoPageTurnSettings();
+                this.hideAutoPageTurnSettingsWithAnimation();
               })
 
-            // 设置面板
-            Column({ space: 12 }) {
+            // 面板
+            Column() {
+              // 标题
               Row() {
                 Text('自动翻页设置')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.text_primary'))
-                Blank().layoutWeight(1)
-              }
-              .height(44)
-              .padding({ left: 16, right: 16 })
+                  .layoutWeight(1)
 
-              // 间隔滑条（1-10s）
-              Column({ space: 8 }) {
-                Row() {
-                  Text('间隔(秒)')
-                    .fontSize(14)
-                    .fontColor($r('app.color.text_secondary'))
-                  Text(`${this.autoPageTurnIntervalSeconds}s`)
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.accent_primary'))
+                Button() {
+                  Image($r('app.media.ic_close'))
+                    .width(20)
+                    .height(20)
+                    .fillColor($r('app.color.text_secondary'))
                 }
-                // .width('100%')
-                .justifyContent(FlexAlign.SpaceBetween)
+                .width(36)
+                .height(36)
+                .backgroundColor(Color.Transparent)
+                .onClick(() => {
+                  this.hideAutoPageTurnSettingsWithAnimation();
+                })
+              }
+              .width('100%')
+              .margin({ bottom: 16 })
+
+              // 间隔设置
+              Text('翻页间隔')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              Row() {
+                Text(`${this.autoPageTurnIntervalSeconds}秒`)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.accent'))
+                  .width(50)
 
                 Slider({
                   value: this.autoPageTurnIntervalSeconds,
@@ -4445,84 +5128,44 @@ export struct MangaReaderPage {
                   max: 10,
                   step: 1
                 })
-                  .selectedColor($r('app.color.accent_primary'))
+                  .layoutWeight(1)
+                  .trackColor($r('app.color.divider'))
+                  .selectedColor($r('app.color.accent'))
                   .onChange((v: number) => {
                     this.setAutoPageTurnIntervalSeconds(Math.round(v));
                   })
               }
-              // .width('100%')
-              .padding({ left: 16, right: 16 })
+              .width('100%')
+              .margin({ bottom: 16 })
 
-              // 输入框（与滑条联动）
+              // 启用开关
               Row() {
-                Text('输入秒数(1-10)')
+                Text('启用自动翻页')
                   .fontSize(14)
-                  .fontColor($r('app.color.text_secondary'))
-                Blank().layoutWeight(1)
-                TextInput({ text: `${this.autoPageTurnIntervalSeconds}` })
-                  .width(80)
-                  .height(36)
-                  .fontSize(14)
-                  .onChange((val: string) => {
-                    const parsed: number = parseInt(val);
-                    if (!Number.isNaN(parsed)) {
-                      this.setAutoPageTurnIntervalSeconds(parsed);
-                    }
+                  .fontColor($r('app.color.text_primary'))
+                  .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.autoPageTurnEnabled })
+                  .selectedColor($r('app.color.accent'))
+                  .onChange((isOn: boolean) => {
+                    this.setAutoPageTurnEnabled(isOn);
                   })
               }
-              .height(44)
-              .padding({ left: 16, right: 16 })
-
-              // 底部双开关（开启/关闭）
-              Row() {
-                Row() {
-                  Text('开启')
-                    .fontSize(14)
-                    .fontColor($r('app.color.text_primary'))
-                  Toggle({ type: ToggleType.Switch, isOn: this.autoPageTurnEnabled })
-                    .selectedColor($r('app.color.accent_primary'))
-                    .switchPointColor($r('app.color.text_white'))
-                    .onChange((isOn: boolean) => {
-                      this.setAutoPageTurnEnabled(isOn);
-                    })
-                }
-                .height(44)
-                .justifyContent(FlexAlign.Start)
-
-                Blank().layoutWeight(1)
-
-                Row() {
-                  Text('关闭')
-                    .fontSize(14)
-                    .fontColor($r('app.color.text_primary'))
-                  Toggle({ type: ToggleType.Switch, isOn: !this.autoPageTurnEnabled })
-                    .selectedColor($r('app.color.accent_primary'))
-                    .switchPointColor($r('app.color.text_white'))
-                    .onChange((isOn: boolean) => {
-                      if (isOn) {
-                        this.setAutoPageTurnEnabled(false);
-                      } else {
-                        this.setAutoPageTurnEnabled(true);
-                      }
-                    })
-                }
-                .height(44)
-                .justifyContent(FlexAlign.End)
-              }
-              .padding({ left: 16, right: 16, bottom: 12 })
+              .width('100%')
             }
-            .backgroundColor(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).backgroundColorResource)
-            .backgroundBlurStyle(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).blurStyle)
-            .borderRadius(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).radius)
-            .shadow({ radius: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).radius, color: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).shadowColor, offsetX: 0, offsetY: 4 })
-            .align(Alignment.BottomEnd)
-            .margin({ bottom: this.navigationBarHeight + 56 + 12, right: 12 })
-            .constraintSize({ maxWidth: 320 })
-            .zIndex(1100)
+            .width('90%')
+            .constraintSize({ maxWidth: 400 })
+            .padding(20)
+            .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+            .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+            .borderRadius(16)
+            .opacity(this.autoPageTurnSettingsOpacity)
+            .scale({ x: this.autoPageTurnSettingsScale, y: this.autoPageTurnSettingsScale })
+            .translate({ y: this.autoPageTurnSettingsTranslateY })
           }
           .width('100%')
           .height('100%')
-          .zIndex(1100)
+          .zIndex(1200)
         }
 
         // 悬浮式章节列表面板
@@ -4557,23 +5200,31 @@ export struct MangaReaderPage {
 
             // 菜单面板
             Column() {
-              // 跳转到页面（占位）
+              // 跳转到页面
               Row() {
                 Text('跳转到页面')
                   .fontColor($r('app.color.text_primary'))
                   .fontSize(16)
                 Blank().layoutWeight(1)
+                Text(`${this.readerState.currentPageIndex + 1}/${this.readerState.currentChapter?.pages.length || 0}`)
+                  .fontColor($r('app.color.text_secondary'))
+                  .fontSize(14)
               }
               .height(44)
               .padding({ left: 16, right: 16 })
               .onClick(() => {
                 logger.info(TAG, 'MoreMenu: 跳转到页面');
                 this.hideMoreMenuWithAnimation();
+                setTimeout(() => {
+                  this.showJumpToPageDialogWithAnimation();
+                }, 200);
               })
 
-              // 下载本章（占位）
+              Divider().color($r('app.color.divider'))
+
+              // 保存本页到图库
               Row() {
-                Text('下载本章')
+                Text('保存本页到图库')
                   .fontColor($r('app.color.text_primary'))
                   .fontSize(16)
                 Blank().layoutWeight(1)
@@ -4581,8 +5232,9 @@ export struct MangaReaderPage {
               .height(44)
               .padding({ left: 16, right: 16 })
               .onClick(() => {
-                logger.info(TAG, 'MoreMenu: 下载本章');
+                logger.info(TAG, 'MoreMenu: 保存本页到图库');
                 this.hideMoreMenuWithAnimation();
+                this.saveCurrentPageToGallery();
               })
             }
             .backgroundColor(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).backgroundColorResource)
@@ -4602,14 +5254,236 @@ export struct MangaReaderPage {
           .zIndex(1100)
         }
 
+        // 跳转到页面对话框
+        if (this.showJumpToPageDialog) {
+          Stack() {
+            // 半透明遮罩（显示漫画背景）
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('#80000000')
+              .opacity(this.jumpToPageDialogOpacity)
+              .onClick(() => {
+                this.hideJumpToPageDialogWithAnimation();
+              })
+
+            // 对话框
+            Column({ space: 16 }) {
+              Text('跳转到页面')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+
+              Text(`当前: ${this.readerState.currentPageIndex + 1} / ${this.readerState.currentChapter?.pages.length || 0}`)
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+
+              TextInput({ placeholder: '输入页码', text: this.jumpToPageInput })
+                .type(InputType.Number)
+                .width('100%')
+                .height(44)
+                .fontSize(16)
+                .onChange((value: string) => {
+                  this.jumpToPageInput = value;
+                })
+
+              Row({ space: 12 }) {
+                Button('取消')
+                  .layoutWeight(1)
+                  .height(40)
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_secondary'))
+                  .backgroundColor($r('app.color.background_secondary'))
+                  .onClick(() => {
+                    this.hideJumpToPageDialogWithAnimation();
+                  })
+
+                Button('跳转')
+                  .layoutWeight(1)
+                  .height(40)
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_on_accent'))
+                  .backgroundColor($r('app.color.accent'))
+                  .onClick(() => {
+                    const pageNum = parseInt(this.jumpToPageInput);
+                    if (!isNaN(pageNum)) {
+                      this.jumpToPage(pageNum);
+                    }
+                  })
+              }
+              .width('100%')
+            }
+            .width('80%')
+            .constraintSize({ maxWidth: 320 })
+            .padding(20)
+            .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+            .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+            .borderRadius(16)
+            .opacity(this.jumpToPageDialogOpacity)
+            .scale({ x: this.jumpToPageDialogScale, y: this.jumpToPageDialogScale })
+          }
+          .width('100%')
+          .height('100%')
+          .zIndex(1200)
+        }
+
+        // 翻页动画设置面板
+        if (this.showPageTurnAnimationSettings) {
+          Stack() {
+            // 遮罩
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor($r('app.color.background_overlay'))
+              .opacity(0.5)
+              .onClick(() => {
+                this.hidePageTurnAnimationSettingsWithAnimation();
+              })
+
+            // 面板
+            Column() {
+              // 标题
+              Row() {
+                Text('翻页动画设置')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.text_primary'))
+                  .layoutWeight(1)
+
+                Button() {
+                  Image($r('app.media.ic_close'))
+                    .width(20)
+                    .height(20)
+                    .fillColor($r('app.color.text_secondary'))
+                }
+                .width(36)
+                .height(36)
+                .backgroundColor(Color.Transparent)
+                .onClick(() => {
+                  this.hidePageTurnAnimationSettingsWithAnimation();
+                })
+              }
+              .width('100%')
+              .margin({ bottom: 16 })
+
+              // 动画类型选择
+              Text('基础动画')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              // 第一行：基础动画
+              Row() {
+                this.buildAnimButton('无', PageTurnAnimationType.NONE)
+                this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
+                this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.SpaceBetween)
+              .margin({ bottom: 8 })
+
+              // 第二行：3D动画
+              Row() {
+                this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
+                this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
+                this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.SpaceBetween)
+              .margin({ bottom: 16 })
+
+              // 拟真动画分类
+              Text('拟真动画')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              // 拟真动画：卷页效果（只有单页LTR/RTL模式可用）
+              Row() {
+                if (this.isCurlAnimationSupported()) {
+                  this.buildAnimButton('卷页', PageTurnAnimationType.CURL)
+                } else {
+                  // 禁用状态的卷页按钮
+                  Column() {
+                    Text('卷页')
+                      .fontSize(13)
+                      .fontColor($r('app.color.text_secondary'))
+                    Text('(仅单页左右翻页)')
+                      .fontSize(10)
+                      .fontColor($r('app.color.text_secondary'))
+                      .margin({ top: 2 })
+                  }
+                  .width(100)
+                  .height(50)
+                  .backgroundColor($r('app.color.background_secondary'))
+                  .borderRadius(8)
+                  .justifyContent(FlexAlign.Center)
+                  .opacity(0.5)
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Start)
+              
+              // 卷页透明度设置（仅在选择卷页动画且模式支持时显示）
+              if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
+                Column() {
+                  Row() {
+                    Text('卷页背面透明度')
+                      .fontSize(14)
+                      .fontColor($r('app.color.text_secondary'))
+                    Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                      .fontSize(14)
+                      .fontColor($r('app.color.accent'))
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.SpaceBetween)
+                  .margin({ top: 16, bottom: 8 })
+                  
+                  Slider({
+                    value: this.readingSettings.curlBackOpacity ?? 90,
+                    min: 0,
+                    max: 100,
+                    step: 5,
+                    style: SliderStyle.OutSet
+                  })
+                    .blockColor($r('app.color.accent'))
+                    .trackColor($r('app.color.background_secondary'))
+                    .selectedColor($r('app.color.accent'))
+                    .onChange((value: number) => {
+                      this.readingSettings.curlBackOpacity = value;
+                      this.handleSettingsChange(this.readingSettings);
+                    })
+                }
+                .width('100%')
+              }
+            }
+            .width('90%')
+            .constraintSize({ maxWidth: 400 })
+            .padding(20)
+            .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+            .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+            .borderRadius(16)
+            .opacity(this.pageTurnAnimationSettingsOpacity)
+            .scale({ x: this.pageTurnAnimationSettingsScale, y: this.pageTurnAnimationSettingsScale })
+            .translate({ y: this.pageTurnAnimationSettingsTranslateY })
+          }
+          .width('100%')
+          .height('100%')
+          .zIndex(1200)
+        }
+
         // 交互区域提示overlay（最高层级）
+        // 关键：使用componentWidth/componentHeight（组件实际渲染尺寸）
+        // 确保与handleHorizontalTap等交互判断使用相同的尺寸来源
         if (this.showInteractionOverlay) {
           MangaInteractionOverlay({
             params: {
               readingMode: this.readingSettings.readingMode,
               readingDirection: this.readingSettings.readingDirection,
-              componentWidth: this.screenWidth,
-              componentHeight: this.screenHeight,
+              componentWidth: this.componentWidth > 0 ? this.componentWidth : this.screenWidth,
+              componentHeight: this.componentHeight > 0 ? this.componentHeight : this.screenHeight,
               deviceOrientation: this.getDeviceOrientation(),
               statusBarHeight: this.statusBarHeight,
               navigationBarHeight: this.navigationBarHeight,
@@ -4654,9 +5528,24 @@ export struct MangaReaderPage {
       .width('100%')
       .height('100%')
       .opacity(this.contentOpacity)
+      .focusable(true)
+      .defaultFocus(true)
+      .onKeyEvent((event: KeyEvent) => {
+        // 处理音量键翻页
+        if (event.type === KeyType.Up) {
+          const consumed = this.handleVolumeKeyPageTurn(event.keyCode);
+          if (consumed) {
+            event.stopPropagation();
+          }
+        }
+      })
     }
     .title(this.isImageLoaded ? '' : (this.readerState.currentManga?.title || '漫画阅读器'))
     .hideTitleBar(true)
+    .onBackPressed(() => {
+      // 返回键处理
+      return false;
+    })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       
