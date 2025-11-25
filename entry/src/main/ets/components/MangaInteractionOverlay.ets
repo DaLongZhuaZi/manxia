@@ -85,7 +85,7 @@ export struct MangaInteractionOverlay {
       return;
     }
     
-    // 单页和双页模式：根据阅读方向决定布局
+    // 单页和双页模式：根据阅读模式和阅读方向决定布局
     if (this.params.readingMode === ReadingMode.DOUBLE_PAGE) {
       // 双页模式根据阅读方向调整
       if (direction === ReadingDirection.RIGHT_TO_LEFT) {
@@ -94,19 +94,32 @@ export struct MangaInteractionOverlay {
         this.calculateDoublePageZones(zones, width, height);
       }
     } else {
-      // 单页模式根据阅读方向调整
-      switch (direction) {
-        case ReadingDirection.RIGHT_TO_LEFT:
-          this.calculateRTLZones(zones, width, height);
-          break;
-        case ReadingDirection.TOP_TO_BOTTOM:
-        case ReadingDirection.VERTICAL:
-          this.calculateTTBZones(zones, width, height);
-          break;
-        case ReadingDirection.LEFT_TO_RIGHT:
-        default:
-          this.calculateLTRZones(zones, width, height);
-          break;
+      // 单页模式：优先根据阅读模式判断，其次根据阅读方向
+      // 修复：SINGLE_PAGE_RTL 和 SINGLE_PAGE_TTB 模式需要正确显示对应的overlay
+      if (this.params.readingMode === ReadingMode.SINGLE_PAGE_RTL) {
+        // 单页从右到左模式
+        this.calculateRTLZones(zones, width, height);
+      } else if (this.params.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
+        // 单页从上到下模式
+        this.calculateTTBZones(zones, width, height);
+      } else if (this.params.readingMode === ReadingMode.SINGLE_PAGE_LTR) {
+        // 单页从左到右模式
+        this.calculateLTRZones(zones, width, height);
+      } else {
+        // SINGLE_PAGE 默认模式：根据阅读方向决定
+        switch (direction) {
+          case ReadingDirection.RIGHT_TO_LEFT:
+            this.calculateRTLZones(zones, width, height);
+            break;
+          case ReadingDirection.TOP_TO_BOTTOM:
+          case ReadingDirection.VERTICAL:
+            this.calculateTTBZones(zones, width, height);
+            break;
+          case ReadingDirection.LEFT_TO_RIGHT:
+          default:
+            this.calculateLTRZones(zones, width, height);
+            break;
+        }
       }
     }
     
@@ -443,9 +456,9 @@ export struct MangaInteractionOverlay {
       }
       .justifyContent(FlexAlign.Center)
     }
-    .width(`${zone.width}px`)
-    .height(`${zone.height}px`)
-    .position({ x: `${zone.left}px`, y: `${zone.top}px` })
+    .width(zone.width)  // vp单位
+    .height(zone.height) // vp单位
+    .position({ x: zone.left, y: zone.top }) // vp单位
   }
 
   /**
@@ -542,8 +555,8 @@ export struct MangaInteractionOverlay {
           this.buildZone(zone);
         }, (zone: InteractionZone, index: number) => `zone_${index}_${zone.type}`)
       }
-      .width(`${this.params.componentWidth}px`)
-      .height(`${this.params.componentHeight}px`)
+      .width(this.params.componentWidth)  // vp单位
+      .height(this.params.componentHeight) // vp单位
       
       // 说明面板（居中或底部）
       Column() {

@@ -2000,8 +2000,10 @@ struct MainMenuPage {
       autoPageTurnInterval: 0,
       skipIntroPages: 0,
       pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
       filterSettings: filterSettings,
-      volumeKeyNavigation: false
+      volumeKeyNavigation: false,
+      curlBackOpacity: 0
     };
 
      return {

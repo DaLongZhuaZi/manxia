@@ -43,7 +43,8 @@ export struct MangaReaderChapterList {
 
   // 内部状态
   @State private panelOpacity: number = 0;
-  @State private panelTranslateX: number = 300;
+  @State private panelScale: number = 0.95;
+  @State private panelTranslateY: number = 20;
   @State private backdropOpacity: number = 0;
   @State private themeState: ThemeAwareState = new ThemeAwareState();
 
@@ -101,14 +102,15 @@ export struct MangaReaderChapterList {
     });
 
     const slideInOptions: AnimateParam = { 
-      duration: 300, 
+      duration: 200, 
       curve: curves.initCurve(Curve.EaseOut),
       iterations: 1,
       playMode: PlayMode.Normal
     };
     this.uiContext.animateTo(slideInOptions, () => {
       this.panelOpacity = 1;
-      this.panelTranslateX = 0;
+      this.panelScale = 1;
+      this.panelTranslateY = 0;
     });
   }
 
@@ -122,14 +124,15 @@ export struct MangaReaderChapterList {
     }
 
     const slideOutOptions: AnimateParam = { 
-      duration: 300, 
-      curve: curves.initCurve(Curve.EaseInOut),
+      duration: 160, 
+      curve: curves.initCurve(Curve.EaseIn),
       iterations: 1,
       playMode: PlayMode.Normal
     };
     this.uiContext.animateTo(slideOutOptions, () => {
       this.panelOpacity = 0;
-      this.panelTranslateX = 300;
+      this.panelScale = 0.95;
+      this.panelTranslateY = 20;
     });
 
     const fadeOutOptions: AnimateParam = { 
@@ -229,12 +232,12 @@ export struct MangaReaderChapterList {
             }
           })
 
-        // 章节列表面板（从右侧滑入）
+        // 章节列表面板（居中弹窗样式）
         Column() {
           // 面板标题
           Row() {
             Text('章节目录')
-              .fontSize(20)
+              .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
@@ -246,12 +249,12 @@ export struct MangaReaderChapterList {
 
             Button() {
               Image($r('app.media.ic_close'))
-                .width(24)
-                .height(24)
+                .width(20)
+                .height(20)
                 .fillColor($r('app.color.text_secondary'))
             }
-            .width(40)
-            .height(40)
+            .width(36)
+            .height(36)
             .backgroundColor(Color.Transparent)
             .onClick(() => {
               this.hidePanel();
@@ -261,7 +264,7 @@ export struct MangaReaderChapterList {
             })
           }
           .width('100%')
-          .padding({ bottom: 16 })
+          .margin({ bottom: 16 })
 
           // 滚动章节列表
           List() {
@@ -280,15 +283,16 @@ export struct MangaReaderChapterList {
             endMargin: 16
           })
         }
-        .width('80%')
-        .height('100%')
+        .width('90%')
+        .height('70%')
+        .constraintSize({ maxWidth: 500, maxHeight: 600 })
         .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
         .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+        .borderRadius(16)
         .padding(20)
         .opacity(this.panelOpacity)
-        .translate({ x: this.panelTranslateX, y: 0 })
-        .position({ x: '100%', y: 0 })
-        .translate({ x: '-100%', y: 0 })
+        .scale({ x: this.panelScale, y: this.panelScale })
+        .translate({ y: this.panelTranslateY })
       }
       .width('100%')
       .height('100%')

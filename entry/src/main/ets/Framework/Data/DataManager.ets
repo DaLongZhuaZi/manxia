@@ -510,6 +510,16 @@ export interface DownloadTaskUpdate {
   errorMessage?: string;
 }
 
+/**
+ * 漫画基础信息更新接口
+ */
+export interface ComicBasicInfoUpdate {
+  title?: string;
+  description?: string;
+  authors?: string[];
+  genres?: string[];
+}
+
 export class DataManager {
   private static instance: DataManager | null = null;
 
@@ -1206,6 +1216,68 @@ export class DataManager {
       return null;
     } catch (error) {
       logger.error(TAG, `根据ID获取漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 更新漫画基础信息
+   * @param comicId 漫画ID
+   * @param basicInfo 基础信息对象
+   */
+  public async updateComicBasicInfo(comicId: string, basicInfo: ComicBasicInfoUpdate): Promise<void> {
+    try {
+      logger.info(TAG, `更新漫画基础信息: ${comicId}`);
+      
+      // 构建更新数据
+      const updateData: UpdateRecordData = {
+        id: comicId,
+        updatedAt: new Date().toISOString()
+      };
+      
+      if (basicInfo.title !== undefined) {
+        updateData.title = basicInfo.title;
+      }
+      if (basicInfo.description !== undefined) {
+        updateData.description = basicInfo.description;
+      }
+      if (basicInfo.authors !== undefined) {
+        // 将数组转换为逗号分隔的字符串存储
+        updateData.author = basicInfo.authors.join(', ');
+      }
+      if (basicInfo.genres !== undefined) {
+        updateData.tags = JSON.stringify(basicInfo.genres);
+      }
+      
+      // 先尝试更新 comic_info 表
+      const localResult = await this.databaseManager.update(
+        'comic_info',
+        updateData,
+        `id = ?`,
+        [comicId]
+      );
+      
+      if (localResult > 0) {
+        logger.info(TAG, `成功更新 comic_info 表中的漫画基础信息: ${comicId}`);
+        return;
+      }
+      
+      // 如果 comic_info 表中没有，尝试更新 online_comic_info 表
+      const onlineResult = await this.databaseManager.update(
+        'online_comic_info',
+        updateData,
+        `id = ?`,
+        [comicId]
+      );
+      
+      if (onlineResult > 0) {
+        logger.info(TAG, `成功更新 online_comic_info 表中的漫画基础信息: ${comicId}`);
+        return;
+      }
+      
+      logger.warn(TAG, `未找到ID为 ${comicId} 的漫画，无法更新基础信息`);
+    } catch (error) {
+      logger.error(TAG, `更新漫画基础信息失败: ${error}`);
       throw error as Error;
     }
   }
