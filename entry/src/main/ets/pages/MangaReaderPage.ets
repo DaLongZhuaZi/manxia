@@ -48,6 +48,7 @@ import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager'
 import { MangaSourceEngine, EngineResult } from '../Framework/WebView/MangaSourceEngine';
 import { PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
 import { MangaSourceAPIEngine } from '../Framework/WebView/MangaSourceAPIEngine';
+import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManager';
 import { webview } from '@kit.ArkWeb';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileUri } from '@kit.CoreFileKit';
@@ -381,6 +382,9 @@ export struct MangaReaderPage {
   onPageShow() {
     logger.lifecycle(TAG, '漫画阅读器页面开始显示');
     
+    // 通知预加载管理器：阅读器已激活
+    ChapterPreloadManager.getInstance().setReaderActive(true);
+    
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (stack) {
@@ -644,6 +648,9 @@ export struct MangaReaderPage {
   }
 
   aboutToDisappear() {
+    // 通知预加载管理器：阅读器已关闭
+    ChapterPreloadManager.getInstance().setReaderActive(false);
+    
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -3549,10 +3556,46 @@ export struct MangaReaderPage {
       const externalChapterId = await this.getExternalChapterIdForOnlineUndownloaded(chapter);
       const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(this.readerState.currentManga?.id || '');
       
-      logger.info(TAG, `📥 预加载章节页面: chapterId=${externalChapterId}, mangaId=${externalMangaId}, maxPages=${maxPages}`);
+      // 检查是否已经在详情页预加载过
+      const preloadManager = ChapterPreloadManager.getInstance();
+      const preloadTask = preloadManager.getTaskStatus(chapter.id);
       
-      // 获取页面列表
-      const pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+      let pageListResult: EngineResult<SourcePageInfo[]>;
+      
+      if (preloadTask && preloadTask.status === 'completed' && preloadTask.pageCount > 0) {
+        logger.info(TAG, `✅ 章节已在详情页预加载: ${chapter.title}, 共${preloadTask.pageCount}页, 已预加载${preloadTask.preloadedPages}页图片`);
+        
+        // 尝试从数据库读取页面列表，避免重复调用getPageList
+        const dataManager = DataManager.getInstance();
+        const dbPages = await dataManager.getPageInfoList(chapter.id);
+        
+        if (dbPages.length > 0) {
+          logger.info(TAG, `✅ 从数据库读取页面列表: ${chapter.title}, 共${dbPages.length}页`);
+          // 转换为SourcePageInfo格式
+          const sourcePages: SourcePageInfo[] = dbPages.map((dbPage, index): SourcePageInfo => {
+            return {
+              page: index + 1,
+              imageUrl: dbPage.imageUrl,
+              width: dbPage.width,
+              height: dbPage.height
+            };
+          });
+          pageListResult = {
+            success: true,
+            data: sourcePages,
+            duration: 0,
+            actionCount: 0
+          };
+        } else {
+          // 数据库中没有，仍然需要调用getPageList
+          logger.info(TAG, `数据库中无页面列表，调用getPageList: ${chapter.title}`);
+          pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+        }
+      } else {
+        // 未预加载，正常调用getPageList
+        logger.info(TAG, `📥 预加载章节页面: chapterId=${externalChapterId}, mangaId=${externalMangaId}, maxPages=${maxPages}`);
+        pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+      }
       
       if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
         const errorMsg = pageListResult.error || '页面列表为空';

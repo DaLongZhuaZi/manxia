@@ -702,6 +702,13 @@ export struct MangaViewer {
     }))
       .then(() => {
         logger.info(TAG, `高优先级页面加载完成，刷新UI: currentIdx=${currentIndex}`);
+        
+        // 【修复】如果正在执行翻页动画，不要立即刷新UI，避免闪回
+        if (this.isPageTurning) {
+          logger.debug(TAG, `翻页动画执行中，延迟UI刷新`);
+          return;
+        }
+        
         // 所有高优先级页面加载完成后，刷新UI
         if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
           this.updateDoublePageDisplay();
@@ -1219,9 +1226,19 @@ export struct MangaViewer {
         
         // 检查当前页PixelMap是否可用
         if (!this.curlCurrentPixelMap) {
-          logger.warn(TAG, `当前页PixelMap为空，无法进入卷页模式`);
+          logger.warn(TAG, `当前页PixelMap为空，降级为普通翻页模式`);
+          // 降级：不使用卷页动画，但允许翻页
           this.translateX = this.initialTranslateX + deltaX;
           return;
+        }
+        
+        // 如果下一页PixelMap也未加载，尝试触发加载但不阻止卷页
+        if (!this.curlNextPixelMap && targetIndex >= 0 && targetIndex < this.chapter.pages.length) {
+          const targetPage: MangaPage = this.chapter.pages[targetIndex];
+          logger.info(TAG, `下一页PixelMap未加载，触发异步加载: ${targetPage.id}`);
+          this.ensurePixelMapLoaded(targetPage).catch((e: Error) => {
+            logger.error(TAG, `下一页PixelMap加载失败: ${e.message}`);
+          });
         }
         
         this.showCanvasCurl = true;
@@ -1286,26 +1303,76 @@ export struct MangaViewer {
           }
           return;
         } else {
-          // 没有进入卷页模式（可能是向后翻页），使用普通滑动处理
-          // 检查是否需要翻到上一页
+          // 没有进入卷页模式（PixelMap未加载），降级为普通翻页
           const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
             (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
-          const dragBackward: boolean = isRTL ? this.translateX < 0 : this.translateX > 0;
+          const dragForward: boolean = isRTL ? this.translateX < 0 : this.translateX > 0;
+          const dragBackward: boolean = !dragForward;
           
-          if (dragBackward && Math.abs(this.translateX) > thresholdX) {
-            // 向后翻页（上一页）
-            if (this.viewCurrentPageIndex > 0) {
-              const targetIndex: number = this.viewCurrentPageIndex - 1;
-              this.viewCurrentPageIndex = targetIndex;
-              this.currentPageIndex = targetIndex;
-              this.suppressExternalIndex = true;
-              this.updateSinglePageDisplay();
-              if (this.callbacks.onPageChange) {
-                this.callbacks.onPageChange(targetIndex);
+          if (Math.abs(this.translateX) > thresholdX) {
+            if (dragForward && this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
+              // 向前翻页（下一页）
+              const targetIndex: number = this.viewCurrentPageIndex + 1;
+              const targetPage: MangaPage = this.chapter.pages[targetIndex];
+              
+              // 先确保目标页PixelMap已加载
+              if (!this.pagePixelMaps.has(targetPage.id)) {
+                logger.info(TAG, `降级翻页：预加载目标页 ${targetPage.id}`);
+                this.ensurePixelMapLoaded(targetPage).then(() => {
+                  this.viewCurrentPageIndex = targetIndex;
+                  this.currentPageIndex = targetIndex;
+                  this.suppressExternalIndex = true;
+                  this.updateSinglePageDisplay();
+                  if (this.callbacks.onPageChange) {
+                    this.callbacks.onPageChange(targetIndex);
+                  }
+                  setTimeout(() => { this.suppressExternalIndex = false; }, 50);
+                }).catch((e: Error) => {
+                  logger.error(TAG, `降级翻页失败: ${e.message}`);
+                });
+              } else {
+                this.viewCurrentPageIndex = targetIndex;
+                this.currentPageIndex = targetIndex;
+                this.suppressExternalIndex = true;
+                this.updateSinglePageDisplay();
+                if (this.callbacks.onPageChange) {
+                  this.callbacks.onPageChange(targetIndex);
+                }
+                setTimeout(() => { this.suppressExternalIndex = false; }, 50);
               }
-              setTimeout(() => { this.suppressExternalIndex = false; }, 50);
+            } else if (dragBackward && this.viewCurrentPageIndex > 0) {
+              // 向后翻页（上一页）
+              const targetIndex: number = this.viewCurrentPageIndex - 1;
+              const targetPage: MangaPage = this.chapter.pages[targetIndex];
+              
+              // 先确保目标页PixelMap已加载
+              if (!this.pagePixelMaps.has(targetPage.id)) {
+                logger.info(TAG, `降级翻页：预加载目标页 ${targetPage.id}`);
+                this.ensurePixelMapLoaded(targetPage).then(() => {
+                  this.viewCurrentPageIndex = targetIndex;
+                  this.currentPageIndex = targetIndex;
+                  this.suppressExternalIndex = true;
+                  this.updateSinglePageDisplay();
+                  if (this.callbacks.onPageChange) {
+                    this.callbacks.onPageChange(targetIndex);
+                  }
+                  setTimeout(() => { this.suppressExternalIndex = false; }, 50);
+                }).catch((e: Error) => {
+                  logger.error(TAG, `降级翻页失败: ${e.message}`);
+                });
+              } else {
+                this.viewCurrentPageIndex = targetIndex;
+                this.currentPageIndex = targetIndex;
+                this.suppressExternalIndex = true;
+                this.updateSinglePageDisplay();
+                if (this.callbacks.onPageChange) {
+                  this.callbacks.onPageChange(targetIndex);
+                }
+                setTimeout(() => { this.suppressExternalIndex = false; }, 50);
+              }
             } else if (this.callbacks.onChapterChange) {
-              this.callbacks.onChapterChange('prev');
+              // 已到边界，切换章节
+              this.callbacks.onChapterChange(dragForward ? 'next' : 'prev');
             }
           }
           this.animateToPosition(0, 0);
@@ -1376,15 +1443,29 @@ export struct MangaViewer {
             // 向下拖拽 -> 上一页
             if (this.viewCurrentPageIndex > 0) {
               const newIndex: number = this.viewCurrentPageIndex - 1;
-              this.viewCurrentPageIndex = newIndex;
-              this.currentPageIndex = newIndex;
-              this.suppressExternalIndex = true;
-              if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-              this.updateSinglePageDisplay();
               const newPage: MangaPage = this.chapter.pages[newIndex];
-              this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
-              this.incrementPixelMapEpoch(newPage.id);
-              this.renderEpoch = this.renderEpoch + 1;
+              
+              // 【修复】先确保目标页面PixelMap已加载，再执行翻页
+              if (!this.pagePixelMaps.has(newPage.id)) {
+                logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
+                this.ensurePixelMapLoaded(newPage).then(() => {
+                  this.viewCurrentPageIndex = newIndex;
+                  this.currentPageIndex = newIndex;
+                  this.suppressExternalIndex = true;
+                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                  this.updateSinglePageDisplay();
+                  this.incrementPixelMapEpoch(newPage.id);
+                  this.renderEpoch = this.renderEpoch + 1;
+                }).catch((_e: Error) => {});
+              } else {
+                this.viewCurrentPageIndex = newIndex;
+                this.currentPageIndex = newIndex;
+                this.suppressExternalIndex = true;
+                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                this.updateSinglePageDisplay();
+                this.incrementPixelMapEpoch(newPage.id);
+                this.renderEpoch = this.renderEpoch + 1;
+              }
               pageChanged = true;
             } else if (this.callbacks.onChapterChange) {
               this.callbacks.onChapterChange('prev');
@@ -1395,15 +1476,29 @@ export struct MangaViewer {
             // 向上拖拽 -> 下一页
             if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
               const newIndex: number = this.viewCurrentPageIndex + 1;
-              this.viewCurrentPageIndex = newIndex;
-              this.currentPageIndex = newIndex;
-              this.suppressExternalIndex = true;
-              if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-              this.updateSinglePageDisplay();
               const newPage: MangaPage = this.chapter.pages[newIndex];
-              this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
-              this.incrementPixelMapEpoch(newPage.id);
-              this.renderEpoch = this.renderEpoch + 1;
+              
+              // 【修复】先确保目标页面PixelMap已加载，再执行翻页
+              if (!this.pagePixelMaps.has(newPage.id)) {
+                logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
+                this.ensurePixelMapLoaded(newPage).then(() => {
+                  this.viewCurrentPageIndex = newIndex;
+                  this.currentPageIndex = newIndex;
+                  this.suppressExternalIndex = true;
+                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                  this.updateSinglePageDisplay();
+                  this.incrementPixelMapEpoch(newPage.id);
+                  this.renderEpoch = this.renderEpoch + 1;
+                }).catch((_e: Error) => {});
+              } else {
+                this.viewCurrentPageIndex = newIndex;
+                this.currentPageIndex = newIndex;
+                this.suppressExternalIndex = true;
+                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                this.updateSinglePageDisplay();
+                this.incrementPixelMapEpoch(newPage.id);
+                this.renderEpoch = this.renderEpoch + 1;
+              }
               pageChanged = true;
             } else if (this.callbacks.onChapterChange) {
               this.callbacks.onChapterChange('next');
@@ -1425,15 +1520,29 @@ export struct MangaViewer {
               // RTL：向右拖拽，下一页
               if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
                 const newIndex: number = this.viewCurrentPageIndex + 1;
-                this.viewCurrentPageIndex = newIndex;
-                this.currentPageIndex = newIndex;
-                this.suppressExternalIndex = true;
-                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                this.updateSinglePageDisplay();
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
-                this.incrementPixelMapEpoch(newPage.id);
-                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
+                if (!this.pagePixelMaps.has(newPage.id)) {
+                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
+                  this.ensurePixelMapLoaded(newPage).then(() => {
+                    this.viewCurrentPageIndex = newIndex;
+                    this.currentPageIndex = newIndex;
+                    this.suppressExternalIndex = true;
+                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                    this.updateSinglePageDisplay();
+                    this.incrementPixelMapEpoch(newPage.id);
+                    this.renderEpoch = this.renderEpoch + 1;
+                  }).catch((_e: Error) => {});
+                } else {
+                  this.viewCurrentPageIndex = newIndex;
+                  this.currentPageIndex = newIndex;
+                  this.suppressExternalIndex = true;
+                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                  this.updateSinglePageDisplay();
+                  this.incrementPixelMapEpoch(newPage.id);
+                  this.renderEpoch = this.renderEpoch + 1;
+                }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
                 this.callbacks.onChapterChange('next');
@@ -1444,15 +1553,29 @@ export struct MangaViewer {
               // RTL：向左拖拽，上一页
               if (this.viewCurrentPageIndex > 0) {
                 const newIndex: number = this.viewCurrentPageIndex - 1;
-                this.viewCurrentPageIndex = newIndex;
-                this.currentPageIndex = newIndex;
-                this.suppressExternalIndex = true;
-                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                this.updateSinglePageDisplay();
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
-                this.incrementPixelMapEpoch(newPage.id);
-                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
+                if (!this.pagePixelMaps.has(newPage.id)) {
+                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
+                  this.ensurePixelMapLoaded(newPage).then(() => {
+                    this.viewCurrentPageIndex = newIndex;
+                    this.currentPageIndex = newIndex;
+                    this.suppressExternalIndex = true;
+                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                    this.updateSinglePageDisplay();
+                    this.incrementPixelMapEpoch(newPage.id);
+                    this.renderEpoch = this.renderEpoch + 1;
+                  }).catch((_e: Error) => {});
+                } else {
+                  this.viewCurrentPageIndex = newIndex;
+                  this.currentPageIndex = newIndex;
+                  this.suppressExternalIndex = true;
+                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                  this.updateSinglePageDisplay();
+                  this.incrementPixelMapEpoch(newPage.id);
+                  this.renderEpoch = this.renderEpoch + 1;
+                }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
                 this.callbacks.onChapterChange('prev');
@@ -1465,15 +1588,29 @@ export struct MangaViewer {
               // LTR：向右拖拽，上一页
               if (this.viewCurrentPageIndex > 0) {
                 const newIndex: number = this.viewCurrentPageIndex - 1;
-                this.viewCurrentPageIndex = newIndex;
-                this.currentPageIndex = newIndex;
-                this.suppressExternalIndex = true;
-                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                this.updateSinglePageDisplay();
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
-                this.incrementPixelMapEpoch(newPage.id);
-                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
+                if (!this.pagePixelMaps.has(newPage.id)) {
+                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
+                  this.ensurePixelMapLoaded(newPage).then(() => {
+                    this.viewCurrentPageIndex = newIndex;
+                    this.currentPageIndex = newIndex;
+                    this.suppressExternalIndex = true;
+                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                    this.updateSinglePageDisplay();
+                    this.incrementPixelMapEpoch(newPage.id);
+                    this.renderEpoch = this.renderEpoch + 1;
+                  }).catch((_e: Error) => {});
+                } else {
+                  this.viewCurrentPageIndex = newIndex;
+                  this.currentPageIndex = newIndex;
+                  this.suppressExternalIndex = true;
+                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                  this.updateSinglePageDisplay();
+                  this.incrementPixelMapEpoch(newPage.id);
+                  this.renderEpoch = this.renderEpoch + 1;
+                }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
                 this.callbacks.onChapterChange('prev');
@@ -1484,15 +1621,29 @@ export struct MangaViewer {
               // LTR：向左拖拽，下一页
               if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
                 const newIndex: number = this.viewCurrentPageIndex + 1;
-                this.viewCurrentPageIndex = newIndex;
-                this.currentPageIndex = newIndex;
-                this.suppressExternalIndex = true;
-                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                this.updateSinglePageDisplay();
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
-                this.incrementPixelMapEpoch(newPage.id);
-                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
+                if (!this.pagePixelMaps.has(newPage.id)) {
+                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
+                  this.ensurePixelMapLoaded(newPage).then(() => {
+                    this.viewCurrentPageIndex = newIndex;
+                    this.currentPageIndex = newIndex;
+                    this.suppressExternalIndex = true;
+                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                    this.updateSinglePageDisplay();
+                    this.incrementPixelMapEpoch(newPage.id);
+                    this.renderEpoch = this.renderEpoch + 1;
+                  }).catch((_e: Error) => {});
+                } else {
+                  this.viewCurrentPageIndex = newIndex;
+                  this.currentPageIndex = newIndex;
+                  this.suppressExternalIndex = true;
+                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                  this.updateSinglePageDisplay();
+                  this.incrementPixelMapEpoch(newPage.id);
+                  this.renderEpoch = this.renderEpoch + 1;
+                }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
                 this.callbacks.onChapterChange('next');
@@ -1515,12 +1666,12 @@ export struct MangaViewer {
         // 执行翻页动画（所有模式都执行）
         this.animatePageTurn();
         
-        if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+        if (isDoublePage) {
           this.updateDoublePageIndices();
           this.updateDoublePageDisplay();
         }
         setTimeout(() => {
-          if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+          if (isDoublePage) {
             this.updateDoublePagePreview();
           } else {
             this.updateSinglePagePreview();
@@ -1533,7 +1684,7 @@ export struct MangaViewer {
           this.incrementPixelMapEpoch(newPage.id);
         }
         this.renderEpoch = this.renderEpoch + 1;
-        if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+        if (isDoublePage) {
           this.ensureDoublePageImagesPreloaded();
         }
         if (this.callbacks.onPageChange) { this.callbacks.onPageChange(this.viewCurrentPageIndex); }
@@ -1721,6 +1872,13 @@ export struct MangaViewer {
           this.pageTurnProgress = 0;
           this.currentAnimationType = PageTurnAnimationType.NONE;
           logger.debug(TAG, `翻页动画完成`);
+          
+          // 【修复】动画完成后刷新UI，确保显示正确的页面
+          if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+            this.updateDoublePageDisplay();
+          } else {
+            this.updateSinglePageDisplay();
+          }
         }
       }, () => {
         // 动画目标状态：恢复正常（单位矩阵）
@@ -1914,24 +2072,63 @@ export struct MangaViewer {
     const targetPage: MangaPage = this.chapter.pages[targetIndex];
     this.curlNextPixelMap = this.pagePixelMaps.get(targetPage.id) || null;
     
-    // 检查当前页PixelMap是否已加载
+    // 【修复】检查当前页PixelMap是否已加载
     if (!this.curlCurrentPixelMap) {
-      logger.warn(TAG, `当前页PixelMap未加载，尝试同步加载`);
-      // 尝试同步等待加载
+      logger.warn(TAG, `当前页PixelMap未加载，开始加载并等待`);
+      
+      // 【修复】显示Loading状态，避免黑屏
+      this.isPageTurning = true;
+      this.pageTurnOpacity = 0.5; // 半透明显示当前页
+      
+      // 【修复】设置3秒超时（而不是立即降级）
+      const loadTimeout = setTimeout(() => {
+        logger.error(TAG, `PixelMap加载超时，降级到普通翻页`);
+        this.isPageTurning = false;
+        this.pageTurnOpacity = 1.0;
+        this.fallbackToNormalPageTurn(targetIndex, isForward);
+      }, 3000); // 3秒超时
+      
+      // 尝试加载
       this.ensurePixelMapLoaded(currentPage).then(() => {
+        clearTimeout(loadTimeout);
         this.curlCurrentPixelMap = this.pagePixelMaps.get(currentPage.id) || null;
+        
         if (this.curlCurrentPixelMap) {
+          // 加载成功，执行卷页动画
+          logger.info(TAG, `当前页PixelMap加载成功，执行卷页动画`);
           this.executeCurlAnimation(targetIndex, isForward);
         } else {
-          // 仍然无法加载，回退到普通翻页
+          // 加载失败，降级
+          logger.warn(TAG, `当前页PixelMap加载失败，降级到普通翻页`);
+          this.isPageTurning = false;
+          this.pageTurnOpacity = 1.0;
           this.fallbackToNormalPageTurn(targetIndex, isForward);
         }
       }).catch(() => {
+        clearTimeout(loadTimeout);
+        logger.error(TAG, `当前页PixelMap加载异常，降级到普通翻页`);
+        this.isPageTurning = false;
+        this.pageTurnOpacity = 1.0;
         this.fallbackToNormalPageTurn(targetIndex, isForward);
       });
+      
       // 先复位位置
       this.animateToPosition(0, 0);
       return;
+    }
+    
+    // 【修复】如果下一页PixelMap未加载，不影响卷页动画启动
+    // 卷页动画可以显示空白的下一页，后台继续加载
+    if (!this.curlNextPixelMap) {
+      logger.info(TAG, `下一页PixelMap未加载，后台加载中`);
+      this.ensurePixelMapLoaded(targetPage).then(() => {
+        this.curlNextPixelMap = this.pagePixelMaps.get(targetPage.id) || null;
+        if (this.curlNextPixelMap) {
+          logger.info(TAG, `下一页PixelMap加载完成`);
+        }
+      }).catch((err:Error) => {
+        logger.error(TAG, `下一页PixelMap加载失败: ${err}`);
+      });
     }
     
     // 执行卷页动画
@@ -2599,9 +2796,9 @@ export struct MangaViewer {
     // 根据内容类型和阅读模式决定预加载页数
     let preloadCount: number;
     if (this.contentType === 'OnlineUndownloaded') {
-      // 在线漫画：条漫模式预加载更多，单页模式保守
+      // 【修复】在线漫画：增加单页模式预加载页数，确保卷页动画所需PixelMap提前加载
       const isWebtoon = this.isWebtoonMode();
-      preloadCount = isWebtoon ? 3 : 1;  // 条漫3页，单页1页
+      preloadCount = isWebtoon ? 3 : 2;  // 条漫3页，单页从1增加到2页
       logger.debug(TAG, `在线漫画模式（${isWebtoon ? '条漫' : '单页'}）：预加载${preloadCount}页`);
     } else {
       // 本地/下载漫画：使用图源设置的预加载页数，默认为10
@@ -2622,7 +2819,7 @@ export struct MangaViewer {
     
     // 在线漫画：优先级策略预加载
     if (this.contentType === 'OnlineUndownloaded') {
-      // 当前页：优先级10（已经在显示）
+      // 【修复】当前页：优先级10（已经在显示）
       // 预加载接下来的N页（根据preloadCount）
       for (let i = 1; i <= preloadCount; i++) {
         const targetIndex = currentIndex + i;
@@ -2633,8 +2830,8 @@ export struct MangaViewer {
         const hasPm = this.pagePixelMaps.has(page.id);
         
         if (!hasPm && (!st || !st.isLoading)) {
-          // 优先级递减：下一页=8，下下页=6，第三页=4
-          const priority = Math.max(2, 10 - i * 2);
+          // 【修复】提高优先级：下一页=9（卷页动画关键），下下页=7，第三页=5
+          const priority = Math.max(3, 11 - i * 2);
           this.loadImageWithPriority(page, priority);
           logger.debug(TAG, `预加载第${targetIndex + 1}页: priority=${priority}`);
         }
@@ -4484,13 +4681,32 @@ export struct MangaViewer {
     let threshold: number = Math.floor(totalPagesCount / 5);
     if (threshold < 10) { threshold = 10; }
     if (this.pagePixelMaps.size < threshold) { return; }
+    
+    // 【修复】保护当前页和相邻页的PixelMap，防止卷页动画降级
+    const protectedIndices = new Set<number>();
+    const currentIndex = this.viewCurrentPageIndex;
+    
+    // 保护范围：当前页 ± 2页（确保卷页动画所需的PixelMap始终可用）
+    for (let i = Math.max(0, currentIndex - 2); 
+         i <= Math.min(totalPagesCount - 1, currentIndex + 2); 
+         i++) {
+      protectedIndices.add(i);
+    }
+    
     const keys: string[] = Array.from(this.pagePixelMaps.keys());
+    let cleanedCount = 0;
     for (let i = 0; i < keys.length; i++) {
       const id: string = keys[i];
       const idx: number = this.getPageIndexById(id);
       if (idx < 0) {
         continue;
       }
+      
+      // 【修复】跳过受保护的页面
+      if (protectedIndices.has(idx)) {
+        continue;
+      }
+      
       const p: MangaPage = this.chapter.pages[idx];
       const visible: boolean = this.isPageCurrentlyVisible(p);
       if (!visible) {
@@ -4500,7 +4716,12 @@ export struct MangaViewer {
         }
         this.pagePixelMaps.delete(id);
         this.pagePixelMapMeta.delete(id);
+        cleanedCount++;
       }
+    }
+    
+    if (cleanedCount > 0) {
+      logger.debug(TAG, `清理了${cleanedCount}个不可见PixelMap，保护了${protectedIndices.size}个相邻页`);
     }
     this.pagePixelMaps = new Map(this.pagePixelMaps);
   }

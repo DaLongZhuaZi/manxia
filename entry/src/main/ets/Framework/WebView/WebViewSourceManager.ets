@@ -59,6 +59,18 @@ export interface WebViewConfigUpdate {
 }
 
 /**
+ * MangaSourceEngine创建结果接口
+ */
+interface EngineCreationResult {
+  /** 引擎实例 */
+  engine: MangaSourceEngine;
+  /** 实际图源ID */
+  actualSourceId: number;
+  /** 实际图源名称 */
+  actualSourceName: string;
+}
+
+/**
  * WebView源管理器实现类
  */
 export class WebViewSourceManager implements IWebViewSourceManager {
@@ -70,8 +82,10 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   private isInitialized: boolean = false;
   private cleanupTimer: number | null = null;
   
-  // 新增：MangaSourceEngine实例管理
-  private readonly mangaEngines: Map<number, MangaSourceEngine> = new Map();
+  // MangaSourceEngine缓存（key: sourceName，确保图源管理的稳定性）
+  private mangaEngines: Map<string, MangaSourceEngine> = new Map();
+  // sourceId到sourceName的映射（用于兼容旧代码）
+  private sourceIdToName: Map<number, string> = new Map();
   private globalWebViewController: webview.WebviewController | null = null;
 
   /**
@@ -263,27 +277,51 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   
   /**
    * 获取或创建MangaSourceEngine实例
-   * [修复] 支持按图源名称降级查找
-   * @param sourceId 图源ID（数字类型）
-   * @param sourceName 图源名称（可选，用于降级查找）
+   * 【关键重构】优先使用sourceName作为主键，确保图源管理的稳定性
+   * @param sourceId 图源ID（数字类型，可能不稳定）
+   * @param sourceName 图源名称（推荐使用，稳定的标识符）
    * @returns MangaSourceEngine实例
    */
   async getMangaEngine(sourceId: number, sourceName?: string): Promise<MangaSourceEngine> {
     try {
-      // 检查缓存
-      if (this.mangaEngines.has(sourceId)) {
-        logger.debug(TAG, `使用缓存的MangaSourceEngine: ${sourceId}`);
-        return this.mangaEngines.get(sourceId)!;
+      let cacheKey: string = '';
+      
+      // 【关键】优先使用sourceName作为缓存key
+      if (sourceName) {
+        cacheKey = sourceName;
+        logger.debug(TAG, `使用sourceName作为缓存key: "${sourceName}"`);
+      } else if (this.sourceIdToName.has(sourceId)) {
+        // 如果没有提供sourceName，尝试从映射表获取
+        cacheKey = this.sourceIdToName.get(sourceId)!;
+        logger.debug(TAG, `从映射表获取sourceName: sourceId=${sourceId} -> "${cacheKey}"`);
+      } else {
+        // 最后降级：从数据库查询sourceName
+        logger.warn(TAG, `未提供sourceName，从数据库查询: sourceId=${sourceId}`);
+        const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+        if (sourceRecord && sourceRecord.name) {
+          cacheKey = sourceRecord.name;
+          this.sourceIdToName.set(sourceId, cacheKey);
+          logger.info(TAG, `从数据库获取sourceName: "${cacheKey}"`);
+        } else {
+          throw new Error(`无法获取图源名称: sourceId=${sourceId}`);
+        }
       }
       
-      // 创建新引擎（传递图源名称用于降级查找）
-      logger.info(TAG, `创建新的MangaSourceEngine: ${sourceId}${sourceName ? ` (名称: ${sourceName})` : ''}`);
-      const engine = await this.createMangaEngine(sourceId, sourceName);
-      this.mangaEngines.set(sourceId, engine);
+      // 检查缓存
+      if (this.mangaEngines.has(cacheKey)) {
+        logger.debug(TAG, `✅ 使用缓存的MangaSourceEngine: "${cacheKey}"`);
+        return this.mangaEngines.get(cacheKey)!;
+      }
       
-      return engine;
+      // 创建新引擎
+      logger.info(TAG, `🔄 创建新的MangaSourceEngine: "${cacheKey}" (sourceId=${sourceId})`);
+      const result = await this.createMangaEngine(sourceId, cacheKey);
+      this.mangaEngines.set(cacheKey, result.engine);
+      this.sourceIdToName.set(result.actualSourceId, cacheKey);
+      
+      return result.engine;
     } catch (error) {
-      logger.error(TAG, `获取MangaSourceEngine失败: ${sourceId}, 错误: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(TAG, `❌ 获取MangaSourceEngine失败: sourceId=${sourceId}, sourceName="${sourceName}", 错误: ${error instanceof Error ? error.message : String(error)}`);
       throw error as Error;
     }
   }
@@ -327,13 +365,13 @@ export class WebViewSourceManager implements IWebViewSourceManager {
     const engines = Array.from(this.mangaEngines.entries());
     for (let i = 0; i < engines.length; i++) {
       const entry = engines[i];
-      const sourceId: number = entry[0];
+      const sourceName: string = entry[0];
       const engine: MangaSourceEngine = entry[1];
       try {
         engine.updateWebViewController(controller);
-        logger.debug(TAG, `Engine ${sourceId} WebView已更新`);
+        logger.debug(TAG, `Engine "${sourceName}" WebView已更新`);
       } catch (error) {
-        logger.warn(TAG, `Engine ${sourceId} WebView更新失败: ${String(error)}`);
+        logger.warn(TAG, `Engine "${sourceName}" WebView更新失败: ${String(error)}`);
       }
     }
   }
@@ -350,29 +388,39 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   
   /**
    * 创建MangaSourceEngine实例
-   * [修复] 支持按图源名称降级查找，提高图源管理的灵活性
+   * 【关键重构】优先使用sourceName查找，确保图源管理的稳定性
    */
-  private async createMangaEngine(sourceId: number, sourceName?: string): Promise<MangaSourceEngine> {
+  private async createMangaEngine(sourceId: number, sourceName: string): Promise<EngineCreationResult> {
     try {
       let config: ESObject | null = null;
       let actualSourceId: number = sourceId;
+      let actualSourceName: string = sourceName;
       
-      // 优先按 ID 查找
-      config = await this.dataManager.getSourceConfig(sourceId);
-      
-      // 如果按 ID 查找失败，且提供了图源名称，则按名称降级查找
-      if (!config && sourceName) {
-        logger.warn(TAG, `图源ID ${sourceId} 不存在，尝试按名称查找: "${sourceName}"`);
-        const result = await this.dataManager.getSourceConfigByName(sourceName);
-        if (result) {
-          config = result.config;
-          actualSourceId = result.id;
-          logger.info(TAG, `✅ 按名称找到图源: "${sourceName}", 新ID=${actualSourceId}`);
+      // 【关键】优先按名称查找（稳定的标识符）
+      logger.info(TAG, `📋 优先按名称查找图源: "${sourceName}"`);
+      const nameResult = await this.dataManager.getSourceConfigByName(sourceName);
+      if (nameResult) {
+        config = nameResult.config;
+        actualSourceId = nameResult.id;
+        actualSourceName = sourceName;
+        logger.info(TAG, `✅ 按名称找到图源: "${sourceName}", ID=${actualSourceId}`);
+      } else {
+        // 降级：按 ID 查找
+        logger.warn(TAG, `⚠️ 按名称未找到图源 "${sourceName}"，尝试按ID查找: ${sourceId}`);
+        config = await this.dataManager.getSourceConfig(sourceId);
+        if (config) {
+          actualSourceId = sourceId;
+          // 从数据库获取实际的sourceName
+          const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+          if (sourceRecord && sourceRecord.name) {
+            actualSourceName = sourceRecord.name;
+            logger.info(TAG, `✅ 按ID找到图源: ${sourceId}, 实际名称="${actualSourceName}"`);
+          }
         }
       }
       
       if (!config) {
-        throw new Error(`图源配置不存在: ${sourceId}${sourceName ? ` (名称: ${sourceName})` : ''}`);
+        throw new Error(`图源配置不存在: ID=${sourceId}, 名称="${sourceName}"`);
       }
       
       // 检查是否为WebView类型
@@ -419,8 +467,9 @@ export class WebViewSourceManager implements IWebViewSourceManager {
       const configJson = JSON.stringify(config);
       await engine.loadConfig(configJson);
       
-      logger.info(TAG, `MangaSourceEngine创建成功: ${actualSourceId}${actualSourceId !== sourceId ? ` (原ID: ${sourceId})` : ''}`);
-      return engine;
+      logger.info(TAG, `✅ MangaSourceEngine创建成功: "${actualSourceName}" (ID=${actualSourceId}${actualSourceId !== sourceId ? `, 原ID=${sourceId}` : ''})`);
+      const result: EngineCreationResult = {engine, actualSourceId, actualSourceName};
+      return result;
       
     } catch (error) {
       logger.error(TAG, `创建MangaSourceEngine失败: ${sourceId}, 错误: ${error instanceof Error ? error.message : String(error)}`);
@@ -430,11 +479,23 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   
   /**
    * 释放MangaSourceEngine实例
+   * 【重构】支持按sourceName或sourceId释放
    */
-  releaseMangaEngine(sourceId: number): void {
-    if (this.mangaEngines.has(sourceId)) {
-      logger.info(TAG, `释放MangaSourceEngine: ${sourceId}`);
-      this.mangaEngines.delete(sourceId);
+  releaseMangaEngine(sourceIdOrName: number | string): void {
+    if (typeof sourceIdOrName === 'string') {
+      // 按sourceName释放
+      if (this.mangaEngines.has(sourceIdOrName)) {
+        logger.info(TAG, `释放MangaSourceEngine: "${sourceIdOrName}"`);
+        this.mangaEngines.delete(sourceIdOrName);
+      }
+    } else {
+      // 按sourceId释放（需要先查找对应的sourceName）
+      const sourceName = this.sourceIdToName.get(sourceIdOrName);
+      if (sourceName && this.mangaEngines.has(sourceName)) {
+        logger.info(TAG, `释放MangaSourceEngine: ${sourceIdOrName} -> "${sourceName}"`);
+        this.mangaEngines.delete(sourceName);
+        this.sourceIdToName.delete(sourceIdOrName);
+      }
     }
   }
 

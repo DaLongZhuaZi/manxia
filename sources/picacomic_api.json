@@ -1,0 +1,715 @@
+{
+  "metadata": {
+    "id": "picacomic",
+    "name": "哔咔漫画",
+    "version": "1.0.7",
+    "language": "zh-CN",
+    "baseUrl": "https://picaapi.picacomic.com",
+    "description": "哔咔漫画 - 需要登录的中文漫画图源，支持HMAC-SHA256签名认证。注意：此图源在部分地区可能无法访问，需要使用代理或VPN。",
+    "author": "ManXia Team",
+    "nsfw": true,
+    "tags": ["chinese", "authenticated", "popular"],
+    "notes": "如果无法获取漫画列表，请检查网络连接或使用代理。分流服务器地址可从 http://68.183.234.72/init 获取。"
+  },
+
+  "capabilities": {
+    "urlResolver": true,
+    "pagination": true,
+    "errorRetry": true,
+    "sessionManagement": true,
+    "loginSupport": true,
+    "customAuthentication": true,
+    "hmacSignature": true,
+    "jwtToken": true,
+    "credentialLogin": true
+  },
+
+  "authentication": {
+    "type": "jwt",
+    "loginUrl": "https://picaapi.picacomic.com/auth/sign-in",
+    "loginMethod": "POST",
+    "tokenStorageKey": "picacomic_token",
+    "tokenLeeway": 10,
+    "loginPayload": {
+      "email": "{{username}}",
+      "password": "{{password}}"
+    },
+    "tokenExtraction": {
+      "type": "json",
+      "path": "data.token"
+    },
+    "requiresLogin": true
+  },
+
+  "network": {
+    "userAgent": "okhttp/3.8.1",
+    "headers": {
+      "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+      "app-channel": "2",
+      "app-version": "2.2.1.3.3.4",
+      "app-uuid": "defaultUuid",
+      "app-platform": "android",
+      "app-build-version": "44",
+      "accept": "application/vnd.picacomic.com.v1+json",
+      "Content-Type": "application/json; charset=UTF-8"
+    },
+    "timeout": 30000,
+    "retryCount": 3,
+    "retryDelay": 1000
+  },
+
+  "signature": {
+    "enabled": true,
+    "algorithm": "hmac-sha256",
+    "key": "~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn",
+    "headers": {
+      "time": "{{timestamp}}",
+      "nonce": "{{nonce}}",
+      "signature": "{{signature}}"
+    },
+    "signatureFormat": "{{path}}{{time}}{{nonce}}{{method}}{{apiKey}}",
+    "toLowerCase": true
+  },
+
+  "settings": {
+    "username": {
+      "type": "text",
+      "name": "用户名",
+      "description": "哔咔漫画账号（邮箱）",
+      "required": true
+    },
+    "password": {
+      "type": "password",
+      "name": "密码",
+      "description": "哔咔漫画密码",
+      "required": true
+    },
+    "imageQuality": {
+      "type": "select",
+      "name": "图片质量",
+      "description": "选择图片质量",
+      "default": "high",
+      "options": [
+        {"value": "original", "label": "原图"},
+        {"value": "low", "label": "低"},
+        {"value": "medium", "label": "中"},
+        {"value": "high", "label": "高"}
+      ]
+    },
+    "appChannel": {
+      "type": "select",
+      "name": "分流",
+      "description": "选择分流线路",
+      "default": "2",
+      "options": [
+        {"value": "1", "label": "分流1"},
+        {"value": "2", "label": "分流2"},
+        {"value": "3", "label": "分流3"}
+      ]
+    },
+    "blockGenres": {
+      "type": "text",
+      "name": "屏蔽词列表",
+      "description": "根据关键词过滤漫画，关键词之间用逗号分隔",
+      "default": ""
+    }
+  },
+
+  "workflows": {
+    "login": {
+      "description": "用户登录获取JWT令牌",
+      "actions": [
+        {
+          "type": "api",
+          "method": "POST",
+          "url": "https://picaapi.picacomic.com/auth/sign-in",
+          "body": {
+            "email": "{{username}}",
+            "password": "{{password}}"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "2",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.token",
+            "saveAs": "token"
+          }
+        }
+      ]
+    },
+
+    "popular": {
+      "description": "获取热门漫画",
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics",
+          "params": {
+            "page": "{{page}}",
+            "s": "dd"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comics.docs",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "thumb": "thumb",
+              "status": "finished ? 'completed' : 'ongoing'",
+              "categories": "categories",
+              "tags": "tags"
+            }
+          }
+        }
+      ]
+    },
+
+    "latest": {
+      "description": "获取随机漫画（哔咔没有最新更新接口）",
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics/random",
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comics",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "thumb": "thumb",
+              "status": "finished ? 'completed' : 'ongoing'",
+              "categories": "categories"
+            }
+          }
+        }
+      ]
+    },
+
+    "search": {
+      "description": "搜索漫画",
+      "actions": [
+        {
+          "type": "api",
+          "method": "POST",
+          "url": "https://picaapi.picacomic.com/comics/advanced-search",
+          "params": {
+            "page": "{{page}}"
+          },
+          "body": {
+            "keyword": "{{query}}",
+            "categories": [],
+            "sort": "dd"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comics.docs",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "thumb": "thumb",
+              "status": "finished ? 'completed' : 'ongoing'"
+            }
+          }
+        }
+      ]
+    },
+
+    "filter": {
+      "description": "分类筛选",
+      "defaults": {
+        "sort": "dd",
+        "category": ""
+      },
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics",
+          "params": {
+            "page": "{{page}}",
+            "c": "{{category}}",
+            "s": "{{sort}}"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comics.docs",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "thumb": "thumb",
+              "status": "finished ? 'completed' : 'ongoing'",
+              "categories": "categories",
+              "tags": "tags"
+            }
+          }
+        }
+      ]
+    },
+
+    "getMangaDetail": {
+      "description": "获取漫画详情",
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics/{{mangaId}}",
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comic",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "artist": "artist",
+              "description": "description",
+              "thumb": "thumb",
+              "finished": "finished",
+              "categories": "categories",
+              "tags": "tags"
+            }
+          }
+        }
+      ]
+    },
+
+    "getChapterList": {
+      "description": "获取章节列表",
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics/{{mangaId}}/eps",
+          "params": {
+            "page": "1"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.eps.docs",
+            "fields": {
+              "id": "order",
+              "title": "title",
+              "order": "order",
+              "updateTime": "updated_at"
+            }
+          },
+          "pagination": {
+            "enabled": true,
+            "type": "page",
+            "pageParam": "page",
+            "hasMorePath": "data.eps.page < data.eps.pages"
+          }
+        }
+      ]
+    },
+
+    "getPageList": {
+      "description": "获取章节页面列表",
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics/{{mangaId}}/order/{{chapterId}}/pages",
+          "params": {
+            "page": "1"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.pages.docs",
+            "fields": {
+              "media": "media"
+            }
+          },
+          "pagination": {
+            "enabled": true,
+            "type": "page",
+            "pageParam": "page",
+            "hasMorePath": "data.pages.page < data.pages.pages"
+          }
+        }
+      ]
+    },
+
+    "getImageUrl": {
+      "description": "获取图片URL",
+      "actions": [
+        {
+          "type": "direct",
+          "description": "直接返回图片URL",
+          "extract": {
+            "type": "passthrough",
+            "field": "url"
+          }
+        }
+      ]
+    },
+
+    "getLeaderboard": {
+      "description": "获取排行榜",
+      "defaults": {
+        "timeType": "H24"
+      },
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/comics/leaderboard",
+          "params": {
+            "tt": "{{timeType}}",
+            "ct": "VC"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comics",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "thumb": "thumb"
+            }
+          }
+        }
+      ]
+    },
+
+    "favorites": {
+      "description": "获取用户收藏",
+      "actions": [
+        {
+          "type": "api",
+          "method": "GET",
+          "url": "https://picaapi.picacomic.com/users/favourite",
+          "params": {
+            "page": "{{page}}",
+            "s": "dd"
+          },
+          "headers": {
+            "api-key": "C69BAF41DA5ABD1FFEDC6D2FEA56B",
+            "app-channel": "{{appChannel}}",
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "app-platform": "android",
+            "app-build-version": "44",
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.8.1",
+            "authorization": "{{token}}",
+            "image-quality": "{{imageQuality}}",
+            "time": "{{timestamp}}",
+            "nonce": "{{nonce}}",
+            "signature": "{{computeSignature}}"
+          },
+          "extract": {
+            "type": "json",
+            "path": "data.comics.docs",
+            "fields": {
+              "id": "_id",
+              "title": "title",
+              "author": "author",
+              "thumb": "thumb",
+              "status": "finished ? 'completed' : 'ongoing'",
+              "categories": "categories",
+              "tags": "tags"
+            }
+          }
+        }
+      ]
+    }
+  },
+
+  "tabs": [
+    {
+      "id": "popular",
+      "type": "popular",
+      "name": "热门",
+      "enabled": true,
+      "order": 0,
+      "requiresLogin": false
+    },
+    {
+      "id": "latest",
+      "type": "latest",
+      "name": "最新",
+      "enabled": true,
+      "order": 1,
+      "requiresLogin": false
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "name": "筛选",
+      "enabled": true,
+      "order": 2,
+      "requiresLogin": false
+    },
+    {
+      "id": "favorites",
+      "type": "favorites",
+      "name": "收藏",
+      "enabled": true,
+      "order": 3,
+      "requiresLogin": false,
+      "icon": "heart",
+      "description": "您收藏的漫画"
+    },
+    {
+      "id": "leaderboard",
+      "type": "leaderboard",
+      "name": "排行榜",
+      "enabled": true,
+      "order": 4,
+      "requiresLogin": false,
+      "icon": "trophy",
+      "description": "热门漫画排行"
+    }
+  ],
+
+  "filters": {
+    "sort": {
+      "type": "select",
+      "name": "排序",
+      "default": "dd",
+      "options": [
+        {"value": "dd", "label": "新到旧"},
+        {"value": "da", "label": "旧到新"},
+        {"value": "ld", "label": "最多爱心"},
+        {"value": "vd", "label": "最多绅士指名"}
+      ]
+    },
+    "category": {
+      "type": "select",
+      "name": "类型",
+      "default": "",
+      "options": [
+        {"value": "", "label": "全部"},
+        {"value": "大家都在看", "label": "大家都在看"},
+        {"value": "牛牛不哭", "label": "牛牛不哭"},
+        {"value": "那年今天", "label": "那年今天"},
+        {"value": "官方都在看", "label": "官方都在看"},
+        {"value": "嗶咔漢化", "label": "嗶咔漢化"},
+        {"value": "全彩", "label": "全彩"},
+        {"value": "長篇", "label": "長篇"},
+        {"value": "同人", "label": "同人"},
+        {"value": "短篇", "label": "短篇"},
+        {"value": "圓神領域", "label": "圓神領域"},
+        {"value": "碧藍幻想", "label": "碧藍幻想"},
+        {"value": "CG雜圖", "label": "CG雜圖"},
+        {"value": "純愛", "label": "純愛"},
+        {"value": "百合花園", "label": "百合花園"},
+        {"value": "後宮閃光", "label": "後宮閃光"},
+        {"value": "單行本", "label": "單行本"},
+        {"value": "姐姐系", "label": "姐姐系"},
+        {"value": "妹妹系", "label": "妹妹系"},
+        {"value": "SM", "label": "SM"},
+        {"value": "人妻", "label": "人妻"},
+        {"value": "NTR", "label": "NTR"},
+        {"value": "強暴", "label": "強暴"},
+        {"value": "艦隊收藏", "label": "艦隊收藏"},
+        {"value": "Love Live", "label": "Love Live"},
+        {"value": "SAO 刀劍神域", "label": "SAO 刀劍神域"},
+        {"value": "Fate", "label": "Fate"},
+        {"value": "東方", "label": "東方"},
+        {"value": "禁書目錄", "label": "禁書目錄"},
+        {"value": "Cosplay", "label": "Cosplay"},
+        {"value": "英語 ENG", "label": "英語 ENG"},
+        {"value": "生肉", "label": "生肉"},
+        {"value": "性轉換", "label": "性轉換"},
+        {"value": "足の恋", "label": "足の恋"},
+        {"value": "非人類", "label": "非人類"},
+        {"value": "耽美花園", "label": "耽美花園"},
+        {"value": "偽娘哲學", "label": "偽娘哲學"},
+        {"value": "扶他樂園", "label": "扶他樂園"},
+        {"value": "重口地帶", "label": "重口地帶"},
+        {"value": "歐美", "label": "歐美"},
+        {"value": "WEBTOON", "label": "WEBTOON"}
+      ]
+    },
+    "rank": {
+      "type": "select",
+      "name": "榜单",
+      "default": "",
+      "options": [
+        {"value": "", "label": "无"},
+        {"value": "H24", "label": "过去24小时最热门"},
+        {"value": "D7", "label": "过去7天最热门"},
+        {"value": "D30", "label": "过去30天最热门"}
+      ]
+    }
+  },
+
+  "imageProcessing": {
+    "urlTransform": {
+      "enabled": false
+    },
+    "headers": {
+      "User-Agent": "okhttp/3.8.1",
+      "accept": "application/vnd.picacomic.com.v1+json"
+    }
+  },
+
+  "notes": [
+    "注意：哔咔漫画需要登录才能使用",
+    "请在设置中输入您的哔咔账号（邮箱）和密码",
+    "所有请求都需要HMAC-SHA256签名",
+    "支持分流线路切换以提高访问速度",
+    "可以通过屏蔽词过滤不想看的内容"
+  ],
+
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2024-11-28",
+      "changes": [
+        "初始版本",
+        "支持JWT认证登录",
+        "支持HMAC-SHA256请求签名",
+        "支持热门、搜索、详情、章节、页面功能",
+        "支持分流线路切换",
+        "支持内容屏蔽过滤"
+      ]
+    }
+  ]
+}

@@ -518,6 +518,7 @@ export type Action = NavigateAction | WaitAction | ClickAction | InputAction |
  */
 export enum WorkflowType {
   INITIALIZE = 'initialize',
+  LOGIN = 'login',
   SEARCH = 'search',
   SEARCH_BY_ID = 'searchById',
   FILTER = 'filter',
@@ -531,7 +532,8 @@ export enum WorkflowType {
   LATEST = 'latest',
   FAVORITES = 'favorites',
   HISTORY = 'history',
-  GET_USER_AVATAR = 'getUserAvatar'
+  GET_USER_AVATAR = 'getUserAvatar',
+  GET_LEADERBOARD = 'getLeaderboard'
 }
 
 /**
@@ -539,6 +541,7 @@ export enum WorkflowType {
  */
 export interface Workflow {
   [WorkflowType.INITIALIZE]?: Action[];
+  [WorkflowType.LOGIN]?: Action[];
   [WorkflowType.SEARCH]?: Action[];
   [WorkflowType.SEARCH_BY_ID]?: Action[];
   [WorkflowType.FILTER]?: Action[];
@@ -553,6 +556,7 @@ export interface Workflow {
   [WorkflowType.FAVORITES]?: Action[];
   [WorkflowType.HISTORY]?: Action[];
   [WorkflowType.GET_USER_AVATAR]?: Action[];
+  [WorkflowType.GET_LEADERBOARD]?: Action[];
 }
 
 // ==================== 错误处理和重试 ====================
@@ -704,6 +708,36 @@ export interface PluginConfig {
 // ==================== 主配置接口 ====================
 
 /**
+ * Token提取配置
+ */
+export interface TokenExtractionConfig {
+  type: 'json' | 'header' | 'cookie';
+  path: string;
+}
+
+/**
+ * 认证配置
+ */
+export interface AuthenticationConfig {
+  /** 认证类型 */
+  type: 'jwt' | 'cookie' | 'basic';
+  /** 登录URL */
+  loginUrl: string;
+  /** 登录方法 */
+  loginMethod: 'POST' | 'GET';
+  /** Token存储键 */
+  tokenStorageKey?: string;
+  /** Token有效期余量(秒) */
+  tokenLeeway?: number;
+  /** 登录载荷 */
+  loginPayload?: Record<string, string>;
+  /** Token提取配置 */
+  tokenExtraction?: TokenExtractionConfig;
+  /** 是否需要登录 */
+  requiresLogin: boolean;
+}
+
+/**
  * 漫画图源配置
  */
 export interface MangaSourceConfig {
@@ -711,6 +745,8 @@ export interface MangaSourceConfig {
   metadata: MangaSourceMetadata;
   /** 设置 */
   settings: MangaSourceSettings;
+  /** 认证配置 */
+  authentication?: AuthenticationConfig;
   /** 工作流程 */
   workflows: Workflow;
   /** 变量定义 */
@@ -909,6 +945,7 @@ export enum MangaSourceErrorCode {
   SELECTOR_ERROR = 'SELECTOR_ERROR',
   INVALID_SELECTOR = 'INVALID_SELECTOR',
   VARIABLE_NOT_FOUND = 'VARIABLE_NOT_FOUND',
+  WORKFLOW_NOT_FOUND = 'WORKFLOW_NOT_FOUND',
   CLOUDFLARE_BLOCKED = 'CLOUDFLARE_BLOCKED',
   CAPTCHA_REQUIRED = 'CAPTCHA_REQUIRED',
   CAPTCHA_FAILED = 'CAPTCHA_FAILED',

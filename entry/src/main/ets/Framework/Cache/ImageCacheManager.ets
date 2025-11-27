@@ -1186,4 +1186,42 @@ export class ImageCacheManager {
     }
   }
 
+  /**
+   * 预加载图片（仅下载到缓存，不返回PixelMap）
+   * 用于后台预加载，减少首次显示时的加载时间
+   */
+  public async preloadImage(url: string, options?: LoadOptions): Promise<void> {
+    try {
+      logger.debug(TAG, `开始预加载图片: ${url.substring(0, 80)}`);
+      
+      // 使用OnlineImageLoader下载图片到缓存
+      const onlineLoader = OnlineImageLoader.getInstance();
+      
+      // 构建请求头
+      let onlineHeaders: OnlineRequestHeaders | undefined = undefined;
+      if (options?.headers) {
+        const headers: OnlineRequestHeaders = {
+          userAgent: options.headers.userAgent || '',
+          referer: options.headers.referer || '',
+          cookie: options.headers.cookie || '',
+          accept: options.headers.accept || 'image/webp,image/apng,image/*,*/*;q=0.8',
+          acceptLanguage: options.headers.acceptLanguage || 'zh-CN,zh;q=0.9,en;q=0.8'
+        };
+        onlineHeaders = headers;
+      }
+      
+      const loadOptions: OnlineLoadOptions = {
+        headers: onlineHeaders,
+        priority: 0  // 低优先级，不影响正常加载
+      };
+      
+      // 下载图片（会自动缓存）
+      await onlineLoader.load(url, loadOptions);
+      logger.debug(TAG, `预加载完成: ${url.substring(0, 80)}`);
+    } catch (error) {
+      logger.warn(TAG, `预加载失败: ${url.substring(0, 80)}, ${error}`);
+      // 预加载失败不抛出异常，不影响主流程
+    }
+  }
+
 }

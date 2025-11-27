@@ -2,7 +2,7 @@
   "metadata": {
     "id": "copymanga_webview",
     "name": "拷贝漫画 (WebView)",
-    "version": "2.0.0",
+    "version": "2.0.2",
     "language": "zh-CN",
     "baseUrl": "https://www.2025copy.com",
     "description": "拷贝漫画 WebView版本 - 使用DOM提取，支持域名切换和Cookie管理",
@@ -313,6 +313,11 @@
 
     "filter": {
       "description": "筛选漫画（支持排序、地区、题材组合）",
+      "defaults": {
+        "filterOrdering": "-datetime_updated",
+        "filterRegion": "all",
+        "filterTheme": "all"
+      },
       "actions": [
         {
           "type": "script",
@@ -492,8 +497,8 @@
         {
           "type": "wait",
           "condition": "time",
-          "duration": 1500,
-          "description": "等待详情页加载（优化：页面FMP约500ms，1.5秒足够）"
+          "duration": 1200,
+          "description": "等待详情页加载"
         },
         {
           "type": "script",
@@ -515,12 +520,12 @@
         {
           "type": "wait",
           "condition": "time",
-          "duration": 1500,
+          "duration": 1200,
           "description": "等待详情页加载"
         },
         {
           "type": "script",
-          "code": "(() => { const result = { id: '{{mangaId}}', title: document.querySelector('.comicParticulars-title h6')?.textContent?.trim() || '', cover: document.querySelector('.comicParticulars-left-img img')?.getAttribute('data-src') || document.querySelector('.comicParticulars-left-img img')?.src || '', author: document.querySelector('.comicParticulars-title li:nth-child(3) a')?.textContent?.trim() || '', status: document.querySelector('.comicParticulars-title li:nth-child(6) .comicParticulars-right-txt')?.textContent?.trim() || '', description: document.querySelector('.comicParticulars-synopsis p.intro')?.textContent?.trim() || '', genres: Array.from(document.querySelectorAll('.comicParticulars-left-theme-all a')).map(a => a.textContent?.trim()).filter(t => t).join(','), updateTime: document.querySelector('.comicParticulars-title li:nth-child(5) .comicParticulars-right-txt')?.textContent?.trim() || '' }; console.log('[漫画详情] 提取结果:', result); return JSON.stringify(result); })();",
+          "code": "(() => { const result = { id: '{{mangaId}}', title: document.querySelector('.comicParticulars-title-right h6, .comicParticulars-title h6, h1.comic-title')?.textContent?.trim() || '', cover: document.querySelector('.comicParticulars-left-img img')?.getAttribute('data-src') || document.querySelector('.comicParticulars-left-img img')?.src || document.querySelector('img.comic-cover')?.src || '', author: document.querySelector('.comicParticulars-title li:nth-child(3) a, .comic-author')?.textContent?.trim() || '', status: document.querySelector('.comicParticulars-title li:nth-child(6) .comicParticulars-right-txt, .comic-status')?.textContent?.trim() || '', description: document.querySelector('.comicParticulars-synopsis p.intro, .comic-intro, .intro')?.textContent?.trim() || '', genres: Array.from(document.querySelectorAll('.comicParticulars-left-theme-all a, .comic-tags a')).map(a => a.textContent?.trim()).filter(t => t).join(','), updateTime: document.querySelector('.comicParticulars-title li:nth-child(5) .comicParticulars-right-txt, .update-time')?.textContent?.trim() || '' }; console.log('[漫画详情] 提取结果:', result); return JSON.stringify(result); })();",
           "description": "提取漫画详情"
         },
         {
@@ -531,13 +536,13 @@
         {
           "type": "wait",
           "condition": "time",
-          "duration": 500,
+          "duration": 400,
           "description": "等待章节列表渲染"
         },
         {
           "type": "script",
-          "code": "(() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['.chapter-list-1 ul li a', '.chapter-list ul li a', 'ul.chapter-list li a', 'a[href*=\"/chapter/\"]']; for(let selector of selectors) { const links = document.querySelectorAll(selector); console.log(`[章节提取] 选择器 \"${selector}\" 找到 ${links.length} 个链接`); if(links.length > 0) { links.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/chapter/') && title && title !== '開始閱讀' && title !== '开始阅读') { chapters.push({id: href, title: title}); } }); if(chapters.length > 0) { console.log(`[章节提取] 使用选择器 \"${selector}\" 成功提取 ${chapters.length} 个章节`); break; } } } console.log(`[章节提取] 最终提取到 ${chapters.length} 个章节`); return JSON.stringify(chapters); })();",
-          "description": "提取章节列表"
+          "code": "(() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['ul.links-of-books li a', '.links-of-books a', 'div[class*=\"chapter\"] a', 'a[href*=\"/comic/\"][href*=\"/chapter/\"]']; for(let selector of selectors) { const links = document.querySelectorAll(selector); console.log(`[章节提取] 选择器 \"${selector}\" 找到 ${links.length} 个链接`); if(links.length > 0) { links.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/chapter/') && title && title !== '開始閱讀' && title !== '开始阅读' && title !== '继续阅读') { chapters.push({id: href, title: title}); } }); if(chapters.length > 0) { console.log(`[章节提取] 使用选择器 \"${selector}\" 成功提取 ${chapters.length} 个章节`); break; } } } if(chapters.length === 0) { console.log('[章节提取] 尝试通用方法：查找所有包含/chapter/的链接'); const allLinks = document.querySelectorAll('a[href]'); allLinks.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/comic/') && href.includes('/chapter/') && title && title.length > 0 && title.length < 100 && title !== '開始閱讀' && title !== '开始阅读' && title !== '继续阅读') { chapters.push({id: href, title: title}); } }); console.log(`[章节提取] 通用方法找到 ${chapters.length} 个章节`); } console.log(`[章节提取] 最终提取到 ${chapters.length} 个章节`); return JSON.stringify(chapters); })();",
+          "description": "提取章节列表（增强选择器）"
         }
       ]
     },
@@ -554,8 +559,8 @@
         {
           "type": "wait",
           "condition": "time",
-          "duration": 1000,
-          "description": "等待页面加载（优化：页面FMP约400ms，1秒足够）"
+          "duration": 800,
+          "description": "等待页面加载"
         },
         {
           "type": "script",
@@ -565,41 +570,41 @@
         {
           "type": "wait",
           "condition": "time",
-          "duration": 500,
-          "description": "等待章节列表加载（优化：滚动后立即可见）"
+          "duration": 400,
+          "description": "等待章节列表渲染"
         },
         {
           "type": "script",
-          "code": "(() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['.chapter-list-1 ul li a', '.chapter-list ul li a', 'ul.chapter-list li a', 'a[href*=\"/chapter/\"]']; for(let selector of selectors) { const links = document.querySelectorAll(selector); console.log(`[章节提取] 选择器 \"${selector}\" 找到 ${links.length} 个链接`); if(links.length > 0) { links.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/chapter/') && title && title !== '開始閱讀' && title !== '开始阅读') { chapters.push({id: href, title: title}); } }); if(chapters.length > 0) { console.log(`[章节提取] 使用选择器 \"${selector}\" 成功提取 ${chapters.length} 个章节`); break; } } } if(chapters.length === 0) { console.log('[章节提取] 所有选择器都未找到章节，返回调试信息'); const allLinks = document.querySelectorAll('a'); console.log(`[章节提取] 页面共有 ${allLinks.length} 个链接`); const chapterLinks = []; for(let i=0; i<Math.min(10, allLinks.length); i++) { const href = allLinks[i].getAttribute('href'); chapterLinks.push(href || 'null'); } return JSON.stringify([{id: 'DEBUG', title: `Total:${allLinks.length} Samples:${chapterLinks.join('|')}`}]); } console.log(`[章节提取] 最终提取到 ${chapters.length} 个章节`); return JSON.stringify(chapters); })();",
-          "description": "提取章节列表"
+          "code": "(() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['ul.links-of-books li a', '.links-of-books a', 'div[class*=\"chapter\"] a', 'a[href*=\"/comic/\"][href*=\"/chapter/\"]']; for(let selector of selectors) { const links = document.querySelectorAll(selector); console.log(`[章节提取] 选择器 \"${selector}\" 找到 ${links.length} 个链接`); if(links.length > 0) { links.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/chapter/') && title && title !== '開始閱讀' && title !== '开始阅读' && title !== '继续阅读') { chapters.push({id: href, title: title}); } }); if(chapters.length > 0) { console.log(`[章节提取] 使用选择器 \"${selector}\" 成功提取 ${chapters.length} 个章节`); break; } } } if(chapters.length === 0) { console.log('[章节提取] 尝试通用方法：查找所有包含/chapter/的链接'); const allLinks = document.querySelectorAll('a[href]'); allLinks.forEach(link => { const href = link.getAttribute('href'); const title = link.textContent.trim(); if(href && href.includes('/comic/') && href.includes('/chapter/') && title && title.length > 0 && title.length < 100 && title !== '開始閱讀' && title !== '开始阅读' && title !== '继续阅读') { chapters.push({id: href, title: title}); } }); console.log(`[章节提取] 通用方法找到 ${chapters.length} 个章节`); } if(chapters.length === 0) { console.log('[章节提取] 所有方法都未找到章节，返回调试信息'); const allLinks = document.querySelectorAll('a'); console.log(`[章节提取] 页面共有 ${allLinks.length} 个链接`); const chapterLinks = []; for(let i=0; i<Math.min(20, allLinks.length); i++) { const href = allLinks[i].getAttribute('href'); if(href) chapterLinks.push(href); } return JSON.stringify([{id: 'DEBUG', title: `Total:${allLinks.length} Samples:${chapterLinks.join('|')}`}]); } console.log(`[章节提取] 最终提取到 ${chapters.length} 个章节`); return JSON.stringify(chapters); })();",
+          "description": "提取章节列表（增强选择器）"
         }
       ]
     },
 
     "getPageList": {
-      "description": "获取章节页面列表（智能滚动收集所有图片）",
+      "description": "获取章节页面列表（优化版：快速滚动收集）",
       "actions": [
         {
           "type": "navigate",
-          "url": "{{baseUrl}}{{chapterId}}",
-          "description": "导航到章节阅读页（chapterId已包含完整路径）"
+          "url": "https://www.2025copy.com{{chapterId}}",
+          "description": "导航到章节阅读页（chapterId是完整路径如/comic/xxx/chapter/yyy）"
         },
         {
           "type": "wait",
           "condition": "time",
-          "duration": 2000,
-          "description": "等待页面初始化"
+          "duration": 800,
+          "description": "等待页面初始化（优化：减少到800ms）"
         },
         {
           "type": "script",
-          "code": "(() => { console.log('[getPageList] 开始提取'); const totalCount = document.querySelector('.comicCount'); const totalPages = totalCount ? parseInt(totalCount.textContent.trim()) : 0; console.log(`[getPageList] 总页数=${totalPages}`); const collectedUrls = new Set(); const scrollHeight = document.body.scrollHeight; const steps = Math.max(50, Math.ceil(totalPages * 1.5)); let lastCollectedCount = 0; let unchangedCount = 0; function collectImages() { const imgs = document.querySelectorAll('img[data-src]'); imgs.forEach(img => { const src = img.getAttribute('data-src'); if (src && src.startsWith('http')) { collectedUrls.add(src); } }); } let currentStep = 0; function scrollAndCollect() { if (currentStep > steps) { finishCollection(); return; } const scrollPos = (scrollHeight / steps) * currentStep; window.scrollTo(0, scrollPos); collectImages(); if (collectedUrls.size === lastCollectedCount) { unchangedCount++; } else { unchangedCount = 0; lastCollectedCount = collectedUrls.size; } if (collectedUrls.size >= totalPages && unchangedCount >= 20) { console.log(`[getPageList] 提前终止: 已收集${collectedUrls.size}/${totalPages}张，进度${Math.round((currentStep/steps)*100)}%`); finishCollection(); return; } if (currentStep % 20 === 0) { console.log(`[getPageList] 进度${Math.round((currentStep/steps)*100)}%: 已收集${collectedUrls.size}张`); } currentStep++; setTimeout(scrollAndCollect, 30); } function finishCollection() { const pages = Array.from(collectedUrls).map((url, index) => ({ imageUrl: url, page: index })); console.log(`[getPageList] 提取完成: ${pages.length}/${totalPages}张图片`); if (pages.length < totalPages) { console.warn(`⚠️ 警告：缺失${totalPages - pages.length}张图片`); } else { console.log('✅ 成功提取所有图片！'); } window.__pageListResult = JSON.stringify({ totalPages: totalPages, pages: pages }); } scrollAndCollect(); return 'ASYNC_COLLECTION_STARTED'; })();",
-          "description": "同步启动异步收集：使用setTimeout链式调用避免async/await问题"
+          "code": "(() => { console.log('[getPageList] 开始提取'); const totalCount = document.querySelector('.comicCount'); const totalPages = totalCount ? parseInt(totalCount.textContent.trim()) : 0; console.log(`[getPageList] 总页数=${totalPages}`); const collectedUrls = new Set(); const scrollHeight = document.body.scrollHeight; const steps = Math.min(30, Math.max(15, Math.ceil(totalPages * 0.8))); let lastCollectedCount = 0; let unchangedCount = 0; function collectImages() { const imgs = document.querySelectorAll('img[data-src]'); imgs.forEach(img => { const src = img.getAttribute('data-src'); if (src && src.startsWith('http')) { collectedUrls.add(src); } }); } let currentStep = 0; function scrollAndCollect() { if (currentStep > steps) { finishCollection(); return; } const scrollPos = (scrollHeight / steps) * currentStep; window.scrollTo(0, scrollPos); collectImages(); if (collectedUrls.size === lastCollectedCount) { unchangedCount++; } else { unchangedCount = 0; lastCollectedCount = collectedUrls.size; } if (collectedUrls.size >= totalPages && unchangedCount >= 5) { console.log(`[getPageList] 提前终止: 已收集${collectedUrls.size}/${totalPages}张，进度${Math.round((currentStep/steps)*100)}%`); finishCollection(); return; } if (currentStep % 10 === 0) { console.log(`[getPageList] 进度${Math.round((currentStep/steps)*100)}%: 已收集${collectedUrls.size}张`); } currentStep++; setTimeout(scrollAndCollect, 15); } function finishCollection() { const pages = Array.from(collectedUrls).map((url, index) => ({ imageUrl: url, page: index })); console.log(`[getPageList] 提取完成: ${pages.length}/${totalPages}张图片`); if (pages.length < totalPages) { console.warn(`⚠️ 警告：缺失${totalPages - pages.length}张图片`); } else { console.log('✅ 成功提取所有图片！'); } window.__pageListResult = JSON.stringify({ totalPages: totalPages, pages: pages }); } scrollAndCollect(); return 'ASYNC_COLLECTION_STARTED'; })();",
+          "description": "优化版滚动收集：减少步数、加快滚动、提前终止"
         },
         {
           "type": "wait",
           "condition": "time",
-          "duration": 5000,
-          "description": "等待异步收集完成（最多5秒）"
+          "duration": 1500,
+          "description": "等待异步收集完成（优化：减少到1.5秒）"
         },
         {
           "type": "script",
@@ -628,6 +633,153 @@
           "code": "return '{{imageUrl}}';",
           "description": "直接返回图片URL"
         }
+      ]
+    }
+  },
+
+  "tabs": [
+    {
+      "id": "popular",
+      "type": "popular",
+      "name": "热门",
+      "enabled": true,
+      "order": 0,
+      "requiresLogin": false
+    },
+    {
+      "id": "latest",
+      "type": "latest",
+      "name": "最新",
+      "enabled": true,
+      "order": 1,
+      "requiresLogin": false
+    },
+    {
+      "id": "filter",
+      "type": "filter",
+      "name": "筛选",
+      "enabled": true,
+      "order": 2,
+      "requiresLogin": false,
+      "filterConfig": {
+        "title": "筛选漫画",
+        "description": "选择筛选条件",
+        "groups": [
+          {
+            "id": "filterOrdering",
+            "title": "排序",
+            "defaultValue": "-datetime_updated",
+            "options": [
+              {"value": "-datetime_updated", "label": "按时间-从新到旧"},
+              {"value": "datetime_updated", "label": "按时间-从旧到新"},
+              {"value": "-popular", "label": "按热度-从高到低"},
+              {"value": "popular", "label": "按热度-从低到高"}
+            ]
+          },
+          {
+            "id": "filterRegion",
+            "title": "地区",
+            "defaultValue": "all",
+            "options": [
+              {"value": "all", "label": "全部"},
+              {"value": "0", "label": "日漫"},
+              {"value": "1", "label": "韩漫"},
+              {"value": "2", "label": "美漫"}
+            ]
+          },
+          {
+            "id": "filterTheme",
+            "title": "题材",
+            "defaultValue": "all",
+            "placeholder": "选择题材分类"
+          }
+        ]
+      }
+    }
+  ],
+
+  "filters": {
+    "filterOrdering": {
+      "type": "select",
+      "name": "排序",
+      "default": "-datetime_updated",
+      "options": [
+        {"value": "-datetime_updated", "label": "按时间-从新到旧"},
+        {"value": "datetime_updated", "label": "按时间-从旧到新"},
+        {"value": "-popular", "label": "按热度-从高到低"},
+        {"value": "popular", "label": "按热度-从低到高"}
+      ]
+    },
+    "filterRegion": {
+      "type": "select",
+      "name": "地区",
+      "default": "all",
+      "options": [
+        {"value": "all", "label": "全部"},
+        {"value": "0", "label": "日漫"},
+        {"value": "1", "label": "韩漫"},
+        {"value": "2", "label": "美漫"}
+      ]
+    },
+    "filterTheme": {
+      "type": "select",
+      "name": "题材",
+      "default": "all",
+      "options": [
+        {"value": "all", "label": "全部"},
+        {"value": "aiqing", "label": "愛情"},
+        {"value": "huanlexiang", "label": "歡樂向"},
+        {"value": "maoxian", "label": "冒險"},
+        {"value": "qihuan", "label": "奇幻"},
+        {"value": "baihe", "label": "百合"},
+        {"value": "xiaoyuan", "label": "校园"},
+        {"value": "kehuan", "label": "科幻"},
+        {"value": "dongfang", "label": "東方"},
+        {"value": "danmei", "label": "耽美"},
+        {"value": "shenghuo", "label": "生活"},
+        {"value": "gedou", "label": "格鬥"},
+        {"value": "qingxiaoshuo", "label": "轻小说"},
+        {"value": "qita", "label": "其他"},
+        {"value": "xuanyi", "label": "悬疑"},
+        {"value": "teenslove", "label": "TL"},
+        {"value": "mengxi", "label": "萌系"},
+        {"value": "shengui", "label": "神鬼"},
+        {"value": "zhichang", "label": "职场"},
+        {"value": "zhiyu", "label": "治愈"},
+        {"value": "jiecao", "label": "节操"},
+        {"value": "sige", "label": "四格"},
+        {"value": "changtiao", "label": "長條"},
+        {"value": "jianniang", "label": "舰娘"},
+        {"value": "gaoxiao", "label": "搞笑"},
+        {"value": "jingji", "label": "竞技"},
+        {"value": "weiniang", "label": "伪娘"},
+        {"value": "mohuan", "label": "魔幻"},
+        {"value": "rexue", "label": "热血"},
+        {"value": "xingzhuanhuan", "label": "性转换"},
+        {"value": "meishi", "label": "美食"},
+        {"value": "lizhi", "label": "励志"},
+        {"value": "COLOR", "label": "彩色"},
+        {"value": "hougong", "label": "後宮"},
+        {"value": "zhentan", "label": "侦探"},
+        {"value": "jingsong", "label": "惊悚"},
+        {"value": "aa", "label": "AA"},
+        {"value": "yinyuewudao", "label": "音乐舞蹈"},
+        {"value": "yishijie", "label": "异世界"},
+        {"value": "zhanzheng", "label": "战争"},
+        {"value": "lishi", "label": "历史"},
+        {"value": "jizhan", "label": "机战"},
+        {"value": "dushi", "label": "都市"},
+        {"value": "chuanyue", "label": "穿越"},
+        {"value": "chongsheng", "label": "重生"},
+        {"value": "kongbu", "label": "恐怖"},
+        {"value": "shengcun", "label": "生存"},
+        {"value": "wuxia", "label": "武侠"},
+        {"value": "zhaixi", "label": "宅系"},
+        {"value": "zhuansheng", "label": "转生"},
+        {"value": "fate", "label": "FATE"},
+        {"value": "Uncensored", "label": "無修正"},
+        {"value": "xianxia", "label": "仙侠"},
+        {"value": "loveLive", "label": "LoveLive"}
       ]
     }
   },

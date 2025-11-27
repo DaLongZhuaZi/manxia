@@ -31,7 +31,8 @@ import {
   APIRequestAction,
   HTTPRequestAction,
   ExtractConfig,
-  BaseAction
+  BaseAction,
+  AuthenticationConfig
 } from './MangaSourceTypes';
 
 const TAG = 'MangaSourceConfigParser';
@@ -246,6 +247,10 @@ export class MangaSourceConfigParser {
         return this.getWorkflowByType(workflow, WorkflowType.HISTORY);
       case 'initialize':
         return this.getWorkflowByType(workflow, WorkflowType.INITIALIZE);
+      case 'login':
+        return this.getWorkflowByType(workflow, WorkflowType.LOGIN);
+      case 'getLeaderboard':
+        return this.getWorkflowByType(workflow, WorkflowType.GET_LEADERBOARD);
       default:
         return undefined;
     }
@@ -282,6 +287,10 @@ export class MangaSourceConfigParser {
         return workflow.initialize;
       case WorkflowType.GET_MANGA_LIST:
         return workflow.getMangaList;
+      case WorkflowType.LOGIN:
+        return workflow.login;
+      case WorkflowType.GET_LEADERBOARD:
+        return workflow.getLeaderboard;
       default:
         return undefined;
     }
@@ -330,6 +339,12 @@ export class MangaSourceConfigParser {
         break;
       case WorkflowType.GET_MANGA_LIST:
         workflow.getMangaList = actions;
+        break;
+      case WorkflowType.LOGIN:
+        workflow.login = actions;
+        break;
+      case WorkflowType.GET_LEADERBOARD:
+        workflow.getLeaderboard = actions;
         break;
     }
   }
@@ -478,6 +493,21 @@ export class MangaSourceConfigParser {
       throw new MangaSourceError(
         MangaSourceErrorCode.INVALID_CONFIG,
         '缺少浏览记录工作流配置'
+      );
+    }
+
+    return this.processActions(workflow, {});
+  }
+
+  /**
+   * 构建排行榜获取操作序列
+   */
+  buildLeaderboardActions(config: MangaSourceConfig): Action[] {
+    const workflow = this.getWorkflow(config, 'getLeaderboard');
+    if (!workflow) {
+      throw new MangaSourceError(
+        MangaSourceErrorCode.INVALID_CONFIG,
+        '缺少排行榜工作流配置'
       );
     }
 
@@ -974,8 +1004,15 @@ export class MangaSourceConfigParser {
     const config: MangaSourceConfig = {
       metadata: rawConfig.metadata as MangaSourceMetadata,
       settings: rawConfig.settings as MangaSourceSettings || defaultSettings,
-      workflows: {} as Workflow
+      workflows: {} as Workflow,
+      // [修复] 解析 authentication 字段，用于 JWT Token 管理
+      authentication: rawConfig.authentication as AuthenticationConfig | undefined
     };
+    
+    // 记录 authentication 配置信息
+    if (config.authentication) {
+      logger.info(TAG, `检测到认证配置: type=${config.authentication.type}, tokenStorageKey=${config.authentication.tokenStorageKey || 'undefined'}`);
+    }
   
     // 转换工作流
     const workflows = rawConfig.workflows as Record<string, Object>;
@@ -1056,6 +1093,18 @@ export class MangaSourceConfigParser {
             break;
           case 'initialize':
             this.setWorkflowByType(config.workflows, WorkflowType.INITIALIZE, actions);
+            break;
+          case 'login':
+            this.setWorkflowByType(config.workflows, WorkflowType.LOGIN, actions);
+            break;
+          case 'getLeaderboard':
+            this.setWorkflowByType(config.workflows, WorkflowType.GET_LEADERBOARD, actions);
+            break;
+          case 'favorites':
+            this.setWorkflowByType(config.workflows, WorkflowType.FAVORITES, actions);
+            break;
+          case 'history':
+            this.setWorkflowByType(config.workflows, WorkflowType.HISTORY, actions);
             break;
           default:
             warnings.push(`未知的工作流类型: ${name}`);

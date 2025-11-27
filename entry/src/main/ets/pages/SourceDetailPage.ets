@@ -17,7 +17,7 @@ import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../
 import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
-import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs } from '../Framework/WebView/TabConfig';
+import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from '../Framework/WebView/TabConfig';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { SourceSettingsPageParams } from './SourceSettingsPage';
 import CookieManager from '../Framework/Managers/CookieManager';
@@ -27,6 +27,8 @@ import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Framework/Cac
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
+import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
+import { SourceCredentials } from '../Framework/Data/DataManager';
 
 const TAG = 'SourceDetailPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -115,8 +117,10 @@ export struct SourceDetailPage {
   @State webViewReady: boolean = false; // WebView是否就绪
   @State webViewControllerAttached: boolean = false; // WebView控制器是否已附加
   @State showSearchDialog: boolean = false; // 显示搜索对话框
-  @State showLoginDialog: boolean = false; // 显示登录对话框
+  @State showLoginDialog: boolean = false; // 显示登录对话框（WebView登录）
+  @State showCredentialDialog: boolean = false; // 显示凭据登录对话框
   @State isLoggedIn: boolean = false; // 登录状态
+  @State requiresCredentialLogin: boolean = false; // 是否需要凭据登录
   @State userAvatarUrl: string = ''; // 用户头像URL
   @State filterOrdering: string = '-datetime_updated'; // 筛选排序
   @State filterRegion: string = 'all'; // 筛选地区
@@ -199,6 +203,16 @@ export struct SourceDetailPage {
       
       // 检测图源类型并初始化相应系统
       await this.detectAndInitializeSourceType();
+      
+      // 检查是否需要凭据登录
+      await this.checkCredentialLogin();
+      
+      // 如果需要凭据登录但未登录，显示登录对话框并返回
+      if (this.requiresCredentialLogin && !this.isLoggedIn) {
+        logger.info(TAG, '需要凭据登录，显示登录对话框');
+        this.showCredentialDialog = true;
+        return;
+      }
       
       // 如果使用WebView，等待控制器附加
       if (this.useWebView) {
@@ -367,44 +381,44 @@ export struct SourceDetailPage {
         return;
       }
 
-      // 降低并发数，避免超时
-      const MAX_CONCURRENT = 3;
+      // 【修复】提高并发数到10，加快封面下载速度
+      const MAX_CONCURRENT = 10;
       let downloadedCount = 0;
       
-      for (let i = 0; i < needDownload.length; i += MAX_CONCURRENT) {
-        const batch = needDownload.slice(i, i + MAX_CONCURRENT);
+      // 【修复】并行下载，不等待批次完成
+      const allPromises: Promise<void>[] = [];
+      
+      for (let i = 0; i < needDownload.length; i++) {
+        const comic = needDownload[i];
+        const coverUrl: string = comic.coverUrl || '';
         
-        // 等待当前批次完成，然后刷新UI
-        const batchPromises = batch.map((comic: ComicInfo) => {
-          const coverUrl: string = comic.coverUrl || '';
-          return coverCache.downloadAndCacheCover(
-            this.sourceId,
-            comic.id,
-            coverUrl,
-            headers
-          ).then((savedPath: string | null) => {
-            if (savedPath) {
-              downloadedCount++;
-              logger.debug(TAG, `后台封面下载完成 (${downloadedCount}/${needDownload.length}): ${comic.title}`);
-              // 下载完成后，刷新对应的封面显示
-              this.refreshCoverDisplay(comic);
-            }
-            return savedPath;
-          }).catch((error: Error) => {
-            logger.debug(TAG, `后台封面下载失败 ${comic.title}: ${String(error)}`);
-            return null;
-          });
+        // 控制并发：每10个一批
+        if (i > 0 && i % MAX_CONCURRENT === 0) {
+          // 等待前一批完成，避免同时发起过多请求
+          await Promise.allSettled(allPromises.splice(0, MAX_CONCURRENT));
+        }
+        
+        const downloadPromise = coverCache.downloadAndCacheCover(
+          this.sourceId,
+          comic.id,
+          coverUrl,
+          headers
+        ).then((savedPath: string | null) => {
+          if (savedPath) {
+            downloadedCount++;
+            logger.debug(TAG, `后台封面下载完成 (${downloadedCount}/${needDownload.length}): ${comic.title}`);
+            // 下载完成后，刷新对应的封面显示
+            this.refreshCoverDisplay(comic);
+          }
+        }).catch((error: Error) => {
+          logger.debug(TAG, `后台封面下载失败 ${comic.title}: ${String(error)}`);
         });
         
-        await Promise.allSettled(batchPromises);
-        
-        // 批次间短暂延迟，避免瞬间大量请求
-        if (i + MAX_CONCURRENT < needDownload.length) {
-          await new Promise<void>((resolve: (value: void) => void) => {
-            setTimeout(() => resolve(), 100);
-          });
-        }
+        allPromises.push(downloadPromise);
       }
+      
+      // 等待所有剩余的下载完成
+      await Promise.allSettled(allPromises);
 
       logger.info(TAG, `封面后台下载完成: 成功 ${downloadedCount}/${needDownload.length} 个`);
     } catch (error) {
@@ -478,6 +492,149 @@ export struct SourceDetailPage {
     } catch (error) {
       logger.error(TAG, '检测图源类型失败，降级到HTTP系统', String(error));
       this.useWebView = false;
+    }
+  }
+
+  /**
+   * 检查是否需要凭据登录
+   */
+  private async checkCredentialLogin(): Promise<void> {
+    try {
+      const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+      
+      if (!config) {
+        this.requiresCredentialLogin = false;
+        return;
+      }
+
+      // 检查capabilities中是否声明了credentialLogin
+      const capabilities: ESObject = config.capabilities as ESObject || {};
+      this.requiresCredentialLogin = capabilities['credentialLogin'] === true;
+      
+      if (!this.requiresCredentialLogin) {
+        logger.info(TAG, '图源不需要凭据登录');
+        this.isLoggedIn = true;
+        return;
+      }
+      
+      logger.info(TAG, '图源需要凭据登录，检查已保存的凭据');
+      
+      // 检查是否已有保存的凭据
+      const credentials: SourceCredentials | null = await this.dataManager.getSourceCredentials(this.sourceId);
+      
+      if (credentials && credentials.username && credentials.password) {
+        logger.info(TAG, `找到已保存的凭据: ${credentials.username}`);
+        
+        // [修复] 对于需要JWT Token的图源，需要检查是否有有效的Token
+        // 如果没有Token，需要执行登录工作流获取Token
+        if (this.useWebView && this.mangaSourceEngine) {
+          const config: ESObject | null = await this.dataManager.getSourceConfig(this.sourceId);
+          const authentication: ESObject | undefined = config?.authentication as ESObject | undefined;
+          
+          if (authentication && authentication['type'] === 'jwt') {
+            logger.info(TAG, '图源使用JWT认证，检查是否需要执行登录获取Token');
+            
+            // 尝试执行登录工作流获取Token
+            try {
+              const loginResult = await this.mangaSourceEngine.executeLogin(
+                credentials.username, 
+                credentials.password
+              );
+              if (loginResult.success && loginResult.data) {
+                logger.info(TAG, `自动登录成功，获取到token: ${loginResult.data.substring(0, 20)}...`);
+              } else {
+                logger.warn(TAG, '自动登录工作流执行成功但未获取到token');
+              }
+            } catch (loginError) {
+              logger.error(TAG, '自动登录工作流执行失败', String(loginError));
+              // 登录失败不阻止继续，可能Token仍然有效
+            }
+          }
+        }
+        
+        this.isLoggedIn = true;
+      } else {
+        logger.info(TAG, '未找到已保存的凭据');
+        this.isLoggedIn = false;
+      }
+    } catch (error) {
+      logger.error(TAG, '检查凭据登录失败', String(error));
+      this.requiresCredentialLogin = false;
+      this.isLoggedIn = true;
+    }
+  }
+
+  /**
+   * 处理凭据登录
+   */
+  private async handleCredentialLogin(username: string, password: string): Promise<void> {
+    try {
+      logger.info(TAG, `处理凭据登录: ${username}`);
+      
+      // 保存凭据到数据库
+      await this.dataManager.saveSourceCredentials(this.sourceId, username, password);
+      logger.info(TAG, '凭据已保存');
+      
+      // 如果图源支持login工作流，执行登录获取token
+      if (this.useWebView && this.mangaSourceEngine) {
+        logger.info(TAG, '执行login工作流获取token');
+        try {
+          const loginResult = await this.mangaSourceEngine.executeLogin(username, password);
+          if (loginResult.success && loginResult.data) {
+            logger.info(TAG, `登录成功，获取到token: ${loginResult.data.substring(0, 20)}...`);
+            // Token已经通过saveAs保存到数据库
+          } else {
+            logger.warn(TAG, '登录工作流执行成功但未获取到token');
+          }
+        } catch (loginError) {
+          logger.error(TAG, 'login工作流执行失败', String(loginError));
+          // 不抛出错误，继续流程
+        }
+      }
+      
+      // 更新登录状态
+      this.isLoggedIn = true;
+      
+      // 关闭登录对话框
+      this.showCredentialDialog = false;
+      
+      // 提示用户
+      this.getUIContext().getPromptAction().showToast({ 
+        message: '登录成功，凭据已保存' 
+      });
+      
+      // 继续初始化流程
+      await this.continueInitializationAfterLogin();
+    } catch (error) {
+      logger.error(TAG, '凭据登录失败', String(error));
+      this.getUIContext().getPromptAction().showToast({ 
+        message: '登录失败，请重试' 
+      });
+    }
+  }
+
+  /**
+   * 登录后继续初始化
+   */
+  private async continueInitializationAfterLogin(): Promise<void> {
+    try {
+      // 如果使用WebView，等待控制器附加
+      if (this.useWebView) {
+        logger.info(TAG, '等待WebView控制器附加...');
+        await this.waitForWebViewReady();
+        await this.loadBaseUrlAndCookieBootstrap();
+      }
+      
+      // 加载标签页配置
+      await this.loadTabsConfig();
+      
+      // 加载筛选设置
+      await this.loadFilterSettings();
+      
+      // 加载漫画列表
+      await this.loadComics();
+    } catch (error) {
+      logger.error(TAG, '登录后初始化失败', String(error));
     }
   }
 
@@ -572,6 +729,11 @@ export struct SourceDetailPage {
 
   private async loadCoverPixelMap(comic: ComicInfo): Promise<void> {
     try {
+      // 如果已经加载过，直接返回
+      if (this.coverPixelMaps.has(comic.id)) {
+        return;
+      }
+      
       const url: string = comic.coverUrl || '';
       if (url.length === 0) { return; }
       
@@ -677,6 +839,18 @@ export struct SourceDetailPage {
           case TabType.HISTORY:
             logger.info(TAG, `开始获取浏览记录: 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
             result = await this.mangaSourceEngine.getHistory(this.currentPage);
+            break;
+          
+          case TabType.LEADERBOARD:
+            logger.info(TAG, `开始获取排行榜: 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
+            result = await this.mangaSourceEngine.getLeaderboard(this.currentPage);
+            break;
+          
+          case TabType.CUSTOM:
+            // 自定义工作流标签
+            const workflowName = currentTab.workflowName || currentTab.id;
+            logger.info(TAG, `开始执行自定义工作流: ${workflowName}, 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
+            result = await this.mangaSourceEngine.executeCustomWorkflow(workflowName, this.currentPage, currentTab.filterParams);
             break;
           
           default:
@@ -853,17 +1027,29 @@ export struct SourceDetailPage {
       this.isLoggedIn = await this.dataManager.isSourceLoggedIn(this.sourceId);
       logger.info(TAG, `登录状态: ${this.isLoggedIn}`);
 
-      // 加载标签配置
-      const configJson = await this.dataManager.getSourceTabsConfig(this.sourceId);
       let config: SourceTabsConfig;
 
-      if (configJson) {
-        config = JSON.parse(configJson) as SourceTabsConfig;
-        logger.info(TAG, `已加载标签配置: ${config.tabs.length}个标签`);
+      // 首先尝试从图源配置中解析标签
+      const sourceConfig: Record<string, Object> | null = await this.dataManager.getSourceConfig(this.sourceId) as Record<string, Object> | null;
+      if (sourceConfig) {
+        config = parseTabsFromSourceConfig(this.sourceId, sourceConfig);
+        logger.info(TAG, `从图源配置解析标签: ${config.tabs.length}个标签`);
+        
+        // 如果图源配置中有 filters 定义，为筛选标签添加 filterConfig
+        if (sourceConfig['filters']) {
+          this.enrichFilterTabsWithConfig(config.tabs, sourceConfig['filters'] as Record<string, Object>);
+        }
       } else {
-        // 使用默认配置
-        config = getDefaultTabsConfig(this.sourceId);
-        logger.info(TAG, '使用默认标签配置');
+        // 尝试加载用户自定义的标签配置
+        const configJson = await this.dataManager.getSourceTabsConfig(this.sourceId);
+        if (configJson) {
+          config = JSON.parse(configJson) as SourceTabsConfig;
+          logger.info(TAG, `已加载用户标签配置: ${config.tabs.length}个标签`);
+        } else {
+          // 使用默认配置
+          config = getDefaultTabsConfig(this.sourceId);
+          logger.info(TAG, '使用默认标签配置');
+        }
       }
 
       // 过滤并排序标签
@@ -888,6 +1074,64 @@ export struct SourceDetailPage {
       if (this.tabsConfig.length > 0) {
         this.currentTabId = this.tabsConfig[0].id;
       }
+    }
+  }
+
+  /**
+   * 为筛选标签添加筛选配置
+   */
+  private enrichFilterTabsWithConfig(tabs: TabConfig[], filtersConfig: Record<string, Object>): void {
+    const filterTab = tabs.find(t => t.type === TabType.FILTER);
+    if (!filterTab) {
+      return;
+    }
+
+    // 将 filters 配置转换为 FilterConfig
+    const groups: FilterGroup[] = [];
+    const filterKeys = Object.keys(filtersConfig);
+    let order = 0;
+
+    for (let i = 0; i < filterKeys.length; i++) {
+      const key = filterKeys[i];
+      const filterDef = filtersConfig[key] as Record<string, Object>;
+      if (!filterDef || typeof filterDef !== 'object') {
+        continue;
+      }
+
+      const options = filterDef['options'] as Record<string, Object>[] | undefined;
+      if (!options || !Array.isArray(options)) {
+        continue;
+      }
+
+      // 转换选项列表
+      const filterOptions: FilterOption[] = [];
+      for (let j = 0; j < options.length; j++) {
+        const opt: Record<string, Object> = options[j];
+        const optItem: FilterOption = {
+          value: String(opt['value'] || ''),
+          label: String(opt['label'] || opt['value'] || '')
+        };
+        filterOptions.push(optItem);
+      }
+
+      groups.push({
+        id: key,
+        title: String(filterDef['name'] || key),
+        placeholder: filterDef['placeholder'] as string | undefined,
+        options: filterOptions,
+        defaultValue: filterDef['default'] as string | undefined,
+        required: filterDef['required'] === true,
+        order: order++
+      });
+    }
+
+    if (groups.length > 0) {
+      filterTab.filterConfig = {
+        groups: groups,
+        title: '筛选',
+        description: '选择筛选条件'
+      };
+      logger.info(TAG, `为筛选标签添加了 ${groups.length} 个筛选组`);
     }
   }
 
@@ -1056,10 +1300,15 @@ export struct SourceDetailPage {
   /**
    * 打开漫画详情
    */
-  private openComicDetail(comic: ComicInfo): void {
+  private async openComicDetail(comic: ComicInfo): Promise<void> {
+    // 获取本地封面路径
+    const coverCache = CoverCacheManager.getInstance();
+    const localCoverPath = await coverCache.getLocalCoverPath(this.sourceId, comic.id);
+    
     const params: MangaDetailPageParams = {
       sourceId: this.sourceId,
-      mangaId: comic.id
+      mangaId: comic.id,
+      cachedCoverPath: localCoverPath || undefined  // 传递已缓存的封面路径
     };
     this.pathStack.pushPathByName('MangaDetailPage', params);
   }
@@ -1161,9 +1410,14 @@ export struct SourceDetailPage {
             })
         }
 
-        // 登录对话框
+        // 登录对话框（WebView登录）
         if (this.showLoginDialog) {
           this.buildLoginDialog()
+        }
+        
+        // 凭据登录对话框
+        if (this.showCredentialDialog) {
+          this.buildCredentialLoginDialog()
         }
       }
       .width('100%')
@@ -1633,6 +1887,48 @@ export struct SourceDetailPage {
   }
 
   /**
+   * 构建凭据登录对话框
+   */
+  @Builder
+  buildCredentialLoginDialog() {
+    Column() {
+      CredentialLoginDialog({
+        controller: new CustomDialogController({
+          builder: CredentialLoginDialog({
+            themeState: this.themeState,
+            sourceName: this.sourceName,
+            onLogin: (username: string, password: string) => {
+              this.handleCredentialLogin(username, password);
+            },
+            onCancel: () => {
+              logger.info(TAG, '用户取消凭据登录');
+              this.showCredentialDialog = false;
+            }
+          }),
+          autoCancel: false,
+          customStyle: true
+        }),
+        themeState: this.themeState,
+        sourceName: this.sourceName,
+        onLogin: (username: string, password: string) => {
+          this.handleCredentialLogin(username, password);
+        },
+        onCancel: () => {
+          logger.info(TAG, '用户取消凭据登录');
+          this.showCredentialDialog = false;
+        }
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0, 0, 0, 0.5)')
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      // 点击背景不关闭对话框（需要用户主动取消）
+    })
+  }
+
+  /**
    * 构建标签栏
    */
   @Builder
@@ -1777,6 +2073,7 @@ export struct SourceDetailPage {
           .columnsGap(this.isLandscape ? 16 : 12)
           .rowsGap(this.isLandscape ? 16 : 12)
           .width('100%')
+          .layoutDirection(GridDirection.Row)  // 确保从左到右、从上到下的顺序
           .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
 
           if (this.isLoading && this.currentPage > 1) {
@@ -1875,7 +2172,7 @@ export struct SourceDetailPage {
           })
       }
 
-      // 标题
+      // 标题 - 固定高度确保卡片一致
       Text(comic.title)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
@@ -1883,17 +2180,17 @@ export struct SourceDetailPage {
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
+        .height(40)
         .lineHeight(20)
 
-      // 作者
-      if (comic.author) {
-        Text(comic.author)
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
+      // 作者 - 固定高度确保卡片一致
+      Text(comic.author || ' ')
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .height(16)
     }
     .width('100%')
     .padding(8)
