@@ -87,7 +87,7 @@ export class OnlineImageLoader {
   // 请求队列
   private requestQueue: QueuedRequest[] = [];
   private activeRequests: number = 0;
-  private readonly MAX_CONCURRENT = 4;  // 最多4个并发请求（优化条漫体验）
+  private readonly MAX_CONCURRENT = 10;  // 【修复】提升到10个并发，加快封面加载速度
   
   // 轻量级内存缓存
   private memoryCache = new Map<string, CacheEntry>();
@@ -173,8 +173,8 @@ export class OnlineImageLoader {
     this.activeRequests++;
     
     try {
-      // 请求间隔控制
-      await this.waitForInterval();
+      // 【修复】移除请求间隔限制，10个并发本身就是限流措施
+      // await this.waitForInterval();
       
       // 执行HTTP请求
       const pixelMap = await this.httpRequest(request.url, request.options);
@@ -223,7 +223,7 @@ export class OnlineImageLoader {
       // 构建请求头
       const headers = await this.buildHeaders(url, options);
       
-      logger.debug(TAG, `发起HTTP请求: url=${url.substring(0, 80)}, timeout=${this.TIMEOUT}`);
+      logger.debug(TAG, `发起HTTP请求: url=${url}, timeout=${this.TIMEOUT}`);
       
       const requestOptions: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
@@ -263,9 +263,33 @@ export class OnlineImageLoader {
       }
       
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `HTTP请求异常: ${errMsg}`);
-      throw new Error(errMsg);
+      // 【修复】详细记录错误信息，包括错误码和完整URL
+      // HarmonyOS的BusinessError对象包含code和message属性
+      let errMsg = '';
+      if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        // 尝试提取message，如果是对象则序列化
+        const msg = (error as Record<string, Object>)['message'];
+        if (typeof msg === 'object') {
+          try {
+            errMsg = JSON.stringify(msg);
+          } catch (e) {
+            errMsg = '[object Object]';
+          }
+        } else {
+          errMsg = String(msg || error);
+        }
+      } else {
+        errMsg = String(error);
+      }
+
+      const errCode = (error as Record<string, Object>)['code'];
+      const errData = (error as Record<string, Object>)['data'];
+      
+      // 输出完整错误信息
+      logger.error(TAG, `HTTP请求异常: message=${errMsg}, code=${errCode}, data=${errData}, url=${url}`);
+      throw new Error(`${errMsg} (code=${errCode})`);
     }
   }
 

@@ -176,7 +176,8 @@ export class ThemeAwareHelper {
               'border_dark' | 'brand_blue' | 'button_text_primary' | 'button_text_secondary' |
               'comp_background_primary' | 'comp_background_secondary' | 'success_border' | 'error_border' |
               'comp_border_primary' | 'success_text' | 'error_text' |
-              'manga_detail_gradient_start' | 'manga_detail_gradient_mid' | 'manga_detail_gradient_end',
+              'manga_detail_gradient_start' | 'manga_detail_gradient_mid' | 'manga_detail_gradient_end' |
+              'comp_divider' | 'text_tertiary',
     theme: ThemeType
   ): Resource {
     // 颜色映射表，将通用颜色类型映射到具体的颜色资源名称
@@ -443,6 +444,14 @@ export class ThemeAwareHelper {
       'font_secondary': { 
         light: 'test_management_font_secondary_light', 
         dark: 'test_management_font_secondary_dark' 
+      },
+      'comp_divider': { 
+        light: 'test_management_divider_light', 
+        dark: 'test_management_divider_dark' 
+      },
+      'text_tertiary': { 
+        light: 'test_management_text_placeholder_light', 
+        dark: 'test_management_text_placeholder_dark' 
       }
     };
 

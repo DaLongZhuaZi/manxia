@@ -111,7 +111,7 @@ export class MangaSourceAPIEngine {
         
         // 规范化并构建headers
         const defaultHeaders: DefaultHeaders = new DefaultHeaders();
-        const baseHeaders: APIHeaders = this.normalizeHeaders(config.headers || (defaultHeaders as Object));
+        const baseHeaders: Object = this.normalizeHeaders(config.headers || (defaultHeaders as Object));
         
         // 使用规范化后的headers
         const headers = baseHeaders;
@@ -245,85 +245,46 @@ export class MangaSourceAPIEngine {
   /**
    * 规范化headers，确保类型安全
    */
-  private normalizeHeaders(input?: Object): APIHeaders {
-    const defaultCt: string = 'application/json';
-    const defaultAccept: string = 'application/json';
-    const defaultUa: string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
-
-    let ct: string = defaultCt;
-    let accept: string = defaultAccept;
-    let ua: string = defaultUa;
-    let referer: string | undefined = undefined;
-    let cookie: string | undefined = undefined;
-    let authorization: string | undefined = undefined;
-    let acceptLanguage: string | undefined = undefined;
-    let cacheControl: string | undefined = undefined;
-    let pragma: string | undefined = undefined;
-    let secFetchDest: string | undefined = undefined;
-    let secFetchMode: string | undefined = undefined;
-    let secFetchSite: string | undefined = undefined;
-    let origin: string | undefined = undefined;
-    let xRequestedWith: string | undefined = undefined;
-    let dnt: string | undefined = undefined;
-    let acceptEncoding: string | undefined = undefined;
-    let connection: string | undefined = undefined;
+  private normalizeHeaders(input?: Object): Object {
+    // 初始化默认Headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
+    };
 
     if (input) {
-      const rec: Record<string, Object> = input as Record<string, Object>;
-      const keys: string[] = Object.keys(rec);
-      let i: number = 0;
-      while (i < keys.length) {
-        const k: string = keys[i];
-        const vRaw: Object = (rec as Record<string, Object>)[k];
-        const v: string = String(vRaw);
-        const lower: string = k.toLowerCase();
-
-        if (lower === 'content-type') { ct = v; }
-        else if (lower === 'accept') { accept = v; }
-        else if (lower === 'user-agent') { ua = v; }
-        else if (lower === 'referer') { referer = v.length > 0 ? v : undefined; }
-        else if (lower === 'cookie') { cookie = v.length > 0 ? v : undefined; }
-        else if (lower === 'authorization') { authorization = v.length > 0 ? v : undefined; }
-        else if (lower === 'accept-language') { acceptLanguage = v.length > 0 ? v : undefined; }
-        else if (lower === 'cache-control') { cacheControl = v.length > 0 ? v : undefined; }
-        else if (lower === 'pragma') { pragma = v.length > 0 ? v : undefined; }
-        else if (lower === 'sec-fetch-dest') { secFetchDest = v.length > 0 ? v : undefined; }
-        else if (lower === 'sec-fetch-mode') { secFetchMode = v.length > 0 ? v : undefined; }
-        else if (lower === 'sec-fetch-site') { secFetchSite = v.length > 0 ? v : undefined; }
-        else if (lower === 'origin') { origin = v.length > 0 ? v : undefined; }
-        else if (lower === 'x-requested-with') { xRequestedWith = v.length > 0 ? v : undefined; }
-        else if (lower === 'dnt') { dnt = v.length > 0 ? v : undefined; }
-        else if (lower === 'accept-encoding') { acceptEncoding = v.length > 0 ? v : undefined; }
-        else if (lower === 'connection') { connection = v.length > 0 ? v : undefined; }
-        i = i + 1;
+      const inputRecord: Record<string, Object> = input as Record<string, Object>;
+      const keys: string[] = Object.keys(inputRecord);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        const value = inputRecord[key];
+        if (value !== undefined && value !== null) {
+          headers[key] = String(value);
+        }
       }
     }
 
-    if (!origin && referer) {
-      origin = referer;
+    // 特殊处理：Origin
+    // 如果有Referer但没有Origin，自动设置Origin
+    let hasOrigin = false;
+    let refererValue = '';
+    
+    const headerKeys = Object.keys(headers);
+    for (let i = 0; i < headerKeys.length; i++) {
+      const k = headerKeys[i].toLowerCase();
+      if (k === 'origin') {
+        hasOrigin = true;
+      } else if (k === 'referer') {
+        refererValue = headers[headerKeys[i]];
+      }
     }
 
-    const finalHeaders: APIHeaders = {
-      'Content-Type': ct,
-      'Accept': accept,
-      'User-Agent': ua,
-      'Referer': referer,
-      'Cookie': cookie,
-      'Authorization': authorization,
-      'Accept-Language': acceptLanguage,
-      'Cache-Control': cacheControl,
-      'Pragma': pragma,
-      'Sec-Fetch-Dest': secFetchDest,
-      'Sec-Fetch-Mode': secFetchMode,
-      'Sec-Fetch-Site': secFetchSite,
-      'Origin': origin,
-      'X-Requested-With': xRequestedWith,
-      'DNT': dnt,
-      'Accept-Encoding': acceptEncoding,
-      'Connection': connection
-    } as APIHeaders;
+    if (!hasOrigin && refererValue) {
+      headers['Origin'] = refererValue;
+    }
 
-    return finalHeaders;
+    return headers;
   }
 
 

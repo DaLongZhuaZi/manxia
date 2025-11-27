@@ -10,6 +10,7 @@ import { MangaSourceActionEngine, ActionContext } from './MangaSourceActionEngin
 import { MangaSourceSelectorEngine, SelectorContext } from './MangaSourceSelectorEngine';
 import { MangaSourceConfigParser, ParseResult, WorkflowContext, ConfigSummaryResult, ConfigSummarySettings } from './MangaSourceConfigParser';
 import { DataManager, UserSettingsDatabaseRecord } from '../Data/DataManager';
+import { FilterParams } from './TabConfig';
 import {
   MangaSourceConfig,
   Action,
@@ -139,6 +140,8 @@ export class MangaSourceEngine {
   private engineConfig: EngineConfig;
   private dataManager: DataManager = DataManager.getInstance();
   private lastChapterAccessDenied: boolean = false;
+  // [修复] 存储当前会话的 Token，登录成功后立即可用
+  private currentToken: string | undefined = undefined;
 
   constructor(engineConfig: EngineConfig) {
     this.engineConfig = engineConfig;
@@ -492,10 +495,58 @@ export class MangaSourceEngine {
       context.variables['page'] = page.toString();
       context.variables['offset'] = ((page - 1) * 30).toString();
       
-      // 设置筛选参数
+      // 设置筛选参数 - 支持多种参数名称
+      // 通用参数名
       context.variables['filterOrdering'] = filterOrdering || '-datetime_updated';
       context.variables['filterRegion'] = filterRegion || 'all';
       context.variables['filterTheme'] = filterTheme || 'all';
+      
+      // PicaComic 等图源使用的参数名 - 从工作流配置中读取默认值
+      let defaultSort: string = 'dd';  // PicaComic 默认排序
+      let defaultCategory: string = '';  // 默认为空（全部分类）
+      
+      // 从原始JSON配置中读取默认值
+      if (this.rawConfigJson) {
+        try {
+          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+          const workflows = rawConfig['workflows'] as Record<string, Object> | undefined;
+          if (workflows) {
+            const filterWorkflow = workflows['filter'] as Record<string, Object> | undefined;
+            if (filterWorkflow) {
+              const defaults = filterWorkflow['defaults'] as Record<string, string> | undefined;
+              if (defaults) {
+                if (defaults['sort']) {
+                  defaultSort = defaults['sort'];
+                }
+                if (defaults['category'] !== undefined) {
+                  defaultCategory = defaults['category'];
+                }
+              }
+            }
+          }
+        } catch (e) {
+          logger.warn(TAG, `解析筛选默认值失败: ${e}`);
+        }
+      }
+      
+      // 设置 sort 参数：只有当 filterOrdering 是 PicaComic 的有效值时才使用
+      // PicaComic 有效的 sort 值: UA, CA, da, dd, ld, vd
+      const validPicaSortValues = ['UA', 'CA', 'da', 'dd', 'ld', 'vd'];
+      const isValidSort = filterOrdering && validPicaSortValues.indexOf(filterOrdering) >= 0;
+      if (isValidSort) {
+        context.variables['sort'] = filterOrdering;
+      } else {
+        context.variables['sort'] = defaultSort;
+      }
+      
+      // 设置 category 参数：优先使用传入的 filterTheme，否则使用配置的默认值
+      if (filterTheme && filterTheme !== 'all') {
+        context.variables['category'] = filterTheme;
+      } else {
+        context.variables['category'] = defaultCategory;
+      }
+      
+      logger.debug(TAG, `筛选参数: sort=${context.variables['sort']}, category=${context.variables['category']}`);
       
       logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
       
@@ -725,6 +776,209 @@ export class MangaSourceEngine {
       const errorStack = error instanceof Error ? error.stack : '';
       
       logger.error(TAG, `获取浏览记录失败: ${errorMessage}`);
+      logger.debug(TAG, `错误堆栈: ${errorStack}`);
+      
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 获取排行榜
+   */
+  async getLeaderboard(page: number = 1): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法获取排行榜');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始获取排行榜: 页码=${page}`);
+
+    try {
+      // 构建排行榜操作序列
+      logger.debug(TAG, '构建排行榜操作序列');
+      const actions = this.configParser.buildLeaderboardActions(this.config);
+      logger.debug(TAG, `排行榜操作序列包含 ${actions.length} 个操作`);
+      
+      // 执行操作序列
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['page'] = page.toString();
+      const pageSize: number = Number(context.variables['pageSize'] || '30');
+      context.variables['offset'] = ((page - 1) * pageSize).toString();
+      // 设置排行榜默认时间类型 (H24=24小时, D7=7天, D30=30天)
+      if (!context.variables['timeType']) {
+        context.variables['timeType'] = 'H24';
+      }
+      logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
+      
+      let leaderboardResults: MangaInfo[] = [];
+      
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        logger.debug(TAG, `执行操作 ${i + 1}/${actions.length}: ${action.type}`);
+        
+        const result = await this.actionEngine.executeAction(action, context);
+        
+        logger.debug(TAG, `操作 ${i + 1} 结果: success=${result.success}, hasData=${!!result.data}`);
+        
+        if (!result.success) {
+          logger.error(TAG, `操作 ${i + 1} 失败: ${result.error}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.ACTION_FAILED,
+            `排行榜操作失败: ${result.error}`
+          );
+        }
+
+        if ((action.type === 'extract' || action.type === 'api') && result.data) {
+          if (Array.isArray(result.data)) {
+            leaderboardResults = result.data.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+          }
+        }
+      }
+
+      logger.debug(TAG, `提取到 ${leaderboardResults.length} 条排行榜数据`);
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `获取排行榜完成，找到 ${leaderboardResults.length} 个结果，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: {
+          mangas: leaderboardResults,
+          total: leaderboardResults.length,
+          page: page,
+          hasNext: leaderboardResults.length >= pageSize
+        },
+        duration,
+        actionCount: actions.length
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      
+      logger.error(TAG, `获取排行榜失败: ${errorMessage}`);
+      logger.debug(TAG, `错误堆栈: ${errorStack}`);
+      
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 执行自定义工作流
+   * @param workflowName 工作流名称
+   * @param page 页码
+   * @param params 额外参数
+   */
+  async executeCustomWorkflow(
+    workflowName: string, 
+    page: number = 1, 
+    params?: FilterParams
+  ): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行自定义工作流');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始执行自定义工作流: ${workflowName}, 页码=${page}`);
+
+    try {
+      // 获取工作流
+      const actions = this.configParser.getWorkflow(this.config, workflowName);
+      if (!actions || actions.length === 0) {
+        throw new MangaSourceError(
+          MangaSourceErrorCode.WORKFLOW_NOT_FOUND,
+          `未找到工作流: ${workflowName}`
+        );
+      }
+      logger.debug(TAG, `自定义工作流 ${workflowName} 包含 ${actions.length} 个操作`);
+      
+      // 执行操作序列
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['page'] = page.toString();
+      const pageSize: number = Number(context.variables['pageSize'] || '30');
+      context.variables['offset'] = ((page - 1) * pageSize).toString();
+      
+      // 添加额外参数
+      if (params) {
+        if (params.ordering) context.variables['ordering'] = params.ordering;
+        if (params.region) context.variables['region'] = params.region;
+        if (params.theme) context.variables['theme'] = params.theme;
+        if (params.sort) context.variables['sort'] = params.sort;
+        if (params.category) context.variables['category'] = params.category;
+        if (params.rank) context.variables['rank'] = params.rank;
+      }
+      
+      logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
+      
+      let results: MangaInfo[] = [];
+      
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        logger.debug(TAG, `执行操作 ${i + 1}/${actions.length}: ${action.type}`);
+        
+        const result = await this.actionEngine.executeAction(action, context);
+        
+        logger.debug(TAG, `操作 ${i + 1} 结果: success=${result.success}, hasData=${!!result.data}`);
+        
+        if (!result.success) {
+          logger.error(TAG, `操作 ${i + 1} 失败: ${result.error}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.ACTION_FAILED,
+            `自定义工作流操作失败: ${result.error}`
+          );
+        }
+
+        if ((action.type === 'extract' || action.type === 'api') && result.data) {
+          if (Array.isArray(result.data)) {
+            results = result.data.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+          }
+        }
+      }
+
+      logger.debug(TAG, `提取到 ${results.length} 条数据`);
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `自定义工作流 ${workflowName} 完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: {
+          mangas: results,
+          total: results.length,
+          page: page,
+          hasNext: results.length >= pageSize
+        },
+        duration,
+        actionCount: actions.length
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      
+      logger.error(TAG, `自定义工作流 ${workflowName} 失败: ${errorMessage}`);
       logger.debug(TAG, `错误堆栈: ${errorStack}`);
       
       return {
@@ -1022,6 +1276,18 @@ export class MangaSourceEngine {
             }
           }
         }
+      }
+
+      // [修复] 根据 order 字段对章节进行升序排序（第一章在前）
+      // PicaComic 等 API 返回的章节可能是降序排列的
+      if (chapters.length > 0) {
+        chapters.sort((a: ChapterInfo, b: ChapterInfo) => {
+          // 优先使用 externalId 进行排序（对于 PicaComic，externalId 就是 order）
+          const orderA = Number(a.externalId) || 0;
+          const orderB = Number(b.externalId) || 0;
+          return orderA - orderB;  // 升序排列
+        });
+        logger.debug(TAG, `章节已按 order 升序排序，第一章: ${chapters[0].title}, 最后一章: ${chapters[chapters.length - 1].title}`);
       }
 
       const duration = Date.now() - startTime;
@@ -1677,15 +1943,48 @@ export class MangaSourceEngine {
       logger.info(TAG, `🖼️ 图片提取调试信息: ${item._imgDebug}`);
     }
     
+    // 特殊处理 PicaComic 的 thumb 对象
+    // PicaComic API 返回 thumb: { fileServer: "...", path: "...", originalName: "..." }
+    let coverUrl = String(item.cover || '');
+    if (!coverUrl && item.thumb && typeof item.thumb === 'object') {
+      const thumb = item.thumb as Record<string, string>;
+      if (thumb.fileServer && thumb.path) {
+        coverUrl = `${thumb.fileServer}/static/${thumb.path}`;
+        logger.debug(TAG, `生成 PicaComic 封面: ${coverUrl}`);
+      }
+    }
+
+    // 处理状态 (PicaComic finished 是 boolean)
+    let status = String(item.status || '');
+    if (item.finished !== undefined) {
+      status = item.finished ? 'completed' : 'ongoing';
+    }
+
+    // 处理标签 (合并 genres, categories, tags)
+    let genres: string[] = [];
+    if (item.genres && Array.isArray(item.genres)) {
+      genres = item.genres as string[];
+    }
+    if (item.categories && Array.isArray(item.categories)) {
+      genres = genres.concat(item.categories as string[]);
+    }
+    if (item.tags && Array.isArray(item.tags)) {
+      genres = genres.concat(item.tags as string[]);
+    }
+    // 去重
+    if (genres.length > 0) {
+      genres = Array.from(new Set(genres));
+    }
+    
     const manga: MangaInfo = {
       id: String(item.id || ''),
       title: String(item.title || ''),
       author: String(item.author || ''),
       description: String(item.description || ''),
-      cover: String(item.cover || ''),
-      status: String(item.status || ''),
+      cover: coverUrl,
+      status: status,
       url: String(item.url || item.id || ''),  // 如果没有url，使用id
-      genres: item.genres ? (item.genres as string[]) : undefined,
+      genres: genres.length > 0 ? genres : undefined,
       updated: item.updated ? String(item.updated) : undefined
     };
     
@@ -1711,12 +2010,14 @@ export class MangaSourceEngine {
       throw new Error('章节数据必须包含id字段作为外部ID');
     }
     
-    logger.debug(TAG, `📋 章节原始数据: externalId=${externalId}, title=${item.title}, publishTime=${item.publishTime}`);
+    // 支持多种时间字段名称: publishTime, updateTime, updated_at
+    const timeValue = item.publishTime || item.updateTime || item.updated_at;
+    logger.debug(TAG, `📋 章节原始数据: externalId=${externalId}, title=${item.title}, timeValue=${timeValue}`);
     
     // 转换时间戳：如果是Unix时间戳（秒），需要乘以1000转换为毫秒
     let publishTimeStr = '';
-    if (item.publishTime) {
-      const raw = String(item.publishTime);
+    if (timeValue) {
+      const raw = String(timeValue);
       const num = Number(raw);
       if (!Number.isNaN(num)) {
         if (num > 0 && num < 10000000000) {
@@ -1767,9 +2068,19 @@ export class MangaSourceEngine {
     const item = data as Record<string, Object>;
     
     // 如果有kid字段但没有imageUrl，构建完整的图片URL（用于Komiic API等）
-    let imageUrl = String(item.imageUrl || '');
+    let imageUrl = String(item.imageUrl || item.url || '');
     if (!imageUrl && item.kid) {
       imageUrl = `https://komiic.com/api/image/${item.kid}`;
+    }
+    
+    // 特殊处理 PicaComic 的 media 对象
+    // PicaComic API 返回 media: { fileServer: "...", path: "...", originalName: "..." }
+    if (!imageUrl && item.media && typeof item.media === 'object') {
+      const media = item.media as Record<string, string>;
+      if (media.fileServer && media.path) {
+        imageUrl = `${media.fileServer}/static/${media.path}`;
+        logger.debug(TAG, `生成 PicaComic 图片URL: ${imageUrl}`);
+      }
     }
     
     return {
@@ -1815,6 +2126,48 @@ export class MangaSourceEngine {
       if (s3 && s3.settingValue) { context.variables['reader.preloadCurrent'] = s3.settingValue; }
       if (s4 && s4.settingValue) { context.variables['reader.preloadNext'] = s4.settingValue; }
       if (s5 && s5.settingValue) { context.variables['reader.downloadWhileReading'] = s5.settingValue; }
+
+      // [修复] 加载图源特定设置（如哔咔漫画的 appChannel 和 imageQuality）
+      const appChannelSetting: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'appChannel');
+      const imageQualitySetting: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'imageQuality');
+      
+      // 设置默认值，确保即使用户未配置也能正常工作
+      context.variables['appChannel'] = (appChannelSetting && appChannelSetting.settingValue) ? String(appChannelSetting.settingValue) : '2';
+      context.variables['imageQuality'] = (imageQualitySetting && imageQualitySetting.settingValue) ? String(imageQualitySetting.settingValue) : 'high';
+      
+      logger.debug(TAG, `图源设置: appChannel=${context.variables['appChannel']}, imageQuality=${context.variables['imageQuality']}`);
+
+      // [修复] 优先使用当前会话的 Token（登录成功后立即可用）
+      if (this.currentToken) {
+        context.variables['token'] = this.currentToken;
+        logger.info(TAG, `使用当前会话Token: length=${this.currentToken.length}`);
+      } else if (this.config && this.config.authentication && this.config.authentication.type === 'jwt' && this.config.authentication.tokenStorageKey) {
+        // 如果当前会话没有 Token，尝试从数据库加载
+        const tokenKey: string = this.config.authentication.tokenStorageKey;
+        // 使用 sourceId + tokenKey 作为唯一的存储键
+        const storageKey: string = `source:${String(sid)}:${tokenKey}`;
+        
+        // 使用username作为userId，如果未登录则使用default_user
+        let userId: string = 'default_user';
+        if (creds && creds.username) {
+          userId = creds.username;
+        }
+        
+        const savedToken = await this.dataManager.getUserSetting(userId, storageKey);
+        if (savedToken) {
+          // 移除可能存在的引号
+          let cleanToken: string = savedToken;
+          if (cleanToken.startsWith('"') && cleanToken.endsWith('"')) {
+            cleanToken = cleanToken.substring(1, cleanToken.length - 1);
+          }
+          context.variables['token'] = cleanToken;
+          // 同时设置到当前会话，避免重复加载
+          this.currentToken = cleanToken;
+          logger.info(TAG, `已加载保存的Token: key=${storageKey}, length=${cleanToken.length}`);
+        } else {
+          logger.debug(TAG, `未找到保存的Token: key=${storageKey}`);
+        }
+      }
     } catch (error) {
       logger.warn(TAG, `填充源设置失败: ${String(error)}`);
     }
@@ -1899,5 +2252,119 @@ export class MangaSourceEngine {
       }
     }
     logger.info(TAG, 'initialize工作流执行完成');
+  }
+
+  /**
+   * 执行登录工作流
+   */
+  async executeLogin(username: string, password: string): Promise<EngineResult<string>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行登录');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始执行登录工作流: username=${username}`);
+
+    try {
+      // 获取login工作流
+      const actions = this.configParser.getWorkflow(this.config, 'login');
+      if (!actions || actions.length === 0) {
+        logger.warn(TAG, '未找到login工作流');
+        return {
+          success: false,
+          error: '图源不支持login工作流',
+          duration: Date.now() - startTime,
+          actionCount: 0
+        };
+      }
+
+      logger.debug(TAG, `login工作流包含 ${actions.length} 个操作`);
+
+      // 创建执行上下文
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['username'] = username;
+      context.variables['password'] = password;
+      context.variables['useCookies'] = 'false';
+      logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
+
+      let tokenData: string | undefined = undefined;
+
+      // 执行login操作序列
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        logger.debug(TAG, `执行登录操作 ${i + 1}/${actions.length}: ${action.type}`);
+
+        const result = await this.actionEngine.executeAction(action, context);
+
+        logger.debug(TAG, `登录操作 ${i + 1} 结果: success=${result.success}, hasData=${!!result.data}`);
+
+        if (!result.success) {
+          logger.error(TAG, `登录操作 ${i + 1} 失败: ${result.error}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.ACTION_FAILED,
+            `登录操作失败: ${result.error}`
+          );
+        }
+
+        // 如果操作返回了数据（token），保存它
+        if (result.data && typeof result.data === 'string') {
+          tokenData = result.data;
+          logger.debug(TAG, `获取到token数据，长度: ${tokenData.length}`);
+          
+          // [修复] 立即设置当前会话的 Token，确保后续请求能立即使用
+          this.currentToken = tokenData;
+          logger.info(TAG, `Token已设置到当前会话: length=${tokenData.length}`);
+          
+          // [修复] 自动保存Token到数据库
+          if (this.config && this.config.authentication && this.config.authentication.type === 'jwt' && this.config.authentication.tokenStorageKey) {
+            const tokenKey: string = this.config.authentication.tokenStorageKey;
+            const sidStr: string = this.engineConfig.sourceId !== undefined ? String(this.engineConfig.sourceId) : '';
+            
+            if (sidStr.length > 0) {
+              const storageKey: string = `source:${sidStr}:${tokenKey}`;
+              const userId: string = username || 'default_user';
+              
+              try {
+                // 注意：DataManager的saveUserSetting是异步的，这里await确保保存完成
+                await this.dataManager.saveUserSetting(userId, storageKey, tokenData);
+                logger.info(TAG, `Token已保存到数据库: key=${storageKey}`);
+              } catch (saveErr) {
+                logger.error(TAG, `保存Token失败: ${saveErr}`);
+              }
+            }
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `登录工作流执行完成，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: tokenData,
+        duration,
+        actionCount: actions.length
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+
+      logger.error(TAG, `登录工作流执行失败: ${errorMessage}`);
+      logger.debug(TAG, `错误堆栈: ${errorStack}`);
+
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
   }
 }

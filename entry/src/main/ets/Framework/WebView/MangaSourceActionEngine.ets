@@ -33,6 +33,7 @@ import { MangaSourceAntiCrawler } from './MangaSourceAntiCrawler';
 import { MangaSourceAPIEngine, JSONExtractConfig } from './MangaSourceAPIEngine';
 import { DataManager } from '../Data/DataManager';
 import CookieManager from '../Managers/CookieManager';
+import { generatePicaSignature } from '../Source/SignatureHandler';
 
 /**
  * 字段选择器解析结果
@@ -961,14 +962,65 @@ export class MangaSourceActionEngine {
           for (let i = 0; i < paramKeys.length; i++) {
             const key = paramKeys[i];
             const value = this.replaceVariables(action.params[key], context.variables);
-            queryParams.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+            // [修复] 跳过空值参数，避免发送无效的查询参数
+            if (value !== '' && value !== undefined && value !== null) {
+              queryParams.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+            } else {
+              logger.debug(TAG, `跳过空值参数: ${key}`);
+            }
           }
-          const separator = url.includes('?') ? '&' : '?';
-          url = url + separator + queryParams.join('&');
-          logger.debug(TAG, `添加查询参数后的URL: ${url}`);
+          if (queryParams.length > 0) {
+            const separator = url.includes('?') ? '&' : '?';
+            url = url + separator + queryParams.join('&');
+            logger.debug(TAG, `添加查询参数后的URL: ${url}`);
+          }
         }
       }
       logger.info(TAG, '开始构建请求Headers');
+      
+      // [修复] 检测是否需要签名，并预先计算签名变量
+      // 检查 action.headers 中是否有签名相关的变量占位符
+      let needsSignature: boolean = false;
+      if (action.headers) {
+        const headerValues: string = JSON.stringify(action.headers);
+        if (headerValues.includes('{{timestamp}}') || 
+            headerValues.includes('{{nonce}}') || 
+            headerValues.includes('{{signature}}') ||
+            headerValues.includes('{{computeSignature}}')) {
+          needsSignature = true;
+        }
+      }
+      
+      if (needsSignature) {
+        logger.info(TAG, '检测到签名变量，开始计算HMAC-SHA256签名');
+        try {
+          // 哔咔漫画的 API Key
+          const apiKey: string = 'C69BAF41DA5ABD1FFEDC6D2FEA56B';
+          // 哔咔漫画的 HMAC 密钥
+          const hmacKey: string = '~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn';
+          
+          // 调用签名生成函数
+          const signatureHeaders: Record<string, string> = await generatePicaSignature(
+            url,
+            action.method,
+            apiKey,
+            hmacKey
+          );
+          
+          // 将签名相关的值注入到 context.variables 中
+          context.variables['timestamp'] = signatureHeaders['time'];
+          context.variables['time'] = signatureHeaders['time'];
+          context.variables['nonce'] = signatureHeaders['nonce'];
+          context.variables['signature'] = signatureHeaders['signature'];
+          context.variables['computeSignature'] = signatureHeaders['signature'];
+          context.variables['apiKey'] = apiKey;
+          
+          logger.info(TAG, `签名计算完成: time=${signatureHeaders['time']}, nonce=${signatureHeaders['nonce'].substring(0, 8)}..., signature=${signatureHeaders['signature'].substring(0, 16)}...`);
+        } catch (signError) {
+          logger.error(TAG, `签名计算失败: ${signError}`);
+          // 签名失败不阻止请求，但可能导致401错误
+        }
+      }
       
       let headers: Record<string, string> = {};
       
@@ -1006,19 +1058,35 @@ export class MangaSourceActionEngine {
         }
       }
 
-      logger.info(TAG, '开始获取WebView User-Agent并注入');
-      try {
-        const uaCode: string = 'navigator.userAgent';
-        const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
-        headers['User-Agent'] = ua;
-        let cleanedUA: string = String(headers['User-Agent']).trim();
-        const lenUA: number = cleanedUA.length;
-        if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
-          cleanedUA = cleanedUA.substring(1, lenUA - 1);
+      // [修复] 只有当配置中没有指定 User-Agent 时，才使用 WebView 的 User-Agent
+      // 某些 API（如哔咔漫画）对 User-Agent 有严格要求，必须使用特定值
+      let configHasUserAgent: boolean = false;
+      const existingHeaderKeys: string[] = Object.keys(headers);
+      for (let idx = 0; idx < existingHeaderKeys.length; idx++) {
+        const hKey: string = existingHeaderKeys[idx];
+        if (hKey.toLowerCase() === 'user-agent') {
+          configHasUserAgent = true;
+          break;
         }
-        headers['User-Agent'] = cleanedUA;
-      } catch (_e) {
-        headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+      }
+      
+      if (!configHasUserAgent) {
+        logger.info(TAG, '配置中未指定 User-Agent，使用 WebView User-Agent');
+        try {
+          const uaCode: string = 'navigator.userAgent';
+          const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
+          headers['User-Agent'] = ua;
+          let cleanedUA: string = String(headers['User-Agent']).trim();
+          const lenUA: number = cleanedUA.length;
+          if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
+            cleanedUA = cleanedUA.substring(1, lenUA - 1);
+          }
+          headers['User-Agent'] = cleanedUA;
+        } catch (_e) {
+          headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+        }
+      } else {
+        logger.info(TAG, `使用配置中指定的 User-Agent: ${headers['User-Agent']}`);
       }
 
       const baseUrlVar: string | undefined = context.variables['baseUrl'];

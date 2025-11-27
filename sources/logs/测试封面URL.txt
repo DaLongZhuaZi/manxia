@@ -1,0 +1,37 @@
+# 从日志中提取的失败URL测试
+
+## 失败的URL（被截断）
+1. https://hi77-overseas.mangafunb.fun/shiernanyoushiernvyou/cover/1686334547.jpg.3
+   - 应该是: .jpg.328x422.jpg
+   - 被截断成: .jpg.3
+
+2. https://hi77-overseas.mangafunb.fun/gebideshoubanyuanxingshi/cover/1651384628.jp
+   - 应该是: .jpg.328x422.jpg
+   - 被截断成: .jp
+
+3. https://hi77-overseas.mangafunb.fun/didushengbeiqitanredline/cover/1651136874.jp
+   - 应该是: .jpg.328x422.jpg
+   - 被截断成: .jp
+
+4. https://hi77-overseas.mangafunb.fun/tiancaizuiruomowushixiangyaoguijia/cover/165
+   - 应该是: 1651567733.jpg.328x422.jpg
+   - 被截断成: 165
+
+5. https://hi77-overseas.mangafunb.fun/wojianleyizhimao/cover/1651148574.jpg.328x42
+   - 应该是: .jpg.328x422.jpg
+   - 被截断成: .jpg.328x42
+
+## 分析
+所有失败的URL都是在80-100字符左右被截断
+可能的原因：
+1. WebView JavaScript提取时有字符串长度限制
+2. 数据传输时被截断
+3. 日志输出时被截断（但实际URL是完整的）
+
+## 测试方法
+在浏览器中直接访问这些URL，看是否能正常加载：
+- 如果404，说明URL确实被截断了
+- 如果能加载，说明只是日志显示问题
+
+## 下一步
+需要检查WebView的JavaScript提取逻辑，看是否有字符串长度限制

@@ -1,0 +1,225 @@
+11-27 23:03:19.732   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.732] ℹ️ 信息 [WebViewDataCacheManager] 初始化WebView数据缓存管理器
+11-27 23:03:19.733   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.733] ℹ️ 信息 [MangaDetailPage] 🔄 生命周期事件: aboutToAppear 开始
+11-27 23:03:19.733   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.733] 🔍 调试 [MangaDetailPage] 主题状态已初始化: dark
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.734] 🔍 调试 [ThemeManager] 注册主题变化监听器，当前监听器数量: 3
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.734] 🔍 调试 [MangaDetailPage] 主题变化: dark -> dark
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.734] 🔍 调试 [ThemeManager] 已向新监听器通知当前主题: dark
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.734] ℹ️ 信息 [WebViewSourceManager] 设置全局WebView控制器
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.734] ℹ️ 信息 [MangaDetailPage] WebView控制器已初始化
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.734] ℹ️ 信息 [MangaDetailPage] 设备方向初始化: 竖屏, 断点: xs
+11-27 23:03:19.734   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.734] 🔍 调试 [DeviceAdaptationManager] 添加监听器，当前监听器数量: 3
+11-27 23:03:19.736   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.736] ℹ️ 信息 [MangaDetailPage] 页面参数: {"sourceId":4,"mangaId":"yuxiangcunbmjdlaxj"}
+11-27 23:03:19.736   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.736] ℹ️ 信息 [MangaDetailPage] 参数设置完成，开始加载数据
+11-27 23:03:19.736   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.736] ℹ️ 信息 [MangaDetailPage] === loadMangaData 开始执行 ===
+11-27 23:03:19.736   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.736] ℹ️ 信息 [MangaDetailPage] 当前pageParams: {"sourceId":4,"mangaId":"yuxiangcunbmjdlaxj"}
+11-27 23:03:19.736   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.736] ℹ️ 信息 [MangaDetailPage] 重试次数: 0/3
+11-27 23:03:19.736   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.736] ℹ️ 信息 [MangaDetailPage] 开始加载漫画数据，ID: yuxiangcunbmjdlaxj
+11-27 23:03:19.776   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.776] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 1
+11-27 23:03:19.777   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.776] 🔍 调试 [📊 数据管理器] [ID查询] workflows包含 13 个工作流: popular, latest, search, filter, favorites, history, getUserAvatar, getMangaDetail, getMangaDetailWithChapters, getChapterList, getPageList, loadMorePages, getImageUrl
+11-27 23:03:19.777   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.777] ℹ️ 信息 [MangaDetailPage] 图源ID: 4, 是否WebView源: true
+11-27 23:03:19.777   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.777] ℹ️ 信息 [MangaDetailPage] WebView源离线优先：尝试从数据库加载在线漫画数据
+11-27 23:03:19.777   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.777] ℹ️ 信息 [MangaDetailPage] 🔄 [场景2] 从图源加载已存在的在线漫画，外部ID: yuxiangcunbmjdlaxj
+11-27 23:03:19.778   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.778] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.778   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.778] ℹ️ 信息 [MangaDetailPage] 未在online_comic_info表中找到漫画，转到场景3
+11-27 23:03:19.778   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.778] ℹ️ 信息 [MangaDetailPage] 离线模式下未找到漫画，需要网络请求
+11-27 23:03:19.778   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.778] ℹ️ 信息 [MangaDetailPage] 数据库未命中缓存：自动从网络获取在线漫画数据
+11-27 23:03:19.778   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.778] ℹ️ 信息 [MangaDetailPage] 开始使用WebView加载漫画详情: sourceId=4, mangaId=yuxiangcunbmjdlaxj
+11-27 23:03:19.801   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.801] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 4
+11-27 23:03:19.801   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.801] 🔍 调试 [MangaDetailPage] 获取到 4 个图源，当前sourceId=4
+11-27 23:03:19.802   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.802] ℹ️ 信息 [MangaDetailPage] 图源名称: 拷贝漫画 (WebView)
+11-27 23:03:19.802   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.802] ℹ️ 信息 [WebViewSourceManager] 创建新的MangaSourceEngine: 4
+11-27 23:03:19.809   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.809] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 1
+11-27 23:03:19.809   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.809] 🔍 调试 [📊 数据管理器] [ID查询] workflows包含 13 个工作流: popular, latest, search, filter, favorites, history, getUserAvatar, getMangaDetail, getMangaDetailWithChapters, getChapterList, getPageList, loadMorePages, getImageUrl
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.810] ℹ️ 信息 [MangaSourceEngine] 加载漫画图源配置
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.810] 🔍 调试 [MangaSourceEngine] 接收到的JSON长度: 17811
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.810] ℹ️ 信息 [MangaSourceConfigParser] 开始解析漫画图源配置
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.810] 🔍 调试 [MangaSourceConfigParser] JSON内容长度: 17811
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.810] 🔍 调试 [MangaSourceConfigParser] JSON解析成功，开始验证配置
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.810] 🔍 调试 [MangaSourceConfigParser] 基础配置验证通过
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.810] 🔍 调试 [MangaSourceConfigParser] 解析工作流，数量: 13, 名称: popular, latest, search, filter, favorites, history, getUserAvatar, getMangaDetail, getMangaDetailWithChapters, getChapterList, getPageList, loadMorePages, getImageUrl
+11-27 23:03:19.810   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.810] 🔍 调试 [MangaSourceConfigParser] 工作流 popular 使用对象格式，操作数量: 7
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 latest 使用对象格式，操作数量: 7
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 search 使用对象格式，操作数量: 7
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 filter 使用对象格式，操作数量: 8
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 favorites 使用对象格式，操作数量: 5
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:19.811] ⚠️ 警告 [MangaSourceConfigParser] 未知的工作流类型: favorites
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 history 使用对象格式，操作数量: 5
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:19.811] ⚠️ 警告 [MangaSourceConfigParser] 未知的工作流类型: history
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 getUserAvatar 使用对象格式，操作数量: 3
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:19.811] ⚠️ 警告 [MangaSourceConfigParser] 未知的工作流类型: getUserAvatar
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 getMangaDetail 使用对象格式，操作数量: 3
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 getMangaDetailWithChapters 使用对象格式，操作数量: 6
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:19.811] ⚠️ 警告 [MangaSourceConfigParser] 未知的工作流类型: getMangaDetailWithChapters
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 getChapterList 使用对象格式，操作数量: 5
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 getPageList 使用对象格式，操作数量: 5
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 loadMorePages 使用对象格式，操作数量: 1
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流 getImageUrl 使用对象格式，操作数量: 1
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 配置转换完成，警告数量: 4
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceConfigParser] 工作流验证通过
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.811] ℹ️ 信息 [MangaSourceConfigParser] 漫画图源配置解析完成
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.811] ℹ️ 信息 [MangaSourceEngine] 配置加载成功: 拷贝漫画 (WebView) v2.0.0
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.811] 🔍 调试 [MangaSourceEngine] 工作流数量: 9, 工作流列表: search, getMangaDetail, getChapterList, getPageList, loadMorePages, getImageUrl, popular, latest, filter
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:19.811] ⚠️ 警告 [MangaSourceEngine] 配置警告: 未知的工作流类型: favorites; 未知的工作流类型: history; 未知的工作流类型: getUserAvatar; 未知的工作流类型: getMangaDetailWithChapters
+11-27 23:03:19.811   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.811] ℹ️ 信息 [WebViewSourceManager] MangaSourceEngine创建成功: 4
+11-27 23:03:19.814   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.814] 🔍 调试 [DatabaseManager] 查询记录成功，表: comic_info, 结果数量: 0
+11-27 23:03:19.815   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.815] 🔍 调试 [DatabaseManager] 查询记录成功，表: online_comic_info, 结果数量: 0
+11-27 23:03:19.815   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:19.815] ⚠️ 警告 [📊 数据管理器] 未找到ID为 yuxiangcunbmjdlaxj 的漫画（已查询 comic_info 和 online_comic_info 表）
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.816] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [📊 数据管理器] 📚 查询到 0 个在线章节记录，开始转换
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [OnlineComicConverter] 开始批量转换 0 个在线章节记录
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [OnlineComicConverter] 批量转换完成，成功转换 0/0 个章节
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [📊 数据管理器] ✅ 在线章节转换完成，成功 0 个
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [MangaDetailPage] 数据库未命中章节，需从网络获取
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.816] 🔍 调试 [MangaDetailPage] currentManga.sourceInfo不可用: currentManga=false, sourceInfo=false, sourceUrl=undefined
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.816] 🔍 调试 [WebViewDataCacheManager] 漫画详情缓存未命中: 4_yuxiangcunbmjdlaxj
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.816] 🔍 调试 [WebViewDataCacheManager] 章节列表缓存未命中: 4_yuxiangcunbmjdlaxj
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [MangaDetailPage] 使用合并工作流获取详情和章节
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [MangaSourceEngine] 未找到合并工作流，使用独立调用
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.816] ℹ️ 信息 [MangaSourceEngine] 获取漫画详情: yuxiangcunbmjdlaxj
+11-27 23:03:19.816   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.816] 🔍 调试 [MangaSourceEngine] 初始化baseUrl变量: https://www.2025copy.com
+11-27 23:03:19.817   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.817] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.818   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.818] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.819   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.819] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.819   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.819] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.820   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.820] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.820   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.820] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:19.820   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.820] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: navigate
+11-27 23:03:19.820   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:19.820] ℹ️ 信息 [MangaSourceActionEngine] 导航到: https://www.2025copy.com/comic/yuxiangcunbmjdlaxj
+11-27 23:03:19.829   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:19.829] 🔍 调试 [MangaSourceActionEngine] 等待页面加载，时间: 1000ms
+11-27 23:03:20.832   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:20.832] 🔍 调试 [MangaSourceActionEngine] 导航完成: https://www.2025copy.com/comic/yuxiangcunbmjdlaxj
+11-27 23:03:20.852   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:20.852] ℹ️ 信息 [MangaSourceActionEngine] 📱 WebView UserAgent: "Mozilla/5.0 (Phone; OpenHarmony 6.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36  ArkWeb/6.0.0.112 Mobile"
+11-27 23:03:20.853   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:20.853] 🔍 调试 [MangaSourceActionEngine] 操作完成: navigate, 耗时: 1033ms
+11-27 23:03:20.853   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:20.853] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: wait
+11-27 23:03:20.853   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:20.853] ℹ️ 信息 [MangaSourceActionEngine] 等待条件: time
+11-27 23:03:22.354   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.353] 🔍 调试 [MangaSourceActionEngine] 操作完成: wait, 耗时: 1500ms
+11-27 23:03:22.355   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:22.355] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: script
+11-27 23:03:22.357   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:22.357] ℹ️ 信息 [MangaSourceActionEngine] 执行脚本: (() => { const result = { id: 'yuxiangcunbmjdlaxj', title: document.querySelector('.comicParticulars...
+11-27 23:03:22.373   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.373] 🔍 调试 [MangaSourceActionEngine] 操作完成: script, 耗时: 19ms
+11-27 23:03:22.373   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.373] 🔍 调试 [MangaSourceActionEngine] 脚本结果已保存到scriptResult: {\"id\":\"yuxiangcunbmjdlaxj\",\"title\":\"與鄉村堂妹間的戀愛喜劇\",\"cover\":\"https://sy.mangafunb.fun/y/yuxi...
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] 第一次JSON解析完成，类型: string
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] 检测到双重字符串化，进行第二次解析
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] 第二次JSON解析完成，类型: object
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] script返回数据已解析: {"id":"yuxiangcunbmjdlaxj","title":"與鄉村堂妹間的戀愛喜劇","cover":"https://sy.mangafunb.fun/y/yuxiangcunbmjdlaxj/cover/1719900684.jpg.328x422.jpg","author":"いぬちく","status":"連載中","description":"初二的夏天來到鄉下叔叔家避暑，遇
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] 提取到的字段: id, title, cover, author, status, description, genres, updateTime
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] 原始id值: yuxiangcunbmjdlaxj, 类型: string
+11-27 23:03:22.374   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.374] 🔍 调试 [MangaSourceEngine] 转换MangaInfo: id="yuxiangcunbmjdlaxj", title="與鄉村堂妹間的戀愛喜劇", cover="https://sy.mangafunb.fun/y/yuxiangcunbmjdlaxj/cover/1719900684.jpg.328x422.jpg"
+11-27 23:03:22.375   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:22.375] ℹ️ 信息 [MangaSourceEngine] 获取漫画详情完成，耗时 2559ms
+11-27 23:03:22.375   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:22.375] ℹ️ 信息 [MangaSourceEngine] 获取章节列表: yuxiangcunbmjdlaxj
+11-27 23:03:22.375   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.375] 🔍 调试 [MangaSourceEngine] 初始化baseUrl变量: https://www.2025copy.com
+11-27 23:03:22.378   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.378] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:22.379   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.379] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:22.380   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.380] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:22.382   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.382] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:22.383   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.383] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:22.385   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.385] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:22.385   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:22.385] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: navigate
+11-27 23:03:22.385   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:22.385] ℹ️ 信息 [MangaSourceActionEngine] 导航到: https://www.2025copy.com/comic/yuxiangcunbmjdlaxj
+11-27 23:03:22.390   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:22.390] 🔍 调试 [MangaSourceActionEngine] 等待页面加载，时间: 1000ms
+11-27 23:03:23.392   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:23.392] 🔍 调试 [MangaSourceActionEngine] 导航完成: https://www.2025copy.com/comic/yuxiangcunbmjdlaxj
+11-27 23:03:23.400   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:23.400] ℹ️ 信息 [MangaSourceActionEngine] 📱 WebView UserAgent: "Mozilla/5.0 (Phone; OpenHarmony 6.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36  ArkWeb/6.0.0.112 Mobile"
+11-27 23:03:23.400   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:23.400] 🔍 调试 [MangaSourceActionEngine] 操作完成: navigate, 耗时: 1015ms
+11-27 23:03:23.400   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:23.400] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: wait
+11-27 23:03:23.400   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:23.400] ℹ️ 信息 [MangaSourceActionEngine] 等待条件: time
+11-27 23:03:24.401   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.401] 🔍 调试 [MangaSourceActionEngine] 操作完成: wait, 耗时: 1001ms
+11-27 23:03:24.401   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.401] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: script
+11-27 23:03:24.402   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.402] ℹ️ 信息 [MangaSourceActionEngine] 执行脚本: window.scrollTo(0, 1500);...
+11-27 23:03:24.409   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.409] 🔍 调试 [MangaSourceActionEngine] JavaScript返回空值: null
+11-27 23:03:24.409   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.409] 🔍 调试 [MangaSourceActionEngine] 操作完成: script, 耗时: 8ms
+11-27 23:03:24.409   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.409] 🔍 调试 [MangaSourceActionEngine] 脚本结果已保存到scriptResult: 
+11-27 23:03:24.410   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.410] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: wait
+11-27 23:03:24.410   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.410] ℹ️ 信息 [MangaSourceActionEngine] 等待条件: time
+11-27 23:03:24.912   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.912] 🔍 调试 [MangaSourceActionEngine] 操作完成: wait, 耗时: 502ms
+11-27 23:03:24.913   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.913] ℹ️ 信息 [MangaSourceActionEngine] 执行操作: script
+11-27 23:03:24.915   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.915] ℹ️ 信息 [MangaSourceActionEngine] 执行脚本: (() => { console.log('[章节提取] 开始提取章节列表'); const chapters = []; const selectors = ['.chapter-list-1 ul...
+11-27 23:03:24.929   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.929] 🔍 调试 [MangaSourceActionEngine] 操作完成: script, 耗时: 17ms
+11-27 23:03:24.930   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.930] 🔍 调试 [MangaSourceActionEngine] 脚本结果已保存到scriptResult: [{\"id\":\"DEBUG\",\"title\":\"Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?...
+11-27 23:03:24.930   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.930] 🔍 调试 [MangaSourceEngine] script操作返回数据类型: string
+11-27 23:03:24.930   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.930] 🔍 调试 [MangaSourceEngine] script操作返回数据内容: "[{\"id\":\"DEBUG\",\"title\":\"Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=
+11-27 23:03:24.931   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.931] 🔍 调试 [MangaSourceEngine] 第一次JSON解析: 类型=string, 是否数组=false
+11-27 23:03:24.931   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.931] 🔍 调试 [MangaSourceEngine] 检测到双重字符串化，进行第二次解析
+11-27 23:03:24.931   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.931] 🔍 调试 [MangaSourceEngine] 第二次JSON解析: 类型=object, 是否数组=true
+11-27 23:03:24.932   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.932] 🔍 调试 [MangaSourceEngine] 章节提取到的字段: id, title
+11-27 23:03:24.932   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.932] 🔍 调试 [MangaSourceEngine] 📋 章节原始数据: externalId=DEBUG, title=Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics, publishTime=undefined
+11-27 23:03:24.932   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.932] ℹ️ 信息 [MangaSourceEngine] ✅ 章节转换完成: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", externalId=DEBUG
+11-27 23:03:24.932   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.932] ℹ️ 信息 [MangaSourceEngine] script操作返回了 1 个章节
+11-27 23:03:24.932   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.932] ℹ️ 信息 [MangaSourceEngine] 获取章节列表完成，共 1 章，耗时 2557ms
+11-27 23:03:24.933   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.933] ℹ️ 信息 [MangaDetailPage] 合并获取成功: 與鄉村堂妹間的戀愛喜劇, 1章
+11-27 23:03:24.933   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.933] ℹ️ 信息 [WebViewDataCacheManager] 缓存漫画详情: 4_yuxiangcunbmjdlaxj, 标题: 與鄉村堂妹間的戀愛喜劇
+11-27 23:03:24.934   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.934] ℹ️ 信息 [WebViewDataCacheManager] 缓存章节列表: 4_yuxiangcunbmjdlaxj, 章节数: 1
+11-27 23:03:24.934   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.934] 🔍 调试 [MangaDetailPage] 转换Manga: id="yuxiangcunbmjdlaxj", title="與鄉村堂妹間的戀愛喜劇", cover="https://sy.mangafunb.fun/y/yuxiangcunbmjdlaxj/cover/1719900684.jpg.328x422.jpg"
+11-27 23:03:24.937   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.937] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:24.937   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.937] ℹ️ 信息 [MangaDetailPage] 在线漫画初始收藏状态: 未在本地表找到externalId映射记录
+11-27 23:03:24.937   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:24.937] ⚠️ 警告 [MangaDetailPage] ⚠️ 检测到DEBUG章节，但这是首次加载，继续处理
+11-27 23:03:24.938   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.938] 🔍 调试 [MangaDetailPage] 📄 转换章节: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", 临时id=DEBUG, externalId=DEBUG
+11-27 23:03:24.938   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.938] ℹ️ 信息 [MangaDetailPage] 章节去重: 原始1章 -> 去重后1章
+11-27 23:03:24.946   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.945] 🔍 调试 [MangaDetailPage] 封面路径来源类型=NETWORK, 原样使用路径: 'https://sy.mangafunb.fun/y/yuxiangcunbmjdlaxj/cover/1719900684.jpg.328x422.jpg'
+11-27 23:03:24.968   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.968] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:24.969   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.969] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:24.969   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.969] ℹ️ 信息 [MangaDetailPage] 📝 准备保存在线漫画: sourceName="拷贝漫画 (WebView)"
+11-27 23:03:24.969   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.969] ℹ️ 信息 [📊 数据管理器] 📝 [SQL] 开始保存在线漫画: title="與鄉村堂妹間的戀愛喜劇", sourceId=4, externalId="yuxiangcunbmjdlaxj"
+11-27 23:03:24.970   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.970] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:24.970   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.970] 🔍 调试 [UUIDGenerator] UUID生成器初始化
+11-27 23:03:24.971   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.971] ℹ️ 信息 [📊 数据管理器] 📝 [SQL] 创建新记录: id="id_1764255804970_v6kprftq"
+11-27 23:03:24.971   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.971] ℹ️ 信息 [📊 数据管理器] 📝 [SQL] 使用传递的图源名称: "拷贝漫画 (WebView)"
+11-27 23:03:24.971   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.971] 🔍 调试 [📊 数据管理器] 📝 [SQL] 执行SQL: INSERT OR REPLACE INTO online_comic_info 
+                                                                                                                  (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName) 
+                                                                                                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+11-27 23:03:24.971   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.971] 🔍 调试 [📊 数据管理器] 📝 [SQL] 参数: id=id_1764255804970_v6kprftq, sourceId=4, externalId=yuxiangcunbmjdlaxj, title=與鄉村堂妹間的戀愛喜劇
+11-27 23:03:24.976   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.976] 🔍 调试 [DatabaseManager] SQL执行成功: INSERT OR REPLACE INTO online_comic_info 
+                                                                                                                  (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName) 
+                                                                                                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.977] ℹ️ 信息 [📊 数据管理器] ✅ [SQL] 在线漫画已保存/更新: 與鄉村堂妹間的戀愛喜劇 (ID=id_1764255804970_v6kprftq, 图源4, 外部ID=yuxiangcunbmjdlaxj)
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.977] ℹ️ 信息 [MangaDetailPage] ✅ 在线漫画已保存到online_comic_info表: 與鄉村堂妹間的戀愛喜劇, 章节数: 1, 内部ID: id_1764255804970_v6kprftq
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.977] ℹ️ 信息 [MangaDetailPage] 🚫 WebView图源禁用页面预取
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.977] ℹ️ 信息 [MangaDetailPage] 🚫 WebView图源禁用页面预取
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.977] ℹ️ 信息 [MangaDetailPage] 当前图源禁用页面预取
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.977] 🔍 调试 [MangaDetailPage] 📋 [保存前] 章节 1/1: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", id="DEBUG", externalId="DEBUG", 使用externalId="DEBUG"
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.977] ℹ️ 信息 [MangaDetailPage] ✅ 准备保存在线章节 "Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics": externalId=DEBUG
+11-27 23:03:24.977   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.977] 🔍 调试 [MangaDetailPage] 📊 章节 "Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics": 提取的章节号=17, 最终使用=17
+11-27 23:03:24.979   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.979] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:24.983   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.983] 🔍 调试 [DatabaseManager] SQL执行成功: INSERT INTO online_chapter 
+                                                                                                                    (id, comicId, externalId, title, chapterNumber, url, pageCount, publishTime, addTime, createTime, updateTime, isDownloaded, downloadPath, `index`) 
+                                                                                                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+11-27 23:03:24.983   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.983] ℹ️ 信息 [📊 数据管理器] ✅ 在线章节已保存: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", externalId=DEBUG, internalId=id_1764255804979_ouxnk7ax
+11-27 23:03:24.984   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.984] ℹ️ 信息 [MangaDetailPage] ✅ 在线章节保存成功: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", externalId=DEBUG, internalId=id_1764255804979_ouxnk7ax
+11-27 23:03:24.984   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.984] ℹ️ 信息 [MangaDetailPage] ✅ 已保存 1 个章节信息到数据库
+11-27 23:03:24.984   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.984] ℹ️ 信息 [MangaDetailPage] 📡 重新加载章节信息以更新UI...
+11-27 23:03:24.988   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.988] 🔍 调试 [MangaDetailPage] 封面路径来源类型=NETWORK, 原样使用路径: 'https://sy.mangafunb.fun/y/yuxiangcunbmjdlaxj/cover/1719900684.jpg.328x422.jpg'
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 1
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.995] ℹ️ 信息 [📊 数据管理器] 📚 查询到 1 个在线章节记录，开始转换
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.995] ℹ️ 信息 [OnlineComicConverter] 开始批量转换 1 个在线章节记录
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter] 📋 [DB→OnlineChapterInfo] 原始记录详细信息:
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - id: type=string, value="id_1764255804979_ouxnk7ax"
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - comicId: type=string, value="id_1764255804970_v6kprftq"
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - externalId: type=string, value="DEBUG", isNull=false, isUndefined=false
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - title: type=string, value="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics"
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   ✅ [DB→OnlineChapterInfo] 转换完成:
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - id="id_1764255804979_ouxnk7ax"
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - externalId="DEBUG" (长度: 5)
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [OnlineComicConverter]   - title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics"
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.995] ℹ️ 信息 [OnlineComicConverter] 批量转换完成，成功转换 1/1 个章节
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.995] ℹ️ 信息 [📊 数据管理器] ✅ 在线章节转换完成，成功 1 个
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.995] ℹ️ 信息 [MangaDetailPage] 从数据库加载章节: 1 个
+11-27 23:03:24.995   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.995] 🔍 调试 [MangaDetailPage] 📋 [数据库读取] 章节 1/1: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", id="id_1764255804979_ouxnk7ax", externalId="DEBUG"
+11-27 23:03:24.997   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.997] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:24.997   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.997] 🔍 调试 [MangaDetailPage]   ✅ 章节转换完成 1: title="Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics", id="id_1764255804979_ouxnk7ax", externalId="DEBUG", pages=0
+11-27 23:03:24.997   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.997] ℹ️ 信息 [MangaDetailPage] 章节加载完成: 1 个
+11-27 23:03:24.997   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:24.997] ℹ️ 信息 [📊 数据管理器] 开始清理漫画 yuxiangcunbmjdlaxj 的重复章节
+11-27 23:03:24.998   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:24.998] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:25.003   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:25.003] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:25.003   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:25.003] ℹ️ 信息 [📊 数据管理器] 没有找到章节
+11-27 23:03:25.003   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:25.003] ℹ️ 信息 [MangaDetailPage] 开始加载章节进度数据，共1个章节
+11-27 23:03:25.004   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:25.004] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 0
+11-27 23:03:25.004   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:25.004] 🔍 调试 [MangaDetailPage] 获取到当前在线漫画的阅读历史记录数: 0
+11-27 23:03:25.006   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:25.006] 🔍 调试 [DatabaseManager] 查询记录成功，表: page, 结果数量: 0
+11-27 23:03:25.006   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:25.006] ℹ️ 信息 [MangaDetailPage] 批量查询完成，获取到1个章节的页面信息
+11-27 23:03:25.006   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:25.006] 🔍 调试 [MangaDetailPage] 章节进度: Total:17 Samples:/|/comics|/topic|/filter|/rank|/download|/web/login?jumpto=https%3A//www.2025copy.com/web/person/uploadComic|/web/login?url=person/home|/web/login?url=person/home|/author/inuciku/comics - 当前页: -1, 总页数: 0
+11-27 23:03:25.007   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:25.007] ℹ️ 信息 [MangaDetailPage] 章节进度数据加载完成，共1个章节
+11-27 23:03:25.007   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:25.007] ℹ️ 信息 [MangaDetailPage] WebView漫画数据加载完成
+11-27 23:03:29.064   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       I     [NGF] [23:03:29.063] ℹ️ 信息 [OnlineImageLoader] HTTP响应成功: code=200, bytes=105875, duration=29517ms
+11-27 23:03:29.090   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:29.090] 🔍 调试 [OnlineImageLoader] 发起HTTP请求: url=https://sy.mangafunb.fun/y/yaoguaiyuwo/cover/1705160559.jpg.328x422.jpg, timeout=30000
+11-27 23:03:29.097   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:29.097] 🔍 调试 [OnlineImageLoader] 淘汰缓存: key=online_3s5h6e, size=140800
+11-27 23:03:29.097   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:29.097] 🔍 调试 [OnlineImageLoader] 存入缓存: key=online_6l5ery, size=140800, total=7040000
+11-27 23:03:29.237   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       E     [NGF] [23:03:29.237] ❌ 错误 [OnlineImageLoader] HTTP请求异常: [object Object]
+11-27 23:03:29.238   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       W     [NGF] [23:03:29.237] ⚠️ 警告 [OnlineImageLoader] 请求失败，准备重试 (2/2): https://sd.mangafunb.fun/d/diyicidegal/cover/1762670614.jpg.328x422.jpg
+11-27 23:03:29.238   24056-24056   A00000/com.dlz...nxia/wwssadad  com.dlzz.manxia       D     [NGF] [23:03:29.238] 🔍 调试 [OnlineImageLoader] 发起HTTP请求: url=https://si.mangafunb.fun/i/ishuzokureviewers/cover/1716882916.jpg.328x422.jpg, timeout=30000

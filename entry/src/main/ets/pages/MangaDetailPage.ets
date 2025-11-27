@@ -33,6 +33,7 @@ import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager'
 import { MangaSourceEngine, EngineResult, MangaDetailWithChapters } from '../Framework/WebView/MangaSourceEngine';
 import { MangaInfo, ChapterInfo as WebViewChapterInfo, PageInfo as SourcePageInfo } from '../Framework/WebView/MangaSourceTypes';
 import { WebViewDataCacheManager } from '../Framework/Cache/WebViewDataCacheManager';
+import { ChapterPreloadManager, ChapterInfo } from '../Framework/Preload/ChapterPreloadManager';
 
 import { LengthMetrics, curves, UIContext } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
@@ -74,6 +75,7 @@ export interface MangaDetailPageParams {
   mangaId: string;
   chapterId?: string;
   fromPage?: string;
+  cachedCoverPath?: string;  // 新增：已缓存的封面路径
 }
 
 /**
@@ -445,6 +447,10 @@ struct MangaDetailPage {
     this.isDisposed = true;
     this.isLoading = false;
     this.clearAllTimers();
+
+    // 停止预加载任务
+    ChapterPreloadManager.getInstance().stopPreload();
+    logger.info(TAG, '已停止章节预加载');
 
     // 清理主题变化监听器
     if (this.themeChangeCallback) {
@@ -1520,8 +1526,12 @@ struct MangaDetailPage {
         logger.warn(TAG, `获取图源名称失败: ${String(err)}`);
       }
       
-      // 获取MangaSourceEngine
-      this.mangaEngine = await this.webViewManager.getMangaEngine(this.sourceId);
+      // 获取MangaSourceEngine（【关键】必须传递sourceName确保图源正确）
+      if (!this.sourceName) {
+        throw new Error(`图源名称为空，无法初始化MangaSourceEngine: sourceId=${this.sourceId}`);
+      }
+      logger.info(TAG, `🔄 初始化MangaSourceEngine: sourceName="${this.sourceName}", sourceId=${this.sourceId}`);
+      this.mangaEngine = await this.webViewManager.getMangaEngine(this.sourceId, this.sourceName);
       
       if (!this.pageParams?.mangaId) {
         throw new Error('漫画ID为空');
@@ -1752,6 +1762,14 @@ struct MangaDetailPage {
       
       // 转换为Manga对象
       this.currentManga = this.convertMangaInfoToManga(mangaInfo);
+      
+      // 如果有缓存的封面路径，优先使用
+      if (this.pageParams?.cachedCoverPath) {
+        this.currentManga.coverImagePath = this.pageParams.cachedCoverPath;
+        this.currentManga.coverSourceType = ImageSourceType.LOCAL;
+        logger.info(TAG, `使用图源详情页缓存的封面: ${this.pageParams.cachedCoverPath}`);
+      }
+      
       if (!this.isSilentRefresh) {
         this.isLoading = false;
       }
@@ -1835,6 +1853,9 @@ struct MangaDetailPage {
       this.isChapterLoading = false;
       
       logger.info(TAG, 'WebView漫画数据加载完成');
+      
+      // 立即触发章节预加载（在获取到章节列表后）
+      this.triggerChapterPreload();
       
     } catch (error) {
       logger.error(TAG, `WebView加载失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -3069,10 +3090,91 @@ struct MangaDetailPage {
   }
 
   /**
+   * 触发章节预加载
+   */
+  private triggerChapterPreload(): void {
+    if (!this.currentManga || !this.currentManga.chapters || this.currentManga.chapters.length === 0) {
+      logger.debug(TAG, '无可用章节，跳过预加载');
+      return;
+    }
+    
+    if (!this.pageParams?.sourceId || !this.pageParams?.mangaId) {
+      logger.debug(TAG, '缺少sourceId或mangaId，跳过预加载');
+      return;
+    }
+    
+    // 获取外部漫画ID
+    let externalMangaId = this.pageParams.mangaId;
+    if (this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceUrl && !this.currentManga.sourceInfo.sourceUrl.startsWith('id_')) {
+      externalMangaId = this.currentManga.sourceInfo.sourceUrl;
+    }
+    
+    // 确定要预加载的章节
+    const chaptersToPreload: ChapterInfo[] = [];
+    
+    // 获取用户阅读进度
+    const readingProgress = this.hasReadingProgress() ? this.determineResumeTarget() : null;
+    let startIndex = 0;
+    
+    if (readingProgress && readingProgress.chapterId) {
+      // 从阅读进度之后的章节开始预加载
+      // 找到当前章节的索引
+      const currentChapterIndex = this.currentManga.chapters.findIndex(ch => ch.id === readingProgress.chapterId);
+      if (currentChapterIndex >= 0) {
+        startIndex = currentChapterIndex + 1;
+        logger.info(TAG, `从阅读进度后开始预加载: 章节${startIndex}`);
+      }
+    } else {
+      // 从第一章开始预加载
+      logger.info(TAG, '从第一章开始预加载');
+    }
+    
+    // 选择前3个章节进行预加载
+    const maxPreloadChapters = 3;
+    for (let i = startIndex; i < Math.min(startIndex + maxPreloadChapters, this.currentManga.chapters.length); i++) {
+      const chapter = this.currentManga.chapters[i];
+      if (chapter.externalId) {
+        const chapterInfo: ChapterInfo = {
+          id: chapter.id,
+          externalId: chapter.externalId,
+          title: chapter.title
+        };
+        chaptersToPreload.push(chapterInfo);
+      }
+    }
+    
+    if (chaptersToPreload.length === 0) {
+      logger.warn(TAG, '没有找到可预加载的章节（缺少externalId）');
+      return;
+    }
+    
+    logger.info(TAG, `准备预加载 ${chaptersToPreload.length} 个章节`);
+    
+    // 启动预加载（【关键】必须传递sourceName）
+    const preloadManager = ChapterPreloadManager.getInstance();
+    if (!this.sourceName) {
+      logger.warn(TAG, `图源名称为空，跳过预加载: sourceId=${this.pageParams.sourceId}`);
+      return;
+    }
+    preloadManager.startPreload(
+      this.pageParams.mangaId,
+      externalMangaId,
+      this.pageParams.sourceId,
+      this.sourceName,
+      chaptersToPreload
+    ).catch((error: Error) => {
+      logger.error(TAG, `预加载失败: ${error.message}`);
+    });
+  }
+
+  /**
    * 开始/继续阅读
    */
   private async startReading(): Promise<void> {
     if (!this.currentManga) return;
+
+    // 通知预加载管理器：阅读器即将激活
+    ChapterPreloadManager.getInstance().setReaderActive(true);
 
     logger.info(TAG, '开始/继续阅读入口');
     const nm: string = this.sourceName ? this.sourceName.toLowerCase() : '';
@@ -3098,88 +3200,47 @@ struct MangaDetailPage {
       readerParams.mangaId = this.pageParams.mangaId; // 传递外部ID用于API请求
       let sn1: string = '';
       const dm = DataManager.getInstance();
+      const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', ''];
       
-      // [修复] 优先从 online_comic_info 表获取图源名称，但要过滤无效值
-      if (this.pageParams.mangaId) {
-        const onlineInfo = await dm.getOnlineComicInfoById(this.pageParams.mangaId);
-        if (onlineInfo && onlineInfo.sourceName) {
-          logger.debug(TAG, `online_comic_info记录: sourceName="${onlineInfo.sourceName}", sourceId="${onlineInfo.sourceId}"`);
-          // 过滤掉无效的图源名称
-          const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', ''];
-          if (!invalidNames.includes(onlineInfo.sourceName)) {
-            sn1 = onlineInfo.sourceName;
-            logger.debug(TAG, `从online_comic_info获取有效图源名称: "${sn1}"`);
-          } else {
-            logger.warn(TAG, `online_comic_info中的sourceName="${onlineInfo.sourceName}"无效，跳过`);
-          }
-        }
+      // [关键修复] 优先使用当前页面已确定的图源名称（this.sourceName）
+      // 这是最可靠的来源，因为 MangaDetailPage 在初始化时已经正确设置了 sourceName
+      // 数据库中的 sourceName 可能是错误的（之前的 bug 导致），所以不再优先使用
+      if (this.sourceName && !invalidNames.includes(this.sourceName)) {
+        sn1 = this.sourceName;
+        logger.info(TAG, `✅ 使用当前页面的图源名称: "${sn1}"`);
       }
       
-      // [修复] 如果上一步失败，直接查询所有WebView图源，找到第一个
-      // 移除 this.useWebView 限制，确保即使 sourceId 不存在也能找到真实图源
-      if (!sn1) {
-        logger.info(TAG, `尝试查找WebView类型图源（不依赖useWebView标志）`);
-        const allSources = await dm.getAllComicSources();
-        for (const record of allSources) {
-          const src = record as ComicSourceDatabaseRecord;
-          // 检查是否为WebView图源（通过configJson中的workflows字段判断）
-          if (src.configJson && typeof src.configJson === 'string') {
-            try {
-              const config: ESObject = JSON.parse(src.configJson) as ESObject;
-              if (config.workflows && src.name && typeof src.name === 'string' && typeof src.id === 'number') {
-                sn1 = src.name;
-                const srcId: number = src.id;
-                logger.info(TAG, `✅ 找到WebView图源: "${sn1}" (ID=${srcId})`);
-                // [重要] 同时更新 pageParams.sourceId 和 readerParams.sourceId
-                if (this.pageParams) {
-                  this.pageParams.sourceId = srcId;
-                  readerParams.sourceId = srcId;
-                  logger.info(TAG, `✅ 已更正sourceId: ${srcId}`);
-                }
-                
-                // [可选] 更新数据库中的图源信息
-                try {
-                  const updateSql = 'UPDATE online_comic_info SET sourceName = ?, sourceId = ? WHERE id = ?';
-                  const dbManager = DatabaseManager.getInstance();
-                  await dbManager.executeSql(updateSql, [src.name, String(srcId), this.pageParams.mangaId]);
-                  logger.info(TAG, `✅ 已更新漫画 ${this.pageParams.mangaId} 的图源信息到数据库`);
-                } catch (updateError) {
-                  logger.warn(TAG, `更新数据库失败（不影响继续）: ${updateError}`);
-                }
-                break;
-              }
-            } catch (e) {
-              // 忽略JSON解析错误
-            }
-          }
-        }
-      }
-      
-      // 降级方案1：从 comic_source 表获取
+      // 降级方案1：从 comic_source 表通过 sourceId 获取（比数据库中的 sourceName 更可靠）
       if (!sn1 && this.pageParams.sourceId) {
         const srcRecord = await dm.getComicSourceById(this.pageParams.sourceId);
         if (srcRecord && srcRecord.name && srcRecord.name.length > 0) {
           sn1 = srcRecord.name;
-          logger.debug(TAG, `从comic_source获取图源名称: "${sn1}"`);
+          logger.info(TAG, `从comic_source获取图源名称: "${sn1}" (sourceId=${this.pageParams.sourceId})`);
         }
       }
       
-      // 降级方案2：从当前页面状态获取（但要过滤无效值）
-      if (!sn1) {
-        const pageSourceName = this.sourceName || (this.currentManga?.sourceInfo?.sourceName);
-        if (pageSourceName && 
-            pageSourceName !== 'LOCAL' && 
-            pageSourceName !== '本地导入' &&
-            pageSourceName !== 'UNKNOWN') {
-          sn1 = pageSourceName;
-          logger.debug(TAG, `从页面状态获取图源名称: "${sn1}"`);
+      // 降级方案2：从 online_comic_info 表获取图源名称（可能不准确，仅作为最后手段）
+      if (!sn1 && this.pageParams.mangaId) {
+        const onlineInfo = await dm.getOnlineComicInfoById(this.pageParams.mangaId);
+        if (onlineInfo && onlineInfo.sourceName && !invalidNames.includes(onlineInfo.sourceName)) {
+          sn1 = onlineInfo.sourceName;
+          logger.debug(TAG, `从online_comic_info获取图源名称: "${sn1}"`);
         }
       }
       
-      // 最终降级：使用占位符
+      // 降级方案3：从漫画对象的 sourceInfo 获取
+      if (!sn1 && this.currentManga?.sourceInfo?.sourceName) {
+        const mangaSourceName = this.currentManga.sourceInfo.sourceName;
+        if (!invalidNames.includes(mangaSourceName)) {
+          sn1 = mangaSourceName;
+          logger.debug(TAG, `从manga.sourceInfo获取图源名称: "${sn1}"`);
+        }
+      }
+      
+      // 最终降级：使用占位符（不应该到达这里）
       if (!sn1) {
         sn1 = 'WebView图源';
-        logger.warn(TAG, `无法获取有效图源名称，使用占位符: "${sn1}"`);
+        logger.warn(TAG, `⚠️ 无法获取有效图源名称，使用占位符: "${sn1}"，sourceId=${this.pageParams.sourceId}`);
       }
       
       readerParams.sourceName = sn1;
@@ -3368,74 +3429,49 @@ struct MangaDetailPage {
       readerParams.sourceId = this.pageParams.sourceId;
       let sn2: string = '';
       const dm = DataManager.getInstance();
+      const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', ''];
       
-      // [修复] 优先从online_comic_info表获取图源名称，但要过滤无效值
-      if (this.pageParams.mangaId) {
+      // [关键修复] 优先使用当前页面已确定的图源名称（this.sourceName）
+      // 这是最可靠的来源，因为 MangaDetailPage 在初始化时已经正确设置了 sourceName
+      if (this.sourceName && !invalidNames.includes(this.sourceName)) {
+        sn2 = this.sourceName;
+        logger.info(TAG, `✅ 使用当前页面的图源名称: "${sn2}"`);
+      }
+      
+      // 降级方案1：从online_comic_info表获取图源名称
+      if (!sn2 && this.pageParams.mangaId) {
         const onlineInfo = await dm.getOnlineComicByExternalId(this.pageParams.mangaId);
-        if (onlineInfo && onlineInfo.sourceName) {
-          // 过滤掉无效的图源名称
-          const validSourceNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', ''];
-          if (!validSourceNames.includes(onlineInfo.sourceName)) {
-            sn2 = onlineInfo.sourceName;
-            logger.debug(TAG, `从online_comic_info获取有效图源名称: "${sn2}"`);
-          } else {
-            logger.warn(TAG, `online_comic_info中的sourceName="${onlineInfo.sourceName}"无效，跳过`);
-          }
+        if (onlineInfo && onlineInfo.sourceName && !invalidNames.includes(onlineInfo.sourceName)) {
+          sn2 = onlineInfo.sourceName;
+          logger.debug(TAG, `从online_comic_info获取有效图源名称: "${sn2}"`);
         }
       }
       
-      // [修复] 如果上一步失败，直接查询所有WebView图源，找到第一个
-      // 移除 this.useWebView 限制，确保即使 sourceId 不存在也能找到真实图源
-      if (!sn2) {
-        logger.info(TAG, `尝试查找WebView类型图源（不依赖useWebView标志）`);
-        const allSources = await dm.getAllComicSources();
-        for (const record of allSources) {
-          const src = record as ComicSourceDatabaseRecord;
-          // 检查是否为WebView图源（通过configJson中的workflows字段判断）
-          if (src.configJson && typeof src.configJson === 'string') {
-            try {
-              const config: ESObject = JSON.parse(src.configJson) as ESObject;
-              if (config.workflows && src.name && typeof src.name === 'string' && typeof src.id === 'number') {
-                sn2 = src.name;
-                const srcId = src.id;
-                logger.info(TAG, `✅ 找到WebView图源: "${sn2}" (ID=${srcId})`);
-                // [重要] 同时更新 pageParams.sourceId 和 readerParams.sourceId
-                if (this.pageParams) {
-                  this.pageParams.sourceId = srcId;
-                  readerParams.sourceId = srcId;
-                  logger.info(TAG, `✅ 已更正sourceId: ${srcId}`);
-                }
-                break;
-              }
-            } catch (e) {
-              // 忽略JSON解析错误
-            }
-          }
-        }
-      }
-      
-      // 降级方案1：通过sourceId查询
+      // 降级方案2：从 comic_source 表通过 sourceId 获取
       if (!sn2 && this.pageParams.sourceId) {
+        logger.info(TAG, `尝试通过当前sourceId=${this.pageParams.sourceId}查找图源名称`);
         const srcRecord = await dm.getComicSourceById(this.pageParams.sourceId);
         if (srcRecord && srcRecord.name && srcRecord.name.length > 0) {
           sn2 = srcRecord.name;
-          logger.debug(TAG, `从comic_source(ID=${this.pageParams.sourceId})获取图源名称: "${sn2}"`);
+          logger.info(TAG, `✅ 找到图源名称: "${sn2}" (ID=${this.pageParams.sourceId})`);
+        } else {
+          logger.warn(TAG, `⚠️ 未找到sourceId=${this.pageParams.sourceId}的图源记录`);
         }
       }
       
-      // 降级方案2：从页面状态获取（但要过滤无效值）
-      if (!sn2) {
-        const pageSourceName = this.sourceName || (this.currentManga && this.currentManga.sourceInfo && this.currentManga.sourceInfo.sourceName);
-        if (pageSourceName && pageSourceName !== 'LOCAL' && pageSourceName !== '本地导入' && pageSourceName !== 'UNKNOWN') {
-          sn2 = pageSourceName;
-          logger.debug(TAG, `从页面状态获取图源名称: "${sn2}"`);
+      // 降级方案3：从漫画对象的 sourceInfo 获取
+      if (!sn2 && this.currentManga?.sourceInfo?.sourceName) {
+        const mangaSourceName = this.currentManga.sourceInfo.sourceName;
+        if (!invalidNames.includes(mangaSourceName)) {
+          sn2 = mangaSourceName;
+          logger.debug(TAG, `从manga.sourceInfo获取图源名称: "${sn2}"`);
         }
       }
       
-      // 最终降级：使用占位符
+      // 最终降级：使用占位符（不应该到达这里）
       if (!sn2) {
         sn2 = 'WebView图源';
-        logger.warn(TAG, `无法获取有效图源名称，使用占位符: "${sn2}"`);
+        logger.warn(TAG, `⚠️ 无法获取有效图源名称，使用占位符: "${sn2}"，sourceId=${this.pageParams.sourceId}`);
       }
       
       readerParams.sourceName = sn2;

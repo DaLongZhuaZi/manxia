@@ -396,7 +396,9 @@ export class CoverCacheManager {
         return null;
       }
     } catch (error) {
-      logger.error(TAG, `下载封面异常: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errCode = (error as Record<string, Object>)['code'];
+      logger.error(TAG, `下载封面异常: message=${errMsg}, code=${errCode}, url=${coverUrl}`);
       return null;
     }
   }
