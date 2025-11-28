@@ -27,7 +27,7 @@
 
 ### 🏗️ 技术架构
 
-- **开发语言**: ArkTS (HarmonyOS Next API 19)
+- **开发语言**: ArkTS (HarmonyOS Next API 18)
 - **架构模式**: ECS (Entity-Component-System)
 - **UI框架**: ArkUI
 - **数据存储**: 关系型数据库 (RDB)
