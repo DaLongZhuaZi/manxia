@@ -458,17 +458,7 @@ struct MangaFeedbackPage {
         }
       },
       content: {
-        title: { mainTitle: '问题反馈' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '问题反馈' }
       }
     })
     .onReady((context: NavDestinationContext) => {

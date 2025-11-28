@@ -692,7 +692,9 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       bookId TEXT NOT NULL,
       userId TEXT NOT NULL,
       currentChapterId TEXT NOT NULL,
+      currentChapterIndex INTEGER DEFAULT 0,
       currentPosition INTEGER DEFAULT 0,
+      domPos TEXT DEFAULT '',
       progress REAL DEFAULT 0.0,
       lastReadTime INTEGER DEFAULT 0,
       totalReadingTime INTEGER DEFAULT 0,
@@ -710,12 +712,17 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       bookId TEXT NOT NULL,
       userId TEXT NOT NULL,
       fontSize INTEGER DEFAULT 18,
-      lineHeight REAL DEFAULT 1.8,
       fontFamily TEXT DEFAULT 'HarmonyOS Sans',
+      fontPath TEXT DEFAULT '',
+      fontWeight INTEGER DEFAULT 400,
+      lineHeight REAL DEFAULT 1.5,
       backgroundColor TEXT DEFAULT '#FFFFFF',
-      textColor TEXT DEFAULT '#333333',
-      pageMargin INTEGER DEFAULT 20,
-      pageMode TEXT DEFAULT 'PAGE',
+      textColor TEXT DEFAULT '#000000',
+      themeBgImage TEXT DEFAULT '',
+      nightMode INTEGER DEFAULT 0,
+      followSystemTheme INTEGER DEFAULT 1,
+      pageMargin INTEGER DEFAULT 16,
+      pageMode TEXT DEFAULT '0',
       brightness INTEGER DEFAULT 100,
       autoSave INTEGER DEFAULT 1,
       saveInterval INTEGER DEFAULT 30,
@@ -807,5 +814,29 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
     // 版本6的升级脚本：添加webUrl和apiUrl字段
     'ALTER TABLE comic_info ADD COLUMN webUrl TEXT',
     'ALTER TABLE comic_info ADD COLUMN apiUrl TEXT'
+  ],
+  7: [
+    // 版本7的升级脚本：为电子书阅读进度表添加 currentChapterIndex 和 domPos 字段
+    'ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0',
+    'ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT \'\'',
+    // 为电子书阅读设置表添加新字段
+    'ALTER TABLE ebook_reading_settings ADD COLUMN fontPath TEXT DEFAULT \'\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN fontWeight INTEGER DEFAULT 400',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN themeBgImage TEXT DEFAULT \'\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN nightMode INTEGER DEFAULT 0'
+  ],
+  8: [
+    // 版本8的补救脚本：确保所有新字段都存在（因为版本7的迁移可能因列已存在而部分失败）
+    // 由于 DatabaseManager 现在会忽略错误，我们可以安全地重新执行这些命令
+    'ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0',
+    'ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT \'\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN fontPath TEXT DEFAULT \'\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN fontWeight INTEGER DEFAULT 400',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN themeBgImage TEXT DEFAULT \'\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN nightMode INTEGER DEFAULT 0'
+  ],
+  9: [
+    // 版本9：添加 followSystemTheme 字段，用于控制是否跟随系统主题
+    'ALTER TABLE ebook_reading_settings ADD COLUMN followSystemTheme INTEGER DEFAULT 1'
   ]
 };

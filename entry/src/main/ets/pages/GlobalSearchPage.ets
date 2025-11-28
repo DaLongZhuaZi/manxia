@@ -1,20 +1,25 @@
 /**
  * 全局搜索页面
- * 支持搜索本地书库和在线图源
+ * 仅搜索本地书库（漫画和电子书）
  */
 import { DataService } from '../Framework/Services/DataService';
 import { DataManager, ComicInfo } from '../Framework/Data/DataManager';
-import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
-import { MangaSourceEngine, EngineConfig, SearchResult } from '../Framework/WebView/MangaSourceEngine';
-import { Manga, ImageSourceType, MangaStatus, ReadingMode, ReadingDirection, DEFAULT_READING_SETTINGS, PageTurnAnimationType } from '../Models/MangaModels';
+import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBook } from '../Models/EBookModels';
+import { Manga, ImageSourceType, MangaStatus, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { ReadingStatus } from '../Framework/Types/StatusEnums';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { GlobalBackgroundLayer } from '../Framework/Components/GlobalBackgroundLayer';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
+
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { webview } from '@kit.ArkWeb';
+import { LengthMetrics } from '@kit.ArkUI';
 
 const TAG = 'GlobalSearchPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 // 筛选类型枚举
 enum FilterType {
@@ -23,37 +28,36 @@ enum FilterType {
   HAS_RESULT = 'hasResult' // 有结果
 }
 
+// 搜索结果项类型
+type SearchItemType = 'manga' | 'ebook';
+
 // 搜索结果项
 interface SearchResultItem {
-  manga: Manga;
-  source: string;         // 来源：'local' 或图源名称
-  sourceId?: number | string;      // 图源ID（在线漫画）
-  isLocal: boolean;       // 是否本地漫画
-  externalId?: string;    // 外部ID（用于在线漫画）
+  manga?: Manga;
+  ebook?: EBook;
+  source: string;         // 来源：'本地-漫画' 或 '本地-电子书'
+  sourceId: string;       // 分组ID
+  isLocal: boolean;       // 是否本地
+  itemType: SearchItemType; // 项目类型
 }
 
-// 图源分组
+// 本地分组
 interface SourceGroup {
-  sourceId: number | string; // 图源ID，本地为'local'
+  sourceId: string;          // 分组ID：'local-manga' 或 'local-ebook'
   sourceName: string;
-  sourceLanguage: string;    // 语言标识
   items: SearchResultItem[];
   isSearching: boolean;      // 是否正在搜索
   hasError: boolean;         // 是否搜索出错
+  itemType: SearchItemType;  // 分组类型
 }
 
 // 导航参数接口
-interface SourceDetailNavParam {
-  sourceId: number;
-  searchKeyword: string;
-}
-
 interface MangaDetailNavParam {
   mangaId: string;
-  sourceId?: number | string;
-  useWebView?: boolean;
-  mangaTitle?: string;
-  coverUrl?: string;
+}
+
+interface EBookDetailNavParam {
+  ebookId: string;
 }
 
 
@@ -66,70 +70,102 @@ export struct GlobalSearchPage {
   @State filterType: FilterType = FilterType.ALL;
   @State isSearching: boolean = false;
   
-  // 结果相关 - 按图源分组
+  // 结果相关 - 按类型分组（本地漫画、本地电子书）
   @State sourceGroups: SourceGroup[] = [];
-  
-  // 图源列表
-  @State availableSources: SourceInfo[] = [];
   
   // 历史记录
   @State searchHistory: string[] = [];
   
-  // WebView相关
-  private webViewController: webview.WebviewController = new webview.WebviewController();
-  private searchEngines: Map<number, MangaSourceEngine> = new Map();
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+  @State responsive_isLandscape: boolean = false;
+  @State responsive_gridColumns: number = 5; // 横向滚动时每行显示的项目数
   
   private dataService: DataService = DataService.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
-  private sourceManager: SourceManager = SourceManager.getInstance();
+  private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private pathStack: NavPathStack = new NavPathStack();
 
   aboutToAppear(): void {
-    this.loadAvailableSources();
     this.loadSearchHistory();
+    this.initResponsiveLayout();
+  }
+
+  aboutToDisappear(): void {
+    // 移除设备变化监听器
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
   }
 
   /**
-   * 主题变化回调
+   * 初始化响应式布局
    */
-  onThemeChange(): void {
-    // 主题变化时的处理逻辑（如果需要）
+  private initResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 横屏=${deviceInfo.isLandscape}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
   }
 
   /**
-   * 获取筛选后的图源分组
+   * 更新响应式布局参数
+   */
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        this.responsive_gridColumns = 4;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        this.responsive_gridColumns = 5;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        this.responsive_gridColumns = 6;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        this.responsive_gridColumns = 8;
+        break;
+    }
+  }
+
+  /**
+   * 获取筛选后的分组（只返回有结果或正在搜索的分组）
    */
   private getFilteredGroups(): SourceGroup[] {
-    const filtered = (() => {
-      switch (this.filterType) {
-        case FilterType.PURCHASED:
-        case FilterType.HAS_RESULT:
-          // 只显示有结果的图源
-          return this.sourceGroups.filter(g => g.items.length > 0);
-        case FilterType.ALL:
-        default:
-          // 显示全部图源
-          return this.sourceGroups;
-      }
-    })();
+    // 如果没有搜索关键词，返回空数组（显示搜索历史）
+    if (!this.searchKeyword || this.searchKeyword.trim().length === 0) {
+      return [];
+    }
     
-    logger.debug(TAG, `getFilteredGroups调用: filterType=${this.filterType}, 总数=${this.sourceGroups.length}, 筛选后=${filtered.length}`);
-    filtered.forEach((g, idx) => {
-      logger.debug(TAG, `  [${idx}] ${g.sourceName}: isSearching=${g.isSearching}, items=${g.items.length}, hasError=${g.hasError}`);
-    });
-    
-    return filtered;
-  }
-
-  /**
-   * 加载可用图源列表
-   */
-  private async loadAvailableSources(): Promise<void> {
-    try {
-      this.availableSources = await this.sourceManager.getAllSources();
-      logger.info(TAG, `加载了 ${this.availableSources.length} 个图源`);
-    } catch (error) {
-      logger.error(TAG, `加载图源失败: ${error}`);
+    switch (this.filterType) {
+      case FilterType.PURCHASED:
+      case FilterType.HAS_RESULT:
+        return this.sourceGroups.filter(g => g.items.length > 0);
+      case FilterType.ALL:
+      default:
+        // 返回有结果或正在搜索的分组
+        return this.sourceGroups.filter(g => g.items.length > 0 || g.isSearching);
     }
   }
 
@@ -139,7 +175,7 @@ export struct GlobalSearchPage {
   private loadSearchHistory(): void {
     try {
       const history = AppStorage.get<string[]>('searchHistory') || [];
-      this.searchHistory = history.slice(0, 10); // 最多10条
+      this.searchHistory = history.slice(0, 10);
     } catch (error) {
       logger.error(TAG, `加载搜索历史失败: ${error}`);
     }
@@ -157,7 +193,7 @@ export struct GlobalSearchPage {
   }
 
   /**
-   * 执行搜索 - 按图源分组并发搜索
+   * 执行搜索 - 仅搜索本地漫画和电子书
    */
   private async performSearch(): Promise<void> {
     if (!this.searchKeyword || this.searchKeyword.trim() === '') {
@@ -165,82 +201,56 @@ export struct GlobalSearchPage {
     }
 
     try {
-      logger.info(TAG, `========== 开始全局搜索: "${this.searchKeyword}" ==========`);
-      
-      // 保存搜索历史
+      logger.info(TAG, `开始本地搜索: "${this.searchKeyword}"`);
       this.saveSearchHistory(this.searchKeyword);
 
-      // 初始化图源分组：本地书库 + 所有在线图源
+      // 初始化分组：本地漫画 + 本地电子书
       const groups: SourceGroup[] = [];
-      logger.debug(TAG, `准备创建图源分组，在线图源数量: ${this.availableSources.length}`);
       
-      // 添加本地书库分组
-      groups.push({
-        sourceId: 'local',
-        sourceName: '本地书库',
-        sourceLanguage: '中文',
+      // 添加本地漫画分组
+      const mangaGroup: SourceGroup = {
+        sourceId: 'local-manga',
+        sourceName: '本地 - 漫画',
         items: [],
         isSearching: true,
-        hasError: false
-      });
+        hasError: false,
+        itemType: 'manga'
+      };
+      groups.push(mangaGroup);
 
-      // 添加所有在线图源分组
-      for (const source of this.availableSources) {
-        groups.push({
-          sourceId: source.id,
-          sourceName: source.name,
-          sourceLanguage: '中文', // 可以从source配置中获取
-          items: [],
-          isSearching: true,
-          hasError: false
-        });
-      }
+      // 添加本地电子书分组
+      const ebookGroup: SourceGroup = {
+        sourceId: 'local-ebook',
+        sourceName: '本地 - 电子书',
+        items: [],
+        isSearching: true,
+        hasError: false,
+        itemType: 'ebook'
+      };
+      groups.push(ebookGroup);
 
-      logger.debug(TAG, `创建了 ${groups.length} 个图源分组`);
       this.sourceGroups = groups;
-      logger.debug(TAG, `sourceGroups已设置，长度: ${this.sourceGroups.length}`);
-      this.sourceGroups.forEach((g, idx) => {
-        logger.debug(TAG, `  初始分组[${idx}]: ${g.sourceName}, isSearching=${g.isSearching}`);
-      });
 
-      // 并发搜索所有图源
-      const searchPromises: Promise<void>[] = [];
-      logger.debug(TAG, `开始并发搜索...`);
+      // 并发搜索本地漫画和电子书
+      await Promise.allSettled([
+        this.searchLocalManga(),
+        this.searchLocalEBooks()
+      ]);
 
-      // 搜索本地书库
-      searchPromises.push(this.searchLocalInGroup());
-
-      // 搜索所有在线图源
-      for (const source of this.availableSources) {
-        searchPromises.push(this.searchSourceInGroup(source));
-      }
-
-      // 等待所有搜索完成
-      await Promise.allSettled(searchPromises);
-
-      // 搜索完成，打印最终状态
-      logger.info(TAG, `========== 全局搜索完成 ==========`);
-      logger.debug(TAG, `最终sourceGroups状态:`);
-      this.sourceGroups.forEach((g, idx) => {
-        logger.debug(TAG, `  [${idx}] ${g.sourceName}: isSearching=${g.isSearching}, items=${g.items.length}, hasError=${g.hasError}`);
-      });
-      
+      logger.info(TAG, `本地搜索完成`);
     } catch (error) {
       logger.error(TAG, `搜索失败: ${error}`);
     }
   }
 
   /**
-   * 在本地书库分组中搜索
+   * 搜索本地漫画
    */
-  private async searchLocalInGroup(): Promise<void> {
-    const groupIndex = this.sourceGroups.findIndex(g => g.sourceId === 'local');
+  private async searchLocalManga(): Promise<void> {
+    const groupIndex = this.sourceGroups.findIndex(g => g.sourceId === 'local-manga');
     if (groupIndex < 0) return;
 
     try {
-      logger.debug(TAG, `开始搜索本地书库`);
-      
-      // 使用searchComics方法搜索所有漫画
       const searchResult = await this.dataService.searchComics('');
       const allManga: Manga[] = this.convertComicsToManga(searchResult.comics);
       const keyword: string = this.searchKeyword.toLowerCase();
@@ -251,173 +261,87 @@ export struct GlobalSearchPage {
         manga.metadata.genres.some((genre: string): boolean => genre.toLowerCase().includes(keyword))
       );
 
-      const items: SearchResultItem[] = filtered.map((manga: Manga): SearchResultItem => ({
-        manga: manga,
-        source: '本地书库',
-        sourceId: 'local',
-        isLocal: true
-      }));
+      const items: SearchResultItem[] = filtered.map((manga: Manga): SearchResultItem => {
+        const item: SearchResultItem = {
+          manga: manga,
+          source: '本地 - 漫画',
+          sourceId: 'local-manga',
+          isLocal: true,
+          itemType: 'manga'
+        };
+        return item;
+      });
 
-      // 更新分组结果
-      logger.debug(TAG, `[本地搜索] 更新前: isSearching=${this.sourceGroups[groupIndex].isSearching}`);
       this.sourceGroups[groupIndex].items = items;
       this.sourceGroups[groupIndex].isSearching = false;
       this.sourceGroups[groupIndex].hasError = false;
-      logger.debug(TAG, `[本地搜索] 更新后: isSearching=${this.sourceGroups[groupIndex].isSearching}, items=${items.length}`);
 
       // 触发响应式更新
-      this.sourceGroups = [...this.sourceGroups];
-      logger.debug(TAG, `[本地搜索] 触发响应式更新，新数组长度: ${this.sourceGroups.length}`);
-
-      logger.info(TAG, `本地搜索完成: ${items.length}条结果`);
+      this.sourceGroups = this.cloneSourceGroups();
+      logger.info(TAG, `本地漫画搜索完成: ${items.length}条结果`);
     } catch (error) {
-      logger.error(TAG, `本地搜索失败: ${error}`);
+      logger.error(TAG, `本地漫画搜索失败: ${error}`);
       this.sourceGroups[groupIndex].isSearching = false;
       this.sourceGroups[groupIndex].hasError = true;
-      
-      // 触发响应式更新
-      this.sourceGroups = [...this.sourceGroups];
+      this.sourceGroups = this.cloneSourceGroups();
     }
   }
 
   /**
-   * 在指定图源分组中搜索
-   * 使用WebView引擎进行搜索
+   * 搜索本地电子书
    */
-  private async searchSourceInGroup(source: SourceInfo): Promise<void> {
-    const groupIndex = this.sourceGroups.findIndex(g => g.sourceId === source.id);
+  private async searchLocalEBooks(): Promise<void> {
+    const groupIndex = this.sourceGroups.findIndex(g => g.sourceId === 'local-ebook');
     if (groupIndex < 0) return;
 
     try {
-      logger.debug(TAG, `开始在图源"${source.name}"中搜索`);
+      // 获取所有电子书并筛选
+      const allEBooks: EBook[] = await this.ebookDataManager.searchEBooks(this.searchKeyword);
       
-      // 获取或创建搜索引擎
-      let engine = this.searchEngines.get(source.id);
-      if (!engine) {
-        // 创建新的搜索引擎
-        const config: ESObject | null = await this.dataManager.getSourceConfig(source.id);
-        if (!config) {
-          logger.warn(TAG, `未找到图源配置: ${source.id}`);
-          this.sourceGroups[groupIndex].isSearching = false;
-          this.sourceGroups[groupIndex].hasError = true;
-          return;
-        }
-
-        // 配置引擎
-        const engineConfig: EngineConfig = {
-          webViewController: this.webViewController,
-          antiCrawlerConfig: config.antiCrawler || {},
-          debug: false,
-          timeout: 30000,
-          caseSensitive: false,
-          sourceId: source.id
+      const items: SearchResultItem[] = allEBooks.map((ebook: EBook): SearchResultItem => {
+        const item: SearchResultItem = {
+          ebook: ebook,
+          source: '本地 - 电子书',
+          sourceId: 'local-ebook',
+          isLocal: true,
+          itemType: 'ebook'
         };
-
-        engine = new MangaSourceEngine(engineConfig);
-        
-        // 加载配置
-        const configJson = JSON.stringify(config);
-        await engine.loadConfig(configJson);
-        
-        // 缓存引擎
-        this.searchEngines.set(source.id, engine);
-      }
-
-      // 执行搜索
-      const result: ESObject = await engine.searchManga(this.searchKeyword, 1);
-
-      if (!result.success || !result.data) {
-        this.sourceGroups[groupIndex].items = [];
-        this.sourceGroups[groupIndex].isSearching = false;
-        this.sourceGroups[groupIndex].hasError = false;
-        logger.info(TAG, `图源"${source.name}"搜索完成: 0条结果`);
-        return;
-      }
-
-      // 从SearchResult中获取mangas数组
-      const searchResult: SearchResult = result.data as SearchResult;
-      const dataArray: ESObject[] = Array.isArray(searchResult.mangas) ? searchResult.mangas as ESObject[] : [];
-      logger.debug(TAG, `图源"${source.name}"返回数据: ${dataArray.length}条`);
-
-      // 转换为SearchResultItem
-      const items: SearchResultItem[] = dataArray.map((mangaInfo: ESObject): SearchResultItem => {
-        const mangaObj: Manga = this.createMangaFromSearchResult(mangaInfo, source);
-        return {
-          manga: mangaObj,
-          source: source.name,
-          sourceId: source.id,
-          isLocal: false,
-          externalId: mangaInfo.id as string
-        };
+        return item;
       });
 
-      // 更新分组结果
-      logger.debug(TAG, `[${source.name}] 更新前: isSearching=${this.sourceGroups[groupIndex].isSearching}`);
       this.sourceGroups[groupIndex].items = items;
       this.sourceGroups[groupIndex].isSearching = false;
       this.sourceGroups[groupIndex].hasError = false;
-      logger.debug(TAG, `[${source.name}] 更新后: isSearching=${this.sourceGroups[groupIndex].isSearching}, items=${items.length}`);
 
       // 触发响应式更新
-      this.sourceGroups = [...this.sourceGroups];
-      logger.debug(TAG, `[${source.name}] 触发响应式更新，新数组长度: ${this.sourceGroups.length}`);
-
-      logger.info(TAG, `图源"${source.name}"搜索完成: ${items.length}条结果`);
+      this.sourceGroups = this.cloneSourceGroups();
+      logger.info(TAG, `本地电子书搜索完成: ${items.length}条结果`);
     } catch (error) {
-      logger.error(TAG, `在图源"${source.name}"中搜索失败: ${error}`);
+      logger.error(TAG, `本地电子书搜索失败: ${error}`);
       this.sourceGroups[groupIndex].isSearching = false;
       this.sourceGroups[groupIndex].hasError = true;
-      
-      // 触发响应式更新
-      this.sourceGroups = [...this.sourceGroups];
+      this.sourceGroups = this.cloneSourceGroups();
     }
   }
 
   /**
-   * 从搜索结果创建Manga对象
+   * 克隆分组数组以触发响应式更新
    */
-  private createMangaFromSearchResult(mangaInfo: ESObject, source: SourceInfo): Manga {
-    return {
-      id: mangaInfo.id as string,
-      title: mangaInfo.title as string,
-      alternativeTitles: [],
-      description: (mangaInfo.description as string) || '',
-      coverImagePath: mangaInfo.cover as string,
-      coverSourceType: ImageSourceType.NETWORK,
-      status: MangaStatus.ONGOING,
-      metadata: {
-        authors: mangaInfo.author ? [mangaInfo.author] : [],
-        artists: [],
-        genres: mangaInfo.genres || [],
-        themes: [],
-        demographics: [],
-        contentRating: undefined,
-        publicationYear: undefined,
-        publisher: undefined,
-        serialization: undefined
-      },
-      chapters: [],
-      readingProgress: {
-        currentChapterId: '',
-        currentPageIndex: 0,
-        readingStatus: ReadingStatus.UNREAD,
-        totalReadingTime: 0,
-        lastReadAt: 0,
-        readingPercentage: 0
-      },
-      bookmarks: [],
-      readingSettings: DEFAULT_READING_SETTINGS,
-      isFavorite: false,
-      lastUpdatedAt: Date.now(),
-      sourceInfo: {
-        sourceName: source.name,
-        sourceUrl: mangaInfo.url || '',
-        sourceId: source.id.toString(),
-        sourceLanguage: 'zh',
-        requiresLogin: false,
-        apiVersion: '1.0'
-      }
-    };
+  private cloneSourceGroups(): SourceGroup[] {
+    const result: SourceGroup[] = [];
+    for (const group of this.sourceGroups) {
+      // 深拷贝每个分组对象
+      const clonedGroup: SourceGroup = {
+        sourceId: group.sourceId,
+        sourceName: group.sourceName,
+        items: [...group.items], // 浅拷贝 items 数组
+        isSearching: group.isSearching,
+        hasError: group.hasError,
+        itemType: group.itemType
+      };
+      result.push(clonedGroup);
+    }
+    return result;
   }
 
   /**
@@ -425,13 +349,17 @@ export struct GlobalSearchPage {
    */
   private convertComicsToManga(comics: ComicInfo[]): Manga[] {
     return comics.map((comic: ComicInfo): Manga => {
+      // 优先使用本地封面路径，其次使用网络URL
+      const coverPath: string = comic.coverLocalPath || comic.coverUrl || '';
+      const coverSourceType: ImageSourceType = comic.coverLocalPath ? ImageSourceType.LOCAL : ImageSourceType.NETWORK;
+      
       const manga: Manga = {
         id: comic.id,
         title: comic.title,
         alternativeTitles: [],
         description: comic.description,
-        coverImagePath: comic.coverUrl,
-        coverSourceType: ImageSourceType.NETWORK,
+        coverImagePath: coverPath,
+        coverSourceType: coverSourceType,
         status: comic.status,
         metadata: {
           authors: [comic.author],
@@ -471,198 +399,279 @@ export struct GlobalSearchPage {
   }
 
   /**
-   * 导航到图源详情页
+   * 打开详情页
    */
-  private navigateToSource(sourceId: number): void {
+  private openDetail(item: SearchResultItem): void {
     try {
-      const navParam: SourceDetailNavParam = {
-        sourceId: sourceId,
-        searchKeyword: this.searchKeyword
-      };
-      
       const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
-      if (globalStack) {
-        logger.debug(TAG, `导航到 SourceDetailPage（全局栈），sourceId=${sourceId}`);
-        globalStack.pushPath({ name: 'SourceDetailPage', param: navParam as Object });
-      } else {
-        logger.debug(TAG, `导航到 SourceDetailPage（本地栈），sourceId=${sourceId}`);
-        this.pathStack.pushPath({ name: 'SourceDetailPage', param: navParam as Object });
+      const stack = globalStack || this.pathStack;
+      
+      if (item.itemType === 'manga' && item.manga) {
+        const navParam: MangaDetailNavParam = { mangaId: item.manga.id };
+        stack.pushPath({ name: 'MangaDetailPage', param: navParam });
+        logger.debug(TAG, `导航到漫画详情页: ${item.manga.id}`);
+      } else if (item.itemType === 'ebook' && item.ebook) {
+        const navParam: EBookDetailNavParam = { ebookId: item.ebook.id };
+        stack.pushPath({ name: 'EBookDetailPage', param: navParam });
+        logger.debug(TAG, `导航到电子书详情页: ${item.ebook.id}`);
       }
     } catch (error) {
-      logger.error(TAG, `导航到图源详情页失败: ${error}`);
-    }
-  }
-
-  /**
-   * 打开漫画详情页
-   */
-  private openMangaDetail(item: SearchResultItem): void {
-    try {
-      let navParam: MangaDetailNavParam;
-      
-      if (item.isLocal) {
-        // 本地漫画
-        navParam = { mangaId: item.manga.id };
-      } else {
-        // 在线漫画 - 使用externalId作为mangaId
-        navParam = {
-          mangaId: item.externalId || item.manga.id,
-          sourceId: item.sourceId,
-          useWebView: true,
-          mangaTitle: item.manga.title,
-          coverUrl: item.manga.coverImagePath
-        };
-      }
-      
-      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
-      if (globalStack) {
-        logger.debug(TAG, `导航到 MangaDetailPage（全局栈），mangaId=${item.manga.id}`);
-        globalStack.pushPath({ name: 'MangaDetailPage', param: navParam });
-      } else {
-        logger.debug(TAG, `导航到 MangaDetailPage（本地栈），mangaId=${item.manga.id}`);
-        this.pathStack.pushPath({ name: 'MangaDetailPage', param: navParam });
-      }
-    } catch (error) {
-      logger.error(TAG, `打开漫画详情失败: ${error}`);
+      logger.error(TAG, `打开详情页失败: ${error}`);
     }
   }
 
   build() {
-    NavDestination() {
+    HdsNavDestination() {
       Stack() {
-        // 隐藏的WebView（用于搜索）
-        Web({ src: 'about:blank', controller: this.webViewController })
-          .width(1)
-          .height(1)
-          .visibility(Visibility.Hidden)
-          .zIndex(-1)
+        // 背景层
+        GlobalBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
+        })
 
+        // 内容层
         Column() {
-        // 搜索栏
-        Row({ space: 12 }) {
-          TextInput({ placeholder: '搜索漫画、作者、标签...', text: this.searchKeyword })
-            .layoutWeight(1)
-            .onChange((value: string) => {
-              this.searchKeyword = value;
-            })
-            .onSubmit(() => {
-              this.performSearch();
-            })
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-          Button('搜索')
-            .onClick(() => {
-              this.performSearch();
-            })
-        }
-        .width('100%')
-        .padding(16)
-
-        // 筛选按钮
-        Row({ space: 8 }) {
-          Button(this.filterType === FilterType.PURCHASED ? '✓ 已浏览' : '已浏览')
-            .borderRadius(8)
-            .fontSize(14)
-            .type(ButtonType.Normal)
-            .backgroundColor(this.filterType === FilterType.PURCHASED ? 
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-              ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .fontColor(this.filterType === FilterType.PURCHASED ? Color.White : 
-              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .onClick(() => {
-              this.filterType = FilterType.PURCHASED;
-            })
-
-          Button(this.filterType === FilterType.ALL ? '✓ 全部' : '全部')
-            .borderRadius(8)
-            .fontSize(14)
-            .type(ButtonType.Normal)
-            .backgroundColor(this.filterType === FilterType.ALL ? 
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-              ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .fontColor(this.filterType === FilterType.ALL ? Color.White : 
-              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .onClick(() => {
-              this.filterType = FilterType.ALL;
-            })
-
-          Button(this.filterType === FilterType.HAS_RESULT ? '✓ 有结果' : '有结果')
-            .borderRadius(8)
-            .fontSize(14)
-            .type(ButtonType.Normal)
-            .backgroundColor(this.filterType === FilterType.HAS_RESULT ? 
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-              ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .fontColor(this.filterType === FilterType.HAS_RESULT ? Color.White : 
-              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .onClick(() => {
-              this.filterType = FilterType.HAS_RESULT;
-            })
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 12 })
-
-        // 搜索结果或历史记录
-        if (this.getFilteredGroups().length > 0) {
-          // 按图源分组显示搜索结果
-          List({ space: 16 }) {
-            ForEach(this.getFilteredGroups(), (group: SourceGroup) => {
-              ListItem() {
-                this.buildSourceGroupCard(group)
-              }
-            }, (group: SourceGroup) => group.sourceId.toString())
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .padding({ left: 16, right: 16, top: 8 })
-        } else if (this.searchKeyword && this.sourceGroups.length > 0) {
-          // 搜索完成但无结果
-          Column() {
-            Text('未找到相关漫画')
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else {
-          // 搜索历史
-          Column() {
-            if (this.searchHistory.length > 0) {
-              Text('搜索历史')
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .padding(16)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              ForEach(this.searchHistory, (keyword: string) => {
-                Text(keyword)
-                  .fontSize(14)
-                  .padding(12)
-                  .width('100%')
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .onClick(() => {
-                    this.searchKeyword = keyword;
-                    this.performSearch();
-                  })
+          // 搜索栏
+          Row({ space: 12 }) {
+            TextInput({ placeholder: '搜索漫画、电子书、作者...', text: this.searchKeyword })
+              .layoutWeight(1)
+              .onChange((value: string) => {
+                this.searchKeyword = value;
               })
-            }
+              .onSubmit(() => {
+                this.performSearch();
+              })
+
+            Button('搜索')
+              .onClick(() => {
+                this.performSearch();
+              })
           }
           .width('100%')
-          .alignItems(HorizontalAlign.Start)
+          .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
+          .padding(this.responsive_contentPadding)
+
+          // 筛选按钮
+          Row({ space: 8 }) {
+            Button(this.filterType === FilterType.PURCHASED ? '✓ 已浏览' : '已浏览')
+              .borderRadius(8)
+              .fontSize(14)
+              .type(ButtonType.Normal)
+              .backgroundColor(this.filterType === FilterType.PURCHASED ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
+                ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .fontColor(this.filterType === FilterType.PURCHASED ? Color.White : 
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.filterType = FilterType.PURCHASED;
+              })
+
+            Button(this.filterType === FilterType.ALL ? '✓ 全部' : '全部')
+              .borderRadius(8)
+              .fontSize(14)
+              .type(ButtonType.Normal)
+              .backgroundColor(this.filterType === FilterType.ALL ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
+                ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .fontColor(this.filterType === FilterType.ALL ? Color.White : 
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.filterType = FilterType.ALL;
+              })
+
+            Button(this.filterType === FilterType.HAS_RESULT ? '✓ 有结果' : '有结果')
+              .borderRadius(8)
+              .fontSize(14)
+              .type(ButtonType.Normal)
+              .backgroundColor(this.filterType === FilterType.HAS_RESULT ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
+                ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .fontColor(this.filterType === FilterType.HAS_RESULT ? Color.White : 
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.filterType = FilterType.HAS_RESULT;
+              })
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 12 })
+
+          // 搜索结果或历史记录
+          if (this.searchKeyword && this.getFilteredGroups().length > 0) {
+            // 按图源分组显示搜索结果
+            if (this.responsive_isLandscape) {
+              // 横屏模式：使用网格布局
+              this.buildLandscapeResults()
+            } else {
+              // 竖屏模式：使用列表布局
+              Scroll() {
+                Column({ space: 16 }) {
+                  ForEach(this.getFilteredGroups(), (group: SourceGroup) => {
+                    this.buildSourceGroupCard(group)
+                  }, (group: SourceGroup) => `${group.sourceId}-${group.items.length}`)
+                }
+                .width('100%')
+                .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .scrollBar(BarState.Auto)
+              .edgeEffect(EdgeEffect.Spring)
+            }
+          } else if (this.searchKeyword && this.sourceGroups.length > 0 && !this.sourceGroups.some(g => g.isSearching)) {
+            // 搜索完成但无结果
+            Column() {
+              Text('未找到相关内容')
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+          } else if (this.searchKeyword && this.sourceGroups.some(g => g.isSearching)) {
+            // 正在搜索
+            Column() {
+              LoadingProgress()
+                .width(48)
+                .height(48)
+              Text('搜索中...')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .margin({ top: 12 })
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+          } else {
+            // 搜索历史
+            Column() {
+              if (this.searchHistory.length > 0) {
+                Text('搜索历史')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .padding(this.responsive_contentPadding)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                ForEach(this.searchHistory, (keyword: string) => {
+                  Text(keyword)
+                    .fontSize(14)
+                    .padding(12)
+                    .width('100%')
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .onClick(() => {
+                      this.searchKeyword = keyword;
+                      this.performSearch();
+                    })
+                })
+              }
+            }
+            .width('100%')
+            .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
+            .alignItems(HorizontalAlign.Start)
+          }
         }
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+        .width('100%')
+        .height('100%')
+        .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
       }
       .width('100%')
       .height('100%')
     }
-    .title('全局搜索')
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
     })
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
+        originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+          },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '全局搜索' }
+      }
+    })
+    .backgroundColor(Color.Transparent)
   }
+
+  /**
+   * 构建横屏模式下的搜索结果
+   */
+  @Builder
+  buildLandscapeResults() {
+    Scroll() {
+      Column({ space: 24 }) {
+        ForEach(this.getFilteredGroups(), (group: SourceGroup) => {
+          Column({ space: 12 }) {
+            // 分组标题
+            Row() {
+              Text(group.sourceName)
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              
+              Text(`(${group.items.length}${group.itemType === 'manga' ? '本漫画' : '本电子书'})`)
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .margin({ left: 8 })
+            }
+            .width('100%')
+            .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+
+            // 网格布局显示结果
+            if (group.items.length > 0) {
+              Grid() {
+                ForEach(group.items, (item: SearchResultItem) => {
+                  GridItem() {
+                    this.buildItemCard(item)
+                  }
+                }, (item: SearchResultItem) => this.getItemId(item))
+              }
+              .columnsTemplate(`repeat(${this.responsive_gridColumns}, 1fr)`)
+              .columnsGap(12)
+              .rowsGap(16)
+              .width('100%')
+              .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+            }
+          }
+          .width('100%')
+        }, (group: SourceGroup) => group.sourceId.toString())
+        
+        Blank().height(40)
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
 
   /**
    * 构建图源分组卡片
@@ -673,16 +682,10 @@ export struct GlobalSearchPage {
       // 图源标题行
       Row() {
         Column({ space: 4 }) {
-          Row({ space: 8 }) {
-            Text(group.sourceName)
-              .fontSize(16)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            
-            Text(group.sourceLanguage)
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
+          Text(group.sourceName)
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           if (group.isSearching) {
             Text('搜索中...')
@@ -693,32 +696,17 @@ export struct GlobalSearchPage {
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
           } else {
-            Text(`${group.items.length}漫画`)
+            Text(`${group.items.length}${group.itemType === 'manga' ? '本漫画' : '本电子书'}`)
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
-
-        // 查看更多按钮
-        if (group.items.length > 0) {
-          Row({ space: 4 }) {
-            Text('查看更多')
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            Text('→')
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-          .onClick(() => {
-            logger.info(TAG, `查看更多: ${group.sourceName}`);
-          })
-        }
       }
       .width('100%')
 
-      // 横向滚动的漫画列表
+      // 横向滚动的列表
       if (group.isSearching) {
         Row({ space: 8 }) {
           LoadingProgress()
@@ -735,8 +723,8 @@ export struct GlobalSearchPage {
         Scroll() {
           Row({ space: 12 }) {
             ForEach(group.items.slice(0, 10), (item: SearchResultItem) => {
-              this.buildMangaCard(item)
-            }, (item: SearchResultItem) => item.manga.id)
+              this.buildItemCard(item)
+            }, (item: SearchResultItem) => this.getItemId(item))
           }
         }
         .scrollable(ScrollDirection.Horizontal)
@@ -765,21 +753,68 @@ export struct GlobalSearchPage {
   }
 
   /**
-   * 构建漫画卡片（横向滚动）
+   * 获取项目ID
+   */
+  private getItemId(item: SearchResultItem): string {
+    if (item.itemType === 'manga' && item.manga) {
+      return item.manga.id;
+    } else if (item.itemType === 'ebook' && item.ebook) {
+      return item.ebook.id;
+    }
+    return '';
+  }
+
+  /**
+   * 规范化封面路径：本地文件添加 file:// 前缀
+   */
+  private normalizeCoverPath(path: string): string {
+    if (!path || path.length === 0) {
+      return '';
+    }
+    // 如果是本地路径（以 / 开头），添加 file:// 前缀
+    if (path.startsWith('/')) {
+      return `file://${path}`;
+    }
+    return path;
+  }
+
+  /**
+   * 构建项目卡片（漫画或电子书）
    */
   @Builder
-  buildMangaCard(item: SearchResultItem) {
+  buildItemCard(item: SearchResultItem) {
     Column({ space: 8 }) {
       // 封面
-      Image(item.manga.coverImagePath)
-        .width(100)
-        .height(140)
-        .borderRadius(8)
-        .objectFit(ImageFit.Cover)
-        .alt($r('app.media.mangabook'))
+      if (item.itemType === 'manga' && item.manga) {
+        Image(this.normalizeCoverPath(item.manga.coverImagePath))
+          .width(100)
+          .height(140)
+          .borderRadius(8)
+          .objectFit(ImageFit.Cover)
+          .alt($r('app.media.mangabook'))
+      } else if (item.itemType === 'ebook' && item.ebook) {
+        if (item.ebook.metadata.coverImagePath && item.ebook.metadata.coverImagePath.length > 0) {
+          Image(this.normalizeCoverPath(item.ebook.metadata.coverImagePath))
+            .width(100)
+            .height(140)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+        } else {
+          Column() {
+            Text('📖')
+              .fontSize(32)
+          }
+          .width(100)
+          .height(140)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
+        }
+      }
 
       // 标题
-      Text(item.manga.title)
+      Text(item.itemType === 'manga' && item.manga ? item.manga.title : 
+           (item.itemType === 'ebook' && item.ebook ? item.ebook.metadata.title : ''))
         .fontSize(13)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
@@ -789,7 +824,7 @@ export struct GlobalSearchPage {
     }
     .width(100)
     .onClick(() => {
-      this.openMangaDetail(item);
+      this.openDetail(item);
     })
   }
 }

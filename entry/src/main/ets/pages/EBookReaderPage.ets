@@ -2,16 +2,20 @@
 /**
  * 电子书阅读器页面
  * 支持TXT、EPUB等格式的电子书阅读
+ * 采用与漫画阅读器一致的沉浸式设计风格
  */
 
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { ThemeType } from '../Framework/Managers/ThemeManager';
-import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat } from '../Models/EBookModels';
+import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
 import { ReaderKitViewerComponent } from '../Framework/Components/ReaderKitViewerComponent';
+import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
+import { curves, UIContext } from '@kit.ArkUI';
 
 const TAG = 'EBookReaderPage';
 
@@ -27,6 +31,7 @@ struct EBookReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private componentId: string = 'EBookReaderPage';
+  private themeManager: ThemeManager = ThemeManager.getInstance();
 
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -42,25 +47,105 @@ struct EBookReaderPage {
   // 阅读设置
   @State fontSize: number = 18;
   @State lineHeight: number = 1.8;
-  @State bgColor: string = '#FFFFFF'; // 重命名避免与组件属性冲突
+  @State bgColor: string = '#FFFFFF';
   @State textColor: string = '#333333';
   @State pageMargin: number = 20;
-  @State showToolbar: boolean = false;
+
+  // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
+  @State showTopToolbar: boolean = false;
+  @State showBottomToolbar: boolean = false;
+  @State toolbarOpacity: number = 0.0;
   @State showSettingsPanel: boolean = false;
+  @State showChapterList: boolean = false;
+  @State showMoreMenu: boolean = false;
+  
+  // 动画状态
+  @State settingsPanelOpacity: number = 0;
+  @State settingsPanelScale: number = 0.95;
+  @State settingsPanelTranslateY: number = 20;
+  @State moreMenuOpacity: number = 0;
+  @State moreMenuScale: number = 0.95;
+  @State moreMenuTranslateY: number = -10;
+  @State chapterListOpacity: number = 0;
+  
+  // 书籍信息弹窗状态
+  @State showBookInfoDialog: boolean = false;
+  @State bookInfoDialogOpacity: number = 0;
 
   // 数据管理器
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  
+  // UI上下文（用于设置沉浸式模式）
+  private uiContext: UIContext | undefined = undefined;
+  
+  // Reader Kit 阅读器组件引用（用于实时应用设置）
+  private readerKitViewerRef: ReaderKitViewerComponent | null = null;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
+      // 根据主题更新背景色
+      if (theme === 'dark') {
+        this.bgColor = '#1E1E1E';
+        this.textColor = '#D4D4D4';
+      } else {
+        this.bgColor = '#FFFFFF';
+        this.textColor = '#333333';
+      }
     });
+    // 根据当前主题设置初始背景色
+    if (this.themeState.currentTheme === 'dark') {
+      this.bgColor = '#1E1E1E';
+      this.textColor = '#D4D4D4';
+    }
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     // 保存阅读进度
     this.saveReadingProgress();
+    // 恢复正常显示模式
+    this.restoreNormalMode();
+  }
+
+  /**
+   * 设置完全沉浸式模式
+   */
+  private setupFullscreenMode(): void {
+    try {
+      if (!this.uiContext) {
+        this.uiContext = this.getUIContext();
+      }
+      if (!this.uiContext) {
+        logger.error(TAG, '无法获取UIContext，设置全屏模式失败');
+        return;
+      }
+      
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
+      logger.info(TAG, '设置完全沉浸式阅读模式');
+    } catch (error) {
+      logger.error(TAG, `设置全屏模式失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 恢复正常显示模式
+   */
+  private restoreNormalMode(): void {
+    try {
+      if (!this.uiContext) {
+        this.uiContext = this.getUIContext();
+      }
+      if (!this.uiContext) {
+        logger.error(TAG, '无法获取UIContext，恢复正常模式失败');
+        return;
+      }
+      
+      WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.uiContext);
+      logger.info(TAG, '恢复默认显示模式');
+    } catch (error) {
+      logger.error(TAG, `恢复正常模式失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -84,6 +169,38 @@ struct EBookReaderPage {
       
       // 加载阅读设置
       if (ebook.readingSettings) {
+        // 如果跟随系统主题，则根据当前系统主题调整颜色
+        if (ebook.readingSettings.followSystemTheme !== false) {
+          this.applySystemThemeToSettings(ebook);
+        }
+        
+        this.fontSize = ebook.readingSettings.fontSize;
+        this.lineHeight = ebook.readingSettings.lineHeight;
+        this.bgColor = ebook.readingSettings.backgroundColor;
+        this.textColor = ebook.readingSettings.textColor;
+        this.pageMargin = ebook.readingSettings.pageMargin;
+      } else {
+        // 如果没有保存的设置，使用默认设置（ArkTS 不支持展开运算符）
+        ebook.readingSettings = {
+          fontSize: DEFAULT_EBOOK_READING_SETTINGS.fontSize,
+          fontFamily: DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
+          fontPath: DEFAULT_EBOOK_READING_SETTINGS.fontPath,
+          fontWeight: DEFAULT_EBOOK_READING_SETTINGS.fontWeight,
+          lineHeight: DEFAULT_EBOOK_READING_SETTINGS.lineHeight,
+          backgroundColor: DEFAULT_EBOOK_READING_SETTINGS.backgroundColor,
+          textColor: DEFAULT_EBOOK_READING_SETTINGS.textColor,
+          themeBgImage: DEFAULT_EBOOK_READING_SETTINGS.themeBgImage,
+          nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
+          followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
+          pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+          pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
+          brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
+          autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
+          saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
+        };
+        // 应用系统主题
+        this.applySystemThemeToSettings(ebook);
+        
         this.fontSize = ebook.readingSettings.fontSize;
         this.lineHeight = ebook.readingSettings.lineHeight;
         this.bgColor = ebook.readingSettings.backgroundColor;
@@ -92,25 +209,80 @@ struct EBookReaderPage {
       }
 
       // 定位到上次阅读位置
-      if (ebook.readingProgress && ebook.readingProgress.currentChapterId) {
-        const chapterIndex = ebook.chapters.findIndex(
-          (ch: EBookChapter) => ch.id === ebook.readingProgress.currentChapterId
-        );
-        if (chapterIndex >= 0) {
-          this.currentChapterIndex = chapterIndex;
+      if (ebook.readingProgress) {
+        // 优先使用保存的章节索引
+        if (typeof ebook.readingProgress.currentChapterIndex === 'number' && ebook.readingProgress.currentChapterIndex >= 0) {
+          this.currentChapterIndex = ebook.readingProgress.currentChapterIndex;
+          logger.info(TAG, `恢复阅读位置: 章节索引=${this.currentChapterIndex}`);
+        } else if (ebook.readingProgress.currentChapterId) {
+          // 兼容旧数据：通过章节ID查找索引
+          const chapterIndex = ebook.chapters.findIndex(
+            (ch: EBookChapter) => ch.id === ebook.readingProgress.currentChapterId
+          );
+          if (chapterIndex >= 0) {
+            this.currentChapterIndex = chapterIndex;
+            logger.info(TAG, `恢复阅读位置（通过章节ID）: 章节索引=${this.currentChapterIndex}`);
+          }
+        }
+        
+        // 恢复 DOM 位置
+        if (ebook.readingProgress.domPos) {
+          this.currentDomPos = ebook.readingProgress.domPos;
+          logger.info(TAG, `恢复 DOM 位置: ${this.currentDomPos}`);
         }
       }
 
       // 加载当前章节
       this.currentChapter = ebook.chapters[this.currentChapterIndex];
+      
+      // 调试日志：检查章节内容
+      logger.info(TAG, `章节数量: ${ebook.chapters.length}`);
+      if (this.currentChapter) {
+        logger.info(TAG, `当前章节标题: ${this.currentChapter.title}`);
+        logger.info(TAG, `当前章节内容长度: ${this.currentChapter.content?.length || 0} 字符`);
+        logger.info(TAG, `当前章节内容前100字: ${this.currentChapter.content?.substring(0, 100) || '(空)'}`);
+      } else {
+        logger.warn(TAG, '当前章节为空');
+      }
 
       this.isLoading = false;
       logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
+      
+      // 设置沉浸式模式
+      this.setupFullscreenMode();
       
     } catch (error) {
       this.errorMessage = `加载失败: ${String(error instanceof Error ? error.message : error)}`;
       this.isLoading = false;
       logger.error(TAG, '加载电子书失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
+   * 根据系统主题应用阅读设置
+   * 当 followSystemTheme 为 true 时，根据当前 App 全局主题自动切换白天/夜间模式
+   */
+  private applySystemThemeToSettings(ebook: EBook): void {
+    if (!ebook.readingSettings) {
+      return;
+    }
+    
+    // 获取当前系统主题
+    const currentTheme = this.themeState.currentTheme;
+    const isDarkMode = currentTheme === ThemeType.DARK;
+    
+    logger.info(TAG, `应用系统主题: currentTheme=${currentTheme}, isDarkMode=${isDarkMode}`);
+    
+    if (isDarkMode) {
+      // 夜间模式
+      ebook.readingSettings.backgroundColor = '#1E1E1E';
+      ebook.readingSettings.textColor = '#D4D4D4';
+      ebook.readingSettings.nightMode = true;
+    } else {
+      // 白天模式
+      ebook.readingSettings.backgroundColor = '#FFFFFF';
+      ebook.readingSettings.textColor = '#000000';
+      ebook.readingSettings.nightMode = false;
     }
   }
 
@@ -145,7 +317,7 @@ struct EBookReaderPage {
   }
 
   /**
-   * 更新阅读设置
+   * 更新阅读设置（立即生效）
    */
   private async updateReadingSettings(settings: EBookReadingSettings): Promise<void> {
     if (!this.ebook) {
@@ -163,6 +335,12 @@ struct EBookReaderPage {
       // 更新电子书设置
       this.ebook.readingSettings = settings;
 
+      // 立即应用到 Reader Kit（如果有引用）
+      if (this.readerKitViewerRef) {
+        this.readerKitViewerRef.applyReadingSettings(settings, true);
+        logger.info(TAG, '阅读设置已立即应用到 Reader Kit');
+      }
+
       // 保存到数据库
       await this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
       logger.info(TAG, '阅读设置已保存');
@@ -170,6 +348,9 @@ struct EBookReaderPage {
       logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
     }
   }
+
+  // 当前 DOM 位置（用于 Reader Kit 精确恢复阅读位置）
+  @State currentDomPos: string = '';
 
   /**
    * 保存阅读进度
@@ -183,17 +364,41 @@ struct EBookReaderPage {
       const progress: EBookReadingProgress = {
         bookId: this.ebook.id,
         currentChapterId: this.currentChapter.id,
+        currentChapterIndex: this.currentChapterIndex,
         currentPosition: 0,
+        domPos: this.currentDomPos,
         progress: (this.currentChapterIndex / this.ebook.chapters.length) * 100,
         lastReadTime: Date.now(),
         totalReadingTime: 0
       };
 
       await this.ebookDataManager.saveReadingProgress(progress);
-      logger.debug(TAG, '阅读进度已保存');
+      logger.debug(TAG, `阅读进度已保存: 章节=${this.currentChapterIndex}, domPos=${this.currentDomPos}`);
     } catch (error) {
       logger.error(TAG, '保存阅读进度失败', String(error instanceof Error ? error.message : error));
     }
+  }
+
+  // 上次保存进度的时间戳，用于防抖
+  private lastProgressSaveTime: number = 0;
+  // 进度保存的最小间隔（毫秒）
+  private static readonly PROGRESS_SAVE_INTERVAL: number = 2000;
+
+  /**
+   * 处理 Reader Kit 进度变化回调（带防抖）
+   */
+  private handleProgressChange(progress: number, domPos: string): void {
+    this.currentDomPos = domPos;
+    
+    // 防抖：检查距离上次保存的时间间隔
+    const now = Date.now();
+    if ((now - this.lastProgressSaveTime) < EBookReaderPage.PROGRESS_SAVE_INTERVAL) {
+      return;
+    }
+    this.lastProgressSaveTime = now;
+    
+    // 自动保存进度
+    this.saveReadingProgress();
   }
 
   /**
@@ -204,57 +409,256 @@ struct EBookReaderPage {
     logger.debug(TAG, `字体大小调整为: ${this.fontSize}`);
   }
 
+  /**
+   * 切换工具栏显示状态
+   */
+  private toggleToolbar(): void {
+    if (this.showSettingsPanel || this.showChapterList || this.showMoreMenu) {
+      return;
+    }
+    
+    if (this.showTopToolbar) {
+      this.hideToolbarWithAnimation();
+    } else {
+      this.showToolbarWithAnimation();
+    }
+  }
+
+  /**
+   * 显示工具栏（带动画）
+   */
+  private showToolbarWithAnimation(): void {
+    this.showTopToolbar = true;
+    this.showBottomToolbar = true;
+    
+    animateTo({
+      duration: 250,
+      curve: curves.springMotion(0.5, 0.8)
+    }, () => {
+      this.toolbarOpacity = 1.0;
+    });
+  }
+
+  /**
+   * 隐藏工具栏（带动画）
+   */
+  private hideToolbarWithAnimation(): void {
+    animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.toolbarOpacity = 0.0;
+    });
+    
+    setTimeout(() => {
+      this.showTopToolbar = false;
+      this.showBottomToolbar = false;
+    }, 200);
+  }
+
+  /**
+   * 显示更多菜单（带动画）
+   */
+  private showMoreMenuWithAnimation(): void {
+    this.showMoreMenu = true;
+    animateTo({
+      duration: 200,
+      curve: curves.springMotion(0.6, 0.9)
+    }, () => {
+      this.moreMenuOpacity = 1;
+      this.moreMenuScale = 1;
+      this.moreMenuTranslateY = 0;
+    });
+  }
+
+  /**
+   * 隐藏更多菜单（带动画）
+   */
+  private hideMoreMenuWithAnimation(): void {
+    animateTo({
+      duration: 150,
+      curve: Curve.EaseOut
+    }, () => {
+      this.moreMenuOpacity = 0;
+      this.moreMenuScale = 0.95;
+      this.moreMenuTranslateY = -10;
+    });
+    setTimeout(() => {
+      this.showMoreMenu = false;
+    }, 150);
+  }
+
+  /**
+   * 显示章节列表（带动画）
+   */
+  private showChapterListWithAnimation(): void {
+    this.showChapterList = true;
+    animateTo({
+      duration: 250,
+      curve: curves.springMotion(0.5, 0.8)
+    }, () => {
+      this.chapterListOpacity = 1;
+    });
+  }
+
+  /**
+   * 隐藏章节列表（带动画）
+   */
+  private hideChapterListWithAnimation(): void {
+    animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.chapterListOpacity = 0;
+    });
+    setTimeout(() => {
+      this.showChapterList = false;
+    }, 200);
+  }
+
+  /**
+   * 显示设置面板（带动画）
+   */
+  private showSettingsPanelWithAnimation(): void {
+    this.showSettingsPanel = true;
+    animateTo({
+      duration: 250,
+      curve: curves.springMotion(0.5, 0.8)
+    }, () => {
+      this.settingsPanelOpacity = 1;
+      this.settingsPanelScale = 1;
+      this.settingsPanelTranslateY = 0;
+    });
+  }
+
+  /**
+   * 隐藏设置面板（带动画）
+   */
+  private hideSettingsPanelWithAnimation(): void {
+    animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.settingsPanelOpacity = 0;
+      this.settingsPanelScale = 0.95;
+      this.settingsPanelTranslateY = 20;
+    });
+    setTimeout(() => {
+      this.showSettingsPanel = false;
+    }, 200);
+  }
+
+  /**
+   * 显示书籍信息弹窗（带动画）
+   */
+  private showBookInfoDialogWithAnimation(): void {
+    this.showBookInfoDialog = true;
+    animateTo({
+      duration: 250,
+      curve: curves.springMotion(0.5, 0.8)
+    }, () => {
+      this.bookInfoDialogOpacity = 1;
+    });
+  }
+
+  /**
+   * 隐藏书籍信息弹窗（带动画）
+   */
+  private hideBookInfoDialogWithAnimation(): void {
+    animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.bookInfoDialogOpacity = 0;
+    });
+    setTimeout(() => {
+      this.showBookInfoDialog = false;
+    }, 200);
+  }
+
+  /**
+   * 返回上一页
+   */
+  private goBack(): void {
+    this.saveReadingProgress();
+    this.pathStack.pop();
+  }
+
   build() {
     NavDestination() {
       Stack() {
-        // 背景层
+        // 背景层 - 扩展到系统栏区域实现完全沉浸式
         Column()
           .width('100%')
           .height('100%')
           .backgroundColor(this.bgColor)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        // 内容层
-        if (this.isLoading) {
-          this.buildLoadingView()
-        } else if (this.errorMessage) {
-          this.buildErrorView()
-        } else if (this.ebook && this.currentChapter) {
-          this.buildReaderView()
+        // 内容层 - 占满全屏
+        Column() {
+          if (this.isLoading) {
+            this.buildLoadingView()
+          } else if (this.errorMessage) {
+            this.buildErrorView()
+          } else if (this.ebook) {
+            this.buildReaderView()
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .onClick(() => {
+          this.toggleToolbar();
+        })
+
+        // 顶部工具栏（悬浮覆盖）
+        if (this.showTopToolbar) {
+          Column() {
+            this.buildTopToolbar()
+          }
+          .width('100%')
+          .align(Alignment.TopStart)
+          .position({ x: 0, y: 0 })
+          .zIndex(100)
         }
 
-        // 工具栏（覆盖在内容上）
-        if (this.showToolbar) {
-          this.buildToolbar()
+        // 底部工具栏（悬浮覆盖）
+        if (this.showBottomToolbar) {
+          Column() {
+            this.buildBottomToolbar()
+          }
+          .width('100%')
+          .position({ x: 0, y: '100%' })
+          .translate({ x: 0, y: '-100%' })
+          .zIndex(100)
+        }
+
+        // 章节列表面板
+        if (this.showChapterList && this.ebook) {
+          this.buildChapterListPanel()
+        }
+
+        // 更多菜单
+        if (this.showMoreMenu) {
+          this.buildMoreMenu()
         }
 
         // 阅读设置面板
         if (this.showSettingsPanel && this.ebook) {
-          EBookReadingSettingsPanel({
-            settings: this.ebook.readingSettings,
-            onSettingsChange: (settings: EBookReadingSettings) => {
-              this.updateReadingSettings(settings);
-            },
-            onClose: () => {
-              this.showSettingsPanel = false;
-            }
-          })
+          this.buildSettingsPanel()
+        }
+
+        // 书籍信息弹窗
+        if (this.showBookInfoDialog && this.ebook) {
+          this.buildBookInfoDialog()
         }
       }
       .width('100%')
       .height('100%')
-      .onClick(() => {
-        // 点击切换工具栏显示
-        if (!this.showSettingsPanel) {
-          this.showToolbar = !this.showToolbar;
-        }
-      })
     }
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'EBookReaderPage onReady');
       this.pathStack = context.pathStack;
       
-      // 使用类型断言获取参数
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
         this.loadEBook(params.bookId);
@@ -287,6 +691,7 @@ struct EBookReaderPage {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .backgroundColor(this.bgColor)
     .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
   }
 
@@ -314,6 +719,7 @@ struct EBookReaderPage {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .backgroundColor(this.bgColor)
     .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
   }
 
@@ -356,50 +762,30 @@ struct EBookReaderPage {
   @Builder
   buildReaderKitView() {
     if (this.ebook) {
-      Stack() {
-      // Reader Kit 阅读器组件
+      // Reader Kit 阅读器组件 - 占满全屏
       ReaderKitViewerComponent({
         ebook: this.ebook,
         currentChapterIndex: this.currentChapterIndex,
+        initialDomPos: this.currentDomPos,
+        readingSettings: this.ebook.readingSettings,
         onChapterChange: (index: number) => {
           this.currentChapterIndex = index;
           this.currentChapter = this.ebook ? this.ebook.chapters[index] : null;
-          this.saveReadingProgress();
+          // 章节切换时不清空 domPos，也不立即保存
+          // 让 onProgressChange 回调来处理保存，这样可以保留完整的 domPos 信息
+          logger.info(TAG, `章节切换: index=${index}, 等待 pageShow 事件更新 domPos`);
         },
-        onProgressChange: (progress: number) => {
-          logger.debug(TAG, `阅读进度更新: ${progress}%`);
+        onProgressChange: (progress: number, domPos: string) => {
+          logger.debug(TAG, `阅读进度更新: ${progress}%, domPos=${domPos}`);
+          this.handleProgressChange(progress, domPos);
+        },
+        onSettingsChange: (settings: EBookReadingSettings) => {
+          if (this.ebook) {
+            this.ebook.readingSettings = settings;
+            this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
+          }
         }
       })
-
-      // 顶部工具栏
-      if (this.showToolbar) {
-        Column() {
-          Row({ space: 12 }) {
-            Button('返回')
-              .fontSize(16)
-              .height(40)
-              .backgroundColor(Color.White)
-              .fontColor(Color.Black)
-              .onClick(() => {
-                this.pathStack.pop();
-              })
-
-            Blank()
-
-            Text(this.ebook?.metadata.title || '')
-              .fontSize(16)
-              .fontColor(Color.White)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .width('100%')
-          .padding(16)
-          .backgroundColor('#CC000000')
-        }
-          .width('100%')
-          .position({ x: 0, y: this.statusBarHeight })
-        }
-      }
       .width('100%')
       .height('100%')
     }
@@ -407,55 +793,61 @@ struct EBookReaderPage {
 
   /**
    * 构建PDF阅读器视图
+   * 使用 PDF Kit 的 PdfView 组件（单页非连续模式）
+   * 通过 goToPage 实现精确的页面控制和进度保存
    */
   @Builder
   buildPdfReaderView() {
-    Stack() {
-      // PDF预览组件
-      if (this.currentChapter && this.currentChapter.content) {
-        PdfViewerComponent({
-          filePath: this.currentChapter.content,
-          onLoadFinished: () => {
-            logger.info(TAG, 'PDF加载完成');
+    if (this.ebook) {
+      // 使用 PDF Kit 阅读器组件
+      PdfKitViewerComponent({
+        ebook: this.ebook,
+        readingSettings: this.ebook.readingSettings,
+        themeBgColor: this.bgColor, // 传递背景色，响应主题
+        callbacks: {
+          onPageChange: (currentPage: number, totalPages: number) => {
+            logger.info(TAG, `PDF 页面变化: ${currentPage}/${totalPages}`);
+            // 更新当前章节索引（PDF 中每页对应一个章节）
+            this.currentChapterIndex = currentPage - 1;
+            if (this.ebook && this.ebook.chapters.length > this.currentChapterIndex) {
+              this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
+            }
+            // 保存阅读进度
+            this.handlePdfProgressChange(currentPage, totalPages);
           },
-          onLoadError: (errorMsg: string) => {
-            logger.error(TAG, `PDF加载失败: ${errorMsg}`);
-            this.errorMessage = errorMsg;
+          onLoadComplete: (pageCount: number) => {
+            logger.info(TAG, `PDF 加载完成，共 ${pageCount} 页`);
+          },
+          onLoadError: (error: string) => {
+            logger.error(TAG, `PDF 加载失败: ${error}`);
+            this.errorMessage = error;
           }
-        })
-      }
-
-      // 顶部工具栏（返回按钮等）
-      if (this.showToolbar) {
-        Column() {
-          Row({ space: 12 }) {
-            Button('返回')
-              .fontSize(16)
-              .height(40)
-              .backgroundColor(Color.White)
-              .fontColor(Color.Black)
-              .onClick(() => {
-                this.pathStack.pop();
-              })
-
-            Blank()
-
-            Text(this.ebook?.metadata.title || '')
-              .fontSize(16)
-              .fontColor(Color.White)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .width('100%')
-          .padding(16)
-          .backgroundColor('#CC000000')
-        }
-        .width('100%')
-        .position({ x: 0, y: this.statusBarHeight })
-      }
+        } as PdfViewerCallbacks
+      })
+      .width('100%')
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
+  }
+
+  /**
+   * 处理 PDF 阅读进度变化
+   */
+  private handlePdfProgressChange(currentPage: number, totalPages: number): void {
+    if (!this.ebook) {
+      return;
+    }
+
+    // 计算进度百分比
+    const progress = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
+    
+    // 更新阅读进度
+    this.ebook.readingProgress.currentChapterIndex = currentPage - 1;
+    this.ebook.readingProgress.progress = progress;
+    this.ebook.readingProgress.lastReadTime = Date.now();
+    
+    // 保存进度
+    this.saveReadingProgress();
+    logger.debug(TAG, `PDF 进度已保存: 第 ${currentPage} 页, ${progress.toFixed(1)}%`);
   }
 
   /**
@@ -482,31 +874,9 @@ struct EBookReaderPage {
           .width('100%')
           .textAlign(TextAlign.Start)
 
-        // 底部导航
-        Row({ space: 20 }) {
-          Button('上一章')
-            .fontSize(14)
-            .height(40)
-            .enabled(this.currentChapterIndex > 0)
-            .onClick(() => {
-              this.previousChapter();
-            })
-
-          Text(`${this.currentChapterIndex + 1} / ${this.ebook?.chapters.length || 0}`)
-            .fontSize(14)
-            .fontColor(this.textColor)
-
-          Button('下一章')
-            .fontSize(14)
-            .height(40)
-            .enabled(this.currentChapterIndex < (this.ebook?.chapters.length || 0) - 1)
-            .onClick(() => {
-              this.nextChapter();
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceEvenly)
-        .padding({ top: 40, bottom: 40 })
+        // 底部留白（给底部工具栏留出空间）
+        Column()
+          .height(80)
       }
       .width('100%')
       .padding({
@@ -523,99 +893,561 @@ struct EBookReaderPage {
   }
 
   /**
-   * 构建工具栏
+   * 构建顶部工具栏
    */
   @Builder
-  buildToolbar() {
-    Column({ space: 0 }) {
-      // 顶部工具栏
-      Row({ space: 16 }) {
-        Button('返回')
-          .fontSize(14)
-          .height(40)
-          .onClick(() => {
-            this.pathStack.pop();
-          })
+  buildTopToolbar() {
+    Row() {
+      // 返回按钮
+      Button() {
+        Image($r('app.media.ic_arrow_back'))
+          .width(24)
+          .height(24)
+          .fillColor($r('app.color.text_primary'))
+      }
+      .width(48)
+      .height(48)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => this.goBack())
 
-        Text(this.ebook?.metadata.title || '')
-          .fontSize(16)
+      // 标题
+      Column({ space: 4 }) {
+        Text(this.ebook?.metadata.title || '电子书阅读器')
+          .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
-          .layoutWeight(1)
+          .fontColor($r('app.color.text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        if (this.currentChapter) {
+          Text(this.currentChapter.title)
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .margin({ left: 12 })
+
+      // 菜单按钮
+      Button() {
+        Image($r('app.media.ic_more_vert'))
+          .width(24)
+          .height(24)
+          .fillColor($r('app.color.text_primary'))
+      }
+      .width(48)
+      .height(48)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.showMoreMenuWithAnimation();
+      })
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 8, right: 8, top: this.statusBarHeight })
+    .backgroundColor(this.themeManager.getGlassBackgroundResource())
+    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+    .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .opacity(this.toolbarOpacity)
+  }
+
+  /**
+   * 构建底部工具栏
+   */
+  @Builder
+  buildBottomToolbar() {
+    Column() {
+      // 章节进度条
+      Row() {
+        Text(`${this.currentChapterIndex + 1}`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width(40)
+          .textAlign(TextAlign.Center)
+
+        Slider({
+          value: this.currentChapterIndex,
+          min: 0,
+          max: (this.ebook?.chapters.length || 1) - 1,
+          step: 1
+        })
+          .layoutWeight(1)
+          .trackColor($r('app.color.divider_primary'))
+          .selectedColor($r('app.color.accent_primary'))
+          .onChange((value: number) => {
+            this.currentChapterIndex = Math.round(value);
+            this.currentChapter = this.ebook?.chapters[this.currentChapterIndex] || null;
+            this.saveReadingProgress();
+          })
+
+        Text(`${this.ebook?.chapters.length || 0}`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width(40)
+          .textAlign(TextAlign.Center)
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.statusBarHeight + 10, bottom: 10 })
-      .backgroundColor('rgba(0, 0, 0, 0.8)')
+      .padding({ left: 16, right: 16 })
 
-      Blank().layoutWeight(1)
+      // 控制按钮（移除翻页按钮，保留目录和设置）
+      Row() {
+        // 目录按钮
+        Column({ space: 4 }) {
+          Image($r('app.media.ic_reading_settings'))
+            .width(24)
+            .height(24)
+            .fillColor($r('app.color.text_primary'))
+          Text('目录')
+            .fontSize(10)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .height(56)
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.showChapterListWithAnimation();
+        })
 
-      // 底部工具栏
-      Column({ space: 12 }) {
-        // 字体大小调整
-        Row({ space: 16 }) {
-          Text('字体大小')
-            .fontSize(14)
-            .fontColor('#FFFFFF')
+        // 设置按钮
+        Column({ space: 4 }) {
+          Image($r('app.media.ic_brightness_high'))
+            .width(24)
+            .height(24)
+            .fillColor($r('app.color.text_primary'))
+          Text('设置')
+            .fontSize(10)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .layoutWeight(1)
+        .height(56)
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.showSettingsPanelWithAnimation();
+        })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: this.navigationBarHeight })
+    }
+    .width('100%')
+    .backgroundColor(this.themeManager.getGlassBackgroundResource())
+    .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+    .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: -2 })
+    .opacity(this.toolbarOpacity)
+  }
 
-          Button('-')
+  /**
+   * 构建更多菜单
+   */
+  @Builder
+  buildMoreMenu() {
+    Stack() {
+      // 点击遮罩关闭
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.hideMoreMenuWithAnimation();
+        })
+
+      // 菜单面板
+      Column() {
+        // 书籍信息
+        Row() {
+          Text('书籍信息')
+            .fontColor($r('app.color.text_primary'))
             .fontSize(16)
-            .width(40)
-            .height(40)
+          Blank().layoutWeight(1)
+          Image($r('app.media.ic_arrow_right'))
+            .width(16)
+            .height(16)
+            .fillColor($r('app.color.text_secondary'))
+        }
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .onClick(() => {
+          logger.info(TAG, 'MoreMenu: 书籍信息');
+          this.hideMoreMenuWithAnimation();
+          this.showBookInfoDialogWithAnimation();
+        })
+
+        Divider().color($r('app.color.divider'))
+
+        // 字体设置
+        Row() {
+          Text('字体大小')
+            .fontColor($r('app.color.text_primary'))
+            .fontSize(16)
+          Blank().layoutWeight(1)
+          Text(`${this.fontSize}`)
+            .fontColor($r('app.color.text_secondary'))
+            .fontSize(14)
+        }
+        .height(44)
+        .padding({ left: 16, right: 16 })
+
+        // 字体调整按钮
+        Row({ space: 16 }) {
+          Button('A-')
+            .fontSize(14)
+            .width(60)
+            .height(36)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
             .onClick(() => {
               this.adjustFontSize(-2);
             })
 
-          Text(`${this.fontSize}`)
+          Button('A+')
             .fontSize(14)
-            .fontColor('#FFFFFF')
-
-          Button('+')
-            .fontSize(16)
-            .width(40)
-            .height(40)
+            .width(60)
+            .height(36)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
             .onClick(() => {
               this.adjustFontSize(2);
             })
         }
         .width('100%')
+        .padding({ left: 16, right: 16, bottom: 12 })
         .justifyContent(FlexAlign.Center)
-
-        // 进度条
-        Row({ space: 8 }) {
-          Text(`${this.currentChapterIndex + 1}`)
-            .fontSize(12)
-            .fontColor('#FFFFFF')
-
-          Slider({
-            value: this.currentChapterIndex,
-            min: 0,
-            max: (this.ebook?.chapters.length || 1) - 1,
-            step: 1,
-            style: SliderStyle.OutSet
-          })
-            .layoutWeight(1)
-            .trackColor('#444444')
-            .selectedColor('#FFFFFF')
-            .onChange((value: number) => {
-              this.currentChapterIndex = Math.floor(value);
-              this.currentChapter = this.ebook?.chapters[this.currentChapterIndex] || null;
-            })
-
-          Text(`${this.ebook?.chapters.length || 0}`)
-            .fontSize(12)
-            .fontColor('#FFFFFF')
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16 })
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: this.navigationBarHeight + 12 })
-      .backgroundColor('rgba(0, 0, 0, 0.8)')
+      .backgroundColor(this.themeManager.getGlassEffectOptions(GlassEffectContext.MENU).backgroundColorResource)
+      .backgroundBlurStyle(this.themeManager.getGlassEffectOptions(GlassEffectContext.MENU).blurStyle)
+      .borderRadius(this.themeManager.getGlassEffectOptions(GlassEffectContext.MENU).radius)
+      .shadow({ radius: this.themeManager.getGlassEffectOptions(GlassEffectContext.MENU).radius, color: this.themeManager.getGlassEffectOptions(GlassEffectContext.MENU).shadowColor, offsetX: 0, offsetY: 4 })
+      .opacity(this.moreMenuOpacity)
+      .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
+      .translate({ y: this.moreMenuTranslateY })
+      .align(Alignment.TopEnd)
+      .margin({ top: this.statusBarHeight + 56 + 8, right: 12 })
+      .constraintSize({ maxWidth: 260 })
+      .zIndex(1100)
     }
     .width('100%')
     .height('100%')
+    .zIndex(1100)
+  }
+
+  /**
+   * 构建章节列表面板
+   */
+  @Builder
+  buildChapterListPanel() {
+    Stack() {
+      // 遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.background_overlay'))
+        .opacity(0.5 * this.chapterListOpacity)
+        .onClick(() => {
+          this.hideChapterListWithAnimation();
+        })
+
+      // 面板
+      Column() {
+        // 标题栏
+        Row() {
+          Text('目录')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
+          Button() {
+            Image($r('app.media.ic_close'))
+              .width(20)
+              .height(20)
+              .fillColor($r('app.color.text_secondary'))
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.hideChapterListWithAnimation();
+          })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 12, top: 16, bottom: 12 })
+
+        Divider().color($r('app.color.divider'))
+
+        // 章节列表
+        List() {
+          ForEach(this.ebook?.chapters || [], (chapter: EBookChapter, index: number) => {
+            ListItem() {
+              Row() {
+                Text(chapter.title)
+                  .fontSize(15)
+                  .fontColor(index === this.currentChapterIndex ? $r('app.color.accent_primary') : $r('app.color.text_primary'))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+
+                if (index === this.currentChapterIndex) {
+                  Text('当前')
+                    .fontSize(12)
+                    .fontColor($r('app.color.accent_primary'))
+                    .margin({ left: 8 })
+                }
+              }
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 14, bottom: 14 })
+              .backgroundColor(index === this.currentChapterIndex ? $r('app.color.background_secondary') : Color.Transparent)
+              .onClick(() => {
+                this.currentChapterIndex = index;
+                this.currentChapter = chapter;
+                this.saveReadingProgress();
+                this.hideChapterListWithAnimation();
+              })
+            }
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .divider({ strokeWidth: 0.5, color: $r('app.color.divider'), startMargin: 20, endMargin: 20 })
+      }
+      .width('85%')
+      .height('80%')
+      .constraintSize({ maxWidth: 400 })
+      .backgroundColor(this.themeManager.getGlassBackgroundResource())
+      .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+      .borderRadius(16)
+      .opacity(this.chapterListOpacity)
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(1000)
+  }
+
+  /**
+   * 构建设置面板 - 使用完整的 EBookReadingSettingsPanel 组件
+   */
+  @Builder
+  buildSettingsPanel() {
+    Stack() {
+      // 遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.background_overlay'))
+        .opacity(0.5 * this.settingsPanelOpacity)
+        .onClick(() => {
+          this.hideSettingsPanelWithAnimation();
+        })
+
+      // 使用完整的阅读设置面板组件
+      Column() {
+        if (this.ebook && this.ebook.readingSettings) {
+          EBookReadingSettingsPanel({
+            settings: this.ebook.readingSettings,
+            onSettingsChange: (settings: EBookReadingSettings) => {
+              this.updateReadingSettings(settings);
+            },
+            onClose: () => {
+              this.hideSettingsPanelWithAnimation();
+            }
+          })
+        }
+      }
+      .width('90%')
+      .height('70%')
+      .constraintSize({ maxWidth: 420, maxHeight: 600 })
+      .backgroundColor(this.themeManager.getGlassBackgroundResource())
+      .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+      .borderRadius(16)
+      .opacity(this.settingsPanelOpacity)
+      .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
+      .translate({ y: this.settingsPanelTranslateY })
+      .clip(true)
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(1200)
+  }
+
+  /**
+   * 构建书籍信息弹窗
+   */
+  @Builder
+  buildBookInfoDialog() {
+    Stack() {
+      // 遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.background_overlay'))
+        .opacity(0.5 * this.bookInfoDialogOpacity)
+        .onClick(() => {
+          this.hideBookInfoDialogWithAnimation();
+        })
+
+      // 书籍信息面板
+      Column() {
+        // 标题栏
+        Row() {
+          Text('书籍信息')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
+          Button() {
+            Image($r('app.media.ic_close'))
+              .width(20)
+              .height(20)
+              .fillColor($r('app.color.text_secondary'))
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.hideBookInfoDialogWithAnimation();
+          })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 12, top: 16, bottom: 12 })
+
+        Divider().color($r('app.color.divider'))
+
+        // 书籍信息内容
+        Scroll() {
+          Column({ space: 16 }) {
+            // 封面和基本信息
+            Row({ space: 16 }) {
+              // 封面
+              if (this.ebook && this.ebook.metadata.coverImagePath && this.ebook.metadata.coverImagePath.length > 0) {
+                Image(this.ebook.metadata.coverImagePath.startsWith('/') 
+                  ? `file://${this.ebook.metadata.coverImagePath}` 
+                  : this.ebook.metadata.coverImagePath)
+                  .width(80)
+                  .height(120)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(8)
+              } else {
+                Column() {
+                  Image($r('app.media.ic_ebook'))
+                    .width(40)
+                    .height(40)
+                    .fillColor($r('app.color.accent_primary'))
+                }
+                .width(80)
+                .height(120)
+                .backgroundColor($r('app.color.background_secondary'))
+                .borderRadius(8)
+                .justifyContent(FlexAlign.Center)
+              }
+
+              // 基本信息
+              Column({ space: 6 }) {
+                Text(this.ebook?.metadata.title || '未知书名')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.text_primary'))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                Text(this.ebook?.metadata.author || '未知作者')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_secondary'))
+
+                Text(this.ebook?.format || '')
+                  .fontSize(12)
+                  .fontColor($r('app.color.text_white'))
+                  .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                  .backgroundColor($r('app.color.accent_primary'))
+                  .borderRadius(4)
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+            }
+            .width('100%')
+
+            Divider().color($r('app.color.divider'))
+
+            // 详细信息列表
+            this.buildBookInfoItem('出版社', this.ebook?.metadata.publisher || '未知')
+            this.buildBookInfoItem('出版日期', this.ebook?.metadata.publishDate || '未知')
+            this.buildBookInfoItem('ISBN', this.ebook?.metadata.isbn || '无')
+            this.buildBookInfoItem('语言', this.ebook?.metadata.language || '未知')
+            this.buildBookInfoItem('章节数', `${this.ebook?.chapters.length || 0}章`)
+            this.buildBookInfoItem('文件大小', this.formatFileSize(this.ebook?.fileSize || 0))
+
+            // 简介
+            if (this.ebook && this.ebook.metadata.description && this.ebook.metadata.description.length > 0) {
+              Column({ space: 8 }) {
+                Text('简介')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.text_primary'))
+                  .width('100%')
+
+                Text(this.ebook.metadata.description)
+                  .fontSize(13)
+                  .fontColor($r('app.color.text_secondary'))
+                  .lineHeight(20)
+                  .width('100%')
+              }
+              .width('100%')
+            }
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 16, bottom: 20 })
+        }
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.Spring)
+      }
+      .width('90%')
+      .height('70%')
+      .constraintSize({ maxWidth: 400, maxHeight: 550 })
+      .backgroundColor(this.themeManager.getGlassBackgroundResource())
+      .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
+      .borderRadius(16)
+      .opacity(this.bookInfoDialogOpacity)
+      .clip(true)
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(1300)
+  }
+
+  /**
+   * 构建书籍信息项
+   */
+  @Builder
+  buildBookInfoItem(label: string, value: string) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .width(80)
+
+      Text(value)
+        .fontSize(14)
+        .fontColor($r('app.color.text_primary'))
+        .layoutWeight(1)
+        .textAlign(TextAlign.End)
+    }
+    .width('100%')
+    .padding({ top: 4, bottom: 4 })
+  }
+
+  /**
+   * 格式化文件大小
+   */
+  private formatFileSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    } else if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    } else {
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
   }
 }
 

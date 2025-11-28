@@ -141,6 +141,7 @@ export interface ComicInfo {
   author: string;
   description: string;
   coverUrl: string;
+  coverLocalPath?: string; // 封面本地路径
   sourceId: string;
   status: MangaStatus;
   tags: string[];
@@ -664,6 +665,7 @@ export class DataManager {
       author: record.author,
       description: record.description,
       coverUrl: record.coverUrl,
+      coverLocalPath: record.coverLocalPath || undefined,
       sourceId: record.sourceId,
       status: record.status as MangaStatus,
       tags: safeJsonParse(record.tags, []),

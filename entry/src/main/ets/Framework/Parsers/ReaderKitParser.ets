@@ -124,64 +124,71 @@ export class ReaderKitEBookParser {
 
   /**
    * 使用 Reader Kit 解析电子书
-   * 
-   * 注意：这是框架代码，实际的 Reader Kit API 可能是：
-   * - import reader from '@ohos.reader'
-   * - 或 import { bookParser } from '@kit.ReaderKit'
-   * 
-   * 需要根据实际可用的 API 进行调整
    */
   private async parseWithReaderKit(fileBuffer: ArrayBuffer): Promise<ReaderKitBookInfo> {
     try {
       const fileName = this.getFileNameFromPath(this.filePath);
       let candidatePath: string = this.filePath;
+      
+      // 处理 file:// 路径
       if (this.filePath.startsWith('file://')) {
-        const stripped = this.filePath.substring(7);
-        candidatePath = stripped.startsWith('/') ? stripped : `/${stripped}`;
+        // 尝试使用原始路径，因为我们在 DataManagementPage 中已经确保了文件在沙箱中
+        // 并且 ReaderKitTestPage 验证了直接传递 URI 给 getDefaultHandler 可能有问题，
+        // 但这里我们假设传入的是沙箱路径。
+        // 如果是 content uri，可能需要特殊处理，但目前我们假设是文件路径
+        // 对于 file://docs，我们已经复制到了沙箱，所以这里应该是沙箱路径
       }
 
-      const parserHandler: bookParser.BookParserHandler = await bookParser.getDefaultHandler(candidatePath);
-      const info: bookParser.BookInfo = await parserHandler.getBookInfo();
-      const catalog: Array<bookParser.CatalogItem> = await parserHandler.getCatalogList();
+      // 获取 Handler
+      const parserHandler = await bookParser.getDefaultHandler(candidatePath);
+      if (!parserHandler) {
+        throw new Error('无法获取 BookParserHandler');
+      }
 
-      const chapters: ReaderKitChapter[] = this.buildChaptersFromCatalog(catalog);
+      // 获取书籍信息
+      // 使用 Record<string, Object> 替代 any，并进行类型断言
+      const infoObj = await parserHandler.getBookInfo() as Record<string, Object>;
+      
+      // 获取目录
+      const catalogObj = await parserHandler.getCatalogList() as Array<Record<string, Object>>;
+
+      // 构建章节列表
+      const chapters: ReaderKitChapter[] = this.buildChaptersFromCatalog(catalogObj);
 
       const bookInfo: ReaderKitBookInfo = {
-        title: this.extractTitleFromFileName(fileName),
-        author: '未知作者',
-        publisher: '',
-        publishDate: '',
-        isbn: '',
-        language: 'zh-CN',
-        description: `${this.format} 电子书`,
-        coverImagePath: '',
+        title: (infoObj['title'] as string) || this.extractTitleFromFileName(fileName),
+        author: (infoObj['author'] as string) || '未知作者',
+        publisher: (infoObj['publisher'] as string) || '',
+        publishDate: (infoObj['publishDate'] as string) || '',
+        isbn: (infoObj['isbn'] as string) || '',
+        language: (infoObj['language'] as string) || 'zh-CN',
+        description: (infoObj['description'] as string) || `${this.format} 电子书`,
+        coverImagePath: (infoObj['coverUrl'] as string) || '',
         chapters: chapters
       };
       return bookInfo;
     } catch (error) {
-      const fileName = this.getFileNameFromPath(this.filePath);
-      const title = this.extractTitleFromFileName(fileName);
-      return {
-        title: title,
-        author: '未知作者',
-        publisher: '',
-        publishDate: '',
-        isbn: '',
-        language: 'zh-CN',
-        description: `${this.format} 格式电子书（兼容解析模式）`,
-        coverImagePath: '',
-        chapters: []
-      };
+      logger.error(TAG, `Reader Kit 内部解析错误: ${error}`);
+      if (error instanceof Error) {
+        throw error;
+      } else {
+        throw new Error(String(error));
+      }
     }
   }
 
-  private buildChaptersFromCatalog(catalog: Array<bookParser.CatalogItem>): ReaderKitChapter[] {
+  private buildChaptersFromCatalog(catalog: Array<Record<string, Object>>): ReaderKitChapter[] {
     const chapters: ReaderKitChapter[] = [];
+    if (!catalog || catalog.length === 0) {
+      return chapters;
+    }
+
     for (let i: number = 0; i < catalog.length; i++) {
+      const item = catalog[i];
       const ch: ReaderKitChapter = {
-        id: `chapter_${i}`,
-        title: `章节${i + 1}`,
-        content: ''
+        id: (item['id'] as string) || `chapter_${i}`,
+        title: (item['title'] as string) || `章节${i + 1}`,
+        content: '' 
       };
       chapters.push(ch);
     }

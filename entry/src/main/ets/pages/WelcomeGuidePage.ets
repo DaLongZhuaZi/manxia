@@ -8,6 +8,7 @@ import { logger } from '../Utils/Logger';
 import { ThemeManager, ThemeType, CustomThemeData } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
+import { ReadingAnalyticsManager } from '../Framework/Managers/ReadingAnalyticsManager';
 import { common } from '@kit.AbilityKit';
 
 const TAG = 'WelcomeGuidePage';
@@ -38,6 +39,8 @@ struct WelcomeGuidePage {
 
   // 引导管理器
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
+  // 阅读报告管理器
+  private readingAnalyticsManager: ReadingAnalyticsManager = ReadingAnalyticsManager.getInstance();
 
   // 页面状态
   @State private currentStep: GuideStep = GuideStep.WELCOME;
@@ -45,6 +48,7 @@ struct WelcomeGuidePage {
   @State private contentOpacity: number = 0;
   @State private contentTranslateY: number = 50;
   @State private buttonClickTrigger: number = 0;  // 按钮点击触发器，用于强制更新
+  @State private analyticsEnabled: boolean = false; // 阅读报告开关状态
 
   private uiContext: UIContext | undefined = undefined;
 
@@ -80,7 +84,7 @@ struct WelcomeGuidePage {
     const dataImportContent: GuideStepContent = {
       title: '导入本地漫画',
       subtitle: '管理您的漫画收藏',
-      description: '您可以导入本地的漫画文件（支持CBZ格式），应用会自动解析漫画信息并组织管理。点击下方按钮前往数据管理页面。',
+      description: '您可以导入本地的漫画文件（支持CBZ格式压缩包，以及TXT、EPUB、MOBI、AZW3、PDF等格式的电子书与漫画），应用会自动解析漫画信息并组织管理。点击下方按钮前往数据管理页面。',
       icon: $r('app.media.ic_guide_import'),
       buttonText: '前往导入',
       showSkip: true
@@ -96,6 +100,16 @@ struct WelcomeGuidePage {
       showSkip: true
     };
     steps.set(GuideStep.LOG_EXPORT, logExportContent);
+    
+    const analyticsPermissionContent: GuideStepContent = {
+      title: '阅读报告',
+      subtitle: '了解您的阅读习惯',
+      description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时在设置中更改。',
+      icon: $r('app.media.ic_guide_library'),
+      buttonText: '继续',
+      showSkip: true
+    };
+    steps.set(GuideStep.ANALYTICS_PERMISSION, analyticsPermissionContent);
     
     const libraryIntroContent: GuideStepContent = {
       title: '开始阅读',
@@ -464,8 +478,8 @@ struct WelcomeGuidePage {
    */
   private navigateToLogManager(): void {
     try {
-      // 更新步骤到书库介绍
-      this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
+      // 更新步骤到阅读报告权限询问
+      this.welcomeGuideManager.setCurrentStep(GuideStep.ANALYTICS_PERMISSION);
 
       const router = this.uiContext?.getRouter();
       if (router) {
@@ -483,6 +497,27 @@ struct WelcomeGuidePage {
       }
     } catch (error) {
       logger.error(TAG, '导航到日志管理页面异常', String(error));
+    }
+  }
+
+  /**
+   * 处理阅读报告权限设置
+   */
+  private async handleAnalyticsPermission(enabled: boolean): Promise<void> {
+    try {
+      await this.readingAnalyticsManager.initialize();
+      await this.readingAnalyticsManager.setEnabled(enabled);
+      await this.readingAnalyticsManager.markAskedPermission();
+      this.analyticsEnabled = enabled;
+      logger.info(TAG, `阅读报告功能已${enabled ? '启用' : '保持关闭'}`);
+      
+      // 切换到下一步
+      this.animateStepChange(() => {
+        this.currentStep = GuideStep.LIBRARY_INTRO;
+        this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
+      });
+    } catch (error) {
+      logger.error(TAG, `设置阅读报告权限失败: ${String(error)}`);
     }
   }
 
@@ -621,6 +656,87 @@ struct WelcomeGuidePage {
               .onClick(() => {
                 this.navigateToThemeSettings();
               })
+          } else if (this.currentStep === GuideStep.ANALYTICS_PERMISSION) {
+            // 阅读报告权限询问步骤专用布局
+            Image(this.getCurrentStepContent().icon)
+              .width(100)
+              .height(100)
+              .objectFit(ImageFit.Contain)
+              .margin({ bottom: 24 })
+
+            Text(this.getCurrentStepContent().title)
+              .fontSize(28)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .margin({ bottom: 8 })
+
+            Text(this.getCurrentStepContent().subtitle)
+              .fontSize(16)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .margin({ bottom: 16 })
+
+            Text(this.getCurrentStepContent().description)
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .textAlign(TextAlign.Center)
+              .lineHeight(24)
+              .padding({ left: 32, right: 32 })
+              .margin({ bottom: 24 })
+
+            // 阅读报告开关
+            Row() {
+              Text('启用阅读报告')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .layoutWeight(1)
+              
+              Toggle({ type: ToggleType.Switch, isOn: this.analyticsEnabled })
+                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .onChange((isOn: boolean) => {
+                  this.analyticsEnabled = isOn;
+                  logger.info(TAG, `阅读报告开关切换: ${isOn}`);
+                })
+            }
+            .width('80%')
+            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(12)
+            .margin({ bottom: 16 })
+
+            // 说明文字
+            Text('开启后，应用将收集阅读时长、偏好等数据用于生成报告。您可以随时在设置中关闭此功能。')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .textAlign(TextAlign.Center)
+              .padding({ left: 32, right: 32 })
+              .margin({ bottom: 24 })
+
+            // 操作按钮
+            Row({ space: 16 }) {
+              Button('保持关闭')
+                .fontSize(14)
+                .height(44)
+                .layoutWeight(1)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .borderRadius(22)
+                .onClick(() => {
+                  this.handleAnalyticsPermission(false);
+                })
+
+              Button('启用功能')
+                .fontSize(14)
+                .height(44)
+                .layoutWeight(1)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .borderRadius(22)
+                .onClick(() => {
+                  this.handleAnalyticsPermission(true);
+                })
+            }
+            .width('80%')
           } else {
             // 默认步骤布局
             Image(this.getCurrentStepContent().icon)

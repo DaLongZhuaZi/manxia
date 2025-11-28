@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 1,
+  DATABASE_VERSION: 9,
   ENCRYPT: false
 };
 
@@ -226,6 +226,7 @@ export class DatabaseManager {
     await this.ensureComicSourcePkgColumn();
     await this.ensureComicSourcePreloadColumns();
     await this.ensureComicSourceTabsConfigColumn();
+    await this.ensureEBookProgressColumns();
   }
 
   /**
@@ -414,6 +415,50 @@ export class DatabaseManager {
   }
 
   /**
+   * 确保ebook_reading_progress表有domPos和currentChapterIndex列
+   */
+  private async ensureEBookProgressColumns(): Promise<void> {
+    logger.info(TAG, '开始检查并确保ebook_reading_progress表的domPos和currentChapterIndex列存在');
+    try {
+      const store = this.getStore();
+      const rs = await store.querySql("PRAGMA table_info('ebook_reading_progress')");
+      let hasDomPos: boolean = false;
+      let hasCurrentChapterIndex: boolean = false;
+      
+      if (rs.goToFirstRow()) {
+        do {
+          const colName = rs.getString(1);
+          if (colName === 'domPos') { hasDomPos = true; }
+          if (colName === 'currentChapterIndex') { hasCurrentChapterIndex = true; }
+        } while (rs.goToNextRow());
+      }
+      rs.close();
+      
+      logger.info(TAG, `ebook_reading_progress表列检查结果: hasDomPos=${hasDomPos}, hasCurrentChapterIndex=${hasCurrentChapterIndex}`);
+      
+      if (!hasCurrentChapterIndex) {
+        try {
+          await store.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0");
+          logger.info(TAG, '已为ebook_reading_progress添加currentChapterIndex列');
+        } catch (alterError) {
+          logger.warn(TAG, `添加currentChapterIndex列失败（可能已存在）: ${String(alterError)}`);
+        }
+      }
+      
+      if (!hasDomPos) {
+        try {
+          await store.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT ''");
+          logger.info(TAG, '已为ebook_reading_progress添加domPos列');
+        } catch (alterError) {
+          logger.warn(TAG, `添加domPos列失败（可能已存在）: ${String(alterError)}`);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `确保ebook_reading_progress列失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 获取数据库版本
    */
   private async getDatabaseVersion(): Promise<number> {
@@ -465,8 +510,8 @@ export class DatabaseManager {
         await store.executeSql(script);
         logger.debug(TAG, `执行迁移脚本成功: ${script}`);
       } catch (error) {
-        logger.error(TAG, `执行迁移脚本失败: ${String(error)}`);
-        throw error as Error;
+        // 记录错误但不中断迁移，允许重复执行 ADD COLUMN 等操作
+        logger.warn(TAG, `执行迁移脚本失败 (可能是列已存在，将继续执行): ${String(error)}`);
       }
     }
   }
@@ -1081,6 +1126,80 @@ export class DatabaseManager {
         record.timeout = value;
       } else if (columnName === 'cookies') {
         record.cookies = value;
+      } else if (columnName === 'content') {
+        record.content = value;
+      } else if (columnName === 'bookId') {
+        record.bookId = value;
+      } else if (columnName === 'chapterNumber') {
+        record.chapterNumber = value;
+      } else if (columnName === 'startPosition') {
+        record.startPosition = value;
+      } else if (columnName === 'endPosition') {
+        record.endPosition = value;
+      } else if (columnName === 'wordCount') {
+        record.wordCount = value;
+      } else if (columnName === 'format') {
+        record.format = value;
+      } else if (columnName === 'filePath') {
+        record.filePath = value;
+      } else if (columnName === 'publisher') {
+        record.publisher = value;
+      } else if (columnName === 'publishDate') {
+        record.publishDate = value;
+      } else if (columnName === 'isbn') {
+        record.isbn = value;
+      } else if (columnName === 'language') {
+        record.language = value;
+      } else if (columnName === 'coverImagePath') {
+        record.coverImagePath = value;
+      } else if (columnName === 'isFavorite') {
+        record.isFavorite = value;
+      } else if (columnName === 'totalWordCount') {
+        record.totalWordCount = value;
+      } else if (columnName === 'currentChapterId') {
+        record.currentChapterId = value;
+      } else if (columnName === 'currentPosition') {
+        record.currentPosition = value;
+      } else if (columnName === 'progress') {
+        record.progress = value;
+      } else if (columnName === 'lastReadTime') {
+        record.lastReadTime = value;
+      } else if (columnName === 'totalReadingTime') {
+        record.totalReadingTime = value;
+      } else if (columnName === 'fontSize') {
+        record.fontSize = value;
+      } else if (columnName === 'lineHeight') {
+        record.lineHeight = value;
+      } else if (columnName === 'fontFamily') {
+        record.fontFamily = value;
+      } else if (columnName === 'backgroundColor') {
+        record.backgroundColor = value;
+      } else if (columnName === 'textColor') {
+        record.textColor = value;
+      } else if (columnName === 'pageMargin') {
+        record.pageMargin = value;
+      } else if (columnName === 'pageMode') {
+        record.pageMode = value;
+      } else if (columnName === 'brightness') {
+        record.brightness = value;
+      } else if (columnName === 'autoSave') {
+        record.autoSave = value;
+      } else if (columnName === 'saveInterval') {
+        record.saveInterval = value;
+      } else if (columnName === 'currentChapterIndex') {
+        record.currentChapterIndex = value;
+      } else if (columnName === 'domPos') {
+        record.domPos = value;
+      } else if (columnName === 'fontPath') {
+        record.fontPath = value;
+      } else if (columnName === 'fontWeight') {
+        record.fontWeight = value;
+      } else if (columnName === 'themeBgImage') {
+        record.themeBgImage = value;
+      } else if (columnName === 'nightMode') {
+        record.nightMode = value;
+      } else if (columnName === 'followSystemTheme') {
+        record.followSystemTheme = value;
       }
       // 其他字段可以根据需要继续添加
     }

@@ -33,6 +33,7 @@ function getRecordValue(record: DatabaseRecord, fieldName: string, defaultValue:
 export class EBookDataManager {
   private static instance: EBookDataManager;
   private dbManager: DatabaseManager;
+  private columnsChecked: boolean = false;
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
@@ -137,30 +138,132 @@ export class EBookDataManager {
   }
 
   /**
+   * 确保 ebook_reading_progress 表有 domPos 和 currentChapterIndex 列
+   */
+  private async ensureProgressColumns(): Promise<void> {
+    if (this.columnsChecked) {
+      return;
+    }
+    
+    try {
+      logger.info(TAG, '检查 ebook_reading_progress 表列...');
+      const result = await this.dbManager.querySql("PRAGMA table_info('ebook_reading_progress')", []);
+      
+      let hasDomPos = false;
+      let hasCurrentChapterIndex = false;
+      
+      for (const row of result) {
+        const colName = String(getRecordValue(row, 'name', ''));
+        if (colName === 'domPos') { hasDomPos = true; }
+        if (colName === 'currentChapterIndex') { hasCurrentChapterIndex = true; }
+      }
+      
+      logger.info(TAG, `列检查结果: hasDomPos=${hasDomPos}, hasCurrentChapterIndex=${hasCurrentChapterIndex}`);
+      
+      if (!hasCurrentChapterIndex) {
+        try {
+          await this.dbManager.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0", []);
+          logger.info(TAG, '已添加 currentChapterIndex 列');
+        } catch (e) {
+          logger.warn(TAG, `添加 currentChapterIndex 列失败: ${String(e)}`);
+        }
+      }
+      
+      if (!hasDomPos) {
+        try {
+          await this.dbManager.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT ''", []);
+          logger.info(TAG, '已添加 domPos 列');
+        } catch (e) {
+          logger.warn(TAG, `添加 domPos 列失败: ${String(e)}`);
+        }
+      }
+      
+      this.columnsChecked = true;
+    } catch (error) {
+      logger.error(TAG, `检查列失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 保存阅读进度
+   * 使用 DELETE + 单次完整 INSERT 策略，避免 UPDATE 静默失败问题
+   * 参考：HarmonyOS RdbStore UPDATE 语句存在静默失败的已知问题
    */
   public async saveReadingProgress(progress: EBookReadingProgress): Promise<void> {
-    const sql = `
-      INSERT OR REPLACE INTO ebook_reading_progress (
-        bookId, userId, currentChapterId, currentPosition, progress,
-        lastReadTime, totalReadingTime, createTime, updateTime
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
+    // 首次保存时检查并添加缺失的列
+    await this.ensureProgressColumns();
+    
+    const domPosValue = progress.domPos || '';
+    const chapterIndexValue = progress.currentChapterIndex || 0;
+    
+    // 详细日志：记录保存的数据
+    logger.info(TAG, `保存阅读进度: bookId=${progress.bookId}, chapterIndex=${chapterIndexValue}, domPos长度=${domPosValue.length}`);
+    
     const now = Date.now();
-    const params = [
-      progress.bookId,
-      'default_user',
-      progress.currentChapterId,
-      progress.currentPosition,
-      progress.progress,
-      progress.lastReadTime,
-      progress.totalReadingTime,
-      now,
-      now
-    ];
-
-    await this.dbManager.executeSql(sql, params);
+    
+    try {
+      // 1. 先删除旧记录
+      const deleteSql = `DELETE FROM ebook_reading_progress WHERE bookId = ? AND userId = ?`;
+      await this.dbManager.executeSql(deleteSql, [progress.bookId, 'default_user']);
+      logger.debug(TAG, `旧记录已删除`);
+      
+      // 2. 一次性插入完整记录（包含所有字段，避免使用 UPDATE）
+      // 关键：将 currentChapterIndex 和 domPos 直接包含在 INSERT 语句中
+      const insertSql = `
+        INSERT INTO ebook_reading_progress (
+          bookId, userId, currentChapterId, currentChapterIndex, currentPosition,
+          domPos, progress, lastReadTime, totalReadingTime, createTime, updateTime
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      
+      const insertParams = [
+        progress.bookId,
+        'default_user',
+        progress.currentChapterId || '',
+        chapterIndexValue,
+        progress.currentPosition || 0,
+        domPosValue,
+        progress.progress || 0,
+        progress.lastReadTime || now,
+        progress.totalReadingTime || 0,
+        now,
+        now
+      ];
+      
+      await this.dbManager.executeSql(insertSql, insertParams);
+      logger.debug(TAG, `完整记录插入成功: chapterIndex=${chapterIndexValue}, domPosLen=${domPosValue.length}`);
+      
+      // 3. 验证保存结果
+      const verifySql = `SELECT currentChapterIndex, domPos FROM ebook_reading_progress WHERE bookId = ? AND userId = ?`;
+      const verifyResult = await this.dbManager.querySql(verifySql, [progress.bookId, 'default_user']);
+      
+      if (verifyResult && verifyResult.length > 0) {
+        const record = verifyResult[0];
+        const savedChapterIndex = Number(getRecordValue(record, 'currentChapterIndex', 0));
+        const savedDomPos = String(getRecordValue(record, 'domPos', ''));
+        
+        logger.info(TAG, `验证结果: savedChapterIndex=${savedChapterIndex}, savedDomPos长度=${savedDomPos.length}`);
+        
+        if (savedChapterIndex === chapterIndexValue && savedDomPos.length === domPosValue.length) {
+          logger.info(TAG, `✅ 阅读进度保存成功`);
+        } else {
+          logger.error(TAG, `❌ 验证失败! 期望: index=${chapterIndexValue}, domPosLen=${domPosValue.length}; 实际: index=${savedChapterIndex}, domPosLen=${savedDomPos.length}`);
+          
+          // 调试：查询所有列名
+          const schemaResult = await this.dbManager.querySql("PRAGMA table_info('ebook_reading_progress')", []);
+          const columnNames: string[] = [];
+          for (const row of schemaResult) {
+            columnNames.push(String(getRecordValue(row, 'name', '')));
+          }
+          logger.error(TAG, `表列名: ${columnNames.join(', ')}`);
+        }
+      } else {
+        logger.error(TAG, `❌ 验证失败! 未找到记录`);
+      }
+      
+    } catch (error) {
+      logger.error(TAG, `保存阅读进度失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -169,10 +272,11 @@ export class EBookDataManager {
   public async saveReadingSettings(bookId: string, settings: EBookReadingSettings): Promise<void> {
     const sql = `
       INSERT OR REPLACE INTO ebook_reading_settings (
-        bookId, userId, fontSize, lineHeight, fontFamily, backgroundColor,
-        textColor, pageMargin, pageMode, brightness, autoSave, saveInterval,
+        bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
+        backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
+        pageMargin, pageMode, brightness, autoSave, saveInterval,
         createTime, updateTime
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const now = Date.now();
@@ -180,10 +284,15 @@ export class EBookDataManager {
       bookId,
       'default_user',
       settings.fontSize,
-      settings.lineHeight,
       settings.fontFamily,
+      settings.fontPath || '',
+      settings.fontWeight || 400,
+      settings.lineHeight,
       settings.backgroundColor,
       settings.textColor,
+      settings.themeBgImage || '',
+      settings.nightMode ? 1 : 0,
+      settings.followSystemTheme !== false ? 1 : 0,  // 默认为 true
       settings.pageMargin,
       settings.pageMode,
       settings.brightness,
@@ -343,10 +452,31 @@ export class EBookDataManager {
       
       if (records && records.length > 0) {
         const record = records[0];
+        const currentChapterIndex = Number(getRecordValue(record, 'currentChapterIndex', 0));
+        const domPos = String(getRecordValue(record, 'domPos', ''));
+        
+        // 如果 domPos 包含 resourceIndex，优先使用 domPos 中的值
+        let finalChapterIndex = currentChapterIndex;
+        if (domPos && domPos.startsWith('{')) {
+          try {
+            const domPosData = JSON.parse(domPos) as Record<string, Object>;
+            if (typeof domPosData['resourceIndex'] === 'number') {
+              finalChapterIndex = domPosData['resourceIndex'] as number;
+              logger.info(TAG, `从 domPos 中恢复章节索引: ${finalChapterIndex}`);
+            }
+          } catch (parseError) {
+            logger.warn(TAG, `解析 domPos 失败: ${String(parseError)}`);
+          }
+        }
+        
+        logger.info(TAG, `读取阅读进度: currentChapterIndex=${currentChapterIndex}, finalChapterIndex=${finalChapterIndex}, domPos长度=${domPos.length}`);
+        
         return {
           bookId: String(getRecordValue(record, 'bookId', '')),
           currentChapterId: String(getRecordValue(record, 'currentChapterId', '')),
+          currentChapterIndex: finalChapterIndex,
           currentPosition: Number(getRecordValue(record, 'currentPosition', 0)),
+          domPos: domPos,
           progress: Number(getRecordValue(record, 'progress', 0)),
           lastReadTime: Number(getRecordValue(record, 'lastReadTime', 0)),
           totalReadingTime: Number(getRecordValue(record, 'totalReadingTime', 0))
@@ -370,16 +500,26 @@ export class EBookDataManager {
       
       if (records && records.length > 0) {
         const record = records[0];
-        const pageModeValue = String(getRecordValue(record, 'pageMode', 'PAGE'));
+        const pageModeValue = String(getRecordValue(record, 'pageMode', '0'));
         
         return {
+          // 字体设置
           fontSize: Number(getRecordValue(record, 'fontSize', 18)),
-          lineHeight: Number(getRecordValue(record, 'lineHeight', 1.8)),
           fontFamily: String(getRecordValue(record, 'fontFamily', 'HarmonyOS Sans')),
+          fontPath: String(getRecordValue(record, 'fontPath', '')),
+          fontWeight: Number(getRecordValue(record, 'fontWeight', 400)),
+          // 排版设置
+          lineHeight: Number(getRecordValue(record, 'lineHeight', 1.5)),
+          // 颜色主题设置
           backgroundColor: String(getRecordValue(record, 'backgroundColor', '#FFFFFF')),
-          textColor: String(getRecordValue(record, 'textColor', '#333333')),
-          pageMargin: Number(getRecordValue(record, 'pageMargin', 20)),
+          textColor: String(getRecordValue(record, 'textColor', '#000000')),
+          themeBgImage: String(getRecordValue(record, 'themeBgImage', '')),
+          nightMode: Number(getRecordValue(record, 'nightMode', 0)) === 1,
+          followSystemTheme: Number(getRecordValue(record, 'followSystemTheme', 1)) === 1,
+          // 翻页设置
+          pageMargin: Number(getRecordValue(record, 'pageMargin', 16)),
           pageMode: pageModeValue as EBookPageMode,
+          // 系统设置
           brightness: Number(getRecordValue(record, 'brightness', 100)),
           autoSave: Number(getRecordValue(record, 'autoSave', 1)) === 1,
           saveInterval: Number(getRecordValue(record, 'saveInterval', 30))
@@ -390,6 +530,40 @@ export class EBookDataManager {
     } catch (error) {
       logger.error(TAG, `获取阅读设置失败: ${String(error instanceof Error ? error.message : error)}`);
       return null;
+    }
+  }
+
+  /**
+   * 搜索电子书
+   * @param keyword 搜索关键词
+   * @returns 匹配的电子书列表
+   */
+  public async searchEBooks(keyword: string): Promise<EBook[]> {
+    try {
+      const lowerKeyword = keyword.toLowerCase();
+      const sql = `
+        SELECT * FROM ebook_info 
+        WHERE LOWER(title) LIKE ? 
+           OR LOWER(author) LIKE ? 
+           OR LOWER(tags) LIKE ?
+        ORDER BY lastUpdateTime DESC
+      `;
+      const searchPattern = `%${lowerKeyword}%`;
+      const records: DatabaseRecord[] = await this.dbManager.querySql(sql, [searchPattern, searchPattern, searchPattern]);
+      
+      const ebooks: EBook[] = [];
+      for (const record of records) {
+        const ebook: EBook = await this.buildEBookFromRecord(record);
+        if (ebook) {
+          ebooks.push(ebook);
+        }
+      }
+      
+      logger.info(TAG, `搜索电子书完成，关键词: "${keyword}"，结果: ${ebooks.length}条`);
+      return ebooks;
+    } catch (error) {
+      logger.error(TAG, `搜索电子书失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
     }
   }
 

@@ -421,17 +421,7 @@ struct AboutPage {
         }
       },
       content: {
-        title: { mainTitle: '关于' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '关于' }
       }
     })
     .onReady((context: NavDestinationContext) => {
