@@ -44,3 +44,16 @@ Thumbs.db
 
 # Large log files
 komiic_api_log.txt
+
+# Sensitive/User specific configuration
+build-profile.json5
+response.json
+.env
+
+# Keystore files
+*.p12
+*.cer
+*.p7b
+*.jks
+*.keystore
+*.csr
