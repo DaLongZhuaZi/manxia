@@ -806,17 +806,7 @@ struct LogManagerPage {
         }
       },
       content: {
-        title: { mainTitle: '日志管理' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '日志管理' }
       }
     })
     .onReady((context: NavDestinationContext) => {

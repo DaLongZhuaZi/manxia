@@ -6,9 +6,23 @@
 
 import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus, EBookPageMode } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
-import { ReaderKitEBookParser } from './ReaderKitParser';
+import { fileIo } from '@kit.CoreFileKit';
+import { util, taskpool } from '@kit.ArkTS';
+import { bookParser } from '@kit.ReaderKit';
+import { image } from '@kit.ImageKit';
+import { pdfService } from '@kit.PDFKit';
 
 const TAG = 'EBookParser';
+
+// 章节标题正则表达式（支持多种格式）
+const CHAPTER_PATTERNS = [
+  /^第\s*([0-9零一二三四五六七八九十百千万亿]+)\s*[章回卷节集部篇]\s*(.*)$/,
+  /^([0-9零一二三四五六七八九十百千万亿]+)\s*[、.．·]\s*(.+)$/,
+  /^Chapter\s+(\d+)[：:\s]+(.*)$/i,
+  /^卷\s*([0-9零一二三四五六七八九十百千万亿]+)\s*(.*)$/,
+  /^\s*(\d+)\s*[、.．·]\s*(.+)$/,
+  /^[【\[]第\s*([0-9零一二三四五六七八九十百千万亿]+)\s*[章回卷节集部篇][】\]]\s*(.*)$/,
+];
 
 /**
  * 电子书解析器抽象基类
@@ -81,6 +95,648 @@ export abstract class EBookParser {
 }
 
 /**
+ * Reader Kit 电子书解析器
+ */
+class ReaderKitEBookParser extends EBookParser {
+  constructor(filePath: string, format: EBookFormat) {
+    super(filePath, format);
+  }
+
+  public static isSupportedFormat(format: EBookFormat): boolean {
+    const supportedFormats = [
+      EBookFormat.TXT,
+      EBookFormat.EPUB,
+      EBookFormat.MOBI,
+      EBookFormat.AZW,
+      EBookFormat.AZW3
+    ];
+    return supportedFormats.includes(format);
+  }
+
+  public async parse(): Promise<EBook> {
+    try {
+      logger.info(TAG, `开始使用 Reader Kit 解析电子书: ${this.filePath}, 格式: ${this.format}`);
+      const fileBuffer = await this.readFileBuffer(this.filePath);
+      const bookInfo = await this.parseWithReaderKit(fileBuffer);
+      const ebook = this.buildEBookFromReaderKit(bookInfo);
+      ebook.fileSize = fileBuffer.byteLength;
+      logger.info(TAG, `Reader Kit 解析完成: ${ebook.metadata.title}`);
+      return ebook;
+    } catch (error) {
+      logger.error(TAG, `Reader Kit 解析失败: ${String(error instanceof Error ? error.message : error)}`);
+      return this.parseFallback();
+    }
+  }
+
+  private async readFileBuffer(filePath: string): Promise<ArrayBuffer> {
+    try {
+      let openTarget: string = filePath;
+      if (!filePath.startsWith('file://') && !filePath.startsWith('/')) {
+        openTarget = `/${filePath}`;
+      }
+      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(file.fd);
+      let buffer = new ArrayBuffer(stat.size);
+      let readLen = fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+      if (readLen !== stat.size) {
+        throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
+      }
+      return buffer;
+    } catch (firstError) {
+      const firstMsg = firstError instanceof Error ? firstError.message : String(firstError);
+      try {
+        if (filePath.startsWith('file://')) {
+          const stripped = filePath.substring(7);
+          const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
+          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = fileIo.statSync(file.fd);
+          const buffer = new ArrayBuffer(stat.size);
+          const readLen = fileIo.readSync(file.fd, buffer);
+          fileIo.closeSync(file);
+          if (readLen !== stat.size) {
+            throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
+          }
+          return buffer;
+        }
+        throw new Error(firstMsg);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        throw new Error(`文件读取失败: ${errorMsg}`);
+      }
+    }
+  }
+
+  private async parseWithReaderKit(fileBuffer: ArrayBuffer): Promise<ReaderKitBookInfo> {
+    try {
+      const fileName = this.getFileNameFromPath(this.filePath);
+      let candidatePath: string = this.filePath;
+      logger.info(TAG, `[ReaderKit] 开始解析，路径: ${candidatePath}`);
+      
+      const parserHandler = await bookParser.getDefaultHandler(candidatePath);
+      if (!parserHandler) {
+        throw new Error('无法获取 BookParserHandler');
+      }
+      logger.info(TAG, `[ReaderKit] Handler 获取成功`);
+
+      // 获取书籍信息 - 使用 Object 类型转换以访问动态属性
+      const rawInfo = await parserHandler.getBookInfo();
+      // 打印完整的 BookInfo 对象以查看实际属性名
+      logger.info(TAG, `[ReaderKit] BookInfo 原始数据: ${JSON.stringify(rawInfo)}`);
+      const infoObj = rawInfo as Object as Record<string, Object>;
+      
+      // 打印所有可用的属性键，帮助调试
+      const allKeys = Object.keys(infoObj);
+      logger.info(TAG, `[ReaderKit] BookInfo 所有属性键: ${allKeys.join(', ')}`);
+      
+      // 获取目录
+      const rawCatalog = await parserHandler.getCatalogList();
+      const catalogArray = rawCatalog as Object as Array<Record<string, Object>>;
+      logger.info(TAG, `[ReaderKit] 目录数量: ${catalogArray?.length || 0}`);
+      if (catalogArray && catalogArray.length > 0) {
+        logger.info(TAG, `[ReaderKit] 第一个目录项: ${JSON.stringify(catalogArray[0])}`);
+      }
+
+      // 构建章节列表
+      const chapters: ReaderKitChapter[] = this.buildChaptersFromCatalog(catalogArray);
+      
+      // 详细打印每个元数据字段的值，帮助调试
+      logger.info(TAG, `[ReaderKit] 元数据详情:`);
+      logger.info(TAG, `  - bookTitle: "${infoObj['bookTitle'] || ''}"`);
+      logger.info(TAG, `  - bookCreator: "${infoObj['bookCreator'] || ''}"`);
+      logger.info(TAG, `  - bookPublisher: "${infoObj['bookPublisher'] || ''}"`);
+      logger.info(TAG, `  - bookPublishDate: "${infoObj['bookPublishDate'] || ''}"`);
+      logger.info(TAG, `  - bookDescription: "${infoObj['bookDescription'] || ''}"`);
+      logger.info(TAG, `  - bookLanguage: "${infoObj['bookLanguage'] || ''}"`);
+      logger.info(TAG, `  - bookCoverImage: "${infoObj['bookCoverImage'] || ''}"`);
+      
+      // 根据 Reader Kit 实际返回的属性名进行映射
+      // BookInfo 实际属性: bookTitle, bookCreator, bookPublishDate, bookLanguage, bookCoverImage, bookCharset, bookType, isRtl
+      let author = this.getStringProperty(infoObj, ['bookCreator', 'author', 'creator', 'bookAuthor']);
+      let publisher = this.getStringProperty(infoObj, ['bookPublisher', 'publisher', 'press']);
+      let description = this.getStringProperty(infoObj, ['bookDescription', 'description', 'desc', 'summary', 'intro']);
+      
+      // 如果作者为空，尝试从目录中的"版权信息"或"作者简介"章节名推断
+      if (!author && catalogArray && catalogArray.length > 0) {
+        for (const item of catalogArray) {
+          const catalogName = String(item['catalogName'] || '');
+          // 检查是否有作者相关的章节
+          if (catalogName.includes('作者') || catalogName.includes('著者')) {
+            logger.info(TAG, `[ReaderKit] 发现作者相关章节: ${catalogName}`);
+            // 可以尝试从章节名中提取作者信息
+          }
+        }
+      }
+      
+      const bookInfo: ReaderKitBookInfo = {
+        title: this.getStringProperty(infoObj, ['bookTitle', 'title', 'name', 'bookName']) || this.extractTitleFromFileName(fileName),
+        author: author || '未知作者',
+        publisher: publisher,
+        publishDate: this.getStringProperty(infoObj, ['bookPublishDate', 'publishDate', 'pubDate', 'date']) || '',
+        isbn: this.getStringProperty(infoObj, ['bookIsbn', 'isbn', 'ISBN']) || '',
+        language: this.getStringProperty(infoObj, ['bookLanguage', 'language', 'lang']) || 'zh-CN',
+        description: description || `${this.format} 电子书`,
+        coverImagePath: this.getStringProperty(infoObj, ['bookCoverImage', 'coverUrl', 'cover', 'coverPath', 'coverImage']) || '',
+        chapters: chapters
+      };
+      
+      logger.info(TAG, `[ReaderKit] 解析完成: 书名=${bookInfo.title}, 作者=${bookInfo.author}, 出版社=${bookInfo.publisher}, 简介长度=${bookInfo.description.length}, 章节数=${chapters.length}`);
+      return bookInfo;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `[ReaderKit] 解析失败: ${errorMsg}`);
+      if (error instanceof Error) throw error;
+      throw new Error(String(error));
+    }
+  }
+  
+  /**
+   * 从对象中获取字符串属性，尝试多个可能的属性名
+   * 跳过空字符串，只返回有实际内容的值
+   */
+  private getStringProperty(obj: Record<string, Object>, keys: string[]): string {
+    for (const key of keys) {
+      const value = obj[key];
+      if (value !== undefined && value !== null) {
+        const strValue = String(value).trim();
+        // 跳过空字符串，继续尝试下一个键
+        if (strValue.length > 0) {
+          return strValue;
+        }
+      }
+    }
+    return '';
+  }
+
+  private buildChaptersFromCatalog(catalog: Array<Record<string, Object>>): ReaderKitChapter[] {
+    const chapters: ReaderKitChapter[] = [];
+    if (!catalog || catalog.length === 0) {
+      return chapters;
+    }
+    for (let i: number = 0; i < catalog.length; i++) {
+      const item = catalog[i];
+      // 根据 Reader Kit 实际返回的属性名进行映射
+      // CatalogItem 实际属性: catalogId, catalogName, catalogLevel, href, resourceFile
+      const chapterId = this.getStringProperty(item, ['catalogId', 'id', 'chapterId', 'index']) || `chapter_${i}`;
+      const chapterTitle = this.getStringProperty(item, ['catalogName', 'title', 'name', 'chapterTitle', 'label']) || `章节${i + 1}`;
+      const ch: ReaderKitChapter = {
+        id: chapterId,
+        title: chapterTitle,
+        content: ''
+      };
+      chapters.push(ch);
+    }
+    return chapters;
+  }
+
+  private buildEBookFromReaderKit(bookInfo: ReaderKitBookInfo): EBook {
+    const now = Date.now();
+    const bookId = `ebook_${this.format.toLowerCase()}_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const metadata: EBookMetadata = {
+      title: bookInfo.title,
+      author: bookInfo.author,
+      publisher: bookInfo.publisher,
+      publishDate: bookInfo.publishDate,
+      isbn: bookInfo.isbn,
+      language: bookInfo.language,
+      description: bookInfo.description,
+      coverImagePath: bookInfo.coverImagePath,
+      tags: [this.format],
+      rating: 0
+    };
+    const ebook = new EBook(
+      bookId, this.format, this.filePath, 0, metadata, [],
+      EBookStatus.UNREAD, null, null, now, now, false, 0
+    );
+    if (bookInfo.chapters && bookInfo.chapters.length > 0) {
+      ebook.chapters = bookInfo.chapters.map((ch, index) => {
+        const chapter: EBookChapter = {
+          id: ch.id || `chapter_${index}`,
+          bookId: bookId,
+          title: ch.title,
+          content: ch.content,
+          chapterNumber: index + 1,
+          wordCount: ch.content.length,
+          startPosition: 0,
+          endPosition: ch.content.length,
+          createTime: now
+        };
+        return chapter;
+      });
+    } else {
+      ebook.chapters.push({
+        id: `chapter_default_${now}`,
+        bookId: bookId,
+        title: '第1章',
+        content: '内容加载中...',
+        chapterNumber: 1,
+        wordCount: 0,
+        startPosition: 0,
+        endPosition: 0,
+        createTime: now
+      });
+    }
+    return ebook;
+  }
+
+  private async parseFallback(): Promise<EBook> {
+    logger.warn(TAG, `使用降级方案解析: ${this.format}`);
+    const fileName = this.getFileNameFromPath(this.filePath);
+    const title = this.extractTitleFromFileName(fileName);
+    const now = Date.now();
+    const bookId = `ebook_${this.format.toLowerCase()}_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    const metadata: EBookMetadata = {
+      title: title,
+      author: '未知作者',
+      publisher: '',
+      publishDate: '',
+      isbn: '',
+      language: 'zh-CN',
+      description: `${this.format} 格式电子书`,
+      coverImagePath: '',
+      tags: [this.format],
+      rating: 0
+    };
+    const ebook = new EBook(
+      bookId, this.format, this.filePath, 0, metadata, [],
+      EBookStatus.UNREAD, null, null, now, now, false, 0
+    );
+    ebook.chapters.push({
+      id: `chapter_${now}`,
+      bookId: bookId,
+      title: '第1章',
+      content: '请在阅读器中打开查看内容',
+      chapterNumber: 1,
+      wordCount: 0,
+      startPosition: 0,
+      endPosition: 0,
+      createTime: now
+    });
+    return ebook;
+  }
+}
+
+/**
+ * Reader Kit 返回的书籍信息接口
+ */
+interface ReaderKitBookInfo {
+  title: string;
+  author: string;
+  publisher: string;
+  publishDate: string;
+  isbn: string;
+  language: string;
+  description: string;
+  coverImagePath: string;
+  chapters: ReaderKitChapter[];
+}
+
+/**
+ * Reader Kit 章节信息接口
+ */
+interface ReaderKitChapter {
+  id: string;
+  title: string;
+  content: string;
+}
+
+/**
+ * 电子书封面提取结果
+ */
+export interface EBookCoverExtractionResult {
+  success: boolean;
+  coverPath: string;
+  candidateImages: string[];
+  errorMessage?: string;
+}
+
+/**
+ * 电子书封面提取器
+ * 使用 Reader Kit 提取电子书封面图片
+ * 对于 PDF 格式，使用 PDF Kit 的 convertToImage 方法
+ */
+export class EBookCoverExtractor {
+  private static TAG: string = 'EBookCoverExtractor';
+  private static readonly MAX_CANDIDATE_IMAGES = 5;
+
+  /**
+   * 提取电子书封面
+   * @param filePath 电子书文件路径
+   * @param savePath 封面保存路径
+   * @returns 提取结果
+   */
+  public static async extractCover(filePath: string, savePath: string): Promise<EBookCoverExtractionResult> {
+    try {
+      logger.info(EBookCoverExtractor.TAG, `开始提取电子书封面: ${filePath}`);
+
+      // 检查是否为 PDF 格式
+      if (filePath.toLowerCase().endsWith('.pdf')) {
+        return await EBookCoverExtractor.extractPdfCover(filePath, savePath);
+      }
+
+      // 获取 Reader Kit Handler（用于非 PDF 格式）
+      const parserHandler = await bookParser.getDefaultHandler(filePath);
+      if (!parserHandler) {
+        throw new Error('无法获取 BookParserHandler');
+      }
+
+      // 获取书籍信息
+      const rawInfo = await parserHandler.getBookInfo();
+      const infoObj = rawInfo as Object as Record<string, Object>;
+      const coverImageRef = String(infoObj['bookCoverImage'] || '');
+
+      logger.info(EBookCoverExtractor.TAG, `封面图片引用: ${coverImageRef}`);
+
+      if (!coverImageRef || coverImageRef.length === 0) {
+        logger.warn(EBookCoverExtractor.TAG, '电子书没有封面图片引用');
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: '电子书没有封面图片'
+        };
+      }
+
+      // 使用官方 API: getResourceContent(spineIndex, resourcePath)
+      // 根据官方示例代码，获取封面时 spineIndex 传 -1
+      try {
+        logger.info(EBookCoverExtractor.TAG, `尝试使用 getResourceContent(-1, "${coverImageRef}") 提取封面...`);
+        
+        // 直接调用 parserHandler 的 getResourceContent 方法
+        // 注意：这是同步方法，不需要 await
+        const resourceData = parserHandler.getResourceContent(-1, coverImageRef);
+        
+        if (resourceData && resourceData.byteLength > 0) {
+          logger.info(EBookCoverExtractor.TAG, `成功获取封面数据，大小: ${resourceData.byteLength} 字节`);
+          // 保存封面图片
+          const savedPath = await EBookCoverExtractor.saveImageToFile(resourceData, savePath, coverImageRef);
+          if (savedPath) {
+            logger.info(EBookCoverExtractor.TAG, `封面图片保存成功: ${savedPath}`);
+            return {
+              success: true,
+              coverPath: savedPath,
+              candidateImages: [savedPath]
+            };
+          }
+        } else {
+          logger.warn(EBookCoverExtractor.TAG, `getResourceContent 返回空数据`);
+        }
+      } catch (extractError) {
+        logger.warn(EBookCoverExtractor.TAG, `使用 getResourceContent 提取封面失败: ${String(extractError)}`);
+      }
+      
+      logger.warn(EBookCoverExtractor.TAG, `无法提取封面图片`);
+
+      // 如果直接提取失败，返回封面引用信息（供后续处理）
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: `封面引用: ${coverImageRef}，但无法提取`
+      };
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(EBookCoverExtractor.TAG, `提取封面失败: ${errorMsg}`);
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: errorMsg
+      };
+    }
+  }
+
+  /**
+   * 保存图片到文件
+   */
+  private static async saveImageToFile(imageData: ArrayBuffer, basePath: string, originalName: string): Promise<string | null> {
+    try {
+      // 确定文件扩展名
+      const ext = EBookCoverExtractor.getImageExtension(originalName, imageData);
+      const fileName = `cover_${Date.now()}${ext}`;
+      const fullPath = `${basePath}/${fileName}`;
+
+      // 确保目录存在
+      try {
+        fileIo.mkdirSync(basePath, true);
+      } catch (e) {
+        // 目录可能已存在
+      }
+
+      // 写入文件
+      const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(file.fd, imageData);
+      fileIo.closeSync(file);
+
+      logger.info(EBookCoverExtractor.TAG, `图片保存成功: ${fullPath}, 大小: ${imageData.byteLength} 字节`);
+      return fullPath;
+    } catch (error) {
+      logger.error(EBookCoverExtractor.TAG, `保存图片失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * 获取图片扩展名
+   */
+  private static getImageExtension(originalName: string, imageData: ArrayBuffer): string {
+    // 从原始文件名获取扩展名
+    const match = originalName.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/i);
+    if (match) {
+      return `.${match[1].toLowerCase()}`;
+    }
+
+    // 通过文件头检测图片格式
+    const bytes = new Uint8Array(imageData.slice(0, 8));
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
+      return '.jpg';
+    } else if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+      return '.png';
+    } else if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+      return '.gif';
+    } else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
+      return '.webp';
+    }
+
+    return '.jpg'; // 默认使用 jpg
+  }
+
+  /**
+   * 提取 PDF 封面
+   * 
+   * 使用 PDF Kit 的 convertToImage 方法将第一页转换为图片。
+   * 为避免阻塞主线程，使用 setTimeout 延迟执行并设置超时保护。
+   */
+  private static async extractPdfCover(filePath: string, savePath: string): Promise<EBookCoverExtractionResult> {
+    logger.info(EBookCoverExtractor.TAG, `开始提取 PDF 封面: ${filePath}`);
+    
+    try {
+      // 创建临时输出目录
+      const tempDir = savePath.substring(0, savePath.lastIndexOf('/'));
+      
+      // 确保目录存在
+      try {
+        fileIo.mkdirSync(tempDir, true);
+      } catch (mkdirError) {
+        // 目录可能已存在
+      }
+      
+      // 使用 Promise 包装 PDF 封面提取，添加超时保护
+      const extractPromise = new Promise<EBookCoverExtractionResult>((resolve) => {
+        // 延迟执行，避免阻塞 UI
+        setTimeout(() => {
+          try {
+            // 创建 PDF 文档对象
+            const pdfDocument: pdfService.PdfDocument = new pdfService.PdfDocument();
+            const loadResult: pdfService.ParseResult = pdfDocument.loadDocument(filePath);
+            
+            if (loadResult !== pdfService.ParseResult.PARSE_SUCCESS) {
+              logger.warn(EBookCoverExtractor.TAG, `PDF 加载失败: ${loadResult}`);
+              resolve({
+                success: false,
+                coverPath: '',
+                candidateImages: [],
+                errorMessage: `PDF 加载失败: ${loadResult}`
+              });
+              return;
+            }
+            
+            const pageCount = pdfDocument.getPageCount();
+            if (pageCount <= 0) {
+              logger.warn(EBookCoverExtractor.TAG, `PDF 页数为 0`);
+              resolve({
+                success: false,
+                coverPath: '',
+                candidateImages: [],
+                errorMessage: 'PDF 页数为 0'
+              });
+              return;
+            }
+            
+            // 转换第一页为图片
+            logger.info(EBookCoverExtractor.TAG, `开始转换 PDF 第一页为图片，输出目录: ${tempDir}`);
+            const convertSuccess: boolean = pdfDocument.convertToImage(tempDir, 0);
+            
+            if (convertSuccess) {
+              // convertToImage 成功后，图片会生成在 tempDir 目录下
+              // 文件名格式通常是 page_0.png 或类似格式
+              logger.info(EBookCoverExtractor.TAG, `PDF 封面图片生成成功`);
+              
+              // 查找生成的图片文件
+              try {
+                const files = fileIo.listFileSync(tempDir);
+                // 查找最新生成的图片文件（通常包含 page 或 0）
+                let generatedImagePath = '';
+                for (const file of files) {
+                  if (file.includes('0') || file.includes('page')) {
+                    if (file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg')) {
+                      generatedImagePath = `${tempDir}/${file}`;
+                      break;
+                    }
+                  }
+                }
+                
+                if (generatedImagePath.length > 0) {
+                  // 如果生成的图片路径与目标路径不同，需要重命名
+                  if (generatedImagePath !== savePath) {
+                    try {
+                      // 如果目标文件已存在，先删除
+                      try {
+                        fileIo.unlinkSync(savePath);
+                      } catch (unlinkError) {
+                        // 文件不存在，忽略
+                      }
+                      // 重命名文件
+                      fileIo.renameSync(generatedImagePath, savePath);
+                      logger.info(EBookCoverExtractor.TAG, `封面图片已重命名为: ${savePath}`);
+                    } catch (renameError) {
+                      logger.warn(EBookCoverExtractor.TAG, `重命名封面图片失败: ${String(renameError)}`);
+                      // 使用原始生成的路径
+                      resolve({
+                        success: true,
+                        coverPath: generatedImagePath,
+                        candidateImages: [generatedImagePath],
+                        errorMessage: ''
+                      });
+                      return;
+                    }
+                  }
+                  
+                  resolve({
+                    success: true,
+                    coverPath: savePath,
+                    candidateImages: [savePath],
+                    errorMessage: ''
+                  });
+                } else {
+                  logger.warn(EBookCoverExtractor.TAG, `未找到生成的封面图片`);
+                  resolve({
+                    success: false,
+                    coverPath: '',
+                    candidateImages: [],
+                    errorMessage: '未找到生成的封面图片'
+                  });
+                }
+              } catch (listError) {
+                logger.warn(EBookCoverExtractor.TAG, `列出目录文件失败: ${String(listError)}`);
+                resolve({
+                  success: false,
+                  coverPath: '',
+                  candidateImages: [],
+                  errorMessage: `列出目录文件失败: ${String(listError)}`
+                });
+              }
+            } else {
+              logger.warn(EBookCoverExtractor.TAG, `PDF 转图片返回失败`);
+              resolve({
+                success: false,
+                coverPath: '',
+                candidateImages: [],
+                errorMessage: 'PDF 转图片返回失败'
+              });
+            }
+          } catch (innerError) {
+            logger.error(EBookCoverExtractor.TAG, `PDF 封面提取内部错误: ${String(innerError)}`);
+            resolve({
+              success: false,
+              coverPath: '',
+              candidateImages: [],
+              errorMessage: `PDF 封面提取失败: ${String(innerError)}`
+            });
+          }
+        }, 100); // 延迟 100ms 执行
+      });
+      
+      // 设置 10 秒超时
+      const timeoutPromise = new Promise<EBookCoverExtractionResult>((resolve) => {
+        setTimeout(() => {
+          logger.warn(EBookCoverExtractor.TAG, `PDF 封面提取超时`);
+          resolve({
+            success: false,
+            coverPath: '',
+            candidateImages: [],
+            errorMessage: 'PDF 封面提取超时'
+          });
+        }, 10000);
+      });
+      
+      // 使用 Promise.race 实现超时控制
+      return await Promise.race([extractPromise, timeoutPromise]);
+      
+    } catch (error) {
+      logger.error(EBookCoverExtractor.TAG, `PDF 封面提取失败: ${String(error)}`);
+      return {
+        success: false,
+        coverPath: '',
+        candidateImages: [],
+        errorMessage: `PDF 封面提取失败: ${String(error)}`
+      };
+    }
+  }
+}
+
+/**
  * 电子书解析器工厂
  */
 export class EBookParserFactory {
@@ -92,7 +748,7 @@ export class EBookParserFactory {
    * - PDF: 使用 Web 组件预览方案
    * - TXT: 使用文件读取 + 自定义解析
    */
-  public static createParser(filePath: string): EBookParser | ReaderKitEBookParser | null {
+  public static createParser(filePath: string): EBookParser | null {
     const format = EBookParserFactory.detectFormat(filePath);
     
     if (!format) {
@@ -100,7 +756,7 @@ export class EBookParserFactory {
       return null;
     }
 
-    // 对于 Reader Kit 支持的格式，使用官方 API
+    // 优先使用 Reader Kit 解析支持的格式（除了 TXT，TXT 我们有自定义实现）
     if (ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT) {
       logger.info(TAG, `使用 Reader Kit 解析: ${format}`);
       return new ReaderKitEBookParser(filePath, format);
@@ -113,7 +769,7 @@ export class EBookParserFactory {
       case EBookFormat.PDF:
         return new PdfParser(filePath);
       default:
-        logger.warn(TAG, `不支持的电子书格式: ${filePath}`);
+        logger.warn(TAG, `暂不支持的电子书格式: ${filePath} (Reader Kit 已禁用)`);
         return null;
     }
   }
@@ -147,39 +803,378 @@ export class EBookParserFactory {
  * TXT解析器实现
  */
 class TxtParser extends EBookParser {
+  private encoding: string = 'utf-8';
+
   constructor(filePath: string) {
     super(filePath, EBookFormat.TXT);
   }
 
   public async parse(): Promise<EBook> {
     logger.info(TAG, `开始解析TXT文件: ${this.filePath}`);
-    
-    // 这里需要实现TXT文件的读取和解析逻辑
-    // 由于HarmonyOS的文件读取API，我们需要在具体实现时补充
-    
+
+    try {
+      // 1. 读取文件内容
+      const content = await this.readFileContent();
+      logger.debug(TAG, `文件内容长度: ${content.length} 字符`);
+
+      // 2. 检测编码（简单实现）
+      this.detectEncoding(content);
+
+      // 3. 获取文件大小
+      const fileSize = await this.getFileSize();
+
+      // 4. 提取元数据
+      const metadata = this.extractMetadata(content);
+      logger.debug(TAG, `提取的元数据: ${JSON.stringify(metadata)}`);
+
+      // 5. 创建电子书对象
+      const ebook = this.generateDefaultEBook(this.filePath, EBookFormat.TXT, metadata);
+      ebook.fileSize = fileSize;
+
+      // 6. 分割章节
+      const chapters = this.splitIntoChapters(content, ebook.id);
+      ebook.chapters = chapters;
+
+      // 7. 计算总字数
+      ebook.totalWordCount = this.calculateTotalWordCount(chapters);
+
+      logger.info(TAG, `TXT文件解析完成: ${metadata.title}, 章节数: ${chapters.length}, 总字数: ${ebook.totalWordCount}`);
+
+      return ebook;
+    } catch (error) {
+      logger.error(TAG, `解析TXT文件失败: ${String(error instanceof Error ? error.message : error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 读取文件内容
+   */
+  private async readFileContent(): Promise<string> {
+    try {
+      let openTarget: string = this.filePath;
+      if (!this.filePath.startsWith('file://') && !this.filePath.startsWith('/')) {
+        openTarget = `/${this.filePath}`;
+      }
+
+      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(file.fd);
+      let buffer = new ArrayBuffer(stat.size);
+      let readLen = fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+
+      if (readLen !== stat.size) {
+        throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
+      }
+
+      const decoder = new util.TextDecoder(this.encoding);
+      const text = decoder.decodeToString(new Uint8Array(buffer));
+      return text;
+    } catch (firstError) {
+      const firstMsg = firstError instanceof Error ? firstError.message : String(firstError);
+      try {
+        if (this.filePath.startsWith('file://')) {
+          const stripped = this.filePath.substring(7);
+          const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
+          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = fileIo.statSync(file.fd);
+          const buffer = new ArrayBuffer(stat.size);
+          const readLen = fileIo.readSync(file.fd, buffer);
+          fileIo.closeSync(file);
+
+          if (readLen !== stat.size) {
+            throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
+          }
+          const decoder = new util.TextDecoder(this.encoding);
+          const text = decoder.decodeToString(new Uint8Array(buffer));
+          return text;
+        }
+        throw new Error(firstMsg);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(TAG, `读取文件失败: ${errorMsg}`);
+        throw new Error(`无法读取文件: ${this.filePath}`);
+      }
+    }
+  }
+
+  /**
+   * 获取文件大小
+   */
+  private async getFileSize(): Promise<number> {
+    try {
+      let openTarget: string = this.filePath;
+      if (!this.filePath.startsWith('file://') && !this.filePath.startsWith('/')) {
+        openTarget = `/${this.filePath}`;
+      }
+
+      let file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(file.fd);
+      fileIo.closeSync(file);
+      return stat.size;
+    } catch (firstError) {
+      try {
+        if (this.filePath.startsWith('file://')) {
+          const stripped = this.filePath.substring(7);
+          const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
+          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = fileIo.statSync(file.fd);
+          fileIo.closeSync(file);
+          return stat.size;
+        }
+        return 0;
+      } catch (error) {
+        logger.warn(TAG, `获取文件大小失败: ${String(error instanceof Error ? error.message : error)}`);
+        return 0;
+      }
+    }
+  }
+
+  /**
+   * 检测编码（简单实现）
+   */
+  private detectEncoding(content: string): void {
+    if (content.includes('') || content.includes('\ufffd')) {
+      logger.warn(TAG, '可能存在编码问题，尝试使用GBK编码');
+      this.encoding = 'gbk';
+    }
+  }
+
+  /**
+   * 提取元数据
+   */
+  private extractMetadata(content: string): EBookMetadata {
     const fileName = this.getFileNameFromPath(this.filePath);
-    const title = this.extractTitleFromFileName(fileName);
-    
-    const metadata: EBookMetadata = {
+    const lines = content.split('\n').slice(0, 50);
+
+    let title = this.extractTitle(lines, fileName);
+    let author = this.extractAuthor(lines);
+    let description = this.extractDescription(content);
+    const tags = this.extractTagsFromFileName(fileName);
+
+    return {
       title: title,
-      author: '未知作者',
+      author: author,
       publisher: '',
       publishDate: '',
       isbn: '',
       language: 'zh-CN',
-      description: '',
+      description: description,
       coverImagePath: '',
-      tags: ['TXT'],
+      tags: tags,
       rating: 0
     };
+  }
+
+  /**
+   * 提取书名
+   */
+  private extractTitle(lines: string[], fallbackFileName: string): string {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.match(/^(书名|标题|名称|Title)[：:]/)) {
+        const title = trimmed.replace(/^(书名|标题|名称|Title)[：:]\s*/, '').trim();
+        if (title.length > 0 && title.length < 100) {
+          return title;
+        }
+      }
+    }
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length > 0 && trimmed.length < 100) {
+        let isChapterTitle = false;
+        for (const pattern of CHAPTER_PATTERNS) {
+          if (pattern.test(trimmed)) {
+            isChapterTitle = true;
+            break;
+          }
+        }
+        if (!isChapterTitle) {
+          return trimmed;
+        }
+      }
+    }
+
+    return this.extractTitleFromFileName(fallbackFileName);
+  }
+
+  /**
+   * 提取作者
+   */
+  private extractAuthor(lines: string[]): string {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const match = trimmed.match(/^(作者|作家|著|Author|by)[：:]\s*(.+)$/i);
+      if (match && match[2]) {
+        const author = match[2].trim();
+        if (author.length > 0 && author.length < 50) {
+          return author;
+        }
+      }
+    }
+    return '未知作者';
+  }
+
+  /**
+   * 提取简介
+   */
+  private extractDescription(content: string): string {
+    const lines = content.split('\n');
+    let descLines: string[] = [];
+    let foundDesc = false;
+
+    for (let i = 0; i < Math.min(lines.length, 100); i++) {
+      const trimmed = lines[i].trim();
+      
+      if (trimmed.match(/^(简介|内容简介|内容提要|Description)[：:]/)) {
+        foundDesc = true;
+        const desc = trimmed.replace(/^(简介|内容简介|内容提要|Description)[：:]\s*/, '').trim();
+        if (desc.length > 0) {
+          descLines.push(desc);
+        }
+        continue;
+      }
+
+      if (foundDesc) {
+        if (trimmed.length === 0) {
+          break; 
+        }
+        let isChapterTitle = false;
+        for (const pattern of CHAPTER_PATTERNS) {
+          if (pattern.test(trimmed)) {
+            isChapterTitle = true;
+            break;
+          }
+        }
+        if (isChapterTitle) {
+          break;
+        }
+        descLines.push(trimmed);
+        if (descLines.join('').length > 500) {
+          break;
+        }
+      }
+    }
+
+    const description = descLines.join(' ').substring(0, 500);
+    return description || '暂无简介';
+  }
+
+  /**
+   * 从文件名提取标签
+   */
+  private extractTagsFromFileName(fileName: string): string[] {
+    const tags: string[] = ['TXT'];
+    const tagKeywords = ['玄幻', '都市', '言情', '科幻', '武侠', '仙侠', '历史', '军事', '网游', '竞技', '灵异', '同人'];
+    for (const keyword of tagKeywords) {
+      if (fileName.includes(keyword)) {
+        tags.push(keyword);
+      }
+    }
+    return tags;
+  }
+
+  /**
+   * 分割章节
+   */
+  private splitIntoChapters(content: string, bookId: string): EBookChapter[] {
+    const chapters: EBookChapter[] = [];
+    const lines = content.split('\n');
     
-    const ebook = this.generateDefaultEBook(this.filePath, EBookFormat.TXT, metadata);
-    
-    // TODO: 实际解析章节内容
-    // 这里需要读取文件内容，识别章节分隔符，拆分成章节
-    
-    logger.info(TAG, `TXT文件解析完成: ${title}`);
-    return ebook;
+    let currentChapterTitle = '正文';
+    let currentChapterNumber = 0;
+    let currentChapterLines: string[] = [];
+    let startPosition = 0;
+    const now = Date.now();
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      
+      let matchedChapter: RegExpMatchArray | null = null;
+      for (const pattern of CHAPTER_PATTERNS) {
+        const match = trimmed.match(pattern);
+        if (match) {
+          matchedChapter = match;
+          break;
+        }
+      }
+
+      if (matchedChapter && currentChapterLines.length > 0) {
+        const chapterContent = currentChapterLines.join('\n').trim();
+        if (chapterContent.length > 0) {
+          const chapter: EBookChapter = {
+            id: `${bookId}_chapter_${currentChapterNumber}`,
+            bookId: bookId,
+            chapterNumber: currentChapterNumber,
+            title: currentChapterTitle,
+            content: chapterContent,
+            startPosition: startPosition,
+            endPosition: startPosition + chapterContent.length,
+            wordCount: this.countWords(chapterContent),
+            createTime: now
+          };
+          chapters.push(chapter);
+          currentChapterNumber++;
+        }
+
+        currentChapterTitle = trimmed;
+        currentChapterLines = [];
+        startPosition += chapterContent.length + 1;
+      } else {
+        currentChapterLines.push(line);
+      }
+    }
+
+    if (currentChapterLines.length > 0) {
+      const chapterContent = currentChapterLines.join('\n').trim();
+      if (chapterContent.length > 0) {
+        const chapter: EBookChapter = {
+          id: `${bookId}_chapter_${currentChapterNumber}`,
+          bookId: bookId,
+          chapterNumber: currentChapterNumber,
+          title: currentChapterTitle,
+          content: chapterContent,
+          startPosition: startPosition,
+          endPosition: startPosition + chapterContent.length,
+          wordCount: this.countWords(chapterContent),
+          createTime: now
+        };
+        chapters.push(chapter);
+      }
+    }
+
+    if (chapters.length === 0) {
+      const fullContent = content.trim();
+      const chapter: EBookChapter = {
+        id: `${bookId}_chapter_0`,
+        bookId: bookId,
+        chapterNumber: 0,
+        title: '正文',
+        content: fullContent,
+        startPosition: 0,
+        endPosition: fullContent.length,
+        wordCount: this.countWords(fullContent),
+        createTime: now
+      };
+      chapters.push(chapter);
+    }
+
+    logger.info(TAG, `识别到 ${chapters.length} 个章节`);
+    return chapters;
+  }
+
+  private countWords(text: string): number {
+    return text.replace(/\s/g, '').length;
+  }
+
+  private calculateTotalWordCount(chapters: EBookChapter[]): number {
+    let total = 0;
+    for (const chapter of chapters) {
+      total += chapter.wordCount;
+    }
+    return total;
   }
 }
 
@@ -197,7 +1192,8 @@ class TxtParser extends EBookParser {
 
 /**
  * PDF解析器实现
- * 注意：PDF解析采用Web组件预览方案，不进行深度内容解析
+ * 使用 PDF Kit 获取文档信息（页数、元数据等）
+ * 阅读时使用 PdfView 组件进行预览
  */
 class PdfParser extends EBookParser {
   constructor(filePath: string) {
@@ -210,38 +1206,167 @@ class PdfParser extends EBookParser {
     const fileName = this.getFileNameFromPath(this.filePath);
     const title = this.extractTitleFromFileName(fileName);
     
-    // 创建元数据
+    // 使用 PDF Kit 获取文档信息
+    let pageCount = 0;
+    let fileSize = 0;
+    let pdfMetadata: PdfDocumentMetadata = {
+      title: '',
+      author: '',
+      subject: '',
+      keywords: '',
+      creator: '',
+      producer: ''
+    };
+    
+    try {
+      const pdfInfo = await this.parsePdfWithKit();
+      pageCount = pdfInfo.pageCount;
+      fileSize = pdfInfo.fileSize;
+      pdfMetadata = pdfInfo.metadata;
+      logger.info(TAG, `PDF Kit 解析成功: 页数=${pageCount}, 文件大小=${fileSize}`);
+    } catch (error) {
+      logger.warn(TAG, `PDF Kit 解析失败，使用默认值: ${String(error)}`);
+    }
+    
+    // 创建元数据（优先使用 PDF Kit 解析的信息）
     const metadata: EBookMetadata = {
-      title: title,
-      author: '未知作者',
-      publisher: '',
+      title: pdfMetadata.title || title,
+      author: pdfMetadata.author || '未知作者',
+      publisher: pdfMetadata.producer || '',
       publishDate: '',
       isbn: '',
       language: 'zh-CN',
-      description: 'PDF文档，点击开始阅读按钮可预览内容',
+      description: pdfMetadata.subject || `PDF文档，共 ${pageCount} 页`,
       coverImagePath: '',
       tags: ['PDF'],
       rating: 0
     };
     
     const ebook = this.generateDefaultEBook(this.filePath, EBookFormat.PDF, metadata);
+    ebook.fileSize = fileSize;
     
-    // 添加单个章节（整个PDF作为一个章节）
+    // 为每一页创建一个"章节"（用于进度跟踪）
     const now = Date.now();
-    const chapter: EBookChapter = {
-      id: `pdf_chapter_${now}`,
-      bookId: ebook.id,
-      title: '全文',
-      content: this.filePath, // 存储PDF文件路径，用于Web组件加载
-      chapterNumber: 1,
-      wordCount: 0,
-      startPosition: 0,
-      endPosition: 0,
-      createTime: now
-    };
-    ebook.chapters.push(chapter);
+    if (pageCount > 0) {
+      for (let i = 0; i < pageCount; i++) {
+        const chapter: EBookChapter = {
+          id: `pdf_page_${ebook.id}_${i}`,
+          bookId: ebook.id,
+          title: `第 ${i + 1} 页`,
+          content: '', // PDF 不存储内容，由 PdfView 组件渲染
+          chapterNumber: i + 1,
+          wordCount: 0,
+          startPosition: i,
+          endPosition: i + 1,
+          createTime: now
+        };
+        ebook.chapters.push(chapter);
+      }
+    } else {
+      // 如果无法获取页数，创建单个章节
+      const chapter: EBookChapter = {
+        id: `pdf_chapter_${now}`,
+        bookId: ebook.id,
+        title: '全文',
+        content: '',
+        chapterNumber: 1,
+        wordCount: 0,
+        startPosition: 0,
+        endPosition: 0,
+        createTime: now
+      };
+      ebook.chapters.push(chapter);
+    }
     
-    logger.info(TAG, `PDF文件解析完成: ${title}，将使用Web组件进行预览`);
+    logger.info(TAG, `PDF文件解析完成: ${metadata.title}，共 ${pageCount} 页`);
     return ebook;
   }
+
+  /**
+   * 使用 PDF Kit 解析 PDF 文档
+   */
+  private async parsePdfWithKit(): Promise<PdfParseResult> {
+    try {
+      logger.info(TAG, `[PDF Kit] 开始解析: ${this.filePath}`);
+      
+      // 创建 PdfDocument 对象
+      const pdfDocument = new pdfService.PdfDocument();
+      
+      // 加载文档
+      const loadResult = pdfDocument.loadDocument(this.filePath);
+      logger.info(TAG, `[PDF Kit] 加载结果: ${JSON.stringify(loadResult)}`);
+      
+      // 获取页数
+      const pageCount = pdfDocument.getPageCount();
+      logger.info(TAG, `[PDF Kit] 页数: ${pageCount}`);
+      
+      // 获取文件大小
+      let fileSize = 0;
+      try {
+        const stat = fileIo.statSync(this.filePath);
+        fileSize = stat.size;
+      } catch (e) {
+        logger.warn(TAG, `获取文件大小失败: ${e}`);
+      }
+      
+      // 获取第一页信息（用于验证）
+      let firstPageWidth = 0;
+      let firstPageHeight = 0;
+      if (pageCount > 0) {
+        try {
+          const firstPage = pdfDocument.getPage(0);
+          firstPageWidth = firstPage.getWidth();
+          firstPageHeight = firstPage.getHeight();
+          logger.info(TAG, `[PDF Kit] 第一页尺寸: ${firstPageWidth} x ${firstPageHeight}`);
+        } catch (e) {
+          logger.warn(TAG, `获取第一页信息失败: ${e}`);
+        }
+      }
+      
+      // 尝试获取文档元数据（PDF Kit 可能不支持直接获取元数据）
+      const metadata: PdfDocumentMetadata = {
+        title: '',
+        author: '',
+        subject: '',
+        keywords: '',
+        creator: '',
+        producer: ''
+      };
+      
+      return {
+        pageCount,
+        fileSize,
+        firstPageWidth,
+        firstPageHeight,
+        metadata
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `[PDF Kit] 解析失败: ${errorMsg}`);
+      throw error as Error;
+    }
+  }
+}
+
+/**
+ * PDF 文档元数据接口
+ */
+interface PdfDocumentMetadata {
+  title: string;
+  author: string;
+  subject: string;
+  keywords: string;
+  creator: string;
+  producer: string;
+}
+
+/**
+ * PDF 解析结果接口
+ */
+interface PdfParseResult {
+  pageCount: number;
+  fileSize: number;
+  firstPageWidth: number;
+  firstPageHeight: number;
+  metadata: PdfDocumentMetadata;
 }

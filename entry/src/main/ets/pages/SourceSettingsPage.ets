@@ -802,17 +802,7 @@ export struct SourceSettingsPage {
         }
       },
       content: {
-        title: { mainTitle: '图源设置' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '图源设置' }
       }
     })
     .onReady((context: NavDestinationContext) => {

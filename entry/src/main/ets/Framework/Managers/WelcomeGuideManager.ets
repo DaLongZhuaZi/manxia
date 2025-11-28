@@ -19,8 +19,9 @@ export enum GuideStep {
   THEME_SELECTION = 1,   // 主题选择
   DATA_IMPORT = 2,       // 数据导入引导
   LOG_EXPORT = 3,        // 日志导出引导
-  LIBRARY_INTRO = 4,     // 书库介绍
-  COMPLETED = 5          // 完成
+  ANALYTICS_PERMISSION = 4, // 阅读报告权限询问
+  LIBRARY_INTRO = 5,     // 书库介绍
+  COMPLETED = 6          // 完成
 }
 
 /**

@@ -2179,17 +2179,7 @@ struct MangaSettingsPage {
         }
       },
       content: {
-        title: { mainTitle: '漫画设置' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '漫画设置' }
       }
     })
     .onReady((context: NavDestinationContext) => {

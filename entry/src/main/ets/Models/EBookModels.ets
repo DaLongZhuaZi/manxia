@@ -44,7 +44,9 @@ export interface EBookChapter {
 export interface EBookReadingProgress {
   bookId: string;              // 书籍ID
   currentChapterId: string;    // 当前章节ID
+  currentChapterIndex: number; // 当前章节索引（用于 Reader Kit startPlay）
   currentPosition: number;     // 当前阅读位置（字符偏移量）
+  domPos: string;              // Reader Kit DOM 位置（用于精确恢复阅读位置）
   progress: number;            // 阅读进度百分比 (0-100)
   lastReadTime: number;        // 最后阅读时间
   totalReadingTime: number;    // 总阅读时长（秒）
@@ -52,15 +54,30 @@ export interface EBookReadingProgress {
 
 /**
  * 电子书阅读设置
+ * 基于 HarmonyOS Reader Kit ReaderSetting 接口
  */
 export interface EBookReadingSettings {
-  fontSize: number;            // 字体大小 (12-32)
-  lineHeight: number;          // 行高 (1.0-3.0)
-  fontFamily: string;          // 字体名称
-  backgroundColor: string;     // 背景颜色
-  textColor: string;           // 文字颜色
+  // 字体设置
+  fontSize: number;            // 字体大小 (12-48)
+  fontFamily: string;          // 字体名称（如 'HarmonyOS Sans'）
+  fontPath: string;            // 自定义字体文件路径（可选）
+  fontWeight: number;          // 字体粗细 (100-900，默认400)
+  
+  // 排版设置
+  lineHeight: number;          // 行高倍数 (1.0-3.0)
+  
+  // 颜色主题设置
+  backgroundColor: string;     // 背景颜色（十六进制，如 '#FFFFFF'）
+  textColor: string;           // 文字颜色（十六进制，如 '#333333'）
+  themeBgImage: string;        // 主题背景图片路径（可选）
+  nightMode: boolean;          // 夜间模式
+  followSystemTheme: boolean;  // 是否跟随系统主题（默认true，选择护眼/羊皮纸等自定义主题后变为false）
+  
+  // 翻页设置
   pageMargin: number;          // 页边距 (10-50)
-  pageMode: EBookPageMode;     // 翻页模式
+  pageMode: EBookPageMode;     // 翻页模式（仿真翻页/横向滑动）
+  
+  // 系统设置
   brightness: number;          // 亮度 (0-100)
   autoSave: boolean;           // 自动保存进度
   saveInterval: number;        // 自动保存间隔（秒）
@@ -68,12 +85,61 @@ export interface EBookReadingSettings {
 
 /**
  * 电子书翻页模式
+ * 对应 Reader Kit 的 flipMode
  */
 export enum EBookPageMode {
-  SCROLL = 'SCROLL',           // 滚动模式
-  PAGE = 'PAGE',               // 分页模式
-  SIMULATION = 'SIMULATION'    // 仿真翻页
+  SIMULATION = '0',            // 仿真翻页（默认）
+  HORIZONTAL = '1'             // 横向滑动
 }
+
+/**
+ * 预设主题
+ */
+export interface EBookThemePreset {
+  name: string;                // 主题名称
+  backgroundColor: string;     // 背景颜色
+  textColor: string;           // 文字颜色
+  themeBgImage: string;        // 背景图片（可选）
+  nightMode: boolean;          // 是否夜间模式
+}
+
+/**
+ * 预设主题列表
+ * 注意：'默认' 和 '夜间' 主题会跟随系统主题，其他主题不会
+ */
+export const EBOOK_THEME_PRESETS: EBookThemePreset[] = [
+  { name: '默认', backgroundColor: '#FFFFFF', textColor: '#000000', themeBgImage: '', nightMode: false },
+  { name: '护眼', backgroundColor: '#C7EDCC', textColor: '#2B2B2B', themeBgImage: '', nightMode: false },
+  { name: '羊皮纸', backgroundColor: '#F4ECD8', textColor: '#5C4B37', themeBgImage: '', nightMode: false },
+  { name: '夜间', backgroundColor: '#1E1E1E', textColor: '#D4D4D4', themeBgImage: '', nightMode: true }
+];
+
+/**
+ * 默认电子书阅读设置
+ * 注意：fontSize 使用 18，这是 Reader Kit 推荐的默认值
+ */
+export const DEFAULT_EBOOK_READING_SETTINGS: EBookReadingSettings = {
+  // 字体设置
+  fontSize: 18,                // 默认字体大小
+  fontFamily: 'HarmonyOS Sans',
+  fontPath: '',
+  fontWeight: 400,
+  // 排版设置
+  lineHeight: 1.5,             // 默认行高（1.5 更紧凑，适合阅读）
+  // 颜色主题设置
+  backgroundColor: '#FFFFFF',
+  textColor: '#000000',
+  themeBgImage: '',
+  nightMode: false,
+  followSystemTheme: true,     // 默认跟随系统主题
+  // 翻页设置
+  pageMargin: 16,              // 默认页边距（16px 更紧凑）
+  pageMode: EBookPageMode.SIMULATION,
+  // 系统设置
+  brightness: 100,
+  autoSave: true,
+  saveInterval: 30
+};
 
 /**
  * 电子书元数据
@@ -144,29 +210,36 @@ export class EBook {
       this.readingProgress = {
         bookId: id,
         currentChapterId: chapters.length > 0 ? chapters[0].id : '',
+        currentChapterIndex: 0,
         currentPosition: 0,
+        domPos: '',
         progress: 0,
         lastReadTime: 0,
         totalReadingTime: 0
       } as EBookReadingProgress;
     }
 
-    // 初始化阅读设置
+    // 初始化阅读设置（使用默认设置常量）
     if (readingSettings) {
       this.readingSettings = readingSettings;
     } else {
       this.readingSettings = {
-        fontSize: 18,
-        lineHeight: 1.8,
-        fontFamily: 'HarmonyOS Sans',
-        backgroundColor: '#FFFFFF',
-        textColor: '#333333',
-        pageMargin: 20,
-        pageMode: EBookPageMode.PAGE,
-        brightness: 100,
-        autoSave: true,
-        saveInterval: 30
-      } as EBookReadingSettings;
+        fontSize: DEFAULT_EBOOK_READING_SETTINGS.fontSize,
+        fontFamily: DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
+        fontPath: DEFAULT_EBOOK_READING_SETTINGS.fontPath,
+        fontWeight: DEFAULT_EBOOK_READING_SETTINGS.fontWeight,
+        lineHeight: DEFAULT_EBOOK_READING_SETTINGS.lineHeight,
+        backgroundColor: DEFAULT_EBOOK_READING_SETTINGS.backgroundColor,
+        textColor: DEFAULT_EBOOK_READING_SETTINGS.textColor,
+        themeBgImage: DEFAULT_EBOOK_READING_SETTINGS.themeBgImage,
+        nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
+        followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
+        pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+        pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
+        brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
+        autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
+        saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
+      };
     }
   }
 

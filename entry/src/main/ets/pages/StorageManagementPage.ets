@@ -557,17 +557,7 @@ struct StorageManagementPage {
         }
       },
       content: {
-        title: { mainTitle: '存储管理' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '存储管理' }
       }
     })
   }

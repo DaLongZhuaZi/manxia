@@ -310,14 +310,14 @@ export struct CoverSelectionPage {
       Button({ stateEffect: true }) {
         Text('不设定封面')
           .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
           .textAlign(TextAlign.Center)
           .width('100%')
       }
       .key('cancel_button')
       .height(40)
       .layoutWeight(1)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+      // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
       .borderRadius(20) // 圆角胶囊型
       .type(ButtonType.Capsule) // 胶囊型按钮
       .onClick(() => this.cancelSelection())
@@ -332,7 +332,7 @@ export struct CoverSelectionPage {
       .key('confirm_button')
       .height(40)
       .layoutWeight(1)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
+      // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
       .borderRadius(20) // 圆角胶囊型
       .type(ButtonType.Capsule) // 胶囊型按钮
       .enabled(this.selectedIndex >= 0)
@@ -347,7 +347,7 @@ export struct CoverSelectionPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 24 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+    // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
   }
 
   build() {

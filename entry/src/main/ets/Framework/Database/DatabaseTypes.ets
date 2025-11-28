@@ -65,6 +65,7 @@ export interface ComicInfoDatabaseRecord {
   author: string;
   description: string;
   coverUrl: string;
+  coverLocalPath?: string;  // 封面本地路径
   sourceId: string;
   externalId: string;  // 外部图源ID
   status: string;
@@ -983,6 +984,45 @@ export interface GenericQueryRecord {
   responseTime?: DatabaseValue;
   errorCode?: DatabaseValue;
   requestTime?: DatabaseValue;
+  // ebook_info 表字段
+  content?: DatabaseValue;
+  bookId?: DatabaseValue;
+  chapterNumber?: DatabaseValue;
+  startPosition?: DatabaseValue;
+  endPosition?: DatabaseValue;
+  wordCount?: DatabaseValue;
+  format?: DatabaseValue;
+  filePath?: DatabaseValue;
+  publisher?: DatabaseValue;
+  publishDate?: DatabaseValue;
+  isbn?: DatabaseValue;
+  language?: DatabaseValue;
+  coverImagePath?: DatabaseValue;
+  isFavorite?: DatabaseValue;
+  totalWordCount?: DatabaseValue;
+  // ebook_reading_progress 表字段
+  currentChapterId?: DatabaseValue;
+  currentChapterIndex?: DatabaseValue;  // 当前章节索引
+  currentPosition?: DatabaseValue;
+  domPos?: DatabaseValue;  // Reader Kit DOM位置信息
+  lastReadTime?: DatabaseValue;
+  totalReadingTime?: DatabaseValue;
+  // ebook_reading_settings 表字段
+  fontSize?: DatabaseValue;
+  lineHeight?: DatabaseValue;
+  fontFamily?: DatabaseValue;
+  fontPath?: DatabaseValue;  // 自定义字体路径
+  fontWeight?: DatabaseValue;  // 字体粗细
+  backgroundColor?: DatabaseValue;
+  textColor?: DatabaseValue;
+  themeBgImage?: DatabaseValue;  // 主题背景图片
+  nightMode?: DatabaseValue;  // 夜间模式
+  followSystemTheme?: DatabaseValue;  // 跟随系统主题
+  pageMargin?: DatabaseValue;
+  pageMode?: DatabaseValue;
+  brightness?: DatabaseValue;
+  autoSave?: DatabaseValue;
+  saveInterval?: DatabaseValue;
 }
 
 export type DatabaseRecord = 

@@ -4,7 +4,7 @@
  * 提供漫画文件导入、解压缩、XML解析和数据库导入功能
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { logger } from '../Utils/Logger';
@@ -24,14 +24,13 @@ import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Compo
 import { eventBus, GameEvent, MangaImportCompletedPayload, FileImportRequestedPayload, IEventPayload } from '../Framework/EventBus';
 
 import fs from '@ohos.file.fs';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, fileUri } from '@kit.CoreFileKit';
 
 import { UpdateRecordData } from '../Framework/Database/DatabaseTypes';
 import { UniversalDialogManager, ButtonStyle, DialogButton, UniversalDialogOptions } from '../Framework/Components/UniversalDialog';
 import { EBook, EBookMetadata } from '../Models/EBookModels';
-import { EBookParserFactory } from '../Framework/Parsers/EBookParser';
+import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
-import { TxtEBookParser } from '../Framework/Parsers/TxtEBookParser';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookMetadataDialog } from '../Framework/Components/EBookMetadataDialog';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -1206,15 +1205,17 @@ struct DataManagementPage {
 
   /**
    * 选择电子书文件
+   * 注意：必须在 picker.select().then() 回调中直接处理文件，否则临时权限可能失效
    */
-  private async selectEBooks(): Promise<void> {
+  private selectEBooks(): void {
     try {
       logger.info(TAG, '开始选择电子书文件');
       
       // 获取UIAbilityContext
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
-        throw new Error('无法获取应用上下文');
+        logger.error(TAG, '无法获取应用上下文');
+        return;
       }
 
       // 创建文档选择器
@@ -1222,27 +1223,237 @@ struct DataManagementPage {
       
       // 设置选择选项 - 电子书格式
       const selectOptions: picker.DocumentSelectOptions = {
-        maxSelectNumber: 10, // 最多选择10个文件
+        maxSelectNumber: 10,
         fileSuffixFilters: ['.txt', '.epub', '.mobi', '.azw', '.azw3', '.pdf'],
       };
 
-      // 选择文件
-      const selectResult = await documentPicker.select(selectOptions);
-      
-      if (!selectResult || selectResult.length === 0) {
-        logger.info(TAG, '未选择任何电子书文件');
-        return;
-      }
+      // 使用 .then() 回调模式，在回调中直接处理文件
+      documentPicker.select(selectOptions).then((selectResult: Array<string>) => {
+        if (!selectResult || selectResult.length === 0) {
+          logger.info(TAG, '未选择任何电子书文件');
+          return;
+        }
 
-      logger.info(TAG, `选择了 ${selectResult.length} 个电子书文件`);
-      
-      // 逐个导入电子书
-      for (const fileUri of selectResult) {
-        await this.importEBook(fileUri);
-      }
+        logger.info(TAG, `选择了 ${selectResult.length} 个电子书文件`);
+        
+        // 在回调中直接处理每个文件
+        for (const uri of selectResult) {
+          this.processEBookFileInCallback(uri, context);
+        }
+      }).catch((err: Error) => {
+        logger.error(TAG, `选择电子书文件失败: ${err.message}`);
+      });
 
     } catch (error) {
       logger.error(TAG, '选择电子书文件失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+  
+  /**
+   * 显示Toast提示
+   */
+  private showToast(message: string): void {
+    try {
+      promptAction.showToast({
+        message: message,
+        duration: 2000
+      });
+    } catch (error) {
+      logger.error(TAG, 'Show toast failed', String(error));
+    }
+  }
+
+  /**
+   * 在 picker 回调中直接处理文件（保持临时权限有效）
+   * 根据官方文档：normal等级应用只能通过 fs 模块处理文档类URI
+   */
+  private processEBookFileInCallback(uri: string, context: common.UIAbilityContext): void {
+    try {
+      logger.info(TAG, `开始处理电子书: ${uri}`);
+      
+      // 获取文件名
+      let fileName = 'unknown.txt';
+      try {
+        const uriObj = new fileUri.FileUri(uri);
+        fileName = uriObj.name;
+        logger.info(TAG, `从 URI 获取文件名: ${fileName}`);
+      } catch (e) {
+        try {
+          fileName = decodeURIComponent(uri.slice(uri.lastIndexOf('/') + 1));
+        } catch {}
+      }
+      
+      // 目标路径
+      const timestamp = new Date().getTime();
+      
+      // 获取文件扩展名，确保保留扩展名以便 Reader Kit 识别
+      let extension = '.txt';
+      const dotIndex = fileName.lastIndexOf('.');
+      if (dotIndex > 0) {
+        extension = fileName.substring(dotIndex);
+      }
+      
+      // 保留原始文件名（去除扩展名后的部分）用于元数据
+      const originalTitle = dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
+      
+      // 使用安全的文件名（保留原始名称以便解析器提取书名）
+      // 清理文件名中的非法字符
+      const safeOriginalName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+      const safeName = `${timestamp}_${safeOriginalName}`;
+      const targetDir = `${context.filesDir}/ebooks`;
+      const targetPath = `${targetDir}/${safeName}`;
+      
+      // 确保目录存在（使用 fs 模块）
+      let dirExists = false;
+      try {
+        dirExists = fs.accessSync(targetDir);
+      } catch {
+        dirExists = false;
+      }
+      
+      if (!dirExists) {
+        try {
+          fs.mkdirSync(targetDir, true); // 递归创建目录
+          logger.info(TAG, `创建目录成功: ${targetDir}`);
+        } catch (mkdirError) {
+          logger.error(TAG, `创建目录失败: ${String(mkdirError)}`);
+          throw mkdirError as Error;
+        }
+      } else {
+        logger.info(TAG, `目录已存在: ${targetDir}`);
+      }
+      
+      // 使用 fs 模块打开源文件（官方文档推荐）
+      // 注意：file://docs URI 的临时权限只允许打开一次，不能关闭后重新打开
+      logger.info(TAG, `准备打开源文件: ${uri}`);
+      const srcFile = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+      logger.info(TAG, `源文件打开成功，fd: ${srcFile.fd}`);
+      
+      // 直接开始复制，不要先读取验证
+      logger.info(TAG, `准备创建目标文件: ${targetPath}`);
+      
+      try {
+        const destFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        logger.info(TAG, `目标文件创建成功，fd: ${destFile.fd}`);
+        
+        const BUFFER_SIZE = 4096;
+        const buffer = new ArrayBuffer(BUFFER_SIZE);
+        let totalBytes = 0;
+        let readLen: number;
+        
+        while ((readLen = fs.readSync(srcFile.fd, buffer)) > 0) {
+          if (readLen === BUFFER_SIZE) {
+            fs.writeSync(destFile.fd, buffer);
+          } else {
+            // 最后一块，只写入实际读取的部分
+            const lastChunk = buffer.slice(0, readLen);
+            fs.writeSync(destFile.fd, lastChunk);
+          }
+          totalBytes += readLen;
+        }
+        
+        fs.closeSync(srcFile);
+        fs.closeSync(destFile);
+        
+        logger.info(TAG, `文件复制成功: ${targetPath}，大小: ${totalBytes} 字节`);
+        
+        if (totalBytes === 0) {
+          logger.error(TAG, '复制后文件大小为 0');
+          try {
+            fs.unlinkSync(targetPath);
+          } catch {}
+          this.showToast('文件内容为空');
+          return;
+        }
+        
+        // 继续导入流程
+        this.continueImportEBook(targetPath);
+        
+      } catch (destError) {
+        // 关闭源文件
+        try {
+          fs.closeSync(srcFile);
+        } catch {}
+        logger.error(TAG, `创建目标文件失败: ${String(destError)}`);
+        throw destError as Error;
+      }
+      
+    } catch (error) {
+      logger.error(TAG, `处理电子书文件失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 继续导入电子书（文件已复制到沙箱后）
+   */
+  private async continueImportEBook(sandboxPath: string): Promise<void> {
+    try {
+      logger.info(TAG, `继续导入电子书: ${sandboxPath}`);
+      
+      // 创建解析器
+      const parser = EBookParserFactory.createParser(sandboxPath);
+      if (!parser) {
+        throw new Error('不支持的电子书格式');
+      }
+
+      // 解析电子书
+      const ebook = await parser.parse();
+      logger.info(TAG, `电子书解析完成: ${ebook.metadata.title}`);
+
+      // 设置默认收藏状态为 true（导入即收藏）
+      ebook.isFavorite = true;
+      
+      // 如果书名看起来像是时间戳开头的文件名，尝试提取真实书名
+      if (ebook.metadata.title.match(/^\d+_/)) {
+        const cleanTitle = ebook.metadata.title.replace(/^\d+_/, '').replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '');
+        if (cleanTitle.length > 0) {
+          ebook.metadata.title = cleanTitle;
+          logger.info(TAG, `提取真实书名: ${cleanTitle}`);
+        }
+      }
+
+      // 尝试提取封面图片
+      await this.tryExtractEBookCover(ebook, sandboxPath);
+
+      // 检查是否需要补充元数据
+      if (this.needsMetadataCompletion(ebook.metadata)) {
+        logger.info(TAG, '电子书信息不完整，显示补充对话框');
+        await this.showEBookMetadataDialog(ebook);
+      } else {
+        // 直接保存到数据库
+        await this.ebookDataManager.saveEBook(ebook);
+        logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
+        this.showToast(`导入成功: ${ebook.metadata.title}`);
+      }
+    } catch (error) {
+      logger.error(TAG, '导入电子书失败', String(error instanceof Error ? error.message : error));
+      this.showToast('导入失败: ' + String(error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
+   * 尝试提取电子书封面
+   */
+  private async tryExtractEBookCover(ebook: EBook, filePath: string): Promise<void> {
+    try {
+      // 获取封面保存目录
+      const context = getContext(this);
+      const coverDir = `${context.filesDir}/ebook_covers`;
+      
+      logger.info(TAG, `尝试提取电子书封面: ${ebook.metadata.title}`);
+      
+      // 使用封面提取器
+      const result = await EBookCoverExtractor.extractCover(filePath, coverDir);
+      
+      if (result.success && result.coverPath) {
+        ebook.metadata.coverImagePath = result.coverPath;
+        logger.info(TAG, `封面提取成功: ${result.coverPath}`);
+      } else {
+        logger.info(TAG, `封面提取失败: ${result.errorMessage || '未知原因'}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `封面提取异常: ${String(error)}`);
+      // 封面提取失败不影响导入流程
     }
   }
 
@@ -1253,8 +1464,13 @@ struct DataManagementPage {
     try {
       logger.info(TAG, `开始导入电子书: ${fileUri}`);
       
-      // 1. 创建解析器
-      const parser = EBookParserFactory.createParser(fileUri);
+      // 0. 复制文件到沙箱
+      // 这步非常重要，解决了权限持久化和路径读取问题
+      const sandboxPath = await this.copyFileToSandbox(fileUri);
+      logger.info(TAG, `文件已复制到沙箱: ${sandboxPath}`);
+
+      // 1. 创建解析器 (使用沙箱路径)
+      const parser = EBookParserFactory.createParser(sandboxPath);
       if (!parser) {
         throw new Error('不支持的电子书格式');
       }
@@ -1275,6 +1491,136 @@ struct DataManagementPage {
 
     } catch (error) {
       logger.error(TAG, '导入电子书失败', String(error instanceof Error ? error.message : error));
+    }
+  }
+
+  /**
+   * 复制文件到沙箱
+   * 参考华为官方示例：使用 fileIo.readSync 并指定 offset: 0
+   */
+  private async copyFileToSandbox(srcUri: string): Promise<string> {
+    try {
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        throw new Error('无法获取应用上下文');
+      }
+
+      // 使用 fileUri 获取文件名
+      let fileName = 'unknown.txt';
+      try {
+        const uriObj = new fileUri.FileUri(srcUri);
+        fileName = uriObj.name;
+        logger.info(TAG, `从 URI 获取文件名: ${fileName}`);
+      } catch (e) {
+        logger.warn(TAG, `fileUri 解析失败，尝试手动解析: ${e}`);
+        try {
+          const parts = srcUri.split('/');
+          const rawName = parts[parts.length - 1];
+          fileName = decodeURIComponent(rawName);
+        } catch (e2) {
+          logger.warn(TAG, `手动解析文件名失败: ${e2}`);
+        }
+      }
+      
+      // 加上时间戳防止重名，但保留原始文件名
+      const timestamp = new Date().getTime();
+      const safeName = `${timestamp}_${fileName}`;
+      
+      const targetDir = `${context.filesDir}/ebooks`;
+      const targetPath = `${targetDir}/${safeName}`;
+
+      // 确保目录存在
+      try {
+        await fileIo.access(targetDir);
+      } catch {
+        await fileIo.mkdir(targetDir);
+        logger.info(TAG, `创建目录: ${targetDir}`);
+      }
+
+      // 使用 fileIo.openSync 打开 URI（华为官方示例使用 fileIo 而不是 fs）
+      const srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+      logger.info(TAG, `源文件打开成功，fd: ${srcFile.fd}`);
+      
+      // 华为官方示例的读取方法：先读取一次获取实际大小，再重新读取
+      const BUFFER_SIZE = 4096;
+      let buffer = new ArrayBuffer(BUFFER_SIZE);
+      
+      // 第一次读取，获取实际读取的字节数
+      let readOut = fileIo.readSync(srcFile.fd, buffer, { offset: 0 });
+      logger.info(TAG, `第一次读取: ${readOut} 字节`);
+      
+      if (readOut > 0) {
+        // 如果第一次读取成功，创建正确大小的 buffer 重新读取
+        // 注意：需要重新打开文件，因为文件指针已经移动
+        fileIo.closeSync(srcFile);
+        
+        const srcFile2 = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+        
+        // 如果文件较大，需要循环读取
+        const destFile = fileIo.openSync(targetPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+        
+        let totalBytes = 0;
+        let currentOffset = 0;
+        
+        while (true) {
+          const chunkBuffer = new ArrayBuffer(BUFFER_SIZE);
+          const bytesRead = fileIo.readSync(srcFile2.fd, chunkBuffer, { offset: currentOffset });
+          
+          if (bytesRead <= 0) {
+            break;
+          }
+          
+          // 写入读取的数据
+          if (bytesRead === BUFFER_SIZE) {
+            fileIo.writeSync(destFile.fd, chunkBuffer);
+          } else {
+            // 最后一块，只写入实际读取的部分
+            const lastChunk = chunkBuffer.slice(0, bytesRead);
+            fileIo.writeSync(destFile.fd, lastChunk);
+          }
+          
+          totalBytes += bytesRead;
+          currentOffset += bytesRead;
+          
+          // 如果读取的字节数小于 buffer 大小，说明已经到达文件末尾
+          if (bytesRead < BUFFER_SIZE) {
+            break;
+          }
+        }
+        
+        fileIo.closeSync(srcFile2);
+        fileIo.closeSync(destFile);
+        
+        if (totalBytes > 0) {
+          logger.info(TAG, `文件复制成功，大小: ${totalBytes} 字节，目标: ${targetPath}`);
+          return targetPath;
+        }
+      }
+      
+      // 如果上面的方法失败，尝试使用 fs.copyFile
+      logger.warn(TAG, `fileIo 读取失败，尝试 fs.copyFile`);
+      try {
+        fileIo.closeSync(srcFile);
+      } catch {}
+      
+      try {
+        const srcFile3 = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
+        await fs.copyFile(srcFile3.fd, targetPath, 0);
+        fs.closeSync(srcFile3);
+        
+        const destStat = fs.statSync(targetPath);
+        if (destStat.size > 0) {
+          logger.info(TAG, `fs.copyFile 成功，文件大小: ${destStat.size} 字节`);
+          return targetPath;
+        }
+      } catch (e) {
+        logger.warn(TAG, `fs.copyFile 失败: ${e}`);
+      }
+      
+      throw new Error('无法读取文件内容');
+    } catch (error) {
+      logger.error(TAG, `文件复制失败: ${String(error)}`);
+      throw error as Error;
     }
   }
 

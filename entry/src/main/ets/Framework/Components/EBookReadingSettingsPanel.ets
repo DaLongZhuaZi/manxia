@@ -7,7 +7,7 @@
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
-import { EBookReadingSettings, EBookPageMode } from '../../Models/EBookModels';
+import { EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 
 const TAG = 'EBookReadingSettingsPanel';
 
@@ -27,31 +27,58 @@ export struct EBookReadingSettingsPanel {
   onClose: () => void = () => {};
 
   @State currentTheme: ThemeType = ThemeType.AUTO;
+  
+  // 主题提示 Popup 显示状态
+  @State showThemeHintPopup: boolean = false;
 
-  // 预设主题
+  // 预设主题（自动模式会跟随系统主题，其他主题不会）
   private themes: ReadingTheme[] = [
-    { name: '默认', bgColor: '#FFFFFF', textColor: '#333333' },
-    { name: '护眼', bgColor: '#C7EDCC', textColor: '#2B2B2B' },
-    { name: '夜间', bgColor: '#1E1E1E', textColor: '#D4D4D4' },
-    { name: '羊皮纸', bgColor: '#F4ECD8', textColor: '#5C4B37' }
+    { name: '自动', bgColor: 'auto', textColor: 'auto', followSystem: true },
+    { name: '默认', bgColor: '#FFFFFF', textColor: '#000000', followSystem: false },
+    { name: '护眼', bgColor: '#C7EDCC', textColor: '#2B2B2B', followSystem: false },
+    { name: '羊皮纸', bgColor: '#F4ECD8', textColor: '#5C4B37', followSystem: false },
+    { name: '夜间', bgColor: '#1E1E1E', textColor: '#D4D4D4', followSystem: false }
+  ];
+  
+  // 预设字体颜色
+  private textColors: TextColorOption[] = [
+    { name: '黑色', color: '#000000' },
+    { name: '深灰', color: '#333333' },
+    { name: '灰色', color: '#666666' },
+    { name: '白色', color: '#FFFFFF' },
+    { name: '淡灰', color: '#D4D4D4' },
+    { name: '棕色', color: '#5C4B37' }
   ];
 
   /**
-   * 更新字体大小
+   * 复制当前设置并返回新对象
    */
-  private updateFontSize(size: number): void {
-    const newSettings: EBookReadingSettings = {
-      fontSize: size,
-      lineHeight: this.settings.lineHeight,
+  private copySettings(): EBookReadingSettings {
+    return {
+      fontSize: this.settings.fontSize,
       fontFamily: this.settings.fontFamily,
+      fontPath: this.settings.fontPath || '',
+      fontWeight: this.settings.fontWeight || 400,
+      lineHeight: this.settings.lineHeight,
       backgroundColor: this.settings.backgroundColor,
       textColor: this.settings.textColor,
+      themeBgImage: this.settings.themeBgImage || '',
+      nightMode: this.settings.nightMode || false,
+      followSystemTheme: this.settings.followSystemTheme !== false,
       pageMargin: this.settings.pageMargin,
       pageMode: this.settings.pageMode,
       brightness: this.settings.brightness,
       autoSave: this.settings.autoSave,
       saveInterval: this.settings.saveInterval
     };
+  }
+
+  /**
+   * 更新字体大小
+   */
+  private updateFontSize(size: number): void {
+    const newSettings = this.copySettings();
+    newSettings.fontSize = size;
     this.onSettingsChange(newSettings);
   }
 
@@ -59,18 +86,8 @@ export struct EBookReadingSettingsPanel {
    * 更新行高
    */
   private updateLineHeight(height: number): void {
-    const newSettings: EBookReadingSettings = {
-      fontSize: this.settings.fontSize,
-      lineHeight: height,
-      fontFamily: this.settings.fontFamily,
-      backgroundColor: this.settings.backgroundColor,
-      textColor: this.settings.textColor,
-      pageMargin: this.settings.pageMargin,
-      pageMode: this.settings.pageMode,
-      brightness: this.settings.brightness,
-      autoSave: this.settings.autoSave,
-      saveInterval: this.settings.saveInterval
-    };
+    const newSettings = this.copySettings();
+    newSettings.lineHeight = height;
     this.onSettingsChange(newSettings);
   }
 
@@ -78,56 +95,56 @@ export struct EBookReadingSettingsPanel {
    * 更新页边距
    */
   private updatePageMargin(margin: number): void {
-    const newSettings: EBookReadingSettings = {
-      fontSize: this.settings.fontSize,
-      lineHeight: this.settings.lineHeight,
-      fontFamily: this.settings.fontFamily,
-      backgroundColor: this.settings.backgroundColor,
-      textColor: this.settings.textColor,
-      pageMargin: margin,
-      pageMode: this.settings.pageMode,
-      brightness: this.settings.brightness,
-      autoSave: this.settings.autoSave,
-      saveInterval: this.settings.saveInterval
-    };
+    const newSettings = this.copySettings();
+    newSettings.pageMargin = margin;
     this.onSettingsChange(newSettings);
   }
 
   /**
    * 更新主题
+   * 注意：选择"自动"主题时，followSystemTheme 为 true，会跟随系统主题
+   * 选择其他主题时，followSystemTheme 为 false，不会跟随系统主题
    */
   private updateTheme(theme: ReadingTheme): void {
-    const newSettings: EBookReadingSettings = {
-      fontSize: this.settings.fontSize,
-      lineHeight: this.settings.lineHeight,
-      fontFamily: this.settings.fontFamily,
-      backgroundColor: theme.bgColor,
-      textColor: theme.textColor,
-      pageMargin: this.settings.pageMargin,
-      pageMode: this.settings.pageMode,
-      brightness: this.settings.brightness,
-      autoSave: this.settings.autoSave,
-      saveInterval: this.settings.saveInterval
-    };
+    const newSettings = this.copySettings();
+    
+    if (theme.followSystem) {
+      // 自动模式：根据当前系统主题设置颜色
+      const isDarkMode = this.currentTheme === ThemeType.DARK;
+      newSettings.backgroundColor = isDarkMode ? '#1E1E1E' : '#FFFFFF';
+      newSettings.textColor = isDarkMode ? '#D4D4D4' : '#000000';
+      newSettings.nightMode = isDarkMode;
+    } else {
+      newSettings.backgroundColor = theme.bgColor;
+      newSettings.textColor = theme.textColor;
+      // 检测是否为夜间模式
+      newSettings.nightMode = theme.bgColor === '#1E1E1E';
+    }
+    
+    // 根据主题类型设置是否跟随系统主题
+    newSettings.followSystemTheme = theme.followSystem;
     this.onSettingsChange(newSettings);
+    logger.info(TAG, `主题已更新: ${theme.name}, followSystemTheme=${theme.followSystem}`);
+  }
+
+  /**
+   * 更新字体颜色
+   */
+  private updateTextColor(color: string): void {
+    const newSettings = this.copySettings();
+    newSettings.textColor = color;
+    // 手动设置字体颜色时，关闭跟随系统主题
+    newSettings.followSystemTheme = false;
+    this.onSettingsChange(newSettings);
+    logger.info(TAG, `字体颜色已更新: ${color}`);
   }
 
   /**
    * 更新翻页模式
    */
   private updatePageMode(mode: EBookPageMode): void {
-    const newSettings: EBookReadingSettings = {
-      fontSize: this.settings.fontSize,
-      lineHeight: this.settings.lineHeight,
-      fontFamily: this.settings.fontFamily,
-      backgroundColor: this.settings.backgroundColor,
-      textColor: this.settings.textColor,
-      pageMargin: this.settings.pageMargin,
-      pageMode: mode,
-      brightness: this.settings.brightness,
-      autoSave: this.settings.autoSave,
-      saveInterval: this.settings.saveInterval
-    };
+    const newSettings = this.copySettings();
+    newSettings.pageMode = mode;
     this.onSettingsChange(newSettings);
   }
 
@@ -188,6 +205,14 @@ export struct EBookReadingSettingsPanel {
 
           Divider()
             .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+
+          // 字体颜色（仅在非自动模式下显示）
+          if (!this.settings.followSystemTheme) {
+            this.buildTextColorSetting()
+
+            Divider()
+              .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+          }
 
           // 翻页模式
           this.buildPageModeSetting()
@@ -397,42 +422,220 @@ export struct EBookReadingSettingsPanel {
   }
 
   /**
+   * 构建主题提示 Popup 内容
+   */
+  @Builder
+  buildThemeHintPopup() {
+    Column({ space: 8 }) {
+      Text('主题跟随说明')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#333333')
+      
+      Text('• "默认"和"夜间"主题会自动跟随App全局主题切换')
+        .fontSize(12)
+        .fontColor('#666666')
+      
+      Text('• "护眼"和"羊皮纸"主题为固定主题，不会跟随系统变化')
+        .fontSize(12)
+        .fontColor('#666666')
+      
+      Row() {
+        Text(this.settings.followSystemTheme !== false ? '当前：跟随系统' : '当前：固定主题')
+          .fontSize(12)
+          .fontColor(this.settings.followSystemTheme !== false ? '#4CAF50' : '#FF9800')
+          .fontWeight(FontWeight.Medium)
+      }
+      .margin({ top: 4 })
+    }
+    .padding(12)
+    .backgroundColor(Color.White)
+    .borderRadius(8)
+    .shadow({ radius: 8, color: '#33000000', offsetX: 0, offsetY: 2 })
+  }
+
+  /**
    * 构建主题设置
    */
   @Builder
   buildThemeSetting() {
     Column({ space: 12 }) {
-      Text('阅读主题')
-        .fontSize(16)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-        .width('100%')
+      Row() {
+        Text('阅读主题')
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+        
+        // 提示图标，点击显示 popup
+        Image($r('app.media.ic_public_help'))
+          .width(18)
+          .height(18)
+          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+          .margin({ left: 6 })
+          .onClick(() => {
+            this.showThemeHintPopup = !this.showThemeHintPopup;
+          })
+          .bindPopup(this.showThemeHintPopup, {
+            builder: this.buildThemeHintPopup,
+            placement: Placement.Bottom,
+            popupColor: Color.Transparent,
+            enableArrow: true,
+            onStateChange: (e) => {
+              if (!e.isVisible) {
+                this.showThemeHintPopup = false;
+              }
+            }
+          })
+        
+        Blank()
+        
+        // 显示当前跟随状态
+        Text(this.settings.followSystemTheme !== false ? '跟随系统' : '固定主题')
+          .fontSize(12)
+          .fontColor(this.settings.followSystemTheme !== false 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+          .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+          .backgroundColor(this.settings.followSystemTheme !== false 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme) + '20'
+            : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+          .borderRadius(4)
+      }
+      .width('100%')
 
-      Row({ space: 12 }) {
+      Row({ space: 8 }) {
         ForEach(this.themes, (theme: ReadingTheme) => {
           Column({ space: 4 }) {
-            Column()
-              .width(50)
-              .height(50)
-              .backgroundColor(theme.bgColor)
-              .borderRadius(8)
-              .border({
-                width: this.settings.backgroundColor === theme.bgColor ? 2 : 1,
-                color: this.settings.backgroundColor === theme.bgColor 
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
-              })
-              .onClick(() => {
-                this.updateTheme(theme);
-              })
+            Stack() {
+              if (theme.followSystem) {
+                // 自动模式：显示渐变效果
+                Column() {
+                  Row() {
+                    Column()
+                      .width('50%')
+                      .height('100%')
+                      .backgroundColor('#FFFFFF')
+                    Column()
+                      .width('50%')
+                      .height('100%')
+                      .backgroundColor('#1E1E1E')
+                  }
+                  .width('100%')
+                  .height('100%')
+                }
+                .width(44)
+                .height(44)
+                .borderRadius(8)
+                .clip(true)
+                .border({
+                  width: this.settings.followSystemTheme ? 2 : 1,
+                  color: this.settings.followSystemTheme 
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
+                })
+              } else {
+                Column()
+                  .width(44)
+                  .height(44)
+                  .backgroundColor(theme.bgColor)
+                  .borderRadius(8)
+                  .border({
+                    width: !this.settings.followSystemTheme && this.settings.backgroundColor === theme.bgColor ? 2 : 1,
+                    color: !this.settings.followSystemTheme && this.settings.backgroundColor === theme.bgColor 
+                      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
+                      : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
+                  })
+              }
+            }
+            .width(44)
+            .height(44)
+            .onClick(() => {
+              this.updateTheme(theme);
+            })
 
             Text(theme.name)
-              .fontSize(12)
+              .fontSize(11)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
           }
         })
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween)
+    }
+  }
+
+  /**
+   * 构建字体颜色设置
+   */
+  @Builder
+  buildTextColorSetting() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('字体颜色')
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+
+        Blank()
+
+        // 显示当前颜色
+        Row({ space: 6 }) {
+          Column()
+            .width(20)
+            .height(20)
+            .backgroundColor(this.settings.textColor)
+            .borderRadius(4)
+            .border({
+              width: 1,
+              color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
+            })
+          
+          Text(this.settings.textColor)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+        }
+      }
+      .width('100%')
+
+      // 预设颜色选择
+      Row({ space: 8 }) {
+        ForEach(this.textColors, (colorOption: TextColorOption) => {
+          Column({ space: 4 }) {
+            Column()
+              .width(36)
+              .height(36)
+              .backgroundColor(colorOption.color)
+              .borderRadius(8)
+              .border({
+                width: this.settings.textColor === colorOption.color ? 2 : 1,
+                color: this.settings.textColor === colorOption.color 
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
+              })
+              .onClick(() => {
+                this.updateTextColor(colorOption.color);
+              })
+
+            Text(colorOption.name)
+              .fontSize(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+          }
+        })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      // 预览效果
+      Text('预览文本 Preview')
+        .fontSize(this.settings.fontSize)
+        .fontColor(this.settings.textColor)
+        .lineHeight(this.settings.fontSize * this.settings.lineHeight)
+        .padding(16)
+        .width('100%')
+        .backgroundColor(this.settings.backgroundColor)
+        .borderRadius(8)
+        .border({
+          width: 1,
+          color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
+        })
     }
   }
 
@@ -448,47 +651,8 @@ export struct EBookReadingSettingsPanel {
         .width('100%')
 
       Row({ space: 12 }) {
-        Button('滚动')
-          .fontSize(14)
-          .layoutWeight(1)
-          .height(40)
-              .backgroundColor(this.settings.pageMode === EBookPageMode.SCROLL 
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
-            : 'transparent')
-          .fontColor(this.settings.pageMode === EBookPageMode.SCROLL
-            ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-          .border({
-            width: 1,
-            color: this.settings.pageMode === EBookPageMode.SCROLL
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
-          })
-          .onClick(() => {
-            this.updatePageMode(EBookPageMode.SCROLL);
-          })
-
-        Button('翻页')
-          .fontSize(14)
-          .layoutWeight(1)
-          .height(40)
-          .backgroundColor(this.settings.pageMode === EBookPageMode.PAGE 
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
-            : 'transparent')
-          .fontColor(this.settings.pageMode === EBookPageMode.PAGE
-            ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
-          .border({
-            width: 1,
-            color: this.settings.pageMode === EBookPageMode.PAGE
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
-          })
-          .onClick(() => {
-            this.updatePageMode(EBookPageMode.PAGE);
-          })
-
-        Button('仿真')
+        // 仿真翻页（Reader Kit flipMode = '0'）
+        Button('仿真翻页')
           .fontSize(14)
           .layoutWeight(1)
           .height(40)
@@ -506,6 +670,27 @@ export struct EBookReadingSettingsPanel {
           })
           .onClick(() => {
             this.updatePageMode(EBookPageMode.SIMULATION);
+          })
+
+        // 横向滑动（Reader Kit flipMode = '1'）
+        Button('横向滑动')
+          .fontSize(14)
+          .layoutWeight(1)
+          .height(40)
+          .backgroundColor(this.settings.pageMode === EBookPageMode.HORIZONTAL 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
+            : 'transparent')
+          .fontColor(this.settings.pageMode === EBookPageMode.HORIZONTAL
+            ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+          .border({
+            width: 1,
+            color: this.settings.pageMode === EBookPageMode.HORIZONTAL
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme)
+          })
+          .onClick(() => {
+            this.updatePageMode(EBookPageMode.HORIZONTAL);
           })
       }
       .width('100%')
@@ -533,18 +718,8 @@ export struct EBookReadingSettingsPanel {
 
         Toggle({ type: ToggleType.Switch, isOn: this.settings.autoSave })
           .onChange((isOn: boolean) => {
-            const newSettings: EBookReadingSettings = {
-              fontSize: this.settings.fontSize,
-              lineHeight: this.settings.lineHeight,
-              fontFamily: this.settings.fontFamily,
-              backgroundColor: this.settings.backgroundColor,
-              textColor: this.settings.textColor,
-              pageMargin: this.settings.pageMargin,
-              pageMode: this.settings.pageMode,
-              brightness: this.settings.brightness,
-              autoSave: isOn,
-              saveInterval: this.settings.saveInterval
-            };
+            const newSettings = this.copySettings();
+            newSettings.autoSave = isOn;
             this.onSettingsChange(newSettings);
           })
       }
@@ -578,18 +753,8 @@ export struct EBookReadingSettingsPanel {
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
           .showTips(false)
           .onChange((value: number) => {
-            const newSettings: EBookReadingSettings = {
-              fontSize: this.settings.fontSize,
-              lineHeight: this.settings.lineHeight,
-              fontFamily: this.settings.fontFamily,
-              backgroundColor: this.settings.backgroundColor,
-              textColor: this.settings.textColor,
-              pageMargin: this.settings.pageMargin,
-              pageMode: this.settings.pageMode,
-              brightness: this.settings.brightness,
-              autoSave: this.settings.autoSave,
-              saveInterval: Math.round(value)
-            };
+            const newSettings = this.copySettings();
+            newSettings.saveInterval = Math.round(value);
             this.onSettingsChange(newSettings);
           })
       }
@@ -600,17 +765,23 @@ export struct EBookReadingSettingsPanel {
    * 恢复默认设置
    */
   private resetToDefault(): void {
+    // 使用全局默认设置常量（ArkTS 不支持展开运算符，需要显式复制）
     const defaultSettings: EBookReadingSettings = {
-      fontSize: 18,
-      lineHeight: 1.8,
-      fontFamily: 'HarmonyOS Sans',
-      backgroundColor: '#FFFFFF',
-      textColor: '#333333',
-      pageMargin: 20,
-      pageMode: EBookPageMode.PAGE,
-      brightness: 100,
-      autoSave: true,
-      saveInterval: 30
+      fontSize: DEFAULT_EBOOK_READING_SETTINGS.fontSize,
+      fontFamily: DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
+      fontPath: DEFAULT_EBOOK_READING_SETTINGS.fontPath,
+      fontWeight: DEFAULT_EBOOK_READING_SETTINGS.fontWeight,
+      lineHeight: DEFAULT_EBOOK_READING_SETTINGS.lineHeight,
+      backgroundColor: DEFAULT_EBOOK_READING_SETTINGS.backgroundColor,
+      textColor: DEFAULT_EBOOK_READING_SETTINGS.textColor,
+      themeBgImage: DEFAULT_EBOOK_READING_SETTINGS.themeBgImage,
+      nightMode: DEFAULT_EBOOK_READING_SETTINGS.nightMode,
+      followSystemTheme: DEFAULT_EBOOK_READING_SETTINGS.followSystemTheme,
+      pageMargin: DEFAULT_EBOOK_READING_SETTINGS.pageMargin,
+      pageMode: DEFAULT_EBOOK_READING_SETTINGS.pageMode,
+      brightness: DEFAULT_EBOOK_READING_SETTINGS.brightness,
+      autoSave: DEFAULT_EBOOK_READING_SETTINGS.autoSave,
+      saveInterval: DEFAULT_EBOOK_READING_SETTINGS.saveInterval
     };
     this.onSettingsChange(defaultSettings);
     logger.info(TAG, '已恢复默认设置');
@@ -624,5 +795,14 @@ interface ReadingTheme {
   name: string;
   bgColor: string;
   textColor: string;
+  followSystem: boolean;  // 是否跟随系统主题
+}
+
+/**
+ * 字体颜色选项接口
+ */
+interface TextColorOption {
+  name: string;
+  color: string;
 }
 

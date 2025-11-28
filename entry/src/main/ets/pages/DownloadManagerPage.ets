@@ -646,17 +646,7 @@ struct DownloadManagerPage {
         }
       },
       content: {
-        title: { mainTitle: '下载管理' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '下载管理' }
       }
     })
     .onReady((context: NavDestinationContext) => {

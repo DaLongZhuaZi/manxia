@@ -8,9 +8,15 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { GlobalBackgroundLayer } from '../Framework/Components/GlobalBackgroundLayer';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
 import { DataService } from '../Framework/Services/DataService';
-import { ReadHistory, DataManager } from '../Framework/Data/DataManager';
+import { ReadHistory, DataManager, ComicInfo } from '../Framework/Data/DataManager';
+import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS } from '../Framework/Managers/ReadingAnalyticsManager';
+import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBook } from '../Models/EBookModels';
 
 const TAG = 'ReadingAnalyticsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -72,6 +78,58 @@ interface DailyStatData {
   pages: number;
 }
 
+/**
+ * 阅读时长排行项类型
+ */
+type ReadingRankType = 'manga' | 'ebook';
+
+/**
+ * 阅读时长排行项
+ */
+interface ReadingRankItem {
+  id: string;
+  title: string;
+  coverPath: string;
+  readingTime: number;      // 阅读时长（分钟）
+  type: ReadingRankType;    // 类型
+}
+
+/**
+ * 兴趣分析项类型
+ */
+type InterestType = 'tag' | 'author' | 'title';
+
+/**
+ * 兴趣分析项
+ */
+interface InterestItem {
+  keyword: string;
+  count: number;
+  type: InterestType;
+}
+
+/**
+ * 关键词统计数据
+ */
+interface KeywordStatData {
+  count: number;
+  type: InterestType;
+}
+
+/**
+ * 漫画详情页导航参数
+ */
+interface MangaDetailParams {
+  mangaId: string;
+}
+
+/**
+ * 电子书详情页导航参数
+ */
+interface EBookDetailParams {
+  ebookId: string;
+}
+
 @Component
 struct ReadingAnalyticsPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -82,11 +140,23 @@ struct ReadingAnalyticsPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'ReadingAnalyticsPage';
 
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+  @State responsive_isLandscape: boolean = false;
+  @State responsive_statCardColumns: number = 2; // 统计卡片列数
+
   // 数据服务
   private dataService: DataService = DataService.getInstance();
+  private dataManager: DataManager = DataManager.getInstance();
+  private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private analyticsManager: ReadingAnalyticsManager = ReadingAnalyticsManager.getInstance();
 
   // 统计数据状态
   @State isLoading: boolean = true;
+  @State analyticsEnabled: boolean = false;
   @State statistics: ReadingStatistics = {
     totalReadingTime: 0,
     totalComicsRead: 0,
@@ -102,9 +172,17 @@ struct ReadingAnalyticsPage {
 
   @State dailyData: DailyReadingData[] = [];
   @State hourlyDistribution: HourlyDistribution[] = [];
+  
+  // 阅读时长排行
+  @State readingRankList: ReadingRankItem[] = [];
+  
+  // 兴趣分析
+  @State interestItems: InterestItem[] = [];
 
   // 时间范围选择
-  @State selectedTimeRange: number = 7; // 默认最近7天
+  @State selectedTimeRange: number = 30; // 默认最近30天
+  @State showRetentionPicker: boolean = false; // 是否显示保留天数选择器
+  @State retentionDaysIndex: number = 2; // 保留天数索引（默认30天）
 
   onPageShow(): void {
     try {
@@ -123,14 +201,86 @@ struct ReadingAnalyticsPage {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
 
-    // 加载阅读数据
-    this.loadReadingData().catch((error: Error) => {
-      logger.error(TAG, '加载阅读数据失败', error.message);
+    // 初始化响应式布局
+    this.initResponsiveLayout();
+
+    // 初始化阅读报告管理器并加载数据
+    this.initializeAndLoad().catch((error: Error) => {
+      logger.error(TAG, '初始化失败', error.message);
     });
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    // 移除设备变化监听器
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+  }
+
+  /**
+   * 初始化响应式布局
+   */
+  private initResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 横屏=${deviceInfo.isLandscape}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  /**
+   * 更新响应式布局参数
+   */
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        this.responsive_statCardColumns = 2;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        this.responsive_statCardColumns = 2;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        this.responsive_statCardColumns = 3;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        this.responsive_statCardColumns = 4;
+        break;
+    }
+  }
+
+  /**
+   * 初始化并加载数据
+   */
+  private async initializeAndLoad(): Promise<void> {
+    try {
+      await this.analyticsManager.initialize();
+      this.analyticsEnabled = this.analyticsManager.isEnabled();
+      this.retentionDaysIndex = this.analyticsManager.getRetentionDaysIndex();
+      this.selectedTimeRange = this.analyticsManager.getRetentionDays();
+      
+      await this.loadReadingData();
+    } catch (error) {
+      logger.error(TAG, `初始化失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -152,7 +302,13 @@ struct ReadingAnalyticsPage {
       }
 
       // 分析数据
-      this.analyzeReadingData(readHistory);
+      await this.analyzeReadingData(readHistory);
+      
+      // 加载阅读时长排行
+      await this.loadReadingRank(readHistory);
+      
+      // 分析用户兴趣
+      await this.analyzeUserInterests();
 
       logger.info(TAG, '阅读数据加载完成');
     } catch (error) {
@@ -399,6 +555,154 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 加载阅读时长排行
+   */
+  private async loadReadingRank(readHistory: ReadHistory[]): Promise<void> {
+    try {
+      // 按漫画ID统计阅读时长
+      const readingTimeMap = new Map<string, number>();
+      readHistory.forEach(record => {
+        const currentTime = readingTimeMap.get(record.comicId) || 0;
+        readingTimeMap.set(record.comicId, currentTime + Math.round(record.readDuration / 60));
+      });
+
+      // 转换为数组并排序
+      const rankEntries = Array.from(readingTimeMap.entries());
+      rankEntries.sort((a, b) => b[1] - a[1]);
+
+      // 获取前10名的详细信息
+      const rankList: ReadingRankItem[] = [];
+      for (let i = 0; i < Math.min(10, rankEntries.length); i++) {
+        const comicId: string = rankEntries[i][0];
+        const readingTime: number = rankEntries[i][1];
+        
+        try {
+          const comic: ComicInfo | null = await this.dataManager.getComicById(comicId);
+          if (comic) {
+            // 优先使用本地封面路径，其次使用网络URL
+            const coverPath: string = comic.coverLocalPath || comic.coverUrl || '';
+            const rankItem: ReadingRankItem = {
+              id: comicId,
+              title: comic.title,
+              coverPath: coverPath,
+              readingTime: readingTime,
+              type: 'manga'
+            };
+            rankList.push(rankItem);
+          }
+        } catch (e) {
+          // 可能是电子书，尝试从电子书数据库查询
+          try {
+            const ebook: EBook | null = await this.ebookDataManager.getEBookById(comicId);
+            if (ebook) {
+              const rankItem: ReadingRankItem = {
+                id: comicId,
+                title: ebook.metadata.title,
+                coverPath: ebook.metadata.coverImagePath || '',
+                readingTime: readingTime,
+                type: 'ebook'
+              };
+              rankList.push(rankItem);
+            }
+          } catch (e2) {
+            logger.warn(TAG, `无法找到作品信息: ${comicId}`);
+          }
+        }
+      }
+
+      this.readingRankList = rankList;
+      logger.info(TAG, `阅读时长排行加载完成，共 ${rankList.length} 项`);
+    } catch (error) {
+      logger.error(TAG, `加载阅读时长排行失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 分析用户兴趣
+   */
+  private async analyzeUserInterests(): Promise<void> {
+    try {
+      const keywordMap = new Map<string, KeywordStatData>();
+
+      // 获取所有漫画
+      const comics: ComicInfo[] = await this.dataManager.getAllComics();
+      for (const comic of comics) {
+        // 分析标签 - ComicInfo.tags 是 string[]
+        if (comic.tags && comic.tags.length > 0) {
+          for (const tag of comic.tags) {
+            const trimmedTag: string = tag.trim();
+            if (trimmedTag.length > 0) {
+              const existing: KeywordStatData | undefined = keywordMap.get(trimmedTag);
+              if (existing) {
+                existing.count++;
+              } else {
+                const newData: KeywordStatData = { count: 1, type: 'tag' };
+                keywordMap.set(trimmedTag, newData);
+              }
+            }
+          }
+        }
+        
+        // 分析作者
+        if (comic.author && comic.author.trim().length > 0) {
+          const existing: KeywordStatData | undefined = keywordMap.get(comic.author);
+          if (existing) {
+            existing.count++;
+          } else {
+            const newData: KeywordStatData = { count: 1, type: 'author' };
+            keywordMap.set(comic.author, newData);
+          }
+        }
+
+        // 分析标题关键词（简单分词）
+        const titleWords: string[] = this.extractKeywords(comic.title);
+        for (const word of titleWords) {
+          const existing: KeywordStatData | undefined = keywordMap.get(word);
+          if (existing) {
+            existing.count++;
+          } else {
+            const newData: KeywordStatData = { count: 1, type: 'title' };
+            keywordMap.set(word, newData);
+          }
+        }
+      }
+
+      // 注意：EBookDataManager 没有 getAllEBooks 方法，跳过电子书分析
+      // 如果需要，可以后续添加该方法
+
+      // 转换为数组并排序
+      const interestEntries = Array.from(keywordMap.entries());
+      interestEntries.sort((a, b) => b[1].count - a[1].count);
+
+      // 取前15个
+      const resultItems: InterestItem[] = [];
+      const slicedEntries = interestEntries.slice(0, 15);
+      for (const entry of slicedEntries) {
+        const item: InterestItem = {
+          keyword: entry[0],
+          count: entry[1].count,
+          type: entry[1].type
+        };
+        resultItems.push(item);
+      }
+      this.interestItems = resultItems;
+
+      logger.info(TAG, `兴趣分析完成，共 ${this.interestItems.length} 个关键词`);
+    } catch (error) {
+      logger.error(TAG, `分析用户兴趣失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 从标题中提取关键词
+   */
+  private extractKeywords(title: string): string[] {
+    // 简单分词：按空格、标点符号分割，过滤短词
+    const words = title.split(/[\s,，。、！？·\-_\[\]【】()（）]+/);
+    return words.filter(word => word.length >= 2 && word.length <= 10);
+  }
+
+  /**
    * 切换时间范围
    */
   private changeTimeRange(days: number): void {
@@ -412,12 +716,63 @@ struct ReadingAnalyticsPage {
     });
   }
 
+  /**
+   * 显示保留天数选择器
+   */
+  private showRetentionDaysPicker(): void {
+    this.showRetentionPicker = true;
+  }
+
+  /**
+   * 处理保留天数选择
+   */
+  private async handleRetentionDaysChange(index: number): Promise<void> {
+    this.retentionDaysIndex = index;
+    await this.analyticsManager.setRetentionDaysByIndex(index);
+    this.selectedTimeRange = RETENTION_DAYS_OPTIONS[index];
+    this.showRetentionPicker = false;
+    
+    // 重新加载数据
+    await this.loadReadingData();
+  }
+
+  /**
+   * 导航到作品详情页
+   */
+  private navigateToDetail(item: ReadingRankItem): void {
+    try {
+      if (item.type === 'manga') {
+        const params: MangaDetailParams = { mangaId: item.id };
+        this.pathStack.pushPathByName('MangaDetailPage', params);
+      } else {
+        const params: EBookDetailParams = { ebookId: item.id };
+        this.pathStack.pushPathByName('EBookDetailPage', params);
+      }
+    } catch (error) {
+      logger.error(TAG, `导航到详情页失败: ${String(error)}`);
+    }
+  }
+
   private goBack(): void {
     try {
       this.pathStack.pop();
     } catch (error) {
       logger.error(TAG, '返回失败', String(error));
     }
+  }
+
+  /**
+   * 规范化封面路径：本地文件添加 file:// 前缀
+   */
+  private normalizeCoverPath(path: string): string {
+    if (!path || path.length === 0) {
+      return '';
+    }
+    // 如果是本地路径（以 / 开头），添加 file:// 前缀
+    if (path.startsWith('/')) {
+      return `file://${path}`;
+    }
+    return path;
   }
 
   /**
@@ -800,6 +1155,190 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 构建兴趣分析
+   */
+  @Builder
+  buildInterestAnalysis() {
+    if (this.interestItems.length > 0) {
+      Column({ space: 12 }) {
+        Text('💡 您可能感兴趣的')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .alignSelf(ItemAlign.Start)
+
+        // 兴趣标签云
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach(this.interestItems, (item: InterestItem, index: number) => {
+            Row({ space: 4 }) {
+              Text(item.type === 'tag' ? '🏷️' : (item.type === 'author' ? '✍️' : '📝'))
+                .fontSize(12)
+              Text(item.keyword)
+                .fontSize(13)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text(`(${item.count})`)
+                .fontSize(11)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(16)
+            .margin({ right: 8, bottom: 8 })
+          }, (item: InterestItem, index: number) => `${item.keyword}-${index}`)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(16)
+    }
+  }
+
+  /**
+   * 构建阅读时长排行
+   */
+  @Builder
+  buildReadingRank() {
+    if (this.readingRankList.length > 0) {
+      Column({ space: 12 }) {
+        Text('🏆 阅读时长排行')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .alignSelf(ItemAlign.Start)
+
+        // 排行列表 - 网格展示
+        Grid() {
+          ForEach(this.readingRankList, (item: ReadingRankItem, index: number) => {
+            GridItem() {
+              Column({ space: 8 }) {
+                // 封面图片
+                Stack() {
+                  if (item.coverPath && item.coverPath.length > 0) {
+                    Image(this.normalizeCoverPath(item.coverPath))
+                      .width('100%')
+                      .height(120)
+                      .objectFit(ImageFit.Cover)
+                      .borderRadius(8)
+                  } else {
+                    Column() {
+                      Text(item.type === 'manga' ? '📚' : '📖')
+                        .fontSize(32)
+                    }
+                    .width('100%')
+                    .height(120)
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                    .borderRadius(8)
+                    .justifyContent(FlexAlign.Center)
+                  }
+                  
+                  // 排名标签
+                  Text(`${index + 1}`)
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#FFFFFF')
+                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                    .backgroundColor(index < 3 ? '#FF6B6B' : '#666666')
+                    .borderRadius(4)
+                    .position({ x: 4, y: 4 })
+                }
+                .width('100%')
+
+                // 标题
+                Text(item.title)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+
+                // 阅读时长
+                Text(this.formatDuration(item.readingTime))
+                  .fontSize(11)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              }
+              .width('100%')
+              .onClick(() => {
+                this.navigateToDetail(item);
+              })
+            }
+          }, (item: ReadingRankItem, index: number) => `${item.id}-${index}`)
+        }
+        .columnsTemplate('1fr 1fr 1fr')
+        .rowsGap(12)
+        .columnsGap(12)
+        .width('100%')
+      }
+      .width('100%')
+      .padding(16)
+    }
+  }
+
+  /**
+   * 构建设置区域
+   */
+  @Builder
+  buildSettingsSection() {
+    Column({ space: 12 }) {
+      Text('⚙️ 设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 数据保留天数设置
+      Row() {
+        Text('数据保留天数')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        Text(`${RETENTION_DAYS_OPTIONS[this.retentionDaysIndex]}天`)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        
+        Image($r('app.media.ic_arrow_right'))
+          .width(16)
+          .height(16)
+          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .margin({ left: 4 })
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(12)
+      .onClick(() => {
+        this.showRetentionDaysPicker();
+      })
+
+      // 阅读报告开关
+      Row() {
+        Text('启用阅读数据收集')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.analyticsEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            this.analyticsEnabled = isOn;
+            await this.analyticsManager.setEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Text('关闭后将停止收集阅读数据，但不会删除已有数据')
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+  }
+
+  /**
    * 构建加载状态
    */
   @Builder
@@ -844,36 +1383,138 @@ struct ReadingAnalyticsPage {
     .justifyContent(FlexAlign.Center)
   }
 
+  /**
+   * 构建横屏模式下的内容
+   */
+  @Builder
+  buildLandscapeContent() {
+    Column({ space: 0 }) {
+      if (this.isLoading) {
+        this.buildLoadingState()
+      } else if (this.statistics.totalReadingTime === 0) {
+        this.buildEmptyState()
+      } else {
+        // 横屏模式：使用两列布局
+        Column({ space: 16 }) {
+          // 第一行：统计概览（使用网格布局）
+          Column({ space: 12 }) {
+            Text('📊 阅读统计')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+
+            Grid() {
+              GridItem() {
+                this.buildStatCard('总阅读时长', this.formatDuration(this.statistics.totalReadingTime), '⏱️')
+              }
+              GridItem() {
+                this.buildStatCard('日均阅读', this.formatDuration(this.statistics.averageReadingTime), '📅')
+              }
+              GridItem() {
+                this.buildStatCard('阅读漫画', `${this.statistics.totalComicsRead}`, '📚', '本')
+              }
+              GridItem() {
+                this.buildStatCard('阅读章节', `${this.statistics.totalChaptersRead}`, '📖', '章')
+              }
+              GridItem() {
+                this.buildStatCard('阅读页数', `${this.statistics.totalPagesRead}`, '📄', '页')
+              }
+              GridItem() {
+                this.buildStatCard('连续阅读', `${this.statistics.continuousReadingDays}`, '🔥', '天')
+              }
+            }
+            .columnsTemplate(`repeat(${this.responsive_statCardColumns}, 1fr)`)
+            .columnsGap(12)
+            .rowsGap(12)
+            .width('100%')
+          }
+          .width('100%')
+          .padding(this.responsive_contentPadding)
+
+          // 第二行：阅读习惯和兴趣分析（左右布局）
+          Row({ space: 16 }) {
+            Column() {
+              this.buildReadingHabits()
+            }
+            .layoutWeight(1)
+
+            Column() {
+              this.buildInterestAnalysis()
+            }
+            .layoutWeight(1)
+          }
+          .width('100%')
+
+          // 第三行：阅读排行和趋势
+          Row({ space: 16 }) {
+            Column() {
+              this.buildReadingRank()
+            }
+            .layoutWeight(1)
+
+            Column() {
+              this.buildDailyTrend()
+            }
+            .layoutWeight(1)
+          }
+          .width('100%')
+
+          // 设置区域
+          this.buildSettingsSection()
+          
+          Blank().height(40)
+        }
+        .width('100%')
+        .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+      }
+    }
+    .width('100%')
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
-          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        // 背景层
+        GlobalBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
+        })
         
+        // 内容层
         Column() {
           Blank().height(TITLE_BAR_HEIGHT_MINI)
 
           // 时间范围选择器
-          this.buildTimeRangeSelector()
+          Row() {
+            this.buildTimeRangeSelector()
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
 
           Scroll(this.scroller) {
-            Column({ space: 0 }) {
-              if (this.isLoading) {
-                this.buildLoadingState()
-              } else if (this.statistics.totalReadingTime === 0) {
-                this.buildEmptyState()
-              } else {
-                this.buildStatisticsOverview()
-                this.buildReadingHabits()
-                this.buildDailyTrend()
-                
-                Blank().height(40)
+            if (this.responsive_isLandscape) {
+              // 横屏模式：使用更紧凑的布局
+              this.buildLandscapeContent()
+            } else {
+              // 竖屏模式：使用原有布局
+              Column({ space: 0 }) {
+                if (this.isLoading) {
+                  this.buildLoadingState()
+                } else if (this.statistics.totalReadingTime === 0) {
+                  this.buildEmptyState()
+                } else {
+                  this.buildStatisticsOverview()
+                  this.buildReadingHabits()
+                  this.buildInterestAnalysis()
+                  this.buildReadingRank()
+                  this.buildDailyTrend()
+                  this.buildSettingsSection()
+                  
+                  Blank().height(40)
+                }
               }
+              .width('100%')
             }
-            .width('100%')
           }
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
@@ -881,6 +1522,68 @@ struct ReadingAnalyticsPage {
         }
         .width('100%')
         .height('100%')
+        .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
+
+        // 保留天数选择器弹窗
+        if (this.showRetentionPicker) {
+          Column() {
+            // 遮罩层
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('#80000000')
+              .onClick(() => {
+                this.showRetentionPicker = false;
+              })
+          }
+          .width('100%')
+          .height('100%')
+          .position({ x: 0, y: 0 })
+
+          // 选择器面板
+          Column() {
+            // 标题栏
+            Row() {
+              Text('取消')
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .onClick(() => {
+                  this.showRetentionPicker = false;
+                })
+              
+              Text('选择数据保留天数')
+                .fontSize(16)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .layoutWeight(1)
+                .textAlign(TextAlign.Center)
+              
+              Text('确定')
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .onClick(() => {
+                  this.handleRetentionDaysChange(this.retentionDaysIndex);
+                })
+            }
+            .width('100%')
+            .padding(16)
+
+            // TextPicker
+            TextPicker({ range: this.analyticsManager.getRetentionDaysOptions(), selected: this.retentionDaysIndex })
+              .onChange((value: string | string[], index: number | number[]) => {
+                if (typeof index === 'number') {
+                  this.retentionDaysIndex = index;
+                }
+              })
+              .width('100%')
+              .height(200)
+          }
+          .width('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderRadius({ topLeft: 16, topRight: 16 })
+          .position({ x: 0, y: '100%' })
+          .translate({ y: -280 })
+        }
       }
     }
     .titleBar({
@@ -919,17 +1622,7 @@ struct ReadingAnalyticsPage {
         }
       },
       content: {
-        title: { mainTitle: '阅读报告' },
-        menu: {
-          value: [{
-            content: {
-              label: '切换主题',
-              icon: $r('app.media.SculptureLargeAnimalistA'),
-              isEnabled: true,
-              action: () => { this.themeManager.toggleTheme(); }
-            }
-          }]
-        }
+        title: { mainTitle: '阅读报告' }
       }
     })
     .onReady((context: NavDestinationContext) => {
