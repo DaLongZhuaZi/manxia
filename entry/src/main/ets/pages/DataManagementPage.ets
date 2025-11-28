@@ -3737,34 +3737,34 @@ struct DataManagementPage {
             .borderRadius(8)
 
             // 电子书导入区域
-            // Column({ space: 16 }) {
-            //   Row() {
-            //     Text('📖 电子书导入')
-            //       .fontSize(18)
-            //       .fontWeight(FontWeight.Bold)
-            //       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            //       .layoutWeight(1)
-            //   }
-            //   .width('100%')
+            Column({ space: 16 }) {
+              Row() {
+                Text('📖 电子书导入')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .layoutWeight(1)
+              }
+              .width('100%')
 
-            //   Text('支持导入TXT、EPUB、MOBI、AZW/AZW3、PDF格式的电子书，自动识别章节。')
-            //     .fontSize(13)
-            //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            //     .lineHeight(18)
+              Text('支持导入TXT、EPUB、MOBI、AZW/AZW3、PDF格式的电子书，自动识别章节。')
+                .fontSize(13)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .lineHeight(18)
 
-            //   Button({ stateEffect: true }) {
-            //     Text('选择电子书')
-            //   }
-            //     .width('100%')
-            //     .height(48)
-            //     .onClick(() => {
-            //       this.selectEBooks();
-            //     })
-            // }
-            // .width('100%')
-            // .padding(16)
-            // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            // .borderRadius(8)
+              Button({ stateEffect: true }) {
+                Text('选择电子书')
+              }
+                .width('100%')
+                .height(48)
+                .onClick(() => {
+                  this.selectEBooks();
+                })
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
 
             // 进度指示器
             this.buildProgressIndicator()

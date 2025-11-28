@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\13359\\.ohos\\config\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001A39EED5A99A8696B4B093CCC92454A0F07338E06A43A465FAD41638EB2B6F667A4908DA14F50C",
+          "keyPassword": "0000001BBF9E393D0E2B88004A0635F39FC0950693566E4AB4E11F88422CC1329319E8FA6C5A788910D5A1",
           "profile": "C:\\Users\\13359\\.ohos\\config\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\13359\\.ohos\\config\\default_manxia_0Z_DzguaoD7jhcm8Jy7aKqDK2oLkOT3lCc-oiaKnMbE=.p12",
-          "storePassword": "0000001A4ACA60F70EB23D67C912753F7BF52D84B99515B3D70FBF42BBCAF70F13875B7573C53D561B7D"
+          "storePassword": "0000001B328FEA2C965F110DA6DA36AB58D2BD67E94F0397897791C1430B05D21C2905193108499AEFCD59"
         }
       },
       {
