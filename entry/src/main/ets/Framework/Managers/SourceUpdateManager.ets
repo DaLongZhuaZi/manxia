@@ -9,6 +9,7 @@ import { logger } from '../../Utils/Logger';
 
 const TAG = 'SourceUpdateManager';
 const PREFERENCES_NAME = 'source_update_preferences';
+const REPO_INDEX_FILENAME = 'index.main.json';
 
 /**
  * 图源仓库索引项
@@ -180,8 +181,8 @@ export class SourceUpdateManager {
       
       // 获取远程索引文件
       const indexUrl = this.repoUrl.endsWith('/') 
-        ? `${this.repoUrl}index.json` 
-        : `${this.repoUrl}/index.json`;
+        ? `${this.repoUrl}${REPO_INDEX_FILENAME}` 
+        : `${this.repoUrl}/${REPO_INDEX_FILENAME}`;
       
       const remoteIndex = await this.fetchRemoteIndex(indexUrl);
       if (!remoteIndex) {
