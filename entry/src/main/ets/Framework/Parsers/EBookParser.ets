@@ -7,7 +7,7 @@
 import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus, EBookPageMode } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
-import { util, taskpool } from '@kit.ArkTS';
+import { util } from '@kit.ArkTS';
 import { bookParser } from '@kit.ReaderKit';
 import { image } from '@kit.ImageKit';
 import { pdfService } from '@kit.PDFKit';
@@ -564,165 +564,113 @@ export class EBookCoverExtractor {
 
   /**
    * 提取 PDF 封面
-   * 
-   * 使用 PDF Kit 的 convertToImage 方法将第一页转换为图片。
-   * 为避免阻塞主线程，使用 setTimeout 延迟执行并设置超时保护。
+   * 使用 PDF Kit 的 getPagePixelMap 方法获取第一页的 PixelMap，
+   * 然后使用 ImagePacker 异步打包为图片文件。
+   * 这种方式比 convertToImage 更不容易阻塞主线程。
    */
   private static async extractPdfCover(filePath: string, savePath: string): Promise<EBookCoverExtractionResult> {
     logger.info(EBookCoverExtractor.TAG, `开始提取 PDF 封面: ${filePath}`);
     
     try {
-      // 创建临时输出目录
-      const tempDir = savePath.substring(0, savePath.lastIndexOf('/'));
+      // 创建输出目录
+      const outputDir = savePath.substring(0, savePath.lastIndexOf('/'));
       
       // 确保目录存在
       try {
-        fileIo.mkdirSync(tempDir, true);
+        fileIo.mkdirSync(outputDir, true);
       } catch (mkdirError) {
         // 目录可能已存在
       }
       
-      // 使用 Promise 包装 PDF 封面提取，添加超时保护
-      const extractPromise = new Promise<EBookCoverExtractionResult>((resolve) => {
-        // 延迟执行，避免阻塞 UI
-        setTimeout(() => {
-          try {
-            // 创建 PDF 文档对象
-            const pdfDocument: pdfService.PdfDocument = new pdfService.PdfDocument();
-            const loadResult: pdfService.ParseResult = pdfDocument.loadDocument(filePath);
-            
-            if (loadResult !== pdfService.ParseResult.PARSE_SUCCESS) {
-              logger.warn(EBookCoverExtractor.TAG, `PDF 加载失败: ${loadResult}`);
-              resolve({
-                success: false,
-                coverPath: '',
-                candidateImages: [],
-                errorMessage: `PDF 加载失败: ${loadResult}`
-              });
-              return;
-            }
-            
-            const pageCount = pdfDocument.getPageCount();
-            if (pageCount <= 0) {
-              logger.warn(EBookCoverExtractor.TAG, `PDF 页数为 0`);
-              resolve({
-                success: false,
-                coverPath: '',
-                candidateImages: [],
-                errorMessage: 'PDF 页数为 0'
-              });
-              return;
-            }
-            
-            // 转换第一页为图片
-            logger.info(EBookCoverExtractor.TAG, `开始转换 PDF 第一页为图片，输出目录: ${tempDir}`);
-            const convertSuccess: boolean = pdfDocument.convertToImage(tempDir, 0);
-            
-            if (convertSuccess) {
-              // convertToImage 成功后，图片会生成在 tempDir 目录下
-              // 文件名格式通常是 page_0.png 或类似格式
-              logger.info(EBookCoverExtractor.TAG, `PDF 封面图片生成成功`);
-              
-              // 查找生成的图片文件
-              try {
-                const files = fileIo.listFileSync(tempDir);
-                // 查找最新生成的图片文件（通常包含 page 或 0）
-                let generatedImagePath = '';
-                for (const file of files) {
-                  if (file.includes('0') || file.includes('page')) {
-                    if (file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg')) {
-                      generatedImagePath = `${tempDir}/${file}`;
-                      break;
-                    }
-                  }
-                }
-                
-                if (generatedImagePath.length > 0) {
-                  // 如果生成的图片路径与目标路径不同，需要重命名
-                  if (generatedImagePath !== savePath) {
-                    try {
-                      // 如果目标文件已存在，先删除
-                      try {
-                        fileIo.unlinkSync(savePath);
-                      } catch (unlinkError) {
-                        // 文件不存在，忽略
-                      }
-                      // 重命名文件
-                      fileIo.renameSync(generatedImagePath, savePath);
-                      logger.info(EBookCoverExtractor.TAG, `封面图片已重命名为: ${savePath}`);
-                    } catch (renameError) {
-                      logger.warn(EBookCoverExtractor.TAG, `重命名封面图片失败: ${String(renameError)}`);
-                      // 使用原始生成的路径
-                      resolve({
-                        success: true,
-                        coverPath: generatedImagePath,
-                        candidateImages: [generatedImagePath],
-                        errorMessage: ''
-                      });
-                      return;
-                    }
-                  }
-                  
-                  resolve({
-                    success: true,
-                    coverPath: savePath,
-                    candidateImages: [savePath],
-                    errorMessage: ''
-                  });
-                } else {
-                  logger.warn(EBookCoverExtractor.TAG, `未找到生成的封面图片`);
-                  resolve({
-                    success: false,
-                    coverPath: '',
-                    candidateImages: [],
-                    errorMessage: '未找到生成的封面图片'
-                  });
-                }
-              } catch (listError) {
-                logger.warn(EBookCoverExtractor.TAG, `列出目录文件失败: ${String(listError)}`);
-                resolve({
-                  success: false,
-                  coverPath: '',
-                  candidateImages: [],
-                  errorMessage: `列出目录文件失败: ${String(listError)}`
-                });
-              }
-            } else {
-              logger.warn(EBookCoverExtractor.TAG, `PDF 转图片返回失败`);
-              resolve({
-                success: false,
-                coverPath: '',
-                candidateImages: [],
-                errorMessage: 'PDF 转图片返回失败'
-              });
-            }
-          } catch (innerError) {
-            logger.error(EBookCoverExtractor.TAG, `PDF 封面提取内部错误: ${String(innerError)}`);
-            resolve({
-              success: false,
-              coverPath: '',
-              candidateImages: [],
-              errorMessage: `PDF 封面提取失败: ${String(innerError)}`
-            });
-          }
-        }, 100); // 延迟 100ms 执行
-      });
+      logger.info(EBookCoverExtractor.TAG, `开始获取 PDF 第一页 PixelMap`);
       
-      // 设置 10 秒超时
-      const timeoutPromise = new Promise<EBookCoverExtractionResult>((resolve) => {
-        setTimeout(() => {
-          logger.warn(EBookCoverExtractor.TAG, `PDF 封面提取超时`);
-          resolve({
-            success: false,
-            coverPath: '',
-            candidateImages: [],
-            errorMessage: 'PDF 封面提取超时'
-          });
-        }, 10000);
-      });
+      // 创建 PDF 文档对象
+      const pdfDocument = new pdfService.PdfDocument();
+      const loadResult = pdfDocument.loadDocument(filePath);
       
-      // 使用 Promise.race 实现超时控制
-      return await Promise.race([extractPromise, timeoutPromise]);
+      if (loadResult !== pdfService.ParseResult.PARSE_SUCCESS) {
+        logger.warn(EBookCoverExtractor.TAG, `PDF 加载失败: ${loadResult}`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: `PDF 加载失败: ${loadResult}`
+        };
+      }
+      
+      const pageCount = pdfDocument.getPageCount();
+      if (pageCount <= 0) {
+        logger.warn(EBookCoverExtractor.TAG, `PDF 页数为 0`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'PDF 页数为 0'
+        };
+      }
+      
+      // 获取第一页
+      const pdfPage: pdfService.PdfPage = pdfDocument.getPage(0);
+      if (!pdfPage) {
+        logger.warn(EBookCoverExtractor.TAG, `无法获取 PDF 第一页`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: '无法获取 PDF 第一页'
+        };
+      }
+      
+      // 使用 getPagePixelMap 获取页面的 PixelMap
+      const pixelMap: image.PixelMap | null = pdfPage.getPagePixelMap();
+      if (!pixelMap) {
+        logger.warn(EBookCoverExtractor.TAG, `获取 PDF 页面 PixelMap 失败`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: '获取 PDF 页面 PixelMap 失败'
+        };
+      }
+      
+      // 使用 ImagePacker 异步将 PixelMap 打包为 WebP 格式
+      // WebP 格式比 JPEG 更节省空间，质量70在文件大小和画质之间取得良好平衡
+      const packOpts: image.PackingOption = {
+        format: 'image/webp',
+        quality: 70
+      };
+      const imagePackerApi = image.createImagePacker();
+      
+      try {
+        const imgBuffer = await imagePackerApi.packToData(pixelMap, packOpts);
+        
+        // 释放 PixelMap 资源
+        pixelMap.release();
+        
+        // 如果目标文件已存在，先删除
+        try {
+          fileIo.unlinkSync(savePath);
+        } catch (unlinkError) {
+          // 文件不存在，忽略
+        }
+        
+        // 异步写入文件
+        const file = fileIo.openSync(savePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+        await fileIo.write(file.fd, imgBuffer);
+        fileIo.closeSync(file.fd);
+        
+        logger.info(EBookCoverExtractor.TAG, `PDF 封面图片生成成功: ${savePath}`);
+        
+        return {
+          success: true,
+          coverPath: savePath,
+          candidateImages: [savePath],
+          errorMessage: ''
+        };
+        
+      } finally {
+        imagePackerApi.release();
+      }
       
     } catch (error) {
       logger.error(EBookCoverExtractor.TAG, `PDF 封面提取失败: ${String(error)}`);

@@ -12,6 +12,9 @@ import { logger } from '../Utils/Logger';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { AppInfoManager } from '../Framework/Managers/AppInfoManager';
+import { pasteboard } from '@kit.BasicServicesKit';
+import { promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -257,6 +260,51 @@ struct AboutPage {
   }
 
   /**
+   * 复制QQ群号并尝试打开QQ
+   */
+  private async copyQQGroupAndOpen(): Promise<void> {
+    const qqGroupNumber = '1067738499';
+    
+    try {
+      // 复制群号到剪贴板
+      const pasteboardData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, qqGroupNumber);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      await systemPasteboard.setData(pasteboardData);
+      
+      logger.info(TAG, `QQ群号已复制: ${qqGroupNumber}`);
+      
+      // 尝试打开QQ群页面
+      try {
+        const context = getContext(this) as common.UIAbilityContext;
+        // 使用QQ群卡片scheme - 直接打开群资料页
+        const qqGroupUrl = `mqqapi://card/show_pslcard?src_type=internal&version=1&card_type=group&uin=${qqGroupNumber}`;
+        
+        await context.openLink(qqGroupUrl, { appLinkingOnly: false });
+        logger.info(TAG, '已尝试打开QQ群页面');
+        
+        promptAction.showToast({
+          message: '正在打开QQ群页面...',
+          duration: 2000
+        });
+      } catch (openError) {
+        // 如果无法打开QQ，只显示复制成功的提示
+        logger.warn(TAG, '无法打开QQ应用，仅复制群号', String(openError));
+        promptAction.showToast({
+          message: `QQ群号 ${qqGroupNumber} 已复制，请在QQ中搜索加群`,
+          duration: 3000
+        });
+      }
+      
+    } catch (error) {
+      logger.error(TAG, '复制QQ群号失败', String(error));
+      promptAction.showToast({
+        message: '复制失败，请手动添加QQ群：1067738499',
+        duration: 3000
+      });
+    }
+  }
+
+  /**
    * 构建功能按钮组
    */
   @Builder
@@ -267,19 +315,36 @@ struct AboutPage {
         // TODO: 实现检查更新功能
       })
 
+      this.buildButtonItem('问题反馈', () => {
+        logger.info(TAG, '问题反馈');
+        this.copyQQGroupAndOpen();
+      })
+
       this.buildButtonItem('用户协议', () => {
-        logger.info(TAG, '打开用户协议');
-        // TODO: 实现打开用户协议
+        try {
+          logger.info(TAG, '导航到用户协议页面');
+          this.pathStack.pushPath({ name: 'UserAgreementPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到用户协议页面失败', String(error));
+        }
       })
 
       this.buildButtonItem('隐私政策', () => {
-        logger.info(TAG, '打开隐私政策');
-        // TODO: 实现打开隐私政策
+        try {
+          logger.info(TAG, '导航到隐私政策页面');
+          this.pathStack.pushPath({ name: 'PrivacyPolicyPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到隐私政策页面失败', String(error));
+        }
       })
 
       this.buildButtonItem('开源许可', () => {
-        logger.info(TAG, '打开开源许可');
-        // TODO: 实现打开开源许可列表
+        try {
+          logger.info(TAG, '导航到开源许可页面');
+          this.pathStack.pushPath({ name: 'OpenSourceLicensePage' });
+        } catch (error) {
+          logger.error(TAG, '导航到开源许可页面失败', String(error));
+        }
       })
 
       this.buildButtonItem('图源说明', () => {

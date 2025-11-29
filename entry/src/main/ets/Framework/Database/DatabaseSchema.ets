@@ -330,7 +330,8 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       createTime INTEGER NOT NULL,
       updateTime INTEGER NOT NULL,
       webUrl TEXT,
-      apiUrl TEXT
+      apiUrl TEXT,
+      contentType TEXT DEFAULT 'manga'
     )
   `,
 
@@ -838,5 +839,10 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
   9: [
     // 版本9：添加 followSystemTheme 字段，用于控制是否跟随系统主题
     'ALTER TABLE ebook_reading_settings ADD COLUMN followSystemTheme INTEGER DEFAULT 1'
+  ],
+  10: [
+    // 版本10：为comic_info表添加contentType字段，用于区分漫画和电子书类PDF
+    // contentType: 'manga' = 漫画, 'ebook' = 电子书类PDF, 'online' = 在线漫画
+    'ALTER TABLE comic_info ADD COLUMN contentType TEXT DEFAULT \'manga\''
   ]
 };

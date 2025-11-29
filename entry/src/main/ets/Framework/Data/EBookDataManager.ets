@@ -306,6 +306,21 @@ export class EBookDataManager {
   }
 
   /**
+   * 更新电子书封面
+   */
+  public async updateEBookCover(bookId: string, coverPath: string): Promise<void> {
+    try {
+      const sql = `UPDATE ebook_info SET coverImagePath = ?, lastUpdateTime = ? WHERE id = ?`;
+      const now = Date.now();
+      await this.dbManager.executeSql(sql, [coverPath, now, bookId]);
+      logger.info(TAG, `电子书封面已更新: ${bookId} -> ${coverPath}`);
+    } catch (error) {
+      logger.error(TAG, `更新电子书封面失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
    * 获取电子书列表
    */
   public async getEBookList(): Promise<EBook[]> {

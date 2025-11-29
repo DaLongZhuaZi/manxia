@@ -82,7 +82,8 @@ export class ComicConverter {
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false
-      }
+      },
+      contentType: comic.contentType || 'manga'
     };
   }
 
@@ -165,7 +166,8 @@ export class ComicConverter {
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false
-      }
+      },
+      contentType: comic.contentType || 'manga'
     };
   }
 

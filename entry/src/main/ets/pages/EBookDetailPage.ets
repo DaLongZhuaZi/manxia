@@ -14,6 +14,8 @@ import { EBook, EBookChapter, EBookFormat, EBookStatus } from '../Models/EBookMo
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookReaderParams } from './EBookReaderPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
+import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
+import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -68,6 +70,9 @@ export struct EBookDetailPage {
 
   // 数据管理器
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+
+  // 刮削对话框控制器
+  private scraperDialogController: CustomDialogController | null = null;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -247,6 +252,87 @@ export struct EBookDetailPage {
       logger.info(TAG, '书籍信息已保存');
     } catch (error) {
       logger.error(TAG, `保存书籍信息失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 打开刮削对话框
+   */
+  private openScraperDialog(): void {
+    if (!this.ebook) {
+      return;
+    }
+
+    const config: ScraperDialogConfig = {
+      initialKeyword: this.ebook.metadata.title || '',
+      contentType: ScraperContentType.BOOK,
+      title: '搜索电子书信息'
+    };
+
+    this.scraperDialogController = new CustomDialogController({
+      builder: ScraperDialog({
+        themeState: this.themeState,
+        config: config,
+        onConfirm: (result: ScraperDialogResult) => {
+          this.applyScraperResult(result);
+        },
+        onCancel: () => {
+          logger.info(TAG, '用户取消刮削');
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+
+    this.scraperDialogController.open();
+  }
+
+  /**
+   * 应用刮削结果
+   */
+  private async applyScraperResult(result: ScraperDialogResult): Promise<void> {
+    if (!this.ebook) {
+      return;
+    }
+
+    const metadata = result.metadata;
+    logger.info(TAG, `应用刮削结果: ${metadata.title}`);
+
+    // 应用作者
+    if (result.applyAuthor && metadata.author) {
+      this.ebook.metadata.author = metadata.author;
+    }
+
+    // 应用描述
+    if (result.applyDescription && metadata.description) {
+      this.ebook.metadata.description = metadata.description;
+    }
+
+    // 应用出版社
+    if (result.applyPublisher && metadata.publisher) {
+      this.ebook.metadata.publisher = metadata.publisher;
+    }
+
+    // 应用发布日期
+    if (metadata.releaseDate) {
+      this.ebook.metadata.publishDate = metadata.releaseDate;
+    }
+
+    // 应用标签
+    if (result.applyTags && metadata.tags && metadata.tags.length > 0) {
+      this.ebook.metadata.tags = metadata.tags;
+    }
+
+    // 更新时间戳
+    this.ebook.lastUpdateTime = Date.now();
+
+    try {
+      // 保存到数据库
+      await this.ebookDataManager.saveEBook(this.ebook);
+      logger.info(TAG, '刮削结果已保存');
+    } catch (error) {
+      logger.error(TAG, `保存刮削结果失败: ${String(error)}`);
     }
   }
 
@@ -608,7 +694,7 @@ export struct EBookDetailPage {
   buildInfoSection() {
     if (this.ebook) {
       Column({ space: 12 }) {
-        // 简介与详细信息标题栏（带编辑按钮）
+        // 简介与详细信息标题栏（带刮削和编辑按钮）
         Row() {
           Text('简介与详细信息')
             .fontSize(16)
@@ -616,6 +702,25 @@ export struct EBookDetailPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
+
+          // 刮削按钮
+          Row({ space: 4 }) {
+            Image($r('app.media.ic_scraper'))
+              .width(14)
+              .height(14)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Text('刮削')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .height(28)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+          .borderRadius(14)
+          .onClick(() => {
+            this.openScraperDialog();
+          })
+          .margin({ right: 8 })
           
           // 编辑按钮
           Button() {

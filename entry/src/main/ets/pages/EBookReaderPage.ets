@@ -12,7 +12,7 @@ import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
-import { ReaderKitViewerComponent } from '../Framework/Components/ReaderKitViewerComponent';
+import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framework/Components/ReaderKitViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
@@ -78,8 +78,8 @@ struct EBookReaderPage {
   // UI上下文（用于设置沉浸式模式）
   private uiContext: UIContext | undefined = undefined;
   
-  // Reader Kit 阅读器组件引用（用于实时应用设置）
-  private readerKitViewerRef: ReaderKitViewerComponent | null = null;
+  // Reader Kit 阅读器控制器（用于实时应用设置和跳转章节）
+  private readerKitController: ReaderKitViewerController | null = null;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -335,9 +335,9 @@ struct EBookReaderPage {
       // 更新电子书设置
       this.ebook.readingSettings = settings;
 
-      // 立即应用到 Reader Kit（如果有引用）
-      if (this.readerKitViewerRef) {
-        this.readerKitViewerRef.applyReadingSettings(settings, true);
+      // 立即应用到 Reader Kit（如果控制器已就绪）
+      if (this.readerKitController && this.readerKitController.isControllerReady()) {
+        this.readerKitController.applyReadingSettings(settings, true);
         logger.info(TAG, '阅读设置已立即应用到 Reader Kit');
       }
 
@@ -398,6 +398,32 @@ struct EBookReaderPage {
     this.lastProgressSaveTime = now;
     
     // 自动保存进度
+    this.saveReadingProgress();
+  }
+
+  /**
+   * 跳转到指定章节
+   * 同时更新本地状态和 Reader Kit 控制器
+   */
+  private async jumpToChapter(chapterIndex: number): Promise<void> {
+    if (!this.ebook || chapterIndex < 0 || chapterIndex >= this.ebook.chapters.length) {
+      logger.warn(TAG, `无效的章节索引: ${chapterIndex}`);
+      return;
+    }
+    
+    logger.info(TAG, `跳转到章节: ${chapterIndex}`);
+    
+    // 更新本地状态
+    this.currentChapterIndex = chapterIndex;
+    this.currentChapter = this.ebook.chapters[chapterIndex];
+    this.currentDomPos = ''; // 清空 DOM 位置，从章节开头开始
+    
+    // 通过控制器跳转（如果是 Reader Kit 格式）
+    if (this.readerKitController && this.readerKitController.isControllerReady()) {
+      await this.readerKitController.goToChapter(chapterIndex, '');
+    }
+    
+    // 保存阅读进度
     this.saveReadingProgress();
   }
 
@@ -784,6 +810,10 @@ struct EBookReaderPage {
             this.ebook.readingSettings = settings;
             this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
           }
+        },
+        onControllerReady: (controller: ReaderKitViewerController) => {
+          this.readerKitController = controller;
+          logger.info(TAG, 'Reader Kit 控制器已就绪');
         }
       })
       .width('100%')
@@ -978,9 +1008,11 @@ struct EBookReaderPage {
           .trackColor($r('app.color.divider_primary'))
           .selectedColor($r('app.color.accent_primary'))
           .onChange((value: number) => {
-            this.currentChapterIndex = Math.round(value);
-            this.currentChapter = this.ebook?.chapters[this.currentChapterIndex] || null;
-            this.saveReadingProgress();
+            const targetIndex = Math.round(value);
+            if (targetIndex !== this.currentChapterIndex) {
+              // 跳转到目标章节
+              this.jumpToChapter(targetIndex);
+            }
           })
 
         Text(`${this.ebook?.chapters.length || 0}`)
@@ -1199,9 +1231,8 @@ struct EBookReaderPage {
               .padding({ left: 20, right: 20, top: 14, bottom: 14 })
               .backgroundColor(index === this.currentChapterIndex ? $r('app.color.background_secondary') : Color.Transparent)
               .onClick(() => {
-                this.currentChapterIndex = index;
-                this.currentChapter = chapter;
-                this.saveReadingProgress();
+                // 跳转到选中的章节
+                this.jumpToChapter(index);
                 this.hideChapterListWithAnimation();
               })
             }

@@ -41,6 +41,7 @@ interface DirectoryPaths {
   temp: string;
   database: string;
   plugins: string;
+  ebooks: string;
 }
 
 /**
@@ -97,7 +98,9 @@ export class SandboxManager {
     // 数据库目录
     database: '',
     // 插件目录
-    plugins: ''
+    plugins: '',
+    // 电子书目录
+    ebooks: ''
   };
 
   private constructor() {}
@@ -162,6 +165,7 @@ export class SandboxManager {
       this.directories.temp = `${filesDir}/temp`;
       this.directories.database = `${filesDir}/database`;
       this.directories.plugins = `${filesDir}/plugins`;
+      this.directories.ebooks = `${filesDir}/ebooks`;
       
       logger.debug(TAG, `文件目录: ${filesDir}`);
     } catch (error) {
@@ -184,7 +188,8 @@ export class SandboxManager {
         { key: 'chapters', value: this.directories.chapters },
         { key: 'temp', value: this.directories.temp },
         { key: 'database', value: this.directories.database },
-        { key: 'plugins', value: this.directories.plugins }
+        { key: 'plugins', value: this.directories.plugins },
+        { key: 'ebooks', value: this.directories.ebooks }
       ];
       
       for (const entry of directoryEntries) {
@@ -230,6 +235,9 @@ export class SandboxManager {
         break;
       case 'plugins':
         path = this.directories.plugins;
+        break;
+      case 'ebooks':
+        path = this.directories.ebooks;
         break;
       default:
         throw new Error(`未知的目录类型: ${type}`);

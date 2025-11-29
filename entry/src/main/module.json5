@@ -1,6 +1,11 @@
 {
   "module": {
     "name": "entry",
+    "querySchemes": [
+      "mqq",
+      "mqqapi",
+      "mqqwpa"
+    ],
     "type": "entry",
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
