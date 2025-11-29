@@ -16,6 +16,16 @@ import { display } from '@kit.ArkUI';
 const TAG = 'ReaderKitViewerComponent';
 
 /**
+ * Reader Kit 阅读器控制器接口
+ * 用于外部控制阅读器
+ */
+export interface ReaderKitViewerController {
+  goToChapter: (chapterIndex: number, domPos?: string) => Promise<void>;
+  applyReadingSettings: (settings: EBookReadingSettings, force?: boolean) => void;
+  isControllerReady: () => boolean;
+}
+
+/**
  * Reader Kit 阅读器参数接口
  */
 export interface ReaderKitViewerParams {
@@ -26,6 +36,7 @@ export interface ReaderKitViewerParams {
   onChapterChange?: (index: number) => void; // 章节切换回调
   onProgressChange?: (progress: number, domPos: string) => void; // 阅读进度回调（包含 domPos）
   onSettingsChange?: (settings: EBookReadingSettings) => void; // 设置变化回调
+  onControllerReady?: (controller: ReaderKitViewerController) => void; // 控制器就绪回调
 }
 
 /**
@@ -40,6 +51,7 @@ export struct ReaderKitViewerComponent {
   onChapterChange?: (index: number) => void;
   onProgressChange?: (progress: number, domPos: string) => void;
   onSettingsChange?: (settings: EBookReadingSettings) => void;
+  onControllerReady?: (controller: ReaderKitViewerController) => void;
   
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
@@ -383,6 +395,17 @@ export struct ReaderKitViewerComponent {
       await this.readerController.startPlay(startIndex, startDomPos);
       
       logger.info(TAG, 'Reader Kit 阅读器已初始化');
+      
+      // 通知外部控制器已就绪
+      if (this.onControllerReady) {
+        const controller: ReaderKitViewerController = {
+          goToChapter: (chapterIndex: number, domPos?: string) => this.goToChapter(chapterIndex, domPos || ''),
+          applyReadingSettings: (settings: EBookReadingSettings, force?: boolean) => this.applyReadingSettings(settings, force || false),
+          isControllerReady: () => this.controllerReady
+        };
+        this.onControllerReady(controller);
+        logger.info(TAG, '已通知外部控制器就绪');
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `Reader Kit 阅读器初始化失败: ${errorMsg}`);
@@ -396,6 +419,43 @@ export struct ReaderKitViewerComponent {
    */
   public getCurrentPageData(): readerCore.PageDataInfo | null {
     return this.currentPageData;
+  }
+  
+  /**
+   * 跳转到指定章节（公开方法，供外部调用）
+   * @param chapterIndex 章节索引
+   * @param domPos 可选的 DOM 位置
+   */
+  public async goToChapter(chapterIndex: number, domPos: string = ''): Promise<void> {
+    try {
+      if (!this.controllerReady) {
+        logger.warn(TAG, 'Reader Kit 控制器未就绪，无法跳转章节');
+        return;
+      }
+      
+      logger.info(TAG, `跳转到章节: ${chapterIndex}, domPos=${domPos}`);
+      await this.readerController.startPlay(chapterIndex, domPos);
+      
+      if (this.onChapterChange) {
+        this.onChapterChange(chapterIndex);
+      }
+    } catch (error) {
+      logger.error(TAG, `跳转章节失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 获取 Reader Kit 控制器（供外部直接操作）
+   */
+  public getReaderController(): readerCore.ReaderComponentController {
+    return this.readerController;
+  }
+  
+  /**
+   * 检查控制器是否就绪
+   */
+  public isControllerReady(): boolean {
+    return this.controllerReady;
   }
 
   build() {

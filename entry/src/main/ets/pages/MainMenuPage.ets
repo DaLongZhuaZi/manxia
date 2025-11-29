@@ -17,7 +17,8 @@ import { GlobalBackgroundLayer } from '../Framework/Components/GlobalBackgroundL
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 
 // 导入页面组件
-import { TestManagementPage } from './TestManagementPage';
+// 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
+// import { TestManagementPage } from './TestManagementPage';
 import { DataManagementPage } from './DataManagementPage';
 import { MangaReaderPage } from './MangaReaderPage';
 import { MangaDetailPage, MangaDetailPageParams } from './MangaDetailPage';
@@ -38,6 +39,9 @@ import { ReadingAnalyticsPage } from './ReadingAnalyticsPage';
 import { MangaFeedbackPage } from './MangaFeedbackPage';
 import { LogManagerPage } from './LogManagerPage';
 import { SourceGuidePage } from './SourceGuidePage';
+import { OpenSourceLicensePage } from './OpenSourceLicensePage';
+import { UserAgreementPage } from './UserAgreementPage';
+import { PrivacyPolicyPage } from './PrivacyPolicyPage';
 import { SourceDetailPage } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
 import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
@@ -48,8 +52,11 @@ import { WindowManager } from '../Utils/WindowManager';
 import { SourceSettingsPage } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
 import { StorageManagementPage } from './StorageManagementPage';
-import { ReaderKitTestPage } from './ReaderKitTestPage';
-import { PdfKitTestPage } from './PdfKitTestPage';
+import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
+// 测试页面导入已移除
+// import { ReaderKitTestPage } from './ReaderKitTestPage';
+// import { PdfKitTestPage } from './PdfKitTestPage';
+import { ScraperTestPage } from './ScraperTestPage';
 
 // 导入示例数据
 import { SAMPLE_MANGA, createSampleMangaList, getDefaultTestManga } from '../Data/SampleMangaData';
@@ -320,6 +327,7 @@ struct MainMenuPage {
   @State discoveredMangaList: Manga[] = []; // 发现页面筛选后的漫画列表
   @State discoveredEBookList: EBook[] = []; // 发现页面筛选后的电子书列表
   @State discoverContentType: 'manga' | 'ebook' | 'all' = 'all'; // 发现页面内容类型筛选
+  @State isRefreshingDiscover: boolean = false; // 是否正在刷新发现页面
 
   // 图源相关状态
   @State sourceList: SourceInfo[] = []; // 图源列表
@@ -509,11 +517,9 @@ struct MainMenuPage {
 
     this.initializeSystem();
     this.loadVersionInfo();
-    this.loadMangaList();
-    this.loadEBookList(); // 加载电子书列表
+    this.initializeContentData(); // 加载漫画、电子书并提取标签作者
     this.loadLibraryViewMode();
     this.loadRecentReadingList();
-    this.extractTagsAndAuthors(); // 提取标签和作者信息
     this.loadSources(); // 加载图源列表
     this.initializeRepositoryManager(); // 初始化仓库管理器
     this.checkSourceUpdates(); // 检查图源更新
@@ -1032,43 +1038,71 @@ struct MainMenuPage {
 
   /**
    * 应用书库筛选
+   * 注意：漫画标签只显示contentType为'manga'或未定义的内容
+   * contentType为'ebook'的PDF会显示在电子书标签下
    */
   private applyLibraryFilter(): void {
+    // 首先过滤掉电子书类PDF（contentType === 'ebook'）
+    const mangaOnly = this.mangaList.filter((manga: Manga) => {
+      return manga.contentType !== 'ebook';
+    });
+    
     let filtered: Manga[] = [];
     
     switch (this.libraryFilterType) {
       case LibraryFilterType.ALL:
-        filtered = this.mangaList;
+        filtered = mangaOnly;
         break;
       case LibraryFilterType.UNREAD:
-        filtered = this.mangaList.filter((manga: Manga) => {
+        filtered = mangaOnly.filter((manga: Manga) => {
           return manga.readingProgress.currentPageIndex === 0 && 
                  manga.readingProgress.currentChapterId === '';
         });
         break;
       case LibraryFilterType.READING:
-        filtered = this.mangaList.filter((manga: Manga) => {
+        filtered = mangaOnly.filter((manga: Manga) => {
           return manga.readingProgress.currentChapterId !== '' && 
                  manga.readingProgress.readingStatus !== ReadingStatus.COMPLETED;
         });
         break;
       case LibraryFilterType.COMPLETED:
-        filtered = this.mangaList.filter((manga: Manga) => {
+        filtered = mangaOnly.filter((manga: Manga) => {
           return manga.status === MangaStatus.COMPLETED;
         });
         break;
       case LibraryFilterType.FAVORITE:
-        filtered = this.mangaList.filter((manga: Manga) => {
+        filtered = mangaOnly.filter((manga: Manga) => {
           return manga.isFavorite;
         });
         break;
       default:
-        filtered = this.mangaList;
+        filtered = mangaOnly;
         break;
     }
     
     this.filteredMangaList = filtered;
-    logger.info(TAG, `应用筛选: ${this.libraryFilterType}, 结果数量: ${filtered.length}`);
+    logger.info(TAG, `应用筛选: ${this.libraryFilterType}, 结果数量: ${filtered.length} (排除电子书类PDF)`);
+  }
+
+  /**
+   * 初始化内容数据（漫画、电子书、标签和作者）
+   * 确保按正确顺序加载数据
+   */
+  private async initializeContentData(): Promise<void> {
+    try {
+      logger.info(TAG, '开始初始化内容数据...');
+      
+      // 先加载漫画和电子书列表
+      await this.loadMangaList();
+      await this.loadEBookList();
+      
+      // 数据加载完成后提取标签和作者
+      await this.extractTagsAndAuthors();
+      
+      logger.info(TAG, '内容数据初始化完成');
+    } catch (error) {
+      logger.error(TAG, `初始化内容数据失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -1077,9 +1111,6 @@ struct MainMenuPage {
   private async extractTagsAndAuthors(): Promise<void> {
     try {
       logger.info(TAG, '开始提取标签和作者信息...');
-      
-      // 等待漫画列表加载完成
-      await new Promise<void>((resolve: (value: void) => void) => setTimeout(resolve, 1000));
       
       // 统计标签和作者出现次数
       const tagCountMap: Map<string, number> = new Map();
@@ -1204,6 +1235,34 @@ struct MainMenuPage {
       logger.error(TAG, `应用发现页面筛选失败: ${String(error)}`);
       this.discoveredMangaList = [...this.mangaList];
       this.discoveredEBookList = [...this.ebookList];
+    }
+  }
+
+  /**
+   * 刷新发现页面数据
+   */
+  private async refreshDiscoverData(): Promise<void> {
+    try {
+      logger.info(TAG, '开始刷新发现页面数据');
+      
+      // 重新加载漫画和电子书列表
+      await this.loadMangaList();
+      await this.loadEBookList();
+      
+      // 重新提取标签和作者
+      await this.extractTagsAndAuthors();
+      
+      // 重新应用筛选
+      this.applyDiscoverFilter();
+      
+      logger.info(TAG, '发现页面数据刷新完成');
+      this.showToast('刷新完成');
+    } catch (error) {
+      logger.error(TAG, `刷新发现页面数据失败: ${String(error)}`);
+      this.showToast('刷新失败');
+    } finally {
+      // 确保刷新状态被重置
+      this.isRefreshingDiscover = false;
     }
   }
 
@@ -2412,7 +2471,6 @@ struct MainMenuPage {
         buttons: [
           { text: '主题切换', color: '#007DFF' },
           { text: '设置', color: '#007DFF' },
-          { text: '测试管理', color: '#007DFF' },
           { text: '关于应用', color: '#007DFF' }
         ]
       }, (err, data) => {
@@ -2436,9 +2494,6 @@ struct MainMenuPage {
             this.tabsController.changeIndex(this.currentTabIndex);
             break;
           case 2:
-            this.pathStack.pushPath({ name: 'TestManagementPage' });
-            break;
-          case 3:
             try {
               const navigationPath: NavigationPath = {
                 name: 'AboutPage',
@@ -5130,6 +5185,22 @@ struct MainMenuPage {
             this.showToast('打开日志管理页面失败');
           }
         })
+        this.buildSettingItem('刮削测试', '测试元数据刮削功能', $r('app.media.ic_search'), () => {
+          try {
+            const navigationPath: NavigationPath = {
+              name: 'ScraperTestPage',
+              param: {
+                fromPage: 'MainMenuPage',
+                timestamp: Date.now()
+              }
+            };
+            this.pathStack.pushPath(navigationPath);
+            logger.info(TAG, '导航到刮削测试页面');
+          } catch (error) {
+            logger.error(TAG, '导航到刮削测试页面失败', String(error));
+            this.showToast('打开刮削测试页面失败');
+          }
+        })
         this.buildSettingItem('关于应用', `版本 ${this.appVersion}`, $r('app.media.ic_info'), () => {
           try {
             const navigationPath: NavigationPath = {
@@ -5146,17 +5217,7 @@ struct MainMenuPage {
             this.showToast('打开关于应用页面失败');
           }
         })
-        this.buildSettingItem('NGF', '测试和调试工具', $r('app.media.ic_settings'), () => {
-          // 导航到TestManagementPage
-          const navigationPath: NavigationPath = {
-            name: 'TestManagementPage',
-            param: {
-              fromPage: 'MainMenuPage',
-              timestamp: Date.now()
-            }
-          };
-          this.pathStack.pushPath(navigationPath);
-        })
+        // NGF测试入口已移除，测试页面仍保留在代码中但不再从主菜单导航
         // this.buildSettingItem('Reader Kit 测试', '测试 EPUB/MOBI 等格式解析', $r('app.media.ic_settings'), () => {
         //   // 导航到ReaderKitTestPage
         //   const navigationPath: NavigationPath = {
@@ -5261,9 +5322,11 @@ struct MainMenuPage {
    */
   @Builder
   buildNavDestination(name: string, param: ESObject) {
-    if (name === 'TestManagementPage') {
-      TestManagementPage()
-    } else if (name === 'DataManagementPage') {
+    // 测试页面导航已移除
+    // if (name === 'TestManagementPage') {
+    //   TestManagementPage()
+    // } else
+    if (name === 'DataManagementPage') {
       DataManagementPage()
     } else if (name === 'MangaReaderPage') {
       MangaReaderPage()
@@ -5305,6 +5368,12 @@ struct MainMenuPage {
       LogManagerPage()
     } else if (name === 'SourceGuidePage') {
       SourceGuidePage()
+    } else if (name === 'OpenSourceLicensePage') {
+      OpenSourceLicensePage()
+    } else if (name === 'UserAgreementPage') {
+      UserAgreementPage()
+    } else if (name === 'PrivacyPolicyPage') {
+      PrivacyPolicyPage()
     } else if (name === 'SourceDetailPage') {
       SourceDetailPage()
     } else if (name === 'SourceSettingsPage') {
@@ -5321,10 +5390,13 @@ struct MainMenuPage {
       ThemeSettingsPage()
     } else if (name === 'StorageManagementPage') {
       StorageManagementPage()
-    } else if (name === 'ReaderKitTestPage') {
-      ReaderKitTestPage()
-    } else if (name === 'PdfKitTestPage') {
-      PdfKitTestPage()
+    // 测试页面导航已移除
+    // } else if (name === 'ReaderKitTestPage') {
+    //   ReaderKitTestPage()
+    // } else if (name === 'PdfKitTestPage') {
+    //   PdfKitTestPage()
+    } else if (name === 'ScraperTestPage') {
+      ScraperTestPage()
     }
   }
 
@@ -5512,8 +5584,13 @@ struct MainMenuPage {
 
               // 发现标签
               TabContent() {
-                Scroll() { this.buildDiscoverContent() }
-                .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
+                Refresh({ refreshing: $$this.isRefreshingDiscover }) {
+                  Scroll() { this.buildDiscoverContent() }
+                  .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
+                }
+                .onRefreshing(() => {
+                  this.refreshDiscoverData();
+                })
               }
               .backgroundColor(Color.Transparent)
 
@@ -5570,6 +5647,9 @@ struct MainMenuPage {
         if (this.enableLogFloatingWindow) {
           LogFloatingWindow()
         }
+
+        // 后台任务悬浮球
+        TaskFloatingBall()
 
         // 全局WebView容器（隐藏，用于后台WebView操作）
         WebViewContainer()

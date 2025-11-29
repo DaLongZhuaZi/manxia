@@ -150,6 +150,7 @@ export interface ComicInfo {
   lastUpdateTime: number;
   addTime: number;
   externalId?: string; // 外部图源ID
+  contentType?: string; // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF
 }
 
 export interface ChapterInfo {
@@ -352,6 +353,7 @@ export interface ComicInfoInput {
   lastUpdateTime: number;
   webUrl?: string;             // 网页URL（可选）
   apiUrl?: string;             // API请求地址（可选）
+  contentType?: string;        // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF（可选，默认'manga'）
 }
 
 export interface ChapterInfoInput {
@@ -1057,7 +1059,8 @@ export class DataManager {
         createTime: now,  // 创建时间
         updateTime: now,   // 更新时间
         webUrl: comic.webUrl || null,  // 网页URL
-        apiUrl: comic.apiUrl || null   // API请求地址
+        apiUrl: comic.apiUrl || null,   // API请求地址
+        contentType: comic.contentType || 'manga'  // 内容类型，默认为漫画
       };
       await this.databaseManager.insert('comic_info', record);
       logger.info(TAG, `添加漫画: ${comicData.title}`);
@@ -1226,58 +1229,55 @@ export class DataManager {
    * 更新漫画基础信息
    * @param comicId 漫画ID
    * @param basicInfo 基础信息对象
+   * 注意：comic_info表的时间字段是updateTime（INTEGER），不是updatedAt
    */
   public async updateComicBasicInfo(comicId: string, basicInfo: ComicBasicInfoUpdate): Promise<void> {
     try {
       logger.info(TAG, `更新漫画基础信息: ${comicId}`);
       
-      // 构建更新数据
-      const updateData: UpdateRecordData = {
-        id: comicId,
-        updatedAt: new Date().toISOString()
-      };
+      // 直接使用SQL更新，避免UpdateRecordData类型转换问题
+      // comic_info表字段：id, sourceId, externalId, title, author, description, coverUrl, coverLocalPath,
+      //                   status, tags, categories, rating, viewCount, favoriteCount, lastChapterTitle,
+      //                   lastChapterTime, isCompleted, chapterCount, lastUpdateTime, addTime, createTime, updateTime, webUrl, apiUrl, contentType
+      
+      const setClauses: string[] = [];
+      const values: (string | number)[] = [];
+      
+      // 更新时间
+      setClauses.push('updateTime = ?');
+      values.push(Date.now());
       
       if (basicInfo.title !== undefined) {
-        updateData.title = basicInfo.title;
+        setClauses.push('title = ?');
+        values.push(basicInfo.title);
       }
       if (basicInfo.description !== undefined) {
-        updateData.description = basicInfo.description;
+        setClauses.push('description = ?');
+        values.push(basicInfo.description);
       }
       if (basicInfo.authors !== undefined) {
-        // 将数组转换为逗号分隔的字符串存储
-        updateData.author = basicInfo.authors.join(', ');
+        setClauses.push('author = ?');
+        values.push(basicInfo.authors.join(', '));
       }
       if (basicInfo.genres !== undefined) {
-        updateData.tags = JSON.stringify(basicInfo.genres);
+        setClauses.push('tags = ?');
+        values.push(JSON.stringify(basicInfo.genres));
       }
       
-      // 先尝试更新 comic_info 表
-      const localResult = await this.databaseManager.update(
-        'comic_info',
-        updateData,
-        `id = ?`,
-        [comicId]
-      );
-      
-      if (localResult > 0) {
-        logger.info(TAG, `成功更新 comic_info 表中的漫画基础信息: ${comicId}`);
+      if (setClauses.length === 1) {
+        // 只有updateTime，没有其他字段需要更新
+        logger.warn(TAG, `没有需要更新的字段: ${comicId}`);
         return;
       }
       
-      // 如果 comic_info 表中没有，尝试更新 online_comic_info 表
-      const onlineResult = await this.databaseManager.update(
-        'online_comic_info',
-        updateData,
-        `id = ?`,
-        [comicId]
-      );
+      // 添加WHERE条件的值
+      values.push(comicId);
       
-      if (onlineResult > 0) {
-        logger.info(TAG, `成功更新 online_comic_info 表中的漫画基础信息: ${comicId}`);
-        return;
-      }
+      const sql = `UPDATE comic_info SET ${setClauses.join(', ')} WHERE id = ?`;
+      logger.debug(TAG, `执行更新SQL: ${sql}, 参数: ${JSON.stringify(values)}`);
       
-      logger.warn(TAG, `未找到ID为 ${comicId} 的漫画，无法更新基础信息`);
+      await this.databaseManager.executeSql(sql, values);
+      logger.info(TAG, `成功更新 comic_info 表中的漫画基础信息: ${comicId}`);
     } catch (error) {
       logger.error(TAG, `更新漫画基础信息失败: ${error}`);
       throw error as Error;
@@ -1762,6 +1762,7 @@ export class DataManager {
 
   /**
    * 添加收藏
+   * 注意：favorite表的id是INTEGER PRIMARY KEY AUTOINCREMENT，由数据库自动生成
    */
   public async addFavorite(favorite: FavoriteInfoInput): Promise<string> {
     try {
@@ -1774,31 +1775,37 @@ export class DataManager {
         return String(existing[0].id);
       }
       
-      const favoriteData: FavoriteInfo = {
-        id: this.generateId(),
-        comicId: favorite.comicId,
-        userId: favorite.userId,
-        lastReadChapterId: favorite.lastReadChapterId,
-        lastReadTime: favorite.lastReadTime,
-        tags: favorite.tags,
-        addTime: Date.now()
-      };
-
-      const record: FavoriteInfoDatabaseRecord = {
-        id: favoriteData.id,
-        comicId: favoriteData.comicId,
-        userId: favoriteData.userId,
-        addTime: favoriteData.addTime,
-        lastReadChapterId: favoriteData.lastReadChapterId || null,
-        lastReadTime: favoriteData.lastReadTime || null,
-        tags: JSON.stringify(favoriteData.tags),
-        notes: null
-      };
-
-      await this.databaseManager.insert('favorite', record);
+      const addTime = Date.now();
+      
+      // 使用直接SQL插入，避免INSERT OR REPLACE在AUTOINCREMENT表上的问题
+      // favorite表的id是INTEGER PRIMARY KEY AUTOINCREMENT，由数据库自动生成
+      const insertSql = `INSERT INTO favorite (comicId, userId, folderName, addTime, lastReadChapterId, lastReadPageNumber, lastReadTime, readProgress) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+      const values: (string | number)[] = [
+        favorite.comicId,
+        favorite.userId,
+        'default',
+        addTime,
+        favorite.lastReadChapterId || '',
+        0,
+        favorite.lastReadTime || 0,
+        0.0
+      ];
+      
+      await this.databaseManager.executeSql(insertSql, values);
       logger.info(TAG, `添加收藏: ${favorite.comicId}`);
 
-      return favoriteData.id;
+      // 查询刚插入的记录获取自动生成的ID
+      const insertedRecords = await this.databaseManager.querySql(
+        `SELECT id FROM favorite WHERE comicId = ? AND userId = ?`,
+        [favorite.comicId, favorite.userId]
+      );
+      
+      if (insertedRecords.length > 0) {
+        return String(insertedRecords[0].id);
+      }
+      
+      // 如果查询失败，返回comicId作为标识
+      return favorite.comicId;
     } catch (error) {
       logger.error(TAG, `添加收藏失败: ${error}`);
       throw error as Error;

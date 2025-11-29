@@ -296,6 +296,8 @@ export interface Manga {
   lastUpdatedAt: number;
   /** 源信息（用于网络漫画） */
   sourceInfo?: MangaSourceInfo;
+  /** 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF（用于区分显示位置） */
+  contentType?: string;
 }
 
 /**

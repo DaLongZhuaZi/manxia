@@ -10,6 +10,7 @@ import { logger } from '../Utils/Logger';
 import { DataManager, ComicInfo, ChapterInfo } from '../Framework/Data/DataManager';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { MangaDetailPageParams } from './MangaDetailPage';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 
 const TAG: string = 'SearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -125,6 +126,11 @@ struct SearchPage {
   private dataManager: DataManager = DataManager.getInstance();
   private searchHistoryManager: SearchHistoryManager = new SearchHistoryManager(this.dataManager);
 
+  // 响应式布局
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State isLandscape: boolean = false;
+
   // 搜索状态
   @State private config: SearchConfig = { query: '', scope: SearchScope.All, page: 1, pageSize: 30 };
   @State private searchStats: SearchStats = { totalCount: 0, metaMatches: 0, chapterMatches: 0 };
@@ -151,6 +157,9 @@ struct SearchPage {
       }
     );
 
+    // 初始化响应式布局
+    this.initResponsiveLayout();
+
     // 加载历史
     this.loadSearchHistory();
   }
@@ -158,6 +167,26 @@ struct SearchPage {
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '搜索页面销毁');
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    // 清理设备变化监听
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+  }
+
+  /**
+   * 初始化响应式布局
+   */
+  private initResponsiveLayout(): void {
+    const deviceInfo: DeviceInfo = this.deviceManager.getDeviceInfo();
+    this.isLandscape = deviceInfo.isLandscape;
+    
+    this.deviceChangeListener = (info: DeviceInfo) => {
+      this.isLandscape = info.isLandscape;
+      logger.info(TAG, `设备方向变化: ${info.orientation}, isLandscape=${this.isLandscape}`);
+    };
+    this.deviceManager.addListener(this.deviceChangeListener);
   }
 
   private showToast(message: string): void {
@@ -301,15 +330,40 @@ struct SearchPage {
 
   //（移除自定义顶部栏，改用 HdsNavDestination 标准 titleBar）
 
+  /**
+   * 获取搜索范围显示文本
+   */
+  private getScopeLabel(): string {
+    if (this.config.scope === SearchScope.MetaOnly) {
+      return '仅元数据';
+    } else if (this.config.scope === SearchScope.IncludeChapters) {
+      return '含章节名';
+    }
+    return '全部';
+  }
+
+  /**
+   * 切换搜索范围
+   */
+  private toggleSearchScope(): void {
+    if (this.config.scope === SearchScope.All) {
+      this.config = { query: this.config.query, scope: SearchScope.MetaOnly, page: 1, pageSize: this.config.pageSize };
+    } else if (this.config.scope === SearchScope.MetaOnly) {
+      this.config = { query: this.config.query, scope: SearchScope.IncludeChapters, page: 1, pageSize: this.config.pageSize };
+    } else {
+      this.config = { query: this.config.query, scope: SearchScope.All, page: 1, pageSize: this.config.pageSize };
+    }
+  }
+
   // 搜索栏
   @Builder
   buildSearchBar() {
-    Column({ space: 12 }) {
-      // 输入框 + 搜索按钮
+    Column({ space: this.isLandscape ? 8 : 12 }) {
+      // 输入框 + 搜索按钮（横屏时添加筛选按钮）
       Row({ space: 8 }) {
-        TextInput({ placeholder: '输入关键字（标题、作者、标签、章节名…）', text: this.config.query })
+        TextInput({ placeholder: this.isLandscape ? '搜索...' : '输入关键字（标题、作者、标签、章节名…）', text: this.config.query })
           .layoutWeight(1)
-          .height(40)
+          .height(this.isLandscape ? 36 : 40)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme) })
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -317,9 +371,24 @@ struct SearchPage {
             this.config = { query: value, scope: this.config.scope, page: 1, pageSize: this.config.pageSize };
           })
 
+        // 横屏模式：筛选按钮放在搜索栏内
+        if (this.isLandscape) {
+          Button(this.getScopeLabel())
+            .height(36)
+            .padding({ left: 12, right: 12 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .fontSize(12)
+            .borderRadius(18)
+            .onClick(() => {
+              this.toggleSearchScope();
+            })
+        }
+
         Button('搜索')
-          .width(80)
-          .height(40)
+          .width(this.isLandscape ? 60 : 80)
+          .height(this.isLandscape ? 36 : 40)
+          .fontSize(this.isLandscape ? 13 : 14)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .onClick(() => {
@@ -327,44 +396,46 @@ struct SearchPage {
           })
       }
 
-      // 搜索范围选项
-      Row({ space: 12 }) {
-        // 仅元数据
-        Radio({ value: 'MetaOnly', group: 'searchScope' })
-          .checked(this.config.scope === SearchScope.MetaOnly)
-          .onChange((checked: boolean) => {
-            if (checked) {
-              this.config = { query: this.config.query, scope: SearchScope.MetaOnly, page: 1, pageSize: this.config.pageSize };
-            }
-          })
-        Text('仅元数据')
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      // 搜索范围选项（仅竖屏显示）
+      if (!this.isLandscape) {
+        Row({ space: 12 }) {
+          // 仅元数据
+          Radio({ value: 'MetaOnly', group: 'searchScope' })
+            .checked(this.config.scope === SearchScope.MetaOnly)
+            .onChange((checked: boolean) => {
+              if (checked) {
+                this.config = { query: this.config.query, scope: SearchScope.MetaOnly, page: 1, pageSize: this.config.pageSize };
+              }
+            })
+          Text('仅元数据')
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
-        // 包含章节名
-        Radio({ value: 'IncludeChapters', group: 'searchScope' })
-          .checked(this.config.scope === SearchScope.IncludeChapters)
-          .onChange((checked: boolean) => {
-            if (checked) {
-              this.config = { query: this.config.query, scope: SearchScope.IncludeChapters, page: 1, pageSize: this.config.pageSize };
-            }
-          })
-        Text('包含章节名')
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          // 包含章节名
+          Radio({ value: 'IncludeChapters', group: 'searchScope' })
+            .checked(this.config.scope === SearchScope.IncludeChapters)
+            .onChange((checked: boolean) => {
+              if (checked) {
+                this.config = { query: this.config.query, scope: SearchScope.IncludeChapters, page: 1, pageSize: this.config.pageSize };
+              }
+            })
+          Text('包含章节名')
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
-        // 全部
-        Radio({ value: 'All', group: 'searchScope' })
-          .checked(this.config.scope === SearchScope.All)
-          .onChange((checked: boolean) => {
-            if (checked) {
-              this.config = { query: this.config.query, scope: SearchScope.All, page: 1, pageSize: this.config.pageSize };
-            }
-          })
-        Text('全部')
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          // 全部
+          Radio({ value: 'All', group: 'searchScope' })
+            .checked(this.config.scope === SearchScope.All)
+            .onChange((checked: boolean) => {
+              if (checked) {
+                this.config = { query: this.config.query, scope: SearchScope.All, page: 1, pageSize: this.config.pageSize };
+              }
+            })
+          Text('全部')
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
       }
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .padding({ left: 16, right: 16, top: this.isLandscape ? 8 : 12, bottom: this.isLandscape ? 8 : 12 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
     .borderRadius(12)
   }

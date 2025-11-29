@@ -5,7 +5,9 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { picker } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
@@ -13,6 +15,7 @@ import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookT
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookSettingsPageParams } from './EBookDetailPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
+import { SandboxManager } from '../Framework/Storage/SandboxManager';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -66,6 +69,12 @@ export struct EBookSettingsPage {
 
   // 数据管理器
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  
+  // UI上下文（用于获取应用上下文）
+  private uiContext: UIContext | undefined = undefined;
+  
+  // 封面路径（用于显示更新后的封面）
+  @State coverImagePath: string = '';
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -881,6 +890,104 @@ export struct EBookSettingsPage {
   }
 
   /**
+   * 从相册选择封面图片
+   */
+  private async selectCoverImage(): Promise<void> {
+    try {
+      logger.info(TAG, '开始选择封面图片');
+      
+      // 获取UIAbilityContext
+      if (!this.uiContext) {
+        this.uiContext = this.getUIContext();
+      }
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        throw new Error('无法获取应用上下文');
+      }
+
+      // 创建图片选择器
+      const photoSelectOptions = new picker.PhotoSelectOptions();
+      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      photoSelectOptions.maxSelectNumber = 1;
+
+      const photoPicker = new picker.PhotoViewPicker(context);
+      const selectResult = await photoPicker.select(photoSelectOptions);
+      
+      if (!selectResult || selectResult.photoUris.length === 0) {
+        logger.info(TAG, '未选择图片');
+        return;
+      }
+
+      const selectedUri: string = selectResult.photoUris[0] as string;
+      logger.info(TAG, `选择了图片: ${selectedUri}`);
+
+      // 复制到电子书目录并重命名为 cover.<ext>
+      if (!this.ebook) {
+        this.showToast('电子书数据不存在');
+        return;
+      }
+      
+      const ebookId: string = this.ebook.id;
+      const sandbox: SandboxManager = SandboxManager.getInstance();
+      const ebooksDir: string = sandbox.getDirectory('ebooks');
+      const safeTitle: string = this.sanitizeFileName(this.ebook.metadata.title || ebookId);
+      const ebookRoot: string = `${ebooksDir}/${safeTitle}`;
+      await sandbox.createDirectory(ebookRoot);
+
+      const ext: string = this.getFileExtension(selectedUri);
+      const coverTarget: string = `${ebookRoot}/cover${ext.length > 0 ? '.' + ext : ''}`;
+      if (await sandbox.exists(coverTarget)) {
+        await sandbox.deleteFile(coverTarget);
+      }
+      await sandbox.copyFile(selectedUri, coverTarget);
+
+      // 更新数据库与页面状态
+      await this.ebookDataManager.updateEBookCover(ebookId, coverTarget);
+      this.coverImagePath = coverTarget;
+      if (this.ebook) {
+        this.ebook.metadata.coverImagePath = coverTarget;
+      }
+      this.showToast('封面已更新');
+      logger.info(TAG, '封面图片更新成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `选择封面图片失败: ${errorMessage}`);
+      this.showToast('选择封面失败');
+    }
+  }
+
+  /**
+   * 获取文件扩展名
+   */
+  private getFileExtension(filePath: string): string {
+    const lastDot = filePath.lastIndexOf('.');
+    if (lastDot === -1 || lastDot === filePath.length - 1) {
+      return '';
+    }
+    return filePath.substring(lastDot + 1).toLowerCase();
+  }
+
+  /**
+   * 清理文件名中的非法字符
+   */
+  private sanitizeFileName(name: string): string {
+    return name.replace(/[\\/:*?"<>|]/g, '_').trim();
+  }
+
+  /**
+   * 显示Toast提示
+   */
+  private showToast(message: string): void {
+    try {
+      import('@kit.ArkUI').then((arkUI) => {
+        arkUI.promptAction.showToast({ message: message, duration: 2000 });
+      });
+    } catch (error) {
+      logger.error(TAG, `显示Toast失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 构建电子书信息展示区域
    */
   @Builder
@@ -914,6 +1021,17 @@ export struct EBookSettingsPage {
         .width(100)
         .height(150)
         .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+
+        // 从相册选择封面按钮
+        Button('从相册选择封面')
+          .width('80%')
+          .height(36)
+          .fontSize(14)
+          .type(ButtonType.Normal)
+          .borderRadius(18)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .onClick(() => { this.selectCoverImage(); })
 
         // 标题
         Text(this.ebook.metadata.title)

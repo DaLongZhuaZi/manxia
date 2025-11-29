@@ -278,8 +278,8 @@ manxia/
 
 ### 4. 本地管理
 
-- **漫画导入**: 支持 ZIP/CBZ 格式
-- **电子书阅读**: 支持 EPUB/PDF 格式
+- **漫画导入**: 支持 ZIP/CBZ/TAR/GZ 等压缩格式
+- **电子书阅读**: 支持 EPUB/PDF/TXT/MOBI/AZW3 格式
 - **书库管理**: 分类、排序、搜索
 - **阅读历史**: 记录阅读轨迹
 
@@ -335,6 +335,17 @@ manxia/
 - **HarmonyOS Next SDK** - 华为官方 SDK
 - **ArkTS** - HarmonyOS 官方开发语言
 - **ArkUI** - HarmonyOS 官方 UI 框架
+
+### 第三方开源库
+
+| 库名称 | 版本 | 许可证 | 用途 |
+|--------|------|--------|------|
+| @ohos/commons-compress | ^2.0.6 | Apache-2.0 | 支持TAR/GZ/BZ2/XZ等压缩格式的解压 |
+| pako | 2.1.0 | MIT | GZip压缩/解压支持 |
+| js-sha256 | 0.11.0 | MIT | SHA256哈希计算 |
+| lz4js | 0.2.0 | MIT | LZ4压缩/解压支持 |
+| snappyjs | 0.7.0 | MIT | Snappy压缩/解压支持 |
+| text-encoding | 0.7.0 | Unlicense | 文本编码转换 |
 
 ### 图源实现参考
 

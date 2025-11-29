@@ -78,6 +78,7 @@ export interface ComicInfoDatabaseRecord {
   updateTime: number;  // 更新时间
   webUrl: string | null;  // 网页URL
   apiUrl: string | null;  // API请求地址
+  contentType?: string;  // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF
 }
 
 /**
@@ -585,7 +586,8 @@ export function convertComicInfoToDbFormat(record: ComicInfoDatabaseRecord): Rec
     "createTime": record.createTime,
     "updateTime": record.updateTime,
     "webUrl": record.webUrl,
-    "apiUrl": record.apiUrl
+    "apiUrl": record.apiUrl,
+    "contentType": record.contentType || 'manga'  // 内容类型
   } as Record<string, DatabaseValue>;
 }
 
@@ -635,17 +637,24 @@ export function convertPageInfoToDbFormat(record: PageInfoDatabaseRecord): Recor
 
 /**
  * 将数据库记录转换为HarmonyOS兼容的格式
+ * 注意：favorite表的id是INTEGER PRIMARY KEY AUTOINCREMENT，不需要手动插入
+ * 表结构：id, comicId, userId, folderName, addTime, lastReadChapterId, lastReadPageNumber, lastReadTime, readProgress
  */
 export function convertFavoriteInfoToDbFormat(record: FavoriteInfoDatabaseRecord): Record<string, DatabaseValue> {
-  // 与当前favorite表结构对齐，移除不存在的tags与notes字段，避免插入失败
+  // 不包含id字段，让数据库自动生成自增ID
   const mapped: Record<string, DatabaseValue> = {} as Record<string, DatabaseValue>;
   mapped["comicId"] = record.comicId as DatabaseValue;
   mapped["userId"] = record.userId as DatabaseValue;
+  mapped["folderName"] = "default" as DatabaseValue; // 默认文件夹
   mapped["addTime"] = (record.addTime as number) as DatabaseValue;
   // lastReadChapterId为TEXT列，避免null
   mapped["lastReadChapterId"] = (record.lastReadChapterId ? record.lastReadChapterId : "") as DatabaseValue;
+  // lastReadPageNumber为INTEGER列，默认0
+  mapped["lastReadPageNumber"] = 0 as DatabaseValue;
   // lastReadTime为INTEGER列，避免null
   mapped["lastReadTime"] = ((record.lastReadTime as number) ?? 0) as DatabaseValue;
+  // readProgress为REAL列，默认0.0
+  mapped["readProgress"] = 0.0 as DatabaseValue;
   return mapped;
 }
 

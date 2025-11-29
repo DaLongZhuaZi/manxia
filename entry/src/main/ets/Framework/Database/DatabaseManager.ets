@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 9,
+  DATABASE_VERSION: 10,
   ENCRYPT: false
 };
 
@@ -613,11 +613,23 @@ export class DatabaseManager {
       const store = this.getStore();
       const dbRecord = this.convertRecordToDbFormat(tableName, record);
       
-      // 使用executeSql执行更新操作，因为RdbPredicates不支持复杂的whereClause
-      const setClause = Object.keys(dbRecord).map(key => `${key} = ?`).join(', ');
-      const sql = `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`;
-      const bindArgs = [...Object.values(dbRecord), ...whereArgs];
+      // 排除id字段，因为id是主键不应该被更新
+      const updateKeys = Object.keys(dbRecord).filter(key => key !== 'id');
+      if (updateKeys.length === 0) {
+        logger.warn(TAG, `没有需要更新的字段，表: ${tableName}`);
+        return 0;
+      }
       
+      // 使用executeSql执行更新操作，因为RdbPredicates不支持复杂的whereClause
+      const setClause = updateKeys.map(key => `${key} = ?`).join(', ');
+      const sql = `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`;
+      const updateValues: DatabaseValue[] = [];
+      for (const key of updateKeys) {
+        updateValues.push(dbRecord[key]);
+      }
+      const bindArgs = [...updateValues, ...whereArgs];
+      
+      logger.debug(TAG, `执行更新SQL: ${sql}, 参数数量: ${bindArgs.length}`);
       await store.executeSql(sql, bindArgs);
       
       // 由于executeSql不返回影响行数，我们返回1表示执行成功
@@ -1526,11 +1538,13 @@ export class DatabaseManager {
     // 更精确的UpdateRecordData类型判断：检查是否只包含更新相关的字段
     // UpdateRecordData通常只包含少数几个字段，而DatabaseRecord包含完整的数据结构
     const recordKeys = Object.keys(record);
+    // 增加字段数量限制到10，因为刮削结果可能包含多个字段（id, updatedAt, title, description, author, tags等）
     const isUpdateRecord = recordKeys.includes('id') && 
                           typeof (record as UpdateRecordData).id === 'string' &&
-                          recordKeys.length <= 5 && // UpdateRecordData通常字段较少
-                          !recordKeys.includes('chapterId') && // DatabaseRecord特有字段
-                          !recordKeys.includes('imageUrl'); // PageInfoDatabaseRecord特有字段
+                          recordKeys.length <= 10 && // UpdateRecordData通常字段较少，但刮削可能有6-8个字段
+                          !recordKeys.includes('imageUrl') && // PageInfoDatabaseRecord特有字段
+                          !recordKeys.includes('pageNumber') && // PageInfoDatabaseRecord特有字段
+                          !recordKeys.includes('chapters'); // ComicInfoDatabaseRecord特有字段（章节数组）
     
     if (isUpdateRecord) {
       const result: Record<string, DatabaseValue> = {};

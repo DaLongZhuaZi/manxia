@@ -23,6 +23,8 @@ import { eventBus, GameEvent, MangaDeletedPayload, CoverSelectionCompletedPayloa
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
 import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Components/CoverSelectionDialog';
 import { CoverSelectionPageParams } from './CoverSelectionPage';
+import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
+import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 
 const TAG: string = 'MangaSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -90,6 +92,9 @@ struct MangaSettingsPage {
   
   // 保存状态
   @State isSavingBasicInfo: boolean = false;
+
+  // 刮削对话框控制器
+  private scraperDialogController: CustomDialogController | null = null;
 
   // 当前页面参数
   private pageParams: MangaSettingsPageParams = { mangaId: '', fromPage: 'Unknown' } as MangaSettingsPageParams;
@@ -859,6 +864,80 @@ struct MangaSettingsPage {
   }
 
   /**
+   * 打开刮削对话框
+   */
+  private openScraperDialog(): void {
+    const config: ScraperDialogConfig = {
+      initialKeyword: this.editingTitle || (this.currentManga ? this.currentManga.title : ''),
+      contentType: ScraperContentType.MANGA,
+      title: '搜索漫画信息'
+    };
+
+    this.scraperDialogController = new CustomDialogController({
+      builder: ScraperDialog({
+        themeState: this.themeState,
+        config: config,
+        onConfirm: (result: ScraperDialogResult) => {
+          this.applyScraperResult(result);
+        },
+        onCancel: () => {
+          logger.info(TAG, '用户取消刮削');
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+
+    this.scraperDialogController.open();
+  }
+
+  /**
+   * 应用刮削结果
+   */
+  private applyScraperResult(result: ScraperDialogResult): void {
+    const metadata = result.metadata;
+    logger.info(TAG, `应用刮削结果: ${metadata.title}`);
+
+    // 应用标题
+    if (metadata.title) {
+      this.editingTitle = metadata.title;
+    }
+
+    // 应用作者
+    if (result.applyAuthor && metadata.author) {
+      this.editingAuthors = metadata.author;
+    } else if (result.applyAuthor && metadata.authors && metadata.authors.length > 0) {
+      this.editingAuthors = metadata.authors.join(', ');
+    }
+
+    // 应用描述
+    if (result.applyDescription && metadata.description) {
+      this.editingDescription = metadata.description;
+    }
+
+    // 应用标签/分类
+    if (result.applyTags) {
+      const tags: string[] = [];
+      if (metadata.genres && metadata.genres.length > 0) {
+        tags.push(...metadata.genres);
+      }
+      if (metadata.tags && metadata.tags.length > 0) {
+        tags.push(...metadata.tags.slice(0, 5)); // 只取前5个标签
+      }
+      if (tags.length > 0) {
+        this.editingGenres = tags.join(', ');
+      }
+    }
+
+    // 展开编辑区域以显示结果
+    this.basicInfoExpanded = true;
+
+    logger.info(TAG, '刮削结果已应用到编辑字段');
+    this.showToast('刮削信息已填入，请确认后保存');
+  }
+
+  /**
    * 判断是否禁用从上到下阅读方向
    * 双页模式下不支持TTB方向
    */
@@ -1106,7 +1185,27 @@ struct MangaSettingsPage {
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .layoutWeight(1)
+
+        Blank()
+
+        // 刮削按钮
+        Row({ space: 4 }) {
+          Image($r('app.media.ic_scraper'))
+            .width(16)
+            .height(16)
+            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+          Text('刮削')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .padding({ left: 8, right: 10, top: 4, bottom: 4 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        .borderRadius(14)
+        .onClick(() => {
+          this.openScraperDialog();
+        })
+        .margin({ right: 8 })
         
         // 展开/收起按钮
         Button() {

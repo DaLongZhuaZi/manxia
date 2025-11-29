@@ -1,6 +1,12 @@
 /**
  * 通用解压缩工具类
  * 用于数据管理功能中的文件解压缩操作
+ * 
+ * 支持的格式：
+ * - ZIP/CBZ: 使用系统@ohos.zlib（性能最佳）
+ * - 7Z/LZMA: 使用@ohos/commons-compress
+ * - TAR/GZ/BZ2/XZ: 使用@ohos/commons-compress
+ * - RAR/CBR: 暂不支持（需要专有解码器）
  */
 
 import { zlib } from '@kit.BasicServicesKit';
@@ -8,6 +14,18 @@ import { fileIo } from '@kit.CoreFileKit';
 import { logger } from './Logger';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
+// 导入commons-compress库用于支持更多压缩格式
+// 注意：7z归档格式暂不支持（OpenHarmony版本未实现SevenZFile）
+import {
+  InputStream,
+  OutputStream,
+  unGzipFile,
+  ArchiveStreamFactory,
+  CompressorStreamFactory,
+  CompressorInputStream,
+  IOUtils
+} from '@ohos/commons-compress';
+import fs from '@ohos.file.fs';
 
 const TAG = 'CompressionUtils';
 
@@ -117,11 +135,29 @@ export class CompressionUtils {
   private sandboxManager: SandboxManager;
 
   // 支持的压缩文件格式
+  // ZIP格式使用系统zlib，其他格式使用commons-compress
+  // 注意：7z归档格式暂不支持（commons-compress的OpenHarmony版本未实现SevenZFile）
   private readonly supportedArchiveFormats = [
-    '.zip',
-    '.cbz',
-    '.cbr', // 注意：CBR需要特殊处理，这里暂时列出
+    '.zip',      // 标准ZIP格式 - 系统zlib
+    '.cbz',      // Comic Book ZIP - 系统zlib
+    '.tar',      // TAR归档 - commons-compress
+    '.gz',       // GZip压缩 - commons-compress
+    '.tgz',      // TAR+GZip - commons-compress
+    '.bz2',      // BZip2压缩 - commons-compress
+    '.xz',       // XZ压缩 - commons-compress
   ];
+  
+  // 使用系统zlib解压的格式（性能最佳）
+  private readonly zlibFormats = ['.zip', '.cbz'];
+  
+  // 使用commons-compress解压的格式
+  private readonly commonsCompressFormats = ['.tar', '.gz', '.tgz', '.bz2', '.xz'];
+  
+  // 暂不支持的格式（需要专有解码器或未实现）
+  // 7z: commons-compress的OpenHarmony版本未实现SevenZFile归档解析
+  // rar/cbr: 需要专有RAR解码器
+  // lzma: 单文件压缩格式，不适合漫画导入
+  private readonly unsupportedFormats = ['.rar', '.cbr', '.7z', '.lzma'];
 
   // 支持的图片格式
   private readonly supportedImageFormats = [
@@ -543,24 +579,211 @@ export class CompressionUtils {
     options: ExtractionOptions,
     result: ExtractionResult
   ): Promise<void> {
+    const extension = this.getFileExtension(archivePath);
+    
     try {
-      // 使用zlib解压缩（archivePath已经是实际的本地路径）
-      await zlib.decompressFile(archivePath, targetDir);
+      // 根据文件格式选择解压方法
+      if (this.zlibFormats.includes(extension)) {
+        // ZIP/CBZ格式使用系统zlib（性能最佳）
+        await this.extractWithZlib(archivePath, targetDir);
+      } else if (this.commonsCompressFormats.includes(extension)) {
+        // 其他格式使用commons-compress
+        await this.extractWithCommonsCompress(archivePath, targetDir, extension);
+      } else if (this.unsupportedFormats.includes(extension)) {
+        throw new Error(`暂不支持${extension}格式，请将文件转换为ZIP或7Z格式后重试`);
+      } else {
+        throw new Error(`不支持的压缩格式: ${extension}`);
+      }
+      
       logger.debug(TAG, `解压缩完成: ${archivePath} -> ${targetDir}`);
 
     } catch (error) {
-      const businessError = error as BusinessError;
-      logger.error(TAG, `解压缩失败: ${businessError.code} - ${businessError.message}`);
+      const errorStr = String(error);
+      logger.error(TAG, `解压缩失败: ${errorStr}`);
       
       // 提供更友好的错误信息
-      if (businessError.code === 401) {
+      if (errorStr.includes('900003') || errorStr.includes('not in ZIP format')) {
         throw new Error('压缩文件格式不正确或已损坏');
-      } else if (businessError.code === 13900002) {
+      } else if (errorStr.includes('13900002') || errorStr.includes('IO')) {
         throw new Error('解压缩过程中发生IO错误');
+      } else if (errorStr.includes('暂不支持')) {
+        throw error as Error;
       } else {
-        throw new Error(`解压缩失败: ${businessError.message}`);
+        throw new Error(`解压缩失败: ${errorStr}`);
       }
     }
+  }
+  
+  /**
+   * 使用系统zlib解压ZIP/CBZ格式
+   */
+  private async extractWithZlib(archivePath: string, targetDir: string): Promise<void> {
+    logger.info(TAG, `使用系统zlib解压: ${archivePath}`);
+    await zlib.decompressFile(archivePath, targetDir);
+  }
+  
+  /**
+   * 使用commons-compress解压其他格式
+   */
+  private async extractWithCommonsCompress(
+    archivePath: string, 
+    targetDir: string, 
+    extension: string
+  ): Promise<void> {
+    logger.info(TAG, `使用commons-compress解压${extension}格式: ${archivePath}`);
+    
+    switch (extension) {
+      case '.gz':
+        await this.extractGzip(archivePath, targetDir);
+        break;
+      case '.tgz':
+        await this.extractTarGzip(archivePath, targetDir);
+        break;
+      case '.tar':
+        await this.extractTar(archivePath, targetDir);
+        break;
+      case '.bz2':
+        await this.extractBzip2(archivePath, targetDir);
+        break;
+      case '.xz':
+        await this.extractXz(archivePath, targetDir);
+        break;
+      default:
+        throw new Error(`commons-compress暂不支持${extension}格式`);
+    }
+  }
+  
+  /**
+   * 解压GZip格式
+   */
+  private async extractGzip(archivePath: string, targetDir: string): Promise<void> {
+    // 获取原始文件名（去掉.gz后缀）
+    const fileName = this.getFileNameFromPath(archivePath);
+    const outputFileName = fileName.endsWith('.gz') ? fileName.slice(0, -3) : fileName + '.out';
+    const outputPath = `${targetDir}/${outputFileName}`;
+    
+    await unGzipFile(archivePath, outputPath);
+    logger.debug(TAG, `GZip解压完成: ${outputPath}`);
+  }
+  
+  /**
+   * 解压TAR.GZ格式
+   */
+  private async extractTarGzip(archivePath: string, targetDir: string): Promise<void> {
+    // 先解压gzip得到tar文件
+    const tempTarPath = `${targetDir}/temp_archive.tar`;
+    await unGzipFile(archivePath, tempTarPath);
+    
+    // 再解压tar
+    await this.extractTar(tempTarPath, targetDir);
+    
+    // 删除临时tar文件
+    try {
+      await fs.unlink(tempTarPath);
+    } catch (e) {
+      logger.warn(TAG, `删除临时tar文件失败: ${tempTarPath}`);
+    }
+  }
+  
+  /**
+   * 解压TAR格式
+   */
+  private async extractTar(archivePath: string, targetDir: string): Promise<void> {
+    const inputStream: InputStream = new InputStream();
+    inputStream.setFilePath(archivePath);
+    
+    const archiveInputStream = ArchiveStreamFactory.DEFAULT.createArchiveInputStream('tar', inputStream, 'UTF-8');
+    
+    let entry = archiveInputStream.getNextEntry();
+    while (entry !== null) {
+      const entryName: string = entry.getName();
+      const outputPath = `${targetDir}/${entryName}`;
+      
+      if (entry.isDirectory()) {
+        // 创建目录
+        await this.sandboxManager.createDirectory(outputPath);
+      } else {
+        // 确保父目录存在
+        const parentDir = outputPath.substring(0, outputPath.lastIndexOf('/'));
+        if (parentDir && parentDir !== targetDir) {
+          await this.sandboxManager.createDirectory(parentDir);
+        }
+        
+        // 写入文件
+        const outputStream: OutputStream = new OutputStream();
+        outputStream.setFilePath(outputPath);
+        IOUtils.copyStream(archiveInputStream, outputStream);
+        outputStream.close();
+      }
+      
+      entry = archiveInputStream.getNextEntry();
+    }
+    
+    archiveInputStream.close();
+    inputStream.close();
+    logger.debug(TAG, `TAR解压完成: ${targetDir}`);
+  }
+  
+  /**
+   * 解压BZip2格式
+   */
+  private async extractBzip2(archivePath: string, targetDir: string): Promise<void> {
+    const inputStream: InputStream = new InputStream();
+    inputStream.setFilePath(archivePath);
+    
+    // 获取输出文件名
+    const fileName = this.getFileNameFromPath(archivePath);
+    const outputFileName = fileName.endsWith('.bz2') ? fileName.slice(0, -4) : fileName + '.out';
+    const outputPath = `${targetDir}/${outputFileName}`;
+    
+    const outputStream: OutputStream = new OutputStream();
+    outputStream.setFilePath(outputPath);
+    
+    // 使用commons-compress的bzip2解压
+    const compressorFactory: CompressorStreamFactory = new CompressorStreamFactory(false);
+    const compressorInputStream: CompressorInputStream = compressorFactory.createCompressorNameInputStream('bzip2', inputStream);
+    IOUtils.copyStream(compressorInputStream, outputStream);
+    
+    outputStream.close();
+    compressorInputStream.close();
+    inputStream.close();
+    
+    logger.debug(TAG, `BZip2解压完成: ${outputPath}`);
+  }
+  
+  /**
+   * 解压XZ格式
+   */
+  private async extractXz(archivePath: string, targetDir: string): Promise<void> {
+    const inputStream: InputStream = new InputStream();
+    inputStream.setFilePath(archivePath);
+    
+    // 获取输出文件名
+    const fileName = this.getFileNameFromPath(archivePath);
+    const outputFileName = fileName.endsWith('.xz') ? fileName.slice(0, -3) : fileName + '.out';
+    const outputPath = `${targetDir}/${outputFileName}`;
+    
+    const outputStream: OutputStream = new OutputStream();
+    outputStream.setFilePath(outputPath);
+    
+    // 使用commons-compress的xz解压
+    const compressorFactory: CompressorStreamFactory = new CompressorStreamFactory(false);
+    const compressorInputStream: CompressorInputStream = compressorFactory.createCompressorNameInputStream('xz', inputStream);
+    IOUtils.copyStream(compressorInputStream, outputStream);
+    
+    outputStream.close();
+    compressorInputStream.close();
+    inputStream.close();
+    
+    logger.debug(TAG, `XZ解压完成: ${outputPath}`);
+  }
+  
+  /**
+   * 从路径获取文件名
+   */
+  private getFileNameFromPath(filePath: string): string {
+    const lastSlash = filePath.lastIndexOf('/');
+    return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath;
   }
 
   /**
@@ -1053,4 +1276,422 @@ export class CompressionUtils {
   public async cleanupRecursiveExtractionResult(result: RecursiveExtractionResult): Promise<void> {
     await this.cleanupTempDirectories(result.tempDirectories);
   }
+
+  // ==================== 增强的压缩包结构解析 ====================
+
+  /**
+   * 解析压缩包结构（用于漫画导入）
+   * 支持检测多层嵌套、多章节结构
+   * @param archivePath 压缩包路径
+   * @returns 解析后的结构信息
+   */
+  public async parseArchiveStructure(archivePath: string): Promise<ParsedArchiveStructure> {
+    const tempDirectories: string[] = [];
+    const warnings: string[] = [];
+    const detectedChapters: DetectedChapterInfo[] = [];
+    let hasComicInfo = false;
+    let comicInfoContent: string | undefined;
+    let totalImageCount = 0;
+    let rootImageCount = 0;
+
+    try {
+      logger.info(TAG, `开始解析压缩包结构: ${archivePath}`);
+
+      // 1. 递归解压所有嵌套的压缩包
+      const extractResult = await this.extractAllNestedArchives(archivePath, tempDirectories, warnings);
+      const extractedPath = extractResult.finalPath;
+
+      // 2. 查找ComicInfo.xml
+      const comicInfoPath = await this.findComicInfoFile(extractedPath);
+      if (comicInfoPath) {
+        try {
+          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          hasComicInfo = true;
+          logger.info(TAG, `找到ComicInfo.xml: ${comicInfoPath}`);
+        } catch (error) {
+          warnings.push(`读取ComicInfo.xml失败: ${error}`);
+        }
+      }
+
+      // 3. 扫描目录结构，检测章节
+      const scanResult = await this.scanDirectoryForChapters(extractedPath);
+      rootImageCount = scanResult.rootImageCount;
+      totalImageCount = scanResult.totalImageCount;
+
+      // 4. 处理检测到的章节
+      for (const chapter of scanResult.chapters) {
+        detectedChapters.push(chapter);
+      }
+
+      // 5. 如果没有检测到章节但有根目录图片，创建一个默认章节
+      if (detectedChapters.length === 0 && rootImageCount > 0) {
+        logger.info(TAG, `未检测到章节结构，根目录有 ${rootImageCount} 张图片`);
+      }
+
+      // 6. 对章节进行自然排序
+      this.sortChaptersNaturally(detectedChapters);
+
+      const result: ParsedArchiveStructure = {
+        hasComicInfo: hasComicInfo,
+        comicInfoContent: comicInfoContent,
+        isMultiLayer: detectedChapters.length > 1 || extractResult.recursionDepth > 0,
+        detectedChapters: detectedChapters,
+        rootImageCount: rootImageCount,
+        totalImageCount: totalImageCount,
+        extractedPath: extractedPath,
+        tempDirectories: tempDirectories,
+        warnings: warnings
+      };
+
+      logger.info(TAG, `压缩包结构解析完成: ${detectedChapters.length} 个章节, ${totalImageCount} 张图片`);
+      return result;
+
+    } catch (error) {
+      logger.error(TAG, '解析压缩包结构失败', String(error));
+      
+      // 清理临时目录
+      await this.cleanupTempDirectories(tempDirectories);
+      
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 递归解压所有嵌套的压缩包
+   */
+  private async extractAllNestedArchives(
+    archivePath: string,
+    tempDirectories: string[],
+    warnings: string[],
+    maxDepth: number = 5,
+    currentDepth: number = 0
+  ): Promise<NestedExtractionResult> {
+    if (currentDepth > maxDepth) {
+      warnings.push(`达到最大递归深度 ${maxDepth}`);
+      const maxDepthResult: NestedExtractionResult = {
+        finalPath: archivePath,
+        recursionDepth: currentDepth
+      };
+      return maxDepthResult;
+    }
+
+    // 解压当前压缩包
+    const extractResult = await this.extractArchive(archivePath);
+    if (!extractResult.success) {
+      throw new Error(`解压失败: ${extractResult.error}`);
+    }
+
+    tempDirectories.push(extractResult.extractedPath);
+    let finalPath = extractResult.extractedPath;
+    let maxRecursionDepth = currentDepth;
+
+    // 扫描解压后的内容，查找嵌套的压缩包
+    const files = await this.sandboxManager.listDirectory(extractResult.extractedPath);
+    const nestedArchives: string[] = [];
+
+    for (const fileName of files) {
+      const filePath = `${extractResult.extractedPath}/${fileName}`;
+      if (this.isSupportedArchive(filePath)) {
+        nestedArchives.push(filePath);
+      }
+    }
+
+    // 递归解压所有嵌套的压缩包
+    for (const nestedArchive of nestedArchives) {
+      try {
+        const nestedResult = await this.extractAllNestedArchives(
+          nestedArchive,
+          tempDirectories,
+          warnings,
+          maxDepth,
+          currentDepth + 1
+        );
+        maxRecursionDepth = Math.max(maxRecursionDepth, nestedResult.recursionDepth);
+        // 更新最终路径为最后解压的路径
+        finalPath = nestedResult.finalPath;
+      } catch (error) {
+        warnings.push(`解压嵌套压缩包失败: ${nestedArchive}, ${error}`);
+      }
+    }
+
+    // 如果只有一个子目录，进入该目录
+    const updatedFiles = await this.sandboxManager.listDirectory(finalPath);
+    if (updatedFiles.length === 1) {
+      const singleItem = `${finalPath}/${updatedFiles[0]}`;
+      const isDir = await this.isDirectory(singleItem);
+      if (isDir) {
+        finalPath = singleItem;
+      }
+    }
+
+    const result: NestedExtractionResult = {
+      finalPath: finalPath,
+      recursionDepth: maxRecursionDepth
+    };
+    return result;
+  }
+
+  /**
+   * 扫描目录结构，检测章节
+   */
+  private async scanDirectoryForChapters(rootPath: string): Promise<DirectoryScanResult> {
+    const chapters: DetectedChapterInfo[] = [];
+    let rootImageCount = 0;
+    let totalImageCount = 0;
+
+    try {
+      const files = await this.sandboxManager.listDirectory(rootPath);
+
+      for (const fileName of files) {
+        const filePath = `${rootPath}/${fileName}`;
+        const isDir = await this.isDirectory(filePath);
+
+        if (isDir) {
+          // 检查子目录是否包含图片（可能是章节）
+          const imageCount = await this.countImagesInDirectory(filePath);
+          if (imageCount > 0) {
+            // 从文件夹名称提取章节信息
+            const chapterInfo = this.extractChapterInfoFromName(fileName, filePath, imageCount);
+            chapters.push(chapterInfo);
+            totalImageCount += imageCount;
+          } else {
+            // 递归检查更深层的目录
+            const subScanResult = await this.scanDirectoryForChapters(filePath);
+            chapters.push(...subScanResult.chapters);
+            totalImageCount += subScanResult.totalImageCount;
+          }
+        } else {
+          // 检查是否为图片文件
+          const extension = this.getFileExtension(fileName).toLowerCase();
+          if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extension)) {
+            rootImageCount++;
+            totalImageCount++;
+          }
+        }
+      }
+
+    } catch (error) {
+      logger.error(TAG, `扫描目录失败: ${rootPath}`, String(error));
+    }
+
+    const result: DirectoryScanResult = {
+      chapters: chapters,
+      rootImageCount: rootImageCount,
+      totalImageCount: totalImageCount
+    };
+    return result;
+  }
+
+  /**
+   * 统计目录中的图片数量
+   */
+  private async countImagesInDirectory(directory: string): Promise<number> {
+    try {
+      const files = await this.sandboxManager.listDirectory(directory);
+      let count = 0;
+
+      for (const fileName of files) {
+        const extension = this.getFileExtension(fileName).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extension)) {
+          count++;
+        }
+      }
+
+      return count;
+    } catch (error) {
+      logger.error(TAG, `统计图片数量失败: ${directory}`, String(error));
+      return 0;
+    }
+  }
+
+  /**
+   * 从文件夹/文件名称提取章节信息
+   */
+  private extractChapterInfoFromName(name: string, path: string, pageCount: number): DetectedChapterInfo {
+    // 尝试从名称中提取章节编号
+    let chapterNumber = 0;
+    let chapterTitle = name;
+
+    // 常见的章节编号模式
+    const patterns: RegExp[] = [
+      /第(\d+)[话話章回卷]/,           // 第1话、第1章
+      /[话話章回卷](\d+)/,              // 话1、章1
+      /[Cc]h(?:apter)?[.\s]*(\d+)/i,   // Ch.1, Chapter 1
+      /[Ee]p(?:isode)?[.\s]*(\d+)/i,   // Ep.1, Episode 1
+      /[Vv]ol(?:ume)?[.\s]*(\d+)/i,    // Vol.1, Volume 1
+      /[\[\(【（](\d+)[\]\)】）]/,      // [1], (1), 【1】
+      /[_\-\s](\d{1,4})[_\-\s.]/,      // _001_, -01-
+      /^(\d{1,4})$/,                    // 纯数字
+      /(\d{1,4})$/                      // 末尾数字
+    ];
+
+    for (const pattern of patterns) {
+      const match = name.match(pattern);
+      if (match && match[1]) {
+        const num = parseInt(match[1], 10);
+        if (num > 0 && num < 10000) {
+          chapterNumber = num;
+          // 如果名称只是数字，生成标题
+          if (/^\d+$/.test(name.trim())) {
+            chapterTitle = `第${num}话`;
+          }
+          break;
+        }
+      }
+    }
+
+    // 如果没有提取到章节编号，使用默认值
+    if (chapterNumber === 0) {
+      chapterNumber = 1;
+    }
+
+    const result: DetectedChapterInfo = {
+      index: chapterNumber,
+      number: chapterNumber,
+      title: chapterTitle,
+      originalName: name,
+      path: path,
+      pageCount: pageCount
+    };
+    return result;
+  }
+
+  /**
+   * 对章节进行自然排序
+   */
+  private sortChaptersNaturally(chapters: DetectedChapterInfo[]): void {
+    chapters.sort((a, b) => {
+      // 首先按章节编号排序
+      if (a.number !== b.number) {
+        return a.number - b.number;
+      }
+      // 如果编号相同，按原始名称自然排序
+      return this.naturalCompare(a.originalName, b.originalName);
+    });
+
+    // 重新分配索引
+    for (let i = 0; i < chapters.length; i++) {
+      chapters[i].index = i + 1;
+    }
+  }
+
+  /**
+   * 自然排序比较函数
+   * 简化实现，避免复杂的类型问题
+   */
+  private naturalCompare(a: string, b: string): number {
+    // 提取数字和非数字部分进行比较
+    const extractParts = (str: string): Array<string | number> => {
+      const parts: Array<string | number> = [];
+      let current = '';
+      let isDigit = false;
+      
+      for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        const charIsDigit = char >= '0' && char <= '9';
+        
+        if (i === 0) {
+          isDigit = charIsDigit;
+          current = char;
+        } else if (charIsDigit === isDigit) {
+          current += char;
+        } else {
+          if (isDigit) {
+            parts.push(parseInt(current, 10));
+          } else {
+            parts.push(current);
+          }
+          current = char;
+          isDigit = charIsDigit;
+        }
+      }
+      
+      if (current.length > 0) {
+        if (isDigit) {
+          parts.push(parseInt(current, 10));
+        } else {
+          parts.push(current);
+        }
+      }
+      
+      return parts;
+    };
+    
+    const partsA = extractParts(a);
+    const partsB = extractParts(b);
+    
+    const minLen = Math.min(partsA.length, partsB.length);
+    for (let i = 0; i < minLen; i++) {
+      const partA = partsA[i];
+      const partB = partsB[i];
+      
+      const aIsNum = typeof partA === 'number';
+      const bIsNum = typeof partB === 'number';
+      
+      if (aIsNum && bIsNum) {
+        const diff = (partA as number) - (partB as number);
+        if (diff !== 0) return diff;
+      } else if (aIsNum) {
+        return -1; // 数字排在字符串前面
+      } else if (bIsNum) {
+        return 1;
+      } else {
+        const cmp = (partA as string).localeCompare(partB as string);
+        if (cmp !== 0) return cmp;
+      }
+    }
+    
+    return partsA.length - partsB.length;
+  }
+
+  /**
+   * 清理解析后的结构（清理临时目录）
+   */
+  public async cleanupParsedArchiveStructure(structure: ParsedArchiveStructure): Promise<void> {
+    await this.cleanupTempDirectories(structure.tempDirectories);
+  }
+}
+
+/**
+ * 检测到的章节信息（内部使用）
+ */
+interface DetectedChapterInfo {
+  index: number;
+  number: number;
+  title: string;
+  originalName: string;
+  path: string;
+  pageCount: number;
+}
+
+/**
+ * 嵌套解压结果（内部使用）
+ */
+interface NestedExtractionResult {
+  finalPath: string;
+  recursionDepth: number;
+}
+
+/**
+ * 目录扫描结果（内部使用）
+ */
+interface DirectoryScanResult {
+  chapters: DetectedChapterInfo[];
+  rootImageCount: number;
+  totalImageCount: number;
+}
+
+/**
+ * 解析后的压缩包结构（导出）
+ */
+export interface ParsedArchiveStructure {
+  hasComicInfo: boolean;
+  comicInfoContent?: string;
+  isMultiLayer: boolean;
+  detectedChapters: DetectedChapterInfo[];
+  rootImageCount: number;
+  totalImageCount: number;
+  extractedPath: string;
+  tempDirectories: string[];
+  warnings: string[];
 }

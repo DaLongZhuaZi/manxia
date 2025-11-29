@@ -1252,7 +1252,7 @@ struct MangaDetailPage {
       // 先快速获取漫画基本信息来判断是否为本地漫画
       if (this.pageParams?.mangaId) {
         const comicInfo = await DataManager.getInstance().getComicById(this.pageParams.mangaId);
-        this.isLocalManga = comicInfo?.sourceId === 'local_import';
+        this.isLocalManga = comicInfo?.sourceId === 'local_import' || comicInfo?.sourceId === 'local_pdf';
         logger.info(TAG, `漫画来源检测: ${comicInfo?.sourceId}, 是否本地漫画: ${this.isLocalManga}`);
       }
 
@@ -1332,9 +1332,9 @@ struct MangaDetailPage {
               logger.info(TAG, `开始加载章节信息，漫画ID: ${this.pageParams.mangaId}`);
               try {
                 // [修复] 根据漫画来源选择正确的表
-                // 本地漫画 (sourceId='local_import') 使用 chapter 表
+                // 本地漫画 (sourceId='local_import' 或 'local_pdf') 使用 chapter 表
                 // 在线漫画使用 online_chapter 表
-                const isLocalManga = comicInfo.sourceId === 'local_import';
+                const isLocalManga = comicInfo.sourceId === 'local_import' || comicInfo.sourceId === 'local_pdf';
                 const chapterInfos = isLocalManga 
                   ? await DataManager.getInstance().getComicChapters(this.pageParams.mangaId)
                   : await DataManager.getInstance().getOnlineComicChapters(this.pageParams.mangaId);
