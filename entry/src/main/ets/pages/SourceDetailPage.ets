@@ -970,11 +970,13 @@ export struct SourceDetailPage {
    */
   private convertMangaInfoToComicInfo(mangas: MangaInfo[]): ComicInfo[] {
     return mangas.map((manga: MangaInfo) => {
-      // 从URL路径中提取ID（如 /comic/466 -> 466）
+      // 从URL路径中提取ID
+      // 只对以 / 开头的路径格式进行转换（如 /comic/466 -> 466）
+      // 不对日期格式路径（如 2025/12/02/xxx）进行转换，保持原样
       let comicId = manga.id || '';
-      if (comicId.includes('/')) {
-        const parts = comicId.split('/');
-        comicId = parts[parts.length - 1]; // 取最后一部分
+      if (comicId.startsWith('/')) {
+        const parts = comicId.split('/').filter((p: string) => p.length > 0);
+        comicId = parts[parts.length - 1] || manga.id || '';
       }
       
       // 直接使用封面URL（从img src属性提取）
