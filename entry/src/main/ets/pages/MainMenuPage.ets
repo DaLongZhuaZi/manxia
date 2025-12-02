@@ -520,8 +520,7 @@ struct MainMenuPage {
     this.initializeContentData(); // 加载漫画、电子书并提取标签作者
     this.loadLibraryViewMode();
     this.loadRecentReadingList();
-    this.loadSources(); // 加载图源列表
-    this.initializeRepositoryManager(); // 初始化仓库管理器
+    this.initializeRepositoryManager(); // 初始化仓库管理器（会在完成后自动加载图源列表）
     this.checkSourceUpdates(); // 检查图源更新
 
     // 初始化响应式布局
@@ -1801,6 +1800,9 @@ struct MainMenuPage {
       await this.repositoryManager.initialize(context);
       await this.loadSavedRepositories();
       logger.info(TAG, '仓库管理器初始化完成');
+      
+      // 仓库管理器初始化完成后，重新加载图源列表以获取图标路径
+      await this.loadSources();
     } catch (error) {
       logger.error(TAG, '初始化仓库管理器失败', String(error));
     }
@@ -1938,7 +1940,7 @@ struct MainMenuPage {
           fontColor: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
           action: async () => {
             try {
-              await this.sourceManager.deleteSource(source.id);
+              await this.sourceManager.deleteSource(source.id, source.pkg);
               this.showToast('图源已删除');
               logger.info(TAG, `图源删除成功: ${source.name}`);
               
@@ -4996,12 +4998,21 @@ struct MainMenuPage {
   @Builder
   buildSourceCard(source: SourceInfo) {
     Row({ space: 12 }) {
-      // 图源图标（暂时使用默认图标）
-      Image($r('app.media.ic_source_normal'))
-        .width(48)
-        .height(48)
-        .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      // 图源图标
+      if (source.iconPath) {
+        Image('file://' + source.iconPath)
+          .width(48)
+          .height(48)
+          .borderRadius(8)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      } else {
+        Image($r('app.media.ic_source_normal'))
+          .width(48)
+          .height(48)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      }
 
       // 图源信息
       Column({ space: 4 }) {

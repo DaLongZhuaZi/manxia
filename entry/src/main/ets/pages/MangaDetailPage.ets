@@ -76,6 +76,8 @@ export interface MangaDetailPageParams {
   chapterId?: string;
   fromPage?: string;
   cachedCoverPath?: string;  // 新增：已缓存的封面路径
+  cachedTitle?: string;      // 新增：已缓存的漫画标题（从列表页面传递）
+  cachedCover?: string;      // 新增：已缓存的封面URL（从列表页面传递）
 }
 
 /**
@@ -1758,6 +1760,16 @@ struct MangaDetailPage {
       // [修复] 验证漫画详情是否有效（仅在刷新模式下严格验证）
       if (this.isRefreshing && (!mangaInfo.title || mangaInfo.title.trim() === '')) {
         throw new Error('漫画标题为空，可能是页面未完全加载，请稍后重试');
+      }
+      
+      // [修复] 如果详情页没有返回标题或封面，使用从列表页面传递的缓存值
+      if ((!mangaInfo.title || mangaInfo.title.trim() === '') && this.pageParams?.cachedTitle) {
+        mangaInfo.title = this.pageParams.cachedTitle;
+        logger.info(TAG, `使用缓存的标题: ${mangaInfo.title}`);
+      }
+      if ((!mangaInfo.cover || mangaInfo.cover.trim() === '') && this.pageParams?.cachedCover) {
+        mangaInfo.cover = this.pageParams.cachedCover;
+        logger.info(TAG, `使用缓存的封面URL: ${mangaInfo.cover}`);
       }
       
       // 转换为Manga对象

@@ -948,6 +948,8 @@ export interface GenericQueryRecord {
   enableImages?: DatabaseValue;
   timeout?: DatabaseValue;
   cookies?: DatabaseValue;
+  pkg?: DatabaseValue;         // 图源包名
+  iconPath?: DatabaseValue;    // 图源图标路径
   // favorite 表字段
   favoriteType?: DatabaseValue;
   favoriteTime?: DatabaseValue;
