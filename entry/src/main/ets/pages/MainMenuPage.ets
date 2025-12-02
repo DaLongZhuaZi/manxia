@@ -1940,7 +1940,7 @@ struct MainMenuPage {
           fontColor: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
           action: async () => {
             try {
-              await this.sourceManager.deleteSource(source.id, source.pkg);
+              await this.sourceManager.deleteSource(source.id, source.pkg, source.name);
               this.showToast('图源已删除');
               logger.info(TAG, `图源删除成功: ${source.name}`);
               

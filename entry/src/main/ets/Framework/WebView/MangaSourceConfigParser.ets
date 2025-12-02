@@ -692,6 +692,8 @@ export class MangaSourceConfigParser {
           optional: extractAction.optional,
           waitAfter: extractAction.waitAfter,
           selector: extractAction.selector,
+          source: extractAction.source,
+          variable: extractAction.variable,
           multiple: extractAction.multiple,
           fields: extractAction.fields
         };

@@ -157,6 +157,16 @@ export struct SourceManagementPage {
         }
       }
       
+      // 【关键】清理WebView引擎缓存（必须在删除数据库记录之前）
+      try {
+        const webViewManager = WebViewSourceManager.getInstance();
+        webViewManager.removeSource(String(source.id), source.name);
+        webViewManager.removeEngineByName(source.name);
+        logger.info(TAG, `WebView引擎缓存已清理: ${source.id} (${source.name})`);
+      } catch (e) {
+        logger.warn(TAG, `清理WebView引擎缓存失败: ${e}`);
+      }
+      
       await this.dataManager.deleteComicSource(source.id);
       
       // 从列表中移除
