@@ -9,6 +9,7 @@ import { SourceExecutor, ComicInfo, ComicDetailInfo, ChapterInfo, PageInfo } fro
 import { SourceTester, TestResult } from './SourceTester';
 import { JSONSourceParser } from './JSONSourceParser';
 import { fileIo } from '@kit.CoreFileKit';
+import { SourceRepositoryManager } from './SourceRepositoryManager';
 
 const TAG = 'SourceManager';
 
@@ -18,6 +19,7 @@ const TAG = 'SourceManager';
 export interface SourceInfo {
   id: number;
   name: string;
+  pkg?: string;  // 图源包名，用于文件管理
   baseUrl: string;
   version: string;
   description: string;
@@ -26,6 +28,7 @@ export interface SourceInfo {
   priority: number;
   createTime: number;
   lastUpdateTime: number;
+  iconPath?: string;  // 图源图标路径
 }
 
 /**
@@ -268,11 +271,23 @@ export class SourceManager {
 
   /**
    * 删除图源
+   * @param sourceId 图源ID
+   * @param pkg 图源包名（可选，用于删除文件）
    */
-  async deleteSource(sourceId: number): Promise<void> {
+  async deleteSource(sourceId: number, pkg?: string): Promise<void> {
+    // 如果提供了 pkg，同时删除相关文件
+    if (pkg) {
+      try {
+        const repoManager = SourceRepositoryManager.getInstance();
+        repoManager.deleteSourceFiles(pkg);
+      } catch (e) {
+        logger.warn(TAG, `删除图源文件失败: ${e}`);
+      }
+    }
+    
     await this.dataManager.deleteComicSource(sourceId);
     this.executor.clearCache(sourceId);
-    logger.info(TAG, `图源已删除: ${sourceId}`);
+    logger.info(TAG, `图源已删除: ${sourceId}${pkg ? `, pkg: ${pkg}` : ''}`);
   }
 
   /**
@@ -349,9 +364,27 @@ export class SourceManager {
    * 映射到SourceInfo
    */
   private mapToSourceInfo(source: ESObject): SourceInfo {
+    const pkg = source.pkg as string || undefined;
+    let iconPath: string | undefined = undefined;
+    
+    // 尝试获取图标路径
+    if (pkg) {
+      const repoManager = SourceRepositoryManager.getInstance();
+      const foundIconPath = repoManager.getSourceIconPath(pkg);
+      if (foundIconPath) {
+        iconPath = foundIconPath;
+        logger.info(TAG, `图源 ${source.name} 找到图标: ${iconPath}`);
+      } else {
+        logger.warn(TAG, `图源 ${source.name} 未找到图标, pkg=${pkg}`);
+      }
+    } else {
+      logger.warn(TAG, `图源 ${source.name} 没有 pkg 字段`);
+    }
+    
     return {
       id: source.id as number,
       name: source.name as string,
+      pkg: pkg,
       baseUrl: source.baseUrl as string,
       version: source.version as string,
       description: source.description as string || '',
@@ -359,7 +392,8 @@ export class SourceManager {
       isEnabled: Boolean(source.isEnabled),
       priority: source.priority as number || 0,
       createTime: source.createTime as number,
-      lastUpdateTime: source.lastUpdateTime as number
+      lastUpdateTime: source.lastUpdateTime as number,
+      iconPath: iconPath
     };
   }
 

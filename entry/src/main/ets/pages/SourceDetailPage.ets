@@ -1308,7 +1308,9 @@ export struct SourceDetailPage {
     const params: MangaDetailPageParams = {
       sourceId: this.sourceId,
       mangaId: comic.id,
-      cachedCoverPath: localCoverPath || undefined  // 传递已缓存的封面路径
+      cachedCoverPath: localCoverPath || undefined,  // 传递已缓存的封面路径
+      cachedTitle: comic.title || undefined,         // 传递已缓存的标题
+      cachedCover: comic.coverUrl || undefined       // 传递已缓存的封面URL
     };
     this.pathStack.pushPathByName('MangaDetailPage', params);
   }

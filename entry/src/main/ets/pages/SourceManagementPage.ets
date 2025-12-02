@@ -147,6 +147,16 @@ export struct SourceManagementPage {
    */
   private async deleteSource(source: SourceInfo): Promise<void> {
     try {
+      // 删除图源文件
+      if (source.pkg) {
+        try {
+          const repoManager = SourceRepositoryManager.getInstance();
+          repoManager.deleteSourceFiles(source.pkg);
+        } catch (e) {
+          logger.warn(TAG, `删除图源文件失败: ${e}`);
+        }
+      }
+      
       await this.dataManager.deleteComicSource(source.id);
       
       // 从列表中移除

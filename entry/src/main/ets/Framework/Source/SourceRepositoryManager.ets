@@ -502,20 +502,64 @@ export class SourceRepositoryManager {
    * @returns 图标文件路径，如果不存在返回 null
    */
   getSourceIconPath(pkg: string): string | null {
+    // 检查 repositoryDir 是否已初始化
+    if (!this.repositoryDir || this.repositoryDir.trim() === '') {
+      logger.warn(TAG, `getSourceIconPath: repositoryDir 未初始化，无法获取图标路径: ${pkg}`);
+      return null;
+    }
+    
     // 尝试多种格式
     const formats = ['webp', 'png', 'jpg'];
     for (const ext of formats) {
       const iconPath = `${this.repositoryDir}/icons/${pkg}.${ext}`;
       try {
-        const exists = fileIo.accessSync(iconPath);
-        if (exists) {
-          return iconPath;
-        }
+        // fileIo.accessSync 如果文件存在不抛异常，不存在则抛异常
+        fileIo.accessSync(iconPath);
+        // 如果没有抛异常，说明文件存在
+        logger.info(TAG, `找到图源图标: ${iconPath}`);
+        return iconPath;
       } catch (_) {
         // 文件不存在，尝试下一个格式
       }
     }
+    logger.warn(TAG, `未找到图源图标: ${pkg}, repositoryDir=${this.repositoryDir}`);
     return null;
+  }
+
+  /**
+   * 删除图源相关文件（JSON配置和图标）
+   * @param pkg 图源包名
+   */
+  deleteSourceFiles(pkg: string): void {
+    if (!pkg || !this.repositoryDir) {
+      logger.warn(TAG, `无法删除图源文件: pkg=${pkg}, repositoryDir=${this.repositoryDir}`);
+      return;
+    }
+
+    // 删除 JSON 配置文件
+    const jsonPath = `${this.repositoryDir}/${pkg}.json`;
+    try {
+      if (fileIo.accessSync(jsonPath)) {
+        fileIo.unlinkSync(jsonPath);
+        logger.info(TAG, `已删除图源配置文件: ${pkg}.json`);
+      }
+    } catch (e) {
+      logger.debug(TAG, `图源配置文件不存在或删除失败: ${pkg}.json`);
+    }
+
+    // 删除图标文件（尝试多种格式）
+    const formats = ['webp', 'png', 'jpg'];
+    for (const ext of formats) {
+      const iconPath = `${this.repositoryDir}/icons/${pkg}.${ext}`;
+      try {
+        if (fileIo.accessSync(iconPath)) {
+          fileIo.unlinkSync(iconPath);
+          logger.info(TAG, `已删除图源图标: ${pkg}.${ext}`);
+        }
+      } catch (_) {
+        // 文件不存在，继续尝试下一个格式
+      }
+    }
   }
 
   /**

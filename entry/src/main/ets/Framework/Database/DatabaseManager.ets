@@ -1240,6 +1240,12 @@ export class DatabaseManager {
         record.nightMode = value;
       } else if (columnName === 'followSystemTheme') {
         record.followSystemTheme = value;
+      } else if (columnName === 'pkg') {
+        record.pkg = value;
+      } else if (columnName === 'version') {
+        record.version = value;
+      } else if (columnName === 'iconPath') {
+        record.iconPath = value;
       }
       // 其他字段可以根据需要继续添加
     }
