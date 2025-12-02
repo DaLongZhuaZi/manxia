@@ -8,6 +8,7 @@ import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/Theme
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { DataManager } from '../Framework/Data/DataManager';
+import { SourceRepositoryManager } from '../Framework/Source/SourceRepositoryManager';
 
 const TAG = 'SourceManagementPage';
 
@@ -17,6 +18,7 @@ const TAG = 'SourceManagementPage';
 interface SourceInfo {
   id: number;
   name: string;
+  pkg: string;
   baseUrl: string;
   version: string;
   description: string;
@@ -25,6 +27,7 @@ interface SourceInfo {
   priority: number;
   lastUpdateTime: number;
   createTime: number;
+  iconPath?: string;
 }
 
 @Component
@@ -62,18 +65,34 @@ export struct SourceManagementPage {
       
       // 从数据库加载图源
       const sources = await this.dataManager.getAllComicSources();
-      this.sourceList = sources.map((source: ESObject) => ({
-        id: source.id as number,
-        name: source.name as string,
-        baseUrl: source.baseUrl as string,
-        version: source.version as string,
-        description: source.description as string || '',
-        language: source.language as string || 'zh-CN',
-        isEnabled: Boolean(source.isEnabled),
-        priority: source.priority as number || 0,
-        lastUpdateTime: source.lastUpdateTime as number || 0,
-        createTime: source.createTime as number
-      }));
+      const repoManager = SourceRepositoryManager.getInstance();
+      
+      this.sourceList = sources.map((source: ESObject) => {
+        const pkg = source.pkg as string || '';
+        // 尝试获取图源图标路径
+        let iconPath: string | undefined = undefined;
+        if (pkg) {
+          const iconFile = repoManager.getSourceIconPath(pkg);
+          if (iconFile) {
+            iconPath = iconFile;
+          }
+        }
+        
+        return {
+          id: source.id as number,
+          name: source.name as string,
+          pkg: pkg,
+          baseUrl: source.baseUrl as string,
+          version: source.version as string,
+          description: source.description as string || '',
+          language: source.language as string || 'zh-CN',
+          isEnabled: Boolean(source.isEnabled),
+          priority: source.priority as number || 0,
+          lastUpdateTime: source.lastUpdateTime as number || 0,
+          createTime: source.createTime as number,
+          iconPath: iconPath
+        };
+      });
       
       this.filteredSourceList = [...this.sourceList];
       
@@ -280,7 +299,31 @@ export struct SourceManagementPage {
   buildSourceCard(source: SourceInfo) {
     Column({ space: 12 }) {
       // 标题行
-      Row() {
+      Row({ space: 12 }) {
+        // 图源图标
+        if (source.iconPath) {
+          Image('file://' + source.iconPath)
+            .width(48)
+            .height(48)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        } else {
+          // 默认图标
+          Column() {
+            Text(source.name.charAt(0).toUpperCase())
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          }
+          .width(48)
+          .height(48)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        }
+        
         Column({ space: 4 }) {
           Text(source.name)
             .fontSize(16)

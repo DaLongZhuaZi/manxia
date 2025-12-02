@@ -9,11 +9,13 @@ import {
   ImageSourceType,
   ReadingMode,
   ReadingDirection,
+  PageTurnAnimationType,
   DEFAULT_READING_SETTINGS
 } from '../../Models/MangaModels';
-import { ComicInfo, ReadHistory, OnlineComicInfo } from '../Data/DataManager';
+import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } from '../Data/DataManager';
 import { MangaStatus, ReadingStatus, StatusConverter } from '../Types/StatusEnums';
 import { DataManager } from '../Data/DataManager';
+import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { logger } from '../../Utils/Logger';
 
 const TAG = 'ComicConverter';
@@ -118,9 +120,9 @@ export class ComicConverter {
       demographics: []
     };
 
-    // 从数据库加载阅读设置
-    const readingSettings = await ComicConverter.loadReadingSettings(comic.id, userId);
-    logger.debug(TAG, `加载的阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}`);
+    // 从数据库加载阅读设置（传入sourceId以支持图源级别设置）
+    const readingSettings = await ComicConverter.loadReadingSettings(comic.id, userId, comic.sourceId);
+    logger.debug(TAG, `加载的阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}, animation=${readingSettings.pageTurnAnimation}`);
 
     // 从数据库加载阅读进度
     const readingProgress = await ComicConverter.loadReadingProgress(comic.id, userId);
@@ -173,59 +175,140 @@ export class ComicConverter {
 
   /**
    * 从数据库加载漫画的阅读设置
+   * 设置优先级：单本漫画设置 > 图源设置 > 全局设置 > 默认值
    * @param comicId 漫画ID
    * @param userId 用户ID
+   * @param sourceId 图源ID（可选，用于加载图源级别设置）
    * @returns Promise<ReadingSettings> 阅读设置
    */
-  private static async loadReadingSettings(comicId: string, userId: string): Promise<ReadingSettings> {
+  public static async loadReadingSettings(comicId: string, userId: string = 'default_user', sourceId?: string): Promise<ReadingSettings> {
     const dataManager = DataManager.getInstance();
+    const settingsManager = SettingsManager.getInstance();
     
     try {
-      // 从user_settings表加载设置（键名格式：manga_settings_{comicId}）
+      // 1. 首先尝试从user_settings表加载单本漫画的设置（最高优先级）
       const settingKey = `manga_settings_${comicId}`;
       const settingsJson = await dataManager.getUserSetting(userId, settingKey);
       
       if (settingsJson) {
         // 解析JSON字符串
         const settings = JSON.parse(settingsJson) as ReadingSettings;
-        logger.info(TAG, `成功从数据库加载漫画 ${comicId} 的阅读设置`);
+        logger.info(TAG, `成功从数据库加载漫画 ${comicId} 的独立阅读设置`);
         return settings;
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.warn(TAG, `加载漫画 ${comicId} 的阅读设置失败: ${errorMessage}，使用默认设置`);
+      logger.warn(TAG, `加载漫画 ${comicId} 的阅读设置失败: ${errorMessage}`);
     }
     
-    // 如果没有保存的设置，使用全局阅读模式作为回退
-    logger.info(TAG, `漫画 ${comicId} 未找到保存的阅读设置，使用全局阅读设置回退`);
-    const globalMode = AppStorage.get<ReadingMode>('global_reading_mode');
-    const globalDirection = AppStorage.get<ReadingDirection>('global_reading_direction');
-
-    const mode: ReadingMode = globalMode ? globalMode : DEFAULT_READING_SETTINGS.readingMode;
-    let direction: ReadingDirection = DEFAULT_READING_SETTINGS.readingDirection;
-    if (globalDirection) {
-      direction = globalDirection;
-    } else {
-      if (mode === ReadingMode.WEBTOON) {
-        direction = ReadingDirection.TOP_TO_BOTTOM;
+    // 2. 漫画没有独立设置，尝试加载图源级别设置
+    logger.info(TAG, `漫画 ${comicId} 未找到独立设置，尝试加载图源/全局设置`);
+    
+    let sourceSettingsEnabled = false;
+    let sourceMode: ReadingMode | null = null;
+    let sourceDirection: ReadingDirection | null = null;
+    let sourceAnimation: PageTurnAnimationType | null = null;
+    
+    logger.info(TAG, `loadReadingSettings 参数: comicId=${comicId}, userId=${userId}, sourceId=${sourceId}`);
+    
+    if (sourceId) {
+      try {
+        const sid = Number(sourceId);
+        logger.info(TAG, `解析后的图源ID: sid=${sid}, isNaN=${isNaN(sid)}`);
+        if (!isNaN(sid) && sid > 0) {
+          // 检查图源漫画设置是否启用
+          const enabledRecord: UserSettingsDatabaseRecord | null = await dataManager.getSourceUserSetting(sid, 'manga.settingsEnabled');
+          logger.info(TAG, `图源设置启用记录: ${JSON.stringify(enabledRecord)}`);
+          sourceSettingsEnabled = enabledRecord?.settingValue === '1' || enabledRecord?.settingValue === 'true';
+          
+          if (sourceSettingsEnabled) {
+            logger.info(TAG, `图源 ${sid} 的漫画默认设置已启用`);
+            
+            const modeRecord: UserSettingsDatabaseRecord | null = await dataManager.getSourceUserSetting(sid, 'manga.readingMode');
+            const directionRecord: UserSettingsDatabaseRecord | null = await dataManager.getSourceUserSetting(sid, 'manga.readingDirection');
+            const animationRecord: UserSettingsDatabaseRecord | null = await dataManager.getSourceUserSetting(sid, 'manga.pageTurnAnimation');
+            
+            logger.info(TAG, `图源设置记录: mode=${JSON.stringify(modeRecord)}, direction=${JSON.stringify(directionRecord)}, animation=${JSON.stringify(animationRecord)}`);
+            
+            if (modeRecord?.settingValue) {
+              sourceMode = modeRecord.settingValue as ReadingMode;
+            }
+            if (directionRecord?.settingValue) {
+              sourceDirection = directionRecord.settingValue as ReadingDirection;
+            }
+            if (animationRecord?.settingValue) {
+              sourceAnimation = animationRecord.settingValue as PageTurnAnimationType;
+            }
+            
+            logger.info(TAG, `图源设置: mode=${sourceMode}, direction=${sourceDirection}, animation=${sourceAnimation}`);
+          }
+        }
+      } catch (sourceErr) {
+        logger.warn(TAG, `加载图源设置失败: ${String(sourceErr)}`);
       }
     }
+    
+    // 3. 加载全局设置
+    const globalMode = settingsManager.getString(SettingKeys.GLOBAL_READING_MODE, '') as ReadingMode | '';
+    const globalDirection = settingsManager.getString(SettingKeys.GLOBAL_READING_DIRECTION, '') as ReadingDirection | '';
+    const globalAnimation = settingsManager.getString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, '') as PageTurnAnimationType | '';
+    const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_KEEP_SCREEN_ON, DEFAULT_READING_SETTINGS.keepScreenOn);
+    const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_VOLUME_KEY_NAVIGATION, DEFAULT_READING_SETTINGS.volumeKeyNavigation);
+    
+    logger.info(TAG, `全局设置: mode=${globalMode}, direction=${globalDirection}, animation=${globalAnimation}`);
+    
+    // 4. 按优先级合并设置：图源设置 > 全局设置 > 默认值
+    let finalMode: ReadingMode = DEFAULT_READING_SETTINGS.readingMode;
+    let finalDirection: ReadingDirection = DEFAULT_READING_SETTINGS.readingDirection;
+    let finalAnimation: PageTurnAnimationType = DEFAULT_READING_SETTINGS.pageTurnAnimation;
+    
+    // 阅读模式
+    if (sourceSettingsEnabled && sourceMode) {
+      finalMode = sourceMode;
+      logger.debug(TAG, `使用图源阅读模式: ${finalMode}`);
+    } else if (globalMode) {
+      finalMode = globalMode;
+      logger.debug(TAG, `使用全局阅读模式: ${finalMode}`);
+    }
+    
+    // 阅读方向
+    if (sourceSettingsEnabled && sourceDirection) {
+      finalDirection = sourceDirection;
+      logger.debug(TAG, `使用图源阅读方向: ${finalDirection}`);
+    } else if (globalDirection) {
+      finalDirection = globalDirection;
+      logger.debug(TAG, `使用全局阅读方向: ${finalDirection}`);
+    } else if (finalMode === ReadingMode.WEBTOON) {
+      finalDirection = ReadingDirection.TOP_TO_BOTTOM;
+      logger.debug(TAG, `条漫模式自动设置阅读方向: ${finalDirection}`);
+    }
+    
+    // 翻页动画
+    if (sourceSettingsEnabled && sourceAnimation) {
+      finalAnimation = sourceAnimation;
+      logger.debug(TAG, `使用图源翻页动画: ${finalAnimation}`);
+    } else if (globalAnimation) {
+      finalAnimation = globalAnimation;
+      logger.debug(TAG, `使用全局翻页动画: ${finalAnimation}`);
+    }
+    
+    logger.info(TAG, `最终设置: mode=${finalMode}, direction=${finalDirection}, animation=${finalAnimation}`);
 
     const fallbackSettings: ReadingSettings = {
-      readingMode: mode,
-      readingDirection: direction,
+      readingMode: finalMode,
+      readingDirection: finalDirection,
       brightness: DEFAULT_READING_SETTINGS.brightness,
-      keepScreenOn: DEFAULT_READING_SETTINGS.keepScreenOn,
+      keepScreenOn: globalKeepScreenOn,
       pageSpacing: DEFAULT_READING_SETTINGS.pageSpacing,
       showPageInfo: DEFAULT_READING_SETTINGS.showPageInfo,
       showPageIndicator: DEFAULT_READING_SETTINGS.showPageIndicator,
       fitMode: DEFAULT_READING_SETTINGS.fitMode,
       autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
       skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
-      pageTurnAnimation: DEFAULT_READING_SETTINGS.pageTurnAnimation,
+      pageTurnAnimation: finalAnimation,
       doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
-      volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
+      volumeKeyNavigation: globalVolumeKeyNav,
       curlBackOpacity: 0
     };
     return fallbackSettings;
@@ -311,9 +394,9 @@ export class ComicConverter {
       demographics: []
     };
 
-    // 从数据库加载阅读设置
-    const readingSettings = await ComicConverter.loadReadingSettings(onlineComic.id, userId);
-    logger.debug(TAG, `加载的阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}`);
+    // 从数据库加载阅读设置（传入sourceId以支持图源级别设置）
+    const readingSettings = await ComicConverter.loadReadingSettings(onlineComic.id, userId, onlineComic.sourceId);
+    logger.debug(TAG, `加载的阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}, animation=${readingSettings.pageTurnAnimation}`);
 
     // 从数据库加载阅读进度
     const readingProgress = await ComicConverter.loadReadingProgress(onlineComic.id, userId);

@@ -226,6 +226,7 @@ export class DatabaseManager {
     await this.ensureComicSourcePkgColumn();
     await this.ensureComicSourcePreloadColumns();
     await this.ensureComicSourceTabsConfigColumn();
+    await this.ensureComicSourceIconPathColumn();
     await this.ensureEBookProgressColumns();
   }
 
@@ -411,6 +412,33 @@ export class DatabaseManager {
       }
     } catch (error) {
       logger.error(TAG, `确保comic_source tabs_config列失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 确保comic_source表有iconPath列（图源图标路径）
+   */
+  private async ensureComicSourceIconPathColumn(): Promise<void> {
+    try {
+      const store = this.getStore();
+      const rs = await store.querySql("PRAGMA table_info(comic_source)");
+      
+      let hasIconPath = false;
+      
+      while (rs.goToNextRow()) {
+        const columnName = rs.getString(1);
+        if (columnName === 'iconPath') {
+          hasIconPath = true;
+        }
+      }
+      rs.close();
+      
+      if (!hasIconPath) {
+        await store.executeSql("ALTER TABLE comic_source ADD COLUMN iconPath TEXT");
+        logger.info(TAG, '已为comic_source添加iconPath列');
+      }
+    } catch (error) {
+      logger.error(TAG, `确保comic_source iconPath列失败: ${String(error)}`);
     }
   }
 

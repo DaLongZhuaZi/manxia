@@ -3028,18 +3028,76 @@ export class DataManager {
   }
 
   /**
+   * 通过 sourceId 获取图源的 pkg（唯一标识符）
+   * @param sourceId 数据库自动生成的图源ID
+   * @returns pkg 字符串，如果未找到则返回 null
+   */
+  async getSourcePkgById(sourceId: number): Promise<string | null> {
+    try {
+      const sql = 'SELECT pkg FROM comic_source WHERE id = ?';
+      const result = await this.databaseManager.querySql(sql, [sourceId]);
+      if (result && result.length > 0) {
+        const row: ESObject = result[0] as ESObject;
+        const pkg = row.pkg as string;
+        if (pkg && pkg.length > 0) {
+          return pkg;
+        }
+        // 如果 pkg 为空，尝试从 configJson 中提取
+        const configResult = await this.databaseManager.querySql(
+          'SELECT configJson FROM comic_source WHERE id = ?', [sourceId]
+        );
+        if (configResult && configResult.length > 0) {
+          const configRow: ESObject = configResult[0] as ESObject;
+          const configJson = configRow.configJson as string;
+          if (configJson) {
+            try {
+              const config: ESObject = JSON.parse(configJson) as ESObject;
+              const metadata: ESObject = config.metadata as ESObject;
+              if (metadata && metadata.id) {
+                const extractedPkg = metadata.id as string;
+                // 同时更新数据库中的 pkg 字段
+                await this.databaseManager.executeSql(
+                  'UPDATE comic_source SET pkg = ? WHERE id = ?', [extractedPkg, sourceId]
+                );
+                logger.info(TAG, `已从 configJson 提取并保存 pkg: ${extractedPkg} (sourceId=${sourceId})`);
+                return extractedPkg;
+              }
+            } catch (parseErr) {
+              logger.warn(TAG, `解析 configJson 失败: ${String(parseErr)}`);
+            }
+          }
+        }
+      }
+      return null;
+    } catch (error) {
+      logger.error(TAG, `获取图源 pkg 失败: sourceId=${sourceId}`, String(error));
+      return null;
+    }
+  }
+
+  /**
    * 保存图源用户设置（通用键值）
+   * [重构] 使用 pkg 作为键的一部分，确保图源删除/重装后设置不丢失
    */
   async saveSourceUserSetting(sourceId: number, keyName: string, value: string, type: string): Promise<void> {
-    const key: string = `source:${String(sourceId)}:${keyName}`;
+    // 优先使用 pkg，如果获取不到则回退到 sourceId
+    const pkg = await this.getSourcePkgById(sourceId);
+    const keyIdentifier = pkg || `id_${String(sourceId)}`;
+    const key: string = `source:${keyIdentifier}:${keyName}`;
+    logger.debug(TAG, `保存图源设置: key=${key}, value=${value}`);
     await this.saveSetting(key, value, type);
   }
 
   /**
    * 获取图源用户设置
+   * [重构] 使用 pkg 作为键的一部分，确保图源删除/重装后设置不丢失
    */
   async getSourceUserSetting(sourceId: number, keyName: string): Promise<UserSettingsDatabaseRecord | null> {
-    const key: string = `source:${String(sourceId)}:${keyName}`;
+    // 优先使用 pkg，如果获取不到则回退到 sourceId
+    const pkg = await this.getSourcePkgById(sourceId);
+    const keyIdentifier = pkg || `id_${String(sourceId)}`;
+    const key: string = `source:${keyIdentifier}:${keyName}`;
+    logger.debug(TAG, `获取图源设置: key=${key}`);
     return await this.getSetting(key);
   }
 
