@@ -17,12 +17,20 @@ export class SettingKeys {
   static readonly ADVANCED_MODE_ENABLED = 'advanced_mode_enabled';
   static readonly ENABLE_LOG_FLOATING_WINDOW = 'enable_log_floating_window';
   
-  // 阅读设置
+  // 漫画全局阅读设置
   static readonly GLOBAL_READING_MODE = 'global_reading_mode';
   static readonly GLOBAL_READING_DIRECTION = 'global_reading_direction';
   static readonly GLOBAL_BRIGHTNESS = 'global_brightness';
   static readonly GLOBAL_KEEP_SCREEN_ON = 'global_keep_screen_on';
   static readonly GLOBAL_VOLUME_KEY_NAVIGATION = 'global_volume_key_navigation';
+  static readonly GLOBAL_PAGE_TURN_ANIMATION = 'global_page_turn_animation';
+  
+  // 电子书全局阅读设置
+  static readonly GLOBAL_EBOOK_FONT_SIZE = 'global_ebook_font_size';
+  static readonly GLOBAL_EBOOK_LINE_HEIGHT = 'global_ebook_line_height';
+  static readonly GLOBAL_EBOOK_PAGE_MARGIN = 'global_ebook_page_margin';
+  static readonly GLOBAL_EBOOK_THEME = 'global_ebook_theme';
+  static readonly GLOBAL_EBOOK_PAGE_MODE = 'global_ebook_page_mode';
   
   // 下载设置
   static readonly DOWNLOAD_WIFI_ONLY = 'download_wifi_only';

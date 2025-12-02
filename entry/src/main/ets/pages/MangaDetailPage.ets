@@ -1761,7 +1761,7 @@ struct MangaDetailPage {
       }
       
       // 转换为Manga对象
-      this.currentManga = this.convertMangaInfoToManga(mangaInfo);
+      this.currentManga = await this.convertMangaInfoToManga(mangaInfo);
       
       // 如果有缓存的封面路径，优先使用
       if (this.pageParams?.cachedCoverPath) {
@@ -1935,7 +1935,7 @@ struct MangaDetailPage {
       }
       
       // 构建Manga对象
-      this.currentManga = this.buildMangaFromOnlineComicInfo(onlineComic);
+      this.currentManga = await this.buildMangaFromOnlineComicInfo(onlineComic);
       
       // 加载章节列表（从online_chapter表）
       const chapters = await this.loadChaptersFromDatabase(String(onlineComic.id));
@@ -1982,7 +1982,7 @@ struct MangaDetailPage {
       logger.info(TAG, `✅ 找到已存在的在线漫画: ${onlineComic.title}, 内部ID: ${onlineComic.id}`);
       
       // 构建Manga对象
-      this.currentManga = this.buildMangaFromOnlineComicInfo(onlineComic);
+      this.currentManga = await this.buildMangaFromOnlineComicInfo(onlineComic);
       
       // 先加载数据库中的章节（快速显示）
       const dbChapters = await this.loadChaptersFromDatabase(onlineComic.id);
@@ -2078,11 +2078,17 @@ struct MangaDetailPage {
 
   /**
    * 辅助方法：从OnlineComicInfo构建Manga对象
+   * [修复] 改为异步方法，正确加载阅读设置（图源设置 > 全局设置 > 默认值）
    */
-  private buildMangaFromOnlineComicInfo(onlineComic: OnlineComicInfo): Manga {
+  private async buildMangaFromOnlineComicInfo(onlineComic: OnlineComicInfo): Promise<Manga> {
     // [修复] 优先使用onlineComic的sourceName，其次使用this.sourceName，最后回退到默认值
     const displaySourceName = onlineComic.sourceName || this.sourceName || `WebView Source ${this.sourceId}`;
     logger.info(TAG, `构建 Manga 对象: sourceName=${displaySourceName}`);
+    
+    // [修复] 加载正确的阅读设置（图源设置 > 全局设置 > 默认值）
+    const sourceIdStr = onlineComic.sourceId ? String(onlineComic.sourceId) : String(this.sourceId);
+    const readingSettings = await ComicConverter.loadReadingSettings(onlineComic.id, 'default_user', sourceIdStr);
+    logger.info(TAG, `加载阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}, animation=${readingSettings.pageTurnAnimation}`);
     
     return {
       id: onlineComic.id,
@@ -2113,7 +2119,7 @@ struct MangaDetailPage {
         readingPercentage: 0
       },
       bookmarks: [],
-      readingSettings: DEFAULT_READING_SETTINGS,
+      readingSettings: readingSettings,
       isFavorite: false,
       lastUpdatedAt: onlineComic.lastUpdateTime,
       sourceInfo: {
@@ -2310,7 +2316,7 @@ struct MangaDetailPage {
       // 优先查询在线独立表
       const onlineComic = await dm.getOnlineComicByExternalId(externalId);
       if (onlineComic) {
-        const mangaObj: Manga = this.buildMangaFromOnlineComicInfo(onlineComic);
+        const mangaObj: Manga = await this.buildMangaFromOnlineComicInfo(onlineComic);
         this.currentManga = mangaObj;
 
         // 章节列表（来自 online_chapter）
@@ -2375,8 +2381,9 @@ struct MangaDetailPage {
   
   /**
    * 转换MangaInfo到Manga
+   * [修复] 改为异步方法，正确加载阅读设置（图源设置 > 全局设置 > 默认值）
    */
-  private convertMangaInfoToManga(info: MangaInfo): Manga {
+  private async convertMangaInfoToManga(info: MangaInfo): Promise<Manga> {
     // 处理简介中的转义符和HTML标签
     let processedDescription = info.description || '暂无简介';
     if (processedDescription !== '暂无简介') {
@@ -2388,6 +2395,13 @@ struct MangaDetailPage {
       processedDescription = processedDescription.replace(/\\t/g, '\t');
       processedDescription = processedDescription.replace(/\\r/g, '\r');
     }
+    
+    // [修复] 加载正确的阅读设置（图源设置 > 全局设置 > 默认值）
+    const mangaId = info.id || '';
+    const sourceIdStr = String(this.sourceId);
+    logger.info(TAG, `convertMangaInfoToManga: 准备加载阅读设置, mangaId=${mangaId}, sourceId=${this.sourceId}, sourceIdStr=${sourceIdStr}`);
+    const readingSettings = await ComicConverter.loadReadingSettings(mangaId, 'default_user', sourceIdStr);
+    logger.info(TAG, `加载阅读设置: mode=${readingSettings.readingMode}, direction=${readingSettings.readingDirection}, animation=${readingSettings.pageTurnAnimation}`);
     
     const manga: Manga = {
       id: info.id || '',
@@ -2418,7 +2432,7 @@ struct MangaDetailPage {
         readingPercentage: 0
       },
       bookmarks: [],
-      readingSettings: DEFAULT_READING_SETTINGS,
+      readingSettings: readingSettings,
       isFavorite: false,
       lastUpdatedAt: info.updated ? new Date(info.updated).getTime() : Date.now(),
       sourceInfo: {

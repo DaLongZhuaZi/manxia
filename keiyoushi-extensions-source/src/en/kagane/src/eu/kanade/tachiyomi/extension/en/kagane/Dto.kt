@@ -56,7 +56,7 @@ class DetailsDto(
 
         author = authors.joinToString()
         description = desc.toString()
-        genre = genres.joinToString()
+        genre = (listOf(source) + genres).joinToString()
         status = this@DetailsDto.status.toStatus()
     }
 
@@ -64,6 +64,7 @@ class DetailsDto(
         return when (this) {
             "ONGOING" -> SManga.ONGOING
             "ENDED" -> SManga.COMPLETED
+            "HIATUS" -> SManga.ON_HIATUS
             else -> SManga.UNKNOWN
         }
     }
@@ -83,11 +84,16 @@ class ChapterDto(
         val releaseDate: String?,
         @SerialName("pages_count")
         val pagesCount: Int,
+        @SerialName("number_sort")
+        val number: Float,
     ) {
-        fun toSChapter(): SChapter = SChapter.create().apply {
+        fun toSChapter(useSourceChapterNumber: Boolean = false): SChapter = SChapter.create().apply {
             url = "$seriesId;$id;$pagesCount"
             name = title
             date_upload = dateFormat.tryParse(releaseDate)
+            if (useSourceChapterNumber) {
+                chapter_number = number
+            }
         }
     }
 
@@ -100,4 +106,6 @@ class ChapterDto(
 class ChallengeDto(
     @SerialName("access_token")
     val accessToken: String,
+    @SerialName("cache_url")
+    val cacheUrl: String,
 )

@@ -32,6 +32,7 @@ export interface SourceRepositoryEntry {
   code: number;           // 版本代码
   version: string;        // 版本号
   nsfw: number;           // 是否NSFW (0/1)
+  hasIcon?: boolean;      // 是否有图标
   sources: SourceSubEntry[];
 }
 
@@ -280,9 +281,12 @@ export class SourceRepositoryManager {
       const responseData = response.result as string;
       const repositoryData = JSON.parse(responseData) as SourceRepositoryEntry[];
 
-      // 下载每个图源的实际配置文件
+      // 下载每个图源的实际配置文件和图标
       const sourceConfigs: Record<string, string> = {};
+      const sourceIcons: Record<string, { data: ArrayBuffer; ext: string }> = {};
+      
       for (const entry of repositoryData) {
+        // 下载图源配置文件 (新格式: pkg/source.json, 旧格式: pkg.json)
         const sourceConfigUrl = this.resolveSourceConfigUrl(url, entry.pkg);
         try {
           const configResponse = await httpRequest.request(sourceConfigUrl, {
@@ -302,6 +306,42 @@ export class SourceRepositoryManager {
           sourceConfigs[entry.pkg] = configResponse.result as string;
         } catch (error) {
           logger.warn(TAG, `下载图源配置异常: ${entry.pkg}`, String(error));
+        }
+        
+        // 如果有图标，下载图标文件（尝试多种格式）
+        if (entry.hasIcon) {
+          const iconFormats = ['webp', 'png', 'jpg'];
+          let iconDownloaded = false;
+          
+          for (const ext of iconFormats) {
+            if (iconDownloaded) break;
+            
+            const iconUrl = this.resolveSourceIconUrl(url, entry.pkg, ext);
+            try {
+              const iconResponse = await httpRequest.request(iconUrl, {
+                method: http.RequestMethod.GET,
+                connectTimeout: 15000,
+                readTimeout: 15000,
+                expectDataType: http.HttpDataType.ARRAY_BUFFER
+              });
+              
+              if (iconResponse.responseCode === 200 && iconResponse.result) {
+                sourceIcons[entry.pkg] = {
+                  data: iconResponse.result as ArrayBuffer,
+                  ext: ext
+                };
+                iconDownloaded = true;
+                logger.info(TAG, `下载图源图标成功: ${entry.pkg} (${ext})`);
+              }
+            } catch (iconError) {
+              // 尝试下一个格式
+              logger.debug(TAG, `尝试下载图标 ${entry.pkg}.${ext} 失败，尝试其他格式`);
+            }
+          }
+          
+          if (!iconDownloaded) {
+            logger.warn(TAG, `下载图源图标失败: ${entry.pkg}，所有格式都不可用`);
+          }
         }
       }
 
@@ -337,8 +377,9 @@ export class SourceRepositoryManager {
       // 保存仓库配置
       await this.saveRepositoryConfig(url, repositoryName || this.deriveRepositoryName(url), repositoryData.length);
 
-      // 保存各个图源的JSON文件
+      // 保存各个图源的JSON文件和图标
       await this.saveSourceFiles(sourceConfigs);
+      await this.saveSourceIcons(sourceIcons);
 
       // 导入新增的图源
       if (sourcesToImport.length > 0) {
@@ -413,6 +454,59 @@ export class SourceRepositoryManager {
         logger.warn(TAG, `保存图源文件失败: ${pkg}`, String(error));
       }
     }
+  }
+
+  /**
+   * 保存图源图标文件
+   */
+  private async saveSourceIcons(sourceIcons: Record<string, { data: ArrayBuffer; ext: string }>): Promise<void> {
+    // 确保图标目录存在
+    const iconsDir = `${this.repositoryDir}/icons`;
+    await this.ensureDirectoryExists(iconsDir);
+    
+    const entries: Array<[string, { data: ArrayBuffer; ext: string }]> = Object.entries(sourceIcons);
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const pkg = entry[0];
+      const iconInfo = entry[1];
+      try {
+        // 使用原始扩展名保存
+        const fileName = `${pkg}.${iconInfo.ext}`;
+        const filePath = `${iconsDir}/${fileName}`;
+
+        const file = fileIo.openSync(
+          filePath,
+          fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+        );
+        fileIo.writeSync(file.fd, iconInfo.data);
+        fileIo.closeSync(file);
+        logger.info(TAG, `图源图标保存成功: ${fileName}`);
+      } catch (error) {
+        logger.warn(TAG, `保存图源图标失败: ${pkg}`, String(error));
+      }
+    }
+  }
+
+  /**
+   * 获取图源图标路径
+   * @param pkg 图源包名
+   * @returns 图标文件路径，如果不存在返回 null
+   */
+  getSourceIconPath(pkg: string): string | null {
+    // 尝试多种格式
+    const formats = ['webp', 'png', 'jpg'];
+    for (const ext of formats) {
+      const iconPath = `${this.repositoryDir}/icons/${pkg}.${ext}`;
+      try {
+        const exists = fileIo.accessSync(iconPath);
+        if (exists) {
+          return iconPath;
+        }
+      } catch (_) {
+        // 文件不存在，尝试下一个格式
+      }
+    }
+    return null;
   }
 
   /**
@@ -586,18 +680,44 @@ export class SourceRepositoryManager {
     }
   }
 
+  /**
+   * 解析图源配置文件URL
+   * 支持两种格式：
+   * - 新格式（文件夹）: base/pkg/source.json
+   * - 旧格式（扁平）: base/pkg.json
+   */
   private resolveSourceConfigUrl(indexUrl: string, pkg: string): string {
     if (!indexUrl) {
-      return `${pkg}.json`;
+      return `${pkg}/source.json`;
     }
     const queryIndex = indexUrl.indexOf('?');
     const cleanUrl = queryIndex >= 0 ? indexUrl.substring(0, queryIndex) : indexUrl;
     const lastSlashIndex = cleanUrl.lastIndexOf('/');
     if (lastSlashIndex === -1) {
-      return `${cleanUrl}/${pkg}.json`;
+      return `${cleanUrl}/${pkg}/source.json`;
     }
     const base = cleanUrl.substring(0, lastSlashIndex + 1);
-    return `${base}${pkg}.json`;
+    // 优先使用新格式（文件夹结构）
+    return `${base}${pkg}/source.json`;
+  }
+
+  /**
+   * 解析图源图标URL
+   * 图标文件位于: base/pkg/icon.{ext}
+   * 支持的格式: png, jpg, webp
+   */
+  private resolveSourceIconUrl(indexUrl: string, pkg: string, ext: string = 'webp'): string {
+    if (!indexUrl) {
+      return `${pkg}/icon.${ext}`;
+    }
+    const queryIndex = indexUrl.indexOf('?');
+    const cleanUrl = queryIndex >= 0 ? indexUrl.substring(0, queryIndex) : indexUrl;
+    const lastSlashIndex = cleanUrl.lastIndexOf('/');
+    if (lastSlashIndex === -1) {
+      return `${cleanUrl}/${pkg}/icon.${ext}`;
+    }
+    const base = cleanUrl.substring(0, lastSlashIndex + 1);
+    return `${base}${pkg}/icon.${ext}`;
   }
 
   private deriveRepositoryName(url: string): string {

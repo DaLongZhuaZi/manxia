@@ -17,6 +17,8 @@ import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { SourceLoginPageParams } from './SourceLoginPage';
+import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
+import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 
 const TAG: string = 'SourceSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -26,6 +28,22 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
  */
 export interface SourceSettingsPageParams {
   sourceName: string;
+}
+
+// ForEach 使用的接口类型
+interface ReadingModeOption {
+  mode: ReadingMode;
+  label: string;
+}
+
+interface ReadingDirectionOption {
+  direction: ReadingDirection;
+  label: string;
+}
+
+interface PageTurnAnimationOption {
+  type: PageTurnAnimationType;
+  label: string;
 }
 
 @Component
@@ -69,6 +87,20 @@ export struct SourceSettingsPage {
   @State private isLandscape: boolean = false;
   private deviceOrientationListener: DeviceChangeListener | null = null;
   private deviceAdaptationManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+
+  // 漫画默认阅读设置（图源级别）
+  @State sourceReadingMode: ReadingMode = DEFAULT_READING_SETTINGS.readingMode;
+  @State sourceReadingDirection: ReadingDirection = DEFAULT_READING_SETTINGS.readingDirection;
+  @State sourcePageTurnAnimation: PageTurnAnimationType = DEFAULT_READING_SETTINGS.pageTurnAnimation;
+  @State sourceMangaSettingsEnabled: boolean = false;
+
+  // 电子书默认阅读设置（图源级别）
+  @State sourceEbookFontSize: number = DEFAULT_EBOOK_READING_SETTINGS.fontSize;
+  @State sourceEbookLineHeight: number = DEFAULT_EBOOK_READING_SETTINGS.lineHeight;
+  @State sourceEbookPageMargin: number = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+  @State sourceEbookThemeIndex: number = 0;
+  @State sourceEbookPageMode: EBookPageMode = DEFAULT_EBOOK_READING_SETTINGS.pageMode;
+  @State sourceEbookSettingsEnabled: boolean = false;
 
   aboutToAppear(): void {
     logger.info(TAG, '=== aboutToAppear 开始 ===');
@@ -142,6 +174,32 @@ export struct SourceSettingsPage {
       if (l2 && l2.settingValue) { this.usernameSelector = l2.settingValue; }
       if (l3 && l3.settingValue) { this.passwordSelector = l3.settingValue; }
       if (l4 && l4.settingValue) { this.submitSelector = l4.settingValue; }
+
+      // 加载漫画默认阅读设置
+      const mangaEnabled: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'manga.settingsEnabled');
+      const mangaMode: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'manga.readingMode');
+      const mangaDirection: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'manga.readingDirection');
+      const mangaAnimation: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'manga.pageTurnAnimation');
+
+      if (mangaEnabled && mangaEnabled.settingValue) { this.sourceMangaSettingsEnabled = mangaEnabled.settingValue === '1'; }
+      if (mangaMode && mangaMode.settingValue) { this.sourceReadingMode = mangaMode.settingValue as ReadingMode; }
+      if (mangaDirection && mangaDirection.settingValue) { this.sourceReadingDirection = mangaDirection.settingValue as ReadingDirection; }
+      if (mangaAnimation && mangaAnimation.settingValue) { this.sourcePageTurnAnimation = mangaAnimation.settingValue as PageTurnAnimationType; }
+
+      // 加载电子书默认阅读设置
+      const ebookEnabled: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.settingsEnabled');
+      const ebookFontSize: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.fontSize');
+      const ebookLineHeight: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.lineHeight');
+      const ebookPageMargin: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.pageMargin');
+      const ebookTheme: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.themeIndex');
+      const ebookPageMode: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'ebook.pageMode');
+
+      if (ebookEnabled && ebookEnabled.settingValue) { this.sourceEbookSettingsEnabled = ebookEnabled.settingValue === '1'; }
+      if (ebookFontSize && ebookFontSize.settingValue) { this.sourceEbookFontSize = Number(ebookFontSize.settingValue); }
+      if (ebookLineHeight && ebookLineHeight.settingValue) { this.sourceEbookLineHeight = Number(ebookLineHeight.settingValue); }
+      if (ebookPageMargin && ebookPageMargin.settingValue) { this.sourceEbookPageMargin = Number(ebookPageMargin.settingValue); }
+      if (ebookTheme && ebookTheme.settingValue) { this.sourceEbookThemeIndex = Number(ebookTheme.settingValue); }
+      if (ebookPageMode && ebookPageMode.settingValue) { this.sourceEbookPageMode = ebookPageMode.settingValue as EBookPageMode; }
     } catch (error) {
       logger.error(TAG, '加载图源设置失败', String(error));
     }
@@ -192,12 +250,77 @@ export struct SourceSettingsPage {
       await this.dataManager.saveSourceUserSetting(sid, 'login.usernameSelector', this.usernameSelector, 'string');
       await this.dataManager.saveSourceUserSetting(sid, 'login.passwordSelector', this.passwordSelector, 'string');
       await this.dataManager.saveSourceUserSetting(sid, 'login.submitSelector', this.submitSelector, 'string');
+
+      // 保存漫画默认阅读设置
+      await this.dataManager.saveSourceUserSetting(sid, 'manga.settingsEnabled', this.sourceMangaSettingsEnabled ? '1' : '0', 'boolean');
+      if (this.sourceMangaSettingsEnabled) {
+        await this.dataManager.saveSourceUserSetting(sid, 'manga.readingMode', this.sourceReadingMode, 'string');
+        await this.dataManager.saveSourceUserSetting(sid, 'manga.readingDirection', this.sourceReadingDirection, 'string');
+        await this.dataManager.saveSourceUserSetting(sid, 'manga.pageTurnAnimation', this.sourcePageTurnAnimation, 'string');
+      }
+
+      // 保存电子书默认阅读设置
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.settingsEnabled', this.sourceEbookSettingsEnabled ? '1' : '0', 'boolean');
+      if (this.sourceEbookSettingsEnabled) {
+        await this.dataManager.saveSourceUserSetting(sid, 'ebook.fontSize', String(this.sourceEbookFontSize), 'number');
+        await this.dataManager.saveSourceUserSetting(sid, 'ebook.lineHeight', String(this.sourceEbookLineHeight), 'number');
+        await this.dataManager.saveSourceUserSetting(sid, 'ebook.pageMargin', String(this.sourceEbookPageMargin), 'number');
+        await this.dataManager.saveSourceUserSetting(sid, 'ebook.themeIndex', String(this.sourceEbookThemeIndex), 'number');
+        await this.dataManager.saveSourceUserSetting(sid, 'ebook.pageMode', this.sourceEbookPageMode, 'string');
+      }
+
       this.showToast('设置已保存');
     } catch (error) {
       logger.error(TAG, '保存图源设置失败', String(error));
       this.showToast('保存失败');
     }
     this.isSaving = false;
+  }
+
+  /**
+   * 实时保存漫画默认阅读设置
+   */
+  private async saveMangaReadingSettings(): Promise<void> {
+    if (!this.pageParams || !this.pageParams.sourceName) {
+      return;
+    }
+    try {
+      const sourceRecord = await this.dataManager.getComicSourceByName(this.pageParams.sourceName);
+      if (!sourceRecord) { return; }
+      const sid: number = Number(sourceRecord.id);
+      
+      await this.dataManager.saveSourceUserSetting(sid, 'manga.settingsEnabled', this.sourceMangaSettingsEnabled ? '1' : '0', 'boolean');
+      await this.dataManager.saveSourceUserSetting(sid, 'manga.readingMode', this.sourceReadingMode, 'string');
+      await this.dataManager.saveSourceUserSetting(sid, 'manga.readingDirection', this.sourceReadingDirection, 'string');
+      await this.dataManager.saveSourceUserSetting(sid, 'manga.pageTurnAnimation', this.sourcePageTurnAnimation, 'string');
+      logger.info(TAG, '漫画默认阅读设置已保存');
+    } catch (error) {
+      logger.error(TAG, '保存漫画默认阅读设置失败', String(error));
+    }
+  }
+
+  /**
+   * 实时保存电子书默认阅读设置
+   */
+  private async saveEbookReadingSettings(): Promise<void> {
+    if (!this.pageParams || !this.pageParams.sourceName) {
+      return;
+    }
+    try {
+      const sourceRecord = await this.dataManager.getComicSourceByName(this.pageParams.sourceName);
+      if (!sourceRecord) { return; }
+      const sid: number = Number(sourceRecord.id);
+      
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.settingsEnabled', this.sourceEbookSettingsEnabled ? '1' : '0', 'boolean');
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.fontSize', String(this.sourceEbookFontSize), 'number');
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.lineHeight', String(this.sourceEbookLineHeight), 'number');
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.pageMargin', String(this.sourceEbookPageMargin), 'number');
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.themeIndex', String(this.sourceEbookThemeIndex), 'number');
+      await this.dataManager.saveSourceUserSetting(sid, 'ebook.pageMode', this.sourceEbookPageMode, 'string');
+      logger.info(TAG, '电子书默认阅读设置已保存');
+    } catch (error) {
+      logger.error(TAG, '保存电子书默认阅读设置失败', String(error));
+    }
   }
 
   private async applyCookieInput(): Promise<void> {
@@ -758,6 +881,358 @@ export struct SourceSettingsPage {
             }
             .width(this.isLandscape ? '48%' : '100%')
             .padding(16)
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+
+            // 漫画默认阅读设置分组
+            Column() {
+              Row() {
+                Text('漫画默认阅读设置')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Blank()
+                Toggle({ type: ToggleType.Switch, isOn: this.sourceMangaSettingsEnabled })
+                  .onChange((isOn: boolean) => { 
+                    this.sourceMangaSettingsEnabled = isOn; 
+                    this.saveMangaReadingSettings();
+                  })
+              }
+              .width('100%')
+              .margin({ bottom: 12 })
+
+              if (this.sourceMangaSettingsEnabled) {
+                // 阅读模式
+                Column({ space: 8 }) {
+                  Text('默认阅读模式')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  
+                  Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+                    ForEach([
+                      { mode: ReadingMode.SINGLE_PAGE, label: '单页' },
+                      { mode: ReadingMode.DOUBLE_PAGE, label: '双页' },
+                      { mode: ReadingMode.CONTINUOUS_SCROLL, label: '连续滚动' },
+                      { mode: ReadingMode.WEBTOON, label: '条漫' }
+                    ], (item: ReadingModeOption) => {
+                      Button({ stateEffect: true }) {
+                        Text(item.label)
+                          .fontSize(12)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                      }
+                        .height(32)
+                        .margin({ right: 8, bottom: 8 })
+                        .padding({ left: 12, right: 12 })
+                        .backgroundColor(
+                          this.sourceReadingMode === item.mode
+                            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+                        )
+                        .borderRadius(6)
+                        .onClick(() => { 
+                          this.sourceReadingMode = item.mode; 
+                          this.saveMangaReadingSettings();
+                        })
+                    })
+                  }
+                  .width('100%')
+                }
+                .width('100%')
+                .margin({ bottom: 12 })
+
+                // 阅读方向
+                Column({ space: 8 }) {
+                  Text('默认阅读方向')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  
+                  Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+                    ForEach([
+                      { direction: ReadingDirection.LEFT_TO_RIGHT, label: '从左到右' },
+                      { direction: ReadingDirection.RIGHT_TO_LEFT, label: '从右到左' },
+                      { direction: ReadingDirection.TOP_TO_BOTTOM, label: '从上到下' }
+                    ], (item: ReadingDirectionOption) => {
+                      Button({ stateEffect: true }) {
+                        Text(item.label)
+                          .fontSize(12)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                      }
+                        .height(32)
+                        .margin({ right: 8, bottom: 8 })
+                        .padding({ left: 12, right: 12 })
+                        .backgroundColor(
+                          this.sourceReadingDirection === item.direction
+                            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+                        )
+                        .borderRadius(6)
+                        .onClick(() => { 
+                          this.sourceReadingDirection = item.direction; 
+                          this.saveMangaReadingSettings();
+                        })
+                    })
+                  }
+                  .width('100%')
+                }
+                .width('100%')
+                .margin({ bottom: 12 })
+
+                // 翻页动画
+                Column({ space: 8 }) {
+                  Text('默认翻页动画')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  
+                  Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+                    ForEach([
+                      { type: PageTurnAnimationType.NONE, label: '无' },
+                      { type: PageTurnAnimationType.SLIDE, label: '滑动' },
+                      { type: PageTurnAnimationType.FADE, label: '淡入淡出' },
+                      { type: PageTurnAnimationType.CURL, label: '卷页' },
+                      { type: PageTurnAnimationType.CUBE, label: '立方体' },
+                      { type: PageTurnAnimationType.COVER, label: '覆盖' },
+                      { type: PageTurnAnimationType.DEPTH, label: '景深' }
+                    ], (item: PageTurnAnimationOption) => {
+                      Button({ stateEffect: true }) {
+                        Text(item.label)
+                          .fontSize(12)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
+                      }
+                        .width(60)
+                        .height(32)
+                        .margin({ right: 8, bottom: 8 })
+                        .backgroundColor(
+                          this.sourcePageTurnAnimation === item.type
+                            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                            : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+                        )
+                        .borderRadius(6)
+                        .onClick(() => { 
+                          this.sourcePageTurnAnimation = item.type; 
+                          this.saveMangaReadingSettings();
+                        })
+                    })
+                  }
+                  .width('100%')
+                }
+                .width('100%')
+              } else {
+                Text('启用后可为此图源的漫画设置默认阅读参数')
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+            }
+            .width(this.isLandscape ? '48%' : '100%')
+            .padding(16)
+            .margin({ top: 16 })
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+
+            // 电子书默认阅读设置分组
+            Column() {
+              Row() {
+                Text('电子书默认阅读设置')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Blank()
+                Toggle({ type: ToggleType.Switch, isOn: this.sourceEbookSettingsEnabled })
+                  .onChange((isOn: boolean) => { 
+                    this.sourceEbookSettingsEnabled = isOn; 
+                    this.saveEbookReadingSettings();
+                  })
+              }
+              .width('100%')
+              .margin({ bottom: 12 })
+
+              if (this.sourceEbookSettingsEnabled) {
+                // 字体大小
+                Column({ space: 8 }) {
+                  Row() {
+                    Text('默认字体大小')
+                      .fontSize(14)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Text(`${this.sourceEbookFontSize}`)
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+
+                  Slider({
+                    value: this.sourceEbookFontSize,
+                    min: 12,
+                    max: 32,
+                    step: 1,
+                    style: SliderStyle.InSet
+                  })
+                    .width('100%')
+                    .trackThickness(4)
+                    .onChange((value: number) => { 
+                      this.sourceEbookFontSize = Math.round(value); 
+                      this.saveEbookReadingSettings();
+                    })
+                }
+                .width('100%')
+                .margin({ bottom: 12 })
+
+                // 行高
+                Column({ space: 8 }) {
+                  Row() {
+                    Text('默认行高')
+                      .fontSize(14)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Text(`${this.sourceEbookLineHeight.toFixed(1)}`)
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+
+                  Slider({
+                    value: this.sourceEbookLineHeight * 10,
+                    min: 12,
+                    max: 30,
+                    step: 1,
+                    style: SliderStyle.InSet
+                  })
+                    .width('100%')
+                    .trackThickness(4)
+                    .onChange((value: number) => { 
+                      this.sourceEbookLineHeight = value / 10; 
+                      this.saveEbookReadingSettings();
+                    })
+                }
+                .width('100%')
+                .margin({ bottom: 12 })
+
+                // 页边距
+                Column({ space: 8 }) {
+                  Row() {
+                    Text('默认页边距')
+                      .fontSize(14)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Text(`${this.sourceEbookPageMargin}`)
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+
+                  Slider({
+                    value: this.sourceEbookPageMargin,
+                    min: 8,
+                    max: 48,
+                    step: 4,
+                    style: SliderStyle.InSet
+                  })
+                    .width('100%')
+                    .trackThickness(4)
+                    .onChange((value: number) => { 
+                      this.sourceEbookPageMargin = Math.round(value); 
+                      this.saveEbookReadingSettings();
+                    })
+                }
+                .width('100%')
+                .margin({ bottom: 12 })
+
+                // 阅读主题
+                Column({ space: 8 }) {
+                  Text('默认阅读主题')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+                  Row({ space: 8 }) {
+                    ForEach(EBOOK_THEME_PRESETS, (theme: EBookThemePreset, index: number) => {
+                      Column() {
+                        Stack() {
+                          Column()
+                            .width(36)
+                            .height(36)
+                            .backgroundColor(theme.backgroundColor)
+                            .borderRadius(18)
+                            .border({
+                              width: this.sourceEbookThemeIndex === index ? 2 : 1,
+                              color: this.sourceEbookThemeIndex === index 
+                                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                                : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                            })
+                          
+                          if (this.sourceEbookThemeIndex === index) {
+                            Image($r('app.media.ic_check'))
+                              .width(14)
+                              .height(14)
+                              .fillColor(theme.nightMode ? '#FFFFFF' : '#000000')
+                          }
+                        }
+                        
+                        Text(theme.name)
+                          .fontSize(10)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                          .margin({ top: 4 })
+                      }
+                      .onClick(() => { 
+                        this.sourceEbookThemeIndex = index; 
+                        this.saveEbookReadingSettings();
+                      })
+                    })
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.SpaceAround)
+                }
+                .width('100%')
+                .margin({ bottom: 12 })
+
+                // 翻页模式
+                Column({ space: 8 }) {
+                  Text('默认翻页模式')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+                  Row({ space: 16 }) {
+                    Row({ space: 8 }) {
+                      Radio({ value: 'simulation', group: 'sourceEbookFlipMode' })
+                        .checked(this.sourceEbookPageMode === EBookPageMode.SIMULATION)
+                        .onChange((isChecked: boolean) => {
+                          if (isChecked) { 
+                            this.sourceEbookPageMode = EBookPageMode.SIMULATION; 
+                            this.saveEbookReadingSettings();
+                          }
+                        })
+                      Text('仿真翻页')
+                        .fontSize(14)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    }
+
+                    Row({ space: 8 }) {
+                      Radio({ value: 'horizontal', group: 'sourceEbookFlipMode' })
+                        .checked(this.sourceEbookPageMode === EBookPageMode.HORIZONTAL)
+                        .onChange((isChecked: boolean) => {
+                          if (isChecked) { 
+                            this.sourceEbookPageMode = EBookPageMode.HORIZONTAL; 
+                            this.saveEbookReadingSettings();
+                          }
+                        })
+                      Text('横向滑动')
+                        .fontSize(14)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    }
+                  }
+                  .width('100%')
+                }
+                .width('100%')
+              } else {
+                Text('启用后可为此图源的电子书设置默认阅读参数')
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+            }
+            .width(this.isLandscape ? '48%' : '100%')
+            .padding(16)
+            .margin({ top: 16 })
             .borderRadius(12)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
           }
