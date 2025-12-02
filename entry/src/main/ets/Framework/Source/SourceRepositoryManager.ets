@@ -66,6 +66,14 @@ export interface SyncResult {
 }
 
 /**
+ * 图源图标信息
+ */
+interface SourceIconInfo {
+  data: ArrayBuffer;
+  ext: string;
+}
+
+/**
  * 图源仓库管理器类
  */
 export class SourceRepositoryManager {
@@ -283,7 +291,7 @@ export class SourceRepositoryManager {
 
       // 下载每个图源的实际配置文件和图标
       const sourceConfigs: Record<string, string> = {};
-      const sourceIcons: Record<string, { data: ArrayBuffer; ext: string }> = {};
+      const sourceIcons: Record<string, SourceIconInfo> = {};
       
       for (const entry of repositoryData) {
         // 下载图源配置文件 (新格式: pkg/source.json, 旧格式: pkg.json)
@@ -326,10 +334,11 @@ export class SourceRepositoryManager {
               });
               
               if (iconResponse.responseCode === 200 && iconResponse.result) {
-                sourceIcons[entry.pkg] = {
+                const iconInfo: SourceIconInfo = {
                   data: iconResponse.result as ArrayBuffer,
                   ext: ext
                 };
+                sourceIcons[entry.pkg] = iconInfo;
                 iconDownloaded = true;
                 logger.info(TAG, `下载图源图标成功: ${entry.pkg} (${ext})`);
               }
@@ -459,12 +468,12 @@ export class SourceRepositoryManager {
   /**
    * 保存图源图标文件
    */
-  private async saveSourceIcons(sourceIcons: Record<string, { data: ArrayBuffer; ext: string }>): Promise<void> {
+  private async saveSourceIcons(sourceIcons: Record<string, SourceIconInfo>): Promise<void> {
     // 确保图标目录存在
     const iconsDir = `${this.repositoryDir}/icons`;
     await this.ensureDirectoryExists(iconsDir);
     
-    const entries: Array<[string, { data: ArrayBuffer; ext: string }]> = Object.entries(sourceIcons);
+    const entries: Array<[string, SourceIconInfo]> = Object.entries(sourceIcons);
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const pkg = entry[0];
