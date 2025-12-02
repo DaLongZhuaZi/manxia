@@ -204,8 +204,10 @@ export class WebViewSourceManager implements IWebViewSourceManager {
 
   /**
    * 移除源配置
+   * @param sourceId 图源ID（字符串或数字）
+   * @param sourceName 图源名称（可选，用于清理MangaSourceEngine缓存）
    */
-  removeSource(sourceId: string): void {
+  removeSource(sourceId: string, sourceName?: string): void {
     try {
       // 销毁WebView实例
       this.destroyWebViewInstance(sourceId);
@@ -213,11 +215,46 @@ export class WebViewSourceManager implements IWebViewSourceManager {
       // 移除配置
       this.sourceConfigs.delete(sourceId);
       
-      logger.info(TAG, `源配置移除完成: ${sourceId}`);
+      // 【关键】清理MangaSourceEngine缓存
+      const numericId = Number(sourceId);
+      if (!isNaN(numericId)) {
+        this.releaseMangaEngine(numericId);
+      }
+      if (sourceName) {
+        this.releaseMangaEngine(sourceName);
+      }
+      // 同时尝试从映射表中获取sourceName并清理
+      const mappedName = this.sourceIdToName.get(numericId);
+      if (mappedName && mappedName !== sourceName) {
+        this.releaseMangaEngine(mappedName);
+      }
+      this.sourceIdToName.delete(numericId);
+      
+      logger.info(TAG, `源配置移除完成: ${sourceId}${sourceName ? ` (${sourceName})` : ''}, MangaEngine缓存已清理`);
       
     } catch (error) {
       logger.error(TAG, `移除源配置失败: ${sourceId}, 错误: ${error instanceof Error ? error.message : String(error)}`);
       throw error as Error;
+    }
+  }
+  
+  /**
+   * 通过图源名称移除MangaSourceEngine缓存
+   * 用于图源被删除或更新时清理旧缓存
+   */
+  removeEngineByName(sourceName: string): void {
+    if (this.mangaEngines.has(sourceName)) {
+      logger.info(TAG, `移除MangaSourceEngine缓存: "${sourceName}"`);
+      this.mangaEngines.delete(sourceName);
+      
+      // 同时清理sourceIdToName映射
+      const entries = Array.from(this.sourceIdToName.entries());
+      for (const entry of entries) {
+        if (entry[1] === sourceName) {
+          this.sourceIdToName.delete(entry[0]);
+          logger.debug(TAG, `清理sourceIdToName映射: ${entry[0]} -> "${sourceName}"`);
+        }
+      }
     }
   }
 

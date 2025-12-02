@@ -118,7 +118,7 @@ export class MangaSourceActionEngine {
     try {
       logger.info(TAG, `执行操作: ${action.type}`, JSON.stringify(action));
       
-      let result: string | boolean | Record<string, string | string[]> | ActionResult[];
+      let result: string | boolean | Record<string, string | string[]> | Array<Record<string, string>> | ActionResult[];
       
       switch (action.type) {
         case ActionType.NAVIGATE:
@@ -358,7 +358,7 @@ export class MangaSourceActionEngine {
   /**
    * 执行提取操作
    */
-  private async executeExtract(action: ExtractAction, context: ActionContext): Promise<Record<string, string | string[]>> {
+  private async executeExtract(action: ExtractAction, context: ActionContext): Promise<Record<string, string | string[]> | Array<Record<string, string>>> {
     // 根据数据源类型处理
     if (action.source === 'variable') {
       // 从变量中提取数据
@@ -371,8 +371,22 @@ export class MangaSourceActionEngine {
           `变量不存在: ${variableName}`
         );
       }
-      // 直接返回变量数据（假设已经是正确格式）
-      return typeof variableData === 'string' ? JSON.parse(variableData) : variableData;
+      // 解析变量数据
+      if (typeof variableData === 'string') {
+        try {
+          // 使用 JSON5 兼容的解析方式处理可能的嵌套对象
+          const parsed = JSON.parse(variableData) as Record<string, Object> | Array<Record<string, Object>>;
+          logger.debug(TAG, `变量数据解析成功，类型: ${Array.isArray(parsed) ? 'array' : typeof parsed}`);
+          return parsed as Record<string, string | string[]> | Array<Record<string, string>>;
+        } catch (e) {
+          logger.error(TAG, `变量数据解析失败: ${e}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.EXTRACTION_FAILED,
+            `变量数据解析失败: ${e}`
+          );
+        }
+      }
+      return variableData as Record<string, string | string[]> | Array<Record<string, string>>;
     }
     
     // 从DOM或脚本结果提取

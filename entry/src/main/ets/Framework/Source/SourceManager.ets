@@ -10,6 +10,7 @@ import { SourceTester, TestResult } from './SourceTester';
 import { JSONSourceParser } from './JSONSourceParser';
 import { fileIo } from '@kit.CoreFileKit';
 import { SourceRepositoryManager } from './SourceRepositoryManager';
+import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 
 const TAG = 'SourceManager';
 
@@ -273,8 +274,22 @@ export class SourceManager {
    * 删除图源
    * @param sourceId 图源ID
    * @param pkg 图源包名（可选，用于删除文件）
+   * @param sourceName 图源名称（可选，用于清理WebView缓存）
    */
-  async deleteSource(sourceId: number, pkg?: string): Promise<void> {
+  async deleteSource(sourceId: number, pkg?: string, sourceName?: string): Promise<void> {
+    // 【关键】获取图源名称（如果未提供），用于清理WebView引擎缓存
+    let actualSourceName = sourceName;
+    if (!actualSourceName) {
+      try {
+        const sourceRecord = await this.dataManager.getComicSourceById(sourceId);
+        if (sourceRecord) {
+          actualSourceName = sourceRecord.name;
+        }
+      } catch (e) {
+        logger.warn(TAG, `获取图源名称失败: ${e}`);
+      }
+    }
+    
     // 如果提供了 pkg，同时删除相关文件
     if (pkg) {
       try {
@@ -283,6 +298,18 @@ export class SourceManager {
       } catch (e) {
         logger.warn(TAG, `删除图源文件失败: ${e}`);
       }
+    }
+    
+    // 【关键】清理WebView引擎缓存（必须在删除数据库记录之前）
+    try {
+      const webViewManager = WebViewSourceManager.getInstance();
+      webViewManager.removeSource(String(sourceId), actualSourceName);
+      if (actualSourceName) {
+        webViewManager.removeEngineByName(actualSourceName);
+      }
+      logger.info(TAG, `WebView引擎缓存已清理: ${sourceId}${actualSourceName ? ` (${actualSourceName})` : ''}`);
+    } catch (e) {
+      logger.warn(TAG, `清理WebView引擎缓存失败: ${e}`);
     }
     
     await this.dataManager.deleteComicSource(sourceId);

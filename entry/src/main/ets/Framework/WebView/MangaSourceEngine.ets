@@ -256,6 +256,30 @@ export class MangaSourceEngine {
           searchResults = extractedData.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
           logger.debug(TAG, `提取到 ${searchResults.length} 条漫画数据`);
         }
+        
+        // 支持 script 操作直接返回漫画列表
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          if (scriptData.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
+                searchResults = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${searchResults.length} 条漫画数据`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是漫画列表格式: ${e}`);
+            }
+          }
+        }
       }
 
       const duration = Date.now() - startTime;
@@ -345,6 +369,34 @@ export class MangaSourceEngine {
           results = extractedData.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
           logger.debug(TAG, `提取到 ${results.length} 条漫画数据`);
         }
+        
+        // 支持 script 操作直接返回漫画列表（用于复杂提取场景）
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+              logger.debug(TAG, `脚本数据解除双重序列化后首字符: '${scriptData.charAt(0)}'`);
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          // 检查是否是漫画列表格式的JSON（以 [ 开头）
+          if (scriptData.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              logger.debug(TAG, `JSON解析成功，数组长度: ${parsed.length}`);
+              // 验证是否是漫画列表格式（包含 id 字段）
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
+                results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果JSON解析失败: ${e}`);
+            }
+          }
+        }
       }
 
       const duration = Date.now() - startTime;
@@ -431,6 +483,30 @@ export class MangaSourceEngine {
           const extractedData = Array.isArray(resultData) ? resultData : [resultData];
           results = extractedData.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
           logger.debug(TAG, `提取到 ${results.length} 条漫画数据`);
+        }
+        
+        // 支持 script 操作直接返回漫画列表
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          if (scriptData.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
+                results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是漫画列表格式: ${e}`);
+            }
+          }
         }
       }
 
