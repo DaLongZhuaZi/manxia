@@ -32,6 +32,24 @@ export class SettingKeys {
   static readonly GLOBAL_EBOOK_THEME = 'global_ebook_theme';
   static readonly GLOBAL_EBOOK_PAGE_MODE = 'global_ebook_page_mode';
   
+  // 纯文本阅读器全局设置
+  static readonly GLOBAL_TEXT_FONT_SIZE = 'global_text_font_size';
+  static readonly GLOBAL_TEXT_LINE_HEIGHT = 'global_text_line_height';
+  static readonly GLOBAL_TEXT_PARAGRAPH_SPACING = 'global_text_paragraph_spacing';
+  static readonly GLOBAL_TEXT_FIRST_LINE_INDENT = 'global_text_first_line_indent';
+  static readonly GLOBAL_TEXT_LETTER_SPACING = 'global_text_letter_spacing';
+  static readonly GLOBAL_TEXT_ALIGNMENT = 'global_text_alignment';
+  static readonly GLOBAL_TEXT_PAGE_MARGIN = 'global_text_page_margin';
+  static readonly GLOBAL_TEXT_BG_COLOR = 'global_text_bg_color';
+  static readonly GLOBAL_TEXT_TEXT_COLOR = 'global_text_text_color';
+  static readonly GLOBAL_TEXT_PAGE_TURN_ANIMATION = 'global_text_page_turn_animation';
+  static readonly GLOBAL_TEXT_KEEP_SCREEN_ON = 'global_text_keep_screen_on';
+  static readonly GLOBAL_TEXT_VOLUME_KEY_NAV = 'global_text_volume_key_nav';
+  static readonly GLOBAL_TEXT_TAP_TO_TURN = 'global_text_tap_to_turn';
+  static readonly GLOBAL_TEXT_BG_IMAGE_PATH = 'global_text_bg_image_path';
+  static readonly GLOBAL_TEXT_BG_IMAGE_OPACITY = 'global_text_bg_image_opacity';
+  static readonly GLOBAL_TEXT_USE_BG_IMAGE = 'global_text_use_bg_image';
+  
   // 下载设置
   static readonly DOWNLOAD_WIFI_ONLY = 'download_wifi_only';
   static readonly MAX_CONCURRENT_DOWNLOADS = 'max_concurrent_downloads';

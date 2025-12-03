@@ -1034,6 +1034,22 @@ export interface GenericQueryRecord {
   brightness?: DatabaseValue;
   autoSave?: DatabaseValue;
   saveInterval?: DatabaseValue;
+  // ========== 纯文本阅读器专用设置字段 ==========
+  letterSpacing?: DatabaseValue;  // 字间距
+  paragraphSpacing?: DatabaseValue;  // 段间距
+  firstLineIndent?: DatabaseValue;  // 首行缩进
+  textAlignment?: DatabaseValue;  // 文字对齐方式
+  pageTurnAnimation?: DatabaseValue;  // 翻页动画
+  tapToTurn?: DatabaseValue;  // 点击翻页
+  volumeKeyNavigation?: DatabaseValue;  // 音量键翻页
+  keepScreenOn?: DatabaseValue;  // 保持屏幕常亮
+  showPageNumber?: DatabaseValue;  // 显示页码
+  showProgress?: DatabaseValue;  // 显示进度
+  showTime?: DatabaseValue;  // 显示时间
+  showBattery?: DatabaseValue;  // 显示电量
+  backgroundType?: DatabaseValue;  // 背景类型 (COLOR/IMAGE)
+  backgroundImagePath?: DatabaseValue;  // 背景图片路径
+  backgroundImageOpacity?: DatabaseValue;  // 背景图片透明度
 }
 
 export type DatabaseRecord = 

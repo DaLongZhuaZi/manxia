@@ -122,9 +122,9 @@ export struct ThemeSettingsPage {
   @State processedImagePath: string = '';
   
   // 调节参数
-  @State blurLevel: number = 50; // 模糊程度 0-100
+  @State blurLevel: number = 0; // 模糊程度 0-100，默认无模糊
   @State brightnessLevel: number = 50; // 亮度 0-100，50为原始亮度，小于50变暗，大于50变亮
-  @State effectMode: ImageEffectMode = ImageEffectMode.STANDARD; // 图片效果模式
+  @State effectMode: ImageEffectMode = ImageEffectMode.NONE; // 图片效果模式，默认无效果
   @State overlayStrength: number = 30; // 磨砂玻璃遮罩强度 0-100
   
   // 提取的主色调
@@ -823,17 +823,26 @@ export struct ThemeSettingsPage {
       this.selectedImagePixelMap = decodedPixelMap;
       this.selectedImagePath = imageUri;
       
-      // 进入裁剪阶段
-      this.isCropping = true;
-      this.processingProgress = 100;
-      this.processingMessage = '已准备裁剪';
-      
       fs.closeSync(file);
       imageSource.release();
       
+      // 直接进行主色调提取（不进入自定义裁剪阶段）
+      this.processingProgress = 60;
+      this.processingMessage = '正在提取主色调...';
+      await this.extractDominantColor(this.selectedImagePixelMap);
+      
+      // 复制原图作为处理结果（默认无效果）
+      this.processingProgress = 80;
+      this.processingMessage = '正在准备预览...';
+      await this.copyOriginalToProcessed();
+      
+      this.isCropping = false;
+      this.processingProgress = 100;
+      this.processingMessage = '图片已准备就绪';
+      
       setTimeout(() => {
         this.isProcessing = false;
-      }, 500);
+      }, 300);
       
     } catch (error) {
       logger.error(TAG, `处理图片失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -1133,6 +1142,76 @@ export struct ThemeSettingsPage {
   }
 
   /**
+   * 获取裁剪对齐方式的显示标签
+   */
+  private getCropAlignmentLabel(): string {
+    switch (this.cropAlignment) {
+      case CropAlignment.TOP_LEFT:
+        return '左上';
+      case CropAlignment.TOP:
+        return '顶部居中';
+      case CropAlignment.TOP_RIGHT:
+        return '右上';
+      case CropAlignment.CENTER_LEFT:
+        return '左侧居中';
+      case CropAlignment.CENTER:
+        return '居中';
+      case CropAlignment.CENTER_RIGHT:
+        return '右侧居中';
+      case CropAlignment.BOTTOM_LEFT:
+        return '左下';
+      case CropAlignment.BOTTOM:
+        return '底部居中';
+      case CropAlignment.BOTTOM_RIGHT:
+        return '右下';
+      default:
+        return '居中';
+    }
+  }
+
+  /**
+   * 复制原图到处理结果（用于默认无效果模式）
+   */
+  private async copyOriginalToProcessed(): Promise<void> {
+    if (!this.selectedImagePixelMap) {
+      return;
+    }
+    
+    try {
+      // 释放旧的处理结果
+      if (this.processedImagePixelMap) {
+        this.processedImagePixelMap.release();
+        this.processedImagePixelMap = null;
+      }
+      
+      // 获取原图信息
+      const imageInfo = await this.selectedImagePixelMap.getImageInfo();
+      const width = imageInfo.size.width;
+      const height = imageInfo.size.height;
+      
+      // 复制原图像素数据
+      // 注意：readPixelsToBuffer 返回的是 BGRA 格式
+      const buffer = new ArrayBuffer(width * height * 4);
+      await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
+      
+      // 创建新的 PixelMap
+      // 关键：使用 BGRA_8888 (pixelFormat: 4) 而不是 RGBA_8888 (pixelFormat: 3)
+      // 因为 readPixelsToBuffer 返回的数据是 BGRA 格式
+      const createOptions: image.InitializationOptions = {
+        size: { width: width, height: height },
+        pixelFormat: 4, // BGRA_8888
+        alphaType: 0,
+        editable: true
+      };
+      
+      this.processedImagePixelMap = await image.createPixelMap(buffer, createOptions);
+      logger.info(TAG, `✅ 原图已复制到预览 (size=${width}x${height})`);
+    } catch (error) {
+      logger.error(TAG, `复制原图失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
    * 防抖应用图片效果
    * 用于滑块调节时避免频繁触发
    */
@@ -1161,19 +1240,35 @@ export struct ThemeSettingsPage {
     try {
       logger.info(TAG, `开始应用图片效果: 模式=${this.effectMode}, 模糊=${this.blurLevel}, 亮度=${this.brightnessLevel}, 遮罩强度=${this.overlayStrength}`);
       
+      // 如果是 NONE 模式，直接复制原图
+      if (this.effectMode === ImageEffectMode.NONE) {
+        await this.copyOriginalToProcessed();
+        logger.info(TAG, '✅ 无效果模式，使用原图');
+        return;
+      }
+      
+      // 如果没有需要应用的效果（模糊为0且亮度为50），直接复制原图
+      if (this.blurLevel === 0 && this.brightnessLevel === 50 && this.effectMode !== ImageEffectMode.FROSTED) {
+        await this.copyOriginalToProcessed();
+        logger.info(TAG, '✅ 无需应用效果，使用原图');
+        return;
+      }
+      
       // 获取原图信息
       const imageInfo = await this.selectedImagePixelMap.getImageInfo();
       const width = imageInfo.size.width;
       const height = imageInfo.size.height;
       
       // 1. 复制原图作为工作副本（避免修改原图）
+      // 注意：readPixelsToBuffer 返回的是 BGRA 格式
       const buffer = new ArrayBuffer(width * height * 4);
       await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
       
       // 2. 创建可编辑的PixelMap用于应用效果
+      // 关键：使用 BGRA_8888 (pixelFormat: 4) 因为 readPixelsToBuffer 返回 BGRA 格式
       const createOptions: image.InitializationOptions = {
         size: { width: width, height: height },
-        pixelFormat: 3, // RGBA_8888
+        pixelFormat: 4, // BGRA_8888
         alphaType: 0,
         editable: true // 必须设置为可编辑，才能使用effectKit
       };
@@ -1181,7 +1276,7 @@ export struct ThemeSettingsPage {
       const workingPixelMap = await image.createPixelMap(buffer, createOptions);
       
       // 3. 应用模糊效果（使用effectKit硬件加速）
-      if (this.effectMode !== ImageEffectMode.NONE && this.blurLevel > 0) {
+      if (this.blurLevel > 0) {
         const blurRadius = Math.round(this.blurLevel);
         logger.info(TAG, `应用模糊效果，半径=${blurRadius}`);
         const filter = effectKit.createEffect(workingPixelMap);
@@ -1194,7 +1289,7 @@ export struct ThemeSettingsPage {
       }
       
       // 4. 应用亮度调整（使用感知亮度算法，避免偏色）
-      if (this.effectMode !== ImageEffectMode.NONE && this.brightnessLevel !== 50) {
+      if (this.brightnessLevel !== 50) {
         logger.info(TAG, `应用亮度调整，亮度=${this.brightnessLevel}`);
         
         // 读取模糊后的像素数据
@@ -1293,9 +1388,10 @@ export struct ThemeSettingsPage {
           const buffer = new ArrayBuffer(imageInfo.size.width * imageInfo.size.height * 4);
           await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
           
+          // 使用 BGRA_8888 格式
           const createOptions: image.InitializationOptions = {
             size: imageInfo.size,
-            pixelFormat: 3,
+            pixelFormat: 4, // BGRA_8888
             alphaType: 0
           };
           
@@ -1469,12 +1565,14 @@ export struct ThemeSettingsPage {
     const height = imageInfo.size.height;
     
     // 1. 复制原图
+    // 注意：readPixelsToBuffer 返回的是 BGRA 格式
     const buffer = new ArrayBuffer(width * height * 4);
     await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
     
+    // 使用 BGRA_8888 格式创建 PixelMap
     const createOptions: image.InitializationOptions = {
       size: { width: width, height: height },
-      pixelFormat: 3,
+      pixelFormat: 4, // BGRA_8888
       alphaType: 0,
       editable: true
     };
@@ -1697,70 +1795,106 @@ export struct ThemeSettingsPage {
                       ForEach(this.customThemes, (theme: CustomTheme) => {
                         GridItem() {
                           Column() {
-                        if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0) {
-                          Image('file://' + theme.backgroundImagePath)
+                            // 主题背景图片预览 - 显示缩略图或占位符
+                            Stack() {
+                              if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0) {
+                                Image('file://' + theme.backgroundImagePath)
+                                  .width('100%')
+                                  .height(120)
+                                  .objectFit(ImageFit.Cover)
+                                  .borderRadius(12)
+                                  .syncLoad(true)
+                              } else {
+                                // 无背景图片时显示主题色渐变占位符
+                                Column()
+                                  .width('100%')
+                                  .height(120)
+                                  .borderRadius(12)
+                                  .linearGradient({
+                                    angle: 135,
+                                    colors: [[theme.primaryColor, 0.0], [theme.isDark ? '#1A1A1A' : '#F5F5F5', 1.0]]
+                                  })
+
+                                Text('默认主题')
+                                  .fontSize(14)
+                                  .fontColor(theme.isDark ? '#FFFFFF' : '#333333')
+                                  .opacity(0.7)
+                              }
+
+                              // 当前激活指示器
+                              if (this.currentCustomThemeId === theme.id) {
+                                Column()
+                                  .width('100%')
+                                  .height(120)
+                                  .borderRadius(12)
+                                  .border({ width: 3, color: $r('app.color.accent_primary') })
+                              }
+
+                              // 多选模式下的选中指示器
+                              if (this.selectionModeEnabled) {
+                                Column()
+                                  .width(28)
+                                  .height(28)
+                                  .backgroundColor(this.isThemeSelected(theme.id) ? $r('app.color.accent_primary') : 'rgba(255,255,255,0.8)')
+                                  .borderRadius(14)
+                                  .border({ width: 2, color: $r('app.color.accent_primary') })
+                                  .position({ x: 8, y: 8 })
+                              }
+                            }
                             .width('100%')
                             .height(120)
-                            .objectFit(ImageFit.Cover)
-                            .borderRadius(12)
-                            .syncLoad(true)
-                        }
 
-                        Row({ space: 8 }) {
-                          // 选择指示器
-                          Column()
-                            .width(24)
-                            .height(24)
-                            .backgroundColor(this.isThemeSelected(theme.id) ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                            .borderRadius(12)
+                            Row({ space: 8 }) {
+                              // 主题色块
+                              Column()
+                                .width(24)
+                                .height(24)
+                                .backgroundColor(theme.primaryColor)
+                                .borderRadius(4)
 
-                          Column()
-                            .width(24)
-                            .height(24)
-                            .backgroundColor(theme.primaryColor)
-                            .borderRadius(4)
-
-                          Column({ space: 4 }) {
-                            Text(theme.name)
-                              .fontSize(14)
-                              .fontWeight(FontWeight.Medium)
-                              .fontColor($r('app.color.text_primary'))
-                            Text(theme.isDark ? '深色主题' : '浅色主题')
-                              .fontSize(12)
-                              .fontColor($r('app.color.text_secondary'))
-                          }
-                          .layoutWeight(1)
-                          .alignItems(HorizontalAlign.Start)
-
-                          Button(this.currentCustomThemeId === theme.id ? '已激活' : '应用')
-                            .fontSize(12)
-                            .height(32)
-                            .backgroundColor($r('app.color.accent_primary'))
-                            .enabled(this.currentCustomThemeId !== theme.id)
-                            .onClick(async () => {
-                              try {
-                                const splashPathApply: string = theme.splashBackgroundImagePath ? theme.splashBackgroundImagePath : '';
-                                await this.applyCustomThemeToManager(theme, splashPathApply);
-                                logger.info(TAG, `已应用保存的主题: ${theme.name}`);
-                              } catch (error) {
-                                logger.error(TAG, `应用主题失败: ${error instanceof Error ? error.message : String(error)}`);
+                              Column({ space: 4 }) {
+                                Text(theme.name)
+                                  .fontSize(14)
+                                  .fontWeight(FontWeight.Medium)
+                                  .fontColor($r('app.color.text_primary'))
+                                  .maxLines(1)
+                                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                                Text(theme.isDark ? '深色主题' : '浅色主题')
+                                  .fontSize(12)
+                                  .fontColor($r('app.color.text_secondary'))
                               }
-                            })
-                        }
-                        .width('100%')
-                        .padding({ top: 8 })
-                      }
-                      .width('100%')
-                      .padding(12)
-                      .backgroundColor($r('app.color.panel_background'))
-                      .borderRadius(12)
-                      // 长按进入/切换选择，点击在选择模式下也切换选中
-                      .gesture(LongPressGesture().onAction(() => { this.toggleThemeSelection(theme.id); }))
-                      .onClick(() => {
-                        if (this.selectionModeEnabled) {
-                          this.toggleThemeSelection(theme.id);
-                        }
-                      })
+                              .layoutWeight(1)
+                              .alignItems(HorizontalAlign.Start)
+
+                              Button(this.currentCustomThemeId === theme.id ? '已激活' : '应用')
+                                .fontSize(12)
+                                .height(32)
+                                .backgroundColor(this.currentCustomThemeId === theme.id ? $r('app.color.text_secondary') : $r('app.color.accent_primary'))
+                                .enabled(this.currentCustomThemeId !== theme.id)
+                                .onClick(async () => {
+                                  try {
+                                    const splashPathApply: string = theme.splashBackgroundImagePath ? theme.splashBackgroundImagePath : '';
+                                    await this.applyCustomThemeToManager(theme, splashPathApply);
+                                    logger.info(TAG, `已应用保存的主题: ${theme.name}`);
+                                  } catch (error) {
+                                    logger.error(TAG, `应用主题失败: ${error instanceof Error ? error.message : String(error)}`);
+                                  }
+                                })
+                            }
+                            .width('100%')
+                            .padding({ top: 8 })
+                          }
+                          .width('100%')
+                          .padding(12)
+                          .backgroundColor($r('app.color.panel_background'))
+                          .borderRadius(12)
+                          // 长按进入/切换选择，点击在选择模式下也切换选中
+                          .gesture(LongPressGesture().onAction(() => { this.toggleThemeSelection(theme.id); }))
+                          .onClick(() => {
+                            if (this.selectionModeEnabled) {
+                              this.toggleThemeSelection(theme.id);
+                            }
+                          })
                         }
                       }, (theme: CustomTheme) => theme.id)
                     }
@@ -1866,119 +2000,8 @@ export struct ThemeSettingsPage {
                 .onClick(() => this.selectSplashImage())
               }
 
-              // 裁剪设置区域（仅创建模式，并且处于裁剪阶段）
-              if (this.isCreatingCustomTheme && this.selectedImagePixelMap && this.isCropping) {
-                Column({ space: 16 }) {
-                  Text('裁剪设置')
-                    .fontSize(16)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
-                  // 九宫格对齐方式选择
-                  Column({ space: 8 }) {
-                    Row({ space: 8 }) {
-                      Button('↖')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.TOP_LEFT; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.TOP_LEFT ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                      Button('↑')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.TOP; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.TOP ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                      Button('↗')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.TOP_RIGHT; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.TOP_RIGHT ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                    }
-                    Row({ space: 8 }) {
-                      Button('←')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.CENTER_LEFT; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.CENTER_LEFT ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                      Button('●')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.CENTER; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.CENTER ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                      Button('→')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.CENTER_RIGHT; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.CENTER_RIGHT ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                    }
-                    Row({ space: 8 }) {
-                      Button('↙')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.BOTTOM_LEFT; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.BOTTOM_LEFT ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                      Button('↓')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.BOTTOM; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.BOTTOM ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                      Button('↘')
-                        .width(40)
-                        .height(40)
-                        .onClick(() => { this.cropAlignment = CropAlignment.BOTTOM_RIGHT; })
-                        .backgroundColor(this.cropAlignment === CropAlignment.BOTTOM_RIGHT ? $r('app.color.accent_primary') : $r('app.color.panel_background'))
-                    }
-                  }
-                  .width('100%')
-
-                  // 裁剪缩放
-                  Column({ space: 8 }) {
-                    Row() {
-                      Text('裁剪缩放')
-                        .fontSize(14)
-                        .fontColor($r('app.color.text_primary'))
-                      Blank()
-                      Text(`${Math.round(this.cropZoom * 100)}%`)
-                        .fontSize(14)
-                        .fontColor($r('app.color.text_secondary'))
-                    }
-                    .width('100%')
-
-                    Slider({
-                      value: this.cropZoom,
-                      min: 1.0,
-                      max: 2.0,
-                      step: 0.1
-                    })
-                      .width('100%')
-                      .trackColor($r('app.color.divider_primary'))
-                      .selectedColor($r('app.color.accent_primary'))
-                      .onChange((value: number) => {
-                        // 保留一位小数
-                        const rounded = Math.round(value * 10) / 10;
-                        this.cropZoom = rounded;
-                      })
-                  }
-
-                  Row({ space: 12 }) {
-                    Button('预览裁剪效果')
-                      .width('48%')
-                      .height(40)
-                      .backgroundColor($r('app.color.panel_background'))
-                      .onClick(() => this.previewCrop())
-                    Button('确认裁剪')
-                      .width('48%')
-                      .height(40)
-                      .backgroundColor($r('app.color.accent_primary'))
-                      .onClick(() => this.applyCrop())
-                  }
-                }
-                .width('100%')
-                .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
-                .borderRadius(12)
-              }
-
-              // 参数调节区域（非裁剪阶段）
-              if (this.isCreatingCustomTheme && this.selectedImagePixelMap && !this.isCropping) {
+              // 参数调节区域（选择图片后显示）
+              if (this.isCreatingCustomTheme && this.selectedImagePixelMap) {
                 Column({ space: 16 }) {
                   // 模糊程度
                   Column({ space: 8 }) {
@@ -2006,6 +2029,10 @@ export struct ThemeSettingsPage {
                       .onChange((value: number) => {
                         // 确保值是10的倍数
                         this.blurLevel = Math.round(value / 10) * 10;
+                        // 调整模糊时自动切换到标准模式
+                        if (this.blurLevel > 0 && this.effectMode === ImageEffectMode.NONE) {
+                          this.effectMode = ImageEffectMode.STANDARD;
+                        }
                         this.applyImageEffectsDebounced();
                       })
                   }
@@ -2041,6 +2068,10 @@ export struct ThemeSettingsPage {
                       .onChange((value: number) => {
                         // 确保值是10的倍数
                         this.brightnessLevel = Math.round(value / 10) * 10;
+                        // 调整亮度时自动切换到标准模式
+                        if (this.brightnessLevel !== 50 && this.effectMode === ImageEffectMode.NONE) {
+                          this.effectMode = ImageEffectMode.STANDARD;
+                        }
                         this.applyImageEffectsDebounced();
                       })
                   }
@@ -2132,15 +2163,70 @@ export struct ThemeSettingsPage {
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.text_primary'))
+                    .width('100%')
+
+                  // 提取的主色调显示
+                  if (this.extractedColor && this.extractedColor.length > 0) {
+                    Row({ space: 12 }) {
+                      Column()
+                        .width(48)
+                        .height(48)
+                        .backgroundColor(this.extractedColor)
+                        .borderRadius(8)
+                        .border({ width: this.selectedPrimaryColor === this.extractedColor ? 3 : 0, color: $r('app.color.accent_primary') })
+                        .onClick(() => { this.selectedPrimaryColor = this.extractedColor; })
+
+                      Column({ space: 4 }) {
+                        Text('从图片提取')
+                          .fontSize(12)
+                          .fontColor($r('app.color.text_secondary'))
+                        Text(this.extractedColor)
+                          .fontSize(14)
+                          .fontWeight(FontWeight.Medium)
+                          .fontColor($r('app.color.text_primary'))
+                        Text(this.extractedColorRGB)
+                          .fontSize(11)
+                          .fontColor($r('app.color.text_secondary'))
+                      }
+                      .alignItems(HorizontalAlign.Start)
+                    }
+                    .width('100%')
+                    .padding(8)
+                    .backgroundColor($r('app.color.comp_background_tertiary'))
+                    .borderRadius(8)
+                  }
+
+                  Text('可选主题色')
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_secondary'))
+                    .width('100%')
+
                   Row({ space: 12 }) {
                     ForEach(this.availablePrimaryColors, (colorStr: string) => {
-                      Button('')
-                        .width(32)
-                        .height(32)
-                        .backgroundColor(colorStr)
-                        .borderRadius(8)
-                        .onClick(() => { this.selectedPrimaryColor = colorStr; })
-                        .border({ width: this.selectedPrimaryColor === colorStr ? 2 : 0, color: $r('app.color.accent_primary') })
+                      Stack() {
+                        Column()
+                          .width(40)
+                          .height(40)
+                          .backgroundColor(colorStr)
+                          .borderRadius(8)
+                          .border({ width: this.selectedPrimaryColor === colorStr ? 3 : 1, color: this.selectedPrimaryColor === colorStr ? $r('app.color.accent_primary') : $r('app.color.divider_primary') })
+
+                        if (this.selectedPrimaryColor === colorStr) {
+                          Image($r('app.media.ic_check'))
+                            .width(16)
+                            .height(16)
+                            .fillColor(Color.White)
+                        }
+                      }
+                      .width(40)
+                      .height(40)
+                      .onClick(() => {
+                        this.selectedPrimaryColor = colorStr;
+                        // 如果选择了磨砂玻璃模式，更新预览
+                        if (this.effectMode === ImageEffectMode.FROSTED) {
+                          this.applyImageEffectsDebounced();
+                        }
+                      })
                     }, (colorStr: string) => colorStr)
                   }
                   .width('100%')

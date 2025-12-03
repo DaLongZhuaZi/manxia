@@ -11,6 +11,7 @@ import { util } from '@kit.ArkTS';
 import { bookParser } from '@kit.ReaderKit';
 import { image } from '@kit.ImageKit';
 import { pdfService } from '@kit.PDFKit';
+import { TxtMetadataExtractor } from './TxtMetadataExtractor';
 
 const TAG = 'EBookParser';
 
@@ -761,32 +762,63 @@ class TxtParser extends EBookParser {
     logger.info(TAG, `开始解析TXT文件: ${this.filePath}`);
 
     try {
-      // 1. 读取文件内容
+      // 1. 读取文件内容（自动检测编码）
       const content = await this.readFileContent();
-      logger.debug(TAG, `文件内容长度: ${content.length} 字符`);
+      logger.debug(TAG, `文件内容长度: ${content.length} 字符, 编码: ${this.encoding}`);
 
-      // 2. 检测编码（简单实现）
-      this.detectEncoding(content);
-
-      // 3. 获取文件大小
+      // 2. 获取文件大小
       const fileSize = await this.getFileSize();
+      
+      // 3. 获取文件名
+      const fileName = this.getFileNameFromPath(this.filePath);
 
-      // 4. 提取元数据
-      const metadata = this.extractMetadata(content);
-      logger.debug(TAG, `提取的元数据: ${JSON.stringify(metadata)}`);
+      // 4. 使用智能提取器提取元数据和章节信息
+      const extractionResult = TxtMetadataExtractor.extract(content, fileName);
+      
+      // 5. 处理标签
+      if (extractionResult.metadata.tags.length === 0) {
+        extractionResult.metadata.tags = this.extractTagsFromFileName(fileName);
+      } else {
+        // 合并标签并去重
+        const fileNameTags = this.extractTagsFromFileName(fileName);
+        const seen = new Set<string>();
+        const mergedTags: string[] = [];
+        for (const tag of extractionResult.metadata.tags) {
+          if (!seen.has(tag)) {
+            seen.add(tag);
+            mergedTags.push(tag);
+          }
+        }
+        for (const tag of fileNameTags) {
+          if (!seen.has(tag)) {
+            seen.add(tag);
+            mergedTags.push(tag);
+          }
+        }
+        extractionResult.metadata.tags = mergedTags;
+      }
+      if (!extractionResult.metadata.tags.includes('TXT')) {
+        extractionResult.metadata.tags.unshift('TXT');
+      }
+      
+      logger.debug(TAG, `提取的元数据: ${JSON.stringify(extractionResult.metadata)}`);
 
-      // 5. 创建电子书对象
-      const ebook = this.generateDefaultEBook(this.filePath, EBookFormat.TXT, metadata);
+      // 7. 创建电子书对象
+      const ebook = this.generateDefaultEBook(this.filePath, EBookFormat.TXT, extractionResult.metadata);
       ebook.fileSize = fileSize;
 
-      // 6. 分割章节
-      const chapters = this.splitIntoChapters(content, ebook.id);
-      ebook.chapters = chapters;
+      // 8. 使用智能提取器的章节信息构建章节列表
+      if (extractionResult.chapters.length > 0) {
+        ebook.chapters = this.buildChaptersFromExtraction(content, extractionResult.chapters, ebook.id);
+      } else {
+        // 降级到原有的章节分割逻辑
+        ebook.chapters = this.splitIntoChapters(content, ebook.id);
+      }
 
-      // 7. 计算总字数
-      ebook.totalWordCount = this.calculateTotalWordCount(chapters);
+      // 9. 计算总字数
+      ebook.totalWordCount = this.calculateTotalWordCount(ebook.chapters);
 
-      logger.info(TAG, `TXT文件解析完成: ${metadata.title}, 章节数: ${chapters.length}, 总字数: ${ebook.totalWordCount}`);
+      logger.info(TAG, `TXT文件解析完成: ${extractionResult.metadata.title}, 章节数: ${ebook.chapters.length}, 总字数: ${ebook.totalWordCount}`);
 
       return ebook;
     } catch (error) {
@@ -794,11 +826,88 @@ class TxtParser extends EBookParser {
       throw error as Error;
     }
   }
+  
+  /**
+   * 根据智能提取器的章节信息构建章节列表
+   */
+  private buildChaptersFromExtraction(content: string, chapterInfos: import('./TxtMetadataExtractor').TxtChapterInfo[], bookId: string): EBookChapter[] {
+    const chapters: EBookChapter[] = [];
+    const now = Date.now();
+    
+    for (let i = 0; i < chapterInfos.length; i++) {
+      const info = chapterInfos[i];
+      const chapterContent = content.substring(info.startPosition, info.endPosition).trim();
+      
+      // 移除章节标题行（避免重复）
+      const lines = chapterContent.split('\n');
+      const contentWithoutTitle = lines.length > 1 ? lines.slice(1).join('\n').trim() : chapterContent;
+      
+      const chapter: EBookChapter = {
+        id: `${bookId}_chapter_${i}`,
+        bookId: bookId,
+        chapterNumber: info.chapterNumber || (i + 1),
+        title: info.title,
+        content: contentWithoutTitle,
+        startPosition: info.startPosition,
+        endPosition: info.endPosition,
+        wordCount: this.countWords(contentWithoutTitle),
+        createTime: now
+      };
+      chapters.push(chapter);
+    }
+    
+    return chapters;
+  }
 
   /**
-   * 读取文件内容
+   * 读取文件内容（支持多种编码自动检测）
    */
   private async readFileContent(): Promise<string> {
+    // 先读取文件的原始字节
+    const buffer = await this.readFileBuffer();
+    
+    // 检测编码并解码
+    const encoding = this.detectEncodingFromBuffer(buffer);
+    this.encoding = encoding;
+    logger.info(TAG, `检测到文件编码: ${encoding}`);
+    
+    try {
+      const decoder = new util.TextDecoder(encoding);
+      const text = decoder.decodeToString(new Uint8Array(buffer));
+      
+      // 验证解码结果
+      if (this.hasGarbledText(text)) {
+        // 尝试其他编码
+        const alternativeEncodings = ['gb18030', 'gbk', 'gb2312', 'utf-8'];
+        for (const altEncoding of alternativeEncodings) {
+          if (altEncoding === encoding) continue;
+          try {
+            const altDecoder = new util.TextDecoder(altEncoding);
+            const altText = altDecoder.decodeToString(new Uint8Array(buffer));
+            if (!this.hasGarbledText(altText)) {
+              logger.info(TAG, `使用备选编码 ${altEncoding} 解码成功`);
+              this.encoding = altEncoding;
+              return altText;
+            }
+          } catch (e) {
+            // 继续尝试下一个编码
+          }
+        }
+      }
+      
+      return text;
+    } catch (error) {
+      logger.error(TAG, `解码失败: ${String(error)}`);
+      // 降级到 UTF-8
+      const decoder = new util.TextDecoder('utf-8');
+      return decoder.decodeToString(new Uint8Array(buffer));
+    }
+  }
+  
+  /**
+   * 读取文件原始字节
+   */
+  private async readFileBuffer(): Promise<ArrayBuffer> {
     try {
       let openTarget: string = this.filePath;
       if (!this.filePath.startsWith('file://') && !this.filePath.startsWith('/')) {
@@ -815,9 +924,7 @@ class TxtParser extends EBookParser {
         throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
       }
 
-      const decoder = new util.TextDecoder(this.encoding);
-      const text = decoder.decodeToString(new Uint8Array(buffer));
-      return text;
+      return buffer;
     } catch (firstError) {
       const firstMsg = firstError instanceof Error ? firstError.message : String(firstError);
       try {
@@ -833,9 +940,7 @@ class TxtParser extends EBookParser {
           if (readLen !== stat.size) {
             throw new Error(`读取长度不一致: 期望 ${stat.size} 实际 ${readLen}`);
           }
-          const decoder = new util.TextDecoder(this.encoding);
-          const text = decoder.decodeToString(new Uint8Array(buffer));
-          return text;
+          return buffer;
         }
         throw new Error(firstMsg);
       } catch (error) {
@@ -844,6 +949,117 @@ class TxtParser extends EBookParser {
         throw new Error(`无法读取文件: ${this.filePath}`);
       }
     }
+  }
+  
+  /**
+   * 从文件头检测编码
+   */
+  private detectEncodingFromBuffer(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    const len = Math.min(bytes.length, 4096); // 检查前 4KB
+    
+    // 检查 BOM (Byte Order Mark)
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      return 'utf-8';
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      return 'utf-16le';
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+      return 'utf-16be';
+    }
+    
+    // 统计字节特征来判断编码
+    let utf8Score = 0;
+    let gbkScore = 0;
+    let i = 0;
+    
+    while (i < len) {
+      const b = bytes[i];
+      
+      // ASCII 字符
+      if (b < 0x80) {
+        i++;
+        continue;
+      }
+      
+      // UTF-8 多字节序列检测
+      if (b >= 0xC0 && b < 0xE0 && i + 1 < len) {
+        // 2字节 UTF-8
+        if ((bytes[i + 1] & 0xC0) === 0x80) {
+          utf8Score += 2;
+          i += 2;
+          continue;
+        }
+      } else if (b >= 0xE0 && b < 0xF0 && i + 2 < len) {
+        // 3字节 UTF-8 (常见中文)
+        if ((bytes[i + 1] & 0xC0) === 0x80 && (bytes[i + 2] & 0xC0) === 0x80) {
+          utf8Score += 3;
+          i += 3;
+          continue;
+        }
+      } else if (b >= 0xF0 && b < 0xF8 && i + 3 < len) {
+        // 4字节 UTF-8
+        if ((bytes[i + 1] & 0xC0) === 0x80 && (bytes[i + 2] & 0xC0) === 0x80 && (bytes[i + 3] & 0xC0) === 0x80) {
+          utf8Score += 4;
+          i += 4;
+          continue;
+        }
+      }
+      
+      // GBK/GB18030 双字节检测
+      if (b >= 0x81 && b <= 0xFE && i + 1 < len) {
+        const b2 = bytes[i + 1];
+        // GBK 第二字节范围
+        if ((b2 >= 0x40 && b2 <= 0x7E) || (b2 >= 0x80 && b2 <= 0xFE)) {
+          gbkScore += 2;
+          i += 2;
+          continue;
+        }
+      }
+      
+      // 无法识别的字节
+      i++;
+    }
+    
+    logger.info(TAG, `编码检测得分: UTF-8=${utf8Score}, GBK/GB18030=${gbkScore}`);
+    
+    // 根据得分判断编码
+    if (utf8Score > gbkScore * 1.5) {
+      return 'utf-8';
+    } else if (gbkScore > 0) {
+      // 优先使用 GB18030，它是 GBK 的超集
+      return 'gb18030';
+    }
+    
+    // 默认使用 UTF-8
+    return 'utf-8';
+  }
+  
+  /**
+   * 检查文本是否包含乱码
+   */
+  private hasGarbledText(text: string): boolean {
+    // 检查是否包含常见的乱码特征
+    const garbledPatterns = [
+      /\ufffd{2,}/,           // 连续的替换字符
+      /[\x00-\x08\x0B\x0C\x0E-\x1F]{3,}/, // 连续的控制字符
+    ];
+    
+    for (const pattern of garbledPatterns) {
+      if (pattern.test(text)) {
+        return true;
+      }
+    }
+    
+    // 检查前 1000 个字符中是否有过多的替换字符
+    const sample = text.substring(0, 1000);
+    const replacementCount = (sample.match(/\ufffd/g) || []).length;
+    if (replacementCount > 10) {
+      return true;
+    }
+    
+    return false;
   }
 
   /**
@@ -876,137 +1092,6 @@ class TxtParser extends EBookParser {
         return 0;
       }
     }
-  }
-
-  /**
-   * 检测编码（简单实现）
-   */
-  private detectEncoding(content: string): void {
-    if (content.includes('') || content.includes('\ufffd')) {
-      logger.warn(TAG, '可能存在编码问题，尝试使用GBK编码');
-      this.encoding = 'gbk';
-    }
-  }
-
-  /**
-   * 提取元数据
-   */
-  private extractMetadata(content: string): EBookMetadata {
-    const fileName = this.getFileNameFromPath(this.filePath);
-    const lines = content.split('\n').slice(0, 50);
-
-    let title = this.extractTitle(lines, fileName);
-    let author = this.extractAuthor(lines);
-    let description = this.extractDescription(content);
-    const tags = this.extractTagsFromFileName(fileName);
-
-    return {
-      title: title,
-      author: author,
-      publisher: '',
-      publishDate: '',
-      isbn: '',
-      language: 'zh-CN',
-      description: description,
-      coverImagePath: '',
-      tags: tags,
-      rating: 0
-    };
-  }
-
-  /**
-   * 提取书名
-   */
-  private extractTitle(lines: string[], fallbackFileName: string): string {
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.match(/^(书名|标题|名称|Title)[：:]/)) {
-        const title = trimmed.replace(/^(书名|标题|名称|Title)[：:]\s*/, '').trim();
-        if (title.length > 0 && title.length < 100) {
-          return title;
-        }
-      }
-    }
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.length > 0 && trimmed.length < 100) {
-        let isChapterTitle = false;
-        for (const pattern of CHAPTER_PATTERNS) {
-          if (pattern.test(trimmed)) {
-            isChapterTitle = true;
-            break;
-          }
-        }
-        if (!isChapterTitle) {
-          return trimmed;
-        }
-      }
-    }
-
-    return this.extractTitleFromFileName(fallbackFileName);
-  }
-
-  /**
-   * 提取作者
-   */
-  private extractAuthor(lines: string[]): string {
-    for (const line of lines) {
-      const trimmed = line.trim();
-      const match = trimmed.match(/^(作者|作家|著|Author|by)[：:]\s*(.+)$/i);
-      if (match && match[2]) {
-        const author = match[2].trim();
-        if (author.length > 0 && author.length < 50) {
-          return author;
-        }
-      }
-    }
-    return '未知作者';
-  }
-
-  /**
-   * 提取简介
-   */
-  private extractDescription(content: string): string {
-    const lines = content.split('\n');
-    let descLines: string[] = [];
-    let foundDesc = false;
-
-    for (let i = 0; i < Math.min(lines.length, 100); i++) {
-      const trimmed = lines[i].trim();
-      
-      if (trimmed.match(/^(简介|内容简介|内容提要|Description)[：:]/)) {
-        foundDesc = true;
-        const desc = trimmed.replace(/^(简介|内容简介|内容提要|Description)[：:]\s*/, '').trim();
-        if (desc.length > 0) {
-          descLines.push(desc);
-        }
-        continue;
-      }
-
-      if (foundDesc) {
-        if (trimmed.length === 0) {
-          break; 
-        }
-        let isChapterTitle = false;
-        for (const pattern of CHAPTER_PATTERNS) {
-          if (pattern.test(trimmed)) {
-            isChapterTitle = true;
-            break;
-          }
-        }
-        if (isChapterTitle) {
-          break;
-        }
-        descLines.push(trimmed);
-        if (descLines.join('').length > 500) {
-          break;
-        }
-      }
-    }
-
-    const description = descLines.join(' ').substring(0, 500);
-    return description || '暂无简介';
   }
 
   /**

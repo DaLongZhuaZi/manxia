@@ -11,11 +11,14 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { common, Want } from '@kit.AbilityKit';
+import { picker } from '@kit.CoreFileKit';
+import fs from '@ohos.file.fs';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
 import { logger } from '../Utils/Logger';
 import { ReadingMode, ReadingDirection, DEFAULT_READING_SETTINGS, PageTurnAnimationType } from '../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
+import { TextPageTurnAnimation, TextAlignment, PRESET_BACKGROUNDS, PresetBackground, DEFAULT_TEXT_READER_SETTINGS } from '../Models/TextReaderModels';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WindowManager } from '../Utils/WindowManager';
 
@@ -31,6 +34,12 @@ interface GlobalSettingsPageParams {
 interface PageTurnAnimationOption {
   type: PageTurnAnimationType;
   label: string;
+}
+
+// 纯文本阅读器翻页动画选项接口
+interface TextAnimationOption {
+  text: string;
+  anim: TextPageTurnAnimation;
 }
 
 // 使用NavDestinationContext官方类型
@@ -69,6 +78,23 @@ struct GlobalSettingsPage {
   @State ebookPageMargin: number = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
   @State ebookThemeIndex: number = 0;
   @State ebookPageMode: EBookPageMode = DEFAULT_EBOOK_READING_SETTINGS.pageMode;
+
+  // 纯文本阅读器全局设置
+  @State textFontSize: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize;
+  @State textLineHeight: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight;
+  @State textParagraphSpacing: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing;
+  @State textFirstLineIndent: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.firstLineIndent;
+  @State textLetterSpacing: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.letterSpacing;
+  @State textAlignment: TextAlignment = DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment;
+  @State textPageMargin: number = DEFAULT_TEXT_READER_SETTINGS.pageMargins.left;
+  @State textBgColorIndex: number = 0;
+  @State textPageTurnAnimation: TextPageTurnAnimation = DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation;
+  @State textKeepScreenOn: boolean = DEFAULT_TEXT_READER_SETTINGS.keepScreenOn;
+  @State textVolumeKeyNav: boolean = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
+  @State textTapToTurn: boolean = DEFAULT_TEXT_READER_SETTINGS.tapToTurn;
+  @State textBgImagePath: string = '';
+  @State textBgImageOpacity: number = 0.3;
+  @State textUseBgImage: boolean = false;
 
   // 下载设置
   @State downloadOnWifiOnly: boolean = true;
@@ -279,6 +305,68 @@ struct GlobalSettingsPage {
         SettingKeys.GLOBAL_EBOOK_PAGE_MODE,
         DEFAULT_EBOOK_READING_SETTINGS.pageMode
       ) as EBookPageMode;
+
+      // 加载纯文本阅读器全局设置
+      this.textFontSize = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_FONT_SIZE,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize
+      );
+      this.textLineHeight = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_LINE_HEIGHT,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight
+      );
+      this.textParagraphSpacing = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing
+      );
+      this.textFirstLineIndent = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.firstLineIndent
+      );
+      this.textLetterSpacing = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_LETTER_SPACING,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.letterSpacing
+      );
+      this.textAlignment = this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_ALIGNMENT,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment
+      ) as TextAlignment;
+      this.textPageMargin = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_PAGE_MARGIN,
+        DEFAULT_TEXT_READER_SETTINGS.pageMargins.left
+      );
+      this.textBgColorIndex = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_BG_COLOR,
+        0
+      );
+      this.textPageTurnAnimation = this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION,
+        DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation
+      ) as TextPageTurnAnimation;
+      this.textKeepScreenOn = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON,
+        DEFAULT_TEXT_READER_SETTINGS.keepScreenOn
+      );
+      this.textVolumeKeyNav = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV,
+        DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation
+      );
+      this.textTapToTurn = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_TAP_TO_TURN,
+        DEFAULT_TEXT_READER_SETTINGS.tapToTurn
+      );
+      this.textBgImagePath = this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH,
+        ''
+      );
+      this.textBgImageOpacity = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY,
+        0.3
+      );
+      this.textUseBgImage = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE,
+        false
+      );
 
       logger.info(TAG, '全局设置加载完成');
     } catch (error) {
@@ -875,6 +963,465 @@ struct GlobalSettingsPage {
   }
 
   /**
+   * 构建纯文本阅读器默认设置区域
+   */
+  @Builder
+  buildTextReaderSettings() {
+    Column({ space: 16 }) {
+      Text('纯文本阅读器默认设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 字体大小
+      Column({ space: 8 }) {
+        Row() {
+          Text('默认字体大小')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.textFontSize}`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.textFontSize,
+          min: 12,
+          max: 32,
+          step: 1,
+          style: SliderStyle.InSet
+        })
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (value: number) => {
+            this.textFontSize = Math.round(value);
+            await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, this.textFontSize);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+
+      // 行高
+      Column({ space: 8 }) {
+        Row() {
+          Text('默认行高')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.textLineHeight.toFixed(1)}`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.textLineHeight * 10,
+          min: 12,
+          max: 30,
+          step: 1,
+          style: SliderStyle.InSet
+        })
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (value: number) => {
+            this.textLineHeight = value / 10;
+            await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, this.textLineHeight);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+
+      // 段间距
+      Column({ space: 8 }) {
+        Row() {
+          Text('段间距')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.textParagraphSpacing}px`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.textParagraphSpacing,
+          min: 0,
+          max: 32,
+          step: 2,
+          style: SliderStyle.InSet
+        })
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (value: number) => {
+            this.textParagraphSpacing = Math.round(value);
+            await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, this.textParagraphSpacing);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+
+      // 首行缩进
+      Column({ space: 8 }) {
+        Row() {
+          Text('首行缩进')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.textFirstLineIndent}字符`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.textFirstLineIndent,
+          min: 0,
+          max: 4,
+          step: 1,
+          style: SliderStyle.InSet
+        })
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (value: number) => {
+            this.textFirstLineIndent = Math.round(value);
+            await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, this.textFirstLineIndent);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+
+      // 页边距
+      Column({ space: 8 }) {
+        Row() {
+          Text('默认页边距')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.textPageMargin}`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.textPageMargin,
+          min: 8,
+          max: 48,
+          step: 4,
+          style: SliderStyle.InSet
+        })
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (value: number) => {
+            this.textPageMargin = Math.round(value);
+            await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, this.textPageMargin);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+
+      // 背景色主题
+      Column({ space: 8 }) {
+        Text('默认背景色')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach(PRESET_BACKGROUNDS, (preset: PresetBackground, index: number) => {
+            Column() {
+              Stack() {
+                Column()
+                  .width(40)
+                  .height(40)
+                  .backgroundColor(preset.backgroundColor)
+                  .borderRadius(20)
+                  .border({
+                    width: this.textBgColorIndex === index && !this.textUseBgImage ? 2 : 1,
+                    color: this.textBgColorIndex === index && !this.textUseBgImage
+                      ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                      : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                  })
+
+                if (this.textBgColorIndex === index && !this.textUseBgImage) {
+                  Image($r('app.media.ic_check'))
+                    .width(16)
+                    .height(16)
+                    .fillColor(preset.textColor)
+                }
+              }
+
+              Text(preset.name)
+                .fontSize(10)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .margin({ top: 4 })
+                .maxLines(1)
+            }
+            .width(50)
+            .margin({ right: 8, bottom: 8 })
+            .onClick(async () => {
+              this.textBgColorIndex = index;
+              this.textUseBgImage = false;
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, this.textBgColorIndex);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, false);
+              this.settingsManager.syncToAppStorage();
+            })
+          })
+        }
+        .width('100%')
+      }
+
+      // 自定义背景图片
+      Column({ space: 12 }) {
+        Row() {
+          Text('使用背景图片')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.textUseBgImage })
+            .onChange(async (isOn: boolean) => {
+              this.textUseBgImage = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+
+        if (this.textUseBgImage) {
+          // 图片不透明度
+          Column({ space: 8 }) {
+            Row() {
+              Text('图片不透明度')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              Blank()
+              Text(`${Math.round(this.textBgImageOpacity * 100)}%`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            }
+            .width('100%')
+
+            Slider({
+              value: this.textBgImageOpacity * 100,
+              min: 10,
+              max: 100,
+              step: 5,
+              style: SliderStyle.InSet
+            })
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .onChange(async (value: number) => {
+                this.textBgImageOpacity = value / 100;
+                await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, this.textBgImageOpacity);
+                this.settingsManager.syncToAppStorage();
+              })
+          }
+
+          // 选择图片按钮
+          Button('选择背景图片')
+            .width('100%')
+            .height(40)
+            .fontSize(14)
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.selectTextBackgroundImage();
+            })
+
+          // 当前背景图片预览
+          if (this.textBgImagePath && this.textBgImagePath.length > 0) {
+            Column({ space: 8 }) {
+              Text('当前背景图片')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .width('100%')
+
+              Image(this.textBgImagePath.startsWith('/') ? 'file://' + this.textBgImagePath : this.textBgImagePath)
+                .width('100%')
+                .height(100)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(8)
+                .opacity(this.textBgImageOpacity)
+            }
+            .width('100%')
+          }
+        }
+      }
+
+      // 翻页动画
+      Column({ space: 8 }) {
+        Text('默认翻页动画')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach([
+            { text: '滑动', anim: TextPageTurnAnimation.SLIDE },
+            { text: '卷曲', anim: TextPageTurnAnimation.CURL },
+            { text: '淡入淡出', anim: TextPageTurnAnimation.FADE },
+            { text: '无', anim: TextPageTurnAnimation.NONE }
+          ] as TextAnimationOption[], (item: TextAnimationOption) => {
+            Button({ stateEffect: true }) {
+              Text(item.text)
+                .fontSize(13)
+                .fontColor(this.textPageTurnAnimation === item.anim
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
+              .width(70)
+              .height(36)
+              .backgroundColor(
+                this.textPageTurnAnimation === item.anim
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
+              )
+              .borderRadius(8)
+              .margin({ right: 8, bottom: 8 })
+              .onClick(async () => {
+                this.textPageTurnAnimation = item.anim;
+                await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, this.textPageTurnAnimation);
+                this.settingsManager.syncToAppStorage();
+              })
+          })
+        }
+        .width('100%')
+      }
+
+      // 开关设置
+      Column({ space: 12 }) {
+        Row() {
+          Text('保持屏幕常亮')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.textKeepScreenOn })
+            .onChange(async (isOn: boolean) => {
+              this.textKeepScreenOn = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, this.textKeepScreenOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+
+        Row() {
+          Text('音量键翻页')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.textVolumeKeyNav })
+            .onChange(async (isOn: boolean) => {
+              this.textVolumeKeyNav = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, this.textVolumeKeyNav);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+
+        Row() {
+          Text('点击翻页')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.textTapToTurn })
+            .onChange(async (isOn: boolean) => {
+              this.textTapToTurn = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, this.textTapToTurn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 选择纯文本阅读器背景图片
+   */
+  private async selectTextBackgroundImage(): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      if (!context) {
+        logger.error(TAG, '无法获取应用上下文');
+        return;
+      }
+
+      const photoSelectOptions = new picker.PhotoSelectOptions();
+      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      photoSelectOptions.maxSelectNumber = 1;
+
+      const photoPicker = new picker.PhotoViewPicker(context);
+      const selectResult = await photoPicker.select(photoSelectOptions);
+
+      if (selectResult && selectResult.photoUris.length > 0) {
+        const sourceUri = selectResult.photoUris[0];
+        // 将图片复制到沙箱目录
+        const savedPath = await this.copyBgImageToSandbox(sourceUri, context);
+        if (savedPath) {
+          this.textBgImagePath = savedPath;
+          await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, savedPath);
+          this.settingsManager.syncToAppStorage();
+          logger.info(TAG, `背景图片已保存: ${savedPath}`);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `选择背景图片失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 将背景图片复制到沙箱目录
+   */
+  private async copyBgImageToSandbox(sourceUri: string, context: common.UIAbilityContext): Promise<string | null> {
+    try {
+      const cacheDir = context.cacheDir;
+      const timestamp = Date.now();
+      const randomStr = Math.random().toString(36).substring(2, 8);
+      const destPath = `${cacheDir}/global_bg_${timestamp}_${randomStr}.jpg`;
+
+      logger.info(TAG, `准备复制图片: ${sourceUri} -> ${destPath}`);
+
+      // 打开源文件（PhotoViewPicker 返回的 URI 需要只读权限打开）
+      const srcFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
+      logger.info(TAG, `源文件打开成功, fd: ${srcFile.fd}`);
+
+      // 使用 copyFileSync(fd, path) 方式复制
+      fs.copyFileSync(srcFile.fd, destPath);
+      logger.info(TAG, `copyFileSync 完成`);
+
+      // 关闭源文件
+      fs.closeSync(srcFile);
+
+      // 验证复制结果
+      const stat = fs.statSync(destPath);
+      logger.info(TAG, `图片复制成功: ${destPath}, 大小: ${stat.size} 字节`);
+
+      return destPath;
+    } catch (error) {
+      logger.error(TAG, `复制图片到沙箱失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /**
    * 构建操作按钮
    */
   @Builder
@@ -949,6 +1496,12 @@ struct GlobalSettingsPage {
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
+                  this.buildTextReaderSettings()
+                }
+                .width('48%')
+                .margin({ bottom: 16 })
+                
+                Column({ space: 16 }) {
                   this.buildDownloadSettings()
                 }
                 .width('48%')
@@ -973,6 +1526,7 @@ struct GlobalSettingsPage {
               // 竖屏：原有布局
               this.buildReadingSettings()
               this.buildEBookSettings()
+              this.buildTextReaderSettings()
               this.buildDownloadSettings()
               this.buildNotificationSettings()
               this.buildDebugSettings()

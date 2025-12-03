@@ -1,16 +1,28 @@
 // 文件路径: entry/src/main/ets/Framework/Components/EBookMetadataDialog.ets
 /**
- * 电子书元数据补充对话框
- * 用于在电子书导入时补充缺失的关键信息
+ * 电子书元数据补充对话框（增强版）
+ * 用于在电子书导入时查看和编辑书籍信息
+ * 支持：元数据编辑、自定义封面、章节列表预览
  */
 
-import { EBookMetadata } from '../../Models/EBookModels';
+import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { logger } from '../../Utils/Logger';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { picker } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 
 const TAG = 'EBookMetadataDialog';
+
+/**
+ * 对话框确认结果
+ */
+export interface EBookMetadataDialogResult {
+  metadata: EBookMetadata;
+  customCoverPath?: string;  // 用户选择的自定义封面路径
+}
 
 /**
  * 电子书元数据补充对话框
@@ -20,8 +32,9 @@ export struct EBookMetadataDialog {
   controller: CustomDialogController;
   @Prop themeState: ThemeAwareState;
   @Prop initialMetadata: EBookMetadata;
+  @Prop chapters: EBookChapter[] = [];  // 章节列表
   // 回调函数不能使用@Prop装饰器，应使用普通属性
-  onConfirm: (metadata: EBookMetadata) => void = (metadata: EBookMetadata) => {};
+  onConfirm: (result: EBookMetadataDialogResult) => void = (result: EBookMetadataDialogResult) => {};
   onCancel: () => void = () => {};
 
   // 表单状态
@@ -32,6 +45,16 @@ export struct EBookMetadataDialog {
   @State publishDate: string = '';
   @State isbn: string = '';
   @State tagsText: string = '';
+  
+  // 封面相关
+  @State coverPath: string = '';
+  @State customCoverPath: string = '';  // 用户选择的自定义封面
+  
+  // 当前显示的标签页：'info' | 'chapters'
+  @State currentTab: string = 'info';
+  
+  // 章节列表展开状态
+  @State showAllChapters: boolean = false;
 
   // 刮削对话框控制器
   private scraperDialogController: CustomDialogController | null = null;
@@ -45,13 +68,16 @@ export struct EBookMetadataDialog {
     this.publishDate = this.initialMetadata.publishDate || '';
     this.isbn = this.initialMetadata.isbn || '';
     this.tagsText = this.initialMetadata.tags.join(', ');
+    this.coverPath = this.initialMetadata.coverImagePath || '';
+    
+    logger.info(TAG, `对话框初始化: 标题=${this.title}, 作者=${this.author}, 章节数=${this.chapters.length}`);
   }
 
   build() {
-    Column({ space: 16 }) {
+    Column({ space: 12 }) {
       // 标题栏
       Row() {
-        Text('补充电子书信息')
+        Text('确认电子书信息')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -78,183 +104,26 @@ export struct EBookMetadataDialog {
       }
       .width('100%')
 
-      // 提示文本
-      Text('请填写电子书的基本信息，标有*的为必填项，点击“刮削”可自动填充')
-        .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .width('100%')
-
-      Scroll() {
-        Column({ space: 12 }) {
-          // 书名 * - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('书名 *')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextInput({ text: this.title, placeholder: '请输入书名' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding({ left: 12, right: 12 })
-              .height(40)
-              .width('100%')
-              .onChange((value: string) => {
-                this.title = value;
-              })
-          }
-          .width('100%')
-
-          // 作者 * - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('作者 *')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextInput({ text: this.author, placeholder: '请输入作者' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding({ left: 12, right: 12 })
-              .height(40)
-              .width('100%')
-              .onChange((value: string) => {
-                this.author = value;
-              })
-          }
-          .width('100%')
-
-          // 简介 - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('简介')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextArea({ text: this.description, placeholder: '请输入简介...' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding(12)
-              .height(100)
-              .width('100%')
-              .onChange((value: string) => {
-                this.description = value;
-              })
-          }
-          .width('100%')
-
-          // 出版社 - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('出版社')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextInput({ text: this.publisher, placeholder: '请输入出版社' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding({ left: 12, right: 12 })
-              .height(40)
-              .width('100%')
-              .onChange((value: string) => {
-                this.publisher = value;
-              })
-          }
-          .width('100%')
-
-          // 出版日期 - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('出版日期')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextInput({ text: this.publishDate, placeholder: '例如: 2023-01-01' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding({ left: 12, right: 12 })
-              .height(40)
-              .width('100%')
-              .onChange((value: string) => {
-                this.publishDate = value;
-              })
-          }
-          .width('100%')
-
-          // ISBN - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('ISBN')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextInput({ text: this.isbn, placeholder: '请输入ISBN' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding({ left: 12, right: 12 })
-              .height(40)
-              .width('100%')
-              .onChange((value: string) => {
-                this.isbn = value;
-              })
-          }
-          .width('100%')
-
-          // 标签（逗号分隔） - 内联定义以确保响应式更新
-          Column({ space: 4 }) {
-            Text('标签（逗号分隔）')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .width('100%')
-
-            TextInput({ text: this.tagsText, placeholder: '例如: 科幻, 悬疑, 推理' })
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .padding({ left: 12, right: 12 })
-              .height(40)
-              .width('100%')
-              .onChange((value: string) => {
-                this.tagsText = value;
-              })
-          }
-          .width('100%')
-        }
-        .width('100%')
+      // 标签页切换
+      Row({ space: 0 }) {
+        this.buildTabButton('基本信息', 'info')
+        this.buildTabButton(`章节列表 (${this.chapters.length})`, 'chapters')
       }
-      .height(400)
       .width('100%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .padding(4)
+
+      // 内容区域
+      if (this.currentTab === 'info') {
+        this.buildInfoTab()
+      } else {
+        this.buildChaptersTab()
+      }
 
       // 操作按钮
       Row({ space: 12 }) {
-        Button('取消')
+        Button('取消导入')
           .fontSize(16)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
@@ -266,7 +135,7 @@ export struct EBookMetadataDialog {
             this.controller.close();
           })
 
-        Button('确认')
+        Button('确认导入')
           .fontSize(16)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -283,11 +152,15 @@ export struct EBookMetadataDialog {
                 publishDate: this.publishDate.trim(),
                 isbn: this.isbn.trim(),
                 language: this.initialMetadata.language,
-                coverImagePath: this.initialMetadata.coverImagePath,
+                coverImagePath: this.customCoverPath || this.coverPath || this.initialMetadata.coverImagePath,
                 tags: this.parseTags(this.tagsText),
                 rating: this.initialMetadata.rating
               };
-              this.onConfirm(metadata);
+              const result: EBookMetadataDialogResult = {
+                metadata: metadata,
+                customCoverPath: this.customCoverPath || undefined
+              };
+              this.onConfirm(result);
               this.controller.close();
             }
           })
@@ -352,6 +225,298 @@ export struct EBookMetadataDialog {
         })
     }
     .width('100%')
+  }
+  
+  /**
+   * 构建标签页按钮
+   */
+  @Builder
+  buildTabButton(label: string, tabId: string) {
+    Text(label)
+      .fontSize(14)
+      .fontWeight(this.currentTab === tabId ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(this.currentTab === tabId 
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      .backgroundColor(this.currentTab === tabId 
+        ? ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
+        : Color.Transparent)
+      .borderRadius(6)
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .layoutWeight(1)
+      .textAlign(TextAlign.Center)
+      .onClick(() => {
+        this.currentTab = tabId;
+      })
+  }
+  
+  /**
+   * 构建基本信息标签页
+   */
+  @Builder
+  buildInfoTab() {
+    Scroll() {
+      Column({ space: 12 }) {
+        // 封面区域
+        Row({ space: 16 }) {
+          // 封面预览
+          Column() {
+            if (this.customCoverPath || this.coverPath) {
+              Image(this.customCoverPath || this.coverPath)
+                .width(80)
+                .height(110)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(4)
+            } else {
+              Column() {
+                Text('📚')
+                  .fontSize(32)
+                Text('无封面')
+                  .fontSize(10)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .width(80)
+              .height(110)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(4)
+              .justifyContent(FlexAlign.Center)
+            }
+          }
+          
+          // 封面操作按钮
+          Column({ space: 8 }) {
+            Button('选择封面')
+              .fontSize(12)
+              .height(32)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+              .borderRadius(6)
+              .onClick(() => {
+                this.selectCustomCover();
+              })
+            
+            if (this.customCoverPath) {
+              Button('清除')
+                .fontSize(12)
+                .height(32)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .borderRadius(6)
+                .onClick(() => {
+                  this.customCoverPath = '';
+                })
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .padding({ bottom: 8 })
+        
+        // 书名
+        Column({ space: 4 }) {
+          Text('书名 *')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          TextInput({ text: this.title, placeholder: '请输入书名' })
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(6)
+            .padding({ left: 12, right: 12 })
+            .height(40)
+            .width('100%')
+            .onChange((value: string) => {
+              this.title = value;
+            })
+        }
+        .width('100%')
+
+        // 作者
+        Column({ space: 4 }) {
+          Text('作者 *')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          TextInput({ text: this.author, placeholder: '请输入作者' })
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(6)
+            .padding({ left: 12, right: 12 })
+            .height(40)
+            .width('100%')
+            .onChange((value: string) => {
+              this.author = value;
+            })
+        }
+        .width('100%')
+
+        // 简介
+        Column({ space: 4 }) {
+          Text('简介')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          TextArea({ text: this.description, placeholder: '请输入简介...' })
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(6)
+            .padding(12)
+            .height(80)
+            .width('100%')
+            .onChange((value: string) => {
+              this.description = value;
+            })
+        }
+        .width('100%')
+
+        // 标签
+        Column({ space: 4 }) {
+          Text('标签（逗号分隔）')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          TextInput({ text: this.tagsText, placeholder: '例如: 科幻, 悬疑, 推理' })
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(6)
+            .padding({ left: 12, right: 12 })
+            .height(40)
+            .width('100%')
+            .onChange((value: string) => {
+              this.tagsText = value;
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+    }
+    .height(350)
+    .width('100%')
+  }
+  
+  /**
+   * 构建章节列表标签页
+   */
+  @Builder
+  buildChaptersTab() {
+    Column({ space: 8 }) {
+      // 章节统计
+      Row() {
+        Text(`共 ${this.chapters.length} 个章节`)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        if (this.chapters.length > 10) {
+          Text(this.showAllChapters ? '收起' : '展开全部')
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.showAllChapters = !this.showAllChapters;
+            })
+        }
+      }
+      .width('100%')
+      
+      // 章节列表
+      if (this.chapters.length === 0) {
+        Column() {
+          Text('未检测到章节')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          Text('该电子书可能没有明确的章节划分')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .height(300)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Scroll() {
+          Column({ space: 4 }) {
+            ForEach(this.getDisplayChapters(), (chapter: EBookChapter, index: number) => {
+              Row() {
+                Text(`${index + 1}.`)
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .width(30)
+                
+                Text(chapter.title)
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+                
+                Text(`${chapter.wordCount}字`)
+                  .fontSize(11)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .width('100%')
+              .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+              .backgroundColor(index % 2 === 0 
+                ? Color.Transparent 
+                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme) + '50')
+              .borderRadius(4)
+            })
+          }
+          .width('100%')
+        }
+        .height(300)
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .height(350)
+  }
+  
+  /**
+   * 获取要显示的章节列表
+   */
+  private getDisplayChapters(): EBookChapter[] {
+    if (this.showAllChapters || this.chapters.length <= 10) {
+      return this.chapters;
+    }
+    return this.chapters.slice(0, 10);
+  }
+  
+  /**
+   * 选择自定义封面
+   */
+  private async selectCustomCover(): Promise<void> {
+    try {
+      const photoPicker = new picker.PhotoViewPicker();
+      const selectOptions: picker.PhotoSelectOptions = {
+        MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      };
+      
+      const result = await photoPicker.select(selectOptions);
+      if (result && result.photoUris && result.photoUris.length > 0) {
+        this.customCoverPath = result.photoUris[0];
+        logger.info(TAG, `选择了自定义封面: ${this.customCoverPath}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `选择封面失败: ${String(error)}`);
+    }
   }
 
   /**

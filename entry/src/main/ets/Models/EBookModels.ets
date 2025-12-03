@@ -81,6 +81,30 @@ export interface EBookReadingSettings {
   brightness: number;          // 亮度 (0-100)
   autoSave: boolean;           // 自动保存进度
   saveInterval: number;        // 自动保存间隔（秒）
+  
+  // ========== 纯文本阅读器专用设置（可选） ==========
+  // 高级字体设置
+  letterSpacing?: number;      // 字间距 (0-5)
+  paragraphSpacing?: number;   // 段落间距 (0-24)
+  firstLineIndent?: number;    // 首行缩进 (0-4，单位：字符数)
+  textAlignment?: string;      // 文字对齐 ('LEFT'|'CENTER'|'RIGHT'|'JUSTIFY')
+  
+  // 翻页动画设置
+  pageTurnAnimation?: string;  // 翻页动画 ('SLIDE'|'CURL'|'FADE'|'NONE')
+  tapToTurn?: boolean;         // 点击翻页
+  volumeKeyNavigation?: boolean; // 音量键翻页
+  keepScreenOn?: boolean;      // 保持屏幕常亮
+  
+  // 显示设置
+  showPageNumber?: boolean;    // 显示页码
+  showProgress?: boolean;      // 显示进度
+  showTime?: boolean;          // 显示时间
+  showBattery?: boolean;       // 显示电量
+  
+  // 背景设置
+  backgroundType?: string;     // 背景类型 ('COLOR'|'IMAGE')
+  backgroundImagePath?: string; // 背景图片路径
+  backgroundImageOpacity?: number; // 背景图片不透明度 (0-1)
 }
 
 /**

@@ -56,7 +56,7 @@ import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
 // import { PdfKitTestPage } from './PdfKitTestPage';
-import { ScraperTestPage } from './ScraperTestPage';
+// import { ScraperTestPage } from './ScraperTestPage';  // 已移除，备份为 .bak
 
 // 导入示例数据
 import { SAMPLE_MANGA, createSampleMangaList, getDefaultTestManga } from '../Data/SampleMangaData';
@@ -322,8 +322,10 @@ struct MainMenuPage {
   // 发现页面相关状态
   @State allTags: string[] = []; // 所有标签（按出现次数倒序）
   @State allAuthors: string[] = []; // 所有作者（按出现次数倒序）
-  @State selectedTag: string = ''; // 选中的标签
-  @State selectedAuthor: string = ''; // 选中的作者
+  @State selectedTags: Set<string> = new Set(); // 选中的标签（支持多选）
+  @State selectedAuthors: Set<string> = new Set(); // 选中的作者（支持多选）
+  @State showTagPopup: boolean = false; // 是否显示标签选择弹窗
+  @State showAuthorPopup: boolean = false; // 是否显示作者选择弹窗
   @State discoveredMangaList: Manga[] = []; // 发现页面筛选后的漫画列表
   @State discoveredEBookList: EBook[] = []; // 发现页面筛选后的电子书列表
   @State discoverContentType: 'manga' | 'ebook' | 'all' = 'all'; // 发现页面内容类型筛选
@@ -1182,21 +1184,35 @@ struct MainMenuPage {
   }
 
   /**
-   * 应用发现页面筛选
+   * 应用发现页面筛选（支持多选标签和作者）
    */
   private applyDiscoverFilter(): void {
     try {
       // 筛选漫画
       let filteredManga = [...this.mangaList];
-      if (this.selectedTag && this.selectedTag !== '') {
+      
+      // 多标签筛选：漫画需要包含所有选中的标签
+      if (this.selectedTags.size > 0) {
         filteredManga = filteredManga.filter((manga: Manga) => {
           const allTags = [...manga.metadata.genres, ...manga.metadata.themes];
-          return allTags.includes(this.selectedTag);
+          for (const tag of this.selectedTags) {
+            if (!allTags.includes(tag)) {
+              return false;
+            }
+          }
+          return true;
         });
       }
-      if (this.selectedAuthor && this.selectedAuthor !== '') {
+      
+      // 多作者筛选：漫画作者在选中列表中即可
+      if (this.selectedAuthors.size > 0) {
         filteredManga = filteredManga.filter((manga: Manga) => {
-          return manga.metadata.authors.includes(this.selectedAuthor);
+          for (const author of manga.metadata.authors) {
+            if (this.selectedAuthors.has(author)) {
+              return true;
+            }
+          }
+          return false;
         });
       }
       
@@ -1205,15 +1221,24 @@ struct MainMenuPage {
       for (const ebook of this.ebookList) {
         filteredEBook.push(ebook);
       }
-      if (this.selectedTag && this.selectedTag !== '') {
+      
+      // 多标签筛选电子书
+      if (this.selectedTags.size > 0) {
         filteredEBook = filteredEBook.filter((ebook: EBook) => {
           const allTags: string[] = ebook.metadata.tags || [];
-          return allTags.includes(this.selectedTag);
+          for (const tag of this.selectedTags) {
+            if (!allTags.includes(tag)) {
+              return false;
+            }
+          }
+          return true;
         });
       }
-      if (this.selectedAuthor && this.selectedAuthor !== '') {
+      
+      // 多作者筛选电子书
+      if (this.selectedAuthors.size > 0) {
         filteredEBook = filteredEBook.filter((ebook: EBook) => {
-          return ebook.metadata.author === this.selectedAuthor;
+          return this.selectedAuthors.has(ebook.metadata.author);
         });
       }
       
@@ -1229,12 +1254,58 @@ struct MainMenuPage {
         this.discoveredEBookList = filteredEBook;
       }
       
-      logger.info(TAG, `发现页面筛选: 标签=${this.selectedTag}, 作者=${this.selectedAuthor}, 类型=${this.discoverContentType}, 漫画=${this.discoveredMangaList.length}本, 电子书=${this.discoveredEBookList.length}本`);
+      const selectedTagsStr = Array.from(this.selectedTags).join(',');
+      const selectedAuthorsStr = Array.from(this.selectedAuthors).join(',');
+      logger.info(TAG, `发现页面筛选: 标签=[${selectedTagsStr}], 作者=[${selectedAuthorsStr}], 类型=${this.discoverContentType}, 漫画=${this.discoveredMangaList.length}本, 电子书=${this.discoveredEBookList.length}本`);
     } catch (error) {
       logger.error(TAG, `应用发现页面筛选失败: ${String(error)}`);
       this.discoveredMangaList = [...this.mangaList];
       this.discoveredEBookList = [...this.ebookList];
     }
+  }
+  
+  /**
+   * 切换标签选中状态
+   */
+  private toggleTagSelection(tag: string): void {
+    if (this.selectedTags.has(tag)) {
+      this.selectedTags.delete(tag);
+    } else {
+      this.selectedTags.add(tag);
+    }
+    this.selectedTags = new Set(this.selectedTags); // 触发UI更新
+    this.applyDiscoverFilter();
+  }
+  
+  /**
+   * 切换作者选中状态
+   */
+  private toggleAuthorSelection(author: string): void {
+    if (this.selectedAuthors.has(author)) {
+      this.selectedAuthors.delete(author);
+    } else {
+      this.selectedAuthors.add(author);
+    }
+    this.selectedAuthors = new Set(this.selectedAuthors); // 触发UI更新
+    this.applyDiscoverFilter();
+  }
+  
+  /**
+   * 清除所有标签选择
+   */
+  private clearTagSelection(): void {
+    this.selectedTags.clear();
+    this.selectedTags = new Set(this.selectedTags);
+    this.applyDiscoverFilter();
+  }
+  
+  /**
+   * 清除所有作者选择
+   */
+  private clearAuthorSelection(): void {
+    this.selectedAuthors.clear();
+    this.selectedAuthors = new Set(this.selectedAuthors);
+    this.applyDiscoverFilter();
   }
 
   /**
@@ -3248,16 +3319,19 @@ struct MainMenuPage {
           // 网格视图（响应式）
           List() {
             ListItem() {
-              Grid() {
-                ForEach(this.filteredMangaList, (manga: Manga, index: number) => {
-                  GridItem() {
-                    this.buildMangaGridCard(manga)
-                  }
-                })
+              Column() {
+                Grid() {
+                  ForEach(this.filteredMangaList, (manga: Manga, index: number) => {
+                    GridItem() {
+                      this.buildMangaGridCard(manga)
+                    }
+                  }, (manga: Manga) => manga.id)
+                }
+                .columnsTemplate(this.getGridColumnsTemplate())
+                .rowsGap(this.responsive_gridGap)
+                .columnsGap(this.responsive_gridGap)
+                .width('100%')
               }
-              .columnsTemplate(this.getGridColumnsTemplate())
-              .rowsGap(this.responsive_gridGap)
-              .columnsGap(this.responsive_gridGap)
               .width('100%')
             }
           }
@@ -3538,13 +3612,52 @@ struct MainMenuPage {
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction(() => {
-          if (!this.isMultiSelectMode) {
-            // 长按进入多选模式并选中当前项
+          // 只有在书库页面（当前标签为书库）才能长按进入多选模式
+          if (this.currentTabIndex === TabIndex.LIBRARY && !this.isMultiSelectMode) {
             this.enterMultiSelectMode();
             this.toggleMangaSelection(manga.id);
           }
         })
     )
+  }
+
+  /**
+   * 构建发现页漫画网格卡片（不支持多选）
+   */
+  @Builder
+  buildDiscoverMangaGridCard(manga: Manga) {
+    Column({ space: 8 }) {
+      // 封面图片
+      Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.mangabook'))
+        .width('100%')
+        .aspectRatio(0.7)
+        .objectFit(ImageFit.Cover)
+        .borderRadius(8)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .shadow({
+          radius: 8,
+          color: '#1F000000',
+          offsetY: 4
+        })
+
+      // 漫画标题
+      Text(manga.title)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+    .borderRadius(ThemeManager.getInstance().getGlassRadius())
+    .onClick(() => {
+      this.openMangaDetail(manga);
+    })
   }
 
   /**
@@ -4540,6 +4653,122 @@ struct MainMenuPage {
   }
 
   /**
+   * 构建标签选择弹窗
+   */
+  @Builder
+  buildTagPopup() {
+    Column({ space: 0 }) {
+      // 标题栏
+      Row() {
+        Text(`选择标签 (${this.allTags.length})`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        if (this.selectedTags.size > 0) {
+          Text('清除全部')
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.clearTagSelection();
+            })
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+      
+      // 标签列表
+      Scroll() {
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach(this.allTags, (tag: string) => {
+            Text(tag)
+              .fontSize(13)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .margin({ right: 8, bottom: 8 })
+              .backgroundColor(this.selectedTags.has(tag) 
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .fontColor(this.selectedTags.has(tag)
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .borderRadius(16)
+              .onClick(() => {
+                this.toggleTagSelection(tag);
+              })
+          }, (tag: string) => tag)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 12 })
+      }
+      .constraintSize({ maxHeight: 300 })
+      .scrollBar(BarState.Auto)
+    }
+    .width(320)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  /**
+   * 构建作者选择弹窗
+   */
+  @Builder
+  buildAuthorPopup() {
+    Column({ space: 0 }) {
+      // 标题栏
+      Row() {
+        Text(`选择作者 (${this.allAuthors.length})`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        if (this.selectedAuthors.size > 0) {
+          Text('清除全部')
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.clearAuthorSelection();
+            })
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+      
+      // 作者列表
+      Scroll() {
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+          ForEach(this.allAuthors, (author: string) => {
+            Text(author)
+              .fontSize(13)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .margin({ right: 8, bottom: 8 })
+              .backgroundColor(this.selectedAuthors.has(author) 
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .fontColor(this.selectedAuthors.has(author)
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .borderRadius(16)
+              .onClick(() => {
+                this.toggleAuthorSelection(author);
+              })
+          }, (author: string) => author)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 12 })
+      }
+      .constraintSize({ maxHeight: 300 })
+      .scrollBar(BarState.Auto)
+    }
+    .width(320)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  /**
    * 构建发现内容
    */
   @Builder
@@ -4572,104 +4801,88 @@ struct MainMenuPage {
         top: this.responsive_isLandscape ? 8 : 16 
       })
 
-      // 标签栏标题
-      Row() {
-        Text('标签')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
-        if (this.selectedTag !== '') {
-          Text('清除')
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .onClick(() => {
-              this.selectedTag = '';
-              this.applyDiscoverFilter();
-            })
+      // 筛选按钮区域
+      Row({ space: 12 }) {
+        // 标签筛选按钮
+        Row({ space: 6 }) {
+          Text('🏷️')
+            .fontSize(14)
+          Text(this.selectedTags.size > 0 ? `标签 (${this.selectedTags.size})` : '标签')
+            .fontSize(14)
+            .fontColor(this.selectedTags.size > 0 
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          if (this.selectedTags.size > 0) {
+            Text('×')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .onClick(() => {
+                this.clearTagSelection();
+              })
+          }
         }
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor(this.selectedTags.size > 0 
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(20)
+        .onClick(() => {
+          this.showTagPopup = true;
+        })
+        .bindPopup(this.showTagPopup, {
+          builder: this.buildTagPopup(),
+          placement: Placement.Bottom,
+          popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+          enableArrow: true,
+          onStateChange: (e) => {
+            if (!e.isVisible) {
+              this.showTagPopup = false;
+            }
+          }
+        })
+
+        // 作者筛选按钮
+        Row({ space: 6 }) {
+          Text('👤')
+            .fontSize(14)
+          Text(this.selectedAuthors.size > 0 ? `作者 (${this.selectedAuthors.size})` : '作者')
+            .fontSize(14)
+            .fontColor(this.selectedAuthors.size > 0 
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          if (this.selectedAuthors.size > 0) {
+            Text('×')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .onClick(() => {
+                this.clearAuthorSelection();
+              })
+          }
+        }
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor(this.selectedAuthors.size > 0 
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(20)
+        .onClick(() => {
+          this.showAuthorPopup = true;
+        })
+        .bindPopup(this.showAuthorPopup, {
+          builder: this.buildAuthorPopup(),
+          placement: Placement.Bottom,
+          popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+          enableArrow: true,
+          onStateChange: (e) => {
+            if (!e.isVisible) {
+              this.showAuthorPopup = false;
+            }
+          }
+        })
+        
+        Blank()
       }
       .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
-
-      // 标签滚动列表（横屏时减小高度）
-      Scroll(new Scroller()) {
-        Row({ space: 8 }) {
-          ForEach(this.allTags, (tag: string) => {
-            Text(tag)
-              .fontSize(this.responsive_isLandscape ? 12 : 13)
-              .padding({ 
-                left: this.responsive_isLandscape ? 10 : 12, 
-                right: this.responsive_isLandscape ? 10 : 12, 
-                top: this.responsive_isLandscape ? 4 : 6, 
-                bottom: this.responsive_isLandscape ? 4 : 6 
-              })
-              .backgroundColor(this.selectedTag === tag ? 
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .fontColor(this.selectedTag === tag ?
-                ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
-                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .borderRadius(12)
-              .onClick(() => {
-                this.selectedTag = tag;
-                this.applyDiscoverFilter();
-              })
-          }, (tag: string) => tag)
-        }
-        .padding({ left: 16, right: 16 })
-      }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-      .height(this.responsive_isLandscape ? 32 : 40)
-
-      // 作者栏标题
-      Row() {
-        Text('作者')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
-        if (this.selectedAuthor !== '') {
-          Text('清除')
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .onClick(() => {
-              this.selectedAuthor = '';
-              this.applyDiscoverFilter();
-            })
-        }
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
-      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
-
-      // 作者滚动列表
-      Scroll(new Scroller()) {
-        Row({ space: 8 }) {
-          ForEach(this.allAuthors, (author: string) => {
-            Text(author)
-              .fontSize(13)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .backgroundColor(this.selectedAuthor === author ? 
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .fontColor(this.selectedAuthor === author ?
-                ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
-                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .borderRadius(12)
-              .onClick(() => {
-                this.selectedAuthor = author;
-                this.applyDiscoverFilter();
-              })
-          }, (author: string) => author)
-        }
-        .padding({ left: 16, right: 16 })
-      }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-      .height(40)
 
       // 内容类型切换
       Row({ space: 8 }) {
@@ -4722,7 +4935,7 @@ struct MainMenuPage {
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
       // 筛选结果提示
-      if (this.selectedTag !== '' || this.selectedAuthor !== '' || this.discoverContentType !== 'all') {
+      if (this.selectedTags.size > 0 || this.selectedAuthors.size > 0 || this.discoverContentType !== 'all') {
         Row() {
           Text(`找到 ${this.discoveredMangaList.length} 本漫画, ${this.discoveredEBookList.length} 本电子书`)
             .fontSize(13)
@@ -4750,7 +4963,7 @@ struct MainMenuPage {
                 Grid() {
                   ForEach(this.discoveredMangaList, (manga: Manga) => {
                     GridItem() {
-                      this.buildMangaGridCard(manga)
+                      this.buildDiscoverMangaGridCard(manga)
                     }
                   }, (manga: Manga) => manga.id)
                 }
@@ -4864,10 +5077,11 @@ struct MainMenuPage {
 
       // 图源列表区域（支持下拉刷新）
       Refresh({ refreshing: this.isRefreshingSourceList }) {
-        Column({ space: 12 }) {
+        Scroll() {
+          Column({ space: 12 }) {
 
-        // 图源列表
-        Column({ space: 8 }) {
+          // 图源列表
+          Column({ space: 8 }) {
           Text(`已安装图源 (${this.sourceList.length})`)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
@@ -4968,8 +5182,11 @@ struct MainMenuPage {
         .backgroundColor(Color.Transparent)
         .borderRadius(12)
         .margin({ left: 16, right: 16 })
+          }
+          .width('100%')
         }
-        .width('100%')
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
       }
       .onRefreshing(async () => {
         await this.handleSourceRefresh();
@@ -5043,9 +5260,17 @@ struct MainMenuPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
 
-        Text(`${source.language} • v${source.version}`)
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Row({ space: 4 }) {
+          Text(`${source.language} • v${source.version}`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          
+          if (source.requireProxy) {
+            Text('🌐需要代理')
+              .fontSize(11)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+          }
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -5164,7 +5389,7 @@ struct MainMenuPage {
             this.showToast('打开全局设置页面失败');
           }
         })
-        this.buildSettingItem('下载管理', '离线下载、存储管理', $r('app.media.ic_download'), () => {
+        this.buildSettingItem('下载管理', '离线下载管理', $r('app.media.ic_download'), () => {
           try {
             const navigationPath: NavigationPath = {
               name: 'DownloadManagerPage',
@@ -5180,38 +5405,41 @@ struct MainMenuPage {
             this.showToast('打开下载管理页面失败');
           }
         })
-        this.buildSettingItem('日志管理', '查看和导出应用日志', $r('app.media.ic_log'), () => {
+        this.buildSettingItem('存储管理', '清理缓存、管理存储空间', $r('app.media.ic_storage_manage'), () => {
           try {
             const navigationPath: NavigationPath = {
-              name: 'LogManagerPage',
+              name: 'StorageManagementPage',
               param: {
                 fromPage: 'MainMenuPage',
                 timestamp: Date.now()
               }
             };
             this.pathStack.pushPath(navigationPath);
-            logger.info(TAG, '导航到日志管理页面');
+            logger.info(TAG, '导航到存储管理页面');
           } catch (error) {
-            logger.error(TAG, '导航到日志管理页面失败', String(error));
-            this.showToast('打开日志管理页面失败');
+            logger.error(TAG, '导航到存储管理页面失败', String(error));
+            this.showToast('打开存储管理页面失败');
           }
         })
-        this.buildSettingItem('刮削测试', '测试元数据刮削功能', $r('app.media.ic_search'), () => {
-          try {
-            const navigationPath: NavigationPath = {
-              name: 'ScraperTestPage',
-              param: {
-                fromPage: 'MainMenuPage',
-                timestamp: Date.now()
-              }
-            };
-            this.pathStack.pushPath(navigationPath);
-            logger.info(TAG, '导航到刮削测试页面');
-          } catch (error) {
-            logger.error(TAG, '导航到刮削测试页面失败', String(error));
-            this.showToast('打开刮削测试页面失败');
-          }
-        })
+        // 日志管理仅在高级模式下显示
+        if (this.advancedModeEnabled) {
+          this.buildSettingItem('日志管理', '查看和导出应用日志', $r('app.media.ic_log'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'LogManagerPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到日志管理页面');
+            } catch (error) {
+              logger.error(TAG, '导航到日志管理页面失败', String(error));
+              this.showToast('打开日志管理页面失败');
+            }
+          })
+        }
         this.buildSettingItem('关于应用', `版本 ${this.appVersion}`, $r('app.media.ic_info'), () => {
           try {
             const navigationPath: NavigationPath = {
@@ -5406,8 +5634,8 @@ struct MainMenuPage {
     //   ReaderKitTestPage()
     // } else if (name === 'PdfKitTestPage') {
     //   PdfKitTestPage()
-    } else if (name === 'ScraperTestPage') {
-      ScraperTestPage()
+    // } else if (name === 'ScraperTestPage') {  // 已移除，备份为 .bak
+    //   ScraperTestPage()
     }
   }
 
@@ -5607,8 +5835,7 @@ struct MainMenuPage {
 
               // 图源标签（高级模式）
               TabContent() {
-                Scroll() { this.buildSourceContent() }
-                .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
+                this.buildSourceContent()
               }
               .backgroundColor(Color.Transparent)
 
