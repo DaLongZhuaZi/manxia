@@ -285,7 +285,8 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       preloadNextChapter INTEGER DEFAULT 1,
       preloadNextPages INTEGER DEFAULT -1,
       downloadWhileReading INTEGER DEFAULT 1,
-      maxCacheSize INTEGER DEFAULT 1073741824
+      maxCacheSize INTEGER DEFAULT 1073741824,
+      requireProxy INTEGER DEFAULT 0
     )
   `,
 
@@ -727,6 +728,21 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       brightness INTEGER DEFAULT 100,
       autoSave INTEGER DEFAULT 1,
       saveInterval INTEGER DEFAULT 30,
+      letterSpacing REAL DEFAULT 0,
+      paragraphSpacing INTEGER DEFAULT 8,
+      firstLineIndent INTEGER DEFAULT 2,
+      textAlignment TEXT DEFAULT 'JUSTIFY',
+      pageTurnAnimation TEXT DEFAULT 'SLIDE',
+      tapToTurn INTEGER DEFAULT 1,
+      volumeKeyNavigation INTEGER DEFAULT 1,
+      keepScreenOn INTEGER DEFAULT 0,
+      showPageNumber INTEGER DEFAULT 1,
+      showProgress INTEGER DEFAULT 0,
+      showTime INTEGER DEFAULT 1,
+      showBattery INTEGER DEFAULT 0,
+      backgroundType TEXT DEFAULT 'COLOR',
+      backgroundImagePath TEXT DEFAULT '',
+      backgroundImageOpacity REAL DEFAULT 0.3,
       createTime INTEGER NOT NULL,
       updateTime INTEGER NOT NULL,
       FOREIGN KEY (bookId) REFERENCES ebook_info (id),
@@ -844,5 +860,27 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
     // 版本10：为comic_info表添加contentType字段，用于区分漫画和电子书类PDF
     // contentType: 'manga' = 漫画, 'ebook' = 电子书类PDF, 'online' = 在线漫画
     'ALTER TABLE comic_info ADD COLUMN contentType TEXT DEFAULT \'manga\''
+  ],
+  11: [
+    // 版本11：为电子书阅读设置表添加纯文本阅读器专用字段
+    // 高级字体设置
+    'ALTER TABLE ebook_reading_settings ADD COLUMN letterSpacing REAL DEFAULT 0',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN paragraphSpacing INTEGER DEFAULT 8',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN firstLineIndent INTEGER DEFAULT 2',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN textAlignment TEXT DEFAULT \'JUSTIFY\'',
+    // 翻页动画设置
+    'ALTER TABLE ebook_reading_settings ADD COLUMN pageTurnAnimation TEXT DEFAULT \'SLIDE\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN tapToTurn INTEGER DEFAULT 1',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN volumeKeyNavigation INTEGER DEFAULT 1',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN keepScreenOn INTEGER DEFAULT 0',
+    // 显示设置
+    'ALTER TABLE ebook_reading_settings ADD COLUMN showPageNumber INTEGER DEFAULT 1',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN showProgress INTEGER DEFAULT 0',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN showTime INTEGER DEFAULT 1',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN showBattery INTEGER DEFAULT 0',
+    // 背景设置
+    'ALTER TABLE ebook_reading_settings ADD COLUMN backgroundType TEXT DEFAULT \'COLOR\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN backgroundImagePath TEXT DEFAULT \'\'',
+    'ALTER TABLE ebook_reading_settings ADD COLUMN backgroundImageOpacity REAL DEFAULT 0.3'
   ]
 };

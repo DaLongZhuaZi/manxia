@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 硬盘外框 -->
+  <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
+  <!-- 硬盘分区线 -->
+  <line x1="2" y1="14" x2="22" y2="14" stroke="currentColor" stroke-width="1.5"/>
+  <!-- 指示灯 -->
+  <circle cx="18" cy="17" r="1.5" fill="currentColor"/>
+  <!-- 存储条 -->
+  <rect x="5" y="7" width="14" height="3" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+  <rect x="5" y="7" width="9" height="3" rx="1" fill="currentColor" opacity="0.6"/>
+</svg>

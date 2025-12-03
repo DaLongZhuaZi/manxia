@@ -30,6 +30,7 @@ export interface SourceInfo {
   createTime: number;
   lastUpdateTime: number;
   iconPath?: string;  // 图源图标路径
+  requireProxy?: boolean;  // 是否需要代理访问（对应 metadata.Internet）
 }
 
 /**
@@ -420,7 +421,8 @@ export class SourceManager {
       priority: source.priority as number || 0,
       createTime: source.createTime as number,
       lastUpdateTime: source.lastUpdateTime as number,
-      iconPath: iconPath
+      iconPath: iconPath,
+      requireProxy: Boolean(source.requireProxy)
     };
   }
 

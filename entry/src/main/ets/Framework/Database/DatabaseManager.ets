@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 10,
+  DATABASE_VERSION: 11,
   ENCRYPT: false
 };
 
@@ -227,6 +227,7 @@ export class DatabaseManager {
     await this.ensureComicSourcePreloadColumns();
     await this.ensureComicSourceTabsConfigColumn();
     await this.ensureComicSourceIconPathColumn();
+    await this.ensureComicSourceRequireProxyColumn();
     await this.ensureEBookProgressColumns();
   }
 
@@ -439,6 +440,33 @@ export class DatabaseManager {
       }
     } catch (error) {
       logger.error(TAG, `确保comic_source iconPath列失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 确保comic_source表有requireProxy列（是否需要代理访问）
+   */
+  private async ensureComicSourceRequireProxyColumn(): Promise<void> {
+    try {
+      const store = this.getStore();
+      const rs = await store.querySql("PRAGMA table_info(comic_source)");
+      
+      let hasRequireProxy = false;
+      
+      while (rs.goToNextRow()) {
+        const columnName = rs.getString(1);
+        if (columnName === 'requireProxy') {
+          hasRequireProxy = true;
+        }
+      }
+      rs.close();
+      
+      if (!hasRequireProxy) {
+        await store.executeSql("ALTER TABLE comic_source ADD COLUMN requireProxy INTEGER DEFAULT 0");
+        logger.info(TAG, '已为comic_source添加requireProxy列');
+      }
+    } catch (error) {
+      logger.error(TAG, `确保comic_source requireProxy列失败: ${String(error)}`);
     }
   }
 
@@ -1246,6 +1274,38 @@ export class DatabaseManager {
         record.version = value;
       } else if (columnName === 'iconPath') {
         record.iconPath = value;
+      }
+      // ========== 纯文本阅读器专用设置字段 ==========
+      else if (columnName === 'letterSpacing') {
+        record.letterSpacing = value;
+      } else if (columnName === 'paragraphSpacing') {
+        record.paragraphSpacing = value;
+      } else if (columnName === 'firstLineIndent') {
+        record.firstLineIndent = value;
+      } else if (columnName === 'textAlignment') {
+        record.textAlignment = value;
+      } else if (columnName === 'pageTurnAnimation') {
+        record.pageTurnAnimation = value;
+      } else if (columnName === 'tapToTurn') {
+        record.tapToTurn = value;
+      } else if (columnName === 'volumeKeyNavigation') {
+        record.volumeKeyNavigation = value;
+      } else if (columnName === 'keepScreenOn') {
+        record.keepScreenOn = value;
+      } else if (columnName === 'showPageNumber') {
+        record.showPageNumber = value;
+      } else if (columnName === 'showProgress') {
+        record.showProgress = value;
+      } else if (columnName === 'showTime') {
+        record.showTime = value;
+      } else if (columnName === 'showBattery') {
+        record.showBattery = value;
+      } else if (columnName === 'backgroundType') {
+        record.backgroundType = value;
+      } else if (columnName === 'backgroundImagePath') {
+        record.backgroundImagePath = value;
+      } else if (columnName === 'backgroundImageOpacity') {
+        record.backgroundImageOpacity = value;
       }
       // 其他字段可以根据需要继续添加
     }

@@ -6,7 +6,7 @@ import { logger } from '../../Utils/Logger';
 import { MangaSourceEngine } from '../WebView/MangaSourceEngine';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
 import { DataManager } from '../Data/DataManager';
-import { ImageCacheManager } from '../Cache/ImageCacheManager';
+import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Cache/ImageCacheManager';
 import { PageInfo } from '../WebView/MangaSourceTypes';
 
 const TAG = 'ChapterPreloadManager';
@@ -72,6 +72,7 @@ export class ChapterPreloadManager {
   private currentMangaId: string = '';      // 当前漫画ID
   private currentSourceId: number = 0;      // 当前图源ID
   private currentSourceName: string = '';   // 当前图源名称（【关键】用于确保图源正确）
+  private currentSourceHeaders: Record<string, string> = {}; // 当前图源的network headers（如Referer）
   
   private constructor() {}
   
@@ -124,6 +125,7 @@ export class ChapterPreloadManager {
     this.currentMangaId = '';
     this.currentSourceId = 0;
     this.currentSourceName = '';
+    this.currentSourceHeaders = {};
   }
   
   /**
@@ -150,7 +152,10 @@ export class ChapterPreloadManager {
     this.currentSourceId = sourceId;
     this.currentSourceName = sourceName;
     
-    logger.info(TAG, `🔄 开始预加载 ${chapters.length} 个章节: sourceName="${sourceName}", sourceId=${sourceId}`);
+    // 获取图源的network headers（如Referer）
+    await this.loadSourceHeaders(sourceId);
+    
+    logger.info(TAG, `🔄 开始预加载 ${chapters.length} 个章节: sourceName="${sourceName}", sourceId=${sourceId}, headers=${JSON.stringify(this.currentSourceHeaders)}`);
     
     // 创建预加载任务
     for (const chapter of chapters) {
@@ -255,8 +260,9 @@ export class ChapterPreloadManager {
         const pageInfo = pageListResult.data[i];
         if (pageInfo.imageUrl) {
           try {
-            // 使用ImageCacheManager预加载图片
-            await ImageCacheManager.getInstance().preloadImage(pageInfo.imageUrl);
+            // 使用ImageCacheManager预加载图片（传递图源headers，如Referer）
+            const preloadOptions = this.buildPreloadOptions();
+            await ImageCacheManager.getInstance().preloadImage(pageInfo.imageUrl, preloadOptions);
             task.preloadedPages++;
             logger.debug(TAG, `预加载完成: ${task.chapterTitle} 第${i + 1}页`);
           } catch (error) {
@@ -356,5 +362,59 @@ export class ChapterPreloadManager {
     } catch (error) {
       logger.error(TAG, `保存页面信息失败: ${error}`);
     }
+  }
+  
+  /**
+   * 从图源配置中加载network headers
+   */
+  private async loadSourceHeaders(sourceId: number): Promise<void> {
+    try {
+      this.currentSourceHeaders = {};
+      const sources = await DataManager.getInstance().getAllComicSources();
+      
+      for (let i = 0; i < sources.length; i++) {
+        const s = sources[i] as Record<string, Object>;
+        if (Number(s.id) === sourceId) {
+          const configJson = s.configJson as string;
+          if (configJson) {
+            const config: Record<string, Object> = JSON.parse(configJson) as Record<string, Object>;
+            const network: Record<string, Object> | undefined = config.network as Record<string, Object> | undefined;
+            if (network && network.headers) {
+              const headers: Record<string, Object> = network.headers as Record<string, Object>;
+              // 提取Referer
+              if (headers.Referer) {
+                this.currentSourceHeaders['Referer'] = String(headers.Referer);
+              }
+              // 提取Accept-Language
+              if (headers['Accept-Language']) {
+                this.currentSourceHeaders['Accept-Language'] = String(headers['Accept-Language']);
+              }
+              logger.info(TAG, `图源headers已加载: ${JSON.stringify(this.currentSourceHeaders)}`);
+            }
+          }
+          break;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `加载图源headers失败: ${error}`);
+    }
+  }
+  
+  /**
+   * 构建预加载选项（包含headers）
+   */
+  private buildPreloadOptions(): LoadOptions | undefined {
+    if (Object.keys(this.currentSourceHeaders).length === 0) {
+      return undefined;
+    }
+    
+    const headers: RequestHeaders = {} as RequestHeaders;
+    headers.referer = this.currentSourceHeaders['Referer'] || '';
+    headers.acceptLanguage = this.currentSourceHeaders['Accept-Language'] || 'zh-CN,zh;q=0.9,en;q=0.8';
+    
+    const options: LoadOptions = {} as LoadOptions;
+    options.headers = headers;
+    options.sourceId = this.currentSourceId;
+    return options;
   }
 }

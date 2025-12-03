@@ -268,6 +268,7 @@ struct MangaDetailPage {
   @State private sourceId: number = 0;
   @State private sourceName: string = '';
   @State private accessDenied: boolean = false;
+  @State private coverHttpHeaders: Record<string, string> = {}; // 封面图片加载的HTTP headers
 
   // 漫画数据
   @State currentManga: Manga | null = null;
@@ -1509,7 +1510,7 @@ struct MangaDetailPage {
     try {
       logger.info(TAG, `开始使用WebView加载漫画详情: sourceId=${this.sourceId}, mangaId=${this.pageParams?.mangaId}`);
       
-      // 获取图源配置以获取名称
+      // 获取图源配置以获取名称和网络headers
       try {
         const sources = await DataManager.getInstance().getAllComicSources();
         logger.debug(TAG, `获取到 ${sources.length} 个图源，当前sourceId=${this.sourceId}`);
@@ -1518,6 +1519,33 @@ struct MangaDetailPage {
           if (Number(s.id) === this.sourceId) {
             this.sourceName = String(s.name);
             logger.info(TAG, `图源名称: ${this.sourceName}`);
+            
+            // 提取网络headers用于封面加载
+            try {
+              const configJson = s.configJson as string;
+              if (configJson) {
+                const config: Record<string, Object> = JSON.parse(configJson) as Record<string, Object>;
+                const network: Record<string, Object> | undefined = config.network as Record<string, Object> | undefined;
+                if (network && network.headers) {
+                  const headers: Record<string, Object> = network.headers as Record<string, Object>;
+                  const newHeaders: Record<string, string> = {};
+                  // 提取Referer
+                  if (headers.Referer) {
+                    newHeaders['Referer'] = String(headers.Referer);
+                  }
+                  // 提取其他可能的headers
+                  if (headers['Accept-Language']) {
+                    newHeaders['Accept-Language'] = String(headers['Accept-Language']);
+                  }
+                  if (Object.keys(newHeaders).length > 0) {
+                    this.coverHttpHeaders = newHeaders;
+                    logger.info(TAG, `封面HTTP headers已设置: ${JSON.stringify(newHeaders)}`);
+                  }
+                }
+              }
+            } catch (parseErr) {
+              logger.warn(TAG, `解析图源配置失败: ${String(parseErr)}`);
+            }
             break;
           }
         }

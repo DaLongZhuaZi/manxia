@@ -32,7 +32,7 @@ import { EBook, EBookMetadata } from '../Models/EBookModels';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
-import { EBookMetadataDialog } from '../Framework/Components/EBookMetadataDialog';
+import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
 import { PdfToMangaImporter, PdfImportConfig, PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
@@ -1971,21 +1971,10 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.PROCESSING, '正在提取封面...', 60);
       await this.tryExtractEBookCover(ebook, sandboxPath);
 
-      // 检查是否需要补充元数据
-      if (this.needsMetadataCompletion(ebook.metadata)) {
-        logger.info(TAG, '电子书信息不完整，显示补充对话框');
-        this.updateProgress(ImportStatus.IDLE, '', 0); // 隐藏进度，显示对话框
-        await this.showEBookMetadataDialog(ebook);
-      } else {
-        // 直接保存到数据库
-        this.updateProgress(ImportStatus.IMPORTING, '正在保存到数据库...', 80);
-        await this.ebookDataManager.saveEBook(ebook);
-        logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
-        
-        // 显示完成状态
-        this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${ebook.metadata.title}`, 100);
-        this.showToast(`导入成功: ${ebook.metadata.title}`);
-      }
+      // 显示确认对话框，让用户查看和编辑解析到的信息
+      logger.info(TAG, `显示电子书确认对话框: ${ebook.metadata.title}, 章节数: ${ebook.chapters.length}`);
+      this.updateProgress(ImportStatus.IDLE, '', 0); // 隐藏进度，显示对话框
+      await this.showEBookMetadataDialog(ebook);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '导入电子书失败', errorMsg);
@@ -2048,22 +2037,19 @@ struct DataManagementPage {
       const ebook = await parser.parse();
       logger.info(TAG, `电子书解析完成: ${ebook.metadata.title}`);
       
-      this.updateProgress(ImportStatus.IMPORTING, '正在保存到数据库...', 70);
+      // 设置默认收藏状态为 true（导入即收藏）
+      ebook.isFavorite = true;
+      
+      // 尝试提取封面图片
+      this.updateProgress(ImportStatus.PROCESSING, '正在提取封面...', 50);
+      await this.tryExtractEBookCover(ebook, sandboxPath);
+      
+      this.updateProgress(ImportStatus.PROCESSING, '准备确认信息...', 70);
 
-      // 3. 检查是否需要补充元数据
-      if (this.needsMetadataCompletion(ebook.metadata)) {
-        logger.info(TAG, '电子书信息不完整，显示补充对话框');
-        this.updateProgress(ImportStatus.IDLE, '', 0);
-        await this.showEBookMetadataDialog(ebook);
-      } else {
-        // 4. 直接保存到数据库
-        await this.ebookDataManager.saveEBook(ebook);
-        logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
-        
-        // 显示完成通知
-        this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${ebook.metadata.title}`, 100);
-        this.showToast(`电子书导入成功: ${ebook.metadata.title}`);
-      }
+      // 3. 显示确认对话框，让用户查看和编辑解析到的信息
+      logger.info(TAG, `显示电子书确认对话框: ${ebook.metadata.title}, 章节数: ${ebook.chapters.length}`);
+      this.updateProgress(ImportStatus.IDLE, '', 0);
+      await this.showEBookMetadataDialog(ebook);
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -2205,16 +2191,12 @@ struct DataManagementPage {
 
   /**
    * 检查是否需要补充元数据
+   * 始终返回 true，让用户确认导入信息
    */
   private needsMetadataCompletion(metadata: EBookMetadata): boolean {
-    // 检查关键字段是否为空或默认值
-    const needsCompletion = 
-      metadata.title === '未知书名' ||
-      metadata.title.length === 0 ||
-      metadata.author === '未知作者' ||
-      metadata.author.length === 0;
-
-    return needsCompletion;
+    // 始终显示确认对话框，让用户可以查看和编辑解析到的信息
+    // 即使信息完整，用户也可能想要修改标题、作者或选择自定义封面
+    return true;
   }
 
   /**
@@ -2226,17 +2208,35 @@ struct DataManagementPage {
         builder: EBookMetadataDialog({
           themeState: this.themeState,
           initialMetadata: ebook.metadata,
-          onConfirm: async (metadata: EBookMetadata) => {
-            logger.info(TAG, '用户确认补充元数据');
+          chapters: ebook.chapters,  // 传递章节信息
+          onConfirm: async (result: EBookMetadataDialogResult) => {
+            logger.info(TAG, '用户确认导入电子书');
             // 更新电子书元数据
-            ebook.metadata = metadata;
+            ebook.metadata = result.metadata;
+            
+            // 如果用户选择了自定义封面，需要复制到应用目录
+            if (result.customCoverPath) {
+              try {
+                const coverPath = await this.copyCustomCoverToApp(result.customCoverPath, ebook.id);
+                ebook.metadata.coverImagePath = coverPath;
+                logger.info(TAG, `自定义封面已保存: ${coverPath}`);
+              } catch (error) {
+                logger.warn(TAG, `保存自定义封面失败: ${String(error)}`);
+              }
+            }
+            
             // 保存到数据库
             await this.ebookDataManager.saveEBook(ebook);
             logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
+            
+            // 显示成功提示
+            this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${ebook.metadata.title}`, 100);
+            this.showToast(`导入成功: ${ebook.metadata.title}`);
             resolve();
           },
           onCancel: () => {
-            logger.info(TAG, '用户取消补充元数据');
+            logger.info(TAG, '用户取消导入电子书');
+            this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
             resolve();
           }
         }),
@@ -2246,6 +2246,41 @@ struct DataManagementPage {
 
       this.ebookMetadataDialogController.open();
     });
+  }
+  
+  /**
+   * 复制自定义封面到应用目录
+   */
+  private async copyCustomCoverToApp(srcUri: string, bookId: string): Promise<string> {
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取应用上下文');
+    }
+    
+    const coverDir = `${context.filesDir}/ebook_covers`;
+    const targetPath = `${coverDir}/${bookId}_cover.jpg`;
+    
+    // 确保目录存在
+    try {
+      await fileIo.access(coverDir);
+    } catch {
+      await fileIo.mkdir(coverDir);
+    }
+    
+    // 复制文件
+    const srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+    const dstFile = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+    
+    const buffer = new ArrayBuffer(4096);
+    let readLen = 0;
+    while ((readLen = fileIo.readSync(srcFile.fd, buffer)) > 0) {
+      fileIo.writeSync(dstFile.fd, buffer, { length: readLen });
+    }
+    
+    fileIo.closeSync(srcFile);
+    fileIo.closeSync(dstFile);
+    
+    return targetPath;
   }
 
   /**

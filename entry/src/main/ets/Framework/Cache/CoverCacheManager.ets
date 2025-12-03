@@ -29,6 +29,7 @@ export class CoverCacheManager {
   private failedDownloads: Set<string> = new Set(); // 记录失败的下载，避免重复尝试
   private isPathInitialized: boolean = false;
   private initializationPromise: Promise<void> | null = null;
+  private sourcePkgCache: Map<number, string> = new Map(); // sourceId -> pkg 缓存
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
@@ -96,10 +97,47 @@ export class CoverCacheManager {
   }
 
   /**
-   * 获取图源封面目录
+   * 获取图源封面目录（使用pkg作为文件夹名，确保图源重装后缓存不丢失）
    */
   private getSourceCoverDir(sourceId: number): string {
+    const pkg = this.sourcePkgCache.get(sourceId);
+    if (pkg) {
+      // 使用 pkg 作为目录名（清理特殊字符）
+      const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
+      return `${this.coverBasePath}/${safePkg}`;
+    }
+    // 降级：使用 sourceId（仅在 pkg 未缓存时）
     return `${this.coverBasePath}/source_${sourceId}`;
+  }
+  
+  /**
+   * 确保图源的 pkg 已缓存
+   */
+  private async ensureSourcePkg(sourceId: number): Promise<string | null> {
+    // 已缓存则直接返回
+    if (this.sourcePkgCache.has(sourceId)) {
+      return this.sourcePkgCache.get(sourceId) || null;
+    }
+    
+    try {
+      // 从数据库查询图源信息
+      const sql = 'SELECT pkg FROM comic_source WHERE id = ?';
+      const records = await this.dbManager.querySql(sql, [sourceId]);
+      
+      if (records && records.length > 0) {
+        const record = records[0] as Record<string, Object>;
+        const pkg = record.pkg as string;
+        if (pkg && pkg.length > 0) {
+          this.sourcePkgCache.set(sourceId, pkg);
+          logger.debug(TAG, `缓存图源pkg: sourceId=${sourceId}, pkg=${pkg}`);
+          return pkg;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `获取图源pkg失败: sourceId=${sourceId}, error=${error}`);
+    }
+    
+    return null;
   }
 
   /**
@@ -111,6 +149,9 @@ export class CoverCacheManager {
         logger.error(TAG, '封面路径未初始化，无法创建图源目录');
         return false;
       }
+      
+      // 先确保 pkg 已缓存，这样 getSourceCoverDir 才能使用正确的目录名
+      await this.ensureSourcePkg(sourceId);
       
       const dirPath = this.getSourceCoverDir(sourceId);
       if (!fs.accessSync(dirPath)) {
@@ -471,7 +512,7 @@ export class CoverCacheManager {
   }
 
   /**
-   * 获取图源封面统计信息
+   * 获取图源封面统计信息（统计新旧两种格式的目录）
    */
   async getSourceCoverStats(sourceId: number): Promise<CoverStats> {
     try {
@@ -480,12 +521,45 @@ export class CoverCacheManager {
         return emptyStats;
       }
       
-      const dirPath = this.getSourceCoverDir(sourceId);
-      if (!fs.accessSync(dirPath)) {
-        const emptyStats: CoverStats = { count: 0, size: 0 };
-        return emptyStats;
+      // 先确保 pkg 已缓存
+      const pkg = await this.ensureSourcePkg(sourceId);
+      
+      let totalCount = 0;
+      let totalSize = 0;
+      
+      // 统计新格式目录（基于 pkg）
+      if (pkg) {
+        const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const pkgPath = `${this.coverBasePath}/${safePkg}`;
+        if (fs.accessSync(pkgPath)) {
+          const stat = this.countDirectoryStats(pkgPath);
+          totalCount += stat.count;
+          totalSize += stat.size;
+        }
       }
       
+      // 统计旧格式目录（基于 sourceId）- 兼容旧数据
+      const oldPath = `${this.coverBasePath}/source_${sourceId}`;
+      if (fs.accessSync(oldPath)) {
+        const stat = this.countDirectoryStats(oldPath);
+        totalCount += stat.count;
+        totalSize += stat.size;
+      }
+      
+      const result: CoverStats = { count: totalCount, size: totalSize };
+      return result;
+    } catch (error) {
+      logger.error(TAG, `获取图源封面统计失败: ${error}`);
+      const emptyStats: CoverStats = { count: 0, size: 0 };
+      return emptyStats;
+    }
+  }
+  
+  /**
+   * 计算目录统计信息
+   */
+  private countDirectoryStats(dirPath: string): CoverStats {
+    try {
       const files = fs.listFileSync(dirPath);
       let totalSize = 0;
       
@@ -502,14 +576,13 @@ export class CoverCacheManager {
       const result: CoverStats = { count: files.length, size: totalSize };
       return result;
     } catch (error) {
-      logger.error(TAG, `获取图源封面统计失败: ${error}`);
       const emptyStats: CoverStats = { count: 0, size: 0 };
       return emptyStats;
     }
   }
 
   /**
-   * 删除图源所有封面
+   * 删除图源所有封面（删除新旧两种格式的目录）
    */
   async deleteSourceCovers(sourceId: number): Promise<number> {
     try {
@@ -518,11 +591,42 @@ export class CoverCacheManager {
         return 0;
       }
       
-      const dirPath = this.getSourceCoverDir(sourceId);
-      if (!fs.accessSync(dirPath)) {
-        return 0;
+      // 先确保 pkg 已缓存
+      const pkg = await this.ensureSourcePkg(sourceId);
+      let deletedCount = 0;
+      
+      // 删除新格式目录（基于 pkg）
+      if (pkg) {
+        const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const pkgPath = `${this.coverBasePath}/${safePkg}`;
+        if (fs.accessSync(pkgPath)) {
+          deletedCount += this.deleteFilesInDirectory(pkgPath);
+        }
       }
       
+      // 删除旧格式目录（基于 sourceId）- 兼容旧数据
+      const oldPath = `${this.coverBasePath}/source_${sourceId}`;
+      if (fs.accessSync(oldPath)) {
+        deletedCount += this.deleteFilesInDirectory(oldPath);
+      }
+      
+      // 清除数据库记录
+      const sql = `UPDATE temp_manga_info SET localCoverPath = NULL WHERE sourceId = ?`;
+      await this.dbManager.executeSql(sql, [sourceId]);
+      
+      logger.info(TAG, `删除图源封面完成: sourceId=${sourceId}, 删除${deletedCount}个文件`);
+      return deletedCount;
+    } catch (error) {
+      logger.error(TAG, `删除图源封面失败: ${error}`);
+      return 0;
+    }
+  }
+  
+  /**
+   * 删除目录中的所有文件并返回删除数量
+   */
+  private deleteFilesInDirectory(dirPath: string): number {
+    try {
       const files = fs.listFileSync(dirPath);
       let deletedCount = 0;
       
@@ -535,15 +639,8 @@ export class CoverCacheManager {
           logger.warn(TAG, `删除封面文件失败: ${filePath}`);
         }
       }
-      
-      // 清除数据库记录
-      const sql = `UPDATE temp_manga_info SET localCoverPath = NULL WHERE sourceId = ?`;
-      await this.dbManager.executeSql(sql, [sourceId]);
-      
-      logger.info(TAG, `删除图源封面完成: sourceId=${sourceId}, 删除${deletedCount}个文件`);
       return deletedCount;
     } catch (error) {
-      logger.error(TAG, `删除图源封面失败: ${error}`);
       return 0;
     }
   }
@@ -563,13 +660,50 @@ export class CoverCacheManager {
         return stats;
       }
       
+      // 先从数据库获取所有图源的 id 和 pkg 映射
+      const pkgToIdMap = new Map<string, number>();
+      try {
+        const sql = 'SELECT id, pkg FROM comic_source WHERE pkg IS NOT NULL';
+        const records = await this.dbManager.querySql(sql, []);
+        if (records) {
+          for (const record of records) {
+            const r = record as Record<string, Object>;
+            const pkg = r.pkg as string;
+            const id = Number(r.id);
+            if (pkg && !isNaN(id)) {
+              const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
+              pkgToIdMap.set(safePkg, id);
+            }
+          }
+        }
+      } catch (dbError) {
+        logger.warn(TAG, `获取图源映射失败: ${dbError}`);
+      }
+      
       const dirs = fs.listFileSync(this.coverBasePath);
       
       for (const dirName of dirs) {
+        let sourceId: number | undefined;
+        
+        // 旧格式: source_X
         if (dirName.startsWith('source_')) {
-          const sourceId = parseInt(dirName.replace('source_', ''));
-          if (!isNaN(sourceId)) {
-            const stat = await this.getSourceCoverStats(sourceId);
+          sourceId = parseInt(dirName.replace('source_', ''));
+        }
+        // 新格式: pkg (如 com.manxia.extension.zh.pixiv)
+        else if (pkgToIdMap.has(dirName)) {
+          sourceId = pkgToIdMap.get(dirName);
+        }
+        
+        if (sourceId !== undefined && !isNaN(sourceId)) {
+          const stat = await this.getSourceCoverStats(sourceId);
+          // 合并同一 sourceId 的统计（可能同时存在新旧格式）
+          const existing = stats.get(sourceId);
+          if (existing) {
+            stats.set(sourceId, {
+              count: existing.count + stat.count,
+              size: existing.size + stat.size
+            });
+          } else {
             stats.set(sourceId, stat);
           }
         }
@@ -591,19 +725,32 @@ export class CoverCacheManager {
         return;
       }
       
-      const sourcePath = `${this.coverBasePath}/source_${sourceId}`;
+      // 先确保 pkg 已缓存
+      const pkg = await this.ensureSourcePkg(sourceId);
       
+      // 删除新格式目录（基于 pkg）
+      if (pkg) {
+        const safePkg = pkg.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const pkgPath = `${this.coverBasePath}/${safePkg}`;
+        if (fs.accessSync(pkgPath)) {
+          this.deleteDirectory(pkgPath);
+          logger.info(TAG, `已删除图源封面(pkg格式): ${pkgPath}`);
+        }
+      }
+      
+      // 删除旧格式目录（基于 sourceId）- 兼容旧数据
+      const sourcePath = `${this.coverBasePath}/source_${sourceId}`;
       if (fs.accessSync(sourcePath)) {
         this.deleteDirectory(sourcePath);
-        logger.info(TAG, `已删除图源封面: ${sourcePath}`);
-        
-        // 同时清理数据库记录
-        const dbManager = DatabaseManager.getInstance();
-        await dbManager.executeSql(
-          'DELETE FROM temp_manga_info WHERE sourceId = ?',
-          [sourceId]
-        );
+        logger.info(TAG, `已删除图源封面(旧格式): ${sourcePath}`);
       }
+      
+      // 清理数据库记录
+      const dbManager = DatabaseManager.getInstance();
+      await dbManager.executeSql(
+        'DELETE FROM temp_manga_info WHERE sourceId = ?',
+        [sourceId]
+      );
     } catch (error) {
       const errorMsg = `删除图源封面失败: ${error}`;
       logger.error(TAG, errorMsg);

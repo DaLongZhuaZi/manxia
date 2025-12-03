@@ -3202,8 +3202,8 @@ export class DataManager {
       }
       
       const sql = `INSERT INTO comic_source 
-                   (pkg, name, baseUrl, version, description, language, isEnabled, priority, lastUpdateTime, configJson, cookies, createTime) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (pkg, name, baseUrl, version, description, language, isEnabled, priority, lastUpdateTime, configJson, cookies, createTime, requireProxy) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       
       await this.databaseManager.executeSql(sql, [
         pkg,
@@ -3217,7 +3217,8 @@ export class DataManager {
         now,
         source.configJson as string || '{}',
         '',
-        now
+        now,
+        source.requireProxy ? 1 : 0
       ]);
       
       logger.info(TAG, `图源已添加: ${source.name} (pkg: ${pkg})`);
@@ -3247,12 +3248,15 @@ export class DataManager {
       // 检查图源是否已存在
       const existingSource: ESObject | null = await this.getSourceConfigByPkg(pkg);
       
+      // 读取是否需要代理（metadata.Internet）
+      const requireProxy = metadata.Internet === true ? 1 : 0;
+      
       if (existingSource) {
         // 更新现有图源（保留 Cookie）
         const now = Date.now();
         const updateSql = `UPDATE comic_source 
                           SET name = ?, baseUrl = ?, version = ?, description = ?, 
-                              language = ?, lastUpdateTime = ?, configJson = ? 
+                              language = ?, lastUpdateTime = ?, configJson = ?, requireProxy = ? 
                           WHERE pkg = ?`;
         
         await this.databaseManager.executeSql(updateSql, [
@@ -3263,10 +3267,11 @@ export class DataManager {
           metadata.language as string || 'zh-CN',
           now,
           jsonContent,
+          requireProxy,
           pkg
         ]);
         
-        logger.info(TAG, `图源已更新: ${metadata.name} (pkg: ${pkg}, v${metadata.version})`);
+        logger.info(TAG, `图源已更新: ${metadata.name} (pkg: ${pkg}, v${metadata.version}, requireProxy=${requireProxy})`);
       } else {
         // 构建图源数据
         const sourceData: ESObject = {
@@ -3278,13 +3283,14 @@ export class DataManager {
           language: metadata.language || 'zh-CN',
           isEnabled: true,
           priority: 0,
-          configJson: jsonContent
+          configJson: jsonContent,
+          requireProxy: requireProxy === 1
         };
 
         // 保存到数据库
         await this.addComicSource(sourceData);
         
-        logger.info(TAG, `图源导入成功: ${metadata.name} (pkg: ${pkg}, v${metadata.version})`);
+        logger.info(TAG, `图源导入成功: ${metadata.name} (pkg: ${pkg}, v${metadata.version}, requireProxy=${requireProxy})`);
       }
       
       return pkg;

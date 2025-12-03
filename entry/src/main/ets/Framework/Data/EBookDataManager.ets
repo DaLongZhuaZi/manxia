@@ -8,6 +8,8 @@ import { DatabaseManager } from '../Database/DatabaseManager';
 import { DatabaseRecord } from '../Database/DatabaseTypes';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookFormat, EBookStatus, EBookPageMode } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
+import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
+import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
 
 const TAG = 'EBookDataManager';
 
@@ -184,6 +186,73 @@ export class EBookDataManager {
     }
   }
 
+  private settingsColumnsChecked: boolean = false;
+
+  /**
+   * 确保 ebook_reading_settings 表有所有需要的列
+   * 注意：暂时移除缓存检查，确保每次都执行列检查
+   */
+  private async ensureSettingsColumns(): Promise<void> {
+    // 暂时禁用缓存，确保每次都检查
+    // if (this.settingsColumnsChecked) {
+    //   return;
+    // }
+    
+    try {
+      logger.info(TAG, '检查 ebook_reading_settings 表列...');
+      const result = await this.dbManager.querySql("PRAGMA table_info('ebook_reading_settings')", []);
+      
+      // 收集已存在的列名
+      const existingColumns: Set<string> = new Set();
+      for (const row of result) {
+        const colName = String(getRecordValue(row, 'name', ''));
+        existingColumns.add(colName);
+      }
+      
+      logger.info(TAG, `已存在的列: ${Array.from(existingColumns).join(', ')}`);
+      
+      // 需要检查的新列及其定义
+      interface ColumnDef {
+        name: string;
+        definition: string;
+      }
+      
+      const requiredColumns: ColumnDef[] = [
+        { name: 'letterSpacing', definition: 'REAL DEFAULT 0' },
+        { name: 'paragraphSpacing', definition: 'INTEGER DEFAULT 8' },
+        { name: 'firstLineIndent', definition: 'INTEGER DEFAULT 2' },
+        { name: 'textAlignment', definition: "TEXT DEFAULT 'JUSTIFY'" },
+        { name: 'pageTurnAnimation', definition: "TEXT DEFAULT 'SLIDE'" },
+        { name: 'tapToTurn', definition: 'INTEGER DEFAULT 1' },
+        { name: 'volumeKeyNavigation', definition: 'INTEGER DEFAULT 1' },
+        { name: 'keepScreenOn', definition: 'INTEGER DEFAULT 0' },
+        { name: 'showPageNumber', definition: 'INTEGER DEFAULT 1' },
+        { name: 'showProgress', definition: 'INTEGER DEFAULT 0' },
+        { name: 'showTime', definition: 'INTEGER DEFAULT 1' },
+        { name: 'showBattery', definition: 'INTEGER DEFAULT 0' },
+        { name: 'backgroundType', definition: "TEXT DEFAULT 'COLOR'" },
+        { name: 'backgroundImagePath', definition: "TEXT DEFAULT ''" },
+        { name: 'backgroundImageOpacity', definition: 'REAL DEFAULT 0.3' }
+      ];
+      
+      for (const col of requiredColumns) {
+        if (!existingColumns.has(col.name)) {
+          try {
+            const alterSql = `ALTER TABLE ebook_reading_settings ADD COLUMN ${col.name} ${col.definition}`;
+            await this.dbManager.executeSql(alterSql, []);
+            logger.info(TAG, `✅ 已添加列: ${col.name}`);
+          } catch (e) {
+            logger.warn(TAG, `添加 ${col.name} 列失败: ${String(e)}`);
+          }
+        }
+      }
+      
+      this.settingsColumnsChecked = true;
+    } catch (error) {
+      logger.error(TAG, `检查设置表列失败: ${String(error)}`);
+    }
+  }
+
   /**
    * 保存阅读进度
    * 使用 DELETE + 单次完整 INSERT 策略，避免 UPDATE 静默失败问题
@@ -267,42 +336,243 @@ export class EBookDataManager {
   }
 
   /**
-   * 保存阅读设置
+   * 保存阅读设置（包含纯文本阅读器专用设置）
+   * 使用 DELETE + 单次完整 INSERT 策略，避免 UPDATE 静默失败问题
+   * 新电子书会自动应用全局设置
    */
   public async saveReadingSettings(bookId: string, settings: EBookReadingSettings): Promise<void> {
-    const sql = `
-      INSERT OR REPLACE INTO ebook_reading_settings (
-        bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
-        backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
-        pageMargin, pageMode, brightness, autoSave, saveInterval,
-        createTime, updateTime
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
+    // 首次保存时检查并添加缺失的列
+    await this.ensureSettingsColumns();
+    
     const now = Date.now();
-    const params = [
-      bookId,
-      'default_user',
-      settings.fontSize,
-      settings.fontFamily,
-      settings.fontPath || '',
-      settings.fontWeight || 400,
-      settings.lineHeight,
-      settings.backgroundColor,
-      settings.textColor,
-      settings.themeBgImage || '',
-      settings.nightMode ? 1 : 0,
-      settings.followSystemTheme !== false ? 1 : 0,  // 默认为 true
-      settings.pageMargin,
-      settings.pageMode,
-      settings.brightness,
-      settings.autoSave ? 1 : 0,
-      settings.saveInterval,
-      now,
-      now
-    ];
+    
+    // 检查是否是新记录（没有自定义设置），如果是则应用全局设置
+    const finalSettings = await this.applyGlobalSettingsIfNew(settings);
+    
+    try {
+      // 1. 先删除旧记录
+      const deleteSql = `DELETE FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
+      await this.dbManager.executeSql(deleteSql, [bookId, 'default_user']);
+      logger.debug(TAG, `阅读设置旧记录已删除: bookId=${bookId}`);
+      
+      const bgType = finalSettings.backgroundType ?? 'COLOR';
+      const bgImagePath = finalSettings.backgroundImagePath ?? '';
+      const bgImageOpacity = finalSettings.backgroundImageOpacity ?? 0.3;
+      
+      // 2. 单次完整 INSERT 所有字段（UPDATE 在 HarmonyOS RdbStore 中会静默失败）
+      const insertSql = `
+        INSERT INTO ebook_reading_settings (
+          bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
+          backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
+          pageMargin, pageMode, brightness, autoSave, saveInterval,
+          letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
+          pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
+          showPageNumber, showProgress, showTime, showBattery,
+          backgroundType, backgroundImagePath, backgroundImageOpacity,
+          createTime, updateTime
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
 
-    await this.dbManager.executeSql(sql, params);
+      const insertParams: (string | number)[] = [
+        bookId,
+        'default_user',
+        finalSettings.fontSize,
+        finalSettings.fontFamily,
+        finalSettings.fontPath || '',
+        finalSettings.fontWeight || 400,
+        finalSettings.lineHeight,
+        finalSettings.backgroundColor,
+        finalSettings.textColor,
+        finalSettings.themeBgImage || '',
+        finalSettings.nightMode ? 1 : 0,
+        finalSettings.followSystemTheme !== false ? 1 : 0,
+        finalSettings.pageMargin,
+        finalSettings.pageMode,
+        finalSettings.brightness,
+        finalSettings.autoSave ? 1 : 0,
+        finalSettings.saveInterval,
+        // 扩展字段
+        finalSettings.letterSpacing ?? 0,
+        finalSettings.paragraphSpacing ?? 8,
+        finalSettings.firstLineIndent ?? 2,
+        finalSettings.textAlignment ?? 'JUSTIFY',
+        finalSettings.pageTurnAnimation ?? 'SLIDE',
+        finalSettings.tapToTurn !== false ? 1 : 0,
+        finalSettings.volumeKeyNavigation !== false ? 1 : 0,
+        finalSettings.keepScreenOn ? 1 : 0,
+        finalSettings.showPageNumber !== false ? 1 : 0,
+        finalSettings.showProgress ? 1 : 0,
+        finalSettings.showTime !== false ? 1 : 0,
+        finalSettings.showBattery ? 1 : 0,
+        bgType,
+        bgImagePath,
+        bgImageOpacity,
+        now,
+        now
+      ];
+      
+      logger.info(TAG, `INSERT 参数数量: ${insertParams.length}, bgType=${bgType}, bgImagePath=${bgImagePath}`);
+      await this.dbManager.executeSql(insertSql, insertParams);
+      logger.info(TAG, `阅读设置完整插入成功: bookId=${bookId}`);
+      
+      // 3. 验证保存结果 - 使用显式字段名查询（SELECT * 可能不返回通过 UPDATE 添加的字段）
+      const verifySql = `SELECT backgroundType, backgroundImagePath, backgroundImageOpacity, volumeKeyNavigation FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
+      const verifyResult = await this.dbManager.querySql(verifySql, [bookId, 'default_user']);
+      
+      if (verifyResult && verifyResult.length > 0) {
+        const record = verifyResult[0];
+        
+        // 打印完整记录的所有键，用于调试
+        const recordKeys = Object.keys(record);
+        logger.info(TAG, `验证记录的字段列表: ${recordKeys.join(', ')}`);
+        
+        const savedBgType = String(getRecordValue(record, 'backgroundType', 'COLOR'));
+        const savedBgImagePath = String(getRecordValue(record, 'backgroundImagePath', ''));
+        const savedVolumeKey = Number(getRecordValue(record, 'volumeKeyNavigation', 1)) === 1;
+        
+        logger.info(TAG, `阅读设置验证: savedBgType=${savedBgType}, savedBgImagePath=${savedBgImagePath}, savedVolumeKey=${savedVolumeKey}`);
+        
+        if (savedBgType !== bgType || savedBgImagePath !== bgImagePath) {
+          logger.error(TAG, `❌ 阅读设置验证失败! 期望: bgType=${bgType}, bgImagePath=${bgImagePath}; 实际: bgType=${savedBgType}, bgImagePath=${savedBgImagePath}`);
+        } else {
+          logger.info(TAG, `✅ 阅读设置保存成功`);
+        }
+      } else {
+        logger.error(TAG, `❌ 阅读设置验证失败! 未找到记录`);
+      }
+      
+    } catch (error) {
+      logger.error(TAG, `保存阅读设置失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 对于新电子书，应用全局设置中的纯文本阅读器默认值
+   * 检测方式：如果设置是默认值（没有自定义背景图片路径），则应用全局设置
+   */
+  private async applyGlobalSettingsIfNew(settings: EBookReadingSettings): Promise<EBookReadingSettings> {
+    try {
+      const settingsManager = SettingsManager.getInstance();
+      
+      // 检查是否使用全局背景图片设置
+      const useGlobalBgImage = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, false);
+      const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
+      const globalBgImageOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, 0.3);
+      
+      // 如果全局设置启用了背景图片，并且当前设置没有自定义背景图片，则应用全局设置
+      if (useGlobalBgImage && globalBgImagePath && globalBgImagePath.length > 0 && !settings.backgroundImagePath) {
+        logger.info(TAG, `应用全局背景图片设置: ${globalBgImagePath}`);
+        
+        // 获取其他全局设置
+        const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, settings.fontSize);
+        const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, settings.lineHeight);
+        const globalParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, settings.paragraphSpacing ?? 8);
+        const globalFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, settings.firstLineIndent ?? 2);
+        const globalLetterSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LETTER_SPACING, settings.letterSpacing ?? 0);
+        const globalPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, settings.pageMargin);
+        const globalBgColorIndex = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, 0);
+        const globalPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, settings.pageTurnAnimation ?? 'SLIDE');
+        const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, settings.keepScreenOn ?? true);
+        const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, settings.volumeKeyNavigation ?? true);
+        const globalTapToTurn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, settings.tapToTurn ?? true);
+        
+        // 获取预设背景的颜色
+        const preset = PRESET_BACKGROUNDS[globalBgColorIndex] || PRESET_BACKGROUNDS[0];
+        
+        const result: EBookReadingSettings = {
+          fontSize: globalFontSize,
+          fontFamily: settings.fontFamily,
+          fontPath: settings.fontPath,
+          fontWeight: settings.fontWeight,
+          lineHeight: globalLineHeight,
+          backgroundColor: preset.backgroundColor,
+          textColor: preset.textColor,
+          themeBgImage: settings.themeBgImage,
+          nightMode: settings.nightMode,
+          followSystemTheme: settings.followSystemTheme,
+          pageMargin: globalPageMargin,
+          pageMode: settings.pageMode,
+          brightness: settings.brightness,
+          autoSave: settings.autoSave,
+          saveInterval: settings.saveInterval,
+          paragraphSpacing: globalParagraphSpacing,
+          firstLineIndent: globalFirstLineIndent,
+          letterSpacing: globalLetterSpacing,
+          textAlignment: settings.textAlignment,
+          pageTurnAnimation: globalPageTurnAnimation,
+          tapToTurn: globalTapToTurn,
+          volumeKeyNavigation: globalVolumeKeyNav,
+          keepScreenOn: globalKeepScreenOn,
+          showPageNumber: settings.showPageNumber,
+          showProgress: settings.showProgress,
+          showTime: settings.showTime,
+          showBattery: settings.showBattery,
+          backgroundType: 'IMAGE',
+          backgroundImagePath: globalBgImagePath,
+          backgroundImageOpacity: globalBgImageOpacity
+        };
+        return result;
+      }
+      
+      // 即使没有启用背景图片，也应用其他全局设置（如果当前是默认设置）
+      if (!settings.backgroundImagePath) {
+        const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, settings.fontSize);
+        const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, settings.lineHeight);
+        const globalParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, settings.paragraphSpacing ?? 8);
+        const globalFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, settings.firstLineIndent ?? 2);
+        const globalLetterSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LETTER_SPACING, settings.letterSpacing ?? 0);
+        const globalPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, settings.pageMargin);
+        const globalBgColorIndex = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, 0);
+        const globalPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, settings.pageTurnAnimation ?? 'SLIDE');
+        const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, settings.keepScreenOn ?? true);
+        const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, settings.volumeKeyNavigation ?? true);
+        const globalTapToTurn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, settings.tapToTurn ?? true);
+        
+        // 获取预设背景的颜色
+        const preset = PRESET_BACKGROUNDS[globalBgColorIndex] || PRESET_BACKGROUNDS[0];
+        
+        logger.info(TAG, `应用全局纯色背景设置: bgColor=${preset.backgroundColor}, textColor=${preset.textColor}`);
+        
+        const result: EBookReadingSettings = {
+          fontSize: globalFontSize,
+          fontFamily: settings.fontFamily,
+          fontPath: settings.fontPath,
+          fontWeight: settings.fontWeight,
+          lineHeight: globalLineHeight,
+          backgroundColor: preset.backgroundColor,
+          textColor: preset.textColor,
+          themeBgImage: settings.themeBgImage,
+          nightMode: settings.nightMode,
+          followSystemTheme: settings.followSystemTheme,
+          pageMargin: globalPageMargin,
+          pageMode: settings.pageMode,
+          brightness: settings.brightness,
+          autoSave: settings.autoSave,
+          saveInterval: settings.saveInterval,
+          paragraphSpacing: globalParagraphSpacing,
+          firstLineIndent: globalFirstLineIndent,
+          letterSpacing: globalLetterSpacing,
+          textAlignment: settings.textAlignment,
+          pageTurnAnimation: globalPageTurnAnimation,
+          tapToTurn: globalTapToTurn,
+          volumeKeyNavigation: globalVolumeKeyNav,
+          keepScreenOn: globalKeepScreenOn,
+          showPageNumber: settings.showPageNumber,
+          showProgress: settings.showProgress,
+          showTime: settings.showTime,
+          showBattery: settings.showBattery,
+          backgroundType: settings.backgroundType,
+          backgroundImagePath: settings.backgroundImagePath,
+          backgroundImageOpacity: settings.backgroundImageOpacity
+        };
+        return result;
+      }
+      
+      return settings;
+    } catch (error) {
+      logger.error(TAG, `应用全局设置失败: ${String(error)}`);
+      return settings;
+    }
   }
 
   /**
@@ -506,18 +776,30 @@ export class EBookDataManager {
   }
 
   /**
-   * 获取阅读设置
+   * 获取阅读设置（包含纯文本阅读器专用设置）
    */
   private async getReadingSettings(bookId: string): Promise<EBookReadingSettings | null> {
+    // 确保表结构完整
+    await this.ensureSettingsColumns();
+    
     try {
-      const sql = `SELECT * FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
+      // 使用显式字段名查询（SELECT * 可能不返回通过 ALTER TABLE 或 UPDATE 添加的字段）
+      const sql = `SELECT 
+        bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
+        backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
+        pageMargin, pageMode, brightness, autoSave, saveInterval,
+        letterSpacing, paragraphSpacing, firstLineIndent, textAlignment,
+        pageTurnAnimation, tapToTurn, volumeKeyNavigation, keepScreenOn,
+        showPageNumber, showProgress, showTime, showBattery,
+        backgroundType, backgroundImagePath, backgroundImageOpacity
+      FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
       const records = await this.dbManager.querySql(sql, [bookId, 'default_user']);
       
       if (records && records.length > 0) {
         const record = records[0];
         const pageModeValue = String(getRecordValue(record, 'pageMode', '0'));
         
-        return {
+        const settings: EBookReadingSettings = {
           // 字体设置
           fontSize: Number(getRecordValue(record, 'fontSize', 18)),
           fontFamily: String(getRecordValue(record, 'fontFamily', 'HarmonyOS Sans')),
@@ -537,8 +819,31 @@ export class EBookDataManager {
           // 系统设置
           brightness: Number(getRecordValue(record, 'brightness', 100)),
           autoSave: Number(getRecordValue(record, 'autoSave', 1)) === 1,
-          saveInterval: Number(getRecordValue(record, 'saveInterval', 30))
+          saveInterval: Number(getRecordValue(record, 'saveInterval', 30)),
+          // ========== 纯文本阅读器专用设置 ==========
+          // 高级字体设置
+          letterSpacing: Number(getRecordValue(record, 'letterSpacing', 0)),
+          paragraphSpacing: Number(getRecordValue(record, 'paragraphSpacing', 8)),
+          firstLineIndent: Number(getRecordValue(record, 'firstLineIndent', 2)),
+          textAlignment: String(getRecordValue(record, 'textAlignment', 'JUSTIFY')),
+          // 翻页动画设置
+          pageTurnAnimation: String(getRecordValue(record, 'pageTurnAnimation', 'SLIDE')),
+          tapToTurn: Number(getRecordValue(record, 'tapToTurn', 1)) === 1,
+          volumeKeyNavigation: Number(getRecordValue(record, 'volumeKeyNavigation', 1)) === 1,
+          keepScreenOn: Number(getRecordValue(record, 'keepScreenOn', 0)) === 1,
+          // 显示设置
+          showPageNumber: Number(getRecordValue(record, 'showPageNumber', 1)) === 1,
+          showProgress: Number(getRecordValue(record, 'showProgress', 0)) === 1,
+          showTime: Number(getRecordValue(record, 'showTime', 1)) === 1,
+          showBattery: Number(getRecordValue(record, 'showBattery', 0)) === 1,
+          // 背景设置
+          backgroundType: String(getRecordValue(record, 'backgroundType', 'COLOR')),
+          backgroundImagePath: String(getRecordValue(record, 'backgroundImagePath', '')),
+          backgroundImageOpacity: Number(getRecordValue(record, 'backgroundImageOpacity', 0.3))
         };
+        
+        logger.info(TAG, `读取阅读设置: volumeKeyNavigation=${settings.volumeKeyNavigation}, tapToTurn=${settings.tapToTurn}, bgType=${settings.backgroundType}, bgColor=${settings.backgroundColor}, textColor=${settings.textColor}, bgImagePath=${settings.backgroundImagePath}, followSystemTheme=${settings.followSystemTheme}`);
+        return settings;
       }
 
       return null;
