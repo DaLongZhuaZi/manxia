@@ -503,6 +503,19 @@ export class DataService {
       throw error as Error;
     }
   }
+  
+  /**
+   * 清除阅读历史
+   */
+  public async clearReadingHistory(): Promise<void> {
+    try {
+      await this.dataManager.clearUserReadHistory(this.currentUserId);
+      logger.info(TAG, '阅读历史已清除');
+    } catch (error) {
+      logger.error(TAG, '清除阅读历史失败' + String(error));
+      throw error as Error;
+    }
+  }
 
   // ==================== 收藏服务 ====================
 

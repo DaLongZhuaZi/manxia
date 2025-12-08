@@ -195,6 +195,15 @@ export class ReadingAnalyticsManager {
     await this.saveSettings();
     logger.info(TAG, '已标记询问过用户权限');
   }
+  
+  /**
+   * 重置权限询问状态（用于清除数据并关闭功能时）
+   */
+  public async resetAskedPermission(): Promise<void> {
+    this.settings.hasAskedPermission = false;
+    await this.saveSettings();
+    logger.info(TAG, '已重置权限询问状态');
+  }
 
   /**
    * 获取保留天数选项列表（用于 TextPicker）

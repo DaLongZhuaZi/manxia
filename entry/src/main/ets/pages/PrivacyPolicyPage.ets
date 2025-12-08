@@ -152,10 +152,10 @@ export struct PrivacyPolicyPage {
 
               this.buildSectionTitle('六、第三方服务')
               this.buildParagraph('本应用可能包含指向第三方网站或服务的链接。这些第三方服务有其独立的隐私政策，我们对其隐私实践不承担责任。')
-              this.buildParagraph('当您使用第三方图源时，请注意该图源可能会收集您的访问信息。')
+              this.buildParagraph('当您使用第三方刮削源/图源时，请注意该刮削源/图源可能会收集您的访问信息，如cookie。')
 
               this.buildSectionTitle('七、儿童隐私')
-              this.buildParagraph('本应用不面向13岁以下的儿童。如果我们发现收集了儿童的个人信息，将立即删除相关数据。')
+              this.buildParagraph('本应用不面向18岁以下的未成年群体。如果我们发现收集了儿童的个人信息，将立即删除相关数据。')
 
               this.buildSectionTitle('八、隐私政策更新')
               this.buildParagraph('我们可能会不时更新本隐私政策。更新后的政策将在应用内公布，请定期查阅。')

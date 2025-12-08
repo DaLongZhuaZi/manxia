@@ -8,6 +8,8 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { getContext } from '../../GlobalContext';
+import { createUserManualEBook, getUserManualId } from '../../Data/UserManualData';
+import { EBookDataManager } from '../Data/EBookDataManager';
 
 const TAG = 'WelcomeGuideManager';
 
@@ -46,6 +48,7 @@ export class WelcomeGuideManager {
   private readonly KEY_GUIDE_SKIPPED = 'guide_skipped';
   private readonly KEY_CURRENT_STEP = 'current_guide_step';
   private readonly KEY_LAST_SHOW_TIME = 'last_show_time';
+  private readonly KEY_USER_MANUAL_ADDED = 'user_manual_added';
 
   private isFirstLaunch: boolean = true;
   private guideCompleted: boolean = false;
@@ -297,6 +300,57 @@ export class WelcomeGuideManager {
    */
   public isGuideSkipped(): boolean {
     return this.guideSkipped;
+  }
+
+  /**
+   * 初始化使用手册（首次运行时添加到书库）
+   */
+  public async initializeUserManual(): Promise<void> {
+    try {
+      // 确保已初始化
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
+
+      // 检查是否已添加过使用手册
+      if (this.preferencesStore) {
+        const userManualAdded = await this.preferencesStore.get(this.KEY_USER_MANUAL_ADDED, false) as boolean;
+        if (userManualAdded) {
+          logger.debug(TAG, '使用手册已添加过，跳过');
+          return;
+        }
+      }
+
+      // 检查书库中是否已存在使用手册
+      const ebookDataManager = EBookDataManager.getInstance();
+      const userManualId = getUserManualId();
+      const existingManual = await ebookDataManager.getEBookById(userManualId);
+      
+      if (existingManual) {
+        logger.info(TAG, '使用手册已存在于书库中，标记为已添加');
+        // 标记为已添加
+        if (this.preferencesStore) {
+          await this.preferencesStore.put(this.KEY_USER_MANUAL_ADDED, true);
+          await this.preferencesStore.flush();
+        }
+        return;
+      }
+
+      // 创建并添加使用手册
+      const userManual = createUserManualEBook();
+      await ebookDataManager.saveEBook(userManual);
+      
+      // 标记为已添加
+      if (this.preferencesStore) {
+        await this.preferencesStore.put(this.KEY_USER_MANUAL_ADDED, true);
+        await this.preferencesStore.flush();
+      }
+
+      logger.info(TAG, '✅ 使用手册已成功添加到书库');
+    } catch (error) {
+      logger.error(TAG, '初始化使用手册失败', String(error));
+      // 不抛出错误，避免影响应用启动
+    }
   }
 
   /**

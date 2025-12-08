@@ -49,11 +49,11 @@ export struct EBookDetailPage {
   @State ebook: EBook | null = null;
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
-  
+
   // UI状态
   @State showChapterList: boolean = false;
   @State expandedDescription: boolean = false;
-  
+
   // 编辑状态
   @State showEditDialog: boolean = false;
   @State editTitle: string = '';
@@ -78,10 +78,10 @@ export struct EBookDetailPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
-    
+
     // 初始化设备方向
     this.updateDeviceOrientation();
-    
+
     // 注册设备方向变化监听器
     this.deviceOrientationListener = (deviceInfo: DeviceInfo) => {
       logger.info(TAG, `设备方向变化: ${deviceInfo.isLandscape ? '横屏' : '竖屏'}`);
@@ -92,11 +92,24 @@ export struct EBookDetailPage {
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
-    
+
     // 移除设备方向监听器
     if (this.deviceOrientationListener) {
       this.deviceAdaptationManager.removeListener(this.deviceOrientationListener);
       this.deviceOrientationListener = null;
+    }
+  }
+
+  /**
+   * 页面显示时自动刷新数据
+   * 确保从阅读器返回时能正确显示最新的阅读进度
+   */
+  onPageShow(): void {
+    logger.lifecycle(TAG, '📱 页面显示，自动刷新电子书数据');
+
+    // 如果已有电子书数据，静默刷新
+    if (this.ebook && this.ebook.id) {
+      this.loadEBookDetail(this.ebook.id);
     }
   }
 
@@ -107,6 +120,45 @@ export struct EBookDetailPage {
     const deviceInfo = this.deviceAdaptationManager.getDeviceInfo();
     this.isLandscape = deviceInfo.isLandscape;
     logger.info(TAG, `设备方向初始化: ${this.isLandscape ? '横屏' : '竖屏'}`);
+  }
+
+  /**
+   * 检查是否有有效封面
+   */
+  private hasValidCover(): boolean {
+    const raw = this.ebook?.metadata?.coverImagePath || '';
+    return raw.length > 0;
+  }
+
+  /**
+   * 获取封面图片源
+   * 支持本地文件路径、网络URL和应用资源路径
+   */
+  private getCoverSource(): ResourceStr {
+    const raw = this.ebook?.metadata?.coverImagePath || '';
+    if (raw.length === 0) {
+      return $r('app.media.ic_ebook');
+    }
+
+    // 检查是否为应用资源路径 (app.media.xxx)
+    if (raw.startsWith('app.media.')) {
+      const resourceName = raw.substring('app.media.'.length);
+      if (resourceName === 'mangabook') {
+        return $r('app.media.mangabook');
+      } else if (resourceName === 'ic_ebook') {
+        return $r('app.media.ic_ebook');
+      } else if (resourceName === 'icon') {
+        return $r('app.media.icon');
+      }
+      return $r('app.media.ic_ebook');
+    }
+
+    // 本地文件路径
+    if (raw.startsWith('/')) {
+      return `file://${raw}`;
+    }
+
+    return raw;
   }
 
   /**
@@ -199,7 +251,7 @@ export struct EBookDetailPage {
     try {
       this.ebook.isFavorite = !this.ebook.isFavorite;
       this.ebook.lastUpdateTime = Date.now();
-      
+
       await this.ebookDataManager.saveEBook(this.ebook);
       logger.info(TAG, `收藏状态已更新: ${this.ebook.isFavorite}`);
     } catch (error) {
@@ -214,7 +266,7 @@ export struct EBookDetailPage {
     if (!this.ebook) {
       return;
     }
-    
+
     // 初始化编辑字段
     this.editTitle = this.ebook.metadata.title;
     this.editAuthor = this.ebook.metadata.author;
@@ -222,7 +274,7 @@ export struct EBookDetailPage {
     this.editPublishDate = this.ebook.metadata.publishDate || '';
     this.editIsbn = this.ebook.metadata.isbn || '';
     this.editDescription = this.ebook.metadata.description || '';
-    
+
     this.showEditDialog = true;
     logger.info(TAG, '打开编辑弹窗');
   }
@@ -244,10 +296,10 @@ export struct EBookDetailPage {
       this.ebook.metadata.isbn = this.editIsbn;
       this.ebook.metadata.description = this.editDescription;
       this.ebook.lastUpdateTime = Date.now();
-      
+
       // 保存到数据库
       await this.ebookDataManager.saveEBook(this.ebook);
-      
+
       this.showEditDialog = false;
       logger.info(TAG, '书籍信息已保存');
     } catch (error) {
@@ -409,17 +461,17 @@ export struct EBookDetailPage {
             backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme),
           },
           contentStyle: {
-            titleStyle: { 
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
-              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
+            titleStyle: {
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
+              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
             },
-            menuStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            menuStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
             },
-            backIconStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
             }
           }
         },
@@ -428,17 +480,17 @@ export struct EBookDetailPage {
             backgroundColor: this.themeState.currentTheme === ThemeType.LIGHT ? '#E6FFFFFF' : '#E6000000',
           },
           contentStyle: {
-            titleStyle: { 
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
-              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
+            titleStyle: {
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
+              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
             },
-            menuStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            menuStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
             },
-            backIconStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
             }
           }
         }
@@ -535,11 +587,9 @@ export struct EBookDetailPage {
       Row({ space: 16 }) {
         // 封面
         Stack() {
-          if (this.ebook.metadata.coverImagePath && this.ebook.metadata.coverImagePath.length > 0) {
-            // 有封面图片 - 本地文件需要添加 file:// 前缀
-            Image(this.ebook.metadata.coverImagePath.startsWith('/') 
-              ? `file://${this.ebook.metadata.coverImagePath}` 
-              : this.ebook.metadata.coverImagePath)
+          if (this.hasValidCover()) {
+            // 有封面图片
+            Image(this.getCoverSource())
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
@@ -612,9 +662,9 @@ export struct EBookDetailPage {
                 total: 100,
                 type: ProgressType.Linear
               })
-              .width('100%')
-              .height(4)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .width('100%')
+                .height(4)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
           }
         }
@@ -648,7 +698,7 @@ export struct EBookDetailPage {
         Image(this.ebook?.isFavorite ? $r('app.media.ic_favorite_filled') : $r('app.media.ic_favorite_outline'))
           .width(24)
           .height(24)
-          .fillColor(this.ebook?.isFavorite 
+          .fillColor(this.ebook?.isFavorite
             ? ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)
             : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
@@ -700,7 +750,7 @@ export struct EBookDetailPage {
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          
+
           Blank()
 
           // 刮削按钮
@@ -721,7 +771,7 @@ export struct EBookDetailPage {
             this.openScraperDialog();
           })
           .margin({ right: 8 })
-          
+
           // 编辑按钮
           Button() {
             Row({ space: 4 }) {
@@ -968,10 +1018,8 @@ export struct EBookDetailPage {
           Column({ space: 16 }) {
             // 封面图片
             Stack() {
-              if (this.ebook.metadata.coverImagePath && this.ebook.metadata.coverImagePath.length > 0) {
-                Image(this.ebook.metadata.coverImagePath.startsWith('/') 
-                  ? `file://${this.ebook.metadata.coverImagePath}` 
-                  : this.ebook.metadata.coverImagePath)
+              if (this.hasValidCover()) {
+                Image(this.getCoverSource())
                   .width('100%')
                   .height('100%')
                   .objectFit(ImageFit.Cover)
@@ -1041,9 +1089,9 @@ export struct EBookDetailPage {
                   total: 100,
                   type: ProgressType.Linear
                 })
-                .width('100%')
-                .height(4)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .width('100%')
+                  .height(4)
+                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               }
               .width('100%')
               .padding({ left: 16, right: 16 })
@@ -1066,7 +1114,7 @@ export struct EBookDetailPage {
                 Image(this.ebook.isFavorite ? $r('app.media.ic_favorite_filled') : $r('app.media.ic_favorite_outline'))
                   .width(16)
                   .height(16)
-                  .fillColor(this.ebook.isFavorite 
+                  .fillColor(this.ebook.isFavorite
                     ? ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)
                     : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }

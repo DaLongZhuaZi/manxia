@@ -114,5 +114,37 @@ export class EpubParser extends EBookParser {
       rating: 0
     } as EBookMetadata;
   }
+
+  /**
+   * 获取文件大小
+   */
+  private getFileSize(filePath: string): number {
+    try {
+      let openTarget: string = filePath;
+      if (!filePath.startsWith('file://') && !filePath.startsWith('/')) {
+        openTarget = `/${filePath}`;
+      }
+
+      const file = fileIo.openSync(openTarget, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(file.fd);
+      fileIo.closeSync(file);
+      return stat.size;
+    } catch (firstError) {
+      try {
+        if (filePath.startsWith('file://')) {
+          const stripped = filePath.substring(7);
+          const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
+          const file = fileIo.openSync(candidate, fileIo.OpenMode.READ_ONLY);
+          const stat = fileIo.statSync(file.fd);
+          fileIo.closeSync(file);
+          return stat.size;
+        }
+        return 0;
+      } catch (error) {
+        logger.warn(TAG, `获取文件大小失败: ${String(error instanceof Error ? error.message : error)}`);
+        return 0;
+      }
+    }
+  }
 }
 

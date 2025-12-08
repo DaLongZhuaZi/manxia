@@ -8,7 +8,6 @@ import { logger } from '../Utils/Logger';
 import { ThemeManager, ThemeType, CustomThemeData } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
-import { ReadingAnalyticsManager } from '../Framework/Managers/ReadingAnalyticsManager';
 import { common } from '@kit.AbilityKit';
 
 const TAG = 'WelcomeGuidePage';
@@ -39,8 +38,6 @@ struct WelcomeGuidePage {
 
   // 引导管理器
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
-  // 阅读报告管理器
-  private readingAnalyticsManager: ReadingAnalyticsManager = ReadingAnalyticsManager.getInstance();
 
   // 页面状态
   @State private currentStep: GuideStep = GuideStep.WELCOME;
@@ -48,7 +45,6 @@ struct WelcomeGuidePage {
   @State private contentOpacity: number = 0;
   @State private contentTranslateY: number = 50;
   @State private buttonClickTrigger: number = 0;  // 按钮点击触发器，用于强制更新
-  @State private analyticsEnabled: boolean = false; // 阅读报告开关状态
 
   private uiContext: UIContext | undefined = undefined;
 
@@ -60,13 +56,13 @@ struct WelcomeGuidePage {
    */
   private initGuideSteps(): Map<GuideStep, GuideStepContent> {
     const steps = new Map<GuideStep, GuideStepContent>();
-    
+
     const welcomeContent: GuideStepContent = {
-      title: '欢迎参与漫匣首次测试',
+      title: '欢迎您使用漫匣',
       subtitle: '感谢您的支持',
-      description: '漫匣是一款专注于本地漫画管理和阅读的应用。接下来将引导您快速了解应用的核心功能。',
+      description: '漫匣是一款专注于本地漫画、电子书管理和阅读的应用。接下来将引导您快速了解应用的核心功能。',
       icon: $r('app.media.icon'),
-      buttonText: '开始引导',
+      buttonText: '开始引导流程',
       showSkip: true
     };
     steps.set(GuideStep.WELCOME, welcomeContent);
@@ -80,53 +76,54 @@ struct WelcomeGuidePage {
       showSkip: true
     };
     steps.set(GuideStep.THEME_SELECTION, themeSelectionContent);
-    
+
     const dataImportContent: GuideStepContent = {
-      title: '导入本地漫画',
+      title: '导入本地漫画/电子书',
       subtitle: '管理您的漫画收藏',
-      description: '您可以导入本地的漫画文件（支持CBZ格式压缩包，以及TXT、EPUB、MOBI、AZW3、PDF等格式的电子书与漫画），应用会自动解析漫画信息并组织管理。点击下方按钮前往数据管理页面。',
+      description: '您可以导入本地的漫画文件（支持CBZ等格式压缩包，以及TXT、EPUB、MOBI、AZW3、PDF等格式的电子书与漫画），应用会自动解析漫画/电子书信息并组织管理。点击下方按钮前往数据管理页面。',
       icon: $r('app.media.ic_guide_import'),
       buttonText: '前往导入',
       showSkip: true
     };
     steps.set(GuideStep.DATA_IMPORT, dataImportContent);
-    
+
+    // 日志管理步骤已移除，保留空定义以避免类型错误
     const logExportContent: GuideStepContent = {
-      title: '日志管理',
-      subtitle: '帮助我们改进',
-      description: '在使用过程中如遇到问题，您可以在日志管理页面导出日志文件，并附上截图和详细的问题描述，以便我们更好地为您解决问题。',
+      title: '',
+      subtitle: '',
+      description: '',
       icon: $r('app.media.ic_guide_log'),
-      buttonText: '查看日志',
+      buttonText: '',
       showSkip: true
     };
     steps.set(GuideStep.LOG_EXPORT, logExportContent);
-    
+
     const analyticsPermissionContent: GuideStepContent = {
       title: '阅读报告',
       subtitle: '了解您的阅读习惯',
-      description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时在设置中更改。',
+      description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，在本地分析处理后为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时进入报告页面中更改。',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '继续',
       showSkip: true
     };
     steps.set(GuideStep.ANALYTICS_PERMISSION, analyticsPermissionContent);
-    
+
     const libraryIntroContent: GuideStepContent = {
       title: '开始阅读',
       subtitle: '探索您的书库',
-      description: '现在，您可以在书库页面查看已导入的漫画，点击封面即可开始阅读。祝您阅读愉快！',
+      description: '现在，您可以在书库页面查看已导入的漫画与电子书，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '进入书库',
       showSkip: false
     };
     steps.set(GuideStep.LIBRARY_INTRO, libraryIntroContent);
-    
+
     return steps;
   }
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, '欢迎引导页面开始加载');
-    
+
     // 获取UIContext
     this.uiContext = this.getUIContext();
     if (!this.uiContext) {
@@ -144,16 +141,16 @@ struct WelcomeGuidePage {
     // 启动入场动画
     this.startEntranceAnimation();
   }
-  
+
   onPageShow(): void {
     logger.lifecycle(TAG, '欢迎引导页面显示');
-    
+
     // 每次页面显示时重新加载当前步骤（用于从其他页面返回后恢复状态）
     const latestStep = this.welcomeGuideManager.getCurrentStep();
     if (latestStep !== this.currentStep) {
       logger.info(TAG, `引导步骤已更新: ${this.currentStep} -> ${latestStep}`);
       this.currentStep = latestStep;
-      
+
       // 重新启动入场动画
       this.contentOpacity = 0;
       this.contentTranslateY = 30;
@@ -266,7 +263,7 @@ struct WelcomeGuidePage {
    */
   private handleNextStep(): void {
     logger.info(TAG, `🔘 handleNextStep 被调用，当前步骤: ${this.currentStep}`);
-    
+
     const stepContent = this.guideSteps.get(this.currentStep);
     if (!stepContent) {
       logger.error(TAG, `❌ 无法获取步骤内容，当前步骤: ${this.currentStep}`);
@@ -309,9 +306,13 @@ struct WelcomeGuidePage {
         break;
 
       case GuideStep.LOG_EXPORT:
-        // 导航到日志管理页面
-        logger.debug(TAG, '执行 LOG_EXPORT 步骤处理，准备导航到日志管理页面');
-        this.navigateToLogManager();
+      case GuideStep.ANALYTICS_PERMISSION:
+        // 这些步骤已移除，直接跳到 LIBRARY_INTRO
+        logger.debug(TAG, '跳过已移除的步骤，直接进入 LIBRARY_INTRO');
+        this.animateStepChange(() => {
+          this.currentStep = GuideStep.LIBRARY_INTRO;
+          this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
+        });
         break;
 
       case GuideStep.LIBRARY_INTRO:
@@ -349,8 +350,8 @@ struct WelcomeGuidePage {
    */
   private navigateToDataManagement(): void {
     try {
-      // 更新步骤到日志导出
-      this.welcomeGuideManager.setCurrentStep(GuideStep.LOG_EXPORT);
+      // 更新步骤到 LIBRARY_INTRO（跳过已移除的步骤）
+      this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
 
       const router = this.uiContext?.getRouter();
       if (router) {
@@ -470,54 +471,6 @@ struct WelcomeGuidePage {
     } catch (error) {
       const msg: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '应用次级自定义主题失败', msg);
-    }
-  }
-
-  /**
-   * 导航到日志管理页面
-   */
-  private navigateToLogManager(): void {
-    try {
-      // 更新步骤到阅读报告权限询问
-      this.welcomeGuideManager.setCurrentStep(GuideStep.ANALYTICS_PERMISSION);
-
-      const router = this.uiContext?.getRouter();
-      if (router) {
-        router.pushUrl({
-          url: 'pages/MainMenuPage',
-          params: {
-            targetPage: 'LogManagerPage',
-            fromGuide: true
-          }
-        }).then(() => {
-          logger.info(TAG, '导航到日志管理页面成功');
-        }).catch((error: Error) => {
-          logger.error(TAG, '导航到日志管理页面失败', error.message);
-        });
-      }
-    } catch (error) {
-      logger.error(TAG, '导航到日志管理页面异常', String(error));
-    }
-  }
-
-  /**
-   * 处理阅读报告权限设置
-   */
-  private async handleAnalyticsPermission(enabled: boolean): Promise<void> {
-    try {
-      await this.readingAnalyticsManager.initialize();
-      await this.readingAnalyticsManager.setEnabled(enabled);
-      await this.readingAnalyticsManager.markAskedPermission();
-      this.analyticsEnabled = enabled;
-      logger.info(TAG, `阅读报告功能已${enabled ? '启用' : '保持关闭'}`);
-      
-      // 切换到下一步
-      this.animateStepChange(() => {
-        this.currentStep = GuideStep.LIBRARY_INTRO;
-        this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
-      });
-    } catch (error) {
-      logger.error(TAG, `设置阅读报告权限失败: ${String(error)}`);
     }
   }
 
@@ -656,87 +609,6 @@ struct WelcomeGuidePage {
               .onClick(() => {
                 this.navigateToThemeSettings();
               })
-          } else if (this.currentStep === GuideStep.ANALYTICS_PERMISSION) {
-            // 阅读报告权限询问步骤专用布局
-            Image(this.getCurrentStepContent().icon)
-              .width(100)
-              .height(100)
-              .objectFit(ImageFit.Contain)
-              .margin({ bottom: 24 })
-
-            Text(this.getCurrentStepContent().title)
-              .fontSize(28)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .margin({ bottom: 8 })
-
-            Text(this.getCurrentStepContent().subtitle)
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .margin({ bottom: 16 })
-
-            Text(this.getCurrentStepContent().description)
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .textAlign(TextAlign.Center)
-              .lineHeight(24)
-              .padding({ left: 32, right: 32 })
-              .margin({ bottom: 24 })
-
-            // 阅读报告开关
-            Row() {
-              Text('启用阅读报告')
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .layoutWeight(1)
-              
-              Toggle({ type: ToggleType.Switch, isOn: this.analyticsEnabled })
-                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-                .onChange((isOn: boolean) => {
-                  this.analyticsEnabled = isOn;
-                  logger.info(TAG, `阅读报告开关切换: ${isOn}`);
-                })
-            }
-            .width('80%')
-            .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .borderRadius(12)
-            .margin({ bottom: 16 })
-
-            // 说明文字
-            Text('开启后，应用将收集阅读时长、偏好等数据用于生成报告。您可以随时在设置中关闭此功能。')
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .textAlign(TextAlign.Center)
-              .padding({ left: 32, right: 32 })
-              .margin({ bottom: 24 })
-
-            // 操作按钮
-            Row({ space: 16 }) {
-              Button('保持关闭')
-                .fontSize(14)
-                .height(44)
-                .layoutWeight(1)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .borderRadius(22)
-                .onClick(() => {
-                  this.handleAnalyticsPermission(false);
-                })
-
-              Button('启用功能')
-                .fontSize(14)
-                .height(44)
-                .layoutWeight(1)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-                .borderRadius(22)
-                .onClick(() => {
-                  this.handleAnalyticsPermission(true);
-                })
-            }
-            .width('80%')
           } else {
             // 默认步骤布局
             Image(this.getCurrentStepContent().icon)

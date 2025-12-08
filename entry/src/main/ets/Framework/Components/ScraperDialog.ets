@@ -83,6 +83,12 @@ export struct ScraperDialog {
 
   // 视图状态
   @State showDetail: boolean = false;
+  
+  // 海外网络提示状态
+  @State showOverseasNetworkHint: boolean = false;
+  
+  // 搜索超时时间（毫秒）
+  private readonly SEARCH_TIMEOUT: number = 15000;
 
   private scraperManager: ScraperManager = ScraperManager.getInstance();
 
@@ -119,6 +125,11 @@ export struct ScraperDialog {
 
       // 源选择
       this.buildSourceSelector()
+      
+      // 海外网络提示
+      if (this.showOverseasNetworkHint) {
+        this.buildOverseasNetworkHint()
+      }
 
       // 内容区域
       if (this.showDetail && this.selectedMetadata) {
@@ -245,6 +256,26 @@ export struct ScraperDialog {
     .onClick(() => {
       this.toggleSource(source);
     })
+  }
+
+  @Builder
+  buildOverseasNetworkHint() {
+    Row({ space: 8 }) {
+      Image($r('app.media.ic_info'))
+        .width(16)
+        .height(16)
+        .fillColor('#FF9800')
+      
+      Text(this.isSearching ? '当前刮削源需要海外网络环境' : '请检查当前网络环境')
+        .fontSize(12)
+        .fontColor('#FF9800')
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .backgroundColor('#FFF3E0')
+    .borderRadius(8)
+    .margin({ bottom: 8 })
   }
 
   @Builder
@@ -617,7 +648,15 @@ export struct ScraperDialog {
   }
 
   /**
-   * 执行搜索
+   * 检查是否选择了需要海外网络的刮削源
+   */
+  private hasOverseasSource(): boolean {
+    return this.selectedSources.includes(ScraperSource.BOOKOF_MOE) ||
+           this.selectedSources.includes(ScraperSource.GOOGLE_BOOKS);
+  }
+
+  /**
+   * 执行搜索（带超时机制）
    */
   private async performSearch(): Promise<void> {
     if (this.searchKeyword.trim().length === 0 || this.isSearching) {
@@ -629,18 +668,33 @@ export struct ScraperDialog {
     this.searchResults = [];
     this.selectedIndex = -1;
     this.selectedMetadata = null;
+    
+    // 检查是否需要显示海外网络提示
+    const needsOverseasNetwork = this.hasOverseasSource();
+    this.showOverseasNetworkHint = needsOverseasNetwork;
 
     try {
       logger.info(TAG, `开始搜索: ${this.searchKeyword}`);
 
-      const result = await this.scraperManager.searchMultipleSources(
+      // 创建超时 Promise
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('搜索超时'));
+        }, this.SEARCH_TIMEOUT);
+      });
+
+      // 执行搜索，带超时
+      const searchPromise = this.scraperManager.searchMultipleSources(
         this.searchKeyword.trim(),
         this.config.contentType,
         this.selectedSources
       );
 
+      const result = await Promise.race([searchPromise, timeoutPromise]);
+
       if (result.success && result.mergedResults.length > 0) {
         this.searchResults = result.mergedResults;
+        this.showOverseasNetworkHint = false; // 搜索成功，隐藏提示
         logger.info(TAG, `搜索完成，找到 ${this.searchResults.length} 条结果`);
       } else {
         // 检查是否有错误
@@ -654,11 +708,27 @@ export struct ScraperDialog {
         } else {
           this.searchError = '未找到相关结果';
         }
+        
+        // 如果使用了海外源且搜索失败，保持提示显示
+        if (needsOverseasNetwork) {
+          this.showOverseasNetworkHint = true;
+        }
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `搜索失败: ${errorMsg}`);
-      this.searchError = `搜索失败: ${errorMsg}`;
+      
+      // 超时或网络错误时，如果使用了海外源，显示网络环境提示
+      if (needsOverseasNetwork) {
+        this.showOverseasNetworkHint = true;
+        if (errorMsg.includes('超时')) {
+          this.searchError = '搜索超时，请检查网络连接';
+        } else {
+          this.searchError = `搜索失败: ${errorMsg}`;
+        }
+      } else {
+        this.searchError = `搜索失败: ${errorMsg}`;
+      }
     } finally {
       this.isSearching = false;
     }

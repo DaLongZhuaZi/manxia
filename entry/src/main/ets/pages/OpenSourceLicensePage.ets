@@ -16,7 +16,7 @@ const TAG = 'OpenSourceLicensePage';
 @Component
 export struct OpenSourceLicensePage {
   @Consume('NavPathStack') pathStack: NavPathStack;
-  
+
   // 主题状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -27,7 +27,7 @@ export struct OpenSourceLicensePage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
-    
+
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(
       this.componentId,
@@ -66,7 +66,7 @@ export struct OpenSourceLicensePage {
     Row({ space: 8 }) {
       Text(emoji)
         .fontSize(24)
-      
+
       Text(title)
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
@@ -114,7 +114,7 @@ export struct OpenSourceLicensePage {
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
-        
+
         Text(version)
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -130,7 +130,7 @@ export struct OpenSourceLicensePage {
         Text('许可证: ')
           .fontSize(13)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        
+
         Text(license)
           .fontSize(13)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -153,27 +153,27 @@ export struct OpenSourceLicensePage {
       Row({ space: 8 }) {
         Text(type === 'info' ? '💡' : type === 'warning' ? '⚠️' : '✅')
           .fontSize(18)
-        
+
         Text(title)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor(type === 'info' ? Color.White : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
       .width('100%')
 
       Text(content)
         .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontColor(type === 'info' ? '#FFFFFFCC' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .lineHeight(20)
         .width('100%')
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(type === 'info' 
+    .backgroundColor(type === 'info'
       ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
       : type === 'warning'
-      ? '#FFF3E0'
-      : '#E8F5E9')
+        ? '#FFF3E0'
+        : '#E8F5E9')
     .borderRadius(8)
     .margin({ bottom: 12 })
   }
@@ -187,7 +187,7 @@ export struct OpenSourceLicensePage {
           .height('100%')
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        
+
         // 内容层
         Column() {
           // 顶部导航栏
@@ -338,7 +338,7 @@ export struct OpenSourceLicensePage {
 
               // MIT许可证全文
               this.buildSectionTitle('📄 MIT许可证', '📄')
-              
+
               Column() {
                 Text(`MIT License
 

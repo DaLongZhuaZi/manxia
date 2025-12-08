@@ -26,11 +26,11 @@
     },
     {
       "name": "get_internet_reason",
-      "value": "应用需要访问网络来获取在线漫画内容。"
+      "value": "应用需要访问网络来刮削漫画、电子书信息。"
     },
     {
       "name": "get_notification_reason",
-      "value": "应用需要通知权限来展示下载状态和漫画更新情况。"
+      "value": "应用需要通知权限来展示下载刮削封面、文字的进度。"
     },
     {
       "name": "get_vibrate_reason",

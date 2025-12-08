@@ -1045,23 +1045,24 @@ export class DataManager {
       const record: ComicInfoDatabaseRecord = {
         id: comicData.id,
         title: comicData.title,
-        author: comicData.author,
-        description: comicData.description,
-        coverUrl: comicData.coverUrl,
+        author: comicData.author || '',  // 确保不为undefined
+        description: comicData.description || '',  // 确保不为undefined
+        coverUrl: comicData.coverUrl || '',  // 确保不为undefined
         sourceId: comicData.sourceId,
         externalId: finalExternalId,  // 确保不为undefined
-        status: comicData.status,
-        tags: JSON.stringify(comicData.tags),
-        rating: comicData.rating,
-        chapterCount: comicData.chapterCount,
-        lastUpdateTime: comicData.lastUpdateTime,
-        addTime: comicData.addTime,
+        status: String(comicData.status),  // 确保转换为字符串
+        tags: JSON.stringify(comicData.tags || []),  // 确保不为undefined
+        rating: comicData.rating || 0,  // 确保不为undefined
+        chapterCount: comicData.chapterCount || 0,  // 确保不为undefined
+        lastUpdateTime: comicData.lastUpdateTime || now,  // 确保不为undefined
+        addTime: comicData.addTime || now,  // 确保不为undefined
         createTime: now,  // 创建时间
         updateTime: now,   // 更新时间
         webUrl: comic.webUrl || null,  // 网页URL
         apiUrl: comic.apiUrl || null,   // API请求地址
         contentType: comic.contentType || 'manga'  // 内容类型，默认为漫画
       };
+      
       await this.databaseManager.insert('comic_info', record);
       logger.info(TAG, `添加漫画: ${comicData.title}`);
 
@@ -1965,6 +1966,19 @@ export class DataManager {
       return records.map(record => this.convertRecordToReadHistory(record as ReadHistoryDatabaseRecord));
     } catch (error) {
       logger.error(TAG, `获取阅读历史失败: ${error}`);
+      throw error as Error;
+    }
+  }
+  
+  /**
+   * 清除用户阅读历史
+   */
+  public async clearUserReadHistory(userId: string): Promise<void> {
+    try {
+      await this.databaseManager.delete('read_history', 'userId = ?', [userId]);
+      logger.info(TAG, `用户 ${userId} 的阅读历史已清除`);
+    } catch (error) {
+      logger.error(TAG, `清除阅读历史失败: ${error}`);
       throw error as Error;
     }
   }
