@@ -157,6 +157,7 @@ struct ReadingAnalyticsPage {
   // 统计数据状态
   @State isLoading: boolean = true;
   @State analyticsEnabled: boolean = false;
+  @State hasAskedPermission: boolean = false; // 是否已询问过用户权限
   @State statistics: ReadingStatistics = {
     totalReadingTime: 0,
     totalComicsRead: 0,
@@ -172,10 +173,10 @@ struct ReadingAnalyticsPage {
 
   @State dailyData: DailyReadingData[] = [];
   @State hourlyDistribution: HourlyDistribution[] = [];
-  
+
   // 阅读时长排行
   @State readingRankList: ReadingRankItem[] = [];
-  
+
   // 兴趣分析
   @State interestItems: InterestItem[] = [];
 
@@ -183,6 +184,7 @@ struct ReadingAnalyticsPage {
   @State selectedTimeRange: number = 30; // 默认最近30天
   @State showRetentionPicker: boolean = false; // 是否显示保留天数选择器
   @State retentionDaysIndex: number = 2; // 保留天数索引（默认30天）
+  @State showClearDataDialog: boolean = false; // 是否显示清除数据对话框
 
   onPageShow(): void {
     try {
@@ -212,7 +214,7 @@ struct ReadingAnalyticsPage {
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
-    
+
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -243,10 +245,10 @@ struct ReadingAnalyticsPage {
   private updateResponsiveParams(): void {
     const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
     const deviceInfo = this.deviceManager.getDeviceInfo();
-    
+
     this.responsive_contentPadding = layoutParams.contentPadding;
     this.responsive_isLandscape = deviceInfo.isLandscape;
-    
+
     switch (deviceInfo.breakpoint) {
       case Breakpoint.XS:
         this.responsive_maxContentWidth = 600;
@@ -274,12 +276,149 @@ struct ReadingAnalyticsPage {
     try {
       await this.analyticsManager.initialize();
       this.analyticsEnabled = this.analyticsManager.isEnabled();
+      this.hasAskedPermission = this.analyticsManager.hasAskedPermission();
       this.retentionDaysIndex = this.analyticsManager.getRetentionDaysIndex();
       this.selectedTimeRange = this.analyticsManager.getRetentionDays();
-      
-      await this.loadReadingData();
+
+      logger.info(TAG, `初始化完成: analyticsEnabled=${this.analyticsEnabled}, hasAskedPermission=${this.hasAskedPermission}`);
+
+      // 如果已询问过权限，才加载数据
+      if (this.hasAskedPermission) {
+        await this.loadReadingData();
+      } else {
+        this.isLoading = false;
+        logger.info(TAG, '用户尚未同意阅读报告权限，显示权限请求界面');
+      }
     } catch (error) {
       logger.error(TAG, `初始化失败: ${String(error)}`);
+      this.isLoading = false;
+    }
+  }
+
+  /**
+   * 处理用户同意权限
+   */
+  private async handleAcceptPermission(): Promise<void> {
+    try {
+      await this.analyticsManager.setEnabled(true);
+      await this.analyticsManager.markAskedPermission();
+      this.analyticsEnabled = true;
+      this.hasAskedPermission = true;
+      logger.info(TAG, '用户同意阅读报告权限，开始加载数据');
+
+      // 加载数据
+      this.isLoading = true;
+      await this.loadReadingData();
+    } catch (error) {
+      logger.error(TAG, `处理同意权限失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 处理用户拒绝权限
+   */
+  private async handleRejectPermission(): Promise<void> {
+    try {
+      // 确保功能保持关闭状态
+      await this.analyticsManager.setEnabled(false);
+      // 标记已询问过权限，下次不再显示权限请求界面
+      await this.analyticsManager.markAskedPermission();
+      this.analyticsEnabled = false;
+      this.hasAskedPermission = true;
+      logger.info(TAG, '用户拒绝阅读报告权限，功能保持关闭');
+      // 返回上一页
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, `处理拒绝权限失败: ${String(error)}`);
+      this.pathStack.pop();
+    }
+  }
+
+  /**
+   * 显示清除数据对话框
+   */
+  private showClearDataConfirmDialog(): void {
+    this.showClearDataDialog = true;
+  }
+
+  /**
+   * 清除阅读分析数据
+   */
+  private async clearReadingAnalyticsData(): Promise<void> {
+    try {
+      logger.info(TAG, '开始清除阅读分析数据');
+
+      // 清除阅读历史
+      await this.dataService.clearReadingHistory();
+
+      // 重置统计数据
+      this.statistics = {
+        totalReadingTime: 0,
+        totalComicsRead: 0,
+        totalChaptersRead: 0,
+        totalPagesRead: 0,
+        averageReadingTime: 0,
+        favoriteReadingHour: 0,
+        mostReadComicId: '',
+        mostReadComicTitle: '暂无数据',
+        continuousReadingDays: 0,
+        lastReadTime: 0
+      };
+      this.dailyData = [];
+      this.hourlyDistribution = [];
+      this.readingRankList = [];
+      this.interestItems = [];
+
+      this.showClearDataDialog = false;
+      logger.info(TAG, '阅读分析数据已清除');
+    } catch (error) {
+      logger.error(TAG, `清除阅读分析数据失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 清除数据并关闭阅读报告功能，然后返回
+   */
+  private async clearDataAndDisableAnalytics(): Promise<void> {
+    try {
+      logger.info(TAG, '开始清除阅读分析数据并关闭功能');
+
+      // 清除阅读历史
+      await this.dataService.clearReadingHistory();
+
+      // 关闭阅读报告功能
+      await this.analyticsManager.setEnabled(false);
+      this.analyticsEnabled = false;
+
+      // 重置权限询问状态，下次进入需要重新询问
+      await this.analyticsManager.resetAskedPermission();
+      this.hasAskedPermission = false;
+
+      // 重置统计数据
+      this.statistics = {
+        totalReadingTime: 0,
+        totalComicsRead: 0,
+        totalChaptersRead: 0,
+        totalPagesRead: 0,
+        averageReadingTime: 0,
+        favoriteReadingHour: 0,
+        mostReadComicId: '',
+        mostReadComicTitle: '暂无数据',
+        continuousReadingDays: 0,
+        lastReadTime: 0
+      };
+      this.dailyData = [];
+      this.hourlyDistribution = [];
+      this.readingRankList = [];
+      this.interestItems = [];
+
+      this.showClearDataDialog = false;
+      logger.info(TAG, '阅读分析数据已清除，功能已关闭，权限状态已重置，准备返回');
+
+      // 返回上一页
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, `清除数据并关闭功能失败: ${String(error)}`);
     }
   }
 
@@ -303,10 +442,10 @@ struct ReadingAnalyticsPage {
 
       // 分析数据
       await this.analyzeReadingData(readHistory);
-      
+
       // 加载阅读时长排行
       await this.loadReadingRank(readHistory);
-      
+
       // 分析用户兴趣
       await this.analyzeUserInterests();
 
@@ -488,7 +627,7 @@ struct ReadingAnalyticsPage {
     });
 
     this.statistics.mostReadComicId = mostReadComicId;
-    
+
     // 从数据库查询漫画标题
     if (mostReadComicId) {
       try {
@@ -575,7 +714,7 @@ struct ReadingAnalyticsPage {
       for (let i = 0; i < Math.min(10, rankEntries.length); i++) {
         const comicId: string = rankEntries[i][0];
         const readingTime: number = rankEntries[i][1];
-        
+
         try {
           const comic: ComicInfo | null = await this.dataManager.getComicById(comicId);
           if (comic) {
@@ -642,7 +781,7 @@ struct ReadingAnalyticsPage {
             }
           }
         }
-        
+
         // 分析作者
         if (comic.author && comic.author.trim().length > 0) {
           const existing: KeywordStatData | undefined = keywordMap.get(comic.author);
@@ -731,7 +870,7 @@ struct ReadingAnalyticsPage {
     await this.analyticsManager.setRetentionDaysByIndex(index);
     this.selectedTimeRange = RETENTION_DAYS_OPTIONS[index];
     this.showRetentionPicker = false;
-    
+
     // 重新加载数据
     await this.loadReadingData();
   }
@@ -889,17 +1028,17 @@ struct ReadingAnalyticsPage {
       Row({ space: 8 }) {
         Text(icon)
           .fontSize(24)
-        
+
         Column({ space: 4 }) {
           Text(title)
             .fontSize(12)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
+
           Text(value)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          
+
           if (subtitle) {
             Text(subtitle)
               .fontSize(10)
@@ -1006,13 +1145,13 @@ struct ReadingAnalyticsPage {
         Row({ space: 8 }) {
           Text('⏰')
             .fontSize(20)
-          
+
           Text('最喜欢的阅读时段')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
-          
+
           Text(`${this.statistics.favoriteReadingHour}:00 - ${this.statistics.favoriteReadingHour + 1}:00`)
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
@@ -1035,13 +1174,13 @@ struct ReadingAnalyticsPage {
           Row({ space: 8 }) {
             Text('🕐')
               .fontSize(20)
-            
+
             Text('最后阅读时间')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
-            
+
             Text(this.formatDate(this.statistics.lastReadTime))
               .fontSize(16)
               .fontWeight(FontWeight.Bold)
@@ -1065,7 +1204,7 @@ struct ReadingAnalyticsPage {
           Row({ space: 8 }) {
             Text('⭐')
               .fontSize(20)
-            
+
             Text('阅读最多的漫画')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
@@ -1073,7 +1212,7 @@ struct ReadingAnalyticsPage {
               .layoutWeight(1)
           }
           .width('100%')
-          
+
           Text(this.statistics.mostReadComicTitle)
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1103,51 +1242,51 @@ struct ReadingAnalyticsPage {
   buildDailyTrend() {
     if (this.dailyData.length > 0) {
       Column({ space: 12 }) {
-      Text('📆 每日阅读趋势')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
+        Text('📆 每日阅读趋势')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .alignSelf(ItemAlign.Start)
 
-      Column({ space: 8 }) {
-        ForEach(this.dailyData.slice(0, 7), (data: DailyReadingData, index: number) => {
-          Row({ space: 12 }) {
-            Text(data.date)
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .width(90)
-            
-            Column({ space: 4 }) {
-              Row({ space: 4 }) {
-                Text('⏱️')
-                  .fontSize(12)
-                Text(`${data.readingTime}分钟`)
-                  .fontSize(12)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Column({ space: 8 }) {
+          ForEach(this.dailyData.slice(0, 7), (data: DailyReadingData, index: number) => {
+            Row({ space: 12 }) {
+              Text(data.date)
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .width(90)
+
+              Column({ space: 4 }) {
+                Row({ space: 4 }) {
+                  Text('⏱️')
+                    .fontSize(12)
+                  Text(`${data.readingTime}分钟`)
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                }
+
+                Row({ space: 4 }) {
+                  Text('📖')
+                    .fontSize(12)
+                  Text(`${data.chaptersRead}章 / ${data.pagesRead}页`)
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
               }
-              
-              Row({ space: 4 }) {
-                Text('📖')
-                  .fontSize(12)
-                Text(`${data.chaptersRead}章 / ${data.pagesRead}页`)
-                  .fontSize(12)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
             }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-          }
-          .width('100%')
-          .padding(12)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(8)
-          .border({
-            width: 1,
-            color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-          })
-        }, (data: DailyReadingData, index: number) => `${data.date}-${index}`)
-      }
-      .width('100%')
+            .width('100%')
+            .padding(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(8)
+            .border({
+              width: 1,
+              color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+            })
+          }, (data: DailyReadingData, index: number) => `${data.date}-${index}`)
+        }
+        .width('100%')
       }
       .width('100%')
       .padding(16)
@@ -1230,7 +1369,7 @@ struct ReadingAnalyticsPage {
                     .borderRadius(8)
                     .justifyContent(FlexAlign.Center)
                   }
-                  
+
                   // 排名标签
                   Text(`${index + 1}`)
                     .fontSize(12)
@@ -1291,11 +1430,11 @@ struct ReadingAnalyticsPage {
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
-        
+
         Text(`${RETENTION_DAYS_OPTIONS[this.retentionDaysIndex]}天`)
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        
+
         Image($r('app.media.ic_arrow_right'))
           .width(16)
           .height(16)
@@ -1316,13 +1455,25 @@ struct ReadingAnalyticsPage {
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
-        
-        Toggle({ type: ToggleType.Switch, isOn: this.analyticsEnabled })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange(async (isOn: boolean) => {
-            this.analyticsEnabled = isOn;
-            await this.analyticsManager.setEnabled(isOn);
-          })
+
+        // 使用条件渲染确保 Toggle 在数据加载后正确显示状态
+        if (this.analyticsEnabled) {
+          Toggle({ type: ToggleType.Switch, isOn: true })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              logger.info(TAG, `开关切换: ${isOn}`);
+              this.analyticsEnabled = isOn;
+              await this.analyticsManager.setEnabled(isOn);
+            })
+        } else {
+          Toggle({ type: ToggleType.Switch, isOn: false })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              logger.info(TAG, `开关切换: ${isOn}`);
+              this.analyticsEnabled = isOn;
+              await this.analyticsManager.setEnabled(isOn);
+            })
+        }
       }
       .width('100%')
       .padding(16)
@@ -1348,7 +1499,7 @@ struct ReadingAnalyticsPage {
         .width(48)
         .height(48)
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-      
+
       Text('正在加载阅读数据...')
         .fontSize(14)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1366,12 +1517,12 @@ struct ReadingAnalyticsPage {
     Column({ space: 16 }) {
       Text('📚')
         .fontSize(64)
-      
+
       Text('暂无阅读记录')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-      
+
       Text('开始阅读漫画后，这里将显示您的阅读统计和分析数据')
         .fontSize(14)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1381,6 +1532,233 @@ struct ReadingAnalyticsPage {
     .width('100%')
     .height('80%')
     .justifyContent(FlexAlign.Center)
+  }
+
+  /**
+   * 构建权限请求界面
+   */
+  @Builder
+  buildPermissionRequest() {
+    Column({ space: 24 }) {
+      // 图标
+      Text('📊')
+        .fontSize(80)
+
+      // 标题
+      Text('阅读报告')
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      // 副标题
+      Text('了解您的阅读习惯')
+        .fontSize(16)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+      // 说明文字
+      Column({ space: 12 }) {
+        Text('开启阅读报告功能后，应用将收集以下数据：')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+
+        Column({ space: 8 }) {
+          this.buildPermissionItem('⏱️', '阅读时长', '记录您每次阅读的时长')
+          this.buildPermissionItem('📖', '阅读进度', '记录您阅读的章节和页数')
+          this.buildPermissionItem('📅', '阅读习惯', '分析您的阅读时段偏好')
+          this.buildPermissionItem('🏷️', '兴趣分析', '根据阅读内容分析您的兴趣')
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+
+        Text('这些数据仅存储在本地，不会上传到任何服务器。您可以随时在设置中关闭此功能或清除数据。')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+      }
+      .width('85%')
+      .margin({ top: 16 })
+
+      // 按钮区域
+      Row({ space: 16 }) {
+        // 拒绝按钮
+        Button('拒绝')
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(24)
+          .height(48)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.handleRejectPermission();
+          })
+
+        // 同意按钮
+        Button('同意并开启')
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .borderRadius(24)
+          .height(48)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.handleAcceptPermission();
+          })
+      }
+      .width('85%')
+      .margin({ top: 32 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding({ bottom: 60 })
+  }
+
+  /**
+   * 构建权限项
+   */
+  @Builder
+  buildPermissionItem(icon: string, title: string, description: string) {
+    Row({ space: 12 }) {
+      Text(icon)
+        .fontSize(20)
+
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(description)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建清除数据确认对话框
+   */
+  @Builder
+  buildClearDataDialog() {
+    Column() {
+      // 遮罩层
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#80000000')
+        .onClick(() => {
+          this.showClearDataDialog = false;
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+
+    // 对话框内容
+    Column({ space: 20 }) {
+      // 图标
+      Text('⚠️')
+        .fontSize(48)
+
+      // 标题
+      Text('清除阅读分析数据')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      // 说明
+      Text('此操作将清除所有统计和分析数据，不影响您书库当中的阅读记录，包括：')
+        .fontSize(14)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+
+      Column({ space: 6 }) {
+        Text('• 阅读时长排行数据')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Text('• 阅读进度分析数据')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Text('• 阅读习惯分析数据')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Text('• 兴趣分析数据')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 24, right: 24 })
+
+      Text('此操作不可撤销！')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#F44336')
+        .margin({ top: 8 })
+
+      // 按钮区域
+      Column({ space: 12 }) {
+        Row({ space: 16 }) {
+          // 取消按钮
+          Button('取消')
+            .fontSize(15)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+            .borderRadius(20)
+            .height(44)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.showClearDataDialog = false;
+            })
+
+          // 确认清除按钮
+          Button('确认清除')
+            .fontSize(15)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#F44336')
+            .borderRadius(20)
+            .height(44)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.clearReadingAnalyticsData();
+            })
+        }
+        .width('100%')
+
+        // 清除数据并关闭功能按钮
+        Button('清除数据并关闭阅读报告')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .backgroundColor('transparent')
+          .border({
+            width: 1,
+            color: ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+          })
+          .borderRadius(20)
+          .height(40)
+          .width('100%')
+          .onClick(() => {
+            this.clearDataAndDisableAnalytics();
+          })
+      }
+      .width('100%')
+      .margin({ top: 16 })
+    }
+    .width('85%')
+    .constraintSize({ maxWidth: 400 })
+    .padding(24)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(16)
+    .position({ x: '50%', y: '50%' })
+    .translate({ x: '-50%', y: '-50%' })
   }
 
   /**
@@ -1462,7 +1840,7 @@ struct ReadingAnalyticsPage {
 
           // 设置区域
           this.buildSettingsSection()
-          
+
           Blank().height(40)
         }
         .width('100%')
@@ -1479,46 +1857,51 @@ struct ReadingAnalyticsPage {
         GlobalBackgroundLayer({
           defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
         })
-        
+
         // 内容层
         Column() {
           Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-          // 时间范围选择器
-          Row() {
-            this.buildTimeRangeSelector()
-          }
-          .width('100%')
-          .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
-
-          Scroll(this.scroller) {
-            if (this.responsive_isLandscape) {
-              // 横屏模式：使用更紧凑的布局
-              this.buildLandscapeContent()
-            } else {
-              // 竖屏模式：使用原有布局
-              Column({ space: 0 }) {
-                if (this.isLoading) {
-                  this.buildLoadingState()
-                } else if (this.statistics.totalReadingTime === 0) {
-                  this.buildEmptyState()
-                } else {
-                  this.buildStatisticsOverview()
-                  this.buildReadingHabits()
-                  this.buildInterestAnalysis()
-                  this.buildReadingRank()
-                  this.buildDailyTrend()
-                  this.buildSettingsSection()
-                  
-                  Blank().height(40)
-                }
-              }
-              .width('100%')
+          // 如果未询问过权限，显示权限请求界面
+          if (!this.hasAskedPermission && !this.isLoading) {
+            this.buildPermissionRequest()
+          } else {
+            // 时间范围选择器
+            Row() {
+              this.buildTimeRangeSelector()
             }
+            .width('100%')
+            .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
+
+            Scroll(this.scroller) {
+              if (this.responsive_isLandscape) {
+                // 横屏模式：使用更紧凑的布局
+                this.buildLandscapeContent()
+              } else {
+                // 竖屏模式：使用原有布局
+                Column({ space: 0 }) {
+                  if (this.isLoading) {
+                    this.buildLoadingState()
+                  } else if (this.statistics.totalReadingTime === 0) {
+                    this.buildEmptyState()
+                  } else {
+                    this.buildStatisticsOverview()
+                    this.buildReadingHabits()
+                    this.buildInterestAnalysis()
+                    this.buildReadingRank()
+                    this.buildDailyTrend()
+                    this.buildSettingsSection()
+
+                    Blank().height(40)
+                  }
+                }
+                .width('100%')
+              }
+            }
+            .edgeEffect(EdgeEffect.Spring)
+            .scrollBar(BarState.Auto)
+            .layoutWeight(1)
           }
-          .edgeEffect(EdgeEffect.Spring)
-          .scrollBar(BarState.Auto)
-          .layoutWeight(1)
         }
         .width('100%')
         .height('100%')
@@ -1550,14 +1933,14 @@ struct ReadingAnalyticsPage {
                 .onClick(() => {
                   this.showRetentionPicker = false;
                 })
-              
+
               Text('选择数据保留天数')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .layoutWeight(1)
                 .textAlign(TextAlign.Center)
-              
+
               Text('确定')
                 .fontSize(16)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1583,6 +1966,11 @@ struct ReadingAnalyticsPage {
           .borderRadius({ topLeft: 16, topRight: 16 })
           .position({ x: 0, y: '100%' })
           .translate({ y: -280 })
+        }
+
+        // 清除数据确认对话框
+        if (this.showClearDataDialog) {
+          this.buildClearDataDialog()
         }
       }
     }
@@ -1622,7 +2010,19 @@ struct ReadingAnalyticsPage {
         }
       },
       content: {
-        title: { mainTitle: '阅读报告' }
+        title: { mainTitle: '阅读报告' },
+        menu: {
+          value: [{
+            content: {
+              label: '清除数据',
+              icon: $r('app.media.ic_delete'),
+              isEnabled: this.hasAskedPermission && !this.isLoading,
+              action: () => {
+                this.showClearDataConfirmDialog();
+              }
+            }
+          }]
+        }
       }
     })
     .onReady((context: NavDestinationContext) => {

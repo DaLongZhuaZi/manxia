@@ -27,7 +27,8 @@ import {
   DEFAULT_TEXT_READER_SETTINGS,
   isTextFile,
   TextAlignment,
-  SavedBackgroundImage
+  SavedBackgroundImage,
+  TextChapter
 } from '../Models/TextReaderModels';
 
 const TAG = 'EBookReaderPage';
@@ -71,7 +72,7 @@ struct EBookReaderPage {
   @State showSettingsPanel: boolean = false;
   @State showChapterList: boolean = false;
   @State showMoreMenu: boolean = false;
-  
+
   // 动画状态
   @State settingsPanelOpacity: number = 0;
   @State settingsPanelScale: number = 0.95;
@@ -80,7 +81,7 @@ struct EBookReaderPage {
   @State moreMenuScale: number = 0.95;
   @State moreMenuTranslateY: number = -10;
   @State chapterListOpacity: number = 0;
-  
+
   // 书籍信息弹窗状态
   @State showBookInfoDialog: boolean = false;
   @State bookInfoDialogOpacity: number = 0;
@@ -89,7 +90,7 @@ struct EBookReaderPage {
   @State showFontSettingsPanel: boolean = false;
   @State fontSettingsPanelOpacity: number = 0;
   @State fontSettingsPanelScale: number = 0.95;
-  
+
   // 阅读设置面板状态（主题、翻页等）
   @State showReadingOptionsPanel: boolean = false;
   @State readingOptionsPanelOpacity: number = 0;
@@ -109,10 +110,10 @@ struct EBookReaderPage {
 
   // 数据管理器
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
-  
+
   // UI上下文（用于设置沉浸式模式）
   private uiContext: UIContext | undefined = undefined;
-  
+
   // Reader Kit 阅读器控制器（用于实时应用设置和跳转章节）
   private readerKitController: ReaderKitViewerController | null = null;
 
@@ -133,11 +134,11 @@ struct EBookReaderPage {
       this.bgColor = '#1E1E1E';
       this.textColor = '#D4D4D4';
     }
-    
+
     // 初始化横屏检测
     this.updateScreenOrientation();
   }
-  
+
   /**
    * 更新屏幕方向状态
    */
@@ -173,7 +174,7 @@ struct EBookReaderPage {
         logger.error(TAG, '无法获取UIContext，设置全屏模式失败');
         return;
       }
-      
+
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       logger.info(TAG, '设置完全沉浸式阅读模式');
     } catch (error) {
@@ -193,7 +194,7 @@ struct EBookReaderPage {
         logger.error(TAG, '无法获取UIContext，恢复正常模式失败');
         return;
       }
-      
+
       WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.uiContext);
       logger.info(TAG, '恢复默认显示模式');
     } catch (error) {
@@ -210,28 +211,28 @@ struct EBookReaderPage {
       this.errorMessage = '';
 
       logger.info(TAG, `开始加载电子书: ${bookId}`);
-      
+
       // 从数据库加载电子书
       const ebook = await this.ebookDataManager.getEBookById(bookId);
-      
+
       if (!ebook) {
         throw new Error('电子书不存在');
       }
 
       this.ebook = ebook;
-      
+
       // 加载阅读设置
       if (ebook.readingSettings) {
         // TXT 格式使用自定义文本阅读器，跳过系统主题覆盖
         // 只有非 TXT 格式且 followSystemTheme 为 true 时才应用系统主题
         const isTxtFormat = ebook.format === EBookFormat.TXT;
-        const hasCustomBackground = ebook.readingSettings.backgroundType === 'IMAGE' || 
+        const hasCustomBackground = ebook.readingSettings.backgroundType === 'IMAGE' ||
           (ebook.readingSettings.backgroundType === 'COLOR' && ebook.readingSettings.backgroundColor !== '#FFFFFF' && ebook.readingSettings.backgroundColor !== '#1E1E1E');
-        
+
         if (!isTxtFormat && ebook.readingSettings.followSystemTheme !== false && !hasCustomBackground) {
           this.applySystemThemeToSettings(ebook);
         }
-        
+
         this.fontSize = ebook.readingSettings.fontSize;
         this.lineHeight = ebook.readingSettings.lineHeight;
         this.bgColor = ebook.readingSettings.backgroundColor;
@@ -258,7 +259,7 @@ struct EBookReaderPage {
         };
         // 应用系统主题
         this.applySystemThemeToSettings(ebook);
-        
+
         this.fontSize = ebook.readingSettings.fontSize;
         this.lineHeight = ebook.readingSettings.lineHeight;
         this.bgColor = ebook.readingSettings.backgroundColor;
@@ -282,12 +283,12 @@ struct EBookReaderPage {
             logger.info(TAG, `恢复阅读位置（通过章节ID）: 章节索引=${this.currentChapterIndex}`);
           }
         }
-        
+
         // 恢复 DOM 位置
         if (ebook.readingProgress.domPos) {
           this.currentDomPos = ebook.readingProgress.domPos;
           logger.info(TAG, `恢复 DOM 位置: ${this.currentDomPos}`);
-          
+
           // 对于 TXT 阅读器，从 domPos 恢复页码
           // 格式: "page:N" 其中 N 是页码
           if (ebook.readingProgress.domPos.startsWith('page:')) {
@@ -298,7 +299,7 @@ struct EBookReaderPage {
             }
           }
         }
-        
+
         // 备用：从 currentPosition 恢复页码
         if (this.textCurrentPageIndex === 0 && ebook.readingProgress.currentPosition > 0) {
           this.textCurrentPageIndex = ebook.readingProgress.currentPosition;
@@ -308,7 +309,7 @@ struct EBookReaderPage {
 
       // 加载当前章节
       this.currentChapter = ebook.chapters[this.currentChapterIndex];
-      
+
       // 调试日志：检查章节内容
       logger.info(TAG, `章节数量: ${ebook.chapters.length}`);
       if (this.currentChapter) {
@@ -324,12 +325,18 @@ struct EBookReaderPage {
         this.loadTextReaderSettingsFromEBook(ebook.readingSettings);
       }
 
+      // 初始化文本内容（用于纯文本阅读器）
+      if (ebook.format === EBookFormat.TXT) {
+        this.textContent = this.getTextContent();
+        logger.info(TAG, `初始化文本内容，长度: ${this.textContent.length}`);
+      }
+
       this.isLoading = false;
       logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
-      
+
       // 设置沉浸式模式
       this.setupFullscreenMode();
-      
+
     } catch (error) {
       this.errorMessage = `加载失败: ${String(error instanceof Error ? error.message : error)}`;
       this.isLoading = false;
@@ -439,13 +446,13 @@ struct EBookReaderPage {
     if (!ebook.readingSettings) {
       return;
     }
-    
+
     // 获取当前系统主题
     const currentTheme = this.themeState.currentTheme;
     const isDarkMode = currentTheme === ThemeType.DARK;
-    
+
     logger.info(TAG, `应用系统主题: currentTheme=${currentTheme}, isDarkMode=${isDarkMode}`);
-    
+
     if (isDarkMode) {
       // 夜间模式
       ebook.readingSettings.backgroundColor = '#1E1E1E';
@@ -563,12 +570,12 @@ struct EBookReaderPage {
       // 对于 TXT 格式，使用页码信息
       let domPos = this.currentDomPos;
       let currentPosition = 0;
-      
+
       if (this.ebook.format === EBookFormat.TXT) {
         domPos = `page:${this.textCurrentPageIndex}`;
         currentPosition = this.textCurrentPageIndex;
       }
-      
+
       const progress: EBookReadingProgress = {
         bookId: this.ebook.id,
         currentChapterId: this.currentChapter.id,
@@ -597,14 +604,14 @@ struct EBookReaderPage {
    */
   private handleProgressChange(progress: number, domPos: string): void {
     this.currentDomPos = domPos;
-    
+
     // 防抖：检查距离上次保存的时间间隔
     const now = Date.now();
     if ((now - this.lastProgressSaveTime) < EBookReaderPage.PROGRESS_SAVE_INTERVAL) {
       return;
     }
     this.lastProgressSaveTime = now;
-    
+
     // 自动保存进度
     this.saveReadingProgress();
   }
@@ -618,29 +625,79 @@ struct EBookReaderPage {
       logger.warn(TAG, `无效的章节索引: ${chapterIndex}`);
       return;
     }
-    
+
     logger.info(TAG, `跳转到章节: ${chapterIndex}`);
-    
+
     // 更新本地状态
     this.currentChapterIndex = chapterIndex;
     this.currentChapter = this.ebook.chapters[chapterIndex];
     this.currentDomPos = ''; // 清空 DOM 位置，从章节开头开始
-    
-    // 通过控制器跳转（如果是 Reader Kit 格式）
-    if (this.readerKitController && this.readerKitController.isControllerReady()) {
+
+    // 根据电子书格式处理跳转
+    if (this.ebook.format === EBookFormat.TXT) {
+      // 纯文本阅读器：重置页码到第一页，并更新文本内容
+      this.textCurrentPageIndex = 0;
+      // 更新文本内容（触发 TextReaderComponent 重新分页）
+      this.textContent = this.getTextContent();
+      logger.info(TAG, `纯文本阅读器跳转到章节 ${chapterIndex}，内容长度: ${this.textContent.length}`);
+    } else if (this.readerKitController && this.readerKitController.isControllerReady()) {
+      // Reader Kit 格式：通过控制器跳转
       await this.readerKitController.goToChapter(chapterIndex, '');
     }
-    
+
     // 保存阅读进度
     this.saveReadingProgress();
   }
 
   /**
    * 调整字体大小
+   * 实时更新UI、应用到阅读器并保存到数据库
    */
   private adjustFontSize(delta: number): void {
-    this.fontSize = Math.max(12, Math.min(32, this.fontSize + delta));
+    const newSize = Math.max(12, Math.min(32, this.fontSize + delta));
+    if (newSize === this.fontSize) {
+      return; // 没有变化，不需要更新
+    }
+
+    this.fontSize = newSize;
     logger.debug(TAG, `字体大小调整为: ${this.fontSize}`);
+
+    // 同步更新 textReaderSettings（用于 TXT 阅读器）
+    if (this.textReaderSettings) {
+      this.textReaderSettings.textStyle.fontSize = this.fontSize;
+      // 触发 UI 更新
+      this.textReaderSettings = {
+        readingMode: this.textReaderSettings.readingMode,
+        readingDirection: this.textReaderSettings.readingDirection,
+        pageTurnAnimation: this.textReaderSettings.pageTurnAnimation,
+        background: this.textReaderSettings.background,
+        savedBackgroundImages: this.textReaderSettings.savedBackgroundImages,
+        textStyle: {
+          fontSize: this.fontSize,
+          lineHeight: this.textReaderSettings.textStyle.lineHeight,
+          paragraphSpacing: this.textReaderSettings.textStyle.paragraphSpacing,
+          firstLineIndent: this.textReaderSettings.textStyle.firstLineIndent,
+          letterSpacing: this.textReaderSettings.textStyle.letterSpacing,
+          textColor: this.textReaderSettings.textStyle.textColor,
+          fontWeight: this.textReaderSettings.textStyle.fontWeight,
+          fontFamily: this.textReaderSettings.textStyle.fontFamily,
+          textAlignment: this.textReaderSettings.textStyle.textAlignment
+        },
+        pageMargins: this.textReaderSettings.pageMargins,
+        keepScreenOn: this.textReaderSettings.keepScreenOn,
+        showPageNumber: this.textReaderSettings.showPageNumber,
+        showProgress: this.textReaderSettings.showProgress,
+        showTime: this.textReaderSettings.showTime,
+        showBattery: this.textReaderSettings.showBattery,
+        tapToTurn: this.textReaderSettings.tapToTurn,
+        volumeKeyNavigation: this.textReaderSettings.volumeKeyNavigation,
+        autoScrollSpeed: this.textReaderSettings.autoScrollSpeed,
+        curlBackOpacity: this.textReaderSettings.curlBackOpacity
+      };
+    }
+
+    // 保存设置到数据库
+    this.saveSettings();
   }
 
   /**
@@ -650,7 +707,7 @@ struct EBookReaderPage {
     if (this.showSettingsPanel || this.showChapterList || this.showMoreMenu) {
       return;
     }
-    
+
     if (this.showTopToolbar) {
       this.hideToolbarWithAnimation();
     } else {
@@ -664,7 +721,7 @@ struct EBookReaderPage {
   private showToolbarWithAnimation(): void {
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
-    
+
     animateTo({
       duration: 250,
       curve: curves.springMotion(0.5, 0.8)
@@ -683,7 +740,7 @@ struct EBookReaderPage {
     }, () => {
       this.toolbarOpacity = 0.0;
     });
-    
+
     setTimeout(() => {
       this.showTopToolbar = false;
       this.showBottomToolbar = false;
@@ -978,7 +1035,7 @@ struct EBookReaderPage {
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'EBookReaderPage onReady');
       this.pathStack = context.pathStack;
-      
+
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
         this.loadEBook(params.bookId);
@@ -1122,8 +1179,8 @@ struct EBookReaderPage {
           logger.info(TAG, 'Reader Kit 控制器已就绪');
         }
       })
-      .width('100%')
-      .height('100%')
+        .width('100%')
+        .height('100%')
     }
   }
 
@@ -1160,8 +1217,8 @@ struct EBookReaderPage {
           }
         } as PdfViewerCallbacks
       })
-      .width('100%')
-      .height('100%')
+        .width('100%')
+        .height('100%')
     }
   }
 
@@ -1175,12 +1232,12 @@ struct EBookReaderPage {
 
     // 计算进度百分比
     const progress = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
-    
+
     // 更新阅读进度
     this.ebook.readingProgress.currentChapterIndex = currentPage - 1;
     this.ebook.readingProgress.progress = progress;
     this.ebook.readingProgress.lastReadTime = Date.now();
-    
+
     // 保存进度
     this.saveReadingProgress();
     logger.debug(TAG, `PDF 进度已保存: 第 ${currentPage} 页, ${progress.toFixed(1)}%`);
@@ -1194,8 +1251,10 @@ struct EBookReaderPage {
   buildTextReaderView() {
     Stack() {
       // 文本阅读器组件
+      // 使用 @State textContent 而不是 getTextContent()，以便章节切换时触发更新
       TextReaderComponent({
-        content: this.getTextContent(),
+        content: this.textContent,
+        chapters: this.getTextChapters(),
         settings: this.textReaderSettings,
         currentChapterIndex: this.currentChapterIndex,
         currentPageIndex: this.textCurrentPageIndex,
@@ -1210,6 +1269,8 @@ struct EBookReaderPage {
         onChapterChange: (chapterIndex: number) => {
           this.currentChapterIndex = chapterIndex;
           this.currentChapter = this.ebook?.chapters[chapterIndex] || null;
+          // 章节切换时更新文本内容
+          this.textContent = this.getTextContent();
         },
         onProgressChange: (progress: number) => {
           logger.debug(TAG, `文本阅读进度: ${progress.toFixed(1)}%`);
@@ -1219,13 +1280,13 @@ struct EBookReaderPage {
           this.toggleToolbar();
         }
       })
-      .width('100%')
-      .height('100%')
+        .width('100%')
+        .height('100%')
     }
     .width('100%')
     .height('100%')
   }
-  
+
   /**
    * 获取文本内容（合并所有章节或当前章节）
    */
@@ -1233,18 +1294,81 @@ struct EBookReaderPage {
     if (!this.ebook) {
       return '';
     }
-    
+
     // 如果有章节，返回当前章节内容
     if (this.currentChapter && this.currentChapter.content) {
       return this.currentChapter.content;
     }
-    
+
     // 否则合并所有章节内容
     return this.ebook.chapters.map(chapter => {
       return `${chapter.title}\n\n${chapter.content}`;
     }).join('\n\n');
   }
-  
+
+  /**
+   * 检查电子书是否有有效封面
+   */
+  private hasValidEBookCover(): boolean {
+    const raw = this.ebook?.metadata?.coverImagePath || '';
+    return raw.length > 0;
+  }
+
+  /**
+   * 获取电子书封面图片源
+   * 支持本地文件路径、网络URL和应用资源路径
+   */
+  private getEBookCoverSource(): ResourceStr {
+    const raw = this.ebook?.metadata?.coverImagePath || '';
+    if (raw.length === 0) {
+      return $r('app.media.ic_ebook');
+    }
+
+    // 检查是否为应用资源路径 (app.media.xxx)
+    if (raw.startsWith('app.media.')) {
+      const resourceName = raw.substring('app.media.'.length);
+      if (resourceName === 'mangabook') {
+        return $r('app.media.mangabook');
+      } else if (resourceName === 'ic_ebook') {
+        return $r('app.media.ic_ebook');
+      } else if (resourceName === 'icon') {
+        return $r('app.media.icon');
+      }
+      return $r('app.media.ic_ebook');
+    }
+
+    // 本地文件路径
+    if (raw.startsWith('/')) {
+      return `file://${raw}`;
+    }
+
+    return raw;
+  }
+
+  /**
+   * 获取文本章节列表（用于 TextReaderComponent）
+   */
+  private getTextChapters(): TextChapter[] {
+    if (!this.ebook) {
+      return [];
+    }
+
+    const result: TextChapter[] = [];
+    for (let i = 0; i < this.ebook.chapters.length; i++) {
+      const ch = this.ebook.chapters[i];
+      const chapter: TextChapter = {
+        id: ch.id,
+        title: ch.title,
+        index: i,
+        content: ch.content || '',
+        startPosition: 0,
+        endPosition: (ch.content || '').length
+      };
+      result.push(chapter);
+    }
+    return result;
+  }
+
   /**
    * 保存文本阅读进度（带页码参数）
    * 对于 TXT 阅读器，使用 currentPosition 保存页码，domPos 保存页码字符串
@@ -1253,7 +1377,7 @@ struct EBookReaderPage {
     if (!this.ebook) {
       return;
     }
-    
+
     try {
       const readingProgress: EBookReadingProgress = {
         bookId: this.ebook.id,
@@ -1265,14 +1389,14 @@ struct EBookReaderPage {
         lastReadTime: Date.now(),
         totalReadingTime: 0
       };
-      
+
       await this.ebookDataManager.saveReadingProgress(readingProgress);
       logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读进度失败: ${String(error)}`);
     }
   }
-  
+
   /**
    * 保存文本阅读进度（使用当前状态）
    * @deprecated 使用 saveTextReadingProgressWithPage 替代
@@ -1280,7 +1404,7 @@ struct EBookReaderPage {
   private async saveTextReadingProgress(progress: number): Promise<void> {
     await this.saveTextReadingProgressWithPage(progress, this.textCurrentPageIndex);
   }
-  
+
   /**
    * 构建文本阅读器设置面板
    */
@@ -1296,7 +1420,7 @@ struct EBookReaderPage {
         .onClick(() => {
           this.hideTextReaderSettingsWithAnimation();
         })
-      
+
       // 设置面板
       Column() {
         TextReaderSettingsPanel({
@@ -1326,7 +1450,7 @@ struct EBookReaderPage {
     .alignContent(this.isLandscape ? Alignment.End : Alignment.Center)
     .zIndex(1300)
   }
-  
+
   /**
    * 显示文本阅读器设置（带动画）
    */
@@ -1340,7 +1464,7 @@ struct EBookReaderPage {
       this.textReaderSettingsScale = 1;
     });
   }
-  
+
   /**
    * 隐藏文本阅读器设置（带动画）
    */
@@ -1356,7 +1480,7 @@ struct EBookReaderPage {
       this.showTextReaderSettings = false;
     }, 200);
   }
-  
+
   /**
    * 保存文本阅读器设置
    * 将 TextReaderSettings 转换为 EBookReadingSettings 并保存到数据库
@@ -1374,7 +1498,7 @@ struct EBookReaderPage {
 
       // 从 textReaderSettings 同步到 ebook.readingSettings
       const settings = this.ebook.readingSettings;
-      
+
       // 字体设置
       settings.fontSize = this.textReaderSettings.textStyle.fontSize;
       settings.lineHeight = this.textReaderSettings.textStyle.lineHeight;
@@ -1384,23 +1508,23 @@ struct EBookReaderPage {
       settings.firstLineIndent = this.textReaderSettings.textStyle.firstLineIndent;
       settings.textAlignment = this.textReaderSettings.textStyle.textAlignment;
       settings.textColor = this.textReaderSettings.textStyle.textColor;
-      
+
       // 背景设置
       settings.backgroundType = this.textReaderSettings.background.type;
       settings.backgroundColor = this.textReaderSettings.background.color || '#F5F0E1';
       settings.backgroundImagePath = this.textReaderSettings.background.imagePath || '';
       settings.backgroundImageOpacity = this.textReaderSettings.background.imageOpacity || 1.0;
-      
+
       // 用户设置了自定义背景，禁用跟随系统主题
       settings.followSystemTheme = false;
-      
+
       // 翻页设置
       settings.pageMargin = this.textReaderSettings.pageMargins.left;
       settings.pageTurnAnimation = this.textReaderSettings.pageTurnAnimation;
       settings.tapToTurn = this.textReaderSettings.tapToTurn;
       settings.volumeKeyNavigation = this.textReaderSettings.volumeKeyNavigation;
       settings.keepScreenOn = this.textReaderSettings.keepScreenOn;
-      
+
       // 显示设置
       settings.showPageNumber = this.textReaderSettings.showPageNumber;
       settings.showProgress = this.textReaderSettings.showProgress;
@@ -1480,7 +1604,7 @@ struct EBookReaderPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        
+
         Text(`${this.currentChapterIndex + 1} / ${this.ebook?.chapters.length || 0}`)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
@@ -1871,7 +1995,7 @@ struct EBookReaderPage {
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
                 .margin({ bottom: 8 })
-              
+
               Text('这是一段预览文字，用于展示当前的字体设置效果。调整下方的设置项可以实时看到效果变化。')
                 .fontSize(this.fontSize)
                 .lineHeight(this.fontSize * this.lineHeight)
@@ -2230,10 +2354,8 @@ struct EBookReaderPage {
             // 封面和基本信息
             Row({ space: 16 }) {
               // 封面
-              if (this.ebook && this.ebook.metadata.coverImagePath && this.ebook.metadata.coverImagePath.length > 0) {
-                Image(this.ebook.metadata.coverImagePath.startsWith('/') 
-                  ? `file://${this.ebook.metadata.coverImagePath}` 
-                  : this.ebook.metadata.coverImagePath)
+              if (this.hasValidEBookCover()) {
+                Image(this.getEBookCoverSource())
                   .width(80)
                   .height(120)
                   .objectFit(ImageFit.Cover)
@@ -2285,7 +2407,6 @@ struct EBookReaderPage {
             this.buildBookInfoItem('ISBN', this.ebook?.metadata.isbn || '无')
             this.buildBookInfoItem('语言', this.ebook?.metadata.language || '未知')
             this.buildBookInfoItem('章节数', `${this.ebook?.chapters.length || 0}章`)
-            this.buildBookInfoItem('文件大小', this.formatFileSize(this.ebook?.fileSize || 0))
 
             // 简介
             if (this.ebook && this.ebook.metadata.description && this.ebook.metadata.description.length > 0) {

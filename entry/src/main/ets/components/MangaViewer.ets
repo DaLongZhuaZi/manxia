@@ -5,16 +5,16 @@
  */
 
 import { logger } from '../Utils/Logger';
-import { 
-  GlobalAnimationManager, 
-  AnimationType, 
+import {
+  GlobalAnimationManager,
+  AnimationType,
   AnimationUtils,
-  globalAnimationManager 
+  globalAnimationManager
 } from '../Framework/Animation/GlobalAnimationSystem';
-import { 
-  MangaPage, 
-  MangaChapter, 
-  ReadingMode, 
+import {
+  MangaPage,
+  MangaChapter,
+  ReadingMode,
   ReadingDirection,
   ReadingSettings,
   ImageSourceType,
@@ -22,8 +22,8 @@ import {
   DoublePagePortraitLayout
 } from '../Models/MangaModels';
 import { colorMap } from '../Data/ResourceMap';
-import { 
-  curves, 
+import {
+  curves,
   UIContext,
   matrix4
 } from '@kit.ArkUI';
@@ -294,7 +294,7 @@ export struct MangaViewer {
   private readonly PRELOAD_RANGE: number = 8; // 预加载前后页的基础范围
   private readonly CACHE_CLEANUP_THRESHOLD: number = 0.8; // 缓存使用率达到80%时清理
   private pendingLoadTimers: Map<string, number> = new Map();
-  
+
   // 图源预加载设置（从外部传入）
   @Prop preloadCurrentPages?: number; // 当前章节预加载页数，默认10
   @Prop preloadNextPages?: number;    // 下一章节预加载页数，默认-1（全部）
@@ -372,7 +372,7 @@ export struct MangaViewer {
 
   // 预加载相关
   private preloadRange: number = 2; // 预加载前后2页
-  
+
   // 内容类型（用于判断预加载策略）
   @Prop contentType?: string;
 
@@ -385,21 +385,21 @@ export struct MangaViewer {
     this.uiContext = this.getUIContext();
     this.viewCurrentPageIndex = this.currentPageIndex;
     this.updateSinglePageDisplay();
-    
+
     if (!this.uiContext) {
       logger.error(TAG, '获取UIContext失败');
     }
-    
+
     // 初始化屏幕尺寸
     this.initScreenSize();
-    
+
     this.initializeImageStates();
     // 初始化双页模式的左右页索引
     this.updateDoublePageIndices();
-    
+
     // 初始化滚动位置键
     this.initScrollPositionKey();
-    
+
     // 恢复滚动位置
     this.restoreScrollPosition();
     if (this.isWebtoonMode() && this.currentPageIndex > 0 && this.savedScrollPosition <= 0) {
@@ -407,10 +407,10 @@ export struct MangaViewer {
         this.smoothScrollToPage(this.currentPageIndex, 1.0);
       }, 0);
     }
-    
+
     // 初始化可见页面
     this.updateVisiblePages();
-    
+
     // 预加载初始图片
     this.preloadNearbyImages();
     this.preloadImages();
@@ -419,17 +419,17 @@ export struct MangaViewer {
     if (this.chapter && this.chapter.pages) {
       this.pageDataSource.setPages(this.chapter.pages);
     }
-    
+
     // 通知父组件组件已准备就绪
     if (this.callbacks.onComponentReady) {
       this.callbacks.onComponentReady(this);
     }
-    
+
     // 添加空值检查，防止访问null对象的属性
     const chapterTitle = this.chapter ? this.chapter.title : '未知章节';
     const currentPage = this.chapter && this.chapter.pages ? (this.currentPageIndex + 1) : 0;
     const totalPages = this.chapter && this.chapter.pages ? this.chapter.pages.length : 0;
-    
+
     logger.info(TAG, '漫画查看器组件初始化' + "当前章节: " + chapterTitle +
       "当前页面: " + '第' + currentPage + '/' + totalPages + '页' +
       "阅读模式: " + this.readingSettings.readingMode.toString());
@@ -441,22 +441,22 @@ export struct MangaViewer {
    */
   private onChapterChange(): void {
     logger.info(TAG, `🔔 [章节切换] 检测到章节切换，chapterTick=${this.chapterTick}，重新初始化组件`);
-    
+
     // 重置页面索引
     this.viewCurrentPageIndex = this.currentPageIndex;
-    
+
     // 重置渲染计数器
     this.renderEpoch = 0;
-    
+
     // 清空所有缓存状态
     this.pagePixelMaps.clear();
     this.imageLoadStates.clear();
     this.pixelMapEpochByPage.clear();
-    
+
     // 重新加载当前页和相邻页
     if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
       logger.info(TAG, `🔄 重新加载章节: ${this.chapter.title}，页面数: ${this.chapter.pages.length}`);
-      
+
       // 关键修复：先更新显示变量为实际URL（而不是占位图）
       // 这样Image组件会立即使用新章节的URL
       if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
@@ -464,7 +464,7 @@ export struct MangaViewer {
       } else {
         this.updateSinglePageDisplay();
       }
-      
+
       // 然后预加载当前页和相邻页到缓存
       // Image组件会从缓存中快速读取
       this.loadCurrentAndNeighborPages();
@@ -482,7 +482,7 @@ export struct MangaViewer {
 
     if (referer && referer.length > 0) {
       let retryCount = 0;
-      
+
       // 1. 重置所有加载失败的页面状态
       this.imageLoadStates.forEach((state, pageId) => {
         if (state.error || (state.isLoading && !state.isLoaded)) {
@@ -494,22 +494,22 @@ export struct MangaViewer {
           retryCount++;
         }
       });
-      
+
       // 强制触发UI更新
       this.imageLoadStates = new Map(this.imageLoadStates);
-      
+
       if (retryCount > 0) {
         logger.info(TAG, `🔄 触发 ${retryCount} 张图片的重试加载`);
-        
+
         // 2. 重新触发预加载逻辑
         if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
-           this.ensureDoublePageImagesPreloaded();
+          this.ensureDoublePageImagesPreloaded();
         } else if (this.isWebtoonMode()) {
-           this.preloadNearbyImages();
+          this.preloadNearbyImages();
         } else {
-           this.preloadSinglePageWebtoonStyle();
+          this.preloadSinglePageWebtoonStyle();
         }
-        
+
         // 3. 确保当前页立即加载
         const currentPageData = this.getCurrentPageData();
         if (currentPageData.page) {
@@ -536,20 +536,20 @@ export struct MangaViewer {
       this.updateSinglePageDisplay();
       this.updateSinglePagePreview();
     }
-    
+
     // 触发翻页动画
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.animatePageTurn();
       this.translateX = 0;
       this.translateY = 0;
     }
-    
+
     // 单页模式：强制刷新锚点；双页模式也刷新一次以确保UI重建
     this.renderEpoch = this.renderEpoch + 1;
-    
+
     // 优先加载当前页和相邻页
     this.loadCurrentAndNeighborPages();
-    
+
     // 对于条漫模式，也触发预加载
     if (this.isWebtoonMode()) {
       this.updateVisiblePages();
@@ -572,10 +572,10 @@ export struct MangaViewer {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'MangaViewer组件即将销毁');
-    
+
     // 保存当前滚动位置
     this.saveScrollPosition();
-    
+
     // 清理定时器
     if (this.scrollTimer !== -1) {
       clearTimeout(this.scrollTimer);
@@ -590,7 +590,7 @@ export struct MangaViewer {
       if (typeof tid === 'number') { clearTimeout(tid); }
       this.pendingLoadTimers.delete(k);
     }
-    
+
     // 清理图片缓存
     this.clearImageCache();
   }
@@ -634,7 +634,7 @@ export struct MangaViewer {
       logger.error(TAG, '章节数据为空，无法初始化图片状态');
       return;
     }
-    
+
     this.chapter.pages.forEach(page => {
       this.imageLoadStates.set(page.id, {
         isLoading: false,
@@ -659,7 +659,7 @@ export struct MangaViewer {
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       return;
     }
-    
+
     this.preloadSinglePageWebtoonStyle();
   }
 
@@ -671,19 +671,19 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    
+
     const currentIndex = this.viewCurrentPageIndex;
     const totalPages = this.chapter.pages.length;
-    
+
     // 创建高优先级页面列表
     const priorityPages: MangaPage[] = [];
-    
+
     // 优先加载当前页
     if (currentIndex >= 0 && currentIndex < totalPages) {
       const currentPage = this.chapter.pages[currentIndex];
       priorityPages.push(currentPage);
     }
-    
+
     // 然后加载前后各1页
     for (let offset of [-1, 1]) {
       const targetIndex = currentIndex + offset;
@@ -692,7 +692,7 @@ export struct MangaViewer {
         priorityPages.push(page);
       }
     }
-    
+
     // 异步加载所有高优先级页面
     Promise.all(priorityPages.map(page => {
       if (!this.pagePixelMaps.has(page.id)) {
@@ -702,13 +702,13 @@ export struct MangaViewer {
     }))
       .then(() => {
         logger.info(TAG, `高优先级页面加载完成，刷新UI: currentIdx=${currentIndex}`);
-        
+
         // 【修复】如果正在执行翻页动画，不要立即刷新UI，避免闪回
         if (this.isPageTurning) {
           logger.debug(TAG, `翻页动画执行中，延迟UI刷新`);
           return;
         }
-        
+
         // 所有高优先级页面加载完成后，刷新UI
         if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
           this.updateDoublePageDisplay();
@@ -815,8 +815,8 @@ export struct MangaViewer {
       logger.error(TAG, 'UIContext未初始化，无法执行缩放动画');
       this.currentScale = targetScale;
       if (this.callbacks.onZoomChange) {
-          this.callbacks.onZoomChange(targetScale);
-        }
+        this.callbacks.onZoomChange(targetScale);
+      }
       return;
     }
 
@@ -826,16 +826,16 @@ export struct MangaViewer {
     }
 
     const animateOptions: AnimateParam = {
-       duration: 300,
-       curve: curves.initCurve(Curve.EaseOut)
-     };
+      duration: 300,
+      curve: curves.initCurve(Curve.EaseOut)
+    };
 
     this.uiContext.animateTo(animateOptions, () => {
       this.currentScale = targetScale;
       if (this.callbacks.onZoomChange) {
         this.callbacks.onZoomChange(targetScale);
       }
-      
+
       // 缩放时重置位移
       if (targetScale === 1.0) {
         this.translateX = 0;
@@ -853,12 +853,12 @@ export struct MangaViewer {
       logger.warn(TAG, '拖拽开始时fingerList无效，忽略此事件');
       return;
     }
-    
+
     // 如果正在缩放，不处理拖拽
     if (this.isZooming) {
       return;
     }
-    
+
     this.isDragging = true;
     this.pageChangeCommitted = false;
     this.swipeTriggered = false;
@@ -866,24 +866,24 @@ export struct MangaViewer {
     this.panStartY = event.fingerList[0].globalY;
     this.initialTranslateX = this.translateX;
     this.initialTranslateY = this.translateY;
-    
+
     // ========== 卷页动画：拖拽开始时立即进入交互模式 ==========
     const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
     const isDoublePage: boolean = this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
     const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
-    
+
     if (animationType === PageTurnAnimationType.CURL && !isTTB) {
       // 准备卷页模式（但不立即显示，等待有明显拖拽时再显示）
       // 支持单页和双页模式
       this.prepareCurlMode();
     }
     // ========== 卷页动画处理结束 ==========
-    
+
     if (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE ||
-        this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
-        this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
-        this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
       this.preloadSinglePageNeighbors();
       this.preloadSinglePageWebtoonStyle();
       // 卷页模式下不更新预览（由Canvas层处理）
@@ -894,7 +894,7 @@ export struct MangaViewer {
       this.preloadDoublePageNeighbors();
     }
   }
-  
+
   /**
    * 准备卷页模式（预加载PixelMap）
    * 支持单页模式和双页模式
@@ -902,32 +902,32 @@ export struct MangaViewer {
   private prepareCurlMode(): void {
     const currentIndex: number = this.viewCurrentPageIndex;
     const isDoublePage: boolean = this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
-    
+
     // 根据触摸位置确定翻页起始位置
     this.determineCurlStartPosition();
-    
+
     // 根据翻页方向决定加载哪一页
     const isLeftSide: boolean = this.curlStartPosition === CurlStartPosition.LEFT_EDGE ||
-                                this.curlStartPosition === CurlStartPosition.TOP_LEFT ||
-                                this.curlStartPosition === CurlStartPosition.BOTTOM_LEFT;
-    
+      this.curlStartPosition === CurlStartPosition.TOP_LEFT ||
+      this.curlStartPosition === CurlStartPosition.BOTTOM_LEFT;
+
     if (isDoublePage) {
       // 双页模式：使用左页或右页的图片（根据翻页方向）
       const leftIdx: number = this.leftPageIndex;
       const rightIdx: number = this.rightPageIndex;
-      
+
       // 当前页使用翻页方向对应的那一页
-      const currentPageIdx: number = isLeftSide ? 
-        (leftIdx >= 0 ? leftIdx : rightIdx) : 
+      const currentPageIdx: number = isLeftSide ?
+        (leftIdx >= 0 ? leftIdx : rightIdx) :
         (rightIdx >= 0 ? rightIdx : leftIdx);
-      
+
       if (currentPageIdx >= 0 && currentPageIdx < this.chapter.pages.length) {
         const currentPage: MangaPage = this.chapter.pages[currentPageIdx];
         this.curlCurrentPixelMap = this.pagePixelMaps.get(currentPage.id) || null;
       } else {
         this.curlCurrentPixelMap = null;
       }
-      
+
       // 双页模式下，翻页是翻两页
       const pairStart: number = currentIndex - (currentIndex % 2);
       if (isLeftSide) {
@@ -966,13 +966,13 @@ export struct MangaViewer {
       // 单页模式：原有逻辑
       const currentPage: MangaPage = this.chapter.pages[currentIndex];
       this.curlCurrentPixelMap = this.pagePixelMaps.get(currentPage.id) || null;
-      
+
       if (isLeftSide) {
         // 左侧翻页 = 向后翻（上一页）
         if (currentIndex > 0) {
           const prevPage: MangaPage = this.chapter.pages[currentIndex - 1];
           this.curlNextPixelMap = this.pagePixelMaps.get(prevPage.id) || null;
-          
+
           if (!this.curlNextPixelMap) {
             logger.info(TAG, `上一页PixelMap未加载，开始加载: ${prevPage.id}`);
             this.ensurePixelMapLoaded(prevPage).then(() => {
@@ -993,7 +993,7 @@ export struct MangaViewer {
         if (currentIndex < this.chapter.pages.length - 1) {
           const nextPage: MangaPage = this.chapter.pages[currentIndex + 1];
           this.curlNextPixelMap = this.pagePixelMaps.get(nextPage.id) || null;
-          
+
           if (!this.curlNextPixelMap) {
             logger.info(TAG, `下一页PixelMap未加载，开始加载: ${nextPage.id}`);
             this.ensurePixelMapLoaded(nextPage).then(() => {
@@ -1011,10 +1011,10 @@ export struct MangaViewer {
         }
       }
     }
-    
+
     // 计算图片显示区域
     this.calculateImageDisplayRect();
-    
+
     logger.info(TAG, `准备卷页模式: currentIndex=${currentIndex}, isDouble=${isDoublePage}, pos=${this.curlStartPosition}, current=${this.curlCurrentPixelMap ? 'loaded' : 'null'}, next=${this.curlNextPixelMap ? 'loaded' : 'null'}`);
   }
 
@@ -1026,15 +1026,15 @@ export struct MangaViewer {
     const touchX: number = this.panStartX;
     const touchY: number = this.panStartY;
     const screenW: number = this.screenWidth;
-    
+
     // 记录触摸坐标（用于自由点翻页）
     this.curlTouchY = touchY;
-    
+
     // 简化判断：只根据触摸点X位置判断左/右侧
     // 自由点翻页会根据实际触摸位置动态计算折叠效果
     const isLeft: boolean = touchX < screenW / 2;
     this.curlStartPosition = isLeft ? CurlStartPosition.LEFT_EDGE : CurlStartPosition.RIGHT_EDGE;
-    
+
     logger.debug(TAG, `确定翻页起始位置(自由点): touchX=${touchX.toFixed(0)}, touchY=${touchY.toFixed(0)}, pos=${this.curlStartPosition}`);
   }
 
@@ -1046,18 +1046,18 @@ export struct MangaViewer {
   private isCurlAnimationSupported(): boolean {
     const mode = this.readingSettings.readingMode;
     const direction = this.readingSettings.readingDirection;
-    
+
     // 单页从右到左模式
     if (mode === ReadingMode.SINGLE_PAGE_RTL) {
       return true;
     }
-    
+
     // 单页模式 + 从左到右或从右到左方向
     if (mode === ReadingMode.SINGLE_PAGE) {
-      return direction === ReadingDirection.LEFT_TO_RIGHT || 
-             direction === ReadingDirection.RIGHT_TO_LEFT;
+      return direction === ReadingDirection.LEFT_TO_RIGHT ||
+        direction === ReadingDirection.RIGHT_TO_LEFT;
     }
-    
+
     // 其他模式（双页、连续滚动、上下翻页等）不支持
     return false;
   }
@@ -1070,7 +1070,7 @@ export struct MangaViewer {
   private updateCurlStartPositionForDirection(isRightSide: boolean): void {
     // 自由点翻页：简化为只区分左/右
     this.curlStartPosition = isRightSide ? CurlStartPosition.RIGHT_EDGE : CurlStartPosition.LEFT_EDGE;
-    
+
     logger.debug(TAG, `更新翻页起始位置(自由点): isRightSide=${isRightSide}, touchX=${this.panStartX.toFixed(0)}, touchY=${this.panStartY.toFixed(0)}, pos=${this.curlStartPosition}`);
   }
 
@@ -1079,13 +1079,13 @@ export struct MangaViewer {
    */
   private handlePanUpdate(event: GestureEvent): void {
     if (!this.isDragging) return;
-    
+
     // 安全检查：确保fingerList存在且有元素
     if (!event.fingerList || event.fingerList.length === 0 || !event.fingerList[0]) {
       logger.warn(TAG, '拖拽更新时fingerList无效，忽略此事件');
       return;
     }
-    
+
     // 如果正在缩放，不处理拖拽
     if (this.isZooming) {
       return;
@@ -1093,10 +1093,10 @@ export struct MangaViewer {
 
     const deltaX = event.fingerList[0].globalX - this.panStartX;
     const deltaY = event.fingerList[0].globalY - this.panStartY;
-    
+
     // ========== 卷页动画：实时更新卷曲进度 ==========
     const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
-    
+
     // 卷页动画只支持单页模式的 LTR 和 RTL
     if (animationType === PageTurnAnimationType.CURL && this.isCurlAnimationSupported() && this.currentScale <= 1.0) {
       // 卷页模式下，实时更新卷曲进度
@@ -1121,7 +1121,7 @@ export struct MangaViewer {
       this.translateX = this.initialTranslateX + deltaX;
     }
   }
-  
+
   /**
    * 更新卷页进度（实时交互）
    * 支持双向翻页：从右向左翻到下一页，从左向右翻到上一页
@@ -1132,25 +1132,25 @@ export struct MangaViewer {
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
-    
+
     // 计算拖拽方向
     // LTR模式：向左拖拽(deltaX < 0)为翻到下一页，向右拖拽(deltaX > 0)为翻到上一页
     // RTL模式：向右拖拽(deltaX > 0)为翻到下一页，向左拖拽(deltaX < 0)为翻到上一页
     const dragForward: boolean = isRTL ? deltaX > 0 : deltaX < 0;
     const dragDistance: number = Math.abs(deltaX);
     const currentIndex: number = this.viewCurrentPageIndex;
-    
+
     // 确定目标页面索引
     let targetIndex: number;
     let canFlip: boolean;
-    
+
     if (isDoublePage) {
       // 双页模式：翻两页
       const maxIndex: number = this.chapter.pages.length - 1;
       const pairStart: number = currentIndex - (currentIndex % 2);
       const nextPairStart: number = Math.min(pairStart + 2, maxIndex - (maxIndex % 2));
       const prevPairStart: number = Math.max(pairStart - 2, 0);
-      
+
       if (dragForward) {
         targetIndex = nextPairStart;
         canFlip = nextPairStart > pairStart;
@@ -1180,30 +1180,30 @@ export struct MangaViewer {
         this.updateCurlStartPositionForDirection(isRTL);
       }
     }
-    
+
     // 检查是否可以翻页
     if (!canFlip) {
       this.showCanvasCurl = false;
       this.translateX = this.initialTranslateX + deltaX;
       return;
     }
-    
+
     // 检查当前页PixelMap是否已加载
     if (!this.curlCurrentPixelMap) {
       this.translateX = this.initialTranslateX + deltaX;
       return;
     }
-    
+
     // 计算卷曲进度 (0-1)
     const imgWidth: number = this.imageDisplayRect.w > 0 ? this.imageDisplayRect.w : this.screenWidth;
     let progress: number = dragDistance / imgWidth;
-    
+
     // 限制进度范围，添加阻尼效果
     progress = Math.max(0, Math.min(1, progress));
     if (progress > 0.85) {
       progress = 0.85 + (progress - 0.85) * 0.3;
     }
-    
+
     // 当拖拽超过一定距离时，显示卷页效果
     const showThreshold: number = 10;
     if (dragDistance > showThreshold) {
@@ -1214,7 +1214,7 @@ export struct MangaViewer {
         if (currentPm) {
           this.curlCurrentPixelMap = currentPm;
         }
-        
+
         // 加载目标页面的PixelMap
         if (targetIndex >= 0 && targetIndex < this.chapter.pages.length) {
           const targetPage: MangaPage = this.chapter.pages[targetIndex];
@@ -1223,7 +1223,7 @@ export struct MangaViewer {
             this.curlNextPixelMap = targetPm;
           }
         }
-        
+
         // 检查当前页PixelMap是否可用
         if (!this.curlCurrentPixelMap) {
           logger.warn(TAG, `当前页PixelMap为空，降级为普通翻页模式`);
@@ -1231,7 +1231,7 @@ export struct MangaViewer {
           this.translateX = this.initialTranslateX + deltaX;
           return;
         }
-        
+
         // 如果下一页PixelMap也未加载，尝试触发加载但不阻止卷页
         if (!this.curlNextPixelMap && targetIndex >= 0 && targetIndex < this.chapter.pages.length) {
           const targetPage: MangaPage = this.chapter.pages[targetIndex];
@@ -1240,7 +1240,7 @@ export struct MangaViewer {
             logger.error(TAG, `下一页PixelMap加载失败: ${e.message}`);
           });
         }
-        
+
         this.showCanvasCurl = true;
         this.curlPendingPageIndex = targetIndex;
         this.isPageTurning = true;
@@ -1249,7 +1249,7 @@ export struct MangaViewer {
         this.pageTurnOpacity = 0;
         logger.info(TAG, `进入卷页模式: currentIndex=${currentIndex}, targetIndex=${targetIndex}, forward=${dragForward}, pos=${this.curlStartPosition}`);
       }
-      
+
       // 更新卷曲进度
       this.curlProgress = progress;
     } else {
@@ -1270,7 +1270,7 @@ export struct MangaViewer {
       this.isDragging = false;
       return;
     }
-    
+
     this.isDragging = false;
     if (this.swipeTriggered || this.pageChangeCommitted) {
       this.translateX = 0;
@@ -1286,7 +1286,7 @@ export struct MangaViewer {
       const thresholdX: number = Math.max(20, Math.floor(this.screenWidth * 0.05));
       const thresholdY: number = Math.max(20, Math.floor(this.screenHeight * 0.05));
       logger.debug(TAG, `拖拽结束: tx=${this.translateX.toFixed ? this.translateX.toFixed(1) : this.translateX}, ty=${this.translateY.toFixed ? this.translateY.toFixed(1) : this.translateY}, thX=${thresholdX}, thY=${thresholdY}, cur=${this.currentPageIndex}, view=${this.viewCurrentPageIndex}`);
-      
+
       // ========== 卷页动画特殊处理 ==========
       const animationType = this.readingSettings.pageTurnAnimation || PageTurnAnimationType.FADE;
       if (animationType === PageTurnAnimationType.CURL && !isTTB) {
@@ -1308,13 +1308,13 @@ export struct MangaViewer {
             (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
           const dragForward: boolean = isRTL ? this.translateX < 0 : this.translateX > 0;
           const dragBackward: boolean = !dragForward;
-          
+
           if (Math.abs(this.translateX) > thresholdX) {
             if (dragForward && this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
               // 向前翻页（下一页）
               const targetIndex: number = this.viewCurrentPageIndex + 1;
               const targetPage: MangaPage = this.chapter.pages[targetIndex];
-              
+
               // 先确保目标页PixelMap已加载
               if (!this.pagePixelMaps.has(targetPage.id)) {
                 logger.info(TAG, `降级翻页：预加载目标页 ${targetPage.id}`);
@@ -1344,7 +1344,7 @@ export struct MangaViewer {
               // 向后翻页（上一页）
               const targetIndex: number = this.viewCurrentPageIndex - 1;
               const targetPage: MangaPage = this.chapter.pages[targetIndex];
-              
+
               // 先确保目标页PixelMap已加载
               if (!this.pagePixelMaps.has(targetPage.id)) {
                 logger.info(TAG, `降级翻页：预加载目标页 ${targetPage.id}`);
@@ -1380,7 +1380,7 @@ export struct MangaViewer {
         }
       }
       // ========== 卷页动画特殊处理结束 ==========
-      
+
       let pageChanged: boolean = false;
 
       if (isDoublePage) {
@@ -1444,7 +1444,7 @@ export struct MangaViewer {
             if (this.viewCurrentPageIndex > 0) {
               const newIndex: number = this.viewCurrentPageIndex - 1;
               const newPage: MangaPage = this.chapter.pages[newIndex];
-              
+
               // 【修复】先确保目标页面PixelMap已加载，再执行翻页
               if (!this.pagePixelMaps.has(newPage.id)) {
                 logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
@@ -1477,7 +1477,7 @@ export struct MangaViewer {
             if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
               const newIndex: number = this.viewCurrentPageIndex + 1;
               const newPage: MangaPage = this.chapter.pages[newIndex];
-              
+
               // 【修复】先确保目标页面PixelMap已加载，再执行翻页
               if (!this.pagePixelMaps.has(newPage.id)) {
                 logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
@@ -1521,7 +1521,7 @@ export struct MangaViewer {
               if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
                 const newIndex: number = this.viewCurrentPageIndex + 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                
+
                 // 【修复】先确保目标页面PixelMap已加载，再执行翻页
                 if (!this.pagePixelMaps.has(newPage.id)) {
                   logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
@@ -1554,7 +1554,7 @@ export struct MangaViewer {
               if (this.viewCurrentPageIndex > 0) {
                 const newIndex: number = this.viewCurrentPageIndex - 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                
+
                 // 【修复】先确保目标页面PixelMap已加载，再执行翻页
                 if (!this.pagePixelMaps.has(newPage.id)) {
                   logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
@@ -1589,7 +1589,7 @@ export struct MangaViewer {
               if (this.viewCurrentPageIndex > 0) {
                 const newIndex: number = this.viewCurrentPageIndex - 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                
+
                 // 【修复】先确保目标页面PixelMap已加载，再执行翻页
                 if (!this.pagePixelMaps.has(newPage.id)) {
                   logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
@@ -1622,7 +1622,7 @@ export struct MangaViewer {
               if (this.viewCurrentPageIndex < this.chapter.pages.length - 1) {
                 const newIndex: number = this.viewCurrentPageIndex + 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
-                
+
                 // 【修复】先确保目标页面PixelMap已加载，再执行翻页
                 if (!this.pagePixelMaps.has(newPage.id)) {
                   logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
@@ -1662,10 +1662,10 @@ export struct MangaViewer {
           this.currentPageIndex = this.viewCurrentPageIndex;
         }
         this.suppressExternalIndex = true;
-        
+
         // 执行翻页动画（所有模式都执行）
         this.animatePageTurn();
-        
+
         if (isDoublePage) {
           this.updateDoublePageIndices();
           this.updateDoublePageDisplay();
@@ -1715,9 +1715,9 @@ export struct MangaViewer {
     const isForward = this.pageTurnDirection === 'left' || this.pageTurnDirection === 'up';
     const screenW = this.screenWidth > 0 ? this.screenWidth : 360;
     const screenH = this.screenHeight > 0 ? this.screenHeight : 780;
-    
+
     logger.info(TAG, `开始执行翻页动画: 类型=${animationType}, 方向=${this.pageTurnDirection}`);
-    
+
     // 无动画模式
     if (animationType === PageTurnAnimationType.NONE) {
       this.isPageTurning = false;
@@ -1731,14 +1731,14 @@ export struct MangaViewer {
     // 设置翻页动画状态
     this.isPageTurning = true;
     this.currentAnimationType = animationType;
-    
+
     // 根据动画类型设置初始状态和动画参数
     let duration: number = 300;
     let animCurve: Curve = Curve.EaseInOut;
-    
+
     // 重置所有动画状态
     this.resetPageTurnAnimationState();
-    
+
     // 使用matrix4创建真正的3D变换矩阵
     // 先设置初始状态（新页面的起始状态）
     switch (animationType) {
@@ -1752,7 +1752,7 @@ export struct MangaViewer {
           .translate({ x: isForward ? screenW : -screenW, y: 0, z: -50 })
           .scale({ x: 0.95, y: 0.95, z: 1 });
         break;
-        
+
       case PageTurnAnimationType.FADE:
         // 淡入淡出效果：纯透明度变化，带轻微缩放
         duration = 280;
@@ -1761,7 +1761,7 @@ export struct MangaViewer {
         this.pageTurnMatrix = matrix4.identity()
           .scale({ x: 0.98, y: 0.98, z: 1 });
         break;
-        
+
       case PageTurnAnimationType.CURL:
         // 卷页效果：由独立的startCurlPageTurn流程处理
         // 如果走到这里，说明是从其他入口调用的animatePageTurn（如双页模式）
@@ -1773,7 +1773,7 @@ export struct MangaViewer {
         this.pageTurnMatrix = matrix4.identity()
           .translate({ x: isForward ? screenW : -screenW, y: 0, z: 0 });
         break;
-        
+
       case PageTurnAnimationType.ZOOM:
         // [已废弃] 缩放效果 -> 映射到景深效果
         // 保留case以兼容旧设置，实际使用DEPTH效果
@@ -1786,7 +1786,7 @@ export struct MangaViewer {
           .rotate({ x: 1, y: 0, z: 0, angle: -15 })
           .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 8 : -8 });
         break;
-        
+
       case PageTurnAnimationType.FLIP:
         // [已废弃] 翻转效果 -> 映射到立方体效果
         // 保留case以兼容旧设置，实际使用CUBE效果
@@ -1800,7 +1800,7 @@ export struct MangaViewer {
           .rotate({ x: 0, y: 1, z: 0, angle: flipCubeAngle })
           .scale({ x: 0.95, y: 0.95, z: 1 });
         break;
-        
+
       case PageTurnAnimationType.CUBE:
         // 立方体效果：页面像立方体的一面旋转进入
         duration = 420;
@@ -1815,7 +1815,7 @@ export struct MangaViewer {
           .rotate({ x: 0, y: 1, z: 0, angle: cubeAngle })
           .scale({ x: 0.95, y: 0.95, z: 1 });
         break;
-        
+
       case PageTurnAnimationType.COVER:
         // 覆盖效果：新页面从一侧滑入覆盖旧页面
         duration = 400;
@@ -1827,7 +1827,7 @@ export struct MangaViewer {
           .scale({ x: 1.02, y: 1.02, z: 1 })
           .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 5 : -5 });
         break;
-        
+
       case PageTurnAnimationType.DEPTH:
         // 景深效果：页面从远处推进到近处
         duration = 400;
@@ -1840,27 +1840,27 @@ export struct MangaViewer {
           .rotate({ x: 1, y: 0, z: 0, angle: -15 })
           .rotate({ x: 0, y: 1, z: 0, angle: isForward ? 8 : -8 });
         break;
-        
+
       default:
         duration = 300;
         animCurve = Curve.EaseInOut;
         this.pageTurnOpacity = 0.5;
         this.pageTurnMatrix = matrix4.identity().scale({ x: 0.95, y: 0.95, z: 1 });
     }
-    
+
     logger.debug(TAG, `翻页动画初始状态: 类型=${animationType}, opacity=${this.pageTurnOpacity}`);
-    
+
     // Canvas卷页使用自定义动画更新curlProgress
     if (animationType === PageTurnAnimationType.CURL) {
       this.startCurlAnimation(duration, animCurve);
       logger.info(TAG, `执行Canvas卷页动画: 时长=${duration}ms`);
       return;
     }
-    
+
     // 使用setTimeout确保初始状态已应用，然后执行动画到目标状态
     setTimeout(() => {
       if (!this.uiContext) return;
-      
+
       this.uiContext.animateTo({
         duration: duration,
         curve: curves.initCurve(animCurve),
@@ -1872,7 +1872,7 @@ export struct MangaViewer {
           this.pageTurnProgress = 0;
           this.currentAnimationType = PageTurnAnimationType.NONE;
           logger.debug(TAG, `翻页动画完成`);
-          
+
           // 【修复】动画完成后刷新UI，确保显示正确的页面
           if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
             this.updateDoublePageDisplay();
@@ -1898,7 +1898,7 @@ export struct MangaViewer {
 
     logger.info(TAG, `执行翻页动画: 类型=${animationType}, 方向=${this.pageTurnDirection}, 时长=${duration}ms`);
   }
-  
+
   /**
    * 重置翻页动画状态到默认值
    */
@@ -1942,12 +1942,12 @@ export struct MangaViewer {
     } else {
       this.curlCurrentPixelMap = null;
     }
-    
+
     // 获取下一页/上一页PixelMap
-    const targetIndex = isForward ? 
-      this.viewCurrentPageIndex + 1 : 
+    const targetIndex = isForward ?
+      this.viewCurrentPageIndex + 1 :
       this.viewCurrentPageIndex - 1;
-    
+
     if (targetIndex >= 0 && targetIndex < this.chapter.pages.length) {
       const targetPage = this.chapter.pages[targetIndex];
       this.curlNextPixelMap = this.pagePixelMaps.get(targetPage.id) || null;
@@ -2023,8 +2023,8 @@ export struct MangaViewer {
       const t = Math.min(1, elapsed / duration);
 
       // 使用缓动函数（easeInOut）
-      const easeT = t < 0.5 
-        ? 2 * t * t 
+      const easeT = t < 0.5
+        ? 2 * t * t
         : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
       this.curlProgress = startProgress + (targetProgress - startProgress) * easeT;
@@ -2055,31 +2055,31 @@ export struct MangaViewer {
   /**
    * 启动卷页翻页动画（独立流程，不使用预览）
    * 这是一个完全独立的翻页流程，不依赖普通的页面切换逻辑
-   * 
+   *
    * @param targetIndex 目标页面索引
    * @param isForward 是否向前翻页（下一页）
    */
   private startCurlPageTurn(targetIndex: number, isForward: boolean): void {
     const currentIndex: number = this.viewCurrentPageIndex;
-    
+
     logger.info(TAG, `启动卷页翻页: 当前页=${currentIndex}, 目标页=${targetIndex}, isForward=${isForward}`);
-    
+
     // 获取当前页的PixelMap（正在被翻走的页面）
     const currentPage: MangaPage = this.chapter.pages[currentIndex];
     this.curlCurrentPixelMap = this.pagePixelMaps.get(currentPage.id) || null;
-    
+
     // 获取目标页的PixelMap（将要显示的页面）
     const targetPage: MangaPage = this.chapter.pages[targetIndex];
     this.curlNextPixelMap = this.pagePixelMaps.get(targetPage.id) || null;
-    
+
     // 【修复】检查当前页PixelMap是否已加载
     if (!this.curlCurrentPixelMap) {
       logger.warn(TAG, `当前页PixelMap未加载，开始加载并等待`);
-      
+
       // 【修复】显示Loading状态，避免黑屏
       this.isPageTurning = true;
       this.pageTurnOpacity = 0.5; // 半透明显示当前页
-      
+
       // 【修复】设置3秒超时（而不是立即降级）
       const loadTimeout = setTimeout(() => {
         logger.error(TAG, `PixelMap加载超时，降级到普通翻页`);
@@ -2087,12 +2087,12 @@ export struct MangaViewer {
         this.pageTurnOpacity = 1.0;
         this.fallbackToNormalPageTurn(targetIndex, isForward);
       }, 3000); // 3秒超时
-      
+
       // 尝试加载
       this.ensurePixelMapLoaded(currentPage).then(() => {
         clearTimeout(loadTimeout);
         this.curlCurrentPixelMap = this.pagePixelMaps.get(currentPage.id) || null;
-        
+
         if (this.curlCurrentPixelMap) {
           // 加载成功，执行卷页动画
           logger.info(TAG, `当前页PixelMap加载成功，执行卷页动画`);
@@ -2111,12 +2111,12 @@ export struct MangaViewer {
         this.pageTurnOpacity = 1.0;
         this.fallbackToNormalPageTurn(targetIndex, isForward);
       });
-      
+
       // 先复位位置
       this.animateToPosition(0, 0);
       return;
     }
-    
+
     // 【修复】如果下一页PixelMap未加载，不影响卷页动画启动
     // 卷页动画可以显示空白的下一页，后台继续加载
     if (!this.curlNextPixelMap) {
@@ -2130,7 +2130,7 @@ export struct MangaViewer {
         logger.error(TAG, `下一页PixelMap加载失败: ${err}`);
       });
     }
-    
+
     // 执行卷页动画
     this.executeCurlAnimation(targetIndex, isForward);
   }
@@ -2142,39 +2142,39 @@ export struct MangaViewer {
     // 保存待切换的页面索引
     this.curlPendingPageIndex = targetIndex;
     this.curlIsForward = isForward;
-    
+
     // 计算图片显示区域
     this.calculateImageDisplayRect();
-    
+
     // 设置动画状态
     this.isPageTurning = true;
     this.pageTurnDirection = isForward ? 'left' : 'right';
     this.currentAnimationType = PageTurnAnimationType.CURL;
     this.pageChangeCommitted = true;
     this.isCommittingPageTurn = true;
-    
+
     // 隐藏普通内容层，显示Canvas卷页层
     this.pageTurnOpacity = 0;
     this.showCanvasCurl = true;
     this.curlProgress = 0;
-    
+
     // 复位拖拽位置
     this.translateX = 0;
     this.translateY = 0;
-    
+
     logger.info(TAG, `执行卷页动画: current=${this.curlCurrentPixelMap ? 'loaded' : 'null'}, next=${this.curlNextPixelMap ? 'loaded' : 'null'}`);
-    
+
     // 启动动画
     const duration: number = this.curlEffectConfig.animationDuration;
     const startTime: number = Date.now();
-    
+
     const animateFrame = (): void => {
       const elapsed: number = Date.now() - startTime;
       const progress: number = Math.min(elapsed / duration, 1.0);
-      
+
       // 使用缓动函数
       this.curlProgress = this.easeInOutCubic(progress);
-      
+
       if (progress < 1.0) {
         const timerId: number = setTimeout(animateFrame, 16);
         this.curlAnimationTimer = timerId;
@@ -2187,7 +2187,7 @@ export struct MangaViewer {
         }, 50);
       }
     };
-    
+
     // 开始动画
     const startTimerId: number = setTimeout(animateFrame, 16);
     this.curlAnimationTimer = startTimerId;
@@ -2199,7 +2199,7 @@ export struct MangaViewer {
   private easeInOutCubic(t: number): number {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
   }
-  
+
   /**
    * 缓动函数 - 缓出
    */
@@ -2212,54 +2212,54 @@ export struct MangaViewer {
    */
   private animateCurlToComplete(): void {
     this.stopCurlAnimation();
-    
+
     // 提前更新页面索引，让底层UI在动画过程中就切换到新页面
     // 这样动画结束移除Canvas时，底层已经稳定显示新页面，避免UI抽动
     const targetIndex: number = this.curlPendingPageIndex;
     if (targetIndex >= 0 && targetIndex < this.chapter.pages.length) {
       logger.info(TAG, `[animateCurlToComplete] 提前切换页面: ${this.viewCurrentPageIndex + 1} -> ${targetIndex + 1}`);
-      
+
       // 更新页面索引
       this.viewCurrentPageIndex = targetIndex;
       this.currentPageIndex = targetIndex;
       this.suppressExternalIndex = true;
-      
+
       // 强制刷新底层Image组件显示新页面
       this.updateSinglePageDisplay();
-      
+
       // 触发页面变更回调
       if (this.callbacks.onPageChange) {
         this.callbacks.onPageChange(targetIndex);
       }
-      
+
       // 更新预加载
       this.preloadSinglePageNeighbors();
       this.preloadSinglePageWebtoonStyle();
     }
-    
+
     const startProgress: number = this.curlProgress;
-    
+
     logger.info(TAG, `动画完成卷页(内部模式): startProgress=${startProgress.toFixed(2)}`);
-    
+
     // 禁用外部进度控制，避免与内部动画冲突
     this.curlProgress = -1;
-    
+
     // 使用内部动画模式：设置目标进度，让 PageCurlEffectV2 内部执行动画循环
     // 这避免了每帧更新 @State 变量的开销
     this.curlAnimateFrom = startProgress;
     this.curlAnimateTarget = 1.0;  // 触发内部动画
   }
-  
+
   /**
    * 内部动画完成回调（高性能模式）
    */
   private onCurlInternalAnimationComplete(): void {
     const targetProgress: number = this.curlAnimateTarget;
-    
+
     // 重置内部动画状态
     this.curlAnimateTarget = -1;
     this.curlAnimateFrom = 0;
-    
+
     if (targetProgress >= 1.0) {
       // 完成翻页
       this.onCurlAnimationComplete();
@@ -2268,21 +2268,21 @@ export struct MangaViewer {
       this.resetCurlState();
     }
   }
-  
+
   /**
    * 动画取消卷页（回弹）
    * 使用内部动画模式提高性能
    */
   private animateCurlToCancel(): void {
     this.stopCurlAnimation();
-    
+
     const startProgress: number = this.curlProgress;
-    
+
     logger.info(TAG, `动画取消卷页(内部模式): startProgress=${startProgress.toFixed(2)}`);
-    
+
     // 禁用外部进度控制，避免与内部动画冲突
     this.curlProgress = -1;
-    
+
     // 使用内部动画模式
     this.curlAnimateFrom = startProgress;
     this.curlAnimateTarget = 0;  // 触发回弹动画
@@ -2293,23 +2293,23 @@ export struct MangaViewer {
    */
   private fallbackToNormalPageTurn(targetIndex: number, isForward: boolean): void {
     logger.warn(TAG, `回退到普通翻页: target=${targetIndex}`);
-    
+
     // 直接切换页面
     this.viewCurrentPageIndex = targetIndex;
     this.currentPageIndex = targetIndex;
     this.suppressExternalIndex = true;
-    
+
     // 更新显示
     this.updateSinglePageDisplay();
-    
+
     // 触发回调
     if (this.callbacks.onPageChange) {
       this.callbacks.onPageChange(targetIndex);
     }
-    
+
     // 复位位置
     this.animateToPosition(0, 0);
-    
+
     setTimeout(() => { this.suppressExternalIndex = false; }, 50);
   }
 
@@ -2320,14 +2320,14 @@ export struct MangaViewer {
    */
   private onCurlAnimationComplete(): void {
     logger.info(TAG, `Canvas卷页动画完成，执行清理`);
-    
+
     // 重要：先重置部分状态，但保持 curlProgress = 1.0 不变
     // 这样 Canvas 在隐藏前继续显示动画完成状态（即新页面），与底层 Image 一致
     this.curlPendingPageIndex = -1;
     this.isPageTurning = false;
     this.pageTurnDirection = null;
     this.currentAnimationType = PageTurnAnimationType.NONE;
-    
+
     // 延迟隐藏Canvas层，确保底层图片组件完全稳定
     // 由于页面已在动画开始时切换，此时底层UI应该已经渲染完成
     setTimeout(() => {
@@ -2335,7 +2335,7 @@ export struct MangaViewer {
       this.showCanvasCurl = false;
       // 恢复普通内容层的透明度
       this.pageTurnOpacity = 1.0;
-      
+
       // Canvas 隐藏后再重置 curlProgress 和 PixelMap
       // 这样可以避免重置 curlProgress 时触发 PageCurlEffectV2 重新渲染导致的闪烁
       setTimeout(() => {
@@ -2347,7 +2347,7 @@ export struct MangaViewer {
         this.suppressExternalIndex = false;
       }, 0);
     }, 50);
-    
+
     // 执行所有待处理的回调
     const callbacks = this.curlAnimationCallbacks.slice();
     this.curlAnimationCallbacks = [];
@@ -2458,7 +2458,7 @@ export struct MangaViewer {
 
     // 双页模式始终配对显示两页（横屏和竖屏都是）
     const pairStart: number = current - (current % 2);
-    
+
     // 根据阅读方向决定左右页的位置
     // LTR: 页码小的在左边
     // RTL: 页码小的在右边
@@ -2471,14 +2471,14 @@ export struct MangaViewer {
       this.leftPageIndex = pairStart;
       this.rightPageIndex = (pairStart + 1 < total) ? pairStart + 1 : -1;
     }
-    
+
     const leftState: ImageLoadState | undefined = (this.leftPageIndex >= 0 && this.leftPageIndex < total)
       ? this.getPageLoadState(this.chapter.pages[this.leftPageIndex])
       : undefined;
     const rightState: ImageLoadState | undefined = (this.rightPageIndex >= 0 && this.rightPageIndex < total)
       ? this.getPageLoadState(this.chapter.pages[this.rightPageIndex])
       : undefined;
-    
+
     logger.debug(TAG, `双页索引更新: 方向=${isRTL ? 'RTL' : isTTB ? 'TTB' : 'LTR'}, left=${this.leftPageIndex}(${leftState?.isLoaded ? 'loaded' : leftState?.isLoading ? 'loading' : 'idle'}), right=${this.rightPageIndex}(${rightState?.isLoaded ? 'loaded' : rightState?.isLoading ? 'loading' : 'idle'}), current=${this.viewCurrentPageIndex}`);
 
     // 加载触发由组件onAppear完成，避免非可视页面提前进入超时逻辑
@@ -2551,7 +2551,7 @@ export struct MangaViewer {
         loadPromises.push(this.ensurePixelMapLoaded(rightPage));
       }
     }
-    
+
     // 等待所有页面加载完成后刷新UI
     if (loadPromises.length > 0) {
       Promise.all(loadPromises)
@@ -2586,21 +2586,21 @@ export struct MangaViewer {
     this.preloadSinglePageNeighbors();
     const swipeDirection = event.angle || 0;
     const swipeSpeed = Math.abs(event.speed || 0);
-    
+
     // 滑动速度阈值
     const SPEED_THRESHOLD = 100;
     if (swipeSpeed < SPEED_THRESHOLD) {
       return;
     }
-    
+
     logger.debug(TAG, `单页滑动手势: angle=${swipeDirection}, speed=${swipeSpeed}`);
-    
+
     // 判断阅读方向：当 readingMode 为 SINGLE_PAGE 时依据 readingDirection
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
     const isTTB: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM);
-    
+
     if (isTTB) {
       // 上下翻页模式：使用垂直角度判断
       // 约定：-90°（上滑） -> 下一页； +90°（下滑） -> 上一页
@@ -2792,7 +2792,7 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    
+
     // 根据内容类型和阅读模式决定预加载页数
     let preloadCount: number;
     if (this.contentType === 'OnlineUndownloaded') {
@@ -2805,18 +2805,18 @@ export struct MangaViewer {
       preloadCount = this.preloadCurrentPages !== undefined ? this.preloadCurrentPages : 10;
       logger.debug(TAG, `本地漫画模式：预加载前后${preloadCount}页`);
     }
-    
+
     // 如果设置为0，不预加载
     if (preloadCount <= 0) {
       logger.debug(TAG, '预加载页数为0，跳过预加载');
       return;
     }
-    
+
     const currentIndex = this.viewCurrentPageIndex;
     const totalPages = this.chapter.pages.length;
-    
+
     logger.debug(TAG, `预加载范围: 当前页=${currentIndex + 1}, 预加载前后${preloadCount}页, contentType=${this.contentType}`);
-    
+
     // 在线漫画：优先级策略预加载
     if (this.contentType === 'OnlineUndownloaded') {
       // 【修复】当前页：优先级10（已经在显示）
@@ -2824,11 +2824,11 @@ export struct MangaViewer {
       for (let i = 1; i <= preloadCount; i++) {
         const targetIndex = currentIndex + i;
         if (targetIndex >= totalPages) break;
-        
+
         const page = this.chapter.pages[targetIndex];
         const st = this.getPageLoadState(page);
         const hasPm = this.pagePixelMaps.has(page.id);
-        
+
         if (!hasPm && (!st || !st.isLoading)) {
           // 【修复】提高优先级：下一页=9（卷页动画关键），下下页=7，第三页=5
           const priority = Math.max(3, 11 - i * 2);
@@ -2840,13 +2840,13 @@ export struct MangaViewer {
       // 本地漫画：预加载前后N页
       for (let i = -preloadCount; i <= preloadCount; i++) {
         if (i === 0) continue; // 跳过当前页（已经在显示）
-        
+
         const targetIndex = currentIndex + i;
         if (targetIndex >= 0 && targetIndex < totalPages) {
           const page = this.chapter.pages[targetIndex];
           const st = this.getPageLoadState(page);
           const hasPm = this.pagePixelMaps.has(page.id);
-          
+
           if (!hasPm && (!st || !st.isLoading)) {
             this.loadImage(page);
             logger.debug(TAG, `预加载第${targetIndex + 1}页: ${page.id}`);
@@ -2935,7 +2935,7 @@ export struct MangaViewer {
    * 构建Canvas卷页层
    * 使用PageCurlEffectV2组件实现真实的3D卷页效果
    * 传入PixelMap和图片显示区域，实现基于图片实际大小的卷页
-   * 
+   *
    * 交互模式：
    * - 组件内部处理触摸事件，实现可交互的翻页
    * - 通过externalProgress可以外部驱动动画
@@ -2972,13 +2972,13 @@ export struct MangaViewer {
       .width('100%')
       .height('100%')
   }
-  
+
   /**
    * 处理卷页翻页完成/取消
    */
   private handleCurlFlipComplete(completed: boolean): void {
     logger.info(TAG, `卷页翻页${completed ? '完成' : '取消'}, pendingIndex=${this.curlPendingPageIndex}`);
-    
+
     if (completed && this.curlPendingPageIndex >= 0) {
       // 翻页完成，切换到目标页面
       this.onCurlAnimationComplete();
@@ -2987,7 +2987,7 @@ export struct MangaViewer {
       this.resetCurlState();
     }
   }
-  
+
   /**
    * 重置卷页状态（不切换页面）
    */
@@ -3073,7 +3073,7 @@ export struct MangaViewer {
       this.buildDoublePagePortraitView()
     }
   }
-  
+
   /**
    * 构建双页横屏视图
    * 左右并排显示两页，图片以高度为基准缩放
@@ -3322,7 +3322,7 @@ export struct MangaViewer {
       }
       .width('100%')
       .height('100%')
-    .key(`${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.viewCurrentPageIndex}_${this.currentPageIndex}_${this.getPixelMapEpoch(this.leftPageIndex >= 0 ? this.chapter.pages[this.leftPageIndex].id : 'L')}_${this.getPixelMapEpoch(this.rightPageIndex >= 0 ? this.chapter.pages[this.rightPageIndex].id : 'R')}`)
+      .key(`${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.viewCurrentPageIndex}_${this.currentPageIndex}_${this.getPixelMapEpoch(this.leftPageIndex >= 0 ? this.chapter.pages[this.leftPageIndex].id : 'L')}_${this.getPixelMapEpoch(this.rightPageIndex >= 0 ? this.chapter.pages[this.rightPageIndex].id : 'R')}`)
       // 使用matrix4.transform()实现真正的3D变换效果
       .scale({ x: this.currentScale, y: this.currentScale })
       .translate({ x: this.translateX, y: this.translateY })
@@ -3333,7 +3333,7 @@ export struct MangaViewer {
       .borderWidth(0)
       // 修复：使用Center居中显示两张图片
       .justifyContent(FlexAlign.Center)
-      
+
       // 页面指示器
       if (this.readingSettings.showPageInfo) {
         this.buildDoublePageIndicator()
@@ -3359,7 +3359,7 @@ export struct MangaViewer {
       )
     )
   }
-  
+
   /**
    * 判断是否为垂直布局
    */
@@ -3381,7 +3381,7 @@ export struct MangaViewer {
         // 左右组合布局：根据阅读方向决定位置
         this.buildDoublePagePortraitHorizontal()
       }
-      
+
       // 页面指示器
       if (this.readingSettings.showPageInfo) {
         this.buildDoublePageIndicator()
@@ -3405,7 +3405,7 @@ export struct MangaViewer {
       )
     )
   }
-  
+
   /**
    * 获取上下组合布局的上方页面索引
    */
@@ -3509,7 +3509,7 @@ export struct MangaViewer {
     .transform(this.pageTurnMatrix)
     .opacity(this.pageTurnOpacity)
   }
-  
+
   /**
    * 双页竖屏-左右组合布局
    * LTR: 页码小的在左边
@@ -3629,9 +3629,9 @@ export struct MangaViewer {
     }
     .width(this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE ? '50%' : '100%')
     .height((this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL ||
-             this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL ||
-             this.readingSettings.readingMode === ReadingMode.WEBTOON ||
-             this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP) ? 'auto' : '100%')
+      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL ||
+      this.readingSettings.readingMode === ReadingMode.WEBTOON ||
+      this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP) ? 'auto' : '100%')
     .alignContent(Alignment.Center)
     .key(page.id)
     .padding(0)
@@ -4027,9 +4027,9 @@ export struct MangaViewer {
    */
   private isSinglePageMode(): boolean {
     return this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE ||
-           this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
-           this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
-           this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB;
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
+      this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB;
   }
 
   /**
@@ -4037,8 +4037,8 @@ export struct MangaViewer {
    */
   private isWebtoonMode(): boolean {
     return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
-           this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
-           this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+      this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
   }
 
   /**
@@ -4059,7 +4059,7 @@ export struct MangaViewer {
    */
   private getPageDirection(): 'horizontal' | 'vertical' {
     if (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-        this.isWebtoonMode()) {
+    this.isWebtoonMode()) {
       return 'vertical';
     }
     return 'horizontal';
@@ -4144,7 +4144,7 @@ export struct MangaViewer {
   private getImageFitMode(page: MangaPage): ImageFit {
     // 判断是否为横向页面（宽度大于高度）
     const isLandscape = page.width && page.height && page.width > page.height;
-    
+
     if (this.isWebtoonMode()) {
       // 条漫模式：以宽度占满并允许放大以适配屏宽
       return ImageFit.Contain;
@@ -4318,15 +4318,15 @@ export struct MangaViewer {
       logger.warn(TAG, `页面对象为空: idx=${idx}, pages.length=${this.chapter.pages.length}`);
       return;
     }
-    
+
     // 强制递增renderEpoch，确保Image组件重新渲染
     this.renderEpoch = this.renderEpoch + 1;
-    
+
     this.singlePagePageId = page.id;
     // 始终使用URL，不使用PixelMap作为Image的src
     // PixelMap仅用于预加载和缓存，Image组件会从缓存中读取
     this.singlePageImageInput = this.getImageResource(page);
-    
+
     // 记录当前状态用于调试
     const hasPm = this.pagePixelMaps.has(page.id);
     const pmEpoch = this.getPixelMapEpoch(page.id);
@@ -4430,10 +4430,10 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    
+
     // 强制递增renderEpoch，确保Image组件重新渲染
     this.renderEpoch = this.renderEpoch + 1;
-    
+
     if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
       const lp: MangaPage = this.chapter.pages[this.leftPageIndex];
       this.doubleLeftPageId = lp.id;
@@ -4521,7 +4521,7 @@ export struct MangaViewer {
         this.imageLoadStates.set(page.id, newState);
         this.imageLoadStates = new Map(this.imageLoadStates);
         logger.debug(TAG, `PixelMap加载完成: id=${page.id}, path=${fsPath}, epoch=${this.getPixelMapEpoch(page.id)}`);
-        
+
         // PixelMap加载完成后，如果是当前可见页面，立即刷新UI
         this.notifyPixelMapLoaded(page);
       } catch (err) {
@@ -4537,7 +4537,7 @@ export struct MangaViewer {
       // [新增] 详细日志，确认 headers 内容
       const currentReferer = this.networkHeaders?.referer || 'undefined';
       logger.debug(TAG, `准备加载网络图片: id=${page.id}, referer=${currentReferer}`);
-      
+
       if (this.networkLoadInProgress >= this.MAX_NETWORK_CONCURRENCY) {
         const alreadyQueued: boolean = this.pendingNetworkLoads.indexOf(page.id) >= 0;
         if (!alreadyQueued) {
@@ -4580,7 +4580,7 @@ export struct MangaViewer {
           this.imageLoadStates.set(page.id, newState);
           this.imageLoadStates = new Map(this.imageLoadStates);
           logger.debug(TAG, `网络PixelMap加载完成: id=${page.id}, url=${page.imageUrl}, epoch=${this.getPixelMapEpoch(page.id)}`);
-          
+
           // PixelMap加载完成后，如果是当前可见页面，立即刷新UI
           this.notifyPixelMapLoaded(page);
           this.cleanupInvisiblePixelMaps();
@@ -4681,18 +4681,18 @@ export struct MangaViewer {
     let threshold: number = Math.floor(totalPagesCount / 5);
     if (threshold < 10) { threshold = 10; }
     if (this.pagePixelMaps.size < threshold) { return; }
-    
+
     // 【修复】保护当前页和相邻页的PixelMap，防止卷页动画降级
     const protectedIndices = new Set<number>();
     const currentIndex = this.viewCurrentPageIndex;
-    
+
     // 保护范围：当前页 ± 2页（确保卷页动画所需的PixelMap始终可用）
-    for (let i = Math.max(0, currentIndex - 2); 
-         i <= Math.min(totalPagesCount - 1, currentIndex + 2); 
-         i++) {
+    for (let i = Math.max(0, currentIndex - 2);
+      i <= Math.min(totalPagesCount - 1, currentIndex + 2);
+      i++) {
       protectedIndices.add(i);
     }
-    
+
     const keys: string[] = Array.from(this.pagePixelMaps.keys());
     let cleanedCount = 0;
     for (let i = 0; i < keys.length; i++) {
@@ -4701,12 +4701,12 @@ export struct MangaViewer {
       if (idx < 0) {
         continue;
       }
-      
+
       // 【修复】跳过受保护的页面
       if (protectedIndices.has(idx)) {
         continue;
       }
-      
+
       const p: MangaPage = this.chapter.pages[idx];
       const visible: boolean = this.isPageCurrentlyVisible(p);
       if (!visible) {
@@ -4719,7 +4719,7 @@ export struct MangaViewer {
         cleanedCount++;
       }
     }
-    
+
     if (cleanedCount > 0) {
       logger.debug(TAG, `清理了${cleanedCount}个不可见PixelMap，保护了${protectedIndices.size}个相邻页`);
     }
@@ -4738,7 +4738,7 @@ export struct MangaViewer {
     if (v && v > 0) { return v; }
     return 0;
   }
-  
+
   /**
    * 检查页面是否已就绪可以显示
    * 就绪条件：PixelMap已加载或图片加载状态为已完成
@@ -4749,16 +4749,16 @@ export struct MangaViewer {
     if (hasPm) {
       return true;
     }
-    
+
     // 检查加载状态
     const state = this.imageLoadStates.get(page.id);
     if (state && state.isLoaded) {
       return true;
     }
-    
+
     return false;
   }
-  
+
   /**
    * 检查是否可以翻到指定页面
    * 如果页面未就绪，返回false
@@ -4767,11 +4767,11 @@ export struct MangaViewer {
     if (pageIndex < 0 || !this.chapter || !this.chapter.pages || pageIndex >= this.chapter.pages.length) {
       return false;
     }
-    
+
     const page = this.chapter.pages[pageIndex];
     return this.isPageReadyForDisplay(page);
   }
-  
+
   /**
    * PixelMap加载完成通知
    * 如果加载的是当前可见页面，立即刷新UI
@@ -4781,16 +4781,16 @@ export struct MangaViewer {
     if (pageIdx < 0) {
       return;
     }
-    
+
     // 检查是否是当前可见页面
     const isVisible = this.isPageCurrentlyVisible(page);
     if (!isVisible) {
       logger.debug(TAG, `PixelMap加载完成但页面不可见: id=${page.id}, idx=${pageIdx}`);
       return;
     }
-    
+
     logger.info(TAG, `PixelMap加载完成且页面可见，刷新UI: id=${page.id}, idx=${pageIdx}`);
-    
+
     // 根据阅读模式刷新对应的显示
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.updateDoublePageDisplay();
@@ -4798,7 +4798,7 @@ export struct MangaViewer {
       this.updateSinglePageDisplay();
     }
   }
-  
+
   private getFsPathFromPage(page: MangaPage): string | undefined {
     if (page.sourceType !== ImageSourceType.LOCAL) {
       return undefined;
@@ -4930,7 +4930,7 @@ export struct MangaViewer {
 
     this.uiContext.animateTo(animateOptions, () => {
       this.webtoonZoomScale = targetScale;
-      
+
       if (targetScale === this.MIN_ZOOM_SCALE) {
         // 重置偏移
         this.webtoonOffsetX = 0;
@@ -4971,39 +4971,39 @@ export struct MangaViewer {
 
   /** 条漫缩放开始时的初始缩放值 */
   private webtoonPinchStartScale: number = 1.0;
-  
+
   /**
    * 处理条漫捏合缩放手势（旧方法，保留兼容）
    */
   private handleWebtoonPinch(event: GestureEvent): void {
     this.handleWebtoonPinchUpdate(event);
   }
-  
+
   /**
    * 处理条漫捏合缩放更新
    * 修复：基于起始缩放值计算，避免抖动
    */
   private handleWebtoonPinchUpdate(event: GestureEvent): void {
     // 基于起始缩放值计算新缩放值，而不是当前值
-    const newScale = Math.max(this.MIN_ZOOM_SCALE, 
-                             Math.min(this.MAX_ZOOM_SCALE, this.webtoonPinchStartScale * event.scale));
-    
+    const newScale = Math.max(this.MIN_ZOOM_SCALE,
+      Math.min(this.MAX_ZOOM_SCALE, this.webtoonPinchStartScale * event.scale));
+
     this.webtoonZoomScale = newScale;
-    
+
     // 如果缩放到最小值，重置偏移
     if (newScale === this.MIN_ZOOM_SCALE) {
       this.webtoonOffsetX = 0;
       this.webtoonOffsetY = 0;
     }
   }
-  
+
   /**
    * 处理条漫捏合缩放结束
    * 修复：添加平滑的结束动画
    */
   private handleWebtoonPinchEnd(): void {
     this.isZooming = false;
-    
+
     // 如果缩放接近最小值，平滑回弹到1.0
     if (this.webtoonZoomScale < this.MIN_ZOOM_SCALE + 0.1) {
       if (this.uiContext) {
@@ -5021,15 +5021,15 @@ export struct MangaViewer {
         this.webtoonOffsetY = 0;
       }
     }
-    
+
     logger.debug(TAG, `条漫双指缩放结束: 最终缩放=${this.webtoonZoomScale}`);
   }
 
   // ==================== 单页/双页模式缩放手势处理 ====================
-  
+
   /** 缩放开始时的初始缩放值 */
   private pinchStartScale: number = 1.0;
-  
+
   /**
    * 处理双指缩放开始
    */
@@ -5038,30 +5038,30 @@ export struct MangaViewer {
     this.isZooming = true;
     logger.debug(TAG, `双指缩放开始: 初始缩放=${this.pinchStartScale}`);
   }
-  
+
   /**
    * 处理双指缩放更新
    */
   private handlePinchUpdate(event: GestureEvent): void {
     // 计算新的缩放值
-    const newScale = Math.max(this.MIN_ZOOM_SCALE, 
-                             Math.min(this.MAX_ZOOM_SCALE, this.pinchStartScale * event.scale));
-    
+    const newScale = Math.max(this.MIN_ZOOM_SCALE,
+      Math.min(this.MAX_ZOOM_SCALE, this.pinchStartScale * event.scale));
+
     this.currentScale = newScale;
-    
+
     // 通知外部缩放变化
     if (this.callbacks.onZoomChange) {
       this.callbacks.onZoomChange(newScale);
     }
   }
-  
+
   /**
    * 处理双指缩放结束
    * 修复：添加平滑的结束动画
    */
   private handlePinchEnd(): void {
     this.isZooming = false;
-    
+
     // 如果缩放接近最小值，平滑回弹到1.0
     if (this.currentScale < this.MIN_ZOOM_SCALE + 0.1) {
       if (this.uiContext) {
@@ -5082,7 +5082,7 @@ export struct MangaViewer {
         this.translateY = 0;
       }
     }
-    
+
     logger.debug(TAG, `双指缩放结束: 最终缩放=${this.currentScale}`);
   }
 
@@ -5092,11 +5092,11 @@ export struct MangaViewer {
   private handleEdgeSwipe(event: GestureEvent): void {
     const screenWidth: number = (this.screenWidth && this.screenWidth > 0) ? this.screenWidth : 360;
     const edgeThreshold: number = Math.floor(screenWidth * 0.14);
-    
+
     if (event.fingerList && event.fingerList.length === 1) {
       const finger = event.fingerList[0];
       const startX = finger.localX;
-      
+
       // 左边缘向右滑动 - 上一章
       if (startX < edgeThreshold && event.offsetX > 100) {
         if (this.callbacks.onChapterChange) {
@@ -5104,7 +5104,7 @@ export struct MangaViewer {
         }
         return;
       }
-      
+
       // 右边缘向左滑动 - 下一章
       if (startX > screenWidth - edgeThreshold && event.offsetX < -100) {
         if (this.callbacks.onChapterChange) {
@@ -5119,14 +5119,22 @@ export struct MangaViewer {
    * 处理条漫滚动事件
    */
   private handleWebtoonScroll(yOffset: number): void {
-    this.scrollPosition = yOffset;
+    // 使用 scroller.currentOffset() 获取实际的绝对滚动位置
+    // onScroll 的 yOffset 参数是增量，不是绝对位置
+    if (this.scroller) {
+      const offset = this.scroller.currentOffset();
+      this.scrollPosition = offset.yOffset;
+    } else {
+      // 回退方案：累加增量（不太准确）
+      this.scrollPosition += yOffset;
+    }
     this.isScrolling = true;
-    
+
     // 清除之前的定时器
     if (this.scrollTimer !== -1) {
       clearTimeout(this.scrollTimer);
     }
-    
+
     // 设置滚动结束检测
     this.scrollTimer = setTimeout(() => {
       this.isScrolling = false;
@@ -5135,13 +5143,13 @@ export struct MangaViewer {
       // 保存滚动位置
       this.saveScrollPosition();
     }, 150);
-    
+
     // 实时更新可见页面（节流处理）
     this.throttledUpdateVisiblePages();
-    
+
     // 通知父组件滚动位置变化
     if (this.callbacks.onScrollPositionChange) {
-      this.callbacks.onScrollPositionChange(yOffset);
+      this.callbacks.onScrollPositionChange(this.scrollPosition);
     }
   }
 
@@ -5164,25 +5172,30 @@ export struct MangaViewer {
     if (!this.scroller) return;
     const containerHeight: number = (this.screenHeight && this.screenHeight > 0) ? this.screenHeight : 800;
     const spacing = this.readingSettings.pageSpacing || 16;
-    
+
     const visibleIndices: number[] = [];
     const scrollTop = this.scrollPosition;
     const scrollBottom = scrollTop + containerHeight;
-    
+
+    // 累计计算每个页面的实际位置（考虑不同页面高度）
+    let currentTop = 0;
     for (let i = 0; i < this.chapter.pages.length; i++) {
       const page: MangaPage = this.chapter.pages[i];
       const ph: number = this.getEstimatedImageHeight(page);
-      const itemTop = i * (ph + spacing);
+      const itemTop = currentTop;
       const itemBottom = itemTop + ph;
-      
+
       // 检查是否在可见区域内（包含一定的缓冲区）
       if (itemBottom >= scrollTop - containerHeight && itemTop <= scrollBottom + containerHeight) {
         visibleIndices.push(i);
       }
+
+      // 累加当前页面高度和间距
+      currentTop += ph + spacing;
     }
-    
+
     this.visiblePageIndices = visibleIndices;
-    
+
     // 更新当前页面和滚动进度
     this.updateWebtoonProgress();
   }
@@ -5194,20 +5207,35 @@ export struct MangaViewer {
     if (this.visiblePageIndices.length > 0) {
       // 取可见页面的中间页作为当前页
       const middleIndex = Math.floor(this.visiblePageIndices.length / 2);
-      this.currentWebtoonPage = this.visiblePageIndices[middleIndex];
+      const newPage = this.visiblePageIndices[middleIndex];
+
+      // 如果页面变化，通知父组件
+      if (newPage !== this.currentWebtoonPage) {
+        this.currentWebtoonPage = newPage;
+        // 同步更新 viewCurrentPageIndex 和外部 currentPageIndex
+        this.viewCurrentPageIndex = newPage;
+        this.currentPageIndex = newPage;
+        // 通知父组件页面变化
+        if (this.callbacks.onPageChange) {
+          this.callbacks.onPageChange(newPage);
+        }
+      }
     }
-    
+
     // 计算滚动进度
     if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
       const totalPages: number = this.chapter.pages.length;
       const spacing: number = this.readingSettings.pageSpacing || 16;
+      const containerHeight: number = (this.screenHeight && this.screenHeight > 0) ? this.screenHeight : 800;
       let totalHeight: number = 0;
       for (let i = 0; i < totalPages; i++) {
         const page: MangaPage = this.chapter.pages[i];
         totalHeight += this.getEstimatedImageHeight(page);
         if (i < totalPages - 1) { totalHeight += spacing; }
       }
-      this.webtoonScrollProgress = Math.min(1, Math.max(0, this.scrollPosition / Math.max(1, totalHeight)));
+      // 最大可滚动距离 = 总高度 - 屏幕高度
+      const maxScrollable = Math.max(1, totalHeight - containerHeight);
+      this.webtoonScrollProgress = Math.min(1, Math.max(0, this.scrollPosition / maxScrollable));
     }
   }
 
@@ -5220,7 +5248,7 @@ export struct MangaViewer {
     }
 
     const preloadIndices = new Set<number>();
-    
+
     // 为每个可见页面添加前后PRELOAD_RANGE范围内的页面
     const range: number = this.getDynamicPreloadRange();
     for (let vi = 0; vi < this.visiblePageIndices.length; vi++) {
@@ -5253,7 +5281,7 @@ export struct MangaViewer {
 
     const page = this.chapter.pages[pageIndex];
     const imageUrl = page.imageUrl;
-    
+
     // 检查缓存中是否已存在
     if (this.imageCache.has(imageUrl)) {
       this.preloadedImages.add(pageIndex);
@@ -5335,23 +5363,23 @@ export struct MangaViewer {
    */
   private cleanupPreloadedImages(keepIndices: Set<number>): void {
     const toRemove: number[] = [];
-    
+
     for (const index of this.preloadedImages) {
       if (!keepIndices.has(index)) {
         toRemove.push(index);
       }
     }
-    
+
     for (const index of toRemove) {
       this.preloadedImages.delete(index);
-      
+
       // 从缓存中移除对应的图片
       const page = this.chapter.pages[index];
       if (page && this.imageCache.has(page.imageUrl)) {
         this.removeFromImageCache(page.imageUrl);
       }
     }
-    
+
     if (toRemove.length > 0) {
       logger.debug(TAG, `清理预加载图片: ${toRemove.length}张`);
     }
@@ -5471,15 +5499,15 @@ export struct MangaViewer {
   private getDynamicPreloadRange(): number {
     // 优先使用图源设置的预加载页数
     const configuredPreload = this.preloadCurrentPages !== undefined ? this.preloadCurrentPages : 10;
-    
+
     // 如果设置为0，返回0（不预加载）
     if (configuredPreload <= 0) {
       return 0;
     }
-    
+
     // 基础范围使用配置值
     let base: number = configuredPreload;
-    
+
     // 根据滚动状态动态调整
     if (this.isScrolling) {
       // 滚动时减少预加载范围，避免过多并发请求
@@ -5488,18 +5516,18 @@ export struct MangaViewer {
       // 静止时增加预加载范围
       base = base + 2;
     }
-    
+
     // 缩放时减少预加载
     if (this.webtoonZoomScale > 1.0) {
       base = Math.max(2, base - 1);
     }
-    
+
     // 大屏幕增加预加载
     const ch: number = (this.screenHeight && this.screenHeight > 0) ? this.screenHeight : 800;
     if (ch > 1200) {
       base = base + 2;
     }
-    
+
     logger.debug(TAG, `动态预加载范围: 配置=${configuredPreload}, 最终=${base}, 滚动=${this.isScrolling}, 缩放=${this.webtoonZoomScale}`);
     return base;
   }
@@ -5588,7 +5616,7 @@ export struct MangaViewer {
       // 确保目标位置在有效范围内
       const maxScrollPosition = this.calculateMaxScrollPosition();
       const clampedTargetPosition = Math.max(0, Math.min(targetPosition, maxScrollPosition));
-      
+
       this.smoothScrollTarget = clampedTargetPosition;
       this.scroller.scrollTo({
         xOffset: 0,
@@ -5614,21 +5642,21 @@ export struct MangaViewer {
 
     const spacing = this.readingSettings.pageSpacing || 16;
     let totalHeight = 0;
-    
+
     for (let i = 0; i < this.chapter.pages.length; i++) {
       const page = this.chapter.pages[i];
       const pageHeight = this.getEstimatedImageHeight(page);
       totalHeight += pageHeight + spacing;
     }
-    
+
     // 减去最后一个间距
     totalHeight -= spacing;
-    
+
     // 考虑缩放比例
     if (this.webtoonZoomScale > 1.0) {
       totalHeight *= this.webtoonZoomScale;
     }
-    
+
     const ch: number = (this.screenHeight && this.screenHeight > 0) ? this.screenHeight : 800;
     return Math.max(0, totalHeight - ch);
   }
@@ -5647,18 +5675,18 @@ export struct MangaViewer {
 
     try {
       const targetScrollY = this.calculatePageScrollPosition(targetPageIndex);
-      
+
       // 计算动画时长，根据滚动距离和速度调整
       const distance = Math.abs(this.scrollPosition - targetScrollY);
       const baseDuration = Math.min(1000, Math.max(300, distance / 2)); // 根据距离调整基础时长
       const duration = Math.max(300, Math.min(1200, baseDuration / scrollSpeed));
-      
+
       // 使用平滑的动画曲线
       const curve: ICurve = curves.initCurve(Curve.EaseInOut);
-      
+
       // 执行平滑滚动动画
       this.smoothScrollTo(targetScrollY, duration, curve);
-      
+
       // 更新当前页面索引（滚动完成后）
       setTimeout(() => {
         // 只有在需要更新页面索引时才调用回调
@@ -5695,7 +5723,7 @@ export struct MangaViewer {
       const currentScrollY = this.scrollPosition;
       let targetScrollY: number;
       let nextPageIndex: number;
-      
+
       if (scrollDistance === 'screen') {
         const screenHeight: number = 800;
         const proposedTarget: number = currentScrollY + screenHeight * 0.8;
@@ -5712,7 +5740,7 @@ export struct MangaViewer {
         nextPageIndex = Math.min(this.currentPageIndex + 1, this.chapter.pages.length - 1);
         targetScrollY = this.calculatePageScrollPosition(nextPageIndex);
       }
-      
+
       // 如果已经在底部，不再滚动
       if (currentScrollY >= targetScrollY && nextPageIndex === this.chapter.pages.length - 1) {
         return false;
@@ -5721,13 +5749,13 @@ export struct MangaViewer {
       // 计算动画时长，根据滚动速度调整
       const baseDuration = scrollDistance === 'screen' ? 800 : 600; // 屏幕滚动稍慢
       const duration = Math.max(300, Math.min(1200, baseDuration / scrollSpeed));
-      
+
       // 使用更自然的动画曲线
       const curve: ICurve = scrollDistance === 'screen' ? curves.initCurve(Curve.EaseOut) : curves.initCurve(Curve.EaseInOut);
-      
+
       // 执行平滑滚动动画
       this.smoothScrollTo(targetScrollY, duration, curve);
-      
+
       // 更新当前页面索引（滚动完成后）
       setTimeout(() => {
         // 只有在需要更新页面索引时才调用回调
@@ -5758,19 +5786,19 @@ export struct MangaViewer {
 
     const spacing = this.readingSettings.pageSpacing || 16;
     let currentPosition = 0;
-    
+
     for (let i = 0; i < this.chapter.pages.length; i++) {
       const page = this.chapter.pages[i];
       const pageHeight = this.getEstimatedImageHeight(page);
-      
+
       // 检查滚动位置是否在当前页面范围内
       if (scrollY >= currentPosition && scrollY < currentPosition + pageHeight) {
         return i;
       }
-      
+
       currentPosition += pageHeight + spacing;
     }
-    
+
     return this.chapter.pages.length - 1; // 默认返回最后一页
   }
 
@@ -5790,12 +5818,12 @@ export struct MangaViewer {
       const currentScrollY = this.scrollPosition;
       let targetScrollY: number;
       let prevPageIndex: number;
-      
+
       if (scrollDistance === 'screen') {
         // 向上滚动一屏距离
         const screenHeight = 800; // 假设屏幕高度
         targetScrollY = Math.max(0, currentScrollY - screenHeight * 0.8); // 向上滚动80%屏幕高度
-        
+
         // 根据滚动位置计算目标页面索引
         prevPageIndex = this.calculatePageIndexFromScroll(targetScrollY);
       } else {
@@ -5803,7 +5831,7 @@ export struct MangaViewer {
         prevPageIndex = Math.max(0, this.currentPageIndex - 1);
         targetScrollY = this.calculatePageScrollPosition(prevPageIndex);
       }
-      
+
       // 如果已经在顶部，不再滚动
       if (currentScrollY <= targetScrollY && prevPageIndex === 0) {
         return false;
@@ -5812,13 +5840,13 @@ export struct MangaViewer {
       // 计算动画时长，根据滚动速度调整
       const baseDuration = scrollDistance === 'screen' ? 800 : 600; // 屏幕滚动稍慢
       const duration = Math.max(300, Math.min(1200, baseDuration / scrollSpeed));
-      
+
       // 使用更自然的动画曲线
       const curve: ICurve = scrollDistance === 'screen' ? curves.initCurve(Curve.EaseOut) : curves.initCurve(Curve.EaseInOut);
-      
+
       // 执行平滑滚动动画
       this.smoothScrollTo(targetScrollY, duration, curve);
-      
+
       // 更新当前页面索引（滚动完成后）
       setTimeout(() => {
         if (this.callbacks.onPageChange) {
@@ -5849,7 +5877,7 @@ export struct MangaViewer {
 
     let scrollPosition = 0;
     const spacing = this.readingSettings.pageSpacing || 16;
-    
+
     // 计算到目标页面之前的所有页面高度总和
     for (let i = 0; i < pageIndex; i++) {
       const page = this.chapter.pages[i];
@@ -5877,21 +5905,21 @@ export struct MangaViewer {
           .fontSize(12)
           .fontColor(colorMap.textOnAccent)
           .fontWeight(FontWeight.Bold)
-        
+
         Text(' | ')
           .fontSize(10)
           .fontColor(colorMap.textSecondary)
-        
+
         Text(`${this.rightPageIndex >= 0 ? this.rightPageIndex + 1 : '-'}`)
           .fontSize(12)
           .fontColor(colorMap.textOnAccent)
           .fontWeight(FontWeight.Bold)
-        
+
         Text(' / ')
           .fontSize(10)
           .fontColor(colorMap.textSecondary)
           .margin({ left: 4 })
-        
+
         Text(`${this.chapter.pages.length}`)
           .fontSize(10)
           .fontColor(colorMap.textSecondary)
@@ -5918,17 +5946,17 @@ export struct MangaViewer {
             .fontSize(14)
             .fontColor(colorMap.textOnAccent)
             .fontWeight(FontWeight.Bold)
-          
+
           Text(' / ')
             .fontSize(12)
             .fontColor(colorMap.textSecondary)
-          
+
           Text(`${this.chapter.pages.length}`)
             .fontSize(12)
             .fontColor(colorMap.textSecondary)
         }
         .margin({ bottom: 4 })
-        
+
         // 进度条
         Row() {
           Progress({
@@ -5941,7 +5969,7 @@ export struct MangaViewer {
             .color(colorMap.primary)
             .backgroundColor(colorMap.backgroundSecondary)
         }
-        
+
         // 进度百分比
         Text(`${Math.round(this.webtoonScrollProgress * 100)}%`)
           .fontSize(10)
@@ -5978,7 +6006,7 @@ export struct MangaViewer {
           .onClick(() => {
             this.showQuickNavigationDialog();
           })
-        
+
         // 快速滚动条（垂直）
         Column() {
           Slider({
@@ -6043,9 +6071,9 @@ export struct MangaViewer {
     const estimatedImageHeight: number = this.getEstimatedImageHeight(this.chapter.pages[pageIndex]);
     const spacing = this.readingSettings.pageSpacing || 16;
     const targetPosition = pageIndex * (estimatedImageHeight + spacing);
-    
+
     this.smoothScrollTo(targetPosition);
-    
+
     // 更新当前页面索引
     if (this.callbacks.onPageChange) {
       this.callbacks.onPageChange(pageIndex);
@@ -6064,14 +6092,14 @@ export struct MangaViewer {
     Stack() {
       // 根据阅读模式选择不同的显示方式
       if (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE ||
-          this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
-          this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
-          this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
+        this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
+        this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
+        this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
         this.buildSinglePageView()
       } else if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
         this.buildDoublePageView()
       } else if (this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL ||
-                 this.readingSettings.readingMode === ReadingMode.WEBTOON) {
+        this.readingSettings.readingMode === ReadingMode.WEBTOON) {
         this.buildWebtoonView()
       } else if (this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP) {
         this.buildWebtoonWithGapView()
@@ -6111,7 +6139,7 @@ export struct MangaViewer {
       const oldH: number = this.screenHeight;
       if (w > 0) { this.screenWidth = w; }
       if (h > 0) { this.screenHeight = h; }
-      
+
       // 检测屏幕方向变化（横竖屏切换）
       const wasLandscape: boolean = oldW > oldH;
       const isLandscape: boolean = w > h;

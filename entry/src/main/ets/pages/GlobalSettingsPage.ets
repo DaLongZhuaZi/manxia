@@ -626,9 +626,10 @@ struct GlobalSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.keepScreenOn })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
+          .onChange(async (isOn: boolean) => {
             this.keepScreenOn = isOn;
-            AppStorage.setOrCreate('global_keep_screen_on', this.keepScreenOn);
+            await this.settingsManager.setBoolean(SettingKeys.GLOBAL_KEEP_SCREEN_ON, isOn);
+            this.settingsManager.syncToAppStorage();
           })
       }
       .width('100%')
@@ -640,9 +641,10 @@ struct GlobalSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.volumeKeyNavigation })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
+          .onChange(async (isOn: boolean) => {
             this.volumeKeyNavigation = isOn;
-            AppStorage.setOrCreate('global_volume_key_navigation', this.volumeKeyNavigation);
+            await this.settingsManager.setBoolean(SettingKeys.GLOBAL_VOLUME_KEY_NAVIGATION, isOn);
+            this.settingsManager.syncToAppStorage();
           })
       }
       .width('100%')
@@ -673,9 +675,10 @@ struct GlobalSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.downloadOnWifiOnly })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
+          .onChange(async (isOn: boolean) => {
             this.downloadOnWifiOnly = isOn;
-            AppStorage.setOrCreate('download_wifi_only', this.downloadOnWifiOnly);
+            await this.settingsManager.setBoolean(SettingKeys.DOWNLOAD_WIFI_ONLY, isOn);
+            this.settingsManager.syncToAppStorage();
           })
       }
       .width('100%')
@@ -704,9 +707,10 @@ struct GlobalSettingsPage {
           .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange((value: number) => {
+          .onChange(async (value: number) => {
             this.maxConcurrentDownloads = Math.round(value);
-            AppStorage.setOrCreate('max_concurrent_downloads', this.maxConcurrentDownloads);
+            await this.settingsManager.setNumber(SettingKeys.MAX_CONCURRENT_DOWNLOADS, this.maxConcurrentDownloads);
+            this.settingsManager.syncToAppStorage();
           })
       }
     }
@@ -735,9 +739,10 @@ struct GlobalSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.enableDownloadNotifications })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
+          .onChange(async (isOn: boolean) => {
             this.enableDownloadNotifications = isOn;
-            AppStorage.setOrCreate('enable_download_notifications', this.enableDownloadNotifications);
+            await this.settingsManager.setBoolean(SettingKeys.ENABLE_DOWNLOAD_NOTIFICATIONS, isOn);
+            this.settingsManager.syncToAppStorage();
           })
       }
       .width('100%')
@@ -749,9 +754,10 @@ struct GlobalSettingsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.enableUpdateNotifications })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
+          .onChange(async (isOn: boolean) => {
             this.enableUpdateNotifications = isOn;
-            AppStorage.setOrCreate('enable_update_notifications', this.enableUpdateNotifications);
+            await this.settingsManager.setBoolean(SettingKeys.ENABLE_UPDATE_NOTIFICATIONS, isOn);
+            this.settingsManager.syncToAppStorage();
           })
       }
       .width('100%')

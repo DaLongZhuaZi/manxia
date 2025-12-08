@@ -58,14 +58,14 @@ struct AboutPage {
     }
   }
 
-  onReady(): void {
+  async onReady(): Promise<void> {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
     
     // 初始化响应式布局
     this.initializeResponsiveLayout();
-    this.loadAppInfo();
+    await this.loadAppInfo();
   }
 
   aboutToDisappear(): void {
@@ -159,7 +159,7 @@ struct AboutPage {
   @Builder
   buildAppHeader() {
     Column({ space: 16 }) {
-      Image($r('app.media.mangabook'))
+      Image($r('app.media.icon'))
         .width(100)
         .height(100)
         .borderRadius(20)
@@ -344,15 +344,6 @@ struct AboutPage {
           this.pathStack.pushPath({ name: 'OpenSourceLicensePage' });
         } catch (error) {
           logger.error(TAG, '导航到开源许可页面失败', String(error));
-        }
-      })
-
-      this.buildButtonItem('图源说明', () => {
-        try {
-          logger.info(TAG, '导航到图源说明页面');
-          this.pathStack.pushPath({ name: 'SourceGuidePage' });
-        } catch (error) {
-          logger.error(TAG, '导航到图源说明页面失败', String(error));
         }
       })
     }

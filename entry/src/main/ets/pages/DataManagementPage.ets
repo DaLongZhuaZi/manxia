@@ -42,6 +42,7 @@ import { BackgroundTaskManager, TaskType, TaskStatus, BackgroundTask, TaskCancel
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { PdfImportDialog, PdfImportDialogResult, PdfImportMode as DialogImportMode } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
+import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
 
 const TAG = 'DataManagementPage';
@@ -674,6 +675,7 @@ struct DataManagementPage {
   private ebookMetadataDialogController: CustomDialogController | null = null;
   private pdfImportDialogController: CustomDialogController | null = null;
   private mangaImportDialogController: CustomDialogController | null = null;
+  private batchMangaImportDialogController: CustomDialogController | null = null;
   
   // 漫画导入相关状态
   @State private currentParsedStructure: ParsedArchiveStructure | null = null;
@@ -2340,15 +2342,261 @@ struct DataManagementPage {
       return;
     }
 
-    // 如果选择了多个文件（2个或以上），显示批量策略选择对话框
+    // 如果选择了多个文件（2个或以上），显示批量导入配置对话框
     if (this.selectedFiles.length >= 2) {
-      this.showBatchStrategyDialog = true;
-      // 等待用户选择策略后继续
+      await this.showBatchMangaImportDialog();
       return;
     }
 
     // 单个文件：先解析结构，然后决定是否需要显示配置对话框
     await this.processFileWithDialog(this.selectedFiles[0]);
+  }
+  
+  /**
+   * 显示批量漫画导入配置对话框
+   */
+  private async showBatchMangaImportDialog(): Promise<void> {
+    // 先查找可能的重复漫画
+    await this.findExistingMangaCandidatesForBatch();
+    
+    this.batchMangaImportDialogController = new CustomDialogController({
+      builder: BatchMangaImportDialog({
+        themeState: this.themeState,
+        fileUris: this.selectedFiles,
+        existingMangaCandidates: this.existingMangaCandidates,
+        parseFileStructure: async (fileUri: string): Promise<ParsedArchiveStructure | null> => {
+          return await this.parseFileStructureForBatch(fileUri);
+        },
+        parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
+          return this.parseComicInfoXml(xmlContent);
+        },
+        onConfirm: (result: BatchMangaImportDialogResult) => {
+          this.handleBatchMangaImportDialogResult(result);
+        },
+        onCancel: () => {
+          this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
+        }
+      }),
+      autoCancel: false,
+      customStyle: true,
+      alignment: DialogAlignment.Center
+    });
+
+    this.batchMangaImportDialogController.open();
+    this.updateProgress(ImportStatus.IDLE, '请配置批量导入选项', 10);
+  }
+  
+  /**
+   * 为批量导入查找可能的重复漫画
+   */
+  private async findExistingMangaCandidatesForBatch(): Promise<void> {
+    try {
+      // 获取所有漫画记录
+      const allComics: ComicRecord[] = await this.dataManager.getAllComics();
+      
+      // 转换为候选格式
+      const candidates: ExistingMangaCandidate[] = [];
+      const comicsToProcess = allComics.slice(0, 20);
+      for (const comic of comicsToProcess) {
+        const candidate: ExistingMangaCandidate = {
+          id: comic.id,
+          title: comic.title,
+          author: comic.author || '未知作者',
+          coverUrl: comic.coverUrl || '',
+          chapterCount: comic.chapterCount || 0
+        };
+        candidates.push(candidate);
+      }
+      this.existingMangaCandidates = candidates;
+      
+      logger.info(TAG, `批量导入找到 ${this.existingMangaCandidates.length} 个已有漫画候选`);
+    } catch (error) {
+      logger.error(TAG, `查找已有漫画失败: ${error}`);
+      this.existingMangaCandidates = [];
+    }
+  }
+  
+  /**
+   * 为批量导入解析文件结构
+   */
+  private async parseFileStructureForBatch(fileUri: string): Promise<ParsedArchiveStructure | null> {
+    try {
+      const parsedStructure = await this.compressionUtils.parseArchiveStructure(fileUri);
+      
+      // 转换为对话框需要的格式
+      const convertedChapters: ChapterInfo[] = [];
+      for (let i = 0; i < parsedStructure.detectedChapters.length; i++) {
+        const ch = parsedStructure.detectedChapters[i];
+        const chapterInfo: ChapterInfo = {
+          index: ch.index,
+          number: ch.number,
+          title: ch.title,
+          originalName: ch.originalName,
+          path: ch.path,
+          pageCount: ch.pageCount
+        };
+        convertedChapters.push(chapterInfo);
+      }
+      
+      const dialogStructure: ParsedArchiveStructure = {
+        hasComicInfo: parsedStructure.hasComicInfo,
+        comicInfoContent: parsedStructure.comicInfoContent,
+        isMultiLayer: parsedStructure.isMultiLayer,
+        detectedChapters: convertedChapters,
+        rootImageCount: parsedStructure.rootImageCount,
+        totalImageCount: parsedStructure.totalImageCount,
+        extractedPath: parsedStructure.extractedPath,
+        tempDirectories: parsedStructure.tempDirectories,
+        warnings: parsedStructure.warnings
+      };
+      
+      return dialogStructure;
+    } catch (error) {
+      logger.error(TAG, `解析文件结构失败: ${fileUri}`, String(error));
+      return null;
+    }
+  }
+  
+  /**
+   * 处理批量漫画导入对话框结果
+   */
+  private async handleBatchMangaImportDialogResult(result: BatchMangaImportDialogResult): Promise<void> {
+    try {
+      this.importResults = [];
+      this.importResultDetails = [];
+      this.showResults = false;
+      
+      const totalGroups = result.groups.length;
+      let processedGroups = 0;
+      let successfulImports = 0;
+      
+      logger.info(TAG, `开始批量导入，共 ${totalGroups} 部漫画`);
+      
+      for (const group of result.groups) {
+        processedGroups++;
+        this.updateProgress(
+          ImportStatus.IMPORTING,
+          `正在导入 (${processedGroups}/${totalGroups}): ${group.title}`,
+          20 + (processedGroups / totalGroups) * 70
+        );
+        
+        try {
+          await this.importMangaGroup(group);
+          successfulImports++;
+          this.importResults.push(`✅ ${group.title}: 导入成功 (${group.chapters.length} 章节)`);
+        } catch (error) {
+          this.importResults.push(`❌ ${group.title}: 导入失败 - ${error}`);
+          logger.error(TAG, `导入漫画分组失败: ${group.title}`, String(error));
+        }
+      }
+      
+      this.updateProgress(ImportStatus.COMPLETED, `导入完成，成功 ${successfulImports}/${totalGroups} 部漫画`, 100);
+      this.showResults = true;
+      
+      // 清除选择的文件
+      this.selectedFiles = [];
+      
+      // 发布导入完成事件
+      if (successfulImports > 0) {
+        eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successfulImports, totalGroups));
+      }
+      
+    } catch (error) {
+      logger.error(TAG, '批量导入失败', String(error));
+      this.updateProgress(ImportStatus.ERROR, `批量导入失败: ${error}`, 0);
+    }
+  }
+  
+  /**
+   * 导入单个漫画分组
+   */
+  private async importMangaGroup(group: MangaGroupResult): Promise<void> {
+    let mangaId: string;
+    
+    if (group.mergeToExisting && group.targetMangaId) {
+      // 合并到已有漫画
+      mangaId = group.targetMangaId;
+      logger.info(TAG, `合并到已有漫画: ${mangaId}`);
+    } else {
+      // 创建新漫画
+      const comicInfoInput: ComicInfoInput = {
+        title: group.title,
+        author: group.author,
+        description: group.description,
+        coverUrl: group.selectedCoverPath || '',
+        sourceId: 'local_import',
+        externalId: `local_${generateUUID()}`,
+        status: MangaStatus.UNKNOWN,
+        tags: group.tags,
+        rating: 0,
+        chapterCount: group.chapters.length,
+        lastUpdateTime: Date.now()
+      };
+      
+      mangaId = await this.dataManager.addComicInfo(comicInfoInput);
+      logger.info(TAG, `创建新漫画: ${mangaId}, 标题: ${group.title}`);
+      
+      // 添加到收藏
+      const dataService = DataService.getInstance();
+      await dataService.addToFavorites(mangaId, group.tags);
+      
+      // 处理封面
+      if (group.selectedCoverPath) {
+        await this.processCoverImage(mangaId, group.selectedCoverPath, group.title);
+      }
+    }
+    
+    // 导入所有章节
+    for (const chapter of group.chapters) {
+      await this.importChapterFromBatch(mangaId, chapter, group.title);
+    }
+    
+    // 注意：章节数已在创建漫画时设置，无需再次更新
+    logger.info(TAG, `漫画 ${group.title} 导入完成，共 ${group.chapters.length} 个章节`);
+  }
+  
+  /**
+   * 从批量导入结果导入单个章节
+   */
+  private async importChapterFromBatch(mangaId: string, chapter: BatchChapterResult, comicTitle: string): Promise<void> {
+    if (!chapter.parsedStructure) {
+      logger.warn(TAG, `章节 ${chapter.title} 没有解析结构，跳过`);
+      return;
+    }
+    
+    const parsedStructure = chapter.parsedStructure;
+    
+    // 创建章节
+    const chapterInfoInput: ChapterInfoInput = {
+      comicId: mangaId,
+      title: chapter.title,
+      index: chapter.number - 1,
+      pageCount: parsedStructure.totalImageCount,
+      isDownloaded: true,
+      downloadPath: parsedStructure.extractedPath,
+      publishTime: Date.now(),
+      externalId: `local_chapter_${generateUUID()}`
+    };
+    
+    const chapterId = await this.dataManager.addChapterInfo(chapterInfoInput);
+    logger.info(TAG, `创建章节: ${chapterId}, 标题: ${chapter.title}`);
+    
+    // 整理文件并添加页面信息
+    const comicInfoInput: ComicInfoInput = {
+      title: comicTitle,
+      author: '',
+      description: '',
+      coverUrl: '',
+      sourceId: 'local_import',
+      externalId: '',
+      status: MangaStatus.UNKNOWN,
+      tags: [],
+      rating: 0,
+      chapterCount: 1,
+      lastUpdateTime: Date.now()
+    };
+    
+    await this.organizeAndAddPages(comicInfoInput, chapterInfoInput, parsedStructure.extractedPath, chapterId);
   }
 
   /**
