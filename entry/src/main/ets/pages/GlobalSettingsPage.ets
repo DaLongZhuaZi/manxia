@@ -418,7 +418,7 @@ struct GlobalSettingsPage {
   @Builder
   buildReadingSettings() {
     Column({ space: 16 }) {
-      Text('默认阅读设置')
+      Text('漫画阅读设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
