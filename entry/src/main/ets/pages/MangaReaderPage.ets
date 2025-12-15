@@ -20,12 +20,12 @@ import { DataService } from '../Framework/Services/DataService';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
-import {
-  Manga,
-  MangaChapter,
-  MangaPage,
-  MangaReaderState,
-  ReadingMode,
+import { 
+  Manga, 
+  MangaChapter, 
+  MangaPage, 
+  MangaReaderState, 
+  ReadingMode, 
   ReadingDirection,
   ReadingSettings,
   DEFAULT_READING_SETTINGS,
@@ -56,6 +56,7 @@ import { util } from '@kit.ArkTS';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
+import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 
 const TAG = 'MangaReaderPage';
 
@@ -250,7 +251,11 @@ export struct MangaReaderPage {
   private lastProgressSaveTime: number = 0;
   private lastSavedPageIndex: number = -1;
   private sessionStartTimestamp: number = 0;
-
+  
+  // 阅读时间定时记录相关
+  private readingTimeTimer: number = -1;  // 阅读时间定时器
+  private static readonly READING_TIME_SAVE_INTERVAL: number = 1000;  // 阅读时间保存间隔（1秒）
+  
   // WebView图源相关
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private mangaEngine: MangaSourceEngine | null = null;
@@ -263,7 +268,7 @@ export struct MangaReaderPage {
   @State private dailyLimitMessage: string = '';
   // WebView控制器（用于动态加载页面列表）
   private webviewController: webview.WebviewController = new webview.WebviewController();
-
+  
   // 图源预加载设置
   private sourcePreloadSettings: SourcePreloadSettings = {
     preloadCurrentChapter: true,
@@ -302,27 +307,27 @@ export struct MangaReaderPage {
   @State autoPageTurnEnabled: boolean = false;
   @State autoPageTurnIntervalSeconds: number = 5;
   private interactionPauseTimer: number = -1;
-
+  
   // 自动翻页控制
   private autoPageTurnController: AutoPageTurnController | null = null;
   @State autoPageTurnState: AutoPageTurnState = AutoPageTurnState.STOPPED;
-
+  
   // MangaViewer组件引用
   private mangaViewerRef: MangaViewer | null = null;
-
+  
   // 用于获取MangaViewer组件实例的引用变量
   @State private mangaViewerComponent: MangaViewer | null = null;
-
+  
   // 交互区域提示
   @State showInteractionOverlay: boolean = false; // 初次进入不显示，等待读取真实阅读设置后再显示
   @State overlayDismissTimer: number = -1;
   @State isReadingSettingsReady: boolean = false; // 阅读设置是否已加载
-
+  
   // 调试：显示点击位置
   @State showDebugClickIndicator: boolean = false;
   @State debugClickX: number = 0;
   @State debugClickY: number = 0;
-
+  
   // 设置面板动画状态
   @State settingsPanelOpacity: number = 0;
   @State settingsPanelScale: number = 0.95;
@@ -349,7 +354,7 @@ export struct MangaReaderPage {
   @State jumpToPageInput: string = '';
   @State jumpToPageDialogOpacity: number = 0;
   @State jumpToPageDialogScale: number = 0.9;
-
+  
   // 屏幕尺寸
   @State screenWidth: number = 0;
   @State screenHeight: number = 0;
@@ -364,16 +369,20 @@ export struct MangaReaderPage {
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
   @State shouldUseDoublePage: boolean = false; // 是否应该使用双页模式
-
+  
   // 图片加载状态 - 用于控制titlebar显示
   @State isImageLoaded: boolean = false;
+  
+  // [修复] 阅读器初始化完成标志，用于阻止初始化期间的错误阅读进度保存
+  // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，覆盖正确的阅读进度
+  private isReaderInitialized: boolean = false;
 
   // 手势和交互状态
   @State isDragging: boolean = false;
   @State lastTapTime: number = 0;
   @State tapCount: number = 0;
   private singleTapTimer: number = -1; // 单击延迟定时器，用于双击检测时取消单击
-
+  
   // 音量键翻页回调函数（用于inputConsumer注册/注销）
   private volumeUpCallback: ((event: InputKeyEvent) => void) | null = null;
   private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
@@ -381,29 +390,29 @@ export struct MangaReaderPage {
 
   onPageShow() {
     logger.lifecycle(TAG, '漫画阅读器页面开始显示');
-
+    
     // 通知预加载管理器：阅读器已激活
     ChapterPreloadManager.getInstance().setReaderActive(true);
-
+    
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (stack) {
         this.pathStack = stack;
         logger.debug(TAG, '✅ 成功获取GlobalNavStack');
-
+        
         // 获取页面参数 - getParamByName返回Array<unknown>
         const paramDataArray = this.pathStack.getParamByName('MangaReaderPage') as MangaReaderPageParams[];
         logger.debug(TAG, `📋 获取到参数数组，长度: ${paramDataArray?.length || 0}`);
-
+        
         if (paramDataArray && paramDataArray.length > 0) {
           const latestParam = paramDataArray[paramDataArray.length - 1]; // 获取最新参数
           logger.debug(TAG, `📋 使用最新参数 (索引: ${paramDataArray.length - 1})`);
-
-          if (latestParam && typeof latestParam === 'object' &&
-            (Object.keys(latestParam).includes('manga') || Object.keys(latestParam).includes('mangaId'))) {
+          
+          if (latestParam && typeof latestParam === 'object' && 
+              (Object.keys(latestParam).includes('manga') || Object.keys(latestParam).includes('mangaId'))) {
             const typedParams = latestParam as MangaReaderPageParams;
             this.pageParams = typedParams;
-
+            
             // 详细记录参数信息
             logger.info(TAG, `📖 漫画参数解析成功:`);
             if (typedParams.manga) {
@@ -417,7 +426,7 @@ export struct MangaReaderPage {
             logger.info(TAG, `  - 指定章节ID: ${typedParams.chapterId || '未指定'}`);
             logger.info(TAG, `  - 指定页面索引: ${typedParams.pageIndex || 0}`);
             logger.info(TAG, `  - 来源页面: ${typedParams.fromPage || '未指定'}`);
-
+            
             this.initializeMangaReader(typedParams);
           } else {
             logger.error(TAG, '❌ 参数格式不正确或缺少必需的manga/mangaId属性');
@@ -482,8 +491,8 @@ export struct MangaReaderPage {
       }
     }
 
-
-
+    
+    
     logger.lifecycle(TAG, '漫画阅读器页面显示完成');
   }
 
@@ -493,47 +502,84 @@ export struct MangaReaderPage {
       logger.info(TAG, `主题已切换到: ${newTheme}`);
     });
 
-
+    
   }
 
   aboutToAppear() {
     logger.lifecycle(TAG, '漫画阅读器页面即将出现');
-
+    
     // 获取UIContext
     this.uiContext = this.getUIContext();
-
+    
     // 初始化屏幕尺寸
     this.initScreenSize();
-
+    
     // 初始化响应式布局
     this.initResponsiveLayout();
-
+    
     // 初始化自动翻页控制器
     this.initAutoPageTurnController();
-
+    
     // 初始化WebView控制器（用于WebView图源动态加载）
     this.initWebViewController();
 
     // 设置全屏阅读模式的状态栏
     this.setupFullscreenMode();
-
+    
     // 应用屏幕常亮设置
     this.applyKeepScreenOnSetting();
-
+    
     // 亮度设置已移除，不再应用
-
+    
     // 注册音量键监听（如果启用了音量键翻页）
     this.updateVolumeKeyListener();
-
+    
     // 启动阅读器流程
     this.startReaderFlow();
-
+    
     // 启动入场动画
     setTimeout(() => {
       this.startEntranceAnimation();
     }, 100);
+    
+    // 启动阅读时间定时记录
+    this.startReadingTimeTracking();
   }
-
+  
+  /**
+   * 启动阅读时间定时记录
+   * 每1秒自动保存一次阅读进度，确保停留在同一页面时也能记录阅读时间
+   */
+  private startReadingTimeTracking(): void {
+    // 清除可能存在的旧定时器
+    if (this.readingTimeTimer !== -1) {
+      clearInterval(this.readingTimeTimer);
+    }
+    
+    // 每1秒保存一次阅读进度 
+    this.readingTimeTimer = setInterval(() => {
+      // 只有在阅读器已初始化后才保存
+      if (this.isReaderInitialized && this.readerState.currentManga && this.readerState.currentChapter) {
+        this.saveReadingProgressInternal('timer').catch((error: Error) => {
+          logger.debug(TAG, `定时保存阅读进度失败: ${error.message}`);
+        });
+      }
+    }, MangaReaderPage.READING_TIME_SAVE_INTERVAL);
+    
+    logger.info(TAG, '阅读时间定时记录已启动');
+  }
+  
+  /**
+   * 停止阅读时间定时记录
+   */
+  private stopReadingTimeTracking(): void {
+    if (this.readingTimeTimer !== -1) {
+      clearInterval(this.readingTimeTimer);
+      this.readingTimeTimer = -1;
+      logger.info(TAG, '阅读时间定时记录已停止');
+    }
+  }
+  
   /**
    * 应用屏幕常亮设置
    */
@@ -541,7 +587,7 @@ export struct MangaReaderPage {
     try {
       const keepScreenOn = this.readingSettings.keepScreenOn;
       logger.info(TAG, `应用屏幕常亮设置: ${keepScreenOn}`);
-
+      
       // 获取当前窗口并设置屏幕常亮
       window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
         windowStage.setWindowKeepScreenOn(keepScreenOn).then(() => {
@@ -565,7 +611,7 @@ export struct MangaReaderPage {
   private applyBrightnessSetting(): void {
     try {
       let brightness = this.readingSettings.brightness;
-
+      
       // 兼容旧数据：如果亮度值大于2.0，说明是旧的百分比格式（0-100或更大）
       // 将其转换为新格式（0.1-2.0）
       if (brightness > 2.0) {
@@ -576,15 +622,15 @@ export struct MangaReaderPage {
         // 更新设置中的亮度值
         this.readingSettings.brightness = brightness;
       }
-
+      
       // 将 0.1-2.0 的范围映射到 0.0-1.0
       // brightness = 1.0 对应窗口亮度 0.5（中间值）
       // brightness = 0.1 对应窗口亮度 0.05
       // brightness = 2.0 对应窗口亮度 1.0
       const windowBrightness = Math.max(0.0, Math.min(1.0, brightness / 2.0));
-
+      
       logger.info(TAG, `应用亮度设置: readingBrightness=${brightness.toFixed(2)}, windowBrightness=${windowBrightness.toFixed(2)}`);
-
+      
       window.getLastWindow(getContext(this)).then((windowStage: window.Window) => {
         windowStage.setWindowBrightness(windowBrightness).then(() => {
           logger.info(TAG, `窗口亮度设置成功: ${windowBrightness.toFixed(2)}`);
@@ -626,21 +672,21 @@ export struct MangaReaderPage {
     try {
       // 检查是否应该使用双页模式
       this.shouldUseDoublePage = ResponsiveLayoutHelper.shouldUseDoublePage();
-
+      
       // 创建并注册设备变化监听器
       this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
         logger.info(TAG, `设备状态变化: 横屏=${deviceInfo.isLandscape}, 宽度=${deviceInfo.screenWidth.toFixed(2)}vp`);
         const newShouldUseDoublePage = ResponsiveLayoutHelper.shouldUseDoublePage();
-
+        
         if (newShouldUseDoublePage !== this.shouldUseDoublePage) {
           this.shouldUseDoublePage = newShouldUseDoublePage;
           logger.info(TAG, `双页模式状态变化: ${this.shouldUseDoublePage ? '开启' : '关闭'}`);
           // 注意：阅读模式的实际切换应该根据用户设置，这里仅作提示
         }
       };
-
+      
       this.deviceManager.addListener(this.deviceChangeListener);
-
+      
       logger.info(TAG, `✅ 响应式布局初始化完成, 建议双页模式: ${this.shouldUseDoublePage}`);
     } catch (error) {
       logger.error(TAG, '响应式布局初始化失败', String(error));
@@ -650,24 +696,27 @@ export struct MangaReaderPage {
   aboutToDisappear() {
     // 通知预加载管理器：阅读器已关闭
     ChapterPreloadManager.getInstance().setReaderActive(false);
-
+    
+    // 停止阅读时间定时记录
+    this.stopReadingTimeTracking();
+    
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
     }
-
+    
     // 离开前尝试保存阅读进度
     this.saveReadingProgressInternal('aboutToDisappear').catch((error: Error) => {
       logger.error(TAG, '离开页面前保存阅读进度失败', error.message);
     });
-
+    
     // 销毁自动翻页控制器
     if (this.autoPageTurnController) {
       this.autoPageTurnController.destroy();
       this.autoPageTurnController = null;
     }
-
+    
     // 清理WebView资源
     this.cleanupWebView();
 
@@ -676,12 +725,12 @@ export struct MangaReaderPage {
       clearTimeout(this.autoHideTimer);
       this.autoHideTimer = -1;
     }
-
+    
     if (this.overlayDismissTimer !== -1) {
       clearTimeout(this.overlayDismissTimer);
       this.overlayDismissTimer = -1;
     }
-
+    
     if (this.singleTapTimer !== -1) {
       clearTimeout(this.singleTapTimer);
       this.singleTapTimer = -1;
@@ -689,10 +738,10 @@ export struct MangaReaderPage {
 
     // 恢复屏幕常亮设置（关闭常亮）
     this.restoreKeepScreenOnSetting();
-
+    
     // 恢复系统默认亮度
     this.restoreBrightnessSetting();
-
+    
     // 注销音量键监听
     this.unregisterVolumeKeyListener();
 
@@ -701,9 +750,13 @@ export struct MangaReaderPage {
 
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    // [修复] 发布阅读进度更新事件，通知书库页面刷新
+    eventBus.publish(GameEvent.MANGA_READING_PROGRESS_UPDATED, new BasePayload());
+    
     logger.lifecycle(TAG, '漫画阅读器页面即将消失');
   }
-
+  
   /**
    * 恢复屏幕常亮设置（离开页面时关闭常亮）
    */
@@ -737,7 +790,7 @@ export struct MangaReaderPage {
         const physicalWidth = displayClass.width;
         const physicalHeight = displayClass.height;
         const densityPixels = displayClass.densityPixels || 1.0;
-
+        
         // 转换为vp单位（ClickEvent.displayX/displayY使用vp单位）
         // vp = px / densityPixels
         this.screenWidth = physicalWidth / densityPixels;
@@ -756,7 +809,7 @@ export struct MangaReaderPage {
       logger.error(TAG, `获取屏幕尺寸失败，使用默认值(vp). Code: ${(exception as BusinessError).code}, message: ${(exception as BusinessError).message}`);
     }
   }
-
+  
   /**
    * 初始化自动翻页控制器
    */
@@ -767,9 +820,9 @@ export struct MangaReaderPage {
       skipIntroPages: this.readingSettings.skipIntroPages,
       autoSwitchChapter: false
     };
-
+    
     this.autoPageTurnController = new AutoPageTurnController(config);
-
+    
     // 设置回调函数，为条漫模式提供特殊的异步翻页支持
     this.autoPageTurnController.setCallbacks(
       () => {
@@ -789,7 +842,7 @@ export struct MangaReaderPage {
       () => this.readerState.currentPageIndex,
       () => this.readerState.currentChapter?.pages.length || 0
     );
-
+    
     logger.info(TAG, '自动翻页控制器已初始化');
   }
 
@@ -904,8 +957,8 @@ export struct MangaReaderPage {
 
   private areMenusVisible(): boolean {
     return this.showTopToolbar || this.showBottomToolbar || this.showSettingsPanel ||
-    this.showQuickSettings || this.showMoreMenu || this.showChapterList ||
-    this.showAutoPageTurnSettings || this.showPageTurnAnimationSettings || this.showJumpToPageDialog;
+      this.showQuickSettings || this.showMoreMenu || this.showChapterList || 
+      this.showAutoPageTurnSettings || this.showPageTurnAnimationSettings || this.showJumpToPageDialog;
   }
 
   private pauseAutoPageTurnAndResetTimer(reason: string): void {
@@ -948,7 +1001,7 @@ export struct MangaReaderPage {
     }
     this.handleMenusVisibilityChange();
   }
-
+  
   /**
    * 显示自动翻页设置面板（带动画）
    */
@@ -958,7 +1011,7 @@ export struct MangaReaderPage {
     this.autoPageTurnSettingsScale = 0.95;
     this.autoPageTurnSettingsTranslateY = 20;
     this.showAutoPageTurnSettings = true;
-
+    
     if (this.uiContext) {
       this.uiContext.animateTo({
         duration: 200,
@@ -974,7 +1027,7 @@ export struct MangaReaderPage {
       this.autoPageTurnSettingsTranslateY = 0;
     }
   }
-
+  
   /**
    * 隐藏自动翻页设置面板（带动画）
    */
@@ -1002,7 +1055,7 @@ export struct MangaReaderPage {
   private getAutoPageTurnIconResource(): Resource {
     return this.autoPageTurnEnabled ? $r('app.media.ic_auto_selected') : $r('app.media.ic_auto');
   }
-
+  
   /**
    * 切换自动翻页状态
    */
@@ -1011,9 +1064,9 @@ export struct MangaReaderPage {
       logger.error(TAG, '自动翻页控制器未初始化');
       return;
     }
-
+    
     const currentState = this.autoPageTurnController.getState();
-
+    
     if (currentState === AutoPageTurnState.STOPPED) {
       this.autoPageTurnController.start();
       this.autoPageTurnState = AutoPageTurnState.RUNNING;
@@ -1028,7 +1081,7 @@ export struct MangaReaderPage {
       logger.info(TAG, '自动翻页已恢复');
     }
   }
-
+  
   /**
    * 停止自动翻页
    */
@@ -1039,7 +1092,7 @@ export struct MangaReaderPage {
       logger.info(TAG, '自动翻页已停止');
     }
   }
-
+  
   /**
    * 更新自动翻页配置
    */
@@ -1047,14 +1100,14 @@ export struct MangaReaderPage {
     if (!this.autoPageTurnController) {
       return;
     }
-
+    
     const config: AutoPageTurnConfig = {
       interval: this.readingSettings.autoPageTurnInterval,
       skipIntro: this.readingSettings.skipIntroPages > 0,
       skipIntroPages: this.readingSettings.skipIntroPages,
       autoSwitchChapter: false
     };
-
+    
     this.autoPageTurnController.setConfig(config);
     logger.info(TAG, '自动翻页配置已更新');
   }
@@ -1080,15 +1133,15 @@ export struct MangaReaderPage {
     const domainKomiic: boolean = firstPageUrl.includes('komiic.com');
 
     const isKomiic = baseUrl.includes('komiic.com') ||
-      (this.currentSourceId === 6) ||
-      (manga.sourceInfo?.sourceName?.toLowerCase().includes('komiic')) ||
-      (srcNameLowerFromParams.length > 0 && srcNameLowerFromParams.includes('komiic')) ||
-      domainKomiic;
+                     (this.currentSourceId === 6) ||
+                     (manga.sourceInfo?.sourceName?.toLowerCase().includes('komiic')) ||
+                     (srcNameLowerFromParams.length > 0 && srcNameLowerFromParams.includes('komiic')) ||
+                     domainKomiic;
 
     if (isKomiic) {
       // 获取外部 Manga ID
       let externalMangaId = this.pageParams?.mangaId || manga.id;
-
+      
       // [修复] 优先使用 manga.sourceInfo.externalId
       if (externalMangaId.startsWith('id_')) {
         if (manga.sourceInfo?.externalId) {
@@ -1115,7 +1168,7 @@ export struct MangaReaderPage {
           logger.warn(TAG, `⚠️ chapter.externalId为空，无法替换内部ID: ${externalChapterId}`);
         }
       }
-
+      
       // 构造正确的 Referer
       let newReferer = `https://komiic.com/comic/${externalMangaId}/chapter/${externalChapterId}/images/all`;
       const needFallback: boolean = (externalMangaId.length === 0) || (externalMangaId.startsWith('id_')) || (externalChapterId.length === 0) || (externalChapterId.startsWith('id_'));
@@ -1125,31 +1178,31 @@ export struct MangaReaderPage {
       } else {
         logger.info(TAG, `✅ 构造完整Referer: ${newReferer}`);
       }
-
+      
       // 只有当 Referer 真的变化时才更新，避免死循环
       if (this.networkHeaders) {
         // 如果 headers 已存在，检查 Referer 是否需要更新
         if (this.networkHeaders.referer !== newReferer) {
-          const prev: RequestHeaders = this.networkHeaders;
-          // 创建新对象，保留旧属性 (不使用 ... 语法，明确赋值)
-          const updated: RequestHeaders = {
-            userAgent: prev?.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-            accept: prev?.accept || 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
-            referer: newReferer,// 更新 Referer
-            origin: newReferer,
-            acceptLanguage: prev && prev.acceptLanguage ? prev.acceptLanguage : 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-            cacheControl: prev.cacheControl,
-            pragma: prev.pragma,
-            secFetchDest: prev.secFetchDest,
-            secFetchMode: prev.secFetchMode,
-            secFetchSite: prev.secFetchSite,
-            cookie: prev?.cookie
-          } as RequestHeaders;
-
-          this.networkHeaders = updated;
-          this.networkHeadersTick = this.networkHeadersTick + 1; // 递增 Tick
-
-          logger.info(TAG, `✅ [二次确认] 强制更新Referer: ${newReferer}, Tick=${this.networkHeadersTick}`);
+           const prev: RequestHeaders = this.networkHeaders;
+           // 创建新对象，保留旧属性 (不使用 ... 语法，明确赋值)
+           const updated: RequestHeaders = {
+             userAgent: prev?.userAgent || 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+             accept: prev?.accept || 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
+             referer: newReferer,// 更新 Referer
+             origin: newReferer,
+             acceptLanguage: prev && prev.acceptLanguage ? prev.acceptLanguage : 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+             cacheControl: prev.cacheControl,
+             pragma: prev.pragma,
+             secFetchDest: prev.secFetchDest,
+             secFetchMode: prev.secFetchMode,
+             secFetchSite: prev.secFetchSite,
+             cookie: prev?.cookie
+           } as RequestHeaders;
+           
+           this.networkHeaders = updated;
+           this.networkHeadersTick = this.networkHeadersTick + 1; // 递增 Tick
+           
+           logger.info(TAG, `✅ [二次确认] 强制更新Referer: ${newReferer}, Tick=${this.networkHeadersTick}`);
         }
       } else {
         // 如果 headers 为空，进行初始化
@@ -1160,10 +1213,10 @@ export struct MangaReaderPage {
           accept: 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5',
           acceptLanguage: 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7'
         } as RequestHeaders;
-
+        
         this.networkHeaders = updated;
         this.networkHeadersTick = this.networkHeadersTick + 1;
-
+        
         logger.info(TAG, `✅ [修正逻辑] 初始化并更新Referer: ${newReferer}, Tick=${this.networkHeadersTick}`);
       }
     }
@@ -1179,7 +1232,7 @@ export struct MangaReaderPage {
       logger.info(TAG, `✅ mangaId本身就是外部ID: ${mangaId}`);
       return mangaId;
     }
-
+    
     // 2. 如果是内部ID，从online_comic表查询（使用强类型方法）
     try {
       const onlineComic = await DataManager.getInstance().getOnlineComicInfoById(mangaId);
@@ -1214,7 +1267,7 @@ export struct MangaReaderPage {
       logger.info(TAG, `✅ 使用内存中的章节externalId: ${chapter.externalId}`);
       return chapter.externalId;
     }
-
+    
     // 2. 如果内存中没有，从online_chapter表查询
     if (chapter.id && (chapter.id.startsWith('id_') || chapter.id.startsWith('local_'))) {
       try {
@@ -1235,13 +1288,13 @@ export struct MangaReaderPage {
         throw err as Error;
       }
     }
-
+    
     // 3. 如果chapter.id本身就是外部ID（不是id_或local_开头），直接使用
     if (chapter.id && !chapter.id.startsWith('id_') && !chapter.id.startsWith('local_')) {
       logger.info(TAG, `✅ chapter.id本身就是外部ID: ${chapter.id}`);
       return chapter.id;
     }
-
+    
     // 4. 所有方法都失败，抛出错误
     const errorMsg = `❌ 无法获取章节 "${chapter.title}" 的有效externalId！\\n` +
       `  - chapter.id: ${chapter.id}\\n` +
@@ -1256,7 +1309,7 @@ export struct MangaReaderPage {
    */
   private isInitializing: boolean = false; // 防止重复初始化
   private initPromise: Promise<void> | null = null; // 保存初始化Promise
-
+  
   private async initializeMangaReader(params: MangaReaderPageParams): Promise<void> {
     // 如果正在初始化，等待完成而不是直接返回
     if (this.isInitializing && this.initPromise) {
@@ -1264,11 +1317,11 @@ export struct MangaReaderPage {
       await this.initPromise;
       return;
     }
-
+    
     this.isInitializing = true;
     logger.info(TAG, '🚀 开始初始化漫画阅读器');
     this.isNetworkConfigReady = false; // 重置配置就绪状态，阻止 Viewer 渲染
-
+    
     // 执行初始化并保存Promise
     this.initPromise = (async () => {
       try {
@@ -1278,10 +1331,10 @@ export struct MangaReaderPage {
         this.initPromise = null;
       }
     })();
-
+    
     await this.initPromise;
   }
-
+  
   /**
    * 实际的初始化逻辑
    */
@@ -1324,7 +1377,7 @@ export struct MangaReaderPage {
 
     // [重构] 根据是否有sourceId判断是在线还是本地漫画
     const hasSourceId = srcId && typeof srcId === 'number' && srcId > 0;
-
+    
     // [修复] 如果mangaId是内部ID格式，从数据库查询真实的externalId
     if (targetMangaId.startsWith('id_')) {
       try {
@@ -1399,16 +1452,16 @@ export struct MangaReaderPage {
       // 获取漫画数据
       let manga: Manga;
       // [修复] OnlineDownloaded也需要初始化MangaEngine以支持章节切换
-      let isWebViewSource = params.contentType === MangaReaderContentType.OnlineUndownloaded ||
-        params.contentType === MangaReaderContentType.OnlineDownloaded;
-
-
+      let isWebViewSource = params.contentType === MangaReaderContentType.OnlineUndownloaded || 
+                           params.contentType === MangaReaderContentType.OnlineDownloaded;
+      
+      
 
       if (params.manga) {
         // 直接使用传递的漫画对象（通常来自WebView图源）
         manga = params.manga;
         logger.debug(TAG, `📖 使用直接传递的漫画对象，内容类型: ${params.contentType}`);
-
+        
         // [修复] 对于WebView图源的在线漫画，从数据库加载章节和页面信息
         // [修复] 如果设置了skipDatabaseLookup，跳过数据库查找
         if (isWebViewSource && manga.id && !params.skipDatabaseLookup) {
@@ -1419,14 +1472,15 @@ export struct MangaReaderPage {
             logger.debug(TAG, `📚 online_chapter表返回章节数量: ${chapters ? chapters.length : 0}`);
             if (chapters && chapters.length > 0) {
               const mangaChapters: MangaChapter[] = [];
-
+              
               for (const chapterInfo of chapters) {
                 logger.debug(TAG, `📄 加载在线章节页面信息: ${chapterInfo.title} (ID: ${chapterInfo.id}, externalId: ${chapterInfo.externalId})`);
                 const pageInfos = await DataManager.getInstance().getOnlineChapterPages(chapterInfo.id);
                 logger.debug(TAG, `📄 在线章节 ${chapterInfo.title} 有 ${pageInfos.length} 页`);
-
+                
                 // 转换页面信息为MangaPage格式
-                const pages: MangaPage[] = pageInfos.map(pageInfo => {
+                // [修复] 使用数组索引而不是pageNumber，确保index是0-indexed
+                const pages: MangaPage[] = pageInfos.map((pageInfo, arrayIndex) => {
                   let sourceType: ImageSourceType;
                   if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
                     sourceType = ImageSourceType.NETWORK;
@@ -1435,10 +1489,10 @@ export struct MangaReaderPage {
                   } else {
                     sourceType = ImageSourceType.RAWFILE;
                   }
-
+                  
                   const page: MangaPage = {
                     id: pageInfo.id,
-                    index: pageInfo.pageNumber,
+                    index: arrayIndex, // [修复] 使用0-indexed数组索引
                     sourceType: sourceType,
                     imagePath: pageInfo.imageUrl,
                     imageUrl: pageInfo.imageUrl,
@@ -1449,9 +1503,9 @@ export struct MangaReaderPage {
                   };
                   return page;
                 });
-
+                
                 logger.debug(TAG, `📄 转换后页面数量: ${pages.length}`);
-
+                
                 const chapter: MangaChapter = {
                   id: chapterInfo.id,
                   title: chapterInfo.title,
@@ -1466,11 +1520,11 @@ export struct MangaReaderPage {
                   localPath: chapterInfo.downloadPath,
                   externalId: chapterInfo.externalId // [重构] 从online_chapter表读取外部ID
                 };
-
+                
                 mangaChapters.push(chapter);
                 logger.debug(TAG, `✅ 在线章节 ${chapter.title} 转换完成 (externalId: ${chapter.externalId})`);
               }
-
+              
               manga.chapters = mangaChapters;
               logger.info(TAG, `✅ 从online_chapter表加载了 ${manga.chapters.length} 个章节`);
             } else {
@@ -1491,20 +1545,20 @@ export struct MangaReaderPage {
             logger.info(TAG, `🔍 当前章节标题: "${params.chapterTitle}"`);
           }
         }
-
+        
         // 如果是WebView图源，初始化MangaSourceEngine
         if (isWebViewSource && params.sourceId) {
           this.currentSourceId = params.sourceId;
           logger.info(TAG, `🌐 WebView图源，初始化MangaSourceEngine，sourceId=${params.sourceId}, sourceName=${params.sourceName || '未指定'}`);
-
+          
           try {
             // [修复] 传递图源名称，支持按名称降级查找
             this.mangaEngine = await this.webViewManager.getMangaEngine(params.sourceId, params.sourceName);
             logger.info(TAG, `✅ MangaSourceEngine初始化成功`);
-
+            
             // 加载图源的预加载设置
             await this.loadSourcePreloadSettings(params.sourceId);
-
+            
             const engine: MangaSourceEngine | null = this.mangaEngine;
             logger.debug(TAG, `🔍 检查engine对象: engine=${engine ? '存在' : 'null'}, this.mangaEngine=${this.mangaEngine ? '存在' : 'null'}`);
             logger.info(TAG, `🔄 准备配置网络请求头`);
@@ -1516,7 +1570,7 @@ export struct MangaReaderPage {
                 baseUrl = String(cfg.metadata.baseUrl);
               }
               logger.debug(TAG, `📋 步骤2: baseUrl=${baseUrl}`);
-
+              
               let ua: string = '';
               try {
                 logger.debug(TAG, '📋 步骤3: 开始获取WebView UserAgent');
@@ -1527,18 +1581,18 @@ export struct MangaReaderPage {
                 logger.warn(TAG, `⚠️ 获取WebView UserAgent失败: ${uaMsg}，使用默认值`);
                 ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
               }
-
+              
               logger.debug(TAG, '📋 步骤5: 准备构造Referer');
               let dynamicReferer: string = baseUrl;
               logger.debug(TAG, `🔍 准备构造Referer: isKomiic=${isKomiic}, baseUrl=${baseUrl}`);
-
+              
               // 注意：此时currentChapter可能还未设置，使用params.chapterId
               if (isKomiic && params.chapterId) {
                 logger.debug(TAG, '📋 步骤6: Komiic图源，构造特定Referer');
                 const base: string = baseUrl;
                 // [修复] 确保使用外部ID而不是内部ID
                 let externalMangaId: string = params.mangaId || params.manga?.id || '';
-
+                
                 // 如果mangaId是内部ID格式(id_开头)，尝试从manga.sourceInfo获取外部ID
                 if (externalMangaId.startsWith('id_')) {
                   logger.warn(TAG, `⚠️ 检测到内部mangaId格式: ${externalMangaId}，尝试获取外部ID`);
@@ -1554,7 +1608,7 @@ export struct MangaReaderPage {
                     }
                   }
                 }
-
+                
                 let externalChapterId: string = params.chapterId;
                 // 如果chapterId是内部ID格式，尝试获取外部ID
                 if (externalChapterId.startsWith('id_')) {
@@ -1570,10 +1624,10 @@ export struct MangaReaderPage {
                     }
                   }
                 }
-
+                
                 logger.debug(TAG, `使用mangaId作为externalId: ${externalMangaId}`);
                 logger.debug(TAG, `使用chapterId: ${externalChapterId}`);
-
+                
                 // 如果ID仍然是内部格式，使用基础URL作为Referer
                 if (externalMangaId.startsWith('id_') || externalChapterId.startsWith('id_')) {
                   dynamicReferer = base + '/';
@@ -1598,7 +1652,7 @@ export struct MangaReaderPage {
                 secFetchMode: 'no-cors',
                 secFetchSite: 'same-origin'
               } as RequestHeaders;
-
+              
               logger.debug(TAG, '📋 步骤8: 开始获取Cookie');
               try {
                 const cm2: CookieManager = CookieManager.getInstance();
@@ -1619,11 +1673,11 @@ export struct MangaReaderPage {
               this.networkHeaders = headers;
               this.networkHeadersTick++;
               logger.debug(TAG, `📋 步骤13: networkHeadersTick=${this.networkHeadersTick}`);
-
+              
               // [修复] 网络配置准备完成，允许Viewer渲染
               this.isNetworkConfigReady = true;
               logger.debug(TAG, '📋 步骤14: isNetworkConfigReady已设置为true');
-
+              
               logger.debug(TAG, `🌐 网络请求头已准备: UA=${ua.substring(0, Math.min(64, ua.length))}, Referer=${dynamicReferer}`);
               logger.info(TAG, `✅ 网络配置就绪，允许Viewer渲染`);
               logger.debug(TAG, '📋 步骤15: 网络请求头配置完成，准备退出if块');
@@ -1649,15 +1703,15 @@ export struct MangaReaderPage {
         if (!comicInfo) {
           throw new Error(`未找到ID为 ${params.mangaId} 的漫画`);
         }
-
+        
         // 转换为Manga对象（使用异步方法，从数据库加载完整的阅读设置和进度）
         manga = await ComicConverter.convertComicInfoToMangaAsync(comicInfo);
         logger.debug(TAG, `✅ 漫画基本信息加载完成: ${manga.title}`);
-
+        
         // [重构] 根据是否有sourceId判断是在线漫画还是本地漫画
         const hasSourceId = params.sourceId && typeof params.sourceId === 'number' && params.sourceId > 0;
         logger.debug(TAG, `📚 开始加载章节信息，hasSourceId: ${hasSourceId}`);
-
+        
         let chapters: ChapterInfo[] | OnlineChapterInfo[];
         if (hasSourceId) {
           // 在线漫画：从online_chapter表加载
@@ -1668,20 +1722,21 @@ export struct MangaReaderPage {
           logger.info(TAG, `📚 本地漫画，从chapter表加载章节`);
           chapters = await DataManager.getInstance().getComicChapters(params.mangaId);
         }
-
+        
         if (chapters && chapters.length > 0) {
           // 转换章节信息为MangaChapter格式，并加载页面信息
           const mangaChapters: MangaChapter[] = [];
-
+          
           for (const chapterInfo of chapters) {
             // [重构] 根据是否为在线漫画选择页面加载方法
             logger.debug(TAG, `📄 加载章节页面信息: ${chapterInfo.title} (ID: ${chapterInfo.id})`);
-            const pageInfos: PageInfo[] | OnlinePageInfo[] = hasSourceId
+            const pageInfos: PageInfo[] | OnlinePageInfo[] = hasSourceId 
               ? await DataManager.getInstance().getOnlineChapterPages(chapterInfo.id)
               : await DataManager.getInstance().getChapterPages(chapterInfo.id);
-
+            
             // 转换页面信息为MangaPage格式
-            const pages: MangaPage[] = pageInfos.map((pageInfo: PageInfo | OnlinePageInfo) => {
+            // [修复] 使用数组索引而不是pageNumber/index，确保index是0-indexed
+            const pages: MangaPage[] = pageInfos.map((pageInfo: PageInfo | OnlinePageInfo, arrayIndex: number) => {
               // 根据图片路径判断sourceType
               let sourceType: ImageSourceType;
               if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
@@ -1693,37 +1748,34 @@ export struct MangaReaderPage {
                 // 默认为rawfile资源
                 sourceType = ImageSourceType.RAWFILE;
               }
-
+              
               // [重构] 根据是否为在线漫画选择字段映射
-              const pageIndex = hasSourceId
-                ? (pageInfo as OnlinePageInfo).pageNumber  // OnlinePageInfo使用pageNumber
-                : (pageInfo as PageInfo).index;             // PageInfo使用index
-              const localPath = hasSourceId
+              const localPath = hasSourceId 
                 ? undefined                                 // OnlinePageInfo没有localPath
                 : (pageInfo as PageInfo).localPath;
-
+              
               const converter: PageInfoToMangaPageConverter = {
                 id: pageInfo.id,
-                pageNumber: pageIndex,
+                pageNumber: arrayIndex, // [修复] 使用0-indexed数组索引
                 imageUrl: pageInfo.imageUrl,
                 localPath: localPath,
                 width: pageInfo.width,
                 height: pageInfo.height,
                 fileSize: pageInfo.fileSize,
                 isLoaded: false,
-                index: pageIndex,
+                index: arrayIndex, // [修复] 使用0-indexed数组索引
                 sourceType: sourceType,
                 imagePath: pageInfo.imageUrl,
                 loadProgress: 0
               };
               return converter as MangaPage;
             });
-
+            
             // [重构] 根据是否为在线漫画选择字段映射
             const chapterNumber = hasSourceId
               ? (chapterInfo as OnlineChapterInfo).chapterNumber  // OnlineChapterInfo使用chapterNumber
               : (chapterInfo as ChapterInfo).index;                // ChapterInfo使用index
-
+            
             const converter: ChapterInfoToMangaChapterConverter = {
               id: chapterInfo.id,
               title: chapterInfo.title,
@@ -1740,17 +1792,17 @@ export struct MangaReaderPage {
               localPath: chapterInfo.downloadPath,
               externalId: chapterInfo.externalId // [重构] 从online_chapter或chapter表读取外部ID
             };
-
+            
             logger.debug(TAG, `转换章节: ${converter.title}, 编号: ${converter.chapterNumber}, 页数: ${pages.length}`);
             mangaChapters.push(converter as MangaChapter);
           }
-
+          
           manga.chapters = mangaChapters;
           logger.info(TAG, `✅ 章节信息加载完成，共 ${manga.chapters.length} 个章节`);
-
+          
           // [修复] 检查是否有章节缺少externalId，如果有则尝试从MangaSourceEngine补全
-          const chaptersWithoutExternalId = manga.chapters.filter(ch =>
-          !ch.externalId || ch.externalId.startsWith('id_')
+          const chaptersWithoutExternalId = manga.chapters.filter(ch => 
+            !ch.externalId || ch.externalId.startsWith('id_')
           );
           if (chaptersWithoutExternalId.length > 0) {
             logger.warn(TAG, `⚠️ 发现 ${chaptersWithoutExternalId.length} 个章节缺少有效的externalId，尝试补全`);
@@ -1759,7 +1811,7 @@ export struct MangaReaderPage {
               logger.warn(TAG, `  - 章节 ${ch.title} (id=${ch.id}) 缺少externalId`);
             });
           }
-
+          
           // 输出章节页面统计信息
           manga.chapters.forEach((chapter, index) => {
             logger.info(TAG, `章节${index + 1}: ${chapter.title} (页数: ${chapter.pages.length}, externalId: ${chapter.externalId || 'N/A'})`);
@@ -1785,13 +1837,13 @@ export struct MangaReaderPage {
 
       // 设置当前章节 - 增强错误处理和日志
       logger.info(TAG, `📚 开始章节初始化，漫画总章节数: ${manga.chapters.length}`);
-
+      
       if (params.chapterId) {
         logger.debug(TAG, `🔍 查找指定章节ID: ${params.chapterId}`);
-
+        
         // [修复] 对于WebView图源，params.chapterId是外部ID，需要通过externalId字段匹配
         let chapter: MangaChapter | undefined;
-
+        
         if (isWebViewSource) {
           // WebView图源：通过externalId匹配
           logger.debug(TAG, `🌐 WebView图源，使用externalId匹配章节`);
@@ -1813,7 +1865,7 @@ export struct MangaReaderPage {
             logger.warn(TAG, `可用章节ID列表: ${manga.chapters.map(ch => ch.id).join(', ')}`);
           }
         }
-
+        
         if (chapter) {
           this.readerState.currentChapter = chapter;
         } else {
@@ -1853,14 +1905,15 @@ export struct MangaReaderPage {
       // [重构] 在线已下载：从online_page表加载本地文件路径
       if (params.contentType === MangaReaderContentType.OnlineDownloaded && this.readerState.currentChapter.pages.length === 0) {
         logger.info(TAG, '📥 在线已下载章节：从online_page表加载页面');
-
+        
         // [修复] 使用getOnlineChapterPages查询online_page表
         const pageInfos = await DataManager.getInstance().getOnlineChapterPages(this.readerState.currentChapter.id);
-        const mangaPages: MangaPage[] = pageInfos.map((pageInfo: OnlinePageInfo) => {
+        // [修复] 使用数组索引而不是pageNumber，确保index是0-indexed
+        const mangaPages: MangaPage[] = pageInfos.map((pageInfo: OnlinePageInfo, arrayIndex: number) => {
           // 在线已下载的页面应该有localPath
           let sourceType: ImageSourceType;
           let imagePath: string;
-
+          
           // 优先使用localPath（如果已下载）
           if (pageInfo.localPath && pageInfo.localPath.length > 0) {
             sourceType = ImageSourceType.LOCAL;
@@ -1876,10 +1929,10 @@ export struct MangaReaderPage {
             imagePath = pageInfo.imageUrl;
             logger.warn(TAG, `  - 页面 ${pageInfo.pageNumber}: 未找到本地路径，使用 ${sourceType}`);
           }
-
+          
           const page: MangaPage = {
             id: pageInfo.id,
-            index: pageInfo.pageNumber,
+            index: arrayIndex, // [修复] 使用0-indexed数组索引
             sourceType: sourceType,
             imagePath: imagePath,
             imageUrl: pageInfo.imageUrl,
@@ -1935,7 +1988,7 @@ export struct MangaReaderPage {
           // [修复] 显示加载状态
           this.readerState.loadingMessage = '正在获取章节图片列表...';
           logger.info(TAG, `🔄 开始获取页面列表: mangaId=${externalMangaId}, chapterId=${externalChapterId}`);
-
+          
           // [新增] 等待WebView组件完全初始化（避免"WebviewController must be associated with a Web component"错误）
           logger.debug(TAG, `⏳ 等待WebView组件就绪...`);
           await new Promise<void>((resolve) => {
@@ -1944,12 +1997,12 @@ export struct MangaReaderPage {
               resolve();
             }, 500); // 延迟500ms确保WebView组件已渲染
           });
-
+          
           // [新增] 智能重试机制：页面列表为空时自动重试
           let pageListResult: ESObject | null = null;
           const maxRetries = 2; // 最多重试2次
           let retryCount = 0;
-
+          
           while (retryCount <= maxRetries) {
             if (retryCount > 0) {
               const retryDelay = retryCount * 1000; // 递增延迟：1s, 2s
@@ -1959,28 +2012,28 @@ export struct MangaReaderPage {
                 setTimeout(() => resolve(), retryDelay);
               });
             }
-
+            
             // 使用修正后的ID请求页面列表
             pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
-
+            
             // 检查结果是否有效
             if (pageListResult.success && pageListResult.data && pageListResult.data.length > 0) {
               logger.info(TAG, `✅ 页面列表获取成功，共 ${pageListResult.data.length} 页`);
               break; // 成功获取，退出重试循环
             }
-
+            
             // 如果是最后一次尝试，记录失败
             if (retryCount === maxRetries) {
               logger.warn(TAG, `⚠️ 已重试${maxRetries}次，页面列表仍为空`);
             }
-
+            
             retryCount++;
           }
-
+          
           if (!pageListResult) {
             throw new Error('页面列表获取失败：未能获取有效结果');
           }
-
+          
           logger.info(TAG, `📊 页面列表获取结果: success=${pageListResult.success}, hasData=${!!pageListResult.data}, dataLength=${pageListResult.data?.length || 0}, 重试次数=${retryCount}`);
           if (pageListResult.error) {
             logger.error(TAG, `❌ 页面列表获取错误: ${pageListResult.error}`);
@@ -2008,7 +2061,7 @@ export struct MangaReaderPage {
           //    this.networkHeadersTick = this.networkHeadersTick + 1;
           //    logger.info(TAG, `🔄 更新图片加载 Referer: ${newReferer}, Tick=${this.networkHeadersTick}`);
           // }
-
+          
           if (!pageListResult.success || !pageListResult.data) {
             const errorMsg: string = (pageListResult.error as string) || '获取页面列表失败';
             logger.error(TAG, `❌ 页面列表获取失败: ${errorMsg}`);
@@ -2016,9 +2069,9 @@ export struct MangaReaderPage {
             this.readerState.isLoading = false;
             throw new Error(errorMsg);
           }
-
+          
           logger.info(TAG, `✅ 页面列表获取成功，共 ${pageListResult.data.length} 页`);
-
+          
           // [调试] 输出所有页面详情
           logger.info(TAG, `📊 [MangaReaderPage] 从MangaSourceEngine获取到的页面详情:`);
           pageListResult.data.forEach((page: SourcePageInfo, idx: number) => {
@@ -2029,7 +2082,7 @@ export struct MangaReaderPage {
           if (pageListResult.data.length > 10) {
             logger.info(TAG, `  ... 还有 ${pageListResult.data.length - 10} 页未显示`);
           }
-
+          
           // [重构] 对于在线未下载漫画，从online_page表查询（不与本地方法混用）
           const dataManager = DataManager.getInstance();
           const dbPages = await dataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
@@ -2051,7 +2104,7 @@ export struct MangaReaderPage {
 
           // [修复] 检查是否有有效的图片URL
           const validPages = sourcePages.filter(p => p.imageUrl && p.imageUrl.trim().length > 0);
-
+          
           if (validPages.length === 0) {
             const errorMsg = '提取到的图片列表为空或所有URL无效';
             logger.error(TAG, `❌ ${errorMsg}`);
@@ -2060,9 +2113,9 @@ export struct MangaReaderPage {
             this.readerState.isLoading = false;
             throw new Error(errorMsg);
           }
-
+          
           logger.info(TAG, `✅ 有效图片数量: ${validPages.length}`);
-
+          
           // 转换SourcePageInfo为MangaPage
           const pagesToConvert = validPages;
           const mangaPages: MangaPage[] = pagesToConvert.map((pageInfo: SourcePageInfo, index: number) => {
@@ -2078,13 +2131,13 @@ export struct MangaReaderPage {
               fileSize: 0,
               isLoaded: false
             };
-
+            
             return page;
           });
-
+          
           // 更新章节的页面列表
           this.readerState.currentChapter.pages = mangaPages;
-
+          
           logger.info(TAG, `📊 [MangaReaderPage] 转换后的MangaPage详情:`);
           mangaPages.forEach((page: MangaPage, idx: number) => {
             if (idx < 10) {
@@ -2095,7 +2148,7 @@ export struct MangaReaderPage {
             logger.info(TAG, `  ... 还有 ${mangaPages.length - 10} 页未显示`);
           }
           logger.info(TAG, `✅ 章节页面数据已更新，共 ${mangaPages.length} 页`);
-
+          
           // 保存页面列表到数据库
           if (validPages.length > 0) {
             this.saveChapterPagesToDatabase(externalChapterId, validPages).catch((err: Error) => {
@@ -2130,15 +2183,15 @@ export struct MangaReaderPage {
             const preMsg: string = preloadErr instanceof Error ? preloadErr.message : String(preloadErr);
             logger.warn(TAG, `🛰️ 首图网络加载触发异常: ${preMsg}`);
           }
-
-          // 保存页面信息到数据库
-          // [修改] 仅当 sourcePages 有数据且来自网络时保存
-          if (sourcePages.length > 0) {
-            await this.savePageInfoToDatabase(this.readerState.currentChapter.id, sourcePages);
-
-            // 当前章节页面信息加载完成后，立即预加载下一章节（如果启用）
-            this.preloadNextChapterAfterCurrentLoaded();
-          }
+          
+        // 保存页面信息到数据库
+        // [修改] 仅当 sourcePages 有数据且来自网络时保存
+        if (sourcePages.length > 0) {
+          await this.savePageInfoToDatabase(this.readerState.currentChapter.id, sourcePages);
+          
+          // 当前章节页面信息加载完成后，立即预加载下一章节（如果启用）
+          this.preloadNextChapterAfterCurrentLoaded();
+        }
           // 在线图源：检测每日限额（仅对支持的图源如Komiic执行）
           await this.detectDailyImageLimitIfSupported(externalChapterId);
 
@@ -2210,32 +2263,32 @@ export struct MangaReaderPage {
           logger.warn(TAG, `在线未下载预触发网络加载异常: ${pmsg}`);
         }
       }
-
+      
       // 设置当前页面索引 - 增强验证和日志
       const requestedPageIndex = params.pageIndex !== undefined ? params.pageIndex : 0;
       // [修复] 使用totalPages而不是pages.length来显示实际总页数
       const totalPages = this.readerState.currentChapter.totalPages || this.readerState.currentChapter.pages.length;
       const maxPageIndex = Math.max(0, this.readerState.currentChapter.pages.length - 1);
-
+      
       logger.debug(TAG, `📄 页面初始化参数:`);
       logger.debug(TAG, `  - 请求页面索引: ${requestedPageIndex}`);
       logger.debug(TAG, `  - 章节总页数: ${totalPages}`);
       logger.debug(TAG, `  - 最大页面索引: ${maxPageIndex}`);
-
+      
       if (totalPages === 0) {
         logger.error(TAG, `❌ 当前章节没有页面数据`);
         this.readerState.errorMessage = `章节"${this.readerState.currentChapter.title}"没有页面数据`;
         this.readerState.isLoading = false;
         return;
       }
-
+      
       // 确保页面索引在有效范围内
       this.readerState.currentPageIndex = Math.max(0, Math.min(requestedPageIndex, maxPageIndex));
-
+      
       if (requestedPageIndex !== this.readerState.currentPageIndex) {
         logger.warn(TAG, `⚠️ 请求的页面索引 ${requestedPageIndex} 超出范围 [0, ${maxPageIndex}]，已调整为 ${this.readerState.currentPageIndex}`);
       }
-
+      
       // [修复] 优先使用currentChapter.totalPages，如果未设置则使用pages.length
       const displayTotalPages = this.readerState.currentChapter.totalPages || totalPages;
       logger.info(TAG, `📄 页面初始化完成: 第 ${this.readerState.currentPageIndex + 1}/${displayTotalPages} 页`);
@@ -2255,7 +2308,7 @@ export struct MangaReaderPage {
       this.loadReadingSettings();
 
       // [新增] 此时章节已确定，强制刷新一次 Headers 以确保 Referer 正确
-      this.updateNetworkHeadersForChapter();
+      this.updateNetworkHeadersForChapter(); 
 
       // 预加载图片
       logger.debug(TAG, '🖼️ 开始预加载图片');
@@ -2281,7 +2334,7 @@ export struct MangaReaderPage {
       logger.info(TAG, `  - 当前页面: 第${this.readerState.currentPageIndex + 1}页/${summaryTotalPages}页`);
       logger.info(TAG, `  - 阅读模式: ${this.readingSettings.readingMode}`);
       logger.info(TAG, `  - 阅读方向: ${this.readingSettings.readingDirection}`);
-
+      
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorDetails: ErrorDetails = {
@@ -2294,11 +2347,11 @@ export struct MangaReaderPage {
         pageIndex: params?.pageIndex,
         timestamp: new Date().toISOString()
       };
-
+      
       const mangaInfo = params?.manga?.title || (params?.mangaId ? `ID: ${params.mangaId}` : '未知');
       this.readerState.errorMessage = `初始化失败: ${errorMessage}\n\n漫画: ${mangaInfo}\n章节ID: ${params?.chapterId || '未指定'}\n页面索引: ${params?.pageIndex || 0}\n\n请检查网络连接或重试`;
       this.readerState.isLoading = false;
-
+      
       logger.error(TAG, '❌ 漫画阅读器初始化失败', errorMessage);
       logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
       logger.error(TAG, `错误堆栈: ${error instanceof Error ? error.stack : 'N/A'}`);
@@ -2449,7 +2502,7 @@ export struct MangaReaderPage {
    */
   private loadReadingSettings(): void {
     logger.debug(TAG, '⚙️ 开始加载阅读设置');
-
+    
     try {
       if (!this.readerState.currentManga) {
         logger.warn(TAG, '⚠️ 当前漫画为空，无法加载阅读设置');
@@ -2469,17 +2522,17 @@ export struct MangaReaderPage {
       // Manga对象的readingSettings已经在convertComicInfoToMangaAsync中从数据库加载
       // 直接使用即可，无需再从AppStorage或其他地方加载
       const settings = this.readerState.currentManga.readingSettings;
-
+      
       logger.debug(TAG, `📖 从漫画对象加载设置（已从数据库加载）:`);
       logger.debug(TAG, `  - 阅读模式: ${settings.readingMode}`);
       logger.debug(TAG, `  - 阅读方向: ${settings.readingDirection}`);
       logger.debug(TAG, `  - 亮度: ${settings.brightness}`);
       logger.debug(TAG, `  - 保持屏幕常亮: ${settings.keepScreenOn}`);
-
+      
       // 直接引用漫画对象的设置（避免不必要的复制）
       this.readingSettings = settings;
       this.isReadingSettingsReady = true;
-
+      
       logger.info(TAG, '✅ 阅读设置加载完成（来自数据库），准备显示交互提示Overlay');
       if (!this.showInteractionOverlay) {
         this.showInteractionOverlay = true;
@@ -2491,7 +2544,7 @@ export struct MangaReaderPage {
       logger.debug(TAG, `  - 亮度: ${this.readingSettings.brightness}`);
       logger.debug(TAG, `  - 自动翻页间隔: ${this.readingSettings.autoPageTurnInterval}ms`);
       logger.debug(TAG, `  - 显示页面信息: ${this.readingSettings.showPageInfo}`);
-
+      
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorDetails: ReadingSettingsErrorDetails = {
@@ -2502,7 +2555,7 @@ export struct MangaReaderPage {
         hasReadingSettings: !!this.readerState.currentManga?.readingSettings,
         timestamp: new Date().toISOString()
       };
-
+      
       logger.error(TAG, '❌ 加载阅读设置失败', errorMessage);
       logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
       this.readingSettings = DEFAULT_READING_SETTINGS;
@@ -2520,35 +2573,35 @@ export struct MangaReaderPage {
    */
   private preloadImages(): void {
     logger.info(TAG, '🖼️ 开始预加载图片');
-
+    
     try {
       const currentChapter = this.readerState.currentChapter;
       if (!currentChapter) {
         logger.warn(TAG, '⚠️ 当前章节为空，无法预加载图片');
         return;
       }
-
+      
       const totalPages = currentChapter.pages.length;
       const currentPageIndex = this.readerState.currentPageIndex;
-
+      
       logger.debug(TAG, `📊 预加载计划:`);
       logger.debug(TAG, `  - 总页数: ${totalPages}`);
       logger.debug(TAG, `  - 当前页面: ${currentPageIndex + 1}`);
-
+      
       // 预加载当前页面和相邻页面
       const preloadRange = 50; // 预加载前后50页（全局默认）
       const startIndex = Math.max(0, currentPageIndex - preloadRange);
       const endIndex = Math.min(totalPages - 1, currentPageIndex + preloadRange);
-
+      
       logger.debug(TAG, `  - 预加载范围: ${startIndex + 1} - ${endIndex + 1}`);
-
+      
       for (let i = startIndex; i <= endIndex; i++) {
         const page = currentChapter.pages[i];
         if (page && page.imageUrl) {
           logger.debug(TAG, `🖼️ 预加载页面 ${i + 1}: ${page.imageUrl}`);
         }
       }
-
+      
       logger.info(TAG, `✅ 图片预加载计划完成，预加载 ${endIndex - startIndex + 1} 页`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2561,7 +2614,7 @@ export struct MangaReaderPage {
         totalPages: this.readerState.currentChapter?.pages.length,
         timestamp: new Date().toISOString()
       };
-
+      
       logger.error(TAG, '❌ 预加载图片失败', errorMessage);
       logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
     }
@@ -2578,7 +2631,7 @@ export struct MangaReaderPage {
         logger.error(TAG, '❌ 无法获取UIContext，设置全屏模式失败');
         return;
       }
-
+      
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, uiContext);
       logger.info(TAG, '✅ 使用WindowManager设置完全沉浸式阅读模式');
     } catch (error) {
@@ -2589,7 +2642,7 @@ export struct MangaReaderPage {
         operation: 'setupFullscreenMode',
         timestamp: new Date().toISOString()
       };
-
+      
       logger.error(TAG, '❌ 设置全屏阅读模式失败', errorMessage);
       logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
     }
@@ -2606,7 +2659,7 @@ export struct MangaReaderPage {
         logger.error(TAG, '❌ 无法获取UIContext，恢复正常模式失败');
         return;
       }
-
+      
       WindowManager.setDisplayMode(DisplayMode.DEFAULT, uiContext);
       logger.info(TAG, '✅ 使用WindowManager恢复默认显示模式');
     } catch (error) {
@@ -2617,7 +2670,7 @@ export struct MangaReaderPage {
         operation: 'restoreNormalMode',
         timestamp: new Date().toISOString()
       };
-
+      
       logger.error(TAG, '❌ 恢复正常模式失败', errorMessage);
       logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
     }
@@ -2628,7 +2681,7 @@ export struct MangaReaderPage {
    */
   private startEntranceAnimation(): void {
     this.isVisible = true;
-
+    
     // 确保UIContext已设置
     if (!this.uiContext) {
       logger.error(TAG, 'UIContext未初始化，无法执行动画');
@@ -2642,11 +2695,11 @@ export struct MangaReaderPage {
       }
       return;
     }
-
+    
     // 设置初始状态
     this.contentOpacity = 0;
     this.titleTranslateY = -20;
-
+    
     // 使用animateTo执行淡入动画
     this.uiContext.animateTo({
       duration: 300,
@@ -2671,7 +2724,7 @@ export struct MangaReaderPage {
     }, () => {
       this.titleTranslateY = 0;
     });
-
+    
     logger.debug(TAG, '入场动画已启动');
   }
 
@@ -2682,12 +2735,12 @@ export struct MangaReaderPage {
     if (!this.showInteractionOverlay) {
       return;
     }
-
+    
     // 5秒后自动隐藏
     this.overlayDismissTimer = setTimeout(() => {
       this.hideInteractionOverlay();
     }, 5000);
-
+    
     logger.info(TAG, '显示交互提示Overlay，5秒后自动隐藏');
   }
 
@@ -2700,7 +2753,7 @@ export struct MangaReaderPage {
       clearTimeout(this.overlayDismissTimer);
       this.overlayDismissTimer = -1;
     }
-
+    
     this.showInteractionOverlay = false;
     logger.info(TAG, '隐藏交互提示Overlay');
   }
@@ -2725,7 +2778,7 @@ export struct MangaReaderPage {
     // 先设置可见性，让组件渲染出来
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
-
+    
     if (this.uiContext) {
       // 使用animateTo执行淡入动画
       this.uiContext.animateTo({
@@ -2780,18 +2833,18 @@ export struct MangaReaderPage {
   private isCurlAnimationSupported(): boolean {
     const mode = this.readingSettings.readingMode;
     const direction = this.readingSettings.readingDirection;
-
+    
     // 单页从右到左模式
     if (mode === ReadingMode.SINGLE_PAGE_RTL) {
       return true;
     }
-
+    
     // 单页模式 + 从左到右或从右到左方向
     if (mode === ReadingMode.SINGLE_PAGE) {
-      return direction === ReadingDirection.LEFT_TO_RIGHT ||
-        direction === ReadingDirection.RIGHT_TO_LEFT;
+      return direction === ReadingDirection.LEFT_TO_RIGHT || 
+             direction === ReadingDirection.RIGHT_TO_LEFT;
     }
-
+    
     return false;
   }
 
@@ -2800,50 +2853,50 @@ export struct MangaReaderPage {
    */
   private handleSettingsChange(settings: ReadingSettings): void {
     logger.info(TAG, `阅读设置已更新: pageTurnAnimation=${settings.pageTurnAnimation}, brightness=${settings.brightness}`);
-
+    
     // 检查屏幕常亮设置是否变更
     const keepScreenOnChanged = this.readingSettings.keepScreenOn !== settings.keepScreenOn;
     // 检查亮度设置是否变更（在更新前检测，使用容差比较浮点数）
     const brightnessChanged = Math.abs(this.readingSettings.brightness - settings.brightness) > 0.01;
     // 检查音量键翻页设置是否变更
     const volumeKeyChanged = this.readingSettings.volumeKeyNavigation !== settings.volumeKeyNavigation;
-
+    
     // 保存设置到数据库和AppStorage（针对当前漫画）
     if (this.readerState.currentManga) {
       const mangaId = this.readerState.currentManga.id;
       const settingsJson = JSON.stringify(settings);
-
+      
       // 保存到数据库
       ComicConverter.saveReadingSettings(mangaId, settings).then(() => {
         logger.info(TAG, `✅ 阅读设置已保存到数据库: manga_settings_${mangaId}`);
       }).catch((error: Error) => {
         logger.error(TAG, `❌ 保存阅读设置到数据库失败: ${error.message}`);
       });
-
+      
       // 同时保存到AppStorage作为缓存
       AppStorage.setOrCreate(`manga_settings_${mangaId}`, settingsJson);
       logger.info(TAG, `已保存漫画独立设置到AppStorage: manga_settings_${mangaId}`);
-
+      
       // 更新Manga对象的阅读设置
       this.readerState.currentManga.readingSettings = settings;
     }
-
+    
     // 立即更新当前阅读设置
     this.readingSettings = settings;
-
+    
     // 如果屏幕常亮设置变更，立即应用
     if (keepScreenOnChanged) {
       this.applyKeepScreenOnSetting();
     }
-
+    
     // 亮度设置已移除，不再处理亮度变更
-
+    
     // 如果音量键翻页设置变更，更新监听状态
     if (volumeKeyChanged) {
       logger.info(TAG, `音量键翻页设置变更: ${settings.volumeKeyNavigation}`);
       this.updateVolumeKeyListener();
     }
-
+    
     // 更新自动翻页配置
     this.updateAutoPageTurnConfig();
 
@@ -2859,10 +2912,10 @@ export struct MangaReaderPage {
         logger.info(TAG, '设置变更触发：自动翻页间隔为0，已停止');
       }
     }
-
+    
     logger.debug(TAG, '阅读设置应用完成');
   }
-
+  
   /**
    * 显示快速设置面板
    * 修复：添加真正的动画效果
@@ -2873,16 +2926,16 @@ export struct MangaReaderPage {
     this.showMoreMenu = false;
     this.showChapterList = false;
     this.handleMenusVisibilityChange();
-
+    
     // 重置动画初始状态
     this.quickSettingsOpacity = 0;
     this.quickSettingsScale = 0.95;
     this.quickSettingsTranslateY = 20;
-
+    
     // 显示快速设置
     this.showQuickSettings = true;
     this.handleMenusVisibilityChange();
-
+    
     // 执行入场动画
     if (this.uiContext) {
       setTimeout(() => {
@@ -2902,7 +2955,7 @@ export struct MangaReaderPage {
     }
     logger.info(TAG, '显示快速设置面板');
   }
-
+  
   /**
    * 隐藏快速设置面板
    * 修复：添加真正的动画效果
@@ -2941,16 +2994,16 @@ export struct MangaReaderPage {
     this.showMoreMenu = false;
     this.showChapterList = false;
     this.handleMenusVisibilityChange();
-
+    
     // 重置动画初始状态
     this.settingsPanelOpacity = 0;
     this.settingsPanelScale = 0.95;
     this.settingsPanelTranslateY = 20;
-
+    
     // 显示设置面板
     this.showSettingsPanel = true;
     this.handleMenusVisibilityChange();
-
+    
     // 执行入场动画
     if (this.uiContext) {
       setTimeout(() => {
@@ -3061,7 +3114,7 @@ export struct MangaReaderPage {
     this.showQuickSettings = false;
     this.showChapterList = false;
     this.handleMenusVisibilityChange();
-
+    
     this.showPageTurnAnimationSettings = true;
     this.handleMenusVisibilityChange();
     if (this.uiContext) {
@@ -3089,12 +3142,12 @@ export struct MangaReaderPage {
       logger.debug(TAG, '音量键监听已注册，跳过');
       return;
     }
-
+    
     if (!this.readingSettings.volumeKeyNavigation) {
       logger.debug(TAG, '音量键翻页未启用，不注册监听');
       return;
     }
-
+    
     try {
       // 音量上键配置
       const volumeUpConfig: inputConsumer.KeyPressedConfig = {
@@ -3102,14 +3155,14 @@ export struct MangaReaderPage {
         action: 1, // 按下按键的行为
         isRepeat: false // 优先消费掉按键事件，不上报给系统
       };
-
+      
       // 音量下键配置
       const volumeDownConfig: inputConsumer.KeyPressedConfig = {
         key: KeyCode.KEYCODE_VOLUME_DOWN,
         action: 1,
         isRepeat: false
       };
-
+      
       // 音量上键回调
       this.volumeUpCallback = (event: InputKeyEvent) => {
         logger.info(TAG, '音量键翻页: 上一页 (inputConsumer)');
@@ -3117,7 +3170,7 @@ export struct MangaReaderPage {
           this.goToPreviousPage();
         }
       };
-
+      
       // 音量下键回调
       this.volumeDownCallback = (event: InputKeyEvent) => {
         logger.info(TAG, '音量键翻页: 下一页 (inputConsumer)');
@@ -3125,18 +3178,18 @@ export struct MangaReaderPage {
           this.goToNextPage();
         }
       };
-
+      
       // 注册监听
       inputConsumer.on('keyPressed', volumeUpConfig, this.volumeUpCallback);
       inputConsumer.on('keyPressed', volumeDownConfig, this.volumeDownCallback);
-
+      
       this.isVolumeKeyListenerRegistered = true;
       logger.info(TAG, '✅ 音量键翻页监听已注册');
     } catch (error) {
       logger.error(TAG, `注册音量键监听失败: ${JSON.stringify(error)}`);
     }
   }
-
+  
   /**
    * 注销音量键监听
    */
@@ -3144,7 +3197,7 @@ export struct MangaReaderPage {
     if (!this.isVolumeKeyListenerRegistered) {
       return;
     }
-
+    
     try {
       if (this.volumeUpCallback) {
         inputConsumer.off('keyPressed', this.volumeUpCallback);
@@ -3154,14 +3207,14 @@ export struct MangaReaderPage {
         inputConsumer.off('keyPressed', this.volumeDownCallback);
         this.volumeDownCallback = null;
       }
-
+      
       this.isVolumeKeyListenerRegistered = false;
       logger.info(TAG, '✅ 音量键翻页监听已注销');
     } catch (error) {
       logger.error(TAG, `注销音量键监听失败: ${JSON.stringify(error)}`);
     }
   }
-
+  
   /**
    * 更新音量键监听状态（根据设置启用/禁用）
    */
@@ -3180,19 +3233,19 @@ export struct MangaReaderPage {
    */
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
     logger.debug(TAG, `按键事件: keyCode=${keyCode}, volumeKeyNavigation=${this.readingSettings.volumeKeyNavigation}`);
-
+    
     // 检查是否启用音量键翻页
     if (!this.readingSettings.volumeKeyNavigation) {
       logger.debug(TAG, '音量键翻页未启用');
       return false;
     }
-
+    
     // 如果有菜单打开，不处理翻页
     if (this.areMenusVisible()) {
       logger.debug(TAG, '菜单可见，不处理音量键翻页');
       return false;
     }
-
+    
     // KeyCode.KEYCODE_VOLUME_UP = 16, KeyCode.KEYCODE_VOLUME_DOWN = 17
     if (keyCode === KeyCode.KEYCODE_VOLUME_UP || keyCode === 16) {
       // 音量上键 - 上一页
@@ -3205,7 +3258,7 @@ export struct MangaReaderPage {
       this.goToNextPage();
       return true;
     }
-
+    
     return false;
   }
 
@@ -3239,7 +3292,7 @@ export struct MangaReaderPage {
     this.jumpToPageInput = '';
     this.jumpToPageDialogOpacity = 0;
     this.jumpToPageDialogScale = 0.9;
-
+    
     if (this.uiContext) {
       setTimeout(() => {
         const animateOptions: AnimationConfig = { duration: 200, curve: Curve.EaseOut };
@@ -3321,42 +3374,42 @@ export struct MangaReaderPage {
     try {
       const chapter = this.readerState.currentChapter;
       const pageIndex = this.readerState.currentPageIndex;
-
+      
       if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
         logger.error(TAG, '无法保存：当前页面无效');
         AlertDialog.show({ message: '无法保存：当前页面无效' });
         return;
       }
-
+      
       const currentPage = chapter.pages[pageIndex];
       let imagePath = currentPage.imagePath;
-
+      
       // 如果是网络图片，需要先下载到沙箱
       if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
         logger.info(TAG, `保存网络图片到图库: ${imagePath}`);
         AlertDialog.show({ message: '网络图片暂不支持直接保存，请先下载章节' });
         return;
       }
-
+      
       // 本地图片路径
       if (!imagePath.startsWith('/')) {
         logger.error(TAG, `无效的图片路径: ${imagePath}`);
         AlertDialog.show({ message: '无法保存：图片路径无效' });
         return;
       }
-
+      
       const context = getContext(this);
-
+      
       // 获取文件后缀名
       const lastDotIndex = imagePath.lastIndexOf('.');
       const fileExtension = lastDotIndex > 0 ? imagePath.substring(lastDotIndex + 1) : 'jpg';
-
+      
       // 转换为沙箱文件URI
       const sandboxUri = fileUri.getUriFromPath(imagePath);
-
+      
       // 创建photoAccessHelper
       const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
-
+      
       // 准备保存配置
       const srcFileUris: Array<string> = [sandboxUri];
       const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [{
@@ -3365,22 +3418,22 @@ export struct MangaReaderPage {
         photoType: photoAccessHelper.PhotoType.IMAGE,
         subtype: photoAccessHelper.PhotoSubtype.DEFAULT
       }];
-
+      
       // 显示保存对话框让用户确认
       const desFileUris: Array<string> = await phAccessHelper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs);
-
+      
       if (desFileUris.length > 0) {
         // 打开目标文件和源文件
         const destFile = await fs.open(desFileUris[0], fs.OpenMode.WRITE_ONLY);
         const srcFile = await fs.open(sandboxUri, fs.OpenMode.READ_ONLY);
-
+        
         // 复制文件内容
         await fs.copyFile(srcFile.fd, destFile.fd);
-
+        
         // 关闭文件
         fs.closeSync(destFile);
         fs.closeSync(srcFile);
-
+        
         logger.info(TAG, `图片保存成功: ${desFileUris[0]}`);
         AlertDialog.show({ message: '图片已保存到图库' });
       } else {
@@ -3399,14 +3452,14 @@ export struct MangaReaderPage {
   private async savePageInfoToDatabase(chapterId: string, pages: SourcePageInfo[]): Promise<void> {
     try {
       const dataManager = DataManager.getInstance();
-
+      
       // 检查是否已经保存过页面信息
       const existingPages = await dataManager.getPageInfoList(chapterId);
       if (existingPages.length > 0) {
         logger.debug(TAG, `章节 ${chapterId} 的页面信息已存在，跳过保存`);
         return;
       }
-
+      
       // 批量保存页面信息
       for (let i = 0; i < pages.length; i++) {
         const pageInfo = pages[i];
@@ -3419,7 +3472,7 @@ export struct MangaReaderPage {
           fileSize: 0
         });
       }
-
+      
       logger.info(TAG, `✅ 已保存章节 ${chapterId} 的 ${pages.length} 个页面信息到数据库`);
     } catch (error) {
       logger.error(TAG, `保存页面信息失败: ${String(error)}`);
@@ -3435,34 +3488,34 @@ export struct MangaReaderPage {
       logger.debug(TAG, '下一章节预加载未启用');
       return;
     }
-
+    
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
-
+    
     if (!manga || !chapter || !this.mangaEngine) {
       return;
     }
-
+    
     // 只在WebView在线漫画时预加载
     if (this.currentSourceId <= 0) {
       return;
     }
-
+    
     // 查找下一章节
     const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
     if (currentIndex < 0 || currentIndex >= manga.chapters.length - 1) {
       logger.debug(TAG, '已是最后一章，无需预加载下一章节');
       return; // 已是最后一章
     }
-
+    
     const nextChapter = manga.chapters[currentIndex + 1];
-
+    
     // 检查下一章节是否已有页面信息
     if (nextChapter.pages && nextChapter.pages.length > 0) {
       logger.debug(TAG, `下一章节 ${nextChapter.title} 已有页面信息，跳过预加载`);
       return;
     }
-
+    
     // 异步预加载（不阻塞当前操作）
     logger.info(TAG, `🔄 当前章节加载完成，立即开始预加载下一章节: ${nextChapter.title}`);
     this.preloadChapterPages(nextChapter, this.sourcePreloadSettings.preloadNextPages).catch((error: Error) => {
@@ -3486,7 +3539,7 @@ export struct MangaReaderPage {
       const dbManager = DatabaseManager.getInstance();
       const sql = 'SELECT preloadCurrentChapter, preloadCurrentPages, preloadNextChapter, preloadNextPages FROM comic_source WHERE id = ?';
       const records = await dbManager.querySql(sql, [sourceId]);
-
+      
       if (records && records.length > 0) {
         const record = records[0] as Record<string, number>;
         const settings: SourcePreloadSettings = {
@@ -3505,14 +3558,14 @@ export struct MangaReaderPage {
     }
   }
 
-
+  
   /**
    * 保存章节页面到数据库
    */
   private async saveChapterPagesToDatabase(chapterId: string, pages: SourcePageInfo[]): Promise<void> {
     try {
       const dataManager = DataManager.getInstance();
-
+      
       for (let i = 0; i < pages.length; i++) {
         const pageInfo = pages[i];
         const onlinePageInput: OnlinePageInfoInput = {
@@ -3523,10 +3576,10 @@ export struct MangaReaderPage {
           height: pageInfo.height || 0,
           fileSize: 0
         };
-
+        
         await dataManager.addOnlinePageInfo(onlinePageInput);
       }
-
+      
       logger.info(TAG, `✅ 已保存章节 ${chapterId} 的 ${pages.length} 个页面信息到数据库`);
     } catch (error) {
       logger.error(TAG, `保存页面信息失败: ${error}`);
@@ -3544,31 +3597,31 @@ export struct MangaReaderPage {
       logger.error(TAG, error);
       throw new Error(error);
     }
-
+    
     // 如果maxPages为0，不预加载
     if (maxPages === 0) {
       logger.debug(TAG, '预加载页数为0，跳过预加载');
       return;
     }
-
+    
     try {
       // 获取外部章节ID
       const externalChapterId = await this.getExternalChapterIdForOnlineUndownloaded(chapter);
       const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(this.readerState.currentManga?.id || '');
-
+      
       // 检查是否已经在详情页预加载过
       const preloadManager = ChapterPreloadManager.getInstance();
       const preloadTask = preloadManager.getTaskStatus(chapter.id);
-
+      
       let pageListResult: EngineResult<SourcePageInfo[]>;
-
+      
       if (preloadTask && preloadTask.status === 'completed' && preloadTask.pageCount > 0) {
         logger.info(TAG, `✅ 章节已在详情页预加载: ${chapter.title}, 共${preloadTask.pageCount}页, 已预加载${preloadTask.preloadedPages}页图片`);
-
+        
         // 尝试从数据库读取页面列表，避免重复调用getPageList
         const dataManager = DataManager.getInstance();
         const dbPages = await dataManager.getPageInfoList(chapter.id);
-
+        
         if (dbPages.length > 0) {
           logger.info(TAG, `✅ 从数据库读取页面列表: ${chapter.title}, 共${dbPages.length}页`);
           // 转换为SourcePageInfo格式
@@ -3596,13 +3649,13 @@ export struct MangaReaderPage {
         logger.info(TAG, `📥 预加载章节页面: chapterId=${externalChapterId}, mangaId=${externalMangaId}, maxPages=${maxPages}`);
         pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
       }
-
+      
       if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
         const errorMsg = pageListResult.error || '页面列表为空';
         logger.error(TAG, `预加载失败: ${errorMsg}`);
         throw new Error(errorMsg);
       }
-
+      
       // 根据maxPages限制预加载的页数
       let pagesToPreload = pageListResult.data;
       if (maxPages > 0 && maxPages < pageListResult.data.length) {
@@ -3611,7 +3664,7 @@ export struct MangaReaderPage {
       } else {
         logger.info(TAG, `✅ 预加载成功，获取到 ${pageListResult.data.length} 页，全部预加载`);
       }
-
+      
       // 转换为MangaPage格式
       const mangaPages: MangaPage[] = pagesToPreload.map((pageInfo: SourcePageInfo, index: number) => {
         return {
@@ -3626,13 +3679,13 @@ export struct MangaReaderPage {
           isLoaded: false
         } as MangaPage;
       });
-
+      
       // 更新章节的页面列表（内存中）
       chapter.pages = mangaPages;
-
+      
       // 保存到数据库（保存全部页面信息，即使只预加载部分）
       await this.savePageInfoToDatabase(chapter.id, pageListResult.data);
-
+      
       logger.info(TAG, `✅ 预加载章节 ${chapter.title} 完成，已保存到数据库`);
     } catch (error) {
       logger.error(TAG, `预加载章节页面失败: ${String(error)}`);
@@ -3644,13 +3697,22 @@ export struct MangaReaderPage {
    * 保存阅读进度（带限流与空值检查）
    */
   private async saveReadingProgressInternal(trigger: string): Promise<void> {
+    // [修复] 阻止初始化期间的阅读进度保存，避免覆盖正确的阅读进度
+    // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，传递错误的页面索引
+    // 只有在退出时（aboutToDisappear）才允许强制保存
+    if (!this.isReaderInitialized && trigger !== 'aboutToDisappear') {
+      logger.debug(TAG, `[修复] 阻止初始化期间的阅读进度保存: trigger=${trigger}`);
+      return;
+    }
+    
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
     if (!manga || !chapter) {
       return;
     }
 
-    const pageIndex: number = this.readerState.currentPageIndex;
+    // 使用 readerState.currentPageIndex 作为当前页面索引
+    let pageIndex: number = this.readerState.currentPageIndex;
     const now: number = Date.now();
 
     // 限流：同页且1秒内不重复写入
@@ -3664,7 +3726,7 @@ export struct MangaReaderPage {
     // 准备在线漫画数据（如果是WebView图源）
     let sourceId: number | undefined = undefined;
     let mangaData: Record<string, Object> | undefined = undefined;
-
+    
     if (this.currentSourceId > 0 && this.mangaEngine) {
       sourceId = this.currentSourceId;
       // 创建临时对象并转换为Record类型
@@ -3690,10 +3752,10 @@ export struct MangaReaderPage {
     manga.readingProgress.currentPageIndex = pageIndex;
     manga.readingProgress.lastReadAt = now;
     manga.readingProgress.readingStatus = ReadingStatus.READING;
-
+    
     // 累加总阅读时间（转换为分钟）
     manga.readingProgress.totalReadingTime += (duration / 1000 / 60);
-
+    
     logger.info(TAG, `✅ 阅读进度已更新: 章节=${chapter.title}, 页码=${pageIndex + 1}, 时间=${now}`);
 
     this.lastSavedPageIndex = pageIndex;
@@ -3750,17 +3812,17 @@ export struct MangaReaderPage {
         // 切换章节
         this.readerState.currentChapter = targetChapter;
         this.readerState.currentPageIndex = 0;
-
+        
         // 通知自动翻页控制器新章节开始
         if (this.autoPageTurnController) {
           this.autoPageTurnController.notifyNewChapter();
         }
-
+        
         // 重置阅读会话计时
         this.sessionStartTimestamp = Date.now();
         this.lastProgressSaveTime = 0;
         this.lastSavedPageIndex = -1;
-
+        
         logger.info(TAG, `切换到章节: ${targetChapter.title}`);
       }).catch((error: Error) => {
         logger.error(TAG, '切换章节前保存进度失败', error.message);
@@ -3785,7 +3847,7 @@ export struct MangaReaderPage {
       const displayWidth = display.getDefaultDisplaySync().width;
       const displayHeight = display.getDefaultDisplaySync().height;
       const aspectRatio = displayWidth / displayHeight;
-
+      
       // 竖屏设备：宽高比 < 0.75 (例如：手机竖屏)
       if (aspectRatio < 0.75) {
         return 'portrait';
@@ -3832,21 +3894,21 @@ export struct MangaReaderPage {
     // 使用显示坐标（vp单位，相对于窗口的坐标）
     const clickX = event.displayX;
     const clickY = event.displayY;
-
+    
     // 获取显示区域的实际尺寸和设备方向
     // 关键修复：统一使用vp单位，与ClickEvent坐标系统一致
     let displayWidth: number;
     let displayHeight: number;
     let aspectRatio: number;
     let deviceOrientation: 'portrait' | 'landscape' | 'square';
-
+    
     try {
       const displayInfo = display.getDefaultDisplaySync();
       // 获取物理像素尺寸和屏幕密度
       const physicalWidth = displayInfo.width;
       const physicalHeight = displayInfo.height;
       const densityPixels = displayInfo.densityPixels || 1.0;
-
+      
       // 转换为vp单位（与ClickEvent.displayX/displayY一致）
       displayWidth = physicalWidth / densityPixels;
       displayHeight = physicalHeight / densityPixels;
@@ -3860,42 +3922,42 @@ export struct MangaReaderPage {
       aspectRatio = displayWidth / displayHeight;
       deviceOrientation = 'portrait';
     }
-
+    
     logger.debug(TAG, `✋ 单击事件: displayX=${clickX.toFixed(2)}vp, displayY=${clickY.toFixed(2)}vp, 屏幕=${displayWidth.toFixed(0)}x${displayHeight.toFixed(0)}vp, 宽高比=${aspectRatio.toFixed(2)}, 设备类型=${deviceOrientation}`);
-
+    
     // 规则1：首次点击隐藏交互提示
     if (this.showInteractionOverlay) {
       this.hideInteractionOverlay();
       return;
     }
-
+    
     // 规则2：如果设置面板或更多菜单已显示，点击任意位置都关闭
     if (this.showSettingsPanel) {
       this.hideSettingsPanelWithAnimation();
       logger.debug(TAG, '关闭设置面板');
       return;
     }
-
+    
     if (this.showMoreMenu) {
       this.hideMoreMenuWithAnimation();
       logger.debug(TAG, '关闭更多菜单');
       return;
     }
-
+    
     // 规则3：如果工具栏已显示，检查点击是否在工具栏区域内
     const topToolbarHeight = this.statusBarHeight + 56 + 16;
     const bottomToolbarHeight = this.navigationBarHeight + 120;
-
+    
     if (this.showTopToolbar && clickY < topToolbarHeight) {
       logger.debug(TAG, '点击在顶部工具栏区域，交给工具栏处理');
       return;
     }
-
+    
     if (this.showBottomToolbar && clickY > (this.screenHeight - bottomToolbarHeight)) {
       logger.debug(TAG, '点击在底部工具栏区域，交给工具栏处理');
       return;
     }
-
+    
     // 规则4：根据阅读模式确定交互区域
     this.handleReadingModeTap(clickX, clickY, deviceOrientation, displayWidth, displayHeight);
   }
@@ -3905,24 +3967,24 @@ export struct MangaReaderPage {
    */
   private handleReadingModeTap(clickX: number, clickY: number, deviceOrientation: string, displayWidth: number, displayHeight: number): void {
     const isWebtoon = this.readingSettings.readingMode === ReadingMode.WEBTOON ||
-      this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
-      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
-
+                      this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+                      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+    
     const isDoublePage = this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
-
+    
     if (isWebtoon) {
       // 条漫模式：点击任意位置切换工具栏
       this.toggleToolbars();
       logger.debug(TAG, `条漫模式点击，切换工具栏: ${this.showTopToolbar}`);
       return;
     }
-
+    
     if (isDoublePage) {
       // 双页模式：左右区域翻页，中央切换工具栏
       this.handleDoublePageTap(clickX, clickY, deviceOrientation, displayWidth, displayHeight);
       return;
     }
-
+    
     // 单页模式：根据设备类型和屏幕方向划分区域
     this.handleSinglePageTap(clickX, clickY, deviceOrientation, displayWidth, displayHeight);
   }
@@ -3934,19 +3996,19 @@ export struct MangaReaderPage {
   private handleDoublePageTap(clickX: number, clickY: number, deviceOrientation: string, displayWidth: number, displayHeight: number): void {
     const centerAreaRatio = 0.4; // 中央区域占比
     const sideAreaRatio = (1 - centerAreaRatio) / 2; // 两侧各占比 = 0.3
-
+    
     // 判断阅读方向
     const isRTL: boolean = this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
     const isTTB: boolean = this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM;
-
+    
     if (isTTB) {
       // TTB模式（上下翻页）：使用垂直区域划分
       const effectiveHeight = this.componentHeight > 0 ? this.componentHeight : displayHeight;
       const topZoneEnd = effectiveHeight * sideAreaRatio;
       const bottomZoneStart = effectiveHeight * (1 - sideAreaRatio);
-
+      
       logger.debug(TAG, `双页TTB模式区域划分: 组件高度=${this.componentHeight.toFixed(0)}vp, 有效高度=${effectiveHeight.toFixed(0)}vp, topZoneEnd=${topZoneEnd.toFixed(0)}vp, bottomZoneStart=${bottomZoneStart.toFixed(0)}vp, clickY=${clickY.toFixed(0)}vp`);
-
+      
       if (clickY < topZoneEnd) {
         // 上侧区域：上一页
         this.goToPreviousPage();
@@ -3965,9 +4027,9 @@ export struct MangaReaderPage {
       const effectiveWidth = this.componentWidth > 0 ? this.componentWidth : displayWidth;
       const leftZoneEnd = effectiveWidth * sideAreaRatio;
       const rightZoneStart = effectiveWidth * (1 - sideAreaRatio);
-
+      
       logger.debug(TAG, `双页模式区域划分: 组件宽度=${this.componentWidth.toFixed(0)}vp, 有效宽度=${effectiveWidth.toFixed(0)}vp, leftZoneEnd=${leftZoneEnd.toFixed(0)}vp, rightZoneStart=${rightZoneStart.toFixed(0)}vp, clickX=${clickX.toFixed(0)}vp, 方向=${isRTL ? 'RTL' : 'LTR'}`);
-
+      
       if (clickX < leftZoneEnd) {
         // 左侧区域
         if (isRTL) {
@@ -4000,17 +4062,17 @@ export struct MangaReaderPage {
   private handleSinglePageTap(clickX: number, clickY: number, deviceOrientation: string, displayWidth: number, displayHeight: number): void {
     const centerAreaRatio = 0.4; // 中央区域占比
     const sideAreaRatio = (1 - centerAreaRatio) / 2; // 两侧各占比 = 0.3
-
+    
     // 上下翻页模式
     if (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB ||
-      (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM)) {
+        (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM)) {
       // 垂直阅读：上 | 中 | 下
       const effectiveHeight = this.componentHeight > 0 ? this.componentHeight : displayHeight;
       const topZoneEnd = effectiveHeight * sideAreaRatio;
       const bottomZoneStart = effectiveHeight * (1 - sideAreaRatio);
-
+      
       logger.debug(TAG, `垂直模式区域划分: 组件高度=${this.componentHeight.toFixed(0)}vp, 有效高度=${effectiveHeight.toFixed(0)}vp, topZoneEnd=${topZoneEnd.toFixed(0)}vp, bottomZoneStart=${bottomZoneStart.toFixed(0)}vp, clickY=${clickY.toFixed(0)}vp`);
-
+      
       if (clickY < topZoneEnd) {
         this.goToPreviousPage();
         logger.info(TAG, '✋ 上侧区域点击，上一页');
@@ -4023,7 +4085,7 @@ export struct MangaReaderPage {
       }
       return;
     }
-
+    
     // 左右翻页模式
     this.handleHorizontalTap(clickX, clickY, deviceOrientation, displayWidth, displayHeight);
   }
@@ -4034,7 +4096,7 @@ export struct MangaReaderPage {
   private handleHorizontalTap(clickX: number, clickY: number, deviceOrientation: string, displayWidth: number, displayHeight: number): void {
     const centerAreaRatio = 0.4; // 中央区域占比
     const sideAreaRatio = (1 - centerAreaRatio) / 2; // 两侧各占比 = 0.3
-
+    
     // 获取有效宽度
     let effectiveWidth: number;
     if (deviceOrientation === 'landscape') {
@@ -4044,18 +4106,18 @@ export struct MangaReaderPage {
     } else {
       effectiveWidth = this.componentWidth > 0 ? this.componentWidth : displayWidth;
     }
-
+    
     const leftZoneEnd = effectiveWidth * sideAreaRatio;
     const rightZoneStart = effectiveWidth * (1 - sideAreaRatio);
-
+    
     // 判断阅读方向
     const isRTL: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT);
     const isLTR: boolean = this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
       (this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE && this.readingSettings.readingDirection === ReadingDirection.LEFT_TO_RIGHT);
-
+    
     logger.debug(TAG, `${deviceOrientation}模式区域划分: 组件宽度=${this.componentWidth.toFixed(0)}vp, 有效宽度=${effectiveWidth.toFixed(0)}vp, leftZoneEnd=${leftZoneEnd.toFixed(0)}vp, rightZoneStart=${rightZoneStart.toFixed(0)}vp, clickX=${clickX.toFixed(0)}vp, isRTL=${isRTL}, isLTR=${isLTR}`);
-
+    
     if (clickX < leftZoneEnd) {
       // 左侧区域
       if (isRTL) {
@@ -4115,7 +4177,7 @@ export struct MangaReaderPage {
     if (this.autoHideTimer !== -1) {
       clearTimeout(this.autoHideTimer);
     }
-
+    
     this.autoHideTimer = setTimeout(() => {
       if (this.showTopToolbar) {
         this.toggleToolbars();
@@ -4147,8 +4209,8 @@ export struct MangaReaderPage {
    */
   private isWebtoonMode(): boolean {
     return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
-      this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
-      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+           this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+           this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
   }
 
   /**
@@ -4161,19 +4223,19 @@ export struct MangaReaderPage {
       logger.warn(TAG, `无效的页面索引: ${pageIndex}`);
       return;
     }
-
+    
     logger.debug(TAG, `条漫模式滚动到页面: ${pageIndex + 1}`);
-
+    
     // 使用MangaViewer的平滑滚动功能代替强制重新渲染
     if (this.mangaViewerComponent && this.mangaViewerComponent.smoothScrollToPage) {
       // 根据自动翻页间隔计算滚动速度，实现更自然的节奏
       // 间隔越短，滚动速度越快（0.5-2.0倍速）
       const scrollSpeed = Math.max(0.5, Math.min(2.0, 5000 / this.readingSettings.autoPageTurnInterval));
-
+      
       // 对于自动翻页，我们需要立即更新页面索引，然后执行平滑滚动
       const currentIndex = this.readerState.currentPageIndex;
       this.readerState.currentPageIndex = pageIndex;
-
+      
       // 调用MangaViewer的平滑滚动到指定页面的方法
       const success = this.mangaViewerComponent.smoothScrollToPage(pageIndex, scrollSpeed);
       if (success) {
@@ -4187,10 +4249,10 @@ export struct MangaReaderPage {
       // 回退到旧的平滑滚动方法
       const scrollSpeed = Math.max(0.5, Math.min(2.0, 5000 / this.readingSettings.autoPageTurnInterval));
       const scrollMode = this.readingSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 'screen' : 'page';
-
+      
       const currentIndex = this.readerState.currentPageIndex;
       this.readerState.currentPageIndex = pageIndex;
-
+      
       const success = this.mangaViewerComponent.smoothScrollToNextPage(scrollSpeed, scrollMode);
       if (success) {
         logger.debug(TAG, `条漫模式平滑滚动成功: 页面${currentIndex + 1} -> ${pageIndex + 1}, 模式: ${scrollMode}, 速度: ${scrollSpeed}x`);
@@ -4213,14 +4275,14 @@ export struct MangaReaderPage {
       // 先更新页面索引，确保MangaViewer能够检测到变化
       const newPageIndex = this.readerState.currentPageIndex - 1;
       logger.debug(TAG, `翻到上一页: ${this.readerState.currentPageIndex} -> ${newPageIndex}`);
-
+      
       // 根据阅读模式处理不同的翻页逻辑
       if (this.isWebtoonMode()) {
         // 条漫模式：使用平滑滚动到上一页
         if (this.mangaViewerComponent && this.mangaViewerComponent.smoothScrollToPreviousPage) {
           const scrollSpeed = Math.max(0.5, Math.min(2.0, this.readingSettings.autoPageTurnInterval / 5000));
           const scrollMode = this.readingSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 'screen' : 'page';
-
+          
           const success = this.mangaViewerComponent.smoothScrollToPreviousPage(scrollSpeed, scrollMode);
           if (success) {
             logger.debug(TAG, `条漫模式平滑向上滚动成功: 页面${this.readerState.currentPageIndex + 1} -> ${newPageIndex + 1}`);
@@ -4237,7 +4299,7 @@ export struct MangaReaderPage {
         this.animatePageTransition('previous');
         this.readerState.currentPageIndex = newPageIndex;
       }
-
+      
       // 通过底部按钮翻页也需要保存进度
       this.saveReadingProgressInternal('prevPageButton').catch((error: Error) => {
         logger.error(TAG, '翻到上一页时保存阅读进度失败', error.message);
@@ -4261,19 +4323,19 @@ export struct MangaReaderPage {
   private goToNextPage(onComplete?: (() => void) | undefined): void {
     const currentChapter = this.readerState.currentChapter;
     const isAutoScroll = !!onComplete; // 判断是否为自动翻页
-
+    
     if (currentChapter && this.readerState.currentPageIndex < currentChapter.pages.length - 1) {
       // 先更新页面索引，确保MangaViewer能够检测到变化
       const newPageIndex = this.readerState.currentPageIndex + 1;
       logger.debug(TAG, `翻到下一页: ${this.readerState.currentPageIndex} -> ${newPageIndex}${isAutoScroll ? ' (自动翻页)' : ''}`);
-
+      
       // 根据阅读模式处理不同的翻页逻辑
       if (this.isWebtoonMode()) {
         // 条漫模式：使用平滑滚动到下一页，实现信息流效果
         if (this.mangaViewerComponent) {
           const scrollSpeed = Math.max(0.5, Math.min(2.0, this.readingSettings.autoPageTurnInterval / 5000));
           const scrollMode = this.readingSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 'screen' : 'page';
-
+          
           // 对于自动翻页模式，我们需要同步更新页面索引，然后让平滑滚动处理视觉效果
           if (isAutoScroll) {
             // 自动翻页模式：不提前更新索引，等待MangaViewer动画完成后通过回调更新
@@ -4307,7 +4369,7 @@ export struct MangaReaderPage {
         this.readerState.currentPageIndex = newPageIndex;
         if (onComplete) { (onComplete as () => void)(); }
       }
-
+      
       // 通过底部按钮翻页也需要保存进度
       this.saveReadingProgressInternal('nextPageButton').catch((error: Error) => {
         logger.error(TAG, '翻到下一页时保存阅读进度失败', error.message);
@@ -4333,12 +4395,12 @@ export struct MangaReaderPage {
   private goToPreviousChapter(): void {
     const currentManga = this.readerState.currentManga;
     const currentChapter = this.readerState.currentChapter;
-
+    
     if (currentManga && currentChapter) {
       const currentIndex = currentManga.chapters.findIndex(ch => ch.id === currentChapter.id);
       if (currentIndex > 0) {
         const prevChapter = currentManga.chapters[currentIndex - 1];
-
+        
         // 检查上一章节是否已有页面信息
         if (!prevChapter.pages || prevChapter.pages.length === 0) {
           logger.info(TAG, `上一章节 ${prevChapter.title} 无页面信息，开始加载...`);
@@ -4346,7 +4408,7 @@ export struct MangaReaderPage {
           this.readerState.currentChapter = prevChapter;
           this.readerState.isLoading = true;
           this.readerState.loadingMessage = '正在加载上一章节...';
-
+          
           // 异步加载页面信息
           this.preloadChapterPages(prevChapter).then(() => {
             // 加载成功后，验证页面数据
@@ -4358,7 +4420,7 @@ export struct MangaReaderPage {
               this.getUIContext().getPromptAction().showToast({ message: '章节加载失败，页面为空' });
               return;
             }
-
+            
             // 加载成功且有有效页面，更新页面索引
             this.readerState.currentPageIndex = prevChapter.pages.length - 1;
             this.readerState.isLoading = false;
@@ -4376,12 +4438,12 @@ export struct MangaReaderPage {
         } else {
           // 已有页面信息，但仍需加载页面数据
           logger.info(TAG, `上一章节 ${prevChapter.title} 已有章节信息，开始加载页面数据...`);
-
+          
           // 先更新当前章节，再显示加载状态（这样加载UI能显示正确的章节名称）
           this.readerState.currentChapter = prevChapter;
           this.readerState.isLoading = true;
           this.readerState.loadingMessage = `正在加载 ${prevChapter.title}...`;
-
+          
           // 异步加载页面信息
           this.preloadChapterPages(prevChapter).then(() => {
             // 验证页面数据
@@ -4393,7 +4455,7 @@ export struct MangaReaderPage {
               this.getUIContext().getPromptAction().showToast({ message: '章节加载失败，页面为空' });
               return;
             }
-
+            
             // 加载成功，更新页面索引
             this.readerState.currentPageIndex = prevChapter.pages.length - 1;
             this.readerState.isLoading = false;
@@ -4425,22 +4487,22 @@ export struct MangaReaderPage {
   private goToNextChapter(): void {
     const currentManga = this.readerState.currentManga;
     const currentChapter = this.readerState.currentChapter;
-
+    
     if (currentManga && currentChapter) {
       logger.debug(TAG, `🔍 查找下一章: 当前章节="${currentChapter.title}", id="${currentChapter.id}", 总章节数=${currentManga.chapters.length}`);
-
+      
       const currentIndex = currentManga.chapters.findIndex(ch => ch.id === currentChapter.id);
       logger.debug(TAG, `🔍 当前章节索引: ${currentIndex}, 章节列表: ${currentManga.chapters.map((ch, idx) => `[${idx}]${ch.title}`).join(', ')}`);
-
+      
       if (currentIndex < 0) {
         logger.error(TAG, `❌ 未找到当前章节: ${currentChapter.title} (${currentChapter.id})`);
         this.getUIContext().getPromptAction().showToast({ message: '章节索引错误' });
         return;
       }
-
+      
       if (currentIndex < currentManga.chapters.length - 1) {
         const nextChapter = currentManga.chapters[currentIndex + 1];
-
+        
         // 检查下一章节是否已有页面信息
         if (!nextChapter.pages || nextChapter.pages.length === 0) {
           logger.info(TAG, `下一章节 ${nextChapter.title} 无页面信息，开始加载...`);
@@ -4448,7 +4510,7 @@ export struct MangaReaderPage {
           this.readerState.currentChapter = nextChapter;
           this.readerState.isLoading = true;
           this.readerState.loadingMessage = '正在加载下一章节...';
-
+          
           // 异步加载页面信息
           this.preloadChapterPages(nextChapter).then(() => {
             // 加载成功后，验证页面数据
@@ -4460,7 +4522,7 @@ export struct MangaReaderPage {
               this.getUIContext().getPromptAction().showToast({ message: '章节加载失败，页面为空' });
               return;
             }
-
+            
             // 加载成功且有有效页面，更新页面索引
             this.readerState.currentPageIndex = 0;
             this.readerState.isLoading = false;
@@ -4478,12 +4540,12 @@ export struct MangaReaderPage {
         } else {
           // 已有页面信息，但仍需加载页面数据
           logger.info(TAG, `下一章节 ${nextChapter.title} 已有章节信息，开始加载页面数据...`);
-
+          
           // 先更新当前章节，再显示加载状态（这样加载UI能显示正确的章节名称）
           this.readerState.currentChapter = nextChapter;
           this.readerState.isLoading = true;
           this.readerState.loadingMessage = `正在加载 ${nextChapter.title}...`;
-
+          
           // 异步加载页面信息
           this.preloadChapterPages(nextChapter).then(() => {
             // 验证页面数据
@@ -4495,7 +4557,7 @@ export struct MangaReaderPage {
               this.getUIContext().getPromptAction().showToast({ message: '章节加载失败，页面为空' });
               return;
             }
-
+            
             // 加载成功，更新页面索引
             this.readerState.currentPageIndex = 0;
             this.readerState.isLoading = false;
@@ -4529,12 +4591,12 @@ export struct MangaReaderPage {
     Column() {
       Text(label)
         .fontSize(12)
-        .fontColor(this.readingSettings.pageTurnAnimation === type ?
+        .fontColor(this.readingSettings.pageTurnAnimation === type ? 
           $r('app.color.accent') : $r('app.color.text_secondary'))
     }
     .width('31%')
     .padding(10)
-    .backgroundColor(this.readingSettings.pageTurnAnimation === type ?
+    .backgroundColor(this.readingSettings.pageTurnAnimation === type ? 
       $r('app.color.accent_background') : Color.Transparent)
     .borderRadius(8)
     .onClick(() => {
@@ -4593,9 +4655,9 @@ export struct MangaReaderPage {
       .width(48)
       .height(48)
       .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.showMoreMenuWithAnimation();
-      })
+        .onClick(() => {
+          this.showMoreMenuWithAnimation();
+        })
     }
     .width('100%')
     .height(56)
@@ -4632,12 +4694,12 @@ export struct MangaReaderPage {
           .onChange((value: number) => {
             const targetPage = Math.round(value);
             this.readerState.currentPageIndex = targetPage;
-
+            
             // 条漫模式下需要滚动到对应页面
             if (this.isWebtoonMode() && this.mangaViewerComponent) {
               this.mangaViewerComponent.smoothScrollToPage(targetPage, 1.5);
             }
-
+            
             // 进度条变更也触发保存
             this.saveReadingProgressInternal('sliderChange').catch((error: Error) => {
               logger.error(TAG, '通过进度条变更保存阅读进度失败', error.message);
@@ -4762,7 +4824,7 @@ export struct MangaReaderPage {
           .fontSize(16)
           .fontColor($r('app.color.text_secondary'))
           .margin({ top: 16 })
-
+        
         // 显示章节名称
         if (this.readerState.currentChapter?.title) {
           Text(this.readerState.currentChapter.title)
@@ -4918,6 +4980,16 @@ export struct MangaReaderPage {
           callbacks: {
             onPageChange: (pageIndex: number) => {
               logger.info(TAG, `页面变更回调: 切换到第 ${pageIndex + 1} 页`);
+              
+              // [修复] 阻止初始化期间的页面变更修改 readerState.currentPageIndex
+              // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，传入错误的页面索引
+              // 这会覆盖正确的 readerState.currentPageIndex，导致后续的修复逻辑失效
+              if (!this.isReaderInitialized) {
+                logger.debug(TAG, `[修复] 阻止初始化期间的页面变更: pageIndex=${pageIndex}, 当前readerState.currentPageIndex=${this.readerState.currentPageIndex}`);
+                // 不更新 readerState.currentPageIndex，保持正确的初始值
+                return;
+              }
+              
               // 手动重新创建对象，确保触发 @State 响应式更新（ArkTS不支持展开运算符）
               this.readerState = {
                 currentManga: this.readerState.currentManga,
@@ -4972,8 +5044,21 @@ export struct MangaReaderPage {
               logger.info(TAG, '🔔 触发MangaViewer预加载');
               component.kickstartLoading();
               const chapter = this.readerState.currentChapter;
-              const index = this.readerState.currentPageIndex;
-              if (chapter && this.isWebtoonMode() && index > 0) {
+              const expectedIndex = this.readerState.currentPageIndex;
+              
+              // [修复] 检查 MangaViewer 的当前页面索引是否与期望的页面索引一致
+              // 由于异步初始化，MangaViewer 可能在 readerState.currentPageIndex 被正确设置之前就被创建了
+              const viewerIndex = component.currentPageIndex;
+              logger.info(TAG, `🔧 [修复] 页面索引检查: viewer=${viewerIndex}, expected=${expectedIndex}`);
+              if (viewerIndex !== expectedIndex && expectedIndex >= 0) {
+                logger.info(TAG, `🔧 [修复] 检测到页面索引不一致: viewer=${viewerIndex}, expected=${expectedIndex}，通过readerState同步`);
+                // 通过更新 readerState.currentPageIndex 来同步 MangaViewer（@Prop绑定）
+                this.readerState.currentPageIndex = expectedIndex;
+              } else {
+                logger.info(TAG, `🔧 [修复] 页面索引一致，无需跳转`);
+              }
+              
+              if (chapter && this.isWebtoonMode() && expectedIndex > 0) {
                 let savedPos: number = 0;
                 const key = `webtoon_scroll_${chapter.id}`;
                 try {
@@ -4985,15 +5070,23 @@ export struct MangaReaderPage {
                   savedPos = 0;
                 }
                 if (!(savedPos > 0)) {
-                  this.scrollToWebtoonPage(index);
+                  this.scrollToWebtoonPage(expectedIndex);
                 }
               }
+              
+              // [修复] 延迟设置初始化完成标志，确保 MangaViewer 完全初始化后才允许保存阅读进度
+              // 使用 setTimeout 确保 MangaViewer 的初始化回调（如 onPageChange）已经执行完毕
+              setTimeout(() => {
+                this.isReaderInitialized = true;
+                logger.info(TAG, '✅ [修复] 阅读器初始化完成，允许保存阅读进度');
+              }, 500);
+              
               logger.debug(TAG, 'MangaViewer组件实例已通过回调获取');
             }
           }
         })
-          .width('100%')
-          .height('100%')
+        .width('100%')
+        .height('100%')
       }
       .width('100%')
       .height('100%')
@@ -5006,7 +5099,7 @@ export struct MangaReaderPage {
         // Area.width和Area.height返回的是vp值，与ClickEvent.displayX/displayY一致
         const widthVp = Number(newArea.width);
         const heightVp = Number(newArea.height);
-
+        
         if (widthVp > 0 && heightVp > 0) {
           this.componentWidth = widthVp;
           this.componentHeight = heightVp;
@@ -5103,12 +5196,12 @@ export struct MangaReaderPage {
               }
             }
           })
-            .opacity(this.quickSettingsOpacity)
-            .scale({ x: this.quickSettingsScale, y: this.quickSettingsScale })
-            .translate({ y: this.quickSettingsTranslateY })
-            .zIndex(1000)
+          .opacity(this.quickSettingsOpacity)
+          .scale({ x: this.quickSettingsScale, y: this.quickSettingsScale })
+          .translate({ y: this.quickSettingsTranslateY })
+          .zIndex(1000)
         }
-
+        
         // 完整设置面板（带动画）
         if (this.showSettingsPanel) {
           MangaReaderSettings({
@@ -5123,10 +5216,10 @@ export struct MangaReaderPage {
               }
             }
           })
-            .opacity(this.settingsPanelOpacity)
-            .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
-            .translate({ y: this.settingsPanelTranslateY })
-            .zIndex(1000)
+          .opacity(this.settingsPanelOpacity)
+          .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
+          .translate({ y: this.settingsPanelTranslateY })
+          .zIndex(1000)
         }
 
         // 自动翻页设置面板（居中弹窗样式，类似翻页动画设置）
@@ -5243,7 +5336,7 @@ export struct MangaReaderPage {
               }
             }
           })
-            .zIndex(1000)
+          .zIndex(1000)
         }
 
         // 悬浮式"更多选项"菜单（移动到主Stack内部，顶部右侧）
@@ -5485,7 +5578,7 @@ export struct MangaReaderPage {
               }
               .width('100%')
               .justifyContent(FlexAlign.Start)
-
+              
               // 卷页透明度设置（仅在选择卷页动画且模式支持时显示）
               if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
                 Column() {
@@ -5500,7 +5593,7 @@ export struct MangaReaderPage {
                   .width('100%')
                   .justifyContent(FlexAlign.SpaceBetween)
                   .margin({ top: 16, bottom: 8 })
-
+                  
                   Slider({
                     value: this.readingSettings.curlBackOpacity ?? 90,
                     min: 0,
@@ -5565,7 +5658,7 @@ export struct MangaReaderPage {
         //       .height(60)
         //       .fill('#FF4081')
         //       .opacity(0.6)
-        //
+        //     
         //     Text(`(${this.debugClickX.toFixed(0)}, ${this.debugClickY.toFixed(0)})`)
         //       .fontSize(12)
         //       .fontColor(Color.White)
@@ -5608,7 +5701,7 @@ export struct MangaReaderPage {
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
-
+      
       // 获取传入的参数
       const params = context.pathInfo.param as MangaReaderPageParams;
       if (params) {
@@ -5622,7 +5715,7 @@ export struct MangaReaderPage {
           const mSrcName: string = params.manga.sourceInfo && params.manga.sourceInfo.sourceName ? String(params.manga.sourceInfo.sourceName) : '未指定';
           logger.info(TAG, `接收到漫画对象: title=${mTitle}, id=${mId}, sourceName=${mSrcName}`);
         }
-
+        
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
         if (!this.pageParams) {
           this.initializeMangaReader(params);

@@ -78,14 +78,14 @@ export class ThemeAwareHelper {
     stateUpdater?: (newState: ThemeAwareState) => void
   ): Promise<void> {
     const themeManager = ThemeManager.getInstance();
-    
+
     // 创建主题变化回调
     const themeChangeCallback = (theme: ThemeType) => {
       // 创建新的状态对象以触发响应式更新
       const newState = new ThemeAwareState();
       newState.updateTheme(theme);
       newState.setThemeTransitioning(true);
-      
+
       // 如果提供了状态更新器，使用它来更新@State变量
       if (stateUpdater) {
         stateUpdater(newState);
@@ -94,12 +94,12 @@ export class ThemeAwareHelper {
         state.setThemeTransitioning(true);
         state.updateTheme(theme);
       }
-      
+
       // 执行自定义回调
       if (callback) {
         callback(theme);
       }
-      
+
       // 延迟重置过渡状态
       setTimeout(() => {
         if (stateUpdater) {
@@ -139,7 +139,7 @@ export class ThemeAwareHelper {
       const themeManager = ThemeManager.getInstance();
       themeManager.offThemeChange(callback);
       ThemeAwareHelper.themeChangeCallbacks.delete(componentId);
-      
+
       logger.debug('ThemeAwareHelper', `组件 ${componentId} 主题感知功能已清理`);
     }
   }
@@ -152,7 +152,7 @@ export class ThemeAwareHelper {
     darkColorKey: string,
     theme: ThemeType
   ): Resource {
-    return theme === ThemeType.LIGHT 
+    return theme === ThemeType.LIGHT
       ? $r(`app.color.${lightColorKey}`)
       : $r(`app.color.${darkColorKey}`);
   }
@@ -161,55 +161,55 @@ export class ThemeAwareHelper {
    * 获取测试管理页面的主题颜色
    */
   public static getTestManagementThemedColor(
-    colorType: 'background' | 'text_primary' | 'text_secondary' | 'button_background' | 
-              'panel_background' | 'panel_border' | 'accent_primary' | 'accent_primary_dimmed' |
-              'button_primary' | 'button_secondary' | 'button_inactive' | 'divider' | 'text_white' | 
-              'text_black' | 'text_muted' | 'accent_green' | 'button_danger' | 'brand' | 
-              'button_success' | 'button_warning' | 'button_purple' | 'button_info' | 'border_light' | 
-              'border_active' | 'text_placeholder' | 'background_darker' | 'panel_dark' | 
-              'border_subtle' | 'row_even' | 'row_odd' | 'text_light' | 'background_secondary' | 
-              'background_dark' | 'background_overlay' | 'comp_background_tertiary' | 
-              'icon_primary' | 'font_secondary' | 'text_dim' | 'accent_blue' | 'accent_orange' | 
-              'accent_secondary' | 'color_error' | 'color_success' | 'color_warning' | 
-              'color_info' | 'color_neutral' | 'text_inverse' | 'background_inverse' | 
-              'brand_secondary' | 'brand_tertiary' | 'background_primary' | 'shadow_black' |
-              'border_dark' | 'brand_blue' | 'button_text_primary' | 'button_text_secondary' |
-              'comp_background_primary' | 'comp_background_secondary' | 'success_border' | 'error_border' |
-              'comp_border_primary' | 'success_text' | 'error_text' |
-              'manga_detail_gradient_start' | 'manga_detail_gradient_mid' | 'manga_detail_gradient_end' |
-              'comp_divider' | 'text_tertiary',
+    colorType: 'background' | 'text_primary' | 'text_secondary' | 'button_background' |
+    'panel_background' | 'panel_border' | 'accent_primary' | 'accent_primary_dimmed' |
+    'button_primary' | 'button_secondary' | 'button_inactive' | 'divider' | 'text_white' |
+    'text_black' | 'text_muted' | 'accent_green' | 'button_danger' | 'brand' |
+    'button_success' | 'button_warning' | 'button_purple' | 'button_info' | 'border_light' |
+    'border_active' | 'text_placeholder' | 'background_darker' | 'panel_dark' |
+    'border_subtle' | 'row_even' | 'row_odd' | 'text_light' | 'background_secondary' |
+    'background_dark' | 'background_overlay' | 'comp_background_tertiary' |
+    'icon_primary' | 'font_secondary' | 'text_dim' | 'accent_blue' | 'accent_orange' |
+    'accent_secondary' | 'color_error' | 'color_success' | 'color_warning' |
+    'color_info' | 'color_neutral' | 'text_inverse' | 'background_inverse' |
+    'brand_secondary' | 'brand_tertiary' | 'background_primary' | 'shadow_black' |
+    'border_dark' | 'brand_blue' | 'button_text_primary' | 'button_text_secondary' |
+    'comp_background_primary' | 'comp_background_secondary' | 'success_border' | 'error_border' |
+    'comp_border_primary' | 'success_text' | 'error_text' |
+    'manga_detail_gradient_start' | 'manga_detail_gradient_mid' | 'manga_detail_gradient_end' |
+    'comp_divider' | 'text_tertiary',
     theme: ThemeType
   ): Resource {
     // 颜色映射表，将通用颜色类型映射到具体的颜色资源名称
     const colorMapping: Record<string, GeneratedTypeLiteralInterface_1> = {
       // 背景颜色
-      'background': { 
-        light: 'test_management_background_primary_light', 
-        dark: 'test_management_background_primary_dark' 
+      'background': {
+        light: 'test_management_background_primary_light',
+        dark: 'test_management_background_primary_dark'
       },
-      'background_primary': { 
-        light: 'test_management_background_primary_light', 
-        dark: 'test_management_background_primary_dark' 
+      'background_primary': {
+        light: 'test_management_background_primary_light',
+        dark: 'test_management_background_primary_dark'
       },
-      'background_secondary': { 
-        light: 'test_management_background_secondary_light', 
-        dark: 'test_management_background_secondary_dark' 
+      'background_secondary': {
+        light: 'test_management_background_secondary_light',
+        dark: 'test_management_background_secondary_dark'
       },
-      'background_dark': { 
-        light: 'test_management_background_dark_light', 
-        dark: 'test_management_background_dark_dark' 
+      'background_dark': {
+        light: 'test_management_background_dark_light',
+        dark: 'test_management_background_dark_dark'
       },
-      'background_overlay': { 
-        light: 'test_management_background_overlay_light', 
-        dark: 'test_management_background_overlay_dark' 
+      'background_overlay': {
+        light: 'test_management_background_overlay_light',
+        dark: 'test_management_background_overlay_dark'
       },
-      'background_darker': { 
-        light: 'test_management_background_darker_light', 
-        dark: 'test_management_background_darker_dark' 
+      'background_darker': {
+        light: 'test_management_background_darker_light',
+        dark: 'test_management_background_darker_dark'
       },
-      'background_inverse': { 
-        light: 'test_management_background_inverse_light', 
-        dark: 'test_management_background_inverse_dark' 
+      'background_inverse': {
+        light: 'test_management_background_inverse_light',
+        dark: 'test_management_background_inverse_dark'
       },
 
       // 漫画详情页：渐变颜色资源键（按主题）
@@ -225,233 +225,255 @@ export class ThemeAwareHelper {
         light: 'manga_detail_gradient_end_light',
         dark: 'manga_detail_gradient_end_dark'
       },
-      
+
       // 文字颜色
-      'text_primary': { 
-        light: 'test_management_text_primary_light', 
-        dark: 'test_management_text_primary_dark' 
+      'text_primary': {
+        light: 'test_management_text_primary_light',
+        dark: 'test_management_text_primary_dark'
       },
-      'text_secondary': { 
-        light: 'test_management_font_secondary_light', 
-        dark: 'test_management_font_secondary_dark' 
+      'text_secondary': {
+        light: 'test_management_font_secondary_light',
+        dark: 'test_management_font_secondary_dark'
       },
-      'text_white': { 
-        light: 'test_management_text_white_light', 
-        dark: 'test_management_text_white_dark' 
+      'text_white': {
+        light: 'test_management_text_white_light',
+        dark: 'test_management_text_white_dark'
       },
-      'button_background': { 
-        light: 'test_management_button_background_light', 
-        dark: 'test_management_button_background_dark' 
+      'button_background': {
+        light: 'test_management_button_background_light',
+        dark: 'test_management_button_background_dark'
       },
-      'button_text_primary': { 
-        light: 'test_management_button_text_primary_light', 
-        dark: 'test_management_button_text_primary_dark' 
+      'button_text_primary': {
+        light: 'test_management_button_text_primary_light',
+        dark: 'test_management_button_text_primary_dark'
       },
-      'button_text_secondary': { 
-        light: 'test_management_button_text_secondary_light', 
-        dark: 'test_management_button_text_secondary_dark' 
+      'button_text_secondary': {
+        light: 'test_management_button_text_secondary_light',
+        dark: 'test_management_button_text_secondary_dark'
       },
-      'text_black': { 
-        light: 'test_management_text_black_light', 
-        dark: 'test_management_text_black_dark' 
+      'text_black': {
+        light: 'test_management_text_black_light',
+        dark: 'test_management_text_black_dark'
       },
-      'text_muted': { 
-        light: 'test_management_text_muted_light', 
-        dark: 'test_management_text_muted_dark' 
+      'text_muted': {
+        light: 'test_management_text_muted_light',
+        dark: 'test_management_text_muted_dark'
       },
-      'text_light': { 
-        light: 'test_management_text_light_light', 
-        dark: 'test_management_text_light_dark' 
+      'text_light': {
+        light: 'test_management_text_light_light',
+        dark: 'test_management_text_light_dark'
       },
-      'text_dim': { 
-        light: 'test_management_font_secondary_light', 
-        dark: 'test_management_font_secondary_dark' 
+      'text_dim': {
+        light: 'test_management_font_secondary_light',
+        dark: 'test_management_font_secondary_dark'
       },
-      'text_placeholder': { 
-        light: 'test_management_text_placeholder_light', 
-        dark: 'test_management_text_placeholder_dark' 
+      'text_placeholder': {
+        light: 'test_management_text_placeholder_light',
+        dark: 'test_management_text_placeholder_dark'
       },
-      'text_inverse': { 
-        light: 'test_management_text_inverse_light', 
-        dark: 'test_management_text_inverse_dark' 
+      'text_inverse': {
+        light: 'test_management_text_inverse_light',
+        dark: 'test_management_text_inverse_dark'
       },
-      
+
       // 按钮颜色
-      'button_primary': { 
-        light: 'test_management_button_primary_light', 
-        dark: 'test_management_button_primary_dark' 
+      'button_primary': {
+        light: 'test_management_button_primary_light',
+        dark: 'test_management_button_primary_dark'
       },
-      'button_secondary': { 
-        light: 'test_management_button_secondary_light', 
-        dark: 'test_management_button_secondary_dark' 
+      'button_secondary': {
+        light: 'test_management_button_secondary_light',
+        dark: 'test_management_button_secondary_dark'
       },
       'button_inactive': {
         light: 'test_management_button_inactive_light',
         dark: 'test_management_button_inactive_dark'
       },
-      'button_danger': { 
-        light: 'test_management_color_error_light', 
-        dark: 'test_management_color_error_dark' 
+      'button_danger': {
+        light: 'test_management_color_error_light',
+        dark: 'test_management_color_error_dark'
       },
-      'button_success': { 
-        light: 'test_management_button_success_light', 
-        dark: 'test_management_button_success_dark' 
+      'button_success': {
+        light: 'test_management_button_success_light',
+        dark: 'test_management_button_success_dark'
       },
-      'button_warning': { 
-        light: 'test_management_button_warning_light', 
-        dark: 'test_management_button_warning_dark' 
+      'button_warning': {
+        light: 'test_management_button_warning_light',
+        dark: 'test_management_button_warning_dark'
       },
-      'button_purple': { 
-        light: 'test_management_button_purple_light', 
-        dark: 'test_management_button_purple_dark' 
+      'button_purple': {
+        light: 'test_management_button_purple_light',
+        dark: 'test_management_button_purple_dark'
       },
-      'button_info': { 
-        light: 'test_management_button_info_light', 
-        dark: 'test_management_button_info_dark' 
+      'button_info': {
+        light: 'test_management_button_info_light',
+        dark: 'test_management_button_info_dark'
       },
-      
+
       // 面板颜色
-      'panel_background': { 
-        light: 'test_management_panel_background_light', 
-        dark: 'test_management_comp_background_tertiary_dark' 
+      'panel_background': {
+        light: 'test_management_panel_background_light',
+        dark: 'test_management_comp_background_tertiary_dark'
       },
-      'panel_border': { 
-        light: 'test_management_panel_border_light', 
-        dark: 'test_management_border_light_dark' 
+      'panel_border': {
+        light: 'test_management_panel_border_light',
+        dark: 'test_management_border_light_dark'
       },
-      'panel_dark': { 
-        light: 'test_management_panel_dark_light', 
-        dark: 'test_management_panel_dark_dark' 
+      'panel_dark': {
+        light: 'test_management_panel_dark_light',
+        dark: 'test_management_panel_dark_dark'
       },
-      
+
       // 强调色
-      'accent_primary': { 
-        light: 'test_management_accent_primary_light', 
-        dark: 'test_management_accent_primary_dark' 
+      'accent_primary': {
+        light: 'test_management_accent_primary_light',
+        dark: 'test_management_accent_primary_dark'
       },
-      'accent_primary_dimmed': { 
-        light: 'test_management_accent_primary_dimmed_light', 
-        dark: 'test_management_accent_primary_dimmed_dark' 
+      'accent_primary_dimmed': {
+        light: 'test_management_accent_primary_dimmed_light',
+        dark: 'test_management_accent_primary_dimmed_dark'
       },
-      'accent_blue': { 
-        light: 'test_management_accent_blue_light', 
-        dark: 'test_management_accent_blue_dark' 
+      'accent_blue': {
+        light: 'test_management_accent_blue_light',
+        dark: 'test_management_accent_blue_dark'
       },
-      'accent_orange': { 
-        light: 'test_management_accent_orange_light', 
-        dark: 'test_management_accent_orange_dark' 
+      'accent_orange': {
+        light: 'test_management_accent_orange_light',
+        dark: 'test_management_accent_orange_dark'
       },
-      'accent_green': { 
-        light: 'test_management_accent_green_light', 
-        dark: 'test_management_accent_green_dark' 
+      'accent_green': {
+        light: 'test_management_accent_green_light',
+        dark: 'test_management_accent_green_dark'
       },
-      'accent_secondary': { 
-        light: 'test_management_accent_secondary_light', 
-        dark: 'test_management_accent_secondary_dark' 
+      'accent_secondary': {
+        light: 'test_management_accent_secondary_light',
+        dark: 'test_management_accent_secondary_dark'
       },
-      
+
       // 状态颜色
-      'color_error': { 
-        light: 'test_management_color_error_light', 
-        dark: 'test_management_color_error_dark' 
+      'color_error': {
+        light: 'test_management_color_error_light',
+        dark: 'test_management_color_error_dark'
       },
-      'color_success': { 
-        light: 'test_management_color_success_light', 
-        dark: 'test_management_color_success_dark' 
+      'color_success': {
+        light: 'test_management_color_success_light',
+        dark: 'test_management_color_success_dark'
       },
-      'color_warning': { 
-        light: 'test_management_color_warning_light', 
-        dark: 'test_management_color_warning_dark' 
+      'color_warning': {
+        light: 'test_management_color_warning_light',
+        dark: 'test_management_color_warning_dark'
       },
-      'color_info': { 
-        light: 'test_management_color_info_light', 
-        dark: 'test_management_color_info_dark' 
+      'color_info': {
+        light: 'test_management_color_info_light',
+        dark: 'test_management_color_info_dark'
       },
-      'color_neutral': { 
-        light: 'test_management_color_neutral_light', 
-        dark: 'test_management_color_neutral_dark' 
+      'color_neutral': {
+        light: 'test_management_color_neutral_light',
+        dark: 'test_management_color_neutral_dark'
       },
-      
+
       // 边框颜色
-      'border_light': { 
-        light: 'test_management_border_light_light', 
-        dark: 'test_management_border_light_dark' 
+      'border_light': {
+        light: 'test_management_border_light_light',
+        dark: 'test_management_border_light_dark'
       },
-      'border_active': { 
-        light: 'test_management_border_active_light', 
-        dark: 'test_management_border_active_dark' 
+      'border_active': {
+        light: 'test_management_border_active_light',
+        dark: 'test_management_border_active_dark'
       },
-      'border_subtle': { 
-        light: 'test_management_border_subtle_light', 
-        dark: 'test_management_border_subtle_dark' 
+      'border_subtle': {
+        light: 'test_management_border_subtle_light',
+        dark: 'test_management_border_subtle_dark'
       },
-      'border_dark': { 
-        light: 'test_management_border_dark_light', 
-        dark: 'test_management_border_dark_dark' 
+      'border_dark': {
+        light: 'test_management_border_dark_light',
+        dark: 'test_management_border_dark_dark'
       },
-      
+
       // 品牌颜色
-      'brand': { 
-        light: 'test_management_brand_light', 
-        dark: 'test_management_brand_dark' 
+      'brand': {
+        light: 'test_management_brand_light',
+        dark: 'test_management_brand_dark'
       },
-      'brand_blue': { 
-        light: 'test_management_brand_blue_light', 
-        dark: 'test_management_brand_blue_dark' 
+      'brand_blue': {
+        light: 'test_management_brand_blue_light',
+        dark: 'test_management_brand_blue_dark'
       },
-      'brand_secondary': { 
-        light: 'test_management_brand_secondary_light', 
-        dark: 'test_management_brand_secondary_dark' 
+      'brand_secondary': {
+        light: 'test_management_brand_secondary_light',
+        dark: 'test_management_brand_secondary_dark'
       },
-      'brand_tertiary': { 
-        light: 'test_management_brand_tertiary_light', 
-        dark: 'test_management_brand_tertiary_dark' 
+      'brand_tertiary': {
+        light: 'test_management_brand_tertiary_light',
+        dark: 'test_management_brand_tertiary_dark'
       },
-      
+
       // 其他颜色
-      'divider': { 
-        light: 'test_management_divider_light', 
-        dark: 'test_management_divider_dark' 
+      'divider': {
+        light: 'test_management_divider_light',
+        dark: 'test_management_divider_dark'
       },
-      'shadow_black': { 
-        light: 'test_management_shadow_black_light', 
-        dark: 'test_management_shadow_black_dark' 
+      'shadow_black': {
+        light: 'test_management_shadow_black_light',
+        dark: 'test_management_shadow_black_dark'
       },
-      'row_even': { 
-        light: 'test_management_row_even_light', 
-        dark: 'test_management_row_even_dark' 
+      'row_even': {
+        light: 'test_management_row_even_light',
+        dark: 'test_management_row_even_dark'
       },
-      'row_odd': { 
-        light: 'test_management_row_odd_light', 
-        dark: 'test_management_row_odd_dark' 
+      'row_odd': {
+        light: 'test_management_row_odd_light',
+        dark: 'test_management_row_odd_dark'
       },
-      'comp_background_tertiary': { 
-        light: 'test_management_comp_background_tertiary_light', 
-        dark: 'test_management_comp_background_tertiary_dark' 
+      'comp_background_tertiary': {
+        light: 'test_management_comp_background_tertiary_light',
+        dark: 'test_management_comp_background_tertiary_dark'
       },
-      'comp_background_secondary': { 
-        light: 'test_management_comp_background_secondary_light', 
-        dark: 'test_management_comp_background_secondary_dark' 
+      'comp_background_secondary': {
+        light: 'test_management_comp_background_secondary_light',
+        dark: 'test_management_comp_background_secondary_dark'
       },
-      'comp_background_primary': { 
-        light: 'test_management_comp_background_primary_light', 
-        dark: 'test_management_comp_background_primary_dark' 
+      'comp_background_primary': {
+        light: 'test_management_comp_background_primary_light',
+        dark: 'test_management_comp_background_primary_dark'
       },
-      'icon_primary': { 
-        light: 'test_management_icon_primary_light', 
-        dark: 'test_management_icon_primary_dark' 
+      'icon_primary': {
+        light: 'test_management_icon_primary_light',
+        dark: 'test_management_icon_primary_dark'
       },
-      'font_secondary': { 
-        light: 'test_management_font_secondary_light', 
-        dark: 'test_management_font_secondary_dark' 
+      'font_secondary': {
+        light: 'test_management_font_secondary_light',
+        dark: 'test_management_font_secondary_dark'
       },
-      'comp_divider': { 
-        light: 'test_management_divider_light', 
-        dark: 'test_management_divider_dark' 
+      'comp_divider': {
+        light: 'test_management_divider_light',
+        dark: 'test_management_divider_dark'
       },
-      'text_tertiary': { 
-        light: 'test_management_text_placeholder_light', 
-        dark: 'test_management_text_placeholder_dark' 
+      'text_tertiary': {
+        light: 'test_management_text_placeholder_light',
+        dark: 'test_management_text_placeholder_dark'
+      },
+
+      // 成功/错误状态文字和边框颜色
+      'success_text': {
+        light: 'test_management_color_success_light',
+        dark: 'test_management_color_success_dark'
+      },
+      'error_text': {
+        light: 'test_management_color_error_light',
+        dark: 'test_management_color_error_dark'
+      },
+      'success_border': {
+        light: 'test_management_color_success_light',
+        dark: 'test_management_color_success_dark'
+      },
+      'error_border': {
+        light: 'test_management_color_error_light',
+        dark: 'test_management_color_error_dark'
+      },
+      'comp_border_primary': {
+        light: 'test_management_border_light_light',
+        dark: 'test_management_border_light_dark'
       }
     };
 

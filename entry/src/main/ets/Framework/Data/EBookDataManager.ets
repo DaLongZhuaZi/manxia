@@ -614,6 +614,33 @@ export class EBookDataManager {
   }
 
   /**
+   * 获取所有有阅读记录的电子书及其阅读进度
+   * 用于阅读报告统计
+   */
+  public async getEBooksWithReadingProgress(): Promise<EBook[]> {
+    try {
+      const allEbooks = await this.getEBookList();
+      // 筛选有阅读进度的电子书
+      const ebooksWithProgress = allEbooks.filter((ebook: EBook) => {
+        if (!ebook.readingProgress) {
+          return false;
+        }
+        // 检查是否有真正的阅读进度
+        const hasDomPos = ebook.readingProgress.domPos && ebook.readingProgress.domPos.length > 0;
+        const hasChapterProgress = ebook.readingProgress.currentChapterIndex > 0;
+        const hasProgress = ebook.readingProgress.progress > 0;
+        return hasDomPos || hasChapterProgress || hasProgress;
+      });
+      
+      logger.info(TAG, `获取到 ${ebooksWithProgress.length} 本有阅读记录的电子书`);
+      return ebooksWithProgress;
+    } catch (error) {
+      logger.error(TAG, `获取电子书阅读进度失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
+    }
+  }
+
+  /**
    * 根据ID获取电子书
    */
   public async getEBookById(id: string): Promise<EBook | null> {
@@ -667,6 +694,21 @@ export class EBookDataManager {
     // 获取阅读设置
     const readingSettings = await this.getReadingSettings(id);
 
+    // 根据阅读进度动态计算正确的状态
+    let finalStatus = status;
+    if (readingProgress) {
+      const hasProgress = readingProgress.progress > 0 || 
+                          readingProgress.currentPosition > 0 || 
+                          readingProgress.currentChapterIndex > 0 ||
+                          (readingProgress.domPos && readingProgress.domPos.length > 0);
+      
+      if (readingProgress.progress >= 100) {
+        finalStatus = EBookStatus.COMPLETED;
+      } else if (hasProgress) {
+        finalStatus = EBookStatus.READING;
+      }
+    }
+
     return new EBook(
       id,
       format,
@@ -685,7 +727,7 @@ export class EBookDataManager {
         rating
       },
       chapters,
-      status,
+      finalStatus,
       readingProgress,
       readingSettings,
       addTime,

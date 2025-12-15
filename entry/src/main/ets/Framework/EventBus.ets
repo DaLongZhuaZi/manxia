@@ -106,6 +106,13 @@ export class ErrorEventPayload implements IEventPayload {
 }
 
 /**
+ * 基础事件载荷（用于不需要额外数据的事件）
+ */
+export class BasePayload implements IEventPayload {
+  constructor() {}
+}
+
+/**
  * 漫画导入完成事件的载荷
  */
 export class MangaImportCompletedPayload implements IEventPayload {
@@ -189,6 +196,11 @@ interface GameEventConstants {
   // 漫画数据
   MANGA_IMPORT_COMPLETED: string;
   MANGA_DELETED: string;
+  MANGA_READING_PROGRESS_UPDATED: string;
+  // 电子书数据
+  EBOOK_UPDATED: string;
+  EBOOK_COVER_CHANGED: string;
+  EBOOK_LIST_REFRESH_NEEDED: string;
   // 文件导入
   FILE_IMPORT_REQUESTED: string;
   // 封面选择
@@ -232,6 +244,12 @@ export const GameEvent: GameEventConstants = {
   // --- 漫画数据事件 ---
   MANGA_IMPORT_COMPLETED: 'mangaImportCompleted',
   MANGA_DELETED: 'mangaDeleted',
+  MANGA_READING_PROGRESS_UPDATED: 'mangaReadingProgressUpdated',
+
+  // --- 电子书数据事件 ---
+  EBOOK_UPDATED: 'ebookUpdated',
+  EBOOK_COVER_CHANGED: 'ebookCoverChanged',
+  EBOOK_LIST_REFRESH_NEEDED: 'ebookListRefreshNeeded',
 
   // --- 文件导入事件 ---
   FILE_IMPORT_REQUESTED: 'fileImportRequested',

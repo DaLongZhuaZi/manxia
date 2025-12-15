@@ -8,7 +8,6 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { GlobalBackgroundLayer } from '../Framework/Components/GlobalBackgroundLayer';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
@@ -30,16 +29,19 @@ interface NavDestinationContext {
  * 阅读统计数据接口
  */
 interface ReadingStatistics {
-  totalReadingTime: number;      // 总阅读时长（分钟）
+  totalReadingTime: number;      // 总阅读时长（秒）
   totalComicsRead: number;        // 阅读过的漫画总数
   totalChaptersRead: number;      // 阅读过的章节总数
   totalPagesRead: number;         // 阅读的总页数
-  averageReadingTime: number;     // 平均每天阅读时长（分钟）
+  averageReadingTime: number;     // 平均每天阅读时长（秒）
   favoriteReadingHour: number;    // 最喜欢的阅读时段（小时）
   mostReadComicId: string;        // 阅读最多的漫画ID
   mostReadComicTitle: string;     // 阅读最多的漫画标题
   continuousReadingDays: number;  // 连续阅读天数
   lastReadTime: number;           // 最后阅读时间
+  // 电子书统计
+  totalEBooksRead: number;        // 阅读过的电子书总数
+  totalEBookReadingTime: number;  // 电子书总阅读时长（秒）
 }
 
 /**
@@ -47,9 +49,21 @@ interface ReadingStatistics {
  */
 interface DailyReadingData {
   date: string;                   // 日期字符串（YYYY-MM-DD）
-  readingTime: number;            // 阅读时长（分钟）
+  readingTime: number;            // 阅读时长（秒）
   chaptersRead: number;           // 阅读章节数
   pagesRead: number;              // 阅读页数
+}
+
+/**
+ * 日视图漫画阅读项
+ */
+interface DailyMangaItem {
+  comicId: string;
+  title: string;
+  coverPath: string;
+  readingTime: number;            // 阅读时长（秒）
+  chaptersRead: number;
+  pagesRead: number;
 }
 
 /**
@@ -58,7 +72,7 @@ interface DailyReadingData {
 interface HourlyDistribution {
   hour: number;                   // 小时（0-23）
   readingCount: number;           // 阅读次数
-  readingTime: number;            // 阅读时长（分钟）
+  readingTime: number;            // 阅读时长（秒）
 }
 
 /**
@@ -73,6 +87,15 @@ interface HourlyStatData {
  * 每日统计数据（用于Map存储）
  */
 interface DailyStatData {
+  time: number;
+  chapters: Set<string>;
+  pages: number;
+}
+
+/**
+ * 漫画阅读统计数据（用于Map存储）
+ */
+interface MangaReadingStatData {
   time: number;
   chapters: Set<string>;
   pages: number;
@@ -168,15 +191,17 @@ struct ReadingAnalyticsPage {
     mostReadComicId: '',
     mostReadComicTitle: '暂无数据',
     continuousReadingDays: 0,
-    lastReadTime: 0
+    lastReadTime: 0,
+    totalEBooksRead: 0,
+    totalEBookReadingTime: 0
   };
 
   @State dailyData: DailyReadingData[] = [];
   @State hourlyDistribution: HourlyDistribution[] = [];
-
+  
   // 阅读时长排行
   @State readingRankList: ReadingRankItem[] = [];
-
+  
   // 兴趣分析
   @State interestItems: InterestItem[] = [];
 
@@ -185,6 +210,16 @@ struct ReadingAnalyticsPage {
   @State showRetentionPicker: boolean = false; // 是否显示保留天数选择器
   @State retentionDaysIndex: number = 2; // 保留天数索引（默认30天）
   @State showClearDataDialog: boolean = false; // 是否显示清除数据对话框
+  
+  // 视图切换：长期视图 / 日视图
+  @State isLongTermView: boolean = true; // true: 长期视图, false: 日视图
+  @State selectedDate: Date = new Date(); // 日视图选中的日期
+  @State currentMonth: Date = new Date(); // 日视图当前显示的月份
+  @State dailyViewData: DailyReadingData | null = null; // 日视图当天的阅读数据
+  @State dailyMangaList: DailyMangaItem[] = []; // 日视图当天阅读的漫画列表
+  
+  // 缓存原始阅读历史数据（用于日视图查询）
+  private cachedReadHistory: ReadHistory[] = [];
 
   onPageShow(): void {
     try {
@@ -214,7 +249,7 @@ struct ReadingAnalyticsPage {
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
-
+    
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -245,10 +280,10 @@ struct ReadingAnalyticsPage {
   private updateResponsiveParams(): void {
     const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
     const deviceInfo = this.deviceManager.getDeviceInfo();
-
+    
     this.responsive_contentPadding = layoutParams.contentPadding;
     this.responsive_isLandscape = deviceInfo.isLandscape;
-
+    
     switch (deviceInfo.breakpoint) {
       case Breakpoint.XS:
         this.responsive_maxContentWidth = 600;
@@ -279,9 +314,9 @@ struct ReadingAnalyticsPage {
       this.hasAskedPermission = this.analyticsManager.hasAskedPermission();
       this.retentionDaysIndex = this.analyticsManager.getRetentionDaysIndex();
       this.selectedTimeRange = this.analyticsManager.getRetentionDays();
-
+      
       logger.info(TAG, `初始化完成: analyticsEnabled=${this.analyticsEnabled}, hasAskedPermission=${this.hasAskedPermission}`);
-
+      
       // 如果已询问过权限，才加载数据
       if (this.hasAskedPermission) {
         await this.loadReadingData();
@@ -294,7 +329,7 @@ struct ReadingAnalyticsPage {
       this.isLoading = false;
     }
   }
-
+  
   /**
    * 处理用户同意权限
    */
@@ -305,7 +340,7 @@ struct ReadingAnalyticsPage {
       this.analyticsEnabled = true;
       this.hasAskedPermission = true;
       logger.info(TAG, '用户同意阅读报告权限，开始加载数据');
-
+      
       // 加载数据
       this.isLoading = true;
       await this.loadReadingData();
@@ -313,7 +348,7 @@ struct ReadingAnalyticsPage {
       logger.error(TAG, `处理同意权限失败: ${String(error)}`);
     }
   }
-
+  
   /**
    * 处理用户拒绝权限
    */
@@ -321,11 +356,9 @@ struct ReadingAnalyticsPage {
     try {
       // 确保功能保持关闭状态
       await this.analyticsManager.setEnabled(false);
-      // 标记已询问过权限，下次不再显示权限请求界面
-      await this.analyticsManager.markAskedPermission();
+      // 不标记已询问过权限，下次进入时继续显示权限请求界面
       this.analyticsEnabled = false;
-      this.hasAskedPermission = true;
-      logger.info(TAG, '用户拒绝阅读报告权限，功能保持关闭');
+      logger.info(TAG, '用户拒绝阅读报告权限，功能保持关闭，下次进入将继续询问');
       // 返回上一页
       this.pathStack.pop();
     } catch (error) {
@@ -333,25 +366,22 @@ struct ReadingAnalyticsPage {
       this.pathStack.pop();
     }
   }
-
+  
   /**
    * 显示清除数据对话框
    */
   private showClearDataConfirmDialog(): void {
     this.showClearDataDialog = true;
   }
-
+  
   /**
-   * 清除阅读分析数据
+   * 清除阅读统计数据（仅重置页面显示的统计数据，不删除阅读记录）
    */
   private async clearReadingAnalyticsData(): Promise<void> {
     try {
-      logger.info(TAG, '开始清除阅读分析数据');
-
-      // 清除阅读历史
-      await this.dataService.clearReadingHistory();
-
-      // 重置统计数据
+      logger.info(TAG, '开始清除阅读统计数据（不删除阅读记录）');
+      
+      // 仅重置页面显示的统计数据，不删除实际的阅读记录
       this.statistics = {
         totalReadingTime: 0,
         totalComicsRead: 0,
@@ -362,64 +392,235 @@ struct ReadingAnalyticsPage {
         mostReadComicId: '',
         mostReadComicTitle: '暂无数据',
         continuousReadingDays: 0,
-        lastReadTime: 0
+        lastReadTime: 0,
+        totalEBooksRead: 0,
+        totalEBookReadingTime: 0
       };
       this.dailyData = [];
       this.hourlyDistribution = [];
       this.readingRankList = [];
       this.interestItems = [];
-
+      
       this.showClearDataDialog = false;
-      logger.info(TAG, '阅读分析数据已清除');
+      logger.info(TAG, '阅读统计数据已清除（阅读记录保留）');
     } catch (error) {
-      logger.error(TAG, `清除阅读分析数据失败: ${String(error)}`);
+      logger.error(TAG, `清除阅读统计数据失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 关闭阅读报告功能并返回（不删除阅读记录）
+   */
+  private async clearDataAndDisableAnalytics(): Promise<void> {
+    try {
+      logger.info(TAG, '开始关闭阅读报告功能（不删除阅读记录）');
+      
+      // 关闭阅读报告功能
+      await this.analyticsManager.setEnabled(false);
+      this.analyticsEnabled = false;
+      
+      // 重置权限询问状态，下次进入需要重新询问
+      await this.analyticsManager.resetAskedPermission();
+      this.hasAskedPermission = false;
+      
+      // 仅重置页面显示的统计数据，不删除实际的阅读记录
+      this.statistics = {
+        totalReadingTime: 0,
+        totalComicsRead: 0,
+        totalChaptersRead: 0,
+        totalPagesRead: 0,
+        averageReadingTime: 0,
+        favoriteReadingHour: 0,
+        mostReadComicId: '',
+        mostReadComicTitle: '暂无数据',
+        continuousReadingDays: 0,
+        lastReadTime: 0,
+        totalEBooksRead: 0,
+        totalEBookReadingTime: 0
+      };
+      this.dailyData = [];
+      this.hourlyDistribution = [];
+      this.readingRankList = [];
+      this.interestItems = [];
+      
+      this.showClearDataDialog = false;
+      logger.info(TAG, '阅读报告功能已关闭，权限状态已重置（阅读记录保留），准备返回');
+      
+      // 返回上一页
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, `关闭阅读报告功能失败: ${String(error)}`);
     }
   }
 
   /**
-   * 清除数据并关闭阅读报告功能，然后返回
+   * 切换视图模式（长期视图 / 日视图）
    */
-  private async clearDataAndDisableAnalytics(): Promise<void> {
-    try {
-      logger.info(TAG, '开始清除阅读分析数据并关闭功能');
-
-      // 清除阅读历史
-      await this.dataService.clearReadingHistory();
-
-      // 关闭阅读报告功能
-      await this.analyticsManager.setEnabled(false);
-      this.analyticsEnabled = false;
-
-      // 重置权限询问状态，下次进入需要重新询问
-      await this.analyticsManager.resetAskedPermission();
-      this.hasAskedPermission = false;
-
-      // 重置统计数据
-      this.statistics = {
-        totalReadingTime: 0,
-        totalComicsRead: 0,
-        totalChaptersRead: 0,
-        totalPagesRead: 0,
-        averageReadingTime: 0,
-        favoriteReadingHour: 0,
-        mostReadComicId: '',
-        mostReadComicTitle: '暂无数据',
-        continuousReadingDays: 0,
-        lastReadTime: 0
-      };
-      this.dailyData = [];
-      this.hourlyDistribution = [];
-      this.readingRankList = [];
-      this.interestItems = [];
-
-      this.showClearDataDialog = false;
-      logger.info(TAG, '阅读分析数据已清除，功能已关闭，权限状态已重置，准备返回');
-
-      // 返回上一页
-      this.pathStack.pop();
-    } catch (error) {
-      logger.error(TAG, `清除数据并关闭功能失败: ${String(error)}`);
+  private toggleViewMode(): void {
+    this.isLongTermView = !this.isLongTermView;
+    logger.info(TAG, `切换到${this.isLongTermView ? '长期视图' : '日视图'}`);
+    
+    if (!this.isLongTermView) {
+      // 切换到日视图时，加载当天数据
+      this.loadDailyViewData(this.selectedDate);
     }
+  }
+
+  /**
+   * 加载日视图数据
+   */
+  private async loadDailyViewData(date: Date): Promise<void> {
+    const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    
+    // 从已加载的每日数据中查找
+    const dayData = this.dailyData.find(d => d.date === dateKey);
+    
+    if (dayData) {
+      this.dailyViewData = dayData;
+    } else {
+      // 没有数据时创建空数据
+      this.dailyViewData = {
+        date: dateKey,
+        readingTime: 0,
+        chaptersRead: 0,
+        pagesRead: 0
+      };
+    }
+    
+    // 加载当天阅读的漫画列表
+    await this.loadDailyMangaList(date);
+    
+    logger.debug(TAG, `日视图数据: ${dateKey}, 时长: ${this.dailyViewData.readingTime}秒, 漫画数: ${this.dailyMangaList.length}`);
+  }
+
+  /**
+   * 加载当天阅读的漫画列表
+   */
+  private async loadDailyMangaList(date: Date): Promise<void> {
+    const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0).getTime();
+    const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999).getTime();
+    
+    // 过滤当天的阅读记录
+    const dayRecords = this.cachedReadHistory.filter(record => 
+      record.readTime >= startOfDay && record.readTime <= endOfDay
+    );
+    
+    // 按漫画ID分组统计
+    const mangaMap = new Map<string, MangaReadingStatData>();
+    
+    dayRecords.forEach(record => {
+      const existing = mangaMap.get(record.comicId);
+      if (existing) {
+        existing.time += record.readDuration;
+        existing.chapters.add(record.chapterId);
+        existing.pages += 1;
+      } else {
+        const chapters = new Set<string>();
+        chapters.add(record.chapterId);
+        const newStat: MangaReadingStatData = {
+          time: record.readDuration,
+          chapters: chapters,
+          pages: 1
+        };
+        mangaMap.set(record.comicId, newStat);
+      }
+    });
+    
+    // 获取漫画详细信息并构建列表
+    const mangaList: DailyMangaItem[] = [];
+    const entries = Array.from(mangaMap.entries());
+    
+    for (const entry of entries) {
+      const comicId = entry[0];
+      const stats = entry[1];
+      
+      try {
+        const comic = await this.dataManager.getComicById(comicId);
+        if (comic) {
+          mangaList.push({
+            comicId: comicId,
+            title: comic.title,
+            coverPath: comic.coverLocalPath || comic.coverUrl || '',
+            readingTime: Math.round(stats.time / 1000), // 毫秒转秒
+            chaptersRead: stats.chapters.size,
+            pagesRead: stats.pages
+          });
+        }
+      } catch (e) {
+        logger.warn(TAG, `无法获取漫画信息: ${comicId}`);
+      }
+    }
+    
+    // 按阅读时长排序
+    mangaList.sort((a, b) => b.readingTime - a.readingTime);
+    this.dailyMangaList = mangaList;
+  }
+
+  /**
+   * 选择日期（日视图）
+   */
+  private selectDate(date: Date): void {
+    this.selectedDate = date;
+    this.loadDailyViewData(date);
+  }
+
+  /**
+   * 切换到上一个月
+   */
+  private previousMonth(): void {
+    const newMonth = new Date(this.currentMonth);
+    newMonth.setMonth(newMonth.getMonth() - 1);
+    this.currentMonth = newMonth;
+  }
+
+  /**
+   * 切换到下一个月
+   */
+  private nextMonth(): void {
+    const newMonth = new Date(this.currentMonth);
+    newMonth.setMonth(newMonth.getMonth() + 1);
+    this.currentMonth = newMonth;
+  }
+
+  /**
+   * 获取指定月份的天数
+   */
+  private getDaysInMonth(year: number, month: number): number {
+    return new Date(year, month + 1, 0).getDate();
+  }
+
+  /**
+   * 获取指定月份第一天是星期几（0-6，0为周日）
+   */
+  private getFirstDayOfMonth(year: number, month: number): number {
+    return new Date(year, month, 1).getDay();
+  }
+
+  /**
+   * 检查某天是否有阅读记录
+   */
+  private hasReadingDataOnDate(date: Date): boolean {
+    const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return this.dailyData.some(d => d.date === dateKey && d.readingTime > 0);
+  }
+
+  /**
+   * 检查是否是选中的日期
+   */
+  private isSelectedDate(date: Date): boolean {
+    return date.getFullYear() === this.selectedDate.getFullYear() &&
+           date.getMonth() === this.selectedDate.getMonth() &&
+           date.getDate() === this.selectedDate.getDate();
+  }
+
+  /**
+   * 检查是否是今天
+   */
+  private isToday(date: Date): boolean {
+    const today = new Date();
+    return date.getFullYear() === today.getFullYear() &&
+           date.getMonth() === today.getMonth() &&
+           date.getDate() === today.getDate();
   }
 
   /**
@@ -430,22 +631,31 @@ struct ReadingAnalyticsPage {
     try {
       logger.info(TAG, '开始加载阅读数据');
 
-      // 获取阅读历史记录
+      // 获取漫画阅读历史记录
       const readHistory: ReadHistory[] = await this.dataService.getReadingHistory(1000);
-      logger.debug(TAG, `获取到 ${readHistory.length} 条阅读记录`);
+      this.cachedReadHistory = readHistory; // 缓存用于日视图
+      logger.debug(TAG, `获取到 ${readHistory.length} 条漫画阅读记录`);
 
-      if (readHistory.length === 0) {
+      // 获取电子书阅读数据
+      const ebooksWithProgress: EBook[] = await this.ebookDataManager.getEBooksWithReadingProgress();
+      logger.debug(TAG, `获取到 ${ebooksWithProgress.length} 本有阅读记录的电子书`);
+
+      // 如果漫画和电子书都没有阅读记录
+      if (readHistory.length === 0 && ebooksWithProgress.length === 0) {
         logger.info(TAG, '暂无阅读记录');
         this.isLoading = false;
         return;
       }
 
-      // 分析数据
+      // 分析漫画数据
       await this.analyzeReadingData(readHistory);
-
-      // 加载阅读时长排行
-      await this.loadReadingRank(readHistory);
-
+      
+      // 分析电子书数据
+      this.analyzeEBookData(ebooksWithProgress);
+      
+      // 加载阅读时长排行（包含漫画和电子书）
+      await this.loadReadingRank(readHistory, ebooksWithProgress);
+      
       // 分析用户兴趣
       await this.analyzeUserInterests();
 
@@ -454,6 +664,32 @@ struct ReadingAnalyticsPage {
       logger.error(TAG, '加载阅读数据失败', String(error));
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  /**
+   * 分析电子书数据
+   */
+  private analyzeEBookData(ebooks: EBook[]): void {
+    try {
+      this.statistics.totalEBooksRead = ebooks.length;
+      
+      // 计算电子书总阅读时长（电子书的 totalReadingTime 是分钟，需要转换为秒）
+      let totalEBookTimeMinutes = 0;
+      ebooks.forEach((ebook: EBook) => {
+        if (ebook.readingProgress && ebook.readingProgress.totalReadingTime > 0) {
+          totalEBookTimeMinutes += ebook.readingProgress.totalReadingTime;
+        }
+      });
+      // 分钟转秒
+      this.statistics.totalEBookReadingTime = Math.round(totalEBookTimeMinutes * 60);
+      
+      // 将电子书阅读时长加入总阅读时长（都是秒）
+      this.statistics.totalReadingTime += this.statistics.totalEBookReadingTime;
+      
+      logger.debug(TAG, `电子书统计: ${this.statistics.totalEBooksRead} 本, 时长 ${this.statistics.totalEBookReadingTime} 秒`);
+    } catch (error) {
+      logger.error(TAG, `分析电子书数据失败: ${String(error)}`);
     }
   }
 
@@ -469,11 +705,11 @@ struct ReadingAnalyticsPage {
       // 过滤时间范围内的记录
       const filteredHistory = readHistory.filter(record => record.readTime >= startTime);
 
-      // 统计总阅读时长
-      const totalReadingTimeSeconds = filteredHistory.reduce((sum: number, record: ReadHistory): number => {
+      // 统计总阅读时长（readDuration 是毫秒，转换为秒以保留精度）
+      const totalReadingTimeMs = filteredHistory.reduce((sum: number, record: ReadHistory): number => {
         return sum + record.readDuration;
       }, 0);
-      this.statistics.totalReadingTime = Math.round(totalReadingTimeSeconds / 60);
+      this.statistics.totalReadingTime = Math.round(totalReadingTimeMs / 1000);  // 毫秒转秒
 
       // 统计阅读过的漫画数量
       const comicIds = new Set<string>();
@@ -537,7 +773,7 @@ struct ReadingAnalyticsPage {
       const existing = hourlyMap.get(hour);
       if (existing) {
         existing.count += 1;
-        existing.time += Math.round(record.readDuration / 60);
+        existing.time += Math.round(record.readDuration / 1000);  // 毫秒转秒
         hourlyMap.set(hour, existing);
       }
     });
@@ -576,7 +812,7 @@ struct ReadingAnalyticsPage {
 
       const existing = dailyMap.get(dateKey);
       if (existing) {
-        existing.time += Math.round(record.readDuration / 60);
+        existing.time += Math.round(record.readDuration / 1000);  // 毫秒转秒
         existing.chapters.add(record.chapterId);
         existing.pages += 1;
         dailyMap.set(dateKey, existing);
@@ -584,7 +820,7 @@ struct ReadingAnalyticsPage {
         const chapters = new Set<string>();
         chapters.add(record.chapterId);
         const newData: DailyStatData = {
-          time: Math.round(record.readDuration / 60),
+          time: Math.round(record.readDuration / 1000),  // 毫秒转秒
           chapters: chapters,
           pages: 1
         };
@@ -627,7 +863,7 @@ struct ReadingAnalyticsPage {
     });
 
     this.statistics.mostReadComicId = mostReadComicId;
-
+    
     // 从数据库查询漫画标题
     if (mostReadComicId) {
       try {
@@ -696,29 +932,26 @@ struct ReadingAnalyticsPage {
   /**
    * 加载阅读时长排行
    */
-  private async loadReadingRank(readHistory: ReadHistory[]): Promise<void> {
+  private async loadReadingRank(readHistory: ReadHistory[], ebooks: EBook[] = []): Promise<void> {
     try {
-      // 按漫画ID统计阅读时长
+      const rankList: ReadingRankItem[] = [];
+      
+      // 按漫画ID统计阅读时长（readDuration 是毫秒）
       const readingTimeMap = new Map<string, number>();
       readHistory.forEach(record => {
         const currentTime = readingTimeMap.get(record.comicId) || 0;
-        readingTimeMap.set(record.comicId, currentTime + Math.round(record.readDuration / 60));
+        readingTimeMap.set(record.comicId, currentTime + Math.round(record.readDuration / 1000));  // 毫秒转秒
       });
 
-      // 转换为数组并排序
-      const rankEntries = Array.from(readingTimeMap.entries());
-      rankEntries.sort((a, b) => b[1] - a[1]);
-
-      // 获取前10名的详细信息
-      const rankList: ReadingRankItem[] = [];
-      for (let i = 0; i < Math.min(10, rankEntries.length); i++) {
-        const comicId: string = rankEntries[i][0];
-        const readingTime: number = rankEntries[i][1];
-
+      // 获取漫画详细信息
+      const mangaEntries = Array.from(readingTimeMap.entries());
+      for (const entry of mangaEntries) {
+        const comicId: string = entry[0];
+        const readingTime: number = entry[1];
+        
         try {
           const comic: ComicInfo | null = await this.dataManager.getComicById(comicId);
           if (comic) {
-            // 优先使用本地封面路径，其次使用网络URL
             const coverPath: string = comic.coverLocalPath || comic.coverUrl || '';
             const rankItem: ReadingRankItem = {
               id: comicId,
@@ -730,27 +963,29 @@ struct ReadingAnalyticsPage {
             rankList.push(rankItem);
           }
         } catch (e) {
-          // 可能是电子书，尝试从电子书数据库查询
-          try {
-            const ebook: EBook | null = await this.ebookDataManager.getEBookById(comicId);
-            if (ebook) {
-              const rankItem: ReadingRankItem = {
-                id: comicId,
-                title: ebook.metadata.title,
-                coverPath: ebook.metadata.coverImagePath || '',
-                readingTime: readingTime,
-                type: 'ebook'
-              };
-              rankList.push(rankItem);
-            }
-          } catch (e2) {
-            logger.warn(TAG, `无法找到作品信息: ${comicId}`);
-          }
+          logger.warn(TAG, `无法找到漫画信息: ${comicId}`);
         }
       }
 
-      this.readingRankList = rankList;
-      logger.info(TAG, `阅读时长排行加载完成，共 ${rankList.length} 项`);
+      // 添加电子书到排行（电子书的 totalReadingTime 是分钟，需要转换为秒）
+      for (const ebook of ebooks) {
+        if (ebook.readingProgress && ebook.readingProgress.totalReadingTime > 0) {
+          const rankItem: ReadingRankItem = {
+            id: ebook.id,
+            title: ebook.metadata.title,
+            coverPath: ebook.metadata.coverImagePath || '',
+            readingTime: Math.round(ebook.readingProgress.totalReadingTime * 60),  // 分钟转秒
+            type: 'ebook'
+          };
+          rankList.push(rankItem);
+        }
+      }
+
+      // 按阅读时长排序并取前10名
+      rankList.sort((a, b) => b.readingTime - a.readingTime);
+      this.readingRankList = rankList.slice(0, 10);
+      
+      logger.info(TAG, `阅读时长排行加载完成，共 ${this.readingRankList.length} 项`);
     } catch (error) {
       logger.error(TAG, `加载阅读时长排行失败: ${String(error)}`);
     }
@@ -781,7 +1016,7 @@ struct ReadingAnalyticsPage {
             }
           }
         }
-
+        
         // 分析作者
         if (comic.author && comic.author.trim().length > 0) {
           const existing: KeywordStatData | undefined = keywordMap.get(comic.author);
@@ -870,7 +1105,7 @@ struct ReadingAnalyticsPage {
     await this.analyticsManager.setRetentionDaysByIndex(index);
     this.selectedTimeRange = RETENTION_DAYS_OPTIONS[index];
     this.showRetentionPicker = false;
-
+    
     // 重新加载数据
     await this.loadReadingData();
   }
@@ -915,11 +1150,19 @@ struct ReadingAnalyticsPage {
   }
 
   /**
-   * 格式化时长
+   * 格式化时长（输入为秒）
    */
-  private formatDuration(minutes: number): string {
+  private formatDuration(seconds: number): string {
+    if (seconds < 60) {
+      return `${seconds}秒`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
     if (minutes < 60) {
-      return `${minutes}分钟`;
+      if (remainingSeconds === 0) {
+        return `${minutes}分钟`;
+      }
+      return `${minutes}分${remainingSeconds}秒`;
     }
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
@@ -950,7 +1193,7 @@ struct ReadingAnalyticsPage {
   }
 
   /**
-   * 构建时间范围选择器
+   * 构建时间范围选择器（长期视图）
    */
   @Builder
   buildTimeRangeSelector() {
@@ -960,7 +1203,7 @@ struct ReadingAnalyticsPage {
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
-      .width('25%')
+      .width('33%')
       .height(32)
       .backgroundColor(
         (this.selectedTimeRange === 7
@@ -975,7 +1218,7 @@ struct ReadingAnalyticsPage {
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
-      .width('25%')
+      .width('33%')
       .height(32)
       .backgroundColor(
         (this.selectedTimeRange === 30
@@ -986,26 +1229,11 @@ struct ReadingAnalyticsPage {
       .onClick(() => this.changeTimeRange(30))
 
       Button({ stateEffect: true }) {
-        Text('90天')
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
-      }
-      .width('25%')
-      .height(32)
-      .backgroundColor(
-        (this.selectedTimeRange === 90
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)) as ResourceColor
-      )
-      .borderRadius(8)
-      .onClick(() => this.changeTimeRange(90))
-
-      Button({ stateEffect: true }) {
         Text('全部')
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
-      .width('25%')
+      .width('33%')
       .height(32)
       .backgroundColor(
         (this.selectedTimeRange === 365
@@ -1020,43 +1248,463 @@ struct ReadingAnalyticsPage {
   }
 
   /**
-   * 构建统计卡片
+   * 构建日视图月历选择器
    */
   @Builder
-  buildStatCard(title: string, value: string, icon: string, subtitle?: string) {
-    Column({ space: 8 }) {
-      Row({ space: 8 }) {
-        Text(icon)
-          .fontSize(24)
-
-        Column({ space: 4 }) {
-          Text(title)
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-          Text(value)
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
+  buildMonthCalendar() {
+    Column({ space: 12 }) {
+      // 月份导航
+      Row() {
+        Button({ stateEffect: true }) {
+          Text('◀')
+            .fontSize(16)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-          if (subtitle) {
-            Text(subtitle)
-              .fontSize(10)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          }
         }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => this.previousMonth())
+
+        Text(`${this.currentMonth.getFullYear()}年${this.currentMonth.getMonth() + 1}月`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .textAlign(TextAlign.Center)
+
+        Button({ stateEffect: true }) {
+          Text('▶')
+            .fontSize(16)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => this.nextMonth())
       }
       .width('100%')
+      .padding({ left: 8, right: 8 })
+
+      // 星期标题
+      Row() {
+        ForEach(['日', '一', '二', '三', '四', '五', '六'], (day: string) => {
+          Text(day)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('14.28%')
+            .textAlign(TextAlign.Center)
+        })
+      }
+      .width('100%')
+
+      // 日期网格
+      this.buildCalendarGrid()
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundColor(this.getBlurPanelBackground())
     .borderRadius(12)
+    .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+    .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+    .border({ width: 1, color: this.getBlurPanelBorder() })
+    .margin({ left: 16, right: 16 })
+  }
+
+  /**
+   * 获取日历网格数据
+   */
+  private getCalendarGridData(): number[][] {
+    const year = this.currentMonth.getFullYear();
+    const month = this.currentMonth.getMonth();
+    const daysInMonth = this.getDaysInMonth(year, month);
+    const firstDayOfWeek = this.getFirstDayOfMonth(year, month);
+    
+    const totalCells = firstDayOfWeek + daysInMonth;
+    const rows = Math.ceil(totalCells / 7);
+    
+    const gridData: number[][] = [];
+    for (let row = 0; row < rows; row++) {
+      const rowData: number[] = [];
+      for (let col = 0; col < 7; col++) {
+        const cellIndex = row * 7 + col;
+        const dayNumber = cellIndex - firstDayOfWeek + 1;
+        if (dayNumber >= 1 && dayNumber <= daysInMonth) {
+          rowData.push(dayNumber);
+        } else {
+          rowData.push(0); // 0 表示空白
+        }
+      }
+      gridData.push(rowData);
+    }
+    return gridData;
+  }
+
+  /**
+   * 构建日历网格
+   */
+  @Builder
+  buildCalendarGrid() {
+    Column({ space: 4 }) {
+      ForEach(this.getCalendarGridData(), (rowData: number[], rowIndex: number) => {
+        Row() {
+          ForEach(rowData, (dayNumber: number, colIndex: number) => {
+            if (dayNumber > 0) {
+              this.buildCalendarCell(dayNumber)
+            } else {
+              // 空白单元格
+              Column()
+                .width('14.28%')
+                .height(38)
+            }
+          })
+        }
+        .width('100%')
+      })
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建日历单元格
+   */
+  @Builder
+  buildCalendarCell(dayNumber: number) {
+    Column() {
+      // 日期圆点
+      Stack() {
+        // 背景圆
+        if (this.isSelectedDay(dayNumber)) {
+          Circle()
+            .width(32)
+            .height(32)
+            .fill(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        
+        // 日期数字
+        Text(`${dayNumber}`)
+          .fontSize(12)
+          .fontColor(this.getDayTextColor(dayNumber))
+          .fontWeight(this.isTodayDay(dayNumber) ? FontWeight.Bold : FontWeight.Normal)
+      }
+      .width(32)
+      .height(32)
+      .alignContent(Alignment.Center)
+      
+      // 有数据指示点
+      if (this.hasDayData(dayNumber) && !this.isSelectedDay(dayNumber)) {
+        Circle()
+          .width(4)
+          .height(4)
+          .fill(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .margin({ top: 2 })
+      } else {
+        Blank().height(6)
+      }
+    }
+    .width('14.28%')
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      const year = this.currentMonth.getFullYear();
+      const month = this.currentMonth.getMonth();
+      this.selectDate(new Date(year, month, dayNumber));
+    })
+  }
+
+  /**
+   * 检查是否是选中的日期（基于日期数字）
+   */
+  private isSelectedDay(dayNumber: number): boolean {
+    const year = this.currentMonth.getFullYear();
+    const month = this.currentMonth.getMonth();
+    return this.selectedDate.getFullYear() === year &&
+           this.selectedDate.getMonth() === month &&
+           this.selectedDate.getDate() === dayNumber;
+  }
+
+  /**
+   * 检查是否是今天（基于日期数字）
+   */
+  private isTodayDay(dayNumber: number): boolean {
+    const today = new Date();
+    const year = this.currentMonth.getFullYear();
+    const month = this.currentMonth.getMonth();
+    return today.getFullYear() === year &&
+           today.getMonth() === month &&
+           today.getDate() === dayNumber;
+  }
+
+  /**
+   * 检查某天是否有阅读数据（基于日期数字）
+   */
+  private hasDayData(dayNumber: number): boolean {
+    const year = this.currentMonth.getFullYear();
+    const month = this.currentMonth.getMonth();
+    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
+    return this.dailyData.some(d => d.date === dateKey && d.readingTime > 0);
+  }
+
+  /**
+   * 获取日期文字颜色
+   */
+  private getDayTextColor(dayNumber: number): ResourceColor {
+    if (this.isSelectedDay(dayNumber)) {
+      return '#FFFFFF';
+    } else if (this.isTodayDay(dayNumber)) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+    } else {
+      return ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme);
+    }
+  }
+
+  /**
+   * 构建日视图内容
+   */
+  @Builder
+  buildDailyViewContent() {
+    Column({ space: 16 }) {
+      // 月历选择器
+      this.buildMonthCalendar()
+      
+      // 当天阅读统计
+      Column({ space: 12 }) {
+        Text(`${this.selectedDate.getMonth() + 1}月${this.selectedDate.getDate()}日 阅读情况`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .alignSelf(ItemAlign.Start)
+        
+        if (this.dailyViewData && this.dailyViewData.readingTime > 0) {
+          // 有阅读数据
+          Row({ space: 16 }) {
+            // 阅读时长
+            Column({ space: 4 }) {
+              Text('⏱️')
+                .fontSize(24)
+              Text(this.formatDuration(this.dailyViewData.readingTime))
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text('阅读时长')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Center)
+            
+            // 阅读章节
+            Column({ space: 4 }) {
+              Text('📖')
+                .fontSize(24)
+              Text(`${this.dailyViewData.chaptersRead}`)
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text('阅读章节')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Center)
+            
+            // 阅读页数
+            Column({ space: 4 }) {
+              Text('📄')
+                .fontSize(24)
+              Text(`${this.dailyViewData.pagesRead}`)
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text('阅读页数')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Center)
+          }
+          .width('100%')
+          .padding(16)
+        } else {
+          // 无阅读数据
+          Column({ space: 8 }) {
+            Text('📚')
+              .fontSize(48)
+            Text('当天没有阅读记录')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .padding(32)
+          .alignItems(HorizontalAlign.Center)
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(this.getBlurPanelBackground())
+      .borderRadius(12)
+      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: 1, color: this.getBlurPanelBorder() })
+      .margin({ left: 16, right: 16 })
+      
+      // 当天阅读的漫画列表
+      if (this.dailyMangaList.length > 0) {
+        Column({ space: 12 }) {
+          Text('阅读的漫画')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .alignSelf(ItemAlign.Start)
+          
+          ForEach(this.dailyMangaList, (item: DailyMangaItem) => {
+            this.buildDailyMangaCard(item)
+          })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(this.getBlurPanelBackground())
+        .borderRadius(12)
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .margin({ left: 16, right: 16 })
+      }
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建日视图漫画卡片
+   */
+  @Builder
+  buildDailyMangaCard(item: DailyMangaItem) {
+    Row({ space: 12 }) {
+      // 封面图片
+      Image(this.normalizeCoverPath(item.coverPath))
+        .width(60)
+        .height(80)
+        .borderRadius(6)
+        .objectFit(ImageFit.Cover)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      
+      // 漫画信息
+      Column({ space: 4 }) {
+        Text(item.title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        
+        Row({ space: 8 }) {
+          Text(`⏱️ ${this.formatDuration(item.readingTime)}`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          
+          Text(`📖 ${item.chaptersRead}章`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          
+          Text(`📄 ${item.pagesRead}页`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+    .onClick(() => {
+      // 点击跳转到漫画详情页
+      const params: MangaDetailParams = { mangaId: item.comicId };
+      this.pathStack.pushPathByName('MangaDetailPage', params);
+    })
+  }
+
+  /**
+   * 获取统计卡片渐变背景色
+   */
+  private getStatCardGradient(index: number): LinearGradient {
+    const isDark = this.themeState.currentTheme === ThemeType.DARK;
+    const gradients: LinearGradient[] = isDark ? [
+      // 深色主题渐变
+      { angle: 135, colors: [['#1A3A5C', 0], ['#0D1F33', 1]] },  // 深蓝
+      { angle: 135, colors: [['#2D1B4E', 0], ['#1A0F2E', 1]] },  // 深紫
+      { angle: 135, colors: [['#1B3D3D', 0], ['#0F2424', 1]] },  // 深青
+      { angle: 135, colors: [['#3D2B1B', 0], ['#241A0F', 1]] },  // 深橙
+      { angle: 135, colors: [['#3D1B2B', 0], ['#240F1A', 1]] },  // 深红
+      { angle: 135, colors: [['#1B3D2B', 0], ['#0F241A', 1]] },  // 深绿
+    ] : [
+      // 浅色主题渐变
+      { angle: 135, colors: [['#E8F4FD', 0], ['#D1E9FA', 1]] },  // 浅蓝
+      { angle: 135, colors: [['#F3E8FD', 0], ['#E6D1FA', 1]] },  // 浅紫
+      { angle: 135, colors: [['#E8FDF4', 0], ['#D1FAE9', 1]] },  // 浅青
+      { angle: 135, colors: [['#FDF4E8', 0], ['#FAE9D1', 1]] },  // 浅橙
+      { angle: 135, colors: [['#FDE8F0', 0], ['#FAD1E0', 1]] },  // 浅红
+      { angle: 135, colors: [['#E8FDE8', 0], ['#D1FAD1', 1]] },  // 浅绿
+    ];
+    return gradients[index % gradients.length];
+  }
+
+  /**
+   * 构建统计卡片（带模糊效果磁贴设计）
+   */
+  @Builder
+  buildStatCard(title: string, value: string, icon: string, subtitle?: string) {
+    Column({ space: 6 }) {
+      // 图标
+      Text(icon)
+        .fontSize(32)
+        .alignSelf(ItemAlign.Start)
+      
+      Blank().layoutWeight(1)
+      
+      // 数值
+      Text(value)
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+      
+      // 标题
+      Text(title)
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+      
+      if (subtitle) {
+        Text(subtitle)
+          .fontSize(10)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .alignSelf(ItemAlign.Start)
+      }
+    }
+    .width('100%')
+    .height(120)
+    .padding(16)
+    .borderRadius(16)
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
+      ? 'rgba(30, 30, 35, 0.85)'   // 深色模式：深色半透明背景
+      : 'rgba(255, 255, 255, 0.85)') // 浅色模式：白色半透明背景
+    .backdropBlur(this.themeState.currentTheme === ThemeType.DARK 
+      ? BlurStyle.BACKGROUND_THICK   // 深色模式：厚模糊
+      : BlurStyle.BACKGROUND_THIN)   // 浅色模式：薄模糊
+    .shadow({
+      radius: 16,
+      color: this.themeState.currentTheme === ThemeType.DARK 
+        ? 'rgba(0, 0, 0, 0.4)'      // 深色模式：深色阴影
+        : 'rgba(0, 0, 0, 0.06)',    // 浅色模式：浅色阴影
+      offsetX: 0,
+      offsetY: 4
+    })
     .border({
       width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      color: this.themeState.currentTheme === ThemeType.DARK 
+        ? 'rgba(255, 255, 255, 0.08)' // 深色模式：微弱白色边框
+        : 'rgba(0, 0, 0, 0.04)'       // 浅色模式：微弱黑色边框
     })
   }
 
@@ -1065,67 +1713,118 @@ struct ReadingAnalyticsPage {
    */
   @Builder
   buildStatisticsOverview() {
-    Column({ space: 12 }) {
+    Column({ space: 16 }) {
       Text('📊 阅读统计')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      // 第一行：总阅读时长和平均时长
-      Row({ space: 12 }) {
-        this.buildStatCard(
-          '总阅读时长',
-          this.formatDuration(this.statistics.totalReadingTime),
-          '⏱️'
-        )
+      // 使用Grid布局实现2列磁贴效果
+      Grid() {
+        GridItem() {
+          this.buildStatCard(
+            '总阅读时长',
+            this.formatDuration(this.statistics.totalReadingTime),
+            '⏱️'
+          )
+        }
 
-        this.buildStatCard(
-          '日均阅读',
-          this.formatDuration(this.statistics.averageReadingTime),
-          '📅'
-        )
+        GridItem() {
+          this.buildStatCard(
+            '日均阅读',
+            this.formatDuration(this.statistics.averageReadingTime),
+            '📅'
+          )
+        }
+
+        GridItem() {
+          this.buildStatCard(
+            '阅读漫画',
+            `${this.statistics.totalComicsRead}`,
+            '📚',
+            '本'
+          )
+        }
+
+        GridItem() {
+          this.buildStatCard(
+            '阅读章节',
+            `${this.statistics.totalChaptersRead}`,
+            '📖',
+            '章'
+          )
+        }
+
+        GridItem() {
+          this.buildStatCard(
+            '阅读电子书',
+            `${this.statistics.totalEBooksRead}`,
+            '📕',
+            '本'
+          )
+        }
+
+        GridItem() {
+          this.buildStatCard(
+            '电子书时长',
+            this.formatDuration(this.statistics.totalEBookReadingTime),
+            '📖'
+          )
+        }
+
+        GridItem() {
+          this.buildStatCard(
+            '阅读页数',
+            `${this.statistics.totalPagesRead}`,
+            '📄',
+            '页'
+          )
+        }
+
+        GridItem() {
+          this.buildStatCard(
+            '连续阅读',
+            `${this.statistics.continuousReadingDays}`,
+            '🔥',
+            '天'
+          )
+        }
       }
-      .width('100%')
-
-      // 第二行：漫画数和章节数
-      Row({ space: 12 }) {
-        this.buildStatCard(
-          '阅读漫画',
-          `${this.statistics.totalComicsRead}`,
-          '📚',
-          '本'
-        )
-
-        this.buildStatCard(
-          '阅读章节',
-          `${this.statistics.totalChaptersRead}`,
-          '📖',
-          '章'
-        )
-      }
-      .width('100%')
-
-      // 第三行：总页数和连续天数
-      Row({ space: 12 }) {
-        this.buildStatCard(
-          '阅读页数',
-          `${this.statistics.totalPagesRead}`,
-          '📄',
-          '页'
-        )
-
-        this.buildStatCard(
-          '连续阅读',
-          `${this.statistics.continuousReadingDays}`,
-          '🔥',
-          '天'
-        )
-      }
+      .columnsTemplate('1fr 1fr')
+      .rowsGap(12)
+      .columnsGap(12)
       .width('100%')
     }
     .width('100%')
     .padding(16)
+  }
+
+  /**
+   * 获取模糊面板背景色
+   */
+  private getBlurPanelBackground(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK 
+      ? 'rgba(30, 30, 35, 0.85)' 
+      : 'rgba(255, 255, 255, 0.85)';
+  }
+
+  /**
+   * 获取模糊面板边框色
+   */
+  private getBlurPanelBorder(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK 
+      ? 'rgba(255, 255, 255, 0.08)' 
+      : 'rgba(0, 0, 0, 0.04)';
+  }
+
+  /**
+   * 获取模糊面板阴影色
+   */
+  private getBlurPanelShadowColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK 
+      ? 'rgba(0, 0, 0, 0.4)' 
+      : 'rgba(0, 0, 0, 0.06)';
   }
 
   /**
@@ -1145,13 +1844,13 @@ struct ReadingAnalyticsPage {
         Row({ space: 8 }) {
           Text('⏰')
             .fontSize(20)
-
+          
           Text('最喜欢的阅读时段')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
-
+          
           Text(`${this.statistics.favoriteReadingHour}:00 - ${this.statistics.favoriteReadingHour + 1}:00`)
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
@@ -1161,12 +1860,11 @@ struct ReadingAnalyticsPage {
       }
       .width('100%')
       .padding(16)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.getBlurPanelBackground())
       .borderRadius(12)
-      .border({
-        width: 1,
-        color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-      })
+      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: 1, color: this.getBlurPanelBorder() })
 
       // 最后阅读时间
       if (this.statistics.lastReadTime > 0) {
@@ -1174,13 +1872,13 @@ struct ReadingAnalyticsPage {
           Row({ space: 8 }) {
             Text('🕐')
               .fontSize(20)
-
+            
             Text('最后阅读时间')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
-
+            
             Text(this.formatDate(this.statistics.lastReadTime))
               .fontSize(16)
               .fontWeight(FontWeight.Bold)
@@ -1190,12 +1888,11 @@ struct ReadingAnalyticsPage {
         }
         .width('100%')
         .padding(16)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .backgroundColor(this.getBlurPanelBackground())
         .borderRadius(12)
-        .border({
-          width: 1,
-          color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-        })
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
       }
 
       // 阅读最多的漫画
@@ -1204,7 +1901,7 @@ struct ReadingAnalyticsPage {
           Row({ space: 8 }) {
             Text('⭐')
               .fontSize(20)
-
+            
             Text('阅读最多的漫画')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
@@ -1212,7 +1909,7 @@ struct ReadingAnalyticsPage {
               .layoutWeight(1)
           }
           .width('100%')
-
+          
           Text(this.statistics.mostReadComicTitle)
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1222,12 +1919,11 @@ struct ReadingAnalyticsPage {
         }
         .width('100%')
         .padding(16)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .backgroundColor(this.getBlurPanelBackground())
         .borderRadius(12)
-        .border({
-          width: 1,
-          color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-        })
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
         .alignItems(HorizontalAlign.Start)
       }
     }
@@ -1255,16 +1951,16 @@ struct ReadingAnalyticsPage {
                 .fontSize(12)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .width(90)
-
+              
               Column({ space: 4 }) {
                 Row({ space: 4 }) {
                   Text('⏱️')
                     .fontSize(12)
-                  Text(`${data.readingTime}分钟`)
+                  Text(this.formatDuration(data.readingTime))
                     .fontSize(12)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 }
-
+                
                 Row({ space: 4 }) {
                   Text('📖')
                     .fontSize(12)
@@ -1278,12 +1974,11 @@ struct ReadingAnalyticsPage {
             }
             .width('100%')
             .padding(12)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .backgroundColor(this.getBlurPanelBackground())
             .borderRadius(8)
-            .border({
-              width: 1,
-              color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-            })
+            .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+            .shadow({ radius: 8, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 2 })
+            .border({ width: 1, color: this.getBlurPanelBorder() })
           }, (data: DailyReadingData, index: number) => `${data.date}-${index}`)
         }
         .width('100%')
@@ -1306,26 +2001,37 @@ struct ReadingAnalyticsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .alignSelf(ItemAlign.Start)
 
-        // 兴趣标签云
-        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-          ForEach(this.interestItems, (item: InterestItem, index: number) => {
-            Row({ space: 4 }) {
-              Text(item.type === 'tag' ? '🏷️' : (item.type === 'author' ? '✍️' : '📝'))
-                .fontSize(12)
-              Text(item.keyword)
-                .fontSize(13)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Text(`(${item.count})`)
-                .fontSize(11)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .borderRadius(16)
-            .margin({ right: 8, bottom: 8 })
-          }, (item: InterestItem, index: number) => `${item.keyword}-${index}`)
+        // 兴趣标签云 - 带模糊效果容器
+        Column() {
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+            ForEach(this.interestItems, (item: InterestItem, index: number) => {
+              Row({ space: 4 }) {
+                Text(item.type === 'tag' ? '🏷️' : (item.type === 'author' ? '✍️' : '📝'))
+                  .fontSize(12)
+                Text(item.keyword)
+                  .fontSize(13)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Text(`(${item.count})`)
+                  .fontSize(11)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+              .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
+                ? 'rgba(255, 255, 255, 0.1)' 
+                : 'rgba(0, 0, 0, 0.05)')
+              .borderRadius(16)
+              .margin({ right: 8, bottom: 8 })
+            }, (item: InterestItem, index: number) => `${item.keyword}-${index}`)
+          }
+          .width('100%')
         }
         .width('100%')
+        .padding(16)
+        .backgroundColor(this.getBlurPanelBackground())
+        .borderRadius(12)
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
       }
       .width('100%')
       .padding(16)
@@ -1369,7 +2075,7 @@ struct ReadingAnalyticsPage {
                     .borderRadius(8)
                     .justifyContent(FlexAlign.Center)
                   }
-
+                  
                   // 排名标签
                   Text(`${index + 1}`)
                     .fontSize(12)
@@ -1430,11 +2136,11 @@ struct ReadingAnalyticsPage {
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
-
+        
         Text(`${RETENTION_DAYS_OPTIONS[this.retentionDaysIndex]}天`)
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-
+        
         Image($r('app.media.ic_arrow_right'))
           .width(16)
           .height(16)
@@ -1443,8 +2149,11 @@ struct ReadingAnalyticsPage {
       }
       .width('100%')
       .padding(16)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.getBlurPanelBackground())
       .borderRadius(12)
+      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: 1, color: this.getBlurPanelBorder() })
       .onClick(() => {
         this.showRetentionDaysPicker();
       })
@@ -1455,7 +2164,7 @@ struct ReadingAnalyticsPage {
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
-
+        
         // 使用条件渲染确保 Toggle 在数据加载后正确显示状态
         if (this.analyticsEnabled) {
           Toggle({ type: ToggleType.Switch, isOn: true })
@@ -1477,8 +2186,11 @@ struct ReadingAnalyticsPage {
       }
       .width('100%')
       .padding(16)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .backgroundColor(this.getBlurPanelBackground())
       .borderRadius(12)
+      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: 1, color: this.getBlurPanelBorder() })
 
       Text('关闭后将停止收集阅读数据，但不会删除已有数据')
         .fontSize(12)
@@ -1499,7 +2211,7 @@ struct ReadingAnalyticsPage {
         .width(48)
         .height(48)
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-
+      
       Text('正在加载阅读数据...')
         .fontSize(14)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1517,13 +2229,13 @@ struct ReadingAnalyticsPage {
     Column({ space: 16 }) {
       Text('📚')
         .fontSize(64)
-
-      Text('暂无阅读记录')
+      
+      Text('暂未收集到有效的阅读数据')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-      Text('开始阅读漫画后，这里将显示您的阅读统计和分析数据')
+      
+      Text('开始阅读漫画/电子书后，这里将显示您的阅读统计和分析数据\n请在阅读更长时间后查看')
         .fontSize(14)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .textAlign(TextAlign.Center)
@@ -1543,25 +2255,25 @@ struct ReadingAnalyticsPage {
       // 图标
       Text('📊')
         .fontSize(80)
-
+      
       // 标题
       Text('阅读报告')
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
+      
       // 副标题
       Text('了解您的阅读习惯')
         .fontSize(16)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
+      
       // 说明文字
       Column({ space: 12 }) {
         Text('开启阅读报告功能后，应用将收集以下数据：')
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width('100%')
-
+        
         Column({ space: 8 }) {
           this.buildPermissionItem('⏱️', '阅读时长', '记录您每次阅读的时长')
           this.buildPermissionItem('📖', '阅读进度', '记录您阅读的章节和页数')
@@ -1572,7 +2284,7 @@ struct ReadingAnalyticsPage {
         .padding(16)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius(12)
-
+        
         Text('这些数据仅存储在本地，不会上传到任何服务器。您可以随时在设置中关闭此功能或清除数据。')
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1581,7 +2293,7 @@ struct ReadingAnalyticsPage {
       }
       .width('85%')
       .margin({ top: 16 })
-
+      
       // 按钮区域
       Row({ space: 16 }) {
         // 拒绝按钮
@@ -1595,7 +2307,7 @@ struct ReadingAnalyticsPage {
           .onClick(() => {
             this.handleRejectPermission();
           })
-
+        
         // 同意按钮
         Button('同意并开启')
           .fontSize(16)
@@ -1616,7 +2328,7 @@ struct ReadingAnalyticsPage {
     .justifyContent(FlexAlign.Center)
     .padding({ bottom: 60 })
   }
-
+  
   /**
    * 构建权限项
    */
@@ -1625,13 +2337,13 @@ struct ReadingAnalyticsPage {
     Row({ space: 12 }) {
       Text(icon)
         .fontSize(20)
-
+      
       Column({ space: 2 }) {
         Text(title)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
+        
         Text(description)
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1641,7 +2353,7 @@ struct ReadingAnalyticsPage {
     }
     .width('100%')
   }
-
+  
   /**
    * 构建清除数据确认对话框
    */
@@ -1660,26 +2372,26 @@ struct ReadingAnalyticsPage {
     .width('100%')
     .height('100%')
     .position({ x: 0, y: 0 })
-
+    
     // 对话框内容
     Column({ space: 20 }) {
       // 图标
       Text('⚠️')
         .fontSize(48)
-
+      
       // 标题
       Text('清除阅读分析数据')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
+      
       // 说明
       Text('此操作将清除所有统计和分析数据，不影响您书库当中的阅读记录，包括：')
         .fontSize(14)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
-
+      
       Column({ space: 6 }) {
         Text('• 阅读时长排行数据')
           .fontSize(13)
@@ -1697,13 +2409,13 @@ struct ReadingAnalyticsPage {
       .width('100%')
       .alignItems(HorizontalAlign.Start)
       .padding({ left: 24, right: 24 })
-
+      
       Text('此操作不可撤销！')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor('#F44336')
         .margin({ top: 8 })
-
+      
       // 按钮区域
       Column({ space: 12 }) {
         Row({ space: 16 }) {
@@ -1718,7 +2430,7 @@ struct ReadingAnalyticsPage {
             .onClick(() => {
               this.showClearDataDialog = false;
             })
-
+          
           // 确认清除按钮
           Button('确认清除')
             .fontSize(15)
@@ -1732,7 +2444,7 @@ struct ReadingAnalyticsPage {
             })
         }
         .width('100%')
-
+        
         // 清除数据并关闭功能按钮
         Button('清除数据并关闭阅读报告')
           .fontSize(14)
@@ -1796,6 +2508,12 @@ struct ReadingAnalyticsPage {
                 this.buildStatCard('阅读章节', `${this.statistics.totalChaptersRead}`, '📖', '章')
               }
               GridItem() {
+                this.buildStatCard('阅读电子书', `${this.statistics.totalEBooksRead}`, '📕', '本')
+              }
+              GridItem() {
+                this.buildStatCard('电子书时长', this.formatDuration(this.statistics.totalEBookReadingTime), '📖')
+              }
+              GridItem() {
                 this.buildStatCard('阅读页数', `${this.statistics.totalPagesRead}`, '📄', '页')
               }
               GridItem() {
@@ -1840,7 +2558,7 @@ struct ReadingAnalyticsPage {
 
           // 设置区域
           this.buildSettingsSection()
-
+          
           Blank().height(40)
         }
         .width('100%')
@@ -1853,19 +2571,22 @@ struct ReadingAnalyticsPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
-        GlobalBackgroundLayer({
-          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
-        })
-
+        // 背景层（纯色，响应全局主题）
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        
         // 内容层
         Column() {
           Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-          // 如果未询问过权限，显示权限请求界面
-          if (!this.hasAskedPermission && !this.isLoading) {
+          // 如果未询问过权限或功能未启用，显示权限请求界面
+          if ((!this.hasAskedPermission || !this.analyticsEnabled) && !this.isLoading) {
             this.buildPermissionRequest()
-          } else {
+          } else if (this.isLongTermView) {
+            // 长期视图
             // 时间范围选择器
             Row() {
               this.buildTimeRangeSelector()
@@ -1891,12 +2612,28 @@ struct ReadingAnalyticsPage {
                     this.buildReadingRank()
                     this.buildDailyTrend()
                     this.buildSettingsSection()
-
+                    
                     Blank().height(40)
                   }
                 }
                 .width('100%')
               }
+            }
+            .edgeEffect(EdgeEffect.Spring)
+            .scrollBar(BarState.Auto)
+            .layoutWeight(1)
+          } else {
+            // 日视图
+            Scroll(this.scroller) {
+              Column({ space: 0 }) {
+                if (this.isLoading) {
+                  this.buildLoadingState()
+                } else {
+                  this.buildDailyViewContent()
+                  Blank().height(40)
+                }
+              }
+              .width('100%')
             }
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
@@ -1933,14 +2670,14 @@ struct ReadingAnalyticsPage {
                 .onClick(() => {
                   this.showRetentionPicker = false;
                 })
-
+              
               Text('选择数据保留天数')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .layoutWeight(1)
                 .textAlign(TextAlign.Center)
-
+              
               Text('确定')
                 .fontSize(16)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1967,7 +2704,7 @@ struct ReadingAnalyticsPage {
           .position({ x: 0, y: '100%' })
           .translate({ y: -280 })
         }
-
+        
         // 清除数据确认对话框
         if (this.showClearDataDialog) {
           this.buildClearDataDialog()
@@ -2013,6 +2750,15 @@ struct ReadingAnalyticsPage {
         title: { mainTitle: '阅读报告' },
         menu: {
           value: [{
+            content: {
+              label: this.isLongTermView ? '日视图' : '长期视图',
+              icon: this.isLongTermView ? $r('app.media.ic_calendar_day') : $r('app.media.ic_calendar_range'),
+              isEnabled: this.hasAskedPermission && !this.isLoading,
+              action: () => {
+                this.toggleViewMode();
+              }
+            }
+          }, {
             content: {
               label: '清除数据',
               icon: $r('app.media.ic_delete'),

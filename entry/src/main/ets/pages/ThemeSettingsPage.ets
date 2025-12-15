@@ -9,7 +9,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
-import { UIContext, LengthMetrics } from '@kit.ArkUI';
+import { UIContext, LengthMetrics, promptAction } from '@kit.ArkUI';
 import { cropToDisplayAspect, cropToDisplayAspectWithOptions, CropAlignment } from '../Framework/Utils/ImageCropper';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
@@ -66,14 +66,6 @@ interface RGBColor {
   b: number;
 }
 
-/**
- * 图片效果模式
- */
-enum ImageEffectMode {
-  STANDARD = 0, // 模糊 + 亮度调整
-  FROSTED = 1, // 磨砂玻璃（在STANDARD基础上叠加主题色半透明遮罩）
-  NONE = 2 // 不进行任何效果处理
-}
 
 @Component
 export struct ThemeSettingsPage {
@@ -101,7 +93,7 @@ export struct ThemeSettingsPage {
   @State selectedSplashImagePixelMap: image.PixelMap | null = null;
   @State processedSplashImagePixelMap: image.PixelMap | null = null;
   @State processedSplashImagePath: string = '';
-
+  
   // 主题商店展示与创建模式
   @State isCreatingCustomTheme: boolean = false;
   @State isCropping: boolean = false;
@@ -113,32 +105,30 @@ export struct ThemeSettingsPage {
   // 多选删除：选择模式与已选主题ID列表
   @State selectionModeEnabled: boolean = false;
   @State selectedThemeIds: string[] = [];
-
+  
   // 当前激活的主题ID（用于在列表中标识）
   @StorageProp(CUSTOM_THEME_KEYS.CURRENT_THEME_ID) currentCustomThemeId: string = '';
-
+  
   // 处理后的图片
   @State processedImagePixelMap: image.PixelMap | null = null;
   @State processedImagePath: string = '';
-
+  
   // 调节参数
   @State blurLevel: number = 0; // 模糊程度 0-100，默认无模糊
   @State brightnessLevel: number = 50; // 亮度 0-100，50为原始亮度，小于50变暗，大于50变亮
-  @State effectMode: ImageEffectMode = ImageEffectMode.NONE; // 图片效果模式，默认无效果
-  @State overlayStrength: number = 30; // 磨砂玻璃遮罩强度 0-100
-
+  
   // 提取的主色调
   @State extractedColor: string = '#6200EE';
   @State extractedColorRGB: string = 'RGB(98, 0, 238)';
-
+  
   // 加载状态
   @State isProcessing: boolean = false;
   @State processingMessage: string = '';
   @State processingProgress: number = 0;
-
+  
   // 预设主题列表
   @State customThemes: CustomTheme[] = [];
-
+  
   // 滑块调节防抖定时器
   private effectDebounceTimer: number = -1;
 
@@ -149,18 +139,18 @@ export struct ThemeSettingsPage {
   private SECONDARY_THEME_NAME: string = '第二自定义主题';
   // 原始背景图片所在 rawfile 目录（如需调整实际目录，请修改此常量）
   private RAW_BACKGROUND_DIR: string = 'backgrounds';
-
+  
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
     this.uiContext = this.getUIContext();
-
+    
     ThemeAwareHelper.initializeThemeAware(TAG, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题已切换: ${theme}`);
     });
-
+    
     // 初始化响应式布局
     this.initializeResponsiveLayout();
-
+    
     this.loadCustomThemes();
 
     // 首次进入时初始化默认自定义主题（若不存在则创建）
@@ -178,19 +168,19 @@ export struct ThemeSettingsPage {
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
     ThemeAwareHelper.cleanupThemeAware(TAG);
-
+    
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
     }
-
+    
     // 清理防抖定时器
     if (this.effectDebounceTimer !== -1) {
       clearTimeout(this.effectDebounceTimer);
       this.effectDebounceTimer = -1;
     }
-
+    
     // 释放PixelMap资源
     if (this.selectedImagePixelMap) {
       this.selectedImagePixelMap.release();
@@ -219,9 +209,9 @@ export struct ThemeSettingsPage {
         logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
         this.updateResponsiveParams();
       };
-
+      
       this.deviceManager.addListener(this.deviceChangeListener);
-
+      
       logger.info(TAG, '✅ 响应式布局初始化完成');
     } catch (error) {
       logger.error(TAG, '响应式布局初始化失败', String(error));
@@ -301,7 +291,7 @@ export struct ThemeSettingsPage {
 
     // 最大内容宽度改为直接使用工具类计算结果，保持与断点逻辑一致
     this.responsive_maxContentWidth = ResponsiveLayoutHelper.getMaxContentWidth();
-
+    
     logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
   }
 
@@ -315,10 +305,10 @@ export struct ThemeSettingsPage {
         logger.error(TAG, '无法获取UIAbilityContext');
         return;
       }
-
+      
       const themesDir = `${context.filesDir}/custom_themes`;
       const themesFile = `${themesDir}/themes.json`;
-
+      
       if (fs.accessSync(themesFile)) {
         const content = fs.readTextSync(themesFile);
         this.customThemes = JSON.parse(content) as CustomTheme[];
@@ -361,15 +351,15 @@ export struct ThemeSettingsPage {
       if (!context) {
         throw new Error('无法获取UIAbilityContext');
       }
-
+      
       const themesDir = `${context.filesDir}/custom_themes`;
       const themesFile = `${themesDir}/themes.json`;
-
+      
       // 确保目录存在
       if (!fs.accessSync(themesDir)) {
         fs.mkdirSync(themesDir);
       }
-
+      
       // 添加或更新主题
       const existingIndex = this.customThemes.findIndex(t => t.id === theme.id);
       if (existingIndex >= 0) {
@@ -377,7 +367,7 @@ export struct ThemeSettingsPage {
       } else {
         this.customThemes.push(theme);
       }
-
+      
       // 保存到文件
       const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, JSON.stringify(this.customThemes));
@@ -753,24 +743,24 @@ export struct ThemeSettingsPage {
   private async selectImage(): Promise<void> {
     try {
       logger.info(TAG, '开始选择图片');
-
+      
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
         throw new Error('无法获取UIAbilityContext');
       }
-
+      
       const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = {
         MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
         maxSelectNumber: 1
       };
-
+      
       const photoPicker = new photoAccessHelper.PhotoViewPicker();
       const result = await photoPicker.select(photoSelectOptions);
-
+      
       if (result && result.photoUris && result.photoUris.length > 0) {
         const imageUri = result.photoUris[0];
         logger.info(TAG, `已选择图片: ${imageUri}`);
-
+        
         await this.loadAndProcessImage(imageUri);
       }
     } catch (error) {
@@ -785,19 +775,19 @@ export struct ThemeSettingsPage {
     this.isProcessing = true;
     this.processingMessage = '正在加载图片...';
     this.processingProgress = 10;
-
+    
     try {
       // 打开图片文件
       const file = fs.openSync(imageUri, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
-
+      
       // 获取图片信息
       const imageInfo = await imageSource.getImageInfo();
       logger.info(TAG, `图片尺寸: ${imageInfo.size.width}x${imageInfo.size.height}`);
-
+      
       this.processingProgress = 30;
       this.processingMessage = '正在准备裁剪...';
-
+      
       // 计算目标尺寸（使用720p分辨率，足够用于背景且文件小）
       // 使用较小的分辨率可以显著减小文件大小，提升性能
       const maxWidth = 720;
@@ -810,40 +800,40 @@ export struct ThemeSettingsPage {
       );
       const targetWidth = targetSize.targetWidth;
       const targetHeight = targetSize.targetHeight;
-
+      
       logger.info(TAG, `目标尺寸: ${targetWidth}x${targetHeight}`);
-
+      
       // 解码并缩放图片（不立即裁剪，进入裁剪阶段）
       const decodingOptions: image.DecodingOptions = {
         desiredSize: { width: targetWidth, height: targetHeight },
         desiredPixelFormat: 3 // RGBA_8888
       };
-
+      
       const decodedPixelMap = await imageSource.createPixelMap(decodingOptions);
       this.selectedImagePixelMap = decodedPixelMap;
       this.selectedImagePath = imageUri;
-
+      
       fs.closeSync(file);
       imageSource.release();
-
+      
       // 直接进行主色调提取（不进入自定义裁剪阶段）
       this.processingProgress = 60;
       this.processingMessage = '正在提取主色调...';
       await this.extractDominantColor(this.selectedImagePixelMap);
-
+      
       // 复制原图作为处理结果（默认无效果）
       this.processingProgress = 80;
       this.processingMessage = '正在准备预览...';
       await this.copyOriginalToProcessed();
-
+      
       this.isCropping = false;
       this.processingProgress = 100;
       this.processingMessage = '图片已准备就绪';
-
+      
       setTimeout(() => {
         this.isProcessing = false;
       }, 300);
-
+      
     } catch (error) {
       logger.error(TAG, `处理图片失败: ${error instanceof Error ? error.message : String(error)}`);
       this.isProcessing = false;
@@ -1010,13 +1000,13 @@ export struct ThemeSettingsPage {
     // 计算缩放比例，确保图片完全适配到最大尺寸内
     const widthScale = maxWidth / srcWidth;
     const heightScale = maxHeight / srcHeight;
-
+    
     // 取较小的缩放比例，确保图片不超出边界
     const scale = Math.min(widthScale, heightScale, 1.0); // 最大1.0，避免放大
-
+    
     const resultWidth = Math.round(srcWidth * scale);
     const resultHeight = Math.round(srcHeight * scale);
-
+    
     const result: TargetSize = {
       targetWidth: resultWidth,
       targetHeight: resultHeight
@@ -1031,30 +1021,30 @@ export struct ThemeSettingsPage {
   private async extractDominantColor(pixelMap: image.PixelMap): Promise<void> {
     try {
       logger.info(TAG, '开始提取主色调（使用effectKit）');
-
+      
       // 使用effectKit的ColorPicker提取主色调
       // createColorPicker返回Promise<ColorPicker>
       const colorPicker = await effectKit.createColorPicker(pixelMap);
-
+      
       // getMainColorSync 返回一个Promise<Color>
       const mainColor = await colorPicker.getMainColorSync();
-
+      
       // Color对象包含red, green, blue, alpha属性（0-255）
       const r = mainColor.red;
       const g = mainColor.green;
       const b = mainColor.blue;
-
+      
       logger.info(TAG, `提取的原始颜色: RGB(${r}, ${g}, ${b})`);
-
+      
       // 增强饱和度
       const enhancedColor = this.enhanceSaturation(r, g, b, 1.3);
       const enhancedR = enhancedColor.r;
       const enhancedG = enhancedColor.g;
       const enhancedB = enhancedColor.b;
-
+      
       this.extractedColor = `#${this.toHex(enhancedR)}${this.toHex(enhancedG)}${this.toHex(enhancedB)}`;
       this.extractedColorRGB = `RGB(${enhancedR}, ${enhancedG}, ${enhancedB})`;
-
+      
       logger.info(TAG, `提取的主色调（增强后）: ${this.extractedColor}`);
 
       // 将提取色加入可选主题色并默认选中（避免重复添加）
@@ -1073,11 +1063,11 @@ export struct ThemeSettingsPage {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `提取主色调失败: ${errorMsg}`);
-
+      
       // 失败时使用默认颜色
       this.extractedColor = '#6200EE';
       this.extractedColorRGB = 'RGB(98, 0, 238)';
-
+      
       // 不再抛出错误，避免中断流程
       logger.warn(TAG, '已使用默认主色调继续处理');
     }
@@ -1091,18 +1081,18 @@ export struct ThemeSettingsPage {
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     const delta = max - min;
-
+    
     if (delta === 0) {
       const result: RGBColor = { r, g, b }; // 灰色，无需增强
       return result;
     }
-
+    
     const saturation = delta / max;
     const newSaturation = Math.min(1, saturation * factor);
-
+    
     const scale = newSaturation / saturation;
     const gray = (r + g + b) / 3;
-
+    
     const result: RGBColor = {
       r: Math.round(Math.max(0, Math.min(255, gray + (r - gray) * scale))),
       g: Math.round(Math.max(0, Math.min(255, gray + (g - gray) * scale))),
@@ -1176,34 +1166,41 @@ export struct ThemeSettingsPage {
     if (!this.selectedImagePixelMap) {
       return;
     }
-
+    
     try {
       // 释放旧的处理结果
       if (this.processedImagePixelMap) {
         this.processedImagePixelMap.release();
         this.processedImagePixelMap = null;
       }
-
+      
       // 获取原图信息
       const imageInfo = await this.selectedImagePixelMap.getImageInfo();
       const width = imageInfo.size.width;
       const height = imageInfo.size.height;
-
+      
       // 复制原图像素数据
-      // 注意：readPixelsToBuffer 返回的是 BGRA 格式
+      // readPixelsToBuffer 返回 BGRA 格式，需要转换为 RGBA
       const buffer = new ArrayBuffer(width * height * 4);
       await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
-
-      // 创建新的 PixelMap
-      // 关键：使用 BGRA_8888 (pixelFormat: 4) 而不是 RGBA_8888 (pixelFormat: 3)
-      // 因为 readPixelsToBuffer 返回的数据是 BGRA 格式
+      
+      // BGRA -> RGBA：交换 R 和 B 通道
+      const pixels = new Uint8Array(buffer);
+      for (let i = 0; i < pixels.length; i += 4) {
+        const b = pixels[i];     // BGRA 中第一个是 B
+        const r = pixels[i + 2]; // BGRA 中第三个是 R
+        pixels[i] = r;           // 设为 R
+        pixels[i + 2] = b;       // 设为 B
+      }
+      
+      // 创建新的 PixelMap（RGBA 格式）
       const createOptions: image.InitializationOptions = {
         size: { width: width, height: height },
-        pixelFormat: 4, // BGRA_8888
+        pixelFormat: 3, // RGBA_8888
         alphaType: 0,
         editable: true
       };
-
+      
       this.processedImagePixelMap = await image.createPixelMap(buffer, createOptions);
       logger.info(TAG, `✅ 原图已复制到预览 (size=${width}x${height})`);
     } catch (error) {
@@ -1220,7 +1217,7 @@ export struct ThemeSettingsPage {
     if (this.effectDebounceTimer !== -1) {
       clearTimeout(this.effectDebounceTimer);
     }
-
+    
     // 设置新的定时器，300ms后执行
     this.effectDebounceTimer = setTimeout(() => {
       this.applyImageEffects();
@@ -1236,165 +1233,132 @@ export struct ThemeSettingsPage {
     if (!this.selectedImagePixelMap) {
       return;
     }
-
+    
     try {
-      logger.info(TAG, `开始应用图片效果: 模式=${this.effectMode}, 模糊=${this.blurLevel}, 亮度=${this.brightnessLevel}, 遮罩强度=${this.overlayStrength}`);
-
-      // 如果是 NONE 模式，直接复制原图
-      if (this.effectMode === ImageEffectMode.NONE) {
-        await this.copyOriginalToProcessed();
-        logger.info(TAG, '✅ 无效果模式，使用原图');
-        return;
-      }
-
+      logger.info(TAG, `开始应用图片效果: 模糊=${this.blurLevel}, 亮度=${this.brightnessLevel}`);
+      
       // 如果没有需要应用的效果（模糊为0且亮度为50），直接复制原图
-      if (this.blurLevel === 0 && this.brightnessLevel === 50 && this.effectMode !== ImageEffectMode.FROSTED) {
+      if (this.blurLevel === 0 && this.brightnessLevel === 50) {
         await this.copyOriginalToProcessed();
         logger.info(TAG, '✅ 无需应用效果，使用原图');
         return;
       }
-
+      
       // 获取原图信息
       const imageInfo = await this.selectedImagePixelMap.getImageInfo();
       const width = imageInfo.size.width;
       const height = imageInfo.size.height;
-
+      
       // 1. 复制原图作为工作副本（避免修改原图）
-      // 注意：readPixelsToBuffer 返回的是 BGRA 格式
       const buffer = new ArrayBuffer(width * height * 4);
       await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
-
-      // 2. 创建可编辑的PixelMap用于应用效果
-      // 关键：使用 BGRA_8888 (pixelFormat: 4) 因为 readPixelsToBuffer 返回 BGRA 格式
+      
+      // BGRA -> RGBA：交换 R 和 B 通道（readPixelsToBuffer 返回 BGRA 格式）
+      const pixelsBgra = new Uint8Array(buffer);
+      for (let swapIdx = 0; swapIdx < pixelsBgra.length; swapIdx += 4) {
+        const bChannel = pixelsBgra[swapIdx];
+        const rChannel = pixelsBgra[swapIdx + 2];
+        pixelsBgra[swapIdx] = rChannel;
+        pixelsBgra[swapIdx + 2] = bChannel;
+      }
+      
+      // 2. 创建可编辑的PixelMap用于应用效果（RGBA 格式）
       const createOptions: image.InitializationOptions = {
         size: { width: width, height: height },
-        pixelFormat: 4, // BGRA_8888
+        pixelFormat: 3, // RGBA_8888
         alphaType: 0,
         editable: true // 必须设置为可编辑，才能使用effectKit
       };
-
-      const workingPixelMap = await image.createPixelMap(buffer, createOptions);
-
-      // 3. 应用模糊效果（使用effectKit硬件加速）
+      
+      let workingPixelMap = await image.createPixelMap(buffer, createOptions);
+      
+      // 3. 应用亮度变暗（在 effectKit 处理之前，避免格式问题）
+      // 此时 workingPixelMap 是我们自己创建的 RGBA 格式，可以安全操作
+      if (this.brightnessLevel < 50) {
+        // 0-49%: 手动像素处理变暗（在原始 buffer 上操作）
+        // 映射: 0% → 0.0, 49% → 0.98, 50% → 1.0
+        const darknessFactor = this.brightnessLevel / 50;
+        logger.info(TAG, `应用亮度降低，因子=${darknessFactor}`);
+        
+        // 直接在已转换为 RGBA 的 buffer 上操作
+        const pixels = new Uint8Array(buffer);
+        for (let i = 0; i < pixels.length; i += 4) {
+          pixels[i] = Math.round(pixels[i] * darknessFactor);
+          pixels[i + 1] = Math.round(pixels[i + 1] * darknessFactor);
+          pixels[i + 2] = Math.round(pixels[i + 2] * darknessFactor);
+        }
+        
+        // 重新创建 PixelMap
+        workingPixelMap.release();
+        workingPixelMap = await image.createPixelMap(buffer, createOptions);
+        logger.info(TAG, '✅ 亮度降低完成');
+      }
+      
+      // 4. 应用模糊效果（使用effectKit硬件加速）
       if (this.blurLevel > 0) {
-        const blurRadius = Math.round(this.blurLevel);
-        logger.info(TAG, `应用模糊效果，半径=${blurRadius}`);
         const filter = effectKit.createEffect(workingPixelMap);
         if (filter) {
+          const blurRadius = Math.round(this.blurLevel * 0.3);
+          logger.info(TAG, `应用模糊效果，半径=${blurRadius}`);
           filter.blur(blurRadius);
+          const blurredPixelMap = await filter.getPixelMap();
+          workingPixelMap.release();
+          workingPixelMap = blurredPixelMap;
           logger.info(TAG, '✅ 模糊效果应用完成');
-        } else {
-          logger.warn(TAG, '无法创建效果滤镜，跳过模糊处理');
         }
       }
-
-      // 4. 应用亮度调整（使用感知亮度算法，避免偏色）
-      if (this.brightnessLevel !== 50) {
-        logger.info(TAG, `应用亮度调整，亮度=${this.brightnessLevel}`);
-
-        // 读取模糊后的像素数据
-        const brightnessBuffer = new ArrayBuffer(width * height * 4);
-        await workingPixelMap.readPixelsToBuffer(brightnessBuffer);
-
-        const pixels = new Uint8Array(brightnessBuffer);
-        // brightnessLevel范围0-100，50为原始亮度
-        // 转换为亮度调整因子：0 -> 0.2, 50 -> 1.0, 100 -> 1.8
-        const brightnessFactor = (this.brightnessLevel / 50);
-
-        // 使用感知亮度权重（Rec. 709标准）
-        // 逐像素调整亮度，保持色相
-        for (let i = 0; i < pixels.length; i += 4) {
-          const r = pixels[i];
-          const g = pixels[i + 1];
-          const b = pixels[i + 2];
-
-          // 计算感知亮度（Luminance）
-          const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-          // 调整亮度并保持色相
-          if (luminance > 0) {
-            const adjustmentRatio = this.calculateBrightnessAdjustment(luminance, brightnessFactor);
-            pixels[i] = Math.min(255, Math.max(0, Math.round(r * adjustmentRatio)));
-            pixels[i + 1] = Math.min(255, Math.max(0, Math.round(g * adjustmentRatio)));
-            pixels[i + 2] = Math.min(255, Math.max(0, Math.round(b * adjustmentRatio)));
-          }
+      
+      // 5. 应用亮度增加（使用 effectKit）
+      if (this.brightnessLevel > 50) {
+        // 51-100%: 使用 effectKit.brightness 增亮
+        // effectKit.brightness: 0=原始, 1=最亮
+        // 映射: 51% → 0.02, 100% → 1.0
+        const brightnessFactor = (this.brightnessLevel - 50) / 50;
+        logger.info(TAG, `应用亮度增加，因子=${brightnessFactor}`);
+        const filter = effectKit.createEffect(workingPixelMap);
+        if (filter) {
+          filter.brightness(brightnessFactor);
+          const brighterPixelMap = await filter.getPixelMap();
+          workingPixelMap.release();
+          workingPixelMap = brighterPixelMap;
+          logger.info(TAG, '✅ 亮度增加完成');
         }
-
-        // 写回像素数据
-        const writeArea: image.PositionArea = {
-          pixels: brightnessBuffer,
-          offset: 0,
-          stride: width * 4,
-          region: {
-            size: { height: height, width: width },
-            x: 0,
-            y: 0
-          }
-        };
-        await workingPixelMap.writePixels(writeArea);
-        logger.info(TAG, '✅ 亮度调整完成');
       }
-
-      // 5. 磨砂玻璃遮罩（在STANDARD效果基础上叠加主题色半透明层）
-      if (this.effectMode === ImageEffectMode.FROSTED) {
-        const overlayRgb: RGBColor = this.selectedPrimaryColor && this.selectedPrimaryColor.length > 0
-          ? this.parseHexColorToRGB(this.selectedPrimaryColor)
-          : this.parseHexColorToRGB(this.extractedColor);
-        const currentBuffer = new ArrayBuffer(width * height * 4);
-        await workingPixelMap.readPixelsToBuffer(currentBuffer);
-        const pixelsOverlay = new Uint8Array(currentBuffer);
-        const alphaStrength = Math.max(0, Math.min(1, this.overlayStrength / 100));
-        for (let i2 = 0; i2 < pixelsOverlay.length; i2 += 4) {
-          const r0 = pixelsOverlay[i2];
-          const g0 = pixelsOverlay[i2 + 1];
-          const b0 = pixelsOverlay[i2 + 2];
-          const rBlend = Math.round((1 - alphaStrength) * r0 + alphaStrength * overlayRgb.r);
-          const gBlend = Math.round((1 - alphaStrength) * g0 + alphaStrength * overlayRgb.g);
-          const bBlend = Math.round((1 - alphaStrength) * b0 + alphaStrength * overlayRgb.b);
-          pixelsOverlay[i2] = Math.min(255, Math.max(0, rBlend));
-          pixelsOverlay[i2 + 1] = Math.min(255, Math.max(0, gBlend));
-          pixelsOverlay[i2 + 2] = Math.min(255, Math.max(0, bBlend));
-        }
-        const writeArea2: image.PositionArea = {
-          pixels: currentBuffer,
-          offset: 0,
-          stride: width * 4,
-          region: {
-            size: { height: height, width: width },
-            x: 0,
-            y: 0
-          }
-        };
-        await workingPixelMap.writePixels(writeArea2);
-        logger.info(TAG, '✅ 磨砂玻璃遮罩应用完成');
-      }
-
-      // 6. 释放旧的处理结果，保存新的处理结果
+      
+      // 5. 释放旧的处理结果，保存新的处理结果
       if (this.processedImagePixelMap) {
         this.processedImagePixelMap.release();
       }
-
+      
       this.processedImagePixelMap = workingPixelMap;
-
+      
       logger.info(TAG, '✅ 图片效果应用完成');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `应用图片效果失败: ${errorMsg}`);
-
+      
       // 失败时直接复制原图
       if (this.selectedImagePixelMap && !this.processedImagePixelMap) {
         try {
           const imageInfo = await this.selectedImagePixelMap.getImageInfo();
           const buffer = new ArrayBuffer(imageInfo.size.width * imageInfo.size.height * 4);
           await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
-
-          // 使用 BGRA_8888 格式
+          
+          // BGRA -> RGBA 转换
+          const fallbackPixels = new Uint8Array(buffer);
+          for (let fi = 0; fi < fallbackPixels.length; fi += 4) {
+            const fb = fallbackPixels[fi];
+            const fr = fallbackPixels[fi + 2];
+            fallbackPixels[fi] = fr;
+            fallbackPixels[fi + 2] = fb;
+          }
+          
           const createOptions: image.InitializationOptions = {
             size: imageInfo.size,
-            pixelFormat: 4, // BGRA_8888
+            pixelFormat: 3, // RGBA_8888
             alphaType: 0
           };
-
+          
           this.processedImagePixelMap = await image.createPixelMap(buffer, createOptions);
           logger.info(TAG, '已使用原图作为备用处理结果');
         } catch (fallbackError) {
@@ -1432,31 +1396,31 @@ export struct ThemeSettingsPage {
       logger.error(TAG, '没有可保存的主题');
       return;
     }
-
+    
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
         throw new Error('无法获取UIAbilityContext');
       }
-
+      
       this.isProcessing = true;
       this.processingMessage = '正在保存主题...';
       this.processingProgress = 0;
-
+      
       // 创建主题目录
       const themesDir = `${context.filesDir}/custom_themes`;
       if (!fs.accessSync(themesDir)) {
         fs.mkdirSync(themesDir);
       }
-
+      
       const themeId = `theme_${Date.now()}`;
-
-      // 1. 生成浅色模式图片（原亮度+模糊）
+      
+      // 1. 生成浅色模式图片（使用用户设置的亮度+模糊）
       this.processingMessage = '正在生成浅色模式图片...';
       this.processingProgress = 20;
-      const lightImagePath = await this.generateThemeImage(themeId, 'light', this.blurLevel, 50);
-
-      // 2. 生成深色模式图片（降低亮度+模糊）
+      const lightImagePath = await this.generateThemeImage(themeId, 'light', this.blurLevel, this.brightnessLevel);
+      
+      // 2. 生成深色模式图片（在用户设置基础上降低亮度）
       this.processingMessage = '正在生成深色模式图片...';
       this.processingProgress = 60;
       const darkBrightness = Math.max(10, Math.min(40, this.brightnessLevel - 20)); // 比当前亮度低20%，范围10-40
@@ -1469,7 +1433,7 @@ export struct ThemeSettingsPage {
         this.processingProgress = 80;
         splashImagePath = await this.generateSplashImage(themeId);
       }
-
+      
       // 3. 创建主题对象
       this.processingMessage = '正在保存主题信息...';
       this.processingProgress = 90;
@@ -1488,24 +1452,34 @@ export struct ThemeSettingsPage {
         createTime: Date.now(),
         lastModified: Date.now()
       };
-
+      
       await this.saveCustomTheme(customTheme);
-
+      
       logger.info(TAG, `主题已保存: ${customTheme.name}`);
       logger.info(TAG, `  浅色模式图片: ${lightImagePath}`);
       logger.info(TAG, `  深色模式图片: ${darkImagePath}`);
-
+      
       // 应用主题到应用
       await this.applyCustomThemeToManager(customTheme, splashImagePath);
-
+      
       this.processingMessage = '主题保存成功！';
       this.processingProgress = 100;
       logger.info(TAG, `✅ 自定义主题已应用，将在所有页面生效`);
-
+      
+      // 显示Toast并自动返回
       setTimeout(() => {
         this.isProcessing = false;
-      }, 1000);
-
+        // 显示成功提示
+        promptAction.showToast({
+          message: '主题已保存并应用',
+          duration: 2000
+        });
+        // 延迟返回上一页
+        setTimeout(() => {
+          this.goBack();
+        }, 500);
+      }, 800);
+      
     } catch (error) {
       this.isProcessing = false;
       logger.error(TAG, `保存主题失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -1555,113 +1529,81 @@ export struct ThemeSettingsPage {
     if (!this.selectedImagePixelMap) {
       throw new Error('selectedImagePixelMap为null');
     }
-
+    
     const themesDir = `${context.filesDir}/custom_themes`;
     const imagePath = `${themesDir}/${themeId}_${mode}.webp`;
-
+    
     // 获取原图信息
     const imageInfo = await this.selectedImagePixelMap.getImageInfo();
     const width = imageInfo.size.width;
     const height = imageInfo.size.height;
-
-    // 1. 复制原图
-    // 注意：readPixelsToBuffer 返回的是 BGRA 格式
+    
+    // 1. 复制原图并转换格式
     const buffer = new ArrayBuffer(width * height * 4);
     await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
-
-    // 使用 BGRA_8888 格式创建 PixelMap
+    
+    // BGRA -> RGBA：交换 R 和 B 通道（readPixelsToBuffer 返回 BGRA 格式）
+    const pixelsConvert = new Uint8Array(buffer);
+    for (let idx = 0; idx < pixelsConvert.length; idx += 4) {
+      const bVal = pixelsConvert[idx];
+      const rVal = pixelsConvert[idx + 2];
+      pixelsConvert[idx] = rVal;
+      pixelsConvert[idx + 2] = bVal;
+    }
+    
+    // 使用 RGBA_8888 格式创建 PixelMap
     const createOptions: image.InitializationOptions = {
       size: { width: width, height: height },
-      pixelFormat: 4, // BGRA_8888
+      pixelFormat: 3, // RGBA_8888
       alphaType: 0,
       editable: true
     };
-
-    const workingPixelMap = await image.createPixelMap(buffer, createOptions);
-
-    // 2. 应用模糊
-    if (this.effectMode !== ImageEffectMode.NONE && blurLevel > 0) {
+    
+    let workingPixelMap = await image.createPixelMap(buffer, createOptions);
+    
+    // 2. 应用亮度变暗（在 effectKit 处理之前）
+    if (brightness < 50) {
+      const darknessFactor = brightness / 50;
+      const pixels = new Uint8Array(buffer);
+      for (let i = 0; i < pixels.length; i += 4) {
+        pixels[i] = Math.round(pixels[i] * darknessFactor);
+        pixels[i + 1] = Math.round(pixels[i + 1] * darknessFactor);
+        pixels[i + 2] = Math.round(pixels[i + 2] * darknessFactor);
+      }
+      workingPixelMap.release();
+      workingPixelMap = await image.createPixelMap(buffer, createOptions);
+    }
+    
+    // 3. 应用模糊效果
+    if (blurLevel > 0) {
       const filter = effectKit.createEffect(workingPixelMap);
       if (filter) {
-        filter.blur(Math.round(blurLevel));
+        const blurRadius = Math.round(blurLevel * 0.3);
+        filter.blur(blurRadius);
+        const blurredPixelMap = await filter.getPixelMap();
+        workingPixelMap.release();
+        workingPixelMap = blurredPixelMap;
       }
     }
-
-    // 3. 应用亮度调整
-    if (this.effectMode !== ImageEffectMode.NONE && brightness !== 50) {
-      const brightnessBuffer = new ArrayBuffer(width * height * 4);
-      await workingPixelMap.readPixelsToBuffer(brightnessBuffer);
-
-      const pixels = new Uint8Array(brightnessBuffer);
-      const brightnessFactor = (brightness / 50);
-
-      for (let i = 0; i < pixels.length; i += 4) {
-        const r = pixels[i];
-        const g = pixels[i + 1];
-        const b = pixels[i + 2];
-
-        const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-        if (luminance > 0) {
-          const adjustmentRatio = this.calculateBrightnessAdjustment(luminance, brightnessFactor);
-          pixels[i] = Math.min(255, Math.max(0, Math.round(r * adjustmentRatio)));
-          pixels[i + 1] = Math.min(255, Math.max(0, Math.round(g * adjustmentRatio)));
-          pixels[i + 2] = Math.min(255, Math.max(0, Math.round(b * adjustmentRatio)));
-        }
+    
+    // 4. 应用亮度增加
+    if (brightness > 50) {
+      const brightnessFactor = (brightness - 50) / 50;
+      const filter = effectKit.createEffect(workingPixelMap);
+      if (filter) {
+        filter.brightness(brightnessFactor);
+        const brighterPixelMap = await filter.getPixelMap();
+        workingPixelMap.release();
+        workingPixelMap = brighterPixelMap;
       }
-
-      const writeArea: image.PositionArea = {
-        pixels: brightnessBuffer,
-        offset: 0,
-        stride: width * 4,
-        region: {
-          size: { height: height, width: width },
-          x: 0,
-          y: 0
-        }
-      };
-      await workingPixelMap.writePixels(writeArea);
     }
-
-    // 3.5 磨砂玻璃遮罩（保存时保持与预览一致）
-    if (this.effectMode === ImageEffectMode.FROSTED) {
-      const overlayRgb: RGBColor = this.selectedPrimaryColor && this.selectedPrimaryColor.length > 0
-        ? this.parseHexColorToRGB(this.selectedPrimaryColor)
-        : this.parseHexColorToRGB(this.extractedColor);
-      const currentBuffer = new ArrayBuffer(width * height * 4);
-      await workingPixelMap.readPixelsToBuffer(currentBuffer);
-      const pixelsOverlay = new Uint8Array(currentBuffer);
-      const alphaStrength = Math.max(0, Math.min(1, this.overlayStrength / 100));
-      for (let i2 = 0; i2 < pixelsOverlay.length; i2 += 4) {
-        const r0 = pixelsOverlay[i2];
-        const g0 = pixelsOverlay[i2 + 1];
-        const b0 = pixelsOverlay[i2 + 2];
-        const rBlend = Math.round((1 - alphaStrength) * r0 + alphaStrength * overlayRgb.r);
-        const gBlend = Math.round((1 - alphaStrength) * g0 + alphaStrength * overlayRgb.g);
-        const bBlend = Math.round((1 - alphaStrength) * b0 + alphaStrength * overlayRgb.b);
-        pixelsOverlay[i2] = Math.min(255, Math.max(0, rBlend));
-        pixelsOverlay[i2 + 1] = Math.min(255, Math.max(0, gBlend));
-        pixelsOverlay[i2 + 2] = Math.min(255, Math.max(0, bBlend));
-      }
-      const writeArea2: image.PositionArea = {
-        pixels: currentBuffer,
-        offset: 0,
-        stride: width * 4,
-        region: {
-          size: { height: height, width: width },
-          x: 0,
-          y: 0
-        }
-      };
-      await workingPixelMap.writePixels(writeArea2);
-    }
-
+    
     // 4. 保存为WebP格式（最优压缩和质量）
     const packOpts: image.PackingOption = {
       format: 'image/webp',
       quality: 85 // WebP质量85可以获得极小的文件体积和优秀的视觉质量
     };
-
+    
     try {
       const imagePacker = image.createImagePacker();
       const file = fs.openSync(imagePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
@@ -1675,9 +1617,9 @@ export struct ThemeSettingsPage {
     } finally {
       workingPixelMap.release();
     }
-
+    
     logger.info(TAG, `✅ 生成${mode}模式图片: ${imagePath}`);
-
+    
     return imagePath;
   }
 
@@ -1725,7 +1667,7 @@ export struct ThemeSettingsPage {
     try {
       logger.info(TAG, `开始应用自定义主题: ${theme.name}`);
       // 不强制切换应用主题；保持当前主题设置（含AUTO），由ThemeManager按系统深浅切换背景
-
+      
       // 调用ThemeManager统一应用（包含开屏背景路径）
       const themeData: CustomThemeData = {
         id: theme.id,
@@ -1740,7 +1682,7 @@ export struct ThemeSettingsPage {
         lastModified: theme.lastModified
       };
       await this.themeManager.applyCustomTheme(themeData);
-
+      
       logger.info(TAG, `✅ 自定义主题应用成功（含开屏图）: ${theme.name}`);
       logger.info(TAG, `   背景图片: ${theme.backgroundImagePath}`);
       logger.info(TAG, `   深色背景: ${theme.backgroundImagePathDark}`);
@@ -1763,6 +1705,31 @@ export struct ThemeSettingsPage {
     this.pathStack.pop();
   }
 
+  /**
+   * 显示删除确认对话框（使用系统组件）
+   */
+  private showDeleteConfirmDialogSystem(): void {
+    if (!this.uiContext) {
+      logger.warn(TAG, 'UIContext 未初始化，无法显示删除确认对话框');
+      return;
+    }
+    
+    this.uiContext.getPromptAction().showDialog({
+      title: '确认删除',
+      message: `确定要删除选中的 ${this.selectedThemeIds.length} 个主题吗？\n此操作不可撤销，相关的背景图片文件也将被删除。`,
+      buttons: [
+        { text: '取消', color: '#999999' },
+        { text: '删除', color: '#FF3B30' }
+      ]
+    }).then((result) => {
+      if (result.index === 1) {
+        this.deleteSelectedThemes();
+      }
+    }).catch((err: Error) => {
+      logger.error(TAG, `显示删除确认对话框失败: ${err.message}`);
+    });
+  }
+
   build() {
     HdsNavDestination() {
       Stack({ alignContent: Alignment.TopStart }) {
@@ -1770,7 +1737,7 @@ export struct ThemeSettingsPage {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor($r('app.color.background'))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
@@ -1787,7 +1754,7 @@ export struct ThemeSettingsPage {
                   Text('自定义主题')
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
 
                   if (this.customThemes.length > 0) {
@@ -1856,12 +1823,12 @@ export struct ThemeSettingsPage {
                                 Text(theme.name)
                                   .fontSize(14)
                                   .fontWeight(FontWeight.Medium)
-                                  .fontColor($r('app.color.text_primary'))
+                                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                                   .maxLines(1)
                                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                                 Text(theme.isDark ? '深色主题' : '浅色主题')
                                   .fontSize(12)
-                                  .fontColor($r('app.color.text_secondary'))
+                                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                               }
                               .layoutWeight(1)
                               .alignItems(HorizontalAlign.Start)
@@ -1886,7 +1853,7 @@ export struct ThemeSettingsPage {
                           }
                           .width('100%')
                           .padding(12)
-                          .backgroundColor($r('app.color.panel_background'))
+                          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                           .borderRadius(12)
                           // 长按进入/切换选择，点击在选择模式下也切换选中
                           .gesture(LongPressGesture().onAction(() => { this.toggleThemeSelection(theme.id); }))
@@ -1913,7 +1880,7 @@ export struct ThemeSettingsPage {
                 }
                 .width('100%')
                 .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
               }
 
@@ -1923,7 +1890,7 @@ export struct ThemeSettingsPage {
                   Text('预览效果')
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                     .margin({ bottom: 8 })
 
@@ -1957,14 +1924,14 @@ export struct ThemeSettingsPage {
                 }
                 .width('100%')
                 .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
               } else if (this.isCreatingCustomTheme && this.selectedImagePixelMap) {
                 Column() {
                   Text('原始图片')
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                     .margin({ bottom: 8 })
 
@@ -1976,28 +1943,38 @@ export struct ThemeSettingsPage {
                 }
                 .width('100%')
                 .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
               }
 
               // 选择图片按钮（背景）仅创建模式
               if (this.isCreatingCustomTheme) {
                 Button('选择背景图片')
-                  .width('100%')
-                  .height(48)
-                  .fontSize(16)
-                  .backgroundColor($r('app.color.accent_primary'))
-                  .onClick(() => this.selectImage())
+                .width('100%')
+                .height(48)
+                .fontSize(16)
+                .backgroundColor($r('app.color.accent_primary'))
+                .onClick(() => this.selectImage())
               }
 
               // 选择开屏图片按钮（仅创建模式）
               if (this.isCreatingCustomTheme) {
-                Button('选择开屏背景图片')
-                  .width('100%')
-                  .height(48)
-                  .fontSize(16)
-                  .backgroundColor($r('app.color.accent_primary'))
-                  .onClick(() => this.selectSplashImage())
+                Column({ space: 8 }) {
+                  Button('选择开屏背景图片')
+                    .width('100%')
+                    .height(48)
+                    .fontSize(16)
+                    .backgroundColor($r('app.color.accent_primary'))
+                    .onClick(() => this.selectSplashImage())
+                  
+                  Text('提示：未设置开屏图片将使用背景图片作为开屏图片')
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .opacity(0.8)
+                    .width('100%')
+                    .textAlign(TextAlign.Center)
+                }
+                .width('100%')
               }
 
               // 参数调节区域（选择图片后显示）
@@ -2008,11 +1985,11 @@ export struct ThemeSettingsPage {
                     Row() {
                       Text('模糊程度')
                         .fontSize(14)
-                        .fontColor($r('app.color.text_primary'))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       Blank()
                       Text(`${this.blurLevel}%`)
                         .fontSize(14)
-                        .fontColor($r('app.color.text_secondary'))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     }
                     .width('100%')
 
@@ -2029,10 +2006,6 @@ export struct ThemeSettingsPage {
                       .onChange((value: number) => {
                         // 确保值是10的倍数
                         this.blurLevel = Math.round(value / 10) * 10;
-                        // 调整模糊时自动切换到标准模式
-                        if (this.blurLevel > 0 && this.effectMode === ImageEffectMode.NONE) {
-                          this.effectMode = ImageEffectMode.STANDARD;
-                        }
                         this.applyImageEffectsDebounced();
                       })
                   }
@@ -2042,14 +2015,14 @@ export struct ThemeSettingsPage {
                     Row() {
                       Text('亮度')
                         .fontSize(14)
-                        .fontColor($r('app.color.text_primary'))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       Blank()
                       Text(`${this.brightnessLevel}%`)
                         .fontSize(14)
-                        .fontColor($r('app.color.text_secondary'))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                       Text(this.brightnessLevel < 50 ? ' (变暗)' : this.brightnessLevel > 50 ? ' (变亮)' : ' (原始)')
                         .fontSize(12)
-                        .fontColor($r('app.color.text_secondary'))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                         .opacity(0.7)
                         .margin({ left: 4 })
                     }
@@ -2068,72 +2041,14 @@ export struct ThemeSettingsPage {
                       .onChange((value: number) => {
                         // 确保值是10的倍数
                         this.brightnessLevel = Math.round(value / 10) * 10;
-                        // 调整亮度时自动切换到标准模式
-                        if (this.brightnessLevel !== 50 && this.effectMode === ImageEffectMode.NONE) {
-                          this.effectMode = ImageEffectMode.STANDARD;
-                        }
                         this.applyImageEffectsDebounced();
                       })
                   }
 
-                  // 效果模式选择
-                  Column({ space: 8 }) {
-                    Text('效果模式')
-                      .fontSize(14)
-                      .fontColor($r('app.color.text_primary'))
-                    Row({ space: 8 }) {
-                      Button('标准')
-                        .height(36)
-                        .backgroundColor(this.effectMode === ImageEffectMode.STANDARD ? $r('app.color.accent_primary') : $r('app.color.divider_primary'))
-                        .fontColor(this.effectMode === ImageEffectMode.STANDARD ? Color.White : $r('app.color.text_primary'))
-                        .onClick(() => { this.effectMode = ImageEffectMode.STANDARD; this.applyImageEffectsDebounced(); })
-                      Button('磨砂玻璃')
-                        .height(36)
-                        .backgroundColor(this.effectMode === ImageEffectMode.FROSTED ? $r('app.color.accent_primary') : $r('app.color.divider_primary'))
-                        .fontColor(this.effectMode === ImageEffectMode.FROSTED ? Color.White : $r('app.color.text_primary'))
-                        .onClick(() => { this.effectMode = ImageEffectMode.FROSTED; this.applyImageEffectsDebounced(); })
-                      Button('无效果')
-                        .height(36)
-                        .backgroundColor(this.effectMode === ImageEffectMode.NONE ? $r('app.color.accent_primary') : $r('app.color.divider_primary'))
-                        .fontColor(this.effectMode === ImageEffectMode.NONE ? Color.White : $r('app.color.text_primary'))
-                        .onClick(() => { this.effectMode = ImageEffectMode.NONE; this.applyImageEffectsDebounced(); })
-                    }
-                  }
-
-                  // 磨砂玻璃遮罩强度（仅在磨砂模式显示）
-                  if (this.effectMode === ImageEffectMode.FROSTED) {
-                    Column({ space: 8 }) {
-                      Row() {
-                        Text('遮罩强度')
-                          .fontSize(14)
-                          .fontColor($r('app.color.text_primary'))
-                        Blank()
-                        Text(`${this.overlayStrength}%`)
-                          .fontSize(14)
-                          .fontColor($r('app.color.text_secondary'))
-                      }
-                      .width('100%')
-
-                      Slider({
-                        value: this.overlayStrength,
-                        min: 0,
-                        max: 100,
-                        step: 5
-                      })
-                        .width('100%')
-                        .trackColor($r('app.color.divider_primary'))
-                        .selectedColor($r('app.color.accent_primary'))
-                        .showSteps(true)
-                        .onChange((value: number) => {
-                          this.overlayStrength = Math.round(value / 5) * 5;
-                          this.applyImageEffectsDebounced();
-                        })
-                    }
-                  }
                 }
                 .width('100%')
                 .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
               }
 
@@ -2143,7 +2058,7 @@ export struct ThemeSettingsPage {
                   Text('开屏图片预览')
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                     .margin({ bottom: 8 })
 
@@ -2155,7 +2070,7 @@ export struct ThemeSettingsPage {
                 }
                 .width('100%')
                 .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
               }
 
@@ -2165,7 +2080,7 @@ export struct ThemeSettingsPage {
                   Text('选择主题色')
                     .fontSize(16)
                     .fontWeight(FontWeight.Bold)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
 
                   // 提取的主色调显示
@@ -2182,26 +2097,26 @@ export struct ThemeSettingsPage {
                       Column({ space: 4 }) {
                         Text('从图片提取')
                           .fontSize(12)
-                          .fontColor($r('app.color.text_secondary'))
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                         Text(this.extractedColor)
                           .fontSize(14)
                           .fontWeight(FontWeight.Medium)
-                          .fontColor($r('app.color.text_primary'))
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                         Text(this.extractedColorRGB)
                           .fontSize(11)
-                          .fontColor($r('app.color.text_secondary'))
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                       }
                       .alignItems(HorizontalAlign.Start)
                     }
                     .width('100%')
                     .padding(8)
-                    .backgroundColor($r('app.color.comp_background_tertiary'))
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                     .borderRadius(8)
                   }
 
                   Text('可选主题色')
                     .fontSize(14)
-                    .fontColor($r('app.color.text_secondary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     .width('100%')
 
                   Row({ space: 12 }) {
@@ -2225,10 +2140,6 @@ export struct ThemeSettingsPage {
                       .height(40)
                       .onClick(() => {
                         this.selectedPrimaryColor = colorStr;
-                        // 如果选择了磨砂玻璃模式，更新预览
-                        if (this.effectMode === ImageEffectMode.FROSTED) {
-                          this.applyImageEffectsDebounced();
-                        }
                       })
                     }, (colorStr: string) => colorStr)
                   }
@@ -2236,7 +2147,7 @@ export struct ThemeSettingsPage {
                 }
                 .width('100%')
                 .padding(16)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
               }
 
@@ -2245,11 +2156,11 @@ export struct ThemeSettingsPage {
                 Column({ space: 8 }) {
                   Text('主题名称（可选）')
                     .fontSize(14)
-                    .fontColor($r('app.color.text_primary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   TextInput({ text: this.newThemeName })
                     .width('100%')
                     .height(40)
-                    .backgroundColor($r('app.color.panel_background'))
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                     .onChange((value: string) => { this.newThemeName = value; })
                 }
                 .width('100%')
@@ -2281,7 +2192,7 @@ export struct ThemeSettingsPage {
 
                   Text(this.processingMessage)
                     .fontSize(14)
-                    .fontColor($r('app.color.text_secondary'))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
                   Progress({
                     value: this.processingProgress,
@@ -2293,7 +2204,7 @@ export struct ThemeSettingsPage {
                 }
                 .width('100%')
                 .padding(24)
-                .backgroundColor($r('app.color.panel_background'))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
@@ -2331,15 +2242,23 @@ export struct ThemeSettingsPage {
         originalStyle: {
           backgroundStyle: { backgroundColor: Color.Transparent },
           contentStyle: {
-            titleStyle: { mainTitleColor: $r('app.color.text_primary') },
-            backIconStyle: { backgroundColor: $r('app.color.comp_background_tertiary'), iconColor: $r('app.color.icon_primary') }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            }
           }
         },
         scrollEffectStyle: {
-          backgroundStyle: { backgroundColor: '#E6F5F5F5' },
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+          },
           contentStyle: {
-            titleStyle: { mainTitleColor: $r('app.color.text_primary') },
-            backIconStyle: { backgroundColor: $r('app.color.comp_background_tertiary'), iconColor: $r('app.color.icon_primary') }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            }
           }
         }
       },
@@ -2352,7 +2271,7 @@ export struct ThemeSettingsPage {
                 label: '删除所选',
                 icon: $r('app.media.ic_delete'),
                 isEnabled: this.selectedThemeIds.length > 0,
-                action: () => { this.deleteSelectedThemes(); }
+                action: () => { this.showDeleteConfirmDialogSystem(); }
               }
             },
             {

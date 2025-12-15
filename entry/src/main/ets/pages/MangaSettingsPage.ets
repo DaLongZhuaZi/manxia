@@ -13,7 +13,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
-import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, FilterSettings, Manga, ImageSourceType, PageTurnAnimationType } from '../Models/MangaModels';
+import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, Manga, ImageSourceType, PageTurnAnimationType } from '../Models/MangaModels';
 import { DataManager, ComicInfo, ChapterInfo, PageInfo, ComicBasicInfoUpdate } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
@@ -80,8 +80,6 @@ struct MangaSettingsPage {
   @State preloadPagesCount: number = 3;
   @State preloadAllPages: boolean = false;
 
-  // 滤镜设置展开状态
-  @State filterSettingsExpanded: boolean = true;
 
   // 高级设置展开状态
   @State advancedSettingsExpanded: boolean = true;
@@ -332,53 +330,6 @@ struct MangaSettingsPage {
   }
 
   /**
-   * 保存设置
-   */
-  private saveSettings(): void {
-    try {
-      logger.info(TAG, '开始保存设置到数据库');
-      
-      // 保存阅读设置到数据库（使用ComicConverter的静态方法）
-      ComicConverter.saveReadingSettings(this.pageParams.mangaId, this.readingSettings).then(() => {
-        logger.info(TAG, `阅读设置已保存到数据库: mode=${this.readingSettings.readingMode}`);
-      }).catch((error: Error) => {
-        logger.error(TAG, `保存阅读设置到数据库失败: ${error.message}`);
-      });
-      
-      // 保存预加载设置到数据库
-      this.dataManager.saveUserSetting('default_user', `preload_count_${this.pageParams.mangaId}`, String(this.preloadPagesCount))
-        .then(() => {
-          logger.info(TAG, '预加载页数设置已保存到数据库');
-        })
-        .catch((error: Error) => {
-          logger.error(TAG, `保存预加载页数失败: ${error.message}`);
-        });
-      
-      this.dataManager.saveUserSetting('default_user', `preload_all_${this.pageParams.mangaId}`, String(this.preloadAllPages))
-        .then(() => {
-          logger.info(TAG, '预加载全部设置已保存到数据库');
-        })
-        .catch((error: Error) => {
-          logger.error(TAG, `保存预加载全部设置失败: ${error.message}`);
-        });
-      
-      // 同时保存到AppStorage作为缓存（快速访问）
-      AppStorage.setOrCreate(`manga_settings_${this.pageParams.mangaId}`, JSON.stringify(this.readingSettings));
-      AppStorage.setOrCreate(`preload_count_${this.pageParams.mangaId}`, this.preloadPagesCount);
-      AppStorage.setOrCreate(`preload_all_${this.pageParams.mangaId}`, this.preloadAllPages);
-      
-      const info: string = `保存设置成功: 模式=${this.readingSettings.readingMode}, 方向=${this.readingSettings.readingDirection}`;
-      logger.info(TAG, info);
-      
-      // 显示保存成功提示
-      this.showToast('设置已保存');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `保存设置失败: ${errorMessage}`);
-    }
-  }
-
-  /**
    * 判断图片路径来源类型（与 MangaDetailPage 一致）
    */
   private detectImageSourceType(path: string): ImageSourceType {
@@ -467,14 +418,6 @@ struct MangaSettingsPage {
       const errorMessage: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `返回失败: ${errorMessage}`);
     }
-  }
-
-  /**
-   * 保存并返回
-   */
-  private saveAndGoBack(): void {
-    this.saveSettings();
-    this.goBack();
   }
 
   /**
@@ -708,46 +651,76 @@ struct MangaSettingsPage {
     return '';
   }
 
-  // 显式更新方法
+  // 显式更新方法 - 修改后立即保存到数据库
   private setReadingDirection(direction: ReadingDirection): void {
     this.readingSettings.readingDirection = direction;
+    this.saveSettingsImmediately();
   }
 
   private setReadingMode(mode: ReadingMode): void {
     this.readingSettings.readingMode = mode;
+    this.saveSettingsImmediately();
   }
 
   private setShowPageInfo(isOn: boolean): void {
     this.readingSettings.showPageInfo = isOn;
+    this.saveSettingsImmediately();
   }
 
   private setShowPageIndicator(isOn: boolean): void {
     this.readingSettings.showPageIndicator = isOn;
+    this.saveSettingsImmediately();
   }
 
   private setKeepScreenOn(isOn: boolean): void {
     this.readingSettings.keepScreenOn = isOn;
+    this.saveSettingsImmediately();
   }
 
   private setVolumeKeyNavigation(isOn: boolean): void {
     this.readingSettings.volumeKeyNavigation = isOn;
+    this.saveSettingsImmediately();
   }
 
   private setBrightness(value: number): void {
     this.readingSettings.brightness = Math.max(0, Math.min(100, value));
+    this.saveSettingsImmediately();
   }
 
   private setPageSpacing(value: number): void {
     this.readingSettings.pageSpacing = Math.max(0, Math.min(50, value));
+    this.saveSettingsImmediately();
   }
 
   private setAutoPageTurnInterval(value: number): void {
     this.readingSettings.autoPageTurnInterval = Math.max(0, Math.min(60, value));
+    this.saveSettingsImmediately();
   }
 
   private setPageTurnAnimation(animationType: PageTurnAnimationType): void {
     this.readingSettings.pageTurnAnimation = animationType;
     logger.info(TAG, `翻页动画设置更新为: ${animationType}`);
+    this.saveSettingsImmediately();
+  }
+
+  /**
+   * 立即保存设置到数据库（静默保存，不显示Toast）
+   */
+  private saveSettingsImmediately(): void {
+    try {
+      // 保存阅读设置到数据库
+      ComicConverter.saveReadingSettings(this.pageParams.mangaId, this.readingSettings).then(() => {
+        logger.debug(TAG, `阅读设置已自动保存`);
+      }).catch((error: Error) => {
+        logger.error(TAG, `自动保存阅读设置失败: ${error.message}`);
+      });
+      
+      // 同时保存到AppStorage作为缓存
+      AppStorage.setOrCreate(`manga_settings_${this.pageParams.mangaId}`, JSON.stringify(this.readingSettings));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `自动保存设置失败: ${errorMessage}`);
+    }
   }
   
   /**
@@ -774,30 +747,36 @@ struct MangaSettingsPage {
 
   private setPreloadPagesCount(value: number): void {
     this.preloadPagesCount = Math.max(1, Math.min(MAX_PRELOAD_PAGES, value));
+    this.savePreloadSettingsImmediately();
   }
 
-  private setFilterEnabled(isOn: boolean): void {
-    this.readingSettings.filterSettings.enabled = isOn;
+  private setPreloadAllPages(isOn: boolean): void {
+    this.preloadAllPages = isOn;
+    this.savePreloadSettingsImmediately();
   }
 
-  private setFilterBrightness(value: number): void {
-    this.readingSettings.filterSettings.brightness = Math.max(0, Math.min(200, value));
-  }
-
-  private setFilterContrast(value: number): void {
-    this.readingSettings.filterSettings.contrast = Math.max(0, Math.min(200, value));
-  }
-
-  private setFilterSaturation(value: number): void {
-    this.readingSettings.filterSettings.saturation = Math.max(0, Math.min(200, value));
-  }
-
-  private setFilterGrayscale(isOn: boolean): void {
-    this.readingSettings.filterSettings.grayscale = isOn;
-  }
-
-  private setFilterInvert(isOn: boolean): void {
-    this.readingSettings.filterSettings.invert = isOn;
+  /**
+   * 立即保存预加载设置到数据库
+   */
+  private savePreloadSettingsImmediately(): void {
+    try {
+      this.dataManager.saveUserSetting('default_user', `preload_count_${this.pageParams.mangaId}`, String(this.preloadPagesCount))
+        .catch((error: Error) => {
+          logger.error(TAG, `保存预加载页数失败: ${error.message}`);
+        });
+      
+      this.dataManager.saveUserSetting('default_user', `preload_all_${this.pageParams.mangaId}`, String(this.preloadAllPages))
+        .catch((error: Error) => {
+          logger.error(TAG, `保存预加载全部设置失败: ${error.message}`);
+        });
+      
+      // 同时保存到AppStorage作为缓存
+      AppStorage.setOrCreate(`preload_count_${this.pageParams.mangaId}`, this.preloadPagesCount);
+      AppStorage.setOrCreate(`preload_all_${this.pageParams.mangaId}`, this.preloadAllPages);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `自动保存预加载设置失败: ${errorMessage}`);
+    }
   }
 
   /**
@@ -998,13 +977,14 @@ struct MangaSettingsPage {
         if (this.responsive_isLandscape) {
           // 横屏：封面和信息垂直排列
           Column({ space: 16 }) {
-            // 封面
+            // 封面 - 使用 key 强制刷新图片
             Image(this.getCoverImageSourceForUI())
               .width('100%')
               .aspectRatio(0.7)
               .borderRadius(8)
               .objectFit(ImageFit.Cover)
               .backgroundColor(Color.Transparent)
+              .key(`cover_${this.coverImagePath}`)
               .onError(() => {
                 const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
                 logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
@@ -1052,7 +1032,7 @@ struct MangaSettingsPage {
         } else {
           // 竖屏：封面和信息横向排列
           Row({ space: 16 }) {
-            // 封面图片区域
+            // 封面图片区域 - 使用 key 强制刷新图片
             Stack() {
               Image(this.getCoverImageSourceForUI())
                 .width('100%')
@@ -1060,6 +1040,7 @@ struct MangaSettingsPage {
                 .borderRadius(8)
                 .objectFit(ImageFit.Auto)
                 .backgroundColor(Color.Transparent)
+                .key(`cover_portrait_${this.coverImagePath}`)
                 .onError(() => {
                   const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
                   logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
@@ -1188,24 +1169,24 @@ struct MangaSettingsPage {
 
         Blank()
 
-        // 刮削按钮
-        Row({ space: 4 }) {
-          Image($r('app.media.ic_scraper'))
-            .width(16)
-            .height(16)
-            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-          Text('刮削')
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        }
-        .padding({ left: 8, right: 10, top: 4, bottom: 4 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        .borderRadius(14)
-        .onClick(() => {
-          this.openScraperDialog();
-        })
-        .margin({ right: 8 })
+        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
+        // Row({ space: 4 }) {
+        //   Image($r('app.media.ic_scraper'))
+        //     .width(16)
+        //     .height(16)
+        //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        //
+        //   Text('刮削')
+        //     .fontSize(12)
+        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        // }
+        // .padding({ left: 8, right: 10, top: 4, bottom: 4 })
+        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        // .borderRadius(14)
+        // .onClick(() => {
+        //   this.openScraperDialog();
+        // })
+        // .margin({ right: 8 })
         
         // 展开/收起按钮
         Button() {
@@ -1656,7 +1637,7 @@ struct MangaSettingsPage {
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
           .onChange((isOn: boolean) => {
-            this.preloadAllPages = isOn;
+            this.setPreloadAllPages(isOn);
           })
       }
       .width('100%')
@@ -1957,100 +1938,35 @@ struct MangaSettingsPage {
     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
-  // 构建设置项：滤镜设置（可展开）
-  @Builder
-  buildFilterSettings() {
-    Column({ space: 16 }) {
-      Row() {
-        Text('滤镜设置')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .layoutWeight(1)
-        
-        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.filterSettings.enabled })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .switchPointColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
-            this.setFilterEnabled(isOn);
-          })
-        
-        Text(this.filterSettingsExpanded ? '收起' : '展开')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .margin({ left: 12 })
-          .onClick(() => {
-            this.filterSettingsExpanded = !this.filterSettingsExpanded;
-          })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 16 })
-      // 根据需求：默认展开，但内部不显示任何内容
-      if (this.filterSettingsExpanded) {
-        Column() {}
-          .width('100%')
-          .padding({ left: 16, right: 16, bottom: 16 })
-      }
-    }
-    .width('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
-  }
-
   // 构建操作按钮区域
   @Builder
   buildActionButtons() {
     Column({ space: 12 }) {
-      // 第一行：主要操作按钮
-      Row({ space: 12 }) {
-        Column() {
-          Button({ stateEffect: true }) {
-            Text('重置默认')
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          }
-            .width('100%')
-            .height(44)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme))
-            .borderRadius(12)
-            .onClick(() => {
-              this.readingSettings = DEFAULT_READING_SETTINGS;
-              this.preloadPagesCount = 3;
-              this.preloadAllPages = false;
-              logger.info(TAG, '已重置为默认设置');
-            })
-        }.width('30%')
-
-        Column() {
-          Button({ stateEffect: true }) {
-            Text('保存')
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          }
-            .width('100%')
-            .height(44)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-            .borderRadius(12)
-            .onClick(() => this.saveSettings())
-        }.layoutWeight(1)
-
-        Column() {
-          Button({ stateEffect: true }) {
-            Text('保存并返回')
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          }
-            .width('100%')
-            .height(44)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .borderRadius(12)
-            .onClick(() => this.saveAndGoBack())
-        }.layoutWeight(1)
+      // 重置默认设置按钮
+      Row() {
+        Button({ stateEffect: true }) {
+          Text('重置为默认设置')
+            .fontSize(16)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+          .width('100%')
+          .height(44)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => {
+            this.readingSettings = DEFAULT_READING_SETTINGS;
+            this.preloadPagesCount = 3;
+            this.preloadAllPages = false;
+            // 立即保存重置后的设置
+            this.saveSettingsImmediately();
+            this.savePreloadSettingsImmediately();
+            this.showToast('已重置为默认设置');
+            logger.info(TAG, '已重置为默认设置');
+          })
       }
       .width('100%')
 
-      // 第二行：删除漫画按钮
+      // 删除漫画按钮
       Row() {
         Button({ stateEffect: true }) {
           Text('删除漫画')
@@ -2201,7 +2117,6 @@ struct MangaSettingsPage {
                 this.buildBasicSettings()
                 this.buildPreloadSettings()
                 this.buildAdvancedSettings()
-                this.buildFilterSettings()
                 this.buildActionButtons()
               }
               .width('100%')
@@ -2228,7 +2143,6 @@ struct MangaSettingsPage {
               this.buildBasicSettings()
               this.buildPreloadSettings()
               this.buildAdvancedSettings()
-              this.buildFilterSettings()
               this.buildActionButtons()
             }
             .width('100%')

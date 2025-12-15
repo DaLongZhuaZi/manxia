@@ -343,6 +343,7 @@ export class SandboxManager {
 
   /**
    * 复制文件
+   * [修复] 支持从相册URI（datashare://或file://media/）复制文件
    */
   public async copyFile(sourcePath: string, targetPath: string): Promise<void> {
     try {
@@ -352,8 +353,37 @@ export class SandboxManager {
         await this.createDirectory(parentDir);
       }
 
-      await fileIo.copyFile(sourcePath, targetPath);
-      logger.debug(TAG, `文件复制成功: ${sourcePath} -> ${targetPath}`);
+      // [修复] 检查是否为相册URI，需要特殊处理
+      if (sourcePath.startsWith('datashare://') || sourcePath.startsWith('file://media/')) {
+        // 相册URI需要通过fd复制
+        let sourceFile: fileIo.File | null = null;
+        let targetFile: fileIo.File | null = null;
+        try {
+          sourceFile = await fileIo.open(sourcePath, fileIo.OpenMode.READ_ONLY);
+          targetFile = await fileIo.open(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+          
+          // 读取源文件内容
+          const stat = await fileIo.stat(sourceFile.fd);
+          const buffer = new ArrayBuffer(stat.size);
+          await fileIo.read(sourceFile.fd, buffer);
+          
+          // 写入目标文件
+          await fileIo.write(targetFile.fd, buffer);
+          
+          logger.debug(TAG, `从相册URI复制文件成功: ${sourcePath} -> ${targetPath}`);
+        } finally {
+          if (sourceFile) {
+            await fileIo.close(sourceFile);
+          }
+          if (targetFile) {
+            await fileIo.close(targetFile);
+          }
+        }
+      } else {
+        // 普通文件路径直接复制
+        await fileIo.copyFile(sourcePath, targetPath);
+        logger.debug(TAG, `文件复制成功: ${sourcePath} -> ${targetPath}`);
+      }
     } catch (error) {
       logger.error(TAG, `复制文件失败: ${sourcePath} -> ${targetPath}` + String(error));
       throw error as Error;

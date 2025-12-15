@@ -658,70 +658,6 @@ struct GlobalSettingsPage {
   }
 
   /**
-   * 构建下载设置区域
-   */
-  @Builder
-  buildDownloadSettings() {
-    Column({ space: 16 }) {
-      Text('下载设置')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
-
-      Row() {
-        Text('仅Wi-Fi下载')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Toggle({ type: ToggleType.Switch, isOn: this.downloadOnWifiOnly })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange(async (isOn: boolean) => {
-            this.downloadOnWifiOnly = isOn;
-            await this.settingsManager.setBoolean(SettingKeys.DOWNLOAD_WIFI_ONLY, isOn);
-            this.settingsManager.syncToAppStorage();
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
-
-      Column({ space: 8 }) {
-        Row() {
-          Text('最大并发下载数')
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          Text(`${this.maxConcurrentDownloads}`)
-            .fontSize(14)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
-
-        Slider({
-          value: this.maxConcurrentDownloads,
-          min: 1,
-          max: 10,
-          step: 1,
-          style: SliderStyle.InSet
-        })
-          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange(async (value: number) => {
-            this.maxConcurrentDownloads = Math.round(value);
-            await this.settingsManager.setNumber(SettingKeys.MAX_CONCURRENT_DOWNLOADS, this.maxConcurrentDownloads);
-            this.settingsManager.syncToAppStorage();
-          })
-      }
-    }
-    .width('100%')
-    .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
-  }
-
-  /**
    * 构建通知设置区域
    */
   @Builder
@@ -762,6 +698,232 @@ struct GlobalSettingsPage {
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建下载设置区域
+   */
+  @Builder
+  buildDownloadSettings() {
+    Column({ space: 16 }) {
+      Text('下载设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Row() {
+        Text('仅在Wi-Fi下下载')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Toggle({ type: ToggleType.Switch, isOn: this.downloadOnWifiOnly })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            this.downloadOnWifiOnly = isOn;
+            await this.settingsManager.setBoolean(SettingKeys.DOWNLOAD_WIFI_ONLY, isOn);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      Column({ space: 8 }) {
+        Row() {
+          Text('最大并发下载数')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${this.maxConcurrentDownloads}`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.maxConcurrentDownloads,
+          min: 1,
+          max: 5,
+          step: 1,
+          style: SliderStyle.InSet
+        })
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (value: number) => {
+            this.maxConcurrentDownloads = Math.round(value);
+            await this.settingsManager.setNumber(SettingKeys.MAX_CONCURRENT_DOWNLOADS, this.maxConcurrentDownloads);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建调试设置区域（仅在高级模式下显示）
+   */
+  @Builder
+  buildDebugSettings() {
+    Column({ space: 16 }) {
+      Text('调试设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Row() {
+        Column({ space: 4 }) {
+          Text('高级模式')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('启用后显示更多开发者选项')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.advancedModeEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            this.advancedModeEnabled = isOn;
+            await this.settingsManager.setBoolean(SettingKeys.ADVANCED_MODE_ENABLED, isOn);
+            this.settingsManager.syncToAppStorage();
+            this.showRestartDialog = true;
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      if (this.advancedModeEnabled) {
+        Row() {
+          Column({ space: 4 }) {
+            Text('日志悬浮窗')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('显示实时日志输出')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.enableLogFloatingWindow })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.enableLogFloatingWindow = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.ENABLE_LOG_FLOATING_WINDOW, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('强制平板模式')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('在手机上使用平板布局')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.forceTabletMode })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.forceTabletMode = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.FORCE_TABLET_MODE, isOn);
+              this.settingsManager.syncToAppStorage();
+              this.showRestartDialog = true;
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('强制横屏模式')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('锁定应用为横屏显示')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.forceLandscapeMode })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.forceLandscapeMode = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.FORCE_LANDSCAPE_MODE, isOn);
+              this.settingsManager.syncToAppStorage();
+              this.showRestartDialog = true;
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('自动检查更新')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('启动时检查应用更新')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.autoCheckUpdates })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.autoCheckUpdates = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.AUTO_CHECK_UPDATES, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('退出时清理缓存')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('关闭应用时自动清理临时文件')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.clearCacheOnExit })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.clearCacheOnExit = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.CLEAR_CACHE_ON_EXIT, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+      }
     }
     .width('100%')
     .padding(16)
@@ -1443,14 +1605,96 @@ struct GlobalSettingsPage {
           .height(44)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme))
           .borderRadius(12)
-          .onClick(() => {
-            // 恢复默认设置
+          .onClick(async () => {
+            // 恢复漫画阅读默认设置
             this.defaultReadingMode = DEFAULT_READING_SETTINGS.readingMode;
             this.defaultReadingDirection = DEFAULT_READING_SETTINGS.readingDirection;
             this.defaultBrightness = DEFAULT_READING_SETTINGS.brightness;
             this.keepScreenOn = DEFAULT_READING_SETTINGS.keepScreenOn;
             this.volumeKeyNavigation = DEFAULT_READING_SETTINGS.volumeKeyNavigation;
-            logger.info(TAG, '已恢复默认设置');
+            this.defaultPageTurnAnimation = DEFAULT_READING_SETTINGS.pageTurnAnimation;
+
+            // 恢复电子书默认设置
+            this.ebookFontSize = DEFAULT_EBOOK_READING_SETTINGS.fontSize;
+            this.ebookLineHeight = DEFAULT_EBOOK_READING_SETTINGS.lineHeight;
+            this.ebookPageMargin = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
+            this.ebookThemeIndex = 0;
+            this.ebookPageMode = DEFAULT_EBOOK_READING_SETTINGS.pageMode;
+
+            // 恢复纯文本阅读器默认设置
+            this.textFontSize = DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize;
+            this.textLineHeight = DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight;
+            this.textParagraphSpacing = DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing;
+            this.textFirstLineIndent = DEFAULT_TEXT_READER_SETTINGS.textStyle.firstLineIndent;
+            this.textLetterSpacing = DEFAULT_TEXT_READER_SETTINGS.textStyle.letterSpacing;
+            this.textAlignment = DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment;
+            this.textPageMargin = DEFAULT_TEXT_READER_SETTINGS.pageMargins.left;
+            this.textBgColorIndex = 0;
+            this.textPageTurnAnimation = DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation;
+            this.textKeepScreenOn = DEFAULT_TEXT_READER_SETTINGS.keepScreenOn;
+            this.textVolumeKeyNav = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
+            this.textTapToTurn = DEFAULT_TEXT_READER_SETTINGS.tapToTurn;
+            this.textUseBgImage = false;
+            this.textBgImagePath = '';
+            this.textBgImageOpacity = 0.3;
+
+            // 恢复下载设置
+            this.downloadOnWifiOnly = true;
+            this.maxConcurrentDownloads = 3;
+
+            // 恢复通知设置
+            this.enableDownloadNotifications = true;
+            this.enableUpdateNotifications = true;
+
+            // 保存所有恢复的设置到 SettingsManager
+            try {
+              // 漫画阅读设置
+              await this.settingsManager.setString(SettingKeys.GLOBAL_READING_MODE, this.defaultReadingMode);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_BRIGHTNESS, this.defaultBrightness);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_KEEP_SCREEN_ON, this.keepScreenOn);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_VOLUME_KEY_NAVIGATION, this.volumeKeyNavigation);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, this.defaultPageTurnAnimation);
+
+              // 电子书设置
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_FONT_SIZE, this.ebookFontSize);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_LINE_HEIGHT, this.ebookLineHeight);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_PAGE_MARGIN, this.ebookPageMargin);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_EBOOK_THEME, this.ebookThemeIndex);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_EBOOK_PAGE_MODE, this.ebookPageMode);
+
+              // 纯文本阅读器设置
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, this.textFontSize);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, this.textLineHeight);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, this.textParagraphSpacing);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, this.textFirstLineIndent);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_LETTER_SPACING, this.textLetterSpacing);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_ALIGNMENT, this.textAlignment);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, this.textPageMargin);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, this.textBgColorIndex);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, this.textPageTurnAnimation);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, this.textKeepScreenOn);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, this.textVolumeKeyNav);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, this.textTapToTurn);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, this.textUseBgImage);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, this.textBgImagePath);
+              await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, this.textBgImageOpacity);
+
+              // 下载设置
+              await this.settingsManager.setBoolean(SettingKeys.DOWNLOAD_WIFI_ONLY, this.downloadOnWifiOnly);
+              await this.settingsManager.setNumber(SettingKeys.MAX_CONCURRENT_DOWNLOADS, this.maxConcurrentDownloads);
+
+              // 通知设置
+              await this.settingsManager.setBoolean(SettingKeys.ENABLE_DOWNLOAD_NOTIFICATIONS, this.enableDownloadNotifications);
+              await this.settingsManager.setBoolean(SettingKeys.ENABLE_UPDATE_NOTIFICATIONS, this.enableUpdateNotifications);
+
+              // 同步到 AppStorage
+              this.settingsManager.syncToAppStorage();
+
+              logger.info(TAG, '已恢复所有默认设置并保存');
+            } catch (error) {
+              logger.error(TAG, '保存默认设置失败', String(error));
+            }
           })
       }.width('30%')
 
@@ -1524,6 +1768,7 @@ struct GlobalSettingsPage {
                 }
                 .width('48%')
                 .margin({ bottom: 16 })
+                
               }
               .width('100%')
               
@@ -1698,148 +1943,6 @@ struct GlobalSettingsPage {
     } catch (error) {
       logger.error(TAG, '重启应用失败', String(error));
     }
-  }
-
-  @Builder
-  buildDebugSettings() {
-    Column({ space: 16 }) {
-      Text('调试与工具')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
-
-      // 高级模式开关
-      Column({ space: 8 }) {
-        Row() {
-          Column({ space: 4 }) {
-            Text('高级模式')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            
-            Text('启用图源管理等高级功能')
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          Toggle({ type: ToggleType.Switch, isOn: this.advancedModeEnabled })
-            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .onChange(async (isOn: boolean) => {
-              this.advancedModeEnabled = isOn;
-              await this.settingsManager.setBoolean(SettingKeys.ADVANCED_MODE_ENABLED, isOn);
-              this.settingsManager.syncToAppStorage();
-              // 显示重启提示
-              this.showRestartDialog = true;
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
-
-        if (this.advancedModeEnabled) {
-          Text('⚠️ 需要重启应用才能生效')
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
-            .width('100%')
-        }
-      }
-      .width('100%')
-
-      Row() {
-        Text('启用日志悬浮窗口')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Toggle({ type: ToggleType.Switch, isOn: this.enableLogFloatingWindow })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange(async (isOn: boolean) => {
-            this.enableLogFloatingWindow = isOn;
-            await this.settingsManager.setBoolean(SettingKeys.ENABLE_LOG_FLOATING_WINDOW, isOn);
-            this.settingsManager.syncToAppStorage();
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
-
-      Row() {
-        Text('强制平板模式')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Toggle({ type: ToggleType.Switch, isOn: this.forceTabletMode })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange(async (isOn: boolean) => {
-            this.forceTabletMode = isOn;
-            await this.settingsManager.setBoolean(SettingKeys.FORCE_TABLET_MODE, isOn);
-            this.settingsManager.syncToAppStorage();
-            logger.info(TAG, isOn ? '已开启强制平板模式' : '已关闭强制平板模式');
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
-
-      Row() {
-        Text('强制横屏显示')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Toggle({ type: ToggleType.Switch, isOn: this.forceLandscapeMode })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .onChange(async (isOn: boolean) => {
-            this.forceLandscapeMode = isOn;
-            await this.settingsManager.setBoolean(SettingKeys.FORCE_LANDSCAPE_MODE, isOn);
-            this.settingsManager.syncToAppStorage();
-            const ui = this.getUIContext();
-            if (isOn) {
-              WindowManager.setPreferredOrientationLandscape(ui);
-              logger.info(TAG, '已开启强制横屏显示');
-            } else {
-              WindowManager.setPreferredOrientationAuto(ui);
-              logger.info(TAG, '已关闭强制横屏显示');
-            }
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.SpaceBetween)
-
-      // 存储管理入口
-      Row({ space: 12 }) {
-        Image($r('app.media.ic_storage'))
-          .width(24)
-          .height(24)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
-
-        Column({ space: 4 }) {
-          Text('存储管理')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          
-          Text('查看和管理应用存储空间')
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-
-        Image($r('app.media.ic_arrow_right'))
-          .width(20)
-          .height(20)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .onClick(() => {
-        logger.info(TAG, '导航到存储管理页面');
-        this.pathStack.pushPathByName('StorageManagementPage', null);
-      })
-    }
-    .width('100%')
-    .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
   /**

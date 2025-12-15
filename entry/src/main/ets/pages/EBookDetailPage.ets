@@ -16,6 +16,7 @@ import { EBookReaderParams } from './EBookReaderPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
+import { GlobalSearchPageParams } from './GlobalSearchPage';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -49,11 +50,11 @@ export struct EBookDetailPage {
   @State ebook: EBook | null = null;
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
-
+  
   // UI状态
   @State showChapterList: boolean = false;
   @State expandedDescription: boolean = false;
-
+  
   // 编辑状态
   @State showEditDialog: boolean = false;
   @State editTitle: string = '';
@@ -78,10 +79,10 @@ export struct EBookDetailPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
-
+    
     // 初始化设备方向
     this.updateDeviceOrientation();
-
+    
     // 注册设备方向变化监听器
     this.deviceOrientationListener = (deviceInfo: DeviceInfo) => {
       logger.info(TAG, `设备方向变化: ${deviceInfo.isLandscape ? '横屏' : '竖屏'}`);
@@ -92,7 +93,7 @@ export struct EBookDetailPage {
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
-
+    
     // 移除设备方向监听器
     if (this.deviceOrientationListener) {
       this.deviceAdaptationManager.removeListener(this.deviceOrientationListener);
@@ -103,13 +104,42 @@ export struct EBookDetailPage {
   /**
    * 页面显示时自动刷新数据
    * 确保从阅读器返回时能正确显示最新的阅读进度
+   * @deprecated 使用 NavDestination.onShown 代替
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，自动刷新电子书数据');
-
+    
     // 如果已有电子书数据，静默刷新
     if (this.ebook && this.ebook.id) {
       this.loadEBookDetail(this.ebook.id);
+    }
+  }
+
+  /**
+   * 静默刷新电子书数据（从阅读器返回时调用）
+   * 不显示加载状态，只更新阅读进度相关的数据
+   */
+  private async refreshEBookDataSilently(): Promise<void> {
+    if (!this.ebook || !this.ebook.id || this.isLoading) {
+      logger.debug(TAG, '跳过静默刷新：电子书未加载或正在加载中');
+      return;
+    }
+
+    try {
+      logger.info(TAG, '开始静默刷新电子书数据...');
+      
+      // 重新加载电子书详情（包含最新的阅读进度）
+      const updatedEbook = await this.ebookDataManager.getEBookById(this.ebook.id);
+      
+      if (updatedEbook) {
+        // 更新电子书数据
+        this.ebook = updatedEbook;
+        logger.info(TAG, `电子书数据已刷新: ${updatedEbook.metadata.title}, 进度: ${updatedEbook.readingProgress?.progress || 0}%`);
+      }
+      
+      logger.info(TAG, '静默刷新电子书数据完成');
+    } catch (error) {
+      logger.error(TAG, `静默刷新电子书数据失败: ${String(error)}`);
     }
   }
 
@@ -139,7 +169,7 @@ export struct EBookDetailPage {
     if (raw.length === 0) {
       return $r('app.media.ic_ebook');
     }
-
+    
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
       const resourceName = raw.substring('app.media.'.length);
@@ -152,12 +182,12 @@ export struct EBookDetailPage {
       }
       return $r('app.media.ic_ebook');
     }
-
+    
     // 本地文件路径
     if (raw.startsWith('/')) {
       return `file://${raw}`;
     }
-
+    
     return raw;
   }
 
@@ -226,6 +256,36 @@ export struct EBookDetailPage {
   }
 
   /**
+   * 计算电子书整体阅读进度百分比
+   * 考虑章节数量，基于当前章节索引和章节内进度计算整体进度
+   * @returns 阅读进度百分比 (0-100)
+   */
+  private calculateOverallProgress(): number {
+    if (!this.ebook || !this.ebook.readingProgress) {
+      return 0;
+    }
+
+    const totalChapters = this.ebook.chapters.length;
+    if (totalChapters === 0) {
+      return 0;
+    }
+
+    const progress = this.ebook.readingProgress;
+    const currentChapterIndex = progress.currentChapterIndex;
+    const chapterProgress = progress.progress; // 当前章节内的进度 (0-100)
+
+    // 计算整体进度：
+    // 已完成的章节数 + 当前章节的进度比例
+    // 例如：共10章，当前在第3章（索引2），章节内进度50%
+    // 整体进度 = (2 + 0.5) / 10 * 100 = 25%
+    const completedChapters = currentChapterIndex;
+    const currentChapterContribution = chapterProgress / 100;
+    const overallProgress = ((completedChapters + currentChapterContribution) / totalChapters) * 100;
+
+    return Math.floor(Math.min(overallProgress, 100));
+  }
+
+  /**
    * 打开设置页面
    */
   private openSettings(): void {
@@ -251,7 +311,7 @@ export struct EBookDetailPage {
     try {
       this.ebook.isFavorite = !this.ebook.isFavorite;
       this.ebook.lastUpdateTime = Date.now();
-
+      
       await this.ebookDataManager.saveEBook(this.ebook);
       logger.info(TAG, `收藏状态已更新: ${this.ebook.isFavorite}`);
     } catch (error) {
@@ -266,7 +326,7 @@ export struct EBookDetailPage {
     if (!this.ebook) {
       return;
     }
-
+    
     // 初始化编辑字段
     this.editTitle = this.ebook.metadata.title;
     this.editAuthor = this.ebook.metadata.author;
@@ -274,7 +334,7 @@ export struct EBookDetailPage {
     this.editPublishDate = this.ebook.metadata.publishDate || '';
     this.editIsbn = this.ebook.metadata.isbn || '';
     this.editDescription = this.ebook.metadata.description || '';
-
+    
     this.showEditDialog = true;
     logger.info(TAG, '打开编辑弹窗');
   }
@@ -296,14 +356,33 @@ export struct EBookDetailPage {
       this.ebook.metadata.isbn = this.editIsbn;
       this.ebook.metadata.description = this.editDescription;
       this.ebook.lastUpdateTime = Date.now();
-
+      
       // 保存到数据库
       await this.ebookDataManager.saveEBook(this.ebook);
-
+      
       this.showEditDialog = false;
       logger.info(TAG, '书籍信息已保存');
     } catch (error) {
       logger.error(TAG, `保存书籍信息失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 跳转到全局搜索页面并搜索指定关键词
+   */
+  private navigateToGlobalSearch(keyword: string): void {
+    if (!keyword || keyword.trim().length === 0) {
+      logger.warn(TAG, '搜索关键词为空');
+      return;
+    }
+    
+    try {
+      const searchParams: GlobalSearchPageParams = { initialKeyword: keyword.trim() };
+      this.pathStack.pushPathByName('GlobalSearchPage', searchParams);
+      logger.info(TAG, `跳转到全局搜索页面: keyword=${keyword}`);
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `跳转全局搜索页面失败: ${errorMessage}`);
     }
   }
 
@@ -440,6 +519,11 @@ export struct EBookDetailPage {
         this.isLoading = false;
       }
     })
+    .onShown(() => {
+      // 从阅读器返回时自动刷新阅读进度
+      logger.lifecycle(TAG, '📱 页面显示，自动刷新电子书数据');
+      this.refreshEBookDataSilently();
+    })
     .backgroundColor(Color.Transparent)
     .hideTitleBar(true)
     /*
@@ -461,17 +545,17 @@ export struct EBookDetailPage {
             backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme),
           },
           contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
-              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
+            titleStyle: { 
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
+              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
             },
-            menuStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            menuStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
             },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            backIconStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
             }
           }
         },
@@ -480,17 +564,17 @@ export struct EBookDetailPage {
             backgroundColor: this.themeState.currentTheme === ThemeType.LIGHT ? '#E6FFFFFF' : '#E6000000',
           },
           contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
-              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
+            titleStyle: { 
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
+              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
             },
-            menuStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            menuStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
             },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            backIconStyle: { 
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
             }
           }
         }
@@ -619,16 +703,34 @@ export struct EBookDetailPage {
 
         // 基本信息
         Column({ space: 8 }) {
+          // 标题 - 长按搜索
           Text(this.ebook.metadata.title)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .gesture(
+              LongPressGesture({ repeat: false, duration: 500 })
+                .onAction(() => {
+                  if (this.ebook?.metadata.title) {
+                    this.navigateToGlobalSearch(this.ebook.metadata.title);
+                  }
+                })
+            )
 
+          // 作者 - 长按搜索
           Text(this.ebook.metadata.author)
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .gesture(
+              LongPressGesture({ repeat: false, duration: 500 })
+                .onAction(() => {
+                  if (this.ebook?.metadata.author) {
+                    this.navigateToGlobalSearch(this.ebook.metadata.author);
+                  }
+                })
+            )
 
           // 格式标签
           Row({ space: 8 }) {
@@ -647,24 +749,24 @@ export struct EBookDetailPage {
               .borderRadius(4)
           }
 
-          // 阅读进度
-          if (this.ebook.readingProgress && this.ebook.readingProgress.progress > 0) {
+          // 阅读进度 - 使用考虑章节的整体进度
+          if (this.hasReadingProgress()) {
             Column({ space: 4 }) {
               Row() {
-                Text(`已读 ${Math.floor(this.ebook.readingProgress.progress)}%`)
+                Text(`已读 ${this.calculateOverallProgress()}%`)
                   .fontSize(12)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
               .width('100%')
 
               Progress({
-                value: this.ebook.readingProgress.progress,
+                value: this.calculateOverallProgress(),
                 total: 100,
                 type: ProgressType.Linear
               })
-                .width('100%')
-                .height(4)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .width('100%')
+              .height(4)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
           }
         }
@@ -698,7 +800,7 @@ export struct EBookDetailPage {
         Image(this.ebook?.isFavorite ? $r('app.media.ic_favorite_filled') : $r('app.media.ic_favorite_outline'))
           .width(24)
           .height(24)
-          .fillColor(this.ebook?.isFavorite
+          .fillColor(this.ebook?.isFavorite 
             ? ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)
             : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
@@ -750,28 +852,28 @@ export struct EBookDetailPage {
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
+          
           Blank()
 
-          // 刮削按钮
-          Row({ space: 4 }) {
-            Image($r('app.media.ic_scraper'))
-              .width(14)
-              .height(14)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            Text('刮削')
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-          .height(28)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-          .borderRadius(14)
-          .onClick(() => {
-            this.openScraperDialog();
-          })
-          .margin({ right: 8 })
-
+          // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
+          // Row({ space: 4 }) {
+          //   Image($r('app.media.ic_scraper'))
+          //     .width(14)
+          //     .height(14)
+          //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          //   Text('刮削')
+          //     .fontSize(12)
+          //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          // }
+          // .height(28)
+          // .padding({ left: 10, right: 10 })
+          // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+          // .borderRadius(14)
+          // .onClick(() => {
+          //   this.openScraperDialog();
+          // })
+          // .margin({ right: 8 })
+          
           // 编辑按钮
           Button() {
             Row({ space: 4 }) {
@@ -833,10 +935,20 @@ export struct EBookDetailPage {
           this.buildInfoItem('出版日期', this.ebook.metadata.publishDate || '未知')
           this.buildInfoItem('ISBN', this.ebook.metadata.isbn || '无')
           this.buildInfoItem('语言', this.ebook.metadata.language)
-          this.buildInfoItem('文件大小', this.formatFileSize(this.ebook.fileSize))
+          // 对于内置电子书（无文件路径），显示"内置"而不是文件大小
+          if (this.ebook.filePath && this.ebook.filePath.length > 0) {
+            this.buildInfoItem('文件大小', this.formatFileSize(this.ebook.fileSize))
+          } else {
+            this.buildInfoItem('文件大小', '内置')
+          }
           this.buildInfoItem('章节数', `${this.ebook.chapters.length}章`)
-          if (this.ebook.totalWordCount > 0) {
-            this.buildInfoItem('总字数', `${Math.floor(this.ebook.totalWordCount / 10000)}万字`)
+          // 显示总字数：优先使用 totalWordCount，否则动态计算
+          if (this.getDisplayWordCount() > 0) {
+            if (this.getDisplayWordCount() >= 10000) {
+              this.buildInfoItem('总字数', `${Math.floor(this.getDisplayWordCount() / 10000)}万字`)
+            } else {
+              this.buildInfoItem('总字数', `${this.getDisplayWordCount()}字`)
+            }
           }
         }
         .width('100%')
@@ -934,10 +1046,17 @@ export struct EBookDetailPage {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
-      if (chapter.wordCount > 0) {
-        Text(`${Math.floor(chapter.wordCount / 1000)}k字`)
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      // 使用动态计算的章节字数
+      if (this.getChapterDisplayWordCount(chapter) > 0) {
+        if (this.getChapterDisplayWordCount(chapter) >= 1000) {
+          Text(`${Math.floor(this.getChapterDisplayWordCount(chapter) / 1000)}k字`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        } else {
+          Text(`${this.getChapterDisplayWordCount(chapter)}字`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
       }
     }
     .width('100%')
@@ -1003,6 +1122,49 @@ export struct EBookDetailPage {
     } else {
       return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
     }
+  }
+
+  /**
+   * 获取显示用的总字数
+   * 优先使用 totalWordCount，如果为 0 则从章节内容动态计算
+   */
+  private getDisplayWordCount(): number {
+    if (!this.ebook) {
+      return 0;
+    }
+    
+    // 如果 totalWordCount 已有值，直接使用
+    if (this.ebook.totalWordCount > 0) {
+      return this.ebook.totalWordCount;
+    }
+    
+    // 否则从章节内容动态计算
+    let totalCount = 0;
+    for (const chapter of this.ebook.chapters) {
+      // 优先使用章节的 wordCount
+      if (chapter.wordCount > 0) {
+        totalCount += chapter.wordCount;
+      } else if (chapter.content && chapter.content.length > 0) {
+        // 如果章节 wordCount 为 0，使用内容长度
+        totalCount += chapter.content.length;
+      }
+    }
+    
+    return totalCount;
+  }
+
+  /**
+   * 获取章节显示用的字数
+   * 优先使用 wordCount，如果为 0 则使用内容长度
+   */
+  private getChapterDisplayWordCount(chapter: EBookChapter): number {
+    if (chapter.wordCount > 0) {
+      return chapter.wordCount;
+    }
+    if (chapter.content && chapter.content.length > 0) {
+      return chapter.content.length;
+    }
+    return 0;
   }
 
   /**
@@ -1078,20 +1240,20 @@ export struct EBookDetailPage {
             .width('100%')
             .justifyContent(FlexAlign.Center)
 
-            // 阅读进度
-            if (this.ebook.readingProgress && this.ebook.readingProgress.progress > 0) {
+            // 阅读进度 - 使用考虑章节的整体进度
+            if (this.hasReadingProgress()) {
               Column({ space: 4 }) {
-                Text(`已读 ${Math.floor(this.ebook.readingProgress.progress)}%`)
+                Text(`已读 ${this.calculateOverallProgress()}%`)
                   .fontSize(11)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 Progress({
-                  value: this.ebook.readingProgress.progress,
+                  value: this.calculateOverallProgress(),
                   total: 100,
                   type: ProgressType.Linear
                 })
-                  .width('100%')
-                  .height(4)
-                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .width('100%')
+                .height(4)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               }
               .width('100%')
               .padding({ left: 16, right: 16 })
@@ -1114,7 +1276,7 @@ export struct EBookDetailPage {
                 Image(this.ebook.isFavorite ? $r('app.media.ic_favorite_filled') : $r('app.media.ic_favorite_outline'))
                   .width(16)
                   .height(16)
-                  .fillColor(this.ebook.isFavorite
+                  .fillColor(this.ebook.isFavorite 
                     ? ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)
                     : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }

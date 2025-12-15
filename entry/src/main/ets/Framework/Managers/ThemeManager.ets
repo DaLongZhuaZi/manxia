@@ -459,26 +459,24 @@ export class ThemeManager {
   }
 
   /**
-   * 切换主题（在浅色、深色和自动之间循环）
-   * LIGHT -> DARK -> AUTO -> LIGHT...
+   * 切换主题（强制切换当前实际显示的主题）
+   * 如果当前实际显示浅色 -> 切换到深色
+   * 如果当前实际显示深色 -> 切换到浅色
+   * 注意：这会覆盖AUTO模式，强制使用固定主题
    */
   public async toggleTheme(): Promise<void> {
+    // 获取当前实际显示的主题（考虑AUTO模式）
+    const actualTheme = this.getActualThemeSync();
     let newTheme: ThemeType;
     
-    switch (this.currentTheme) {
-      case ThemeType.LIGHT:
-        newTheme = ThemeType.DARK;
-        break;
-      case ThemeType.DARK:
-        newTheme = ThemeType.AUTO;
-        break;
-      case ThemeType.AUTO:
-      default:
-        newTheme = ThemeType.LIGHT;
-        break;
+    // 基于实际显示的主题进行切换
+    if (actualTheme === ThemeType.LIGHT) {
+      newTheme = ThemeType.DARK;
+    } else {
+      newTheme = ThemeType.LIGHT;
     }
     
-    logger.info(TAG, `主题切换: ${this.currentTheme} -> ${newTheme}`);
+    logger.info(TAG, `主题切换: 实际显示=${actualTheme}, 配置=${this.currentTheme} -> 新主题=${newTheme}`);
     await this.setTheme(newTheme);
   }
 
@@ -873,14 +871,16 @@ export class ThemeManager {
         // 若未提供深色版本，则先使用浅色版本占位
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.BACKGROUND_IMAGE_DARK, themeData.backgroundImagePath);
       }
-      // 根据当前实际主题刷新通用背景键，确保旧组件兼容
-      this.refreshCustomBackgroundForCurrentTheme();
       if (themeData.splashBackgroundImagePath && themeData.splashBackgroundImagePath.length > 0) {
         AppStorage.setOrCreate(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE, themeData.splashBackgroundImagePath);
       }
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.PRIMARY_COLOR, themeData.primaryColor);
+      // 必须先设置 IS_CUSTOM_THEME_ACTIVE 为 true，再调用 refreshCustomBackgroundForCurrentTheme
+      // 否则该函数会因为检查到 IS_CUSTOM_THEME_ACTIVE 不为 true 而提前返回
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.IS_CUSTOM_THEME_ACTIVE, true);
       AppStorage.setOrCreate(CUSTOM_THEME_KEYS.CURRENT_THEME_ID, themeData.id);
+      // 根据当前实际主题刷新通用背景键，确保旧组件兼容
+      this.refreshCustomBackgroundForCurrentTheme();
       
       // 2. 启用自定义主题时，强制将主题设置为AUTO以跟随系统
       // 避免用户之前固定为DARK/LIGHT导致与系统不一致

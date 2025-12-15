@@ -763,20 +763,20 @@ export struct BatchMangaImportDialog {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         
-        // 刮削按钮
-        Row({ space: 4 }) {
-          Text('🔍')
-            .fontSize(12)
-          Text('刮削')
-            .fontSize(11)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        }
-        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        .borderRadius(4)
-        .onClick(() => {
-          this.openScraperDialogForGroup(groupIndex);
-        })
+        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
+        // Row({ space: 4 }) {
+        //   Text('🔍')
+        //     .fontSize(12)
+        //   Text('刮削')
+        //     .fontSize(11)
+        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        // }
+        // .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        // .borderRadius(4)
+        // .onClick(() => {
+        //   this.openScraperDialogForGroup(groupIndex);
+        // })
         
         // 导入模式标签
         Text(this.getImportModeLabel(group.importMode))

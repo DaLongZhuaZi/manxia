@@ -27,6 +27,7 @@ import { colorMap } from '../Data/ResourceMap';
 import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage';
 import { DataService } from '../Framework/Services/DataService';
 import { MangaSettingsPageParams } from './MangaSettingsPage';
+import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
@@ -1071,6 +1072,50 @@ struct MangaDetailPage {
     }
 
     return null;
+  }
+
+  /**
+   * 静默刷新阅读进度（从阅读器返回时调用）
+   * 不显示加载状态，只更新阅读进度相关的数据
+   */
+  private async refreshReadingProgressSilently(): Promise<void> {
+    if (!this.currentManga || this.isLoading) {
+      logger.debug(TAG, '跳过静默刷新：漫画未加载或正在加载中');
+      return;
+    }
+
+    try {
+      logger.info(TAG, '开始静默刷新阅读进度...');
+      const dm = DataManager.getInstance();
+      const mangaId = this.currentManga.id;
+
+      // 1. 重新加载阅读历史记录
+      const history: ReadHistory[] = await dm.getReadHistoryByComic(mangaId, 'default_user', 1);
+      if (history && history.length > 0) {
+        const lastRead: ReadHistory = history[0];
+        this.currentManga.readingProgress = {
+          currentChapterId: lastRead.chapterId,
+          currentPageIndex: lastRead.pageIndex,
+          readingStatus: ReadingStatus.READING,
+          totalReadingTime: this.currentManga.readingProgress.totalReadingTime,
+          lastReadAt: lastRead.readTime,
+          readingPercentage: this.currentManga.readingProgress.readingPercentage
+        };
+        logger.info(TAG, `阅读进度已更新: chapterId=${lastRead.chapterId}, pageIndex=${lastRead.pageIndex}`);
+      }
+
+      // 2. 重新加载章节进度数据
+      await this.loadChapterProgressData();
+
+      // 3. 触发UI更新
+      const updatedManga = this.currentManga;
+      this.currentManga = null;
+      this.currentManga = updatedManga;
+
+      logger.info(TAG, '静默刷新阅读进度完成');
+    } catch (error) {
+      logger.error(TAG, `静默刷新阅读进度失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -3374,6 +3419,40 @@ struct MangaDetailPage {
   }
 
   /**
+   * 计算漫画阅读进度百分比
+   * 基于已阅读的页数占总页数的比例
+   * @returns 阅读进度百分比 (0-100)
+   */
+  private calculateReadingPercentage(): number {
+    if (!this.currentManga || this.chapterProgressList.length === 0) {
+      return 0;
+    }
+
+    let totalPages = 0;
+    let readPages = 0;
+
+    // 遍历所有章节，计算总页数和已读页数
+    for (const progress of this.chapterProgressList) {
+      if (progress.totalPages > 0) {
+        totalPages += progress.totalPages;
+        // currentPageIndex >= 0 表示已开始阅读该章节
+        // currentPageIndex + 1 表示已阅读的页数（因为索引从0开始）
+        if (progress.currentPageIndex >= 0) {
+          readPages += progress.currentPageIndex + 1;
+        }
+      }
+    }
+
+    if (totalPages === 0) {
+      return 0;
+    }
+
+    // 计算百分比，保留整数
+    const percentage = Math.floor((readPages / totalPages) * 100);
+    return Math.min(percentage, 100); // 确保不超过100%
+  }
+
+  /**
    * 阅读指定章节
    */
   private async readChapter(chapter: MangaChapter): Promise<void> {
@@ -3428,19 +3507,55 @@ struct MangaDetailPage {
       }
     }
     
-    const info: ChapterProgressInfo | null = this.findChapterProgress(chapter.id);
-    logger.debug(TAG, `📖 查找章节进度结果: ${info ? `找到进度，当前页=${info.currentPageIndex}/${info.totalPages}` : '未找到进度'}`);
-    
+    // [修复] 直接从数据库读取最新的阅读进度，而不是依赖可能过时的 chapterProgressList
+    // 问题：chapterProgressList 可能在 onPageShow 的异步刷新完成之前就被使用，导致使用旧数据
     let resumePageIndex: number = 0;
-    if (info) {
-      if (info.currentPageIndex >= 0) {
-        resumePageIndex = info.currentPageIndex;
-        const totalPages: number = info.totalPages;
-        if (totalPages > 0 && resumePageIndex >= totalPages) {
-          logger.debug(TAG, `⚠️ 页面索引越界，调整: ${resumePageIndex} -> ${totalPages - 1}`);
-          resumePageIndex = totalPages - 1;
+    try {
+      const dm = DataManager.getInstance();
+      const mangaId = this.currentManga.id;
+      
+      // 根据漫画类型选择正确的阅读历史表
+      let latestHistory: ReadHistory | null = null;
+      if (this.pageParams?.sourceId) {
+        // 在线漫画：查询 online_read_history 表
+        const onlineHistoryRecords = await dm.getOnlineReadHistoryByComic(mangaId);
+        // 找到该章节的最新阅读记录
+        for (const record of onlineHistoryRecords) {
+          if (record.chapterId === chapter.id) {
+            if (!latestHistory || record.readTime > latestHistory.readTime) {
+              latestHistory = {
+                id: record.id,
+                userId: 'default_user',
+                comicId: record.comicId,
+                chapterId: record.chapterId,
+                pageIndex: record.pageIndex,
+                readTime: record.readTime,
+                readDuration: 0
+              };
+            }
+          }
+        }
+      } else {
+        // 本地漫画：查询 read_history 表
+        const historyList = await dm.getReadHistoryByComic(mangaId, 'default_user', 1000);
+        // 找到该章节的最新阅读记录
+        for (const record of historyList) {
+          if (record.chapterId === chapter.id) {
+            if (!latestHistory || record.readTime > latestHistory.readTime) {
+              latestHistory = record;
+            }
+          }
         }
       }
+      
+      if (latestHistory && latestHistory.pageIndex >= 0) {
+        resumePageIndex = latestHistory.pageIndex;
+        logger.info(TAG, `📖 [修复] 从数据库直接读取章节进度: chapterId=${chapter.id}, pageIndex=${resumePageIndex}, readTime=${latestHistory.readTime}`);
+      } else {
+        logger.debug(TAG, `📖 未找到章节 ${chapter.id} 的阅读记录，从第1页开始`);
+      }
+    } catch (err) {
+      logger.warn(TAG, `📖 读取章节进度失败: ${String(err)}，从第1页开始`);
     }
 
     logger.debug(TAG, `📄 最终恢复页面索引: ${resumePageIndex}`);
@@ -3690,7 +3805,7 @@ struct MangaDetailPage {
 
         // 漫画信息区域 - 占60%宽度
         Column({ space: 8 }) {
-          // 标题
+          // 标题 - 长按搜索
           Text(this.currentManga?.title || '加载中...')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
@@ -3699,8 +3814,16 @@ struct MangaDetailPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
             .textAlign(TextAlign.Start)
+            .gesture(
+              LongPressGesture({ repeat: false, duration: 500 })
+                .onAction(() => {
+                  if (this.currentManga?.title) {
+                    this.navigateToGlobalSearch(this.currentManga.title);
+                  }
+                })
+            )
 
-          // 作者信息
+          // 作者信息 - 长按搜索
           if (this.currentManga?.metadata.authors) {
             Text(`作者: ${this.currentManga.metadata.authors}`)
               .fontSize(13)
@@ -3708,6 +3831,18 @@ struct MangaDetailPage {
               .opacity(0.8)
               .width('100%')
               .textAlign(TextAlign.Start)
+              .gesture(
+                LongPressGesture({ repeat: false, duration: 500 })
+                  .onAction(() => {
+                    if (this.currentManga?.metadata.authors && this.currentManga.metadata.authors.length > 0) {
+                      // 搜索第一个作者
+                      const firstAuthor = Array.isArray(this.currentManga.metadata.authors) 
+                        ? this.currentManga.metadata.authors[0] 
+                        : String(this.currentManga.metadata.authors);
+                      this.navigateToGlobalSearch(firstAuthor);
+                    }
+                  })
+              )
           }
 
           // 图源信息
@@ -3741,9 +3876,9 @@ struct MangaDetailPage {
           }
           .width('100%')
 
-          // 阅读进度
-          if (this.currentManga?.readingProgress) {
-            Text(`阅读进度: ${this.currentManga.readingProgress.readingPercentage}%`)
+          // 阅读进度 - 使用动态计算的百分比
+          if (this.hasReadingProgress()) {
+            Text(`阅读进度: ${this.calculateReadingPercentage()}%`)
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .opacity(0.8)
@@ -3875,6 +4010,10 @@ struct MangaDetailPage {
               .border({
                 width: 1,
                 color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+              })
+              .onClick(() => {
+                // 点击标签跳转到全局搜索
+                this.navigateToGlobalSearch(genre);
               })
           })
         }
@@ -5048,6 +5187,11 @@ struct MangaDetailPage {
         logger.error(TAG, `初始加载失败: ${error.message}`);
       });
     })
+    .onShown(() => {
+      // 从阅读器返回时自动刷新阅读进度
+      logger.lifecycle(TAG, '📱 页面显示，自动刷新阅读进度');
+      this.refreshReadingProgressSilently();
+    })
   }
 
   /**
@@ -5067,6 +5211,25 @@ struct MangaDetailPage {
     } catch (error) {
       const errorMessage: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `跳转漫画设置页面失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 跳转到全局搜索页面并搜索指定关键词
+   */
+  private navigateToGlobalSearch(keyword: string): void {
+    if (!keyword || keyword.trim().length === 0) {
+      logger.warn(TAG, '搜索关键词为空');
+      return;
+    }
+    
+    try {
+      const searchParams: GlobalSearchPageParams = { initialKeyword: keyword.trim() };
+      this.pathStack.pushPathByName('GlobalSearchPage', searchParams);
+      logger.info(TAG, `跳转到全局搜索页面: keyword=${keyword}`);
+    } catch (error) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `跳转全局搜索页面失败: ${errorMessage}`);
     }
   }
 
