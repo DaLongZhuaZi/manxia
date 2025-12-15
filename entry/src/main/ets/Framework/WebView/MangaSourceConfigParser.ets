@@ -397,7 +397,7 @@ export class MangaSourceConfigParser {
   /**
    * 构建页面列表获取操作序列
    */
-  buildPageListActions(config: MangaSourceConfig, chapterId: string): Action[] {
+  buildPageListActions(config: MangaSourceConfig, chapterId: string, mangaId?: string): Action[] {
     const workflow = this.getWorkflow(config, 'getPageList');
     if (!workflow) {
       throw new MangaSourceError(
@@ -406,7 +406,7 @@ export class MangaSourceConfigParser {
       );
     }
 
-    return this.processActions(workflow, { chapterId });
+    return this.processActions(workflow, { chapterId, mangaId });
   }
 
   /**

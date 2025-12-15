@@ -443,6 +443,7 @@ export interface OnlineComicInfo {
   createTime: number;
   updateTime: number;
   sourceName: string;
+  sourcePkg: string;  // 图源唯一包名标识符，用于在图源删除后重新导入时正确识别图源
 }
 
 export interface OnlineChapterInfo {
@@ -805,7 +806,8 @@ export class DataManager {
       addTime: Number(obj.addTime) || 0,
       createTime: Number(obj.createTime) || 0,
       updateTime: Number(obj.updateTime) || 0,
-      sourceName: (obj.sourceName as string) || ''
+      sourceName: (obj.sourceName as string) || '',
+      sourcePkg: (obj.sourcePkg as string) || ''
     };
     return info;
   }
@@ -3517,30 +3519,46 @@ export class DataManager {
         logger.info(TAG, `📝 [SQL] 创建新记录: id="${comicId}"`);
       }
       
-      // [修复] 解析sourceName，优先级：comicData.sourceName > comic_source表 > 默认值
+      // [修复] 解析sourceName和sourcePkg，优先级：comicData > comic_source表 > 默认值
+      // sourcePkg 是图源的唯一包名标识符，用于在图源删除后重新导入时正确识别图源
       let sourceNameVal: string = '';
+      let sourcePkgVal: string = '';
       
-      // 1. 优先使用comicData中传递的sourceName
+      // 1. 优先使用comicData中传递的sourceName和sourcePkg
       if (comicData.sourceName && typeof comicData.sourceName === 'string' && comicData.sourceName.length > 0) {
         sourceNameVal = comicData.sourceName as string;
         logger.info(TAG, `📝 [SQL] 使用传递的图源名称: "${sourceNameVal}"`);
-      } else {
-        // 2. 从comic_source表查询
+      }
+      if (comicData.sourcePkg && typeof comicData.sourcePkg === 'string' && comicData.sourcePkg.length > 0) {
+        sourcePkgVal = comicData.sourcePkg as string;
+        logger.info(TAG, `📝 [SQL] 使用传递的图源包名: "${sourcePkgVal}"`);
+      }
+      
+      // 2. 如果没有传递，从comic_source表查询
+      if (!sourceNameVal || !sourcePkgVal) {
         const srcRecord: ComicSourceDatabaseRecord | null = await this.getComicSourceById(sourceId);
-        if (srcRecord && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
-          sourceNameVal = srcRecord.name;
-          logger.info(TAG, `📝 [SQL] 从comic_source表获取图源名称: "${sourceNameVal}"`);
-        } else {
-          // 3. 使用默认值
-          sourceNameVal = 'WEBVIEW';
-          logger.warn(TAG, `📝 [SQL] 未找到sourceId=${sourceId}的图源记录，使用默认名称: "${sourceNameVal}"`);
+        if (srcRecord) {
+          if (!sourceNameVal && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
+            sourceNameVal = srcRecord.name;
+            logger.info(TAG, `📝 [SQL] 从comic_source表获取图源名称: "${sourceNameVal}"`);
+          }
+          if (!sourcePkgVal && srcRecord.pkg && typeof srcRecord.pkg === 'string' && srcRecord.pkg.length > 0) {
+            sourcePkgVal = srcRecord.pkg;
+            logger.info(TAG, `📝 [SQL] 从comic_source表获取图源包名: "${sourcePkgVal}"`);
+          }
         }
+      }
+      
+      // 3. 使用默认值
+      if (!sourceNameVal) {
+        sourceNameVal = 'WEBVIEW';
+        logger.warn(TAG, `📝 [SQL] 未找到sourceId=${sourceId}的图源记录，使用默认名称: "${sourceNameVal}"`);
       }
       
       // 使用INSERT OR REPLACE，基于主键id
       const sql = `INSERT OR REPLACE INTO online_comic_info 
-                   (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       
       const params = [
         comicId,
@@ -3556,7 +3574,8 @@ export class DataManager {
         now,
         now,
         now,
-        sourceNameVal
+        sourceNameVal,
+        sourcePkgVal
       ];
       
       logger.debug(TAG, `📝 [SQL] 执行SQL: ${sql}`);
@@ -3830,6 +3849,97 @@ export class DataManager {
     } catch (error) {
       logger.error(TAG, `更新在线漫画sourceName失败: id=${comicId}`, String(error));
       throw error as Error;
+    }
+  }
+
+  /**
+   * [修复] 通过 sourcePkg 恢复在线漫画与图源的关联
+   * 当图源被删除后重新导入时，通过 sourcePkg 查找新的 sourceId 并更新在线漫画
+   * @param sourcePkg 图源唯一包名
+   * @returns 更新的漫画数量
+   */
+  public async restoreOnlineComicSourceByPkg(sourcePkg: string): Promise<number> {
+    try {
+      if (!sourcePkg) {
+        logger.warn(TAG, `restoreOnlineComicSourceByPkg: sourcePkg 为空`);
+        return 0;
+      }
+
+      // 1. 通过 pkg 查找图源
+      const sourceRecord = await this.getComicSourceByPkg(sourcePkg);
+      if (!sourceRecord) {
+        logger.warn(TAG, `restoreOnlineComicSourceByPkg: 未找到 pkg="${sourcePkg}" 的图源`);
+        return 0;
+      }
+
+      const newSourceId = sourceRecord.id;
+      const sourceName = sourceRecord.name;
+      logger.info(TAG, `[修复] 找到图源: pkg="${sourcePkg}", id=${newSourceId}, name="${sourceName}"`);
+
+      // 2. 查找所有使用该 sourcePkg 的在线漫画
+      const sql = 'SELECT id, sourceId FROM online_comic_info WHERE sourcePkg = ?';
+      const comics = await this.databaseManager.querySql(sql, [sourcePkg]);
+
+      if (!comics || comics.length === 0) {
+        logger.info(TAG, `[修复] 没有找到使用 sourcePkg="${sourcePkg}" 的在线漫画`);
+        return 0;
+      }
+
+      // 3. 更新这些漫画的 sourceId 和 sourceName
+      let updatedCount = 0;
+      for (const comic of comics) {
+        const comicObj: ESObject = comic as ESObject;
+        const comicId = comicObj.id as string;
+        const oldSourceId = comicObj.sourceId as string;
+
+        if (oldSourceId !== String(newSourceId)) {
+          const updateSql = 'UPDATE online_comic_info SET sourceId = ?, sourceName = ?, updateTime = ? WHERE id = ?';
+          await this.databaseManager.executeSql(updateSql, [String(newSourceId), sourceName, Date.now(), comicId]);
+          updatedCount++;
+          logger.info(TAG, `[修复] 更新漫画 "${comicId}" 的 sourceId: ${oldSourceId} -> ${newSourceId}`);
+        }
+      }
+
+      logger.info(TAG, `[修复] 通过 sourcePkg="${sourcePkg}" 恢复了 ${updatedCount} 部漫画的图源关联`);
+      return updatedCount;
+    } catch (error) {
+      logger.error(TAG, `restoreOnlineComicSourceByPkg 失败: sourcePkg="${sourcePkg}"`, String(error));
+      return 0;
+    }
+  }
+
+  /**
+   * [修复] 尝试通过 sourcePkg 或 sourceName 查找图源ID
+   * 用于在 sourceId 失效时的降级查找
+   * @param sourcePkg 图源唯一包名（优先）
+   * @param sourceName 图源名称（备选）
+   * @returns 图源ID，如果未找到返回 null
+   */
+  public async findSourceIdByPkgOrName(sourcePkg?: string, sourceName?: string): Promise<number | null> {
+    try {
+      // 1. 优先通过 pkg 查找
+      if (sourcePkg) {
+        const sourceByPkg = await this.getComicSourceByPkg(sourcePkg);
+        if (sourceByPkg) {
+          logger.info(TAG, `[修复] 通过 pkg="${sourcePkg}" 找到图源 ID=${sourceByPkg.id}`);
+          return Number(sourceByPkg.id);
+        }
+      }
+
+      // 2. 通过 name 查找
+      if (sourceName) {
+        const sourceByName = await this.getComicSourceByName(sourceName);
+        if (sourceByName) {
+          logger.info(TAG, `[修复] 通过 name="${sourceName}" 找到图源 ID=${sourceByName.id}`);
+          return Number(sourceByName.id);
+        }
+      }
+
+      logger.warn(TAG, `[修复] 未找到图源: pkg="${sourcePkg}", name="${sourceName}"`);
+      return null;
+    } catch (error) {
+      logger.error(TAG, `findSourceIdByPkgOrName 失败`, String(error));
+      return null;
     }
   }
 

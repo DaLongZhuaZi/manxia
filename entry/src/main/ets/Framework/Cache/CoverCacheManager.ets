@@ -403,18 +403,77 @@ export class CoverCacheManager {
         return localPath;
       }
       
-      // 下载封面
+      // 下载封面（支持SSL错误时自动降级为HTTP）
       logger.info(TAG, `开始下载封面: ${coverUrl}`);
+      
+      // 构建请求头，添加Referer和User-Agent以解决防盗链和SSL问题
+      const finalHeaders: Record<string, string> = {};
+      finalHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+      finalHeaders['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
+      finalHeaders['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8';
+      
+      // 合并传入的headers
+      if (headers) {
+        const headerKeys = Object.keys(headers);
+        for (let i = 0; i < headerKeys.length; i++) {
+          const key = headerKeys[i];
+          finalHeaders[key] = headers[key];
+        }
+      }
+      
+      // 根据图片URL自动添加Referer（解决防盗链问题）
+      if (coverUrl.includes('amh1234.wszwhg.net') || coverUrl.includes('gmh1234.wszwhg.net')) {
+        finalHeaders['Referer'] = 'https://b.amh1234.com/';
+        finalHeaders['Origin'] = 'https://b.amh1234.com';
+      }
+      
+      // 尝试下载，如果SSL错误则降级为HTTP
+      // result: [success, sslError]
+      let downloadUrl = coverUrl;
+      let result = await this.tryDownloadCover(downloadUrl, finalHeaders, localPath);
+      
+      // 如果SSL错误且是HTTPS，尝试HTTP降级
+      if (result[1] && downloadUrl.startsWith('https://')) {
+        downloadUrl = downloadUrl.replace('https://', 'http://');
+        logger.info(TAG, `SSL错误，尝试HTTP降级: ${downloadUrl}`);
+        result = await this.tryDownloadCover(downloadUrl, finalHeaders, localPath);
+      }
+      
+      if (result[0]) {
+        // 更新数据库
+        await this.updateLocalCoverPath(sourceId, externalId, localPath);
+        return localPath;
+      } else {
+        return null;
+      }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errCode = (error as Record<string, Object>)['code'];
+      logger.error(TAG, `下载封面异常: message=${errMsg}, code=${errCode}, url=${coverUrl}`);
+      return null;
+    }
+  }
+
+  /**
+   * 尝试下载封面（内部方法）
+   * @returns [success, sslError] - 下载是否成功，是否是SSL错误
+   */
+  private async tryDownloadCover(
+    url: string,
+    headers: Record<string, string>,
+    localPath: string
+  ): Promise<boolean[]> {
+    try {
       const httpRequest = http.createHttp();
       
       const requestOptions: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
         header: headers,
-        readTimeout: 10000,  // 降低超时时间：10秒
-        connectTimeout: 5000  // 降低连接超时：5秒
+        readTimeout: 10000,
+        connectTimeout: 5000
       };
       
-      const response = await httpRequest.request(coverUrl, requestOptions);
+      const response = await httpRequest.request(url, requestOptions);
       
       if (response.responseCode === 200) {
         // 保存文件
@@ -425,22 +484,28 @@ export class CoverCacheManager {
         fs.closeSync(file);
         
         logger.info(TAG, `封面下载成功: ${localPath}`);
-        
-        // 更新数据库
-        await this.updateLocalCoverPath(sourceId, externalId, localPath);
-        
         httpRequest.destroy();
-        return localPath;
+        return [true, false];  // success=true, sslError=false
       } else {
         logger.warn(TAG, `封面下载失败: HTTP ${response.responseCode}`);
         httpRequest.destroy();
-        return null;
+        return [false, false];  // success=false, sslError=false
       }
     } catch (error) {
+      const errObj = error as Object;
+      const errCode = (errObj as Record<string, Object>)['code'];
       const errMsg = error instanceof Error ? error.message : String(error);
-      const errCode = (error as Record<string, Object>)['code'];
-      logger.error(TAG, `下载封面异常: message=${errMsg}, code=${errCode}, url=${coverUrl}`);
-      return null;
+      
+      // 检查是否是SSL错误 (code=2300060)
+      const isSslError = errCode === 2300060;
+      
+      if (isSslError) {
+        logger.warn(TAG, `封面下载SSL错误: ${url}`);
+      } else {
+        logger.error(TAG, `封面下载异常: message=${errMsg}, code=${errCode}, url=${url}`);
+      }
+      
+      return [false, isSslError];  // success=false, sslError=isSslError
     }
   }
 

@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 11,
+  DATABASE_VERSION: 12,
   ENCRYPT: false
 };
 

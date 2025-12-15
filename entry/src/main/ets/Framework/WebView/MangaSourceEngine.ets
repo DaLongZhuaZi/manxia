@@ -268,6 +268,7 @@ export class MangaSourceEngine {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
           }
+          // 处理直接返回数组的情况: [...]
           if (scriptData.startsWith('[')) {
             try {
               const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
@@ -277,6 +278,19 @@ export class MangaSourceEngine {
               }
             } catch (e) {
               logger.debug(TAG, `脚本结果不是漫画列表格式: ${e}`);
+            }
+          }
+          // 处理返回对象包含 mangas 数组的情况: {"mangas":[...]}
+          else if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+              if (Array.isArray(mangasArray) && mangasArray.length > 0) {
+                searchResults = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果(mangas字段)提取到 ${searchResults.length} 条漫画数据`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果对象解析失败: ${e}`);
             }
           }
         }
@@ -1185,8 +1199,8 @@ export class MangaSourceEngine {
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'true';
-      // 添加mangaId变量到上下文
-      context.variables['mangaId'] = mangaId;
+      // 添加mangaId变量到上下文（规范化URL）
+      context.variables['mangaId'] = this.normalizeUrl(mangaId);
       
       let mangaDetail: MangaInfo | undefined;
       
@@ -1276,8 +1290,8 @@ export class MangaSourceEngine {
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'true';
-      // 添加mangaId变量到上下文
-      context.variables['mangaId'] = mangaId;
+      // 添加mangaId变量到上下文（规范化URL）
+      context.variables['mangaId'] = this.normalizeUrl(mangaId);
       
       let chapters: ChapterInfo[] = [];
       this.lastChapterAccessDenied = false;
@@ -1418,17 +1432,43 @@ export class MangaSourceEngine {
       const detailResult = await this.getMangaDetail(mangaId);
       const chapterResult = await this.getChapterList(mangaId);
       
-      if (!detailResult.success || !chapterResult.success) {
+      // [修复] 即使详情获取失败，只要章节获取成功，也返回部分成功的结果
+      // MangaDetailPage 可以使用缓存的标题和封面来显示页面
+      if (!chapterResult.success) {
+        // 章节获取失败才是真正的失败
         return {
           success: false,
-          error: detailResult.error || chapterResult.error || '获取失败',
+          error: chapterResult.error || '获取章节列表失败',
           duration: Date.now() - startTime,
           actionCount: 0
         };
       }
       
+      // 构建返回数据，详情可能为空（使用空对象作为占位符）
+      let detailData: MangaInfo;
+      if (detailResult.success && detailResult.data) {
+        detailData = detailResult.data;
+      } else {
+        // 创建空的占位符对象
+        const emptyDetail: MangaInfo = {
+          id: mangaId,
+          title: '',
+          url: '',
+          cover: '',
+          author: '',
+          description: '',
+          status: '',
+          genres: []
+        };
+        detailData = emptyDetail;
+      }
+      
+      if (!detailResult.success) {
+        logger.warn(TAG, `详情获取失败但章节成功，使用空详情占位符: ${detailResult.error}`);
+      }
+      
       const combinedData: MangaDetailWithChapters = {
-        detail: detailResult.data!,
+        detail: detailData,
         chapters: chapterResult.data!
       };
       return {
@@ -1446,7 +1486,8 @@ export class MangaSourceEngine {
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'true';
-      context.variables['mangaId'] = mangaId;
+      // 规范化mangaId URL
+      context.variables['mangaId'] = this.normalizeUrl(mangaId);
       
       let mangaDetail: MangaInfo | undefined;
       let chapters: ChapterInfo[] = [];
@@ -1559,15 +1600,15 @@ export class MangaSourceEngine {
     logger.info(TAG, `获取页面列表: ${chapterId}`);
 
     try {
-      const actions = this.configParser.buildPageListActions(this.config, chapterId);
+      const actions = this.configParser.buildPageListActions(this.config, chapterId, mangaId);
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'true';
-      // 添加mangaId和chapterId变量到上下文
+      // 添加mangaId和chapterId变量到上下文（规范化URL）
       if (mangaId) {
-        context.variables['mangaId'] = mangaId;
+        context.variables['mangaId'] = this.normalizeUrl(mangaId);
       }
-      context.variables['chapterId'] = chapterId;
+      context.variables['chapterId'] = this.normalizeUrl(chapterId);
       
       let pages: PageInfo[] = [];
       
@@ -1701,10 +1742,11 @@ export class MangaSourceEngine {
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'true';
+      // 规范化URL
       if (mangaId) {
-        context.variables['mangaId'] = mangaId;
+        context.variables['mangaId'] = this.normalizeUrl(mangaId);
       }
-      context.variables['chapterId'] = chapterId;
+      context.variables['chapterId'] = this.normalizeUrl(chapterId);
       
       let resultData: ESObject = {};
       
@@ -2004,6 +2046,43 @@ export class MangaSourceEngine {
   }
 
   /**
+   * 规范化URL - 确保URL是完整的绝对URL
+   * 如果传入的是相对路径，则拼接baseUrl
+   * 如果已经是完整URL，则直接返回
+   */
+  private normalizeUrl(url: string): string {
+    if (!url) {
+      return url;
+    }
+    
+    // 如果已经是完整URL（以http://或https://开头），直接返回
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    
+    // 获取baseUrl
+    const baseUrl = this.config?.metadata?.baseUrl || '';
+    if (!baseUrl) {
+      logger.warn(TAG, `无法规范化URL，baseUrl为空: ${url}`);
+      return url;
+    }
+    
+    // 拼接baseUrl和相对路径
+    // 确保不会出现双斜杠
+    if (url.startsWith('/')) {
+      // 相对路径以/开头，直接拼接
+      const normalizedUrl = baseUrl.replace(/\/$/, '') + url;
+      logger.debug(TAG, `URL规范化: ${url} -> ${normalizedUrl}`);
+      return normalizedUrl;
+    } else {
+      // 相对路径不以/开头，添加/
+      const normalizedUrl = baseUrl.replace(/\/$/, '') + '/' + url;
+      logger.debug(TAG, `URL规范化: ${url} -> ${normalizedUrl}`);
+      return normalizedUrl;
+    }
+  }
+
+  /**
    * 转换为漫画信息
    */
   private transformToMangaInfo(data: Object): MangaInfo {
@@ -2036,7 +2115,7 @@ export class MangaSourceEngine {
       status = item.finished ? 'completed' : 'ongoing';
     }
 
-    // 处理标签 (合并 genres, categories, tags)
+    // 处理标签 (合并 genres, categories, tags, genre)
     let genres: string[] = [];
     if (item.genres && Array.isArray(item.genres)) {
       genres = item.genres as string[];
@@ -2046,6 +2125,12 @@ export class MangaSourceEngine {
     }
     if (item.tags && Array.isArray(item.tags)) {
       genres = genres.concat(item.tags as string[]);
+    }
+    // 支持 genre 字符串（逗号分隔），如 Manwa 返回的格式
+    if (item.genre && typeof item.genre === 'string') {
+      const genreStr = item.genre as string;
+      const genreArr = genreStr.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+      genres = genres.concat(genreArr);
     }
     // 去重
     if (genres.length > 0) {

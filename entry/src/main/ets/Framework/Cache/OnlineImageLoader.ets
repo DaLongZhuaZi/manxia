@@ -13,6 +13,7 @@ import { image } from '@kit.ImageKit';
 import { logger } from '../../Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import CookieManager from '../Managers/CookieManager';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 
 const TAG = 'OnlineImageLoader';
 
@@ -216,6 +217,35 @@ export class OnlineImageLoader {
    * HTTP请求
    */
   private async httpRequest(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
+    // 首先尝试原始URL
+    try {
+      return await this.doHttpRequest(url, options);
+    } catch (error) {
+      const errObj = error as Object;
+      const errCode = (errObj as Record<string, Object>)['code'];
+      
+      // 如果是SSL错误(2300060)且URL是HTTPS，尝试降级为HTTP
+      if (errCode === 2300060 && url.startsWith('https://')) {
+        const httpUrl = url.replace('https://', 'http://');
+        logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
+        
+        try {
+          return await this.doHttpRequest(httpUrl, options);
+        } catch (retryError) {
+          // HTTP降级也失败，抛出原始错误
+          logger.warn(TAG, `HTTP降级也失败: ${httpUrl.substring(0, 80)}`);
+          throw error as Error;
+        }
+      }
+      
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 执行HTTP请求（内部方法）
+   */
+  private async doHttpRequest(url: string, options: OnlineLoadOptions): Promise<image.PixelMap | null> {
     try {
       const httpRequest = http.createHttp();
       const startTs = Date.now();
@@ -243,8 +273,39 @@ export class OnlineImageLoader {
         
         logger.info(TAG, `HTTP响应成功: code=200, bytes=${bytesLen}, duration=${duration}ms`);
         
+        // 检查是否需要解密（Manwa图片加密）
+        let finalBuffer = imageBuffer;
+        if (url.endsWith('?v=20220724')) {
+          logger.debug(TAG, `检测到加密图片，开始AES解密: ${url.substring(0, 80)}`);
+          try {
+            // 记录原始数据的前16字节（加密头）
+            const encryptedView = new Uint8Array(imageBuffer);
+            const encHeader = Array.from(encryptedView.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            logger.debug(TAG, `加密数据头(hex): ${encHeader}`);
+            
+            finalBuffer = await this.decryptManwaImage(imageBuffer);
+            
+            // 记录解密后的前16字节（应该是WEBP文件头: RIFF....WEBP）
+            const decryptedView = new Uint8Array(finalBuffer);
+            const decHeader = Array.from(decryptedView.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            logger.debug(TAG, `解密数据头(hex): ${decHeader}`);
+            
+            // 检查是否是有效的WEBP文件（RIFF开头）
+            const isValidWebP = decryptedView[0] === 0x52 && decryptedView[1] === 0x49 && 
+                               decryptedView[2] === 0x46 && decryptedView[3] === 0x46;
+            logger.debug(TAG, `AES解密完成，解密后大小: ${finalBuffer.byteLength}, 是否有效WEBP: ${isValidWebP}`);
+            
+            if (!isValidWebP) {
+              logger.warn(TAG, `解密后的数据不是有效的WEBP格式！前4字节: ${decHeader.substring(0, 11)}`);
+            }
+          } catch (decryptError) {
+            logger.error(TAG, `AES解密失败: ${decryptError}`);
+            throw new Error(`图片解密失败: ${decryptError}`);
+          }
+        }
+        
         // 创建PixelMap
-        const imageSource = image.createImageSource(imageBuffer);
+        const imageSource = image.createImageSource(finalBuffer);
         const decodingOptions: image.DecodingOptions = {
           desiredSize: options.width && options.height ? 
             { width: options.width, height: options.height } : undefined,
@@ -289,6 +350,8 @@ export class OnlineImageLoader {
       
       // 输出完整错误信息
       logger.error(TAG, `HTTP请求异常: message=${errMsg}, code=${errCode}, data=${errData}, url=${url}`);
+      
+      // 重新抛出错误
       throw new Error(`${errMsg} (code=${errCode})`);
     }
   }
@@ -303,8 +366,14 @@ export class OnlineImageLoader {
     
     const ua = options.headers?.userAgent || defaultUa;
     const accept = options.headers?.accept || defaultAccept;
-    const referer = options.headers?.referer || '';
-    const origin = options.headers?.origin || '';
+    let referer = options.headers?.referer || '';
+    let origin = options.headers?.origin || '';
+    
+    // 自动为特定CDN添加Referer（解决防盗链和SSL问题）
+    if (!referer && (url.includes('amh1234.wszwhg.net') || url.includes('gmh1234.wszwhg.net'))) {
+      referer = 'https://b.amh1234.com/';
+      origin = 'https://b.amh1234.com';
+    }
     
     // 获取Cookie
     let cookie = options.headers?.cookie || '';
@@ -549,5 +618,58 @@ export class OnlineImageLoader {
     });
     this.requestQueue = [];
     logger.info(TAG, `已取消 ${count} 个待处理请求`);
+  }
+
+  /**
+   * 解密 Manwa 加密图片
+   * 使用 AES-CBC 解密，密钥和IV都是 "my2ecret782ecret"
+   */
+  private async decryptManwaImage(encryptedBuffer: ArrayBuffer): Promise<ArrayBuffer> {
+    const keyStr = 'my2ecret782ecret';
+    const keyData = this.stringToUint8Array(keyStr);
+    
+    // 创建对称密钥生成器
+    const symKeyGenerator = cryptoFramework.createSymKeyGenerator('AES128');
+    const keyBlob: cryptoFramework.DataBlob = { data: keyData };
+    const symKey = await symKeyGenerator.convertKey(keyBlob);
+    
+    // 创建解密器 AES-CBC-NoPadding
+    const cipher = cryptoFramework.createCipher('AES128|CBC|NoPadding');
+    
+    // 初始化解密器，IV 同密钥
+    const ivBlob: cryptoFramework.DataBlob = { data: keyData };
+    const params: cryptoFramework.IvParamsSpec = {
+      algName: 'IvParamsSpec',
+      iv: ivBlob
+    };
+    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, params);
+    
+    // 执行解密
+    const encryptedData: cryptoFramework.DataBlob = { data: new Uint8Array(encryptedBuffer) };
+    const decryptedBlob = await cipher.doFinal(encryptedData);
+    
+    if (!decryptedBlob || !decryptedBlob.data) {
+      throw new Error('解密结果为空');
+    }
+    
+    // 【修复】正确复制解密数据到新的 ArrayBuffer
+    // Uint8Array.buffer 可能包含额外的偏移量，需要创建精确大小的新 buffer
+    const decryptedData = decryptedBlob.data;
+    const resultBuffer = new ArrayBuffer(decryptedData.length);
+    const resultView = new Uint8Array(resultBuffer);
+    resultView.set(decryptedData);
+    
+    return resultBuffer;
+  }
+
+  /**
+   * 字符串转 Uint8Array
+   */
+  private stringToUint8Array(str: string): Uint8Array {
+    const arr = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+      arr[i] = str.charCodeAt(i);
+    }
+    return arr;
   }
 }

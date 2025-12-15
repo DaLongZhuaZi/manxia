@@ -203,6 +203,19 @@ export class SourceManager {
 
       logger.info(TAG, `图源导入成功: ${sourceName} (ID: ${sourceId}, pkg: ${pkg}, 类型: ${configType})`);
 
+      // [修复] 图源导入成功后，尝试恢复使用该 pkg 的在线漫画的图源关联
+      // 这解决了图源删除后重新导入时，在线漫画无法识别图源的问题
+      if (pkg) {
+        try {
+          const restoredCount = await this.dataManager.restoreOnlineComicSourceByPkg(pkg);
+          if (restoredCount > 0) {
+            logger.info(TAG, `[修复] 已恢复 ${restoredCount} 部在线漫画的图源关联 (pkg: ${pkg})`);
+          }
+        } catch (restoreError) {
+          logger.warn(TAG, `[修复] 恢复在线漫画图源关联失败: ${restoreError}`);
+        }
+      }
+
       return {
         success: true,
         sourceId: sourceId,
