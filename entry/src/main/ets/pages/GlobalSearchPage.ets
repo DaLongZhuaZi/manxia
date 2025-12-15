@@ -10,7 +10,6 @@ import { Manga, ImageSourceType, MangaStatus, DEFAULT_READING_SETTINGS } from '.
 import { ReadingStatus } from '../Framework/Types/StatusEnums';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { GlobalBackgroundLayer } from '../Framework/Components/GlobalBackgroundLayer';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
@@ -60,6 +59,11 @@ interface EBookDetailNavParam {
   bookId: string;
 }
 
+// 全局搜索页面参数接口
+export interface GlobalSearchPageParams {
+  initialKeyword?: string;  // 初始搜索关键词
+}
+
 
 @Component
 export struct GlobalSearchPage {
@@ -67,18 +71,18 @@ export struct GlobalSearchPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSearchPage';
-
+  
   // 搜索相关
   @State searchKeyword: string = '';
   @State filterType: FilterType = FilterType.ALL;
   @State isSearching: boolean = false;
-
+  
   // 结果相关 - 按类型分组（本地漫画、本地电子书）
   @State sourceGroups: SourceGroup[] = [];
-
+  
   // 历史记录
   @State searchHistory: string[] = [];
-
+  
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
@@ -86,16 +90,30 @@ export struct GlobalSearchPage {
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
   @State responsive_gridColumns: number = 5; // 横向滚动时每行显示的项目数
-
+  
   private dataService: DataService = DataService.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private pathStack: NavPathStack = new NavPathStack();
+  
+  // 页面参数
+  @State pageParams: GlobalSearchPageParams | null = null;
 
   aboutToAppear(): void {
     this.initThemeAware();
     this.loadSearchHistory();
     this.initResponsiveLayout();
+  }
+  
+  /**
+   * 处理页面参数，如果有初始关键词则自动搜索
+   */
+  private handlePageParams(): void {
+    if (this.pageParams?.initialKeyword) {
+      this.searchKeyword = this.pageParams.initialKeyword;
+      logger.info(TAG, `收到初始搜索关键词: ${this.searchKeyword}`);
+      this.performSearch();
+    }
   }
 
   aboutToDisappear(): void {
@@ -147,10 +165,10 @@ export struct GlobalSearchPage {
   private updateResponsiveParams(): void {
     const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
     const deviceInfo = this.deviceManager.getDeviceInfo();
-
+    
     this.responsive_contentPadding = layoutParams.contentPadding;
     this.responsive_isLandscape = deviceInfo.isLandscape;
-
+    
     switch (deviceInfo.breakpoint) {
       case Breakpoint.XS:
         this.responsive_maxContentWidth = 600;
@@ -179,14 +197,14 @@ export struct GlobalSearchPage {
     if (!this.searchKeyword || this.searchKeyword.trim().length === 0) {
       return [];
     }
-
+    
     switch (this.filterType) {
       case FilterType.PURCHASED:
       case FilterType.HAS_RESULT:
         return this.sourceGroups.filter(g => g.items.length > 0);
       case FilterType.ALL:
       default:
-      // 返回有结果或正在搜索的分组
+        // 返回有结果或正在搜索的分组
         return this.sourceGroups.filter(g => g.items.length > 0 || g.isSearching);
     }
   }
@@ -208,7 +226,7 @@ export struct GlobalSearchPage {
    */
   private saveSearchHistory(keyword: string): void {
     if (!keyword || keyword.trim() === '') return;
-
+    
     const history = [keyword, ...this.searchHistory.filter(h => h !== keyword)];
     this.searchHistory = history.slice(0, 10);
     AppStorage.setOrCreate('searchHistory', this.searchHistory);
@@ -228,7 +246,7 @@ export struct GlobalSearchPage {
 
       // 初始化分组：本地漫画 + 本地电子书
       const groups: SourceGroup[] = [];
-
+      
       // 添加本地漫画分组
       const mangaGroup: SourceGroup = {
         sourceId: 'local-manga',
@@ -276,11 +294,11 @@ export struct GlobalSearchPage {
       const searchResult = await this.dataService.searchComics('');
       const allManga: Manga[] = this.convertComicsToManga(searchResult.comics);
       const keyword: string = this.searchKeyword.toLowerCase();
-
-      const filtered: Manga[] = allManga.filter((manga: Manga): boolean =>
-      manga.title.toLowerCase().includes(keyword) ||
-      manga.metadata.authors.some((author: string): boolean => author.toLowerCase().includes(keyword)) ||
-      manga.metadata.genres.some((genre: string): boolean => genre.toLowerCase().includes(keyword))
+      
+      const filtered: Manga[] = allManga.filter((manga: Manga): boolean => 
+        manga.title.toLowerCase().includes(keyword) ||
+        manga.metadata.authors.some((author: string): boolean => author.toLowerCase().includes(keyword)) ||
+        manga.metadata.genres.some((genre: string): boolean => genre.toLowerCase().includes(keyword))
       );
 
       const items: SearchResultItem[] = filtered.map((manga: Manga): SearchResultItem => {
@@ -319,7 +337,7 @@ export struct GlobalSearchPage {
     try {
       // 获取所有电子书并筛选
       const allEBooks: EBook[] = await this.ebookDataManager.searchEBooks(this.searchKeyword);
-
+      
       const items: SearchResultItem[] = allEBooks.map((ebook: EBook): SearchResultItem => {
         const item: SearchResultItem = {
           ebook: ebook,
@@ -374,7 +392,7 @@ export struct GlobalSearchPage {
       // 优先使用本地封面路径，其次使用网络URL
       const coverPath: string = comic.coverLocalPath || comic.coverUrl || '';
       const coverSourceType: ImageSourceType = comic.coverLocalPath ? ImageSourceType.LOCAL : ImageSourceType.NETWORK;
-
+      
       const manga: Manga = {
         id: comic.id,
         title: comic.title,
@@ -427,7 +445,7 @@ export struct GlobalSearchPage {
     try {
       const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
       const stack = globalStack || this.pathStack;
-
+      
       if (item.itemType === 'manga' && item.manga) {
         const navParam: MangaDetailNavParam = { mangaId: item.manga.id };
         stack.pushPath({ name: 'MangaDetailPage', param: navParam });
@@ -445,10 +463,12 @@ export struct GlobalSearchPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层
-        GlobalBackgroundLayer({
-          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
-        })
+        // 背景层（纯色，响应全局主题）
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
         Column() {
@@ -491,10 +511,10 @@ export struct GlobalSearchPage {
               .borderRadius(8)
               .fontSize(14)
               .type(ButtonType.Normal)
-              .backgroundColor(this.filterType === FilterType.PURCHASED ?
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+              .backgroundColor(this.filterType === FilterType.PURCHASED ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
                 ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .fontColor(this.filterType === FilterType.PURCHASED ? Color.White :
+              .fontColor(this.filterType === FilterType.PURCHASED ? Color.White : 
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .onClick(() => {
                 this.filterType = FilterType.PURCHASED;
@@ -504,10 +524,10 @@ export struct GlobalSearchPage {
               .borderRadius(8)
               .fontSize(14)
               .type(ButtonType.Normal)
-              .backgroundColor(this.filterType === FilterType.ALL ?
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+              .backgroundColor(this.filterType === FilterType.ALL ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
                 ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .fontColor(this.filterType === FilterType.ALL ? Color.White :
+              .fontColor(this.filterType === FilterType.ALL ? Color.White : 
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .onClick(() => {
                 this.filterType = FilterType.ALL;
@@ -517,10 +537,10 @@ export struct GlobalSearchPage {
               .borderRadius(8)
               .fontSize(14)
               .type(ButtonType.Normal)
-              .backgroundColor(this.filterType === FilterType.HAS_RESULT ?
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+              .backgroundColor(this.filterType === FilterType.HAS_RESULT ? 
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
                 ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .fontColor(this.filterType === FilterType.HAS_RESULT ? Color.White :
+              .fontColor(this.filterType === FilterType.HAS_RESULT ? Color.White : 
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .onClick(() => {
                 this.filterType = FilterType.HAS_RESULT;
@@ -637,6 +657,12 @@ export struct GlobalSearchPage {
     }
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      // 获取页面参数
+      const params: GlobalSearchPageParams | undefined = context.pathInfo?.param as GlobalSearchPageParams | undefined;
+      if (params) {
+        this.pageParams = params;
+        this.handlePageParams();
+      }
     })
     .titleBar({
       padding: {
@@ -689,7 +715,7 @@ export struct GlobalSearchPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
+              
               Text(`(${group.items.length}${group.itemType === 'manga' ? '本漫画' : '本电子书'})`)
                 .fontSize(14)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -716,7 +742,7 @@ export struct GlobalSearchPage {
           }
           .width('100%')
         }, (group: SourceGroup) => group.sourceId.toString())
-
+        
         Blank().height(40)
       }
       .width('100%')
@@ -742,7 +768,7 @@ export struct GlobalSearchPage {
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
+          
           if (group.isSearching) {
             Text('搜索中...')
               .fontSize(12)
@@ -850,7 +876,7 @@ export struct GlobalSearchPage {
     if (raw.length === 0) {
       return $r('app.media.mangabook');
     }
-
+    
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
       const resourceName = raw.substring('app.media.'.length);
@@ -861,12 +887,12 @@ export struct GlobalSearchPage {
       }
       return $r('app.media.mangabook');
     }
-
+    
     // 本地文件路径
     if (raw.startsWith('/')) {
       return `file://${raw}`;
     }
-
+    
     return raw;
   }
 
@@ -878,7 +904,7 @@ export struct GlobalSearchPage {
     if (raw.length === 0) {
       return $r('app.media.ic_ebook');
     }
-
+    
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
       const resourceName = raw.substring('app.media.'.length);
@@ -891,12 +917,12 @@ export struct GlobalSearchPage {
       }
       return $r('app.media.ic_ebook');
     }
-
+    
     // 本地文件路径
     if (raw.startsWith('/')) {
       return `file://${raw}`;
     }
-
+    
     return raw;
   }
 
@@ -926,8 +952,8 @@ export struct GlobalSearchPage {
       }
 
       // 标题
-      Text(item.itemType === 'manga' && item.manga ? item.manga.title :
-        (item.itemType === 'ebook' && item.ebook ? item.ebook.metadata.title : ''))
+      Text(item.itemType === 'manga' && item.manga ? item.manga.title : 
+           (item.itemType === 'ebook' && item.ebook ? item.ebook.metadata.title : ''))
         .fontSize(13)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)

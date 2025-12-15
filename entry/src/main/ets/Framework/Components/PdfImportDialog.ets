@@ -128,23 +128,23 @@ export struct PdfImportDialog {
 
         Blank()
 
-        // 刮削按钮
-        Row({ space: 4 }) {
-          Image($r('app.media.ic_scraper'))
-            .width(18)
-            .height(18)
-            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-          Text('刮削')
-            .fontSize(13)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        }
-        .padding({ left: 10, right: 12, top: 6, bottom: 6 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        .borderRadius(16)
-        .onClick(() => {
-          this.openScraperDialog();
-        })
+        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
+        // Row({ space: 4 }) {
+        //   Image($r('app.media.ic_scraper'))
+        //     .width(18)
+        //     .height(18)
+        //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        //
+        //   Text('刮削')
+        //     .fontSize(13)
+        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        // }
+        // .padding({ left: 10, right: 12, top: 6, bottom: 6 })
+        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        // .borderRadius(16)
+        // .onClick(() => {
+        //   this.openScraperDialog();
+        // })
       }
       .width('100%')
 

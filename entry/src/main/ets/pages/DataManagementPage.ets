@@ -1171,6 +1171,8 @@ struct DataManagementPage {
       
       if (dialogResult === null) {
         logger.info(TAG, 'PDF导入已取消');
+        // [修复] 清除进度提示信息
+        this.updateProgress(ImportStatus.IDLE, '', 0);
         return;
       }
       
@@ -1618,10 +1620,8 @@ struct DataManagementPage {
 
         logger.info(TAG, `选择了 ${selectResult.length} 个电子书文件`);
         
-        // 在回调中直接处理每个文件
-        for (const uri of selectResult) {
-          this.processEBookFileInCallback(uri, context);
-        }
+        // [修复] 批量导入时顺序处理每个文件，避免竞态条件
+        this.processEBookFilesSequentially(selectResult, context);
       }).catch((err: Error) => {
         logger.error(TAG, `选择电子书文件失败: ${err.message}`);
       });
@@ -1799,6 +1799,121 @@ struct DataManagementPage {
       });
     } catch (error) {
       logger.error(TAG, 'Show toast failed', String(error));
+    }
+  }
+
+  /**
+   * [修复] 顺序处理多个电子书文件，避免批量导入时的竞态条件
+   * 每个文件处理完成后再处理下一个
+   */
+  private async processEBookFilesSequentially(uris: Array<string>, context: common.UIAbilityContext): Promise<void> {
+    const totalFiles = uris.length;
+    let successCount = 0;
+    let failCount = 0;
+    
+    logger.info(TAG, `开始顺序处理 ${totalFiles} 个电子书文件`);
+    
+    for (let i = 0; i < uris.length; i++) {
+      const uri = uris[i];
+      const currentIndex = i + 1;
+      
+      try {
+        this.updateProgress(ImportStatus.PROCESSING, `正在处理第 ${currentIndex}/${totalFiles} 个文件...`, (currentIndex / totalFiles) * 100);
+        
+        // 同步复制文件到沙箱
+        const targetPath = await this.copyEBookFileToSandboxSync(uri, context);
+        
+        if (targetPath) {
+          // 等待导入完成
+          await this.continueImportEBook(targetPath);
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (error) {
+        logger.error(TAG, `处理电子书文件失败 [${currentIndex}/${totalFiles}]: ${String(error)}`);
+        failCount++;
+      }
+    }
+    
+    // 显示最终结果
+    if (successCount > 0) {
+      this.showToast(`电子书导入完成: 成功 ${successCount} 个，失败 ${failCount} 个`);
+    } else {
+      this.showToast(`电子书导入失败: 全部 ${totalFiles} 个文件导入失败`);
+    }
+    
+    this.updateProgress(ImportStatus.COMPLETED, `导入完成: 成功 ${successCount}，失败 ${failCount}`, 100);
+    logger.info(TAG, `电子书批量导入完成: 成功 ${successCount}，失败 ${failCount}`);
+  }
+  
+  /**
+   * [修复] 同步复制电子书文件到沙箱（返回Promise）
+   */
+  private async copyEBookFileToSandboxSync(uri: string, context: common.UIAbilityContext): Promise<string | null> {
+    try {
+      // 获取文件名
+      let fileName = 'unknown.txt';
+      try {
+        const uriObj = new fileUri.FileUri(uri);
+        fileName = uriObj.name;
+      } catch (e) {
+        try {
+          fileName = decodeURIComponent(uri.slice(uri.lastIndexOf('/') + 1));
+        } catch {}
+      }
+      
+      // 目标路径
+      const timestamp = new Date().getTime();
+      const safeOriginalName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+      const safeName = `${timestamp}_${safeOriginalName}`;
+      const targetDir = `${context.filesDir}/ebooks`;
+      const targetPath = `${targetDir}/${safeName}`;
+      
+      // 确保目录存在
+      let dirExists = false;
+      try {
+        dirExists = fs.accessSync(targetDir);
+      } catch {
+        dirExists = false;
+      }
+      
+      if (!dirExists) {
+        fs.mkdirSync(targetDir, true);
+      }
+      
+      // 复制文件
+      const srcFile = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+      const destFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      
+      const BUFFER_SIZE = 4096;
+      const buffer = new ArrayBuffer(BUFFER_SIZE);
+      let totalBytes = 0;
+      let readLen: number;
+      
+      while ((readLen = fs.readSync(srcFile.fd, buffer)) > 0) {
+        if (readLen === BUFFER_SIZE) {
+          fs.writeSync(destFile.fd, buffer);
+        } else {
+          const lastChunk = buffer.slice(0, readLen);
+          fs.writeSync(destFile.fd, lastChunk);
+        }
+        totalBytes += readLen;
+      }
+      
+      fs.closeSync(srcFile);
+      fs.closeSync(destFile);
+      
+      if (totalBytes === 0) {
+        try { fs.unlinkSync(targetPath); } catch {}
+        return null;
+      }
+      
+      logger.info(TAG, `文件复制成功: ${targetPath}，大小: ${totalBytes} 字节`);
+      return targetPath;
+    } catch (error) {
+      logger.error(TAG, `复制电子书文件失败: ${String(error)}`);
+      return null;
     }
   }
 
@@ -2493,6 +2608,13 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.COMPLETED, `导入完成，成功 ${successfulImports}/${totalGroups} 部漫画`, 100);
       this.showResults = true;
       
+      // 显示导入结果Toast
+      if (successfulImports > 0) {
+        this.showToast(`批量导入完成: 成功 ${successfulImports} 部，失败 ${totalGroups - successfulImports} 部`);
+      } else {
+        this.showToast(`批量导入完成: 全部失败 (${totalGroups} 部漫画)`);
+      }
+      
       // 清除选择的文件
       this.selectedFiles = [];
       
@@ -2504,6 +2626,7 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, '批量导入失败', String(error));
       this.updateProgress(ImportStatus.ERROR, `批量导入失败: ${error}`, 0);
+      this.showToast(`批量导入失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
@@ -2828,6 +2951,7 @@ struct DataManagementPage {
       
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
       this.showResults = true;
+      this.showToast('漫画导入成功');
       
       // 导入成功后清除选择的文件
       this.selectedFiles = [];
@@ -2838,6 +2962,7 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, '导入漫画失败', String(error));
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
+      this.showToast(`漫画导入失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       // 清理临时文件
       if (this.currentParsedStructure) {
@@ -3300,6 +3425,13 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.COMPLETED, `导入完成，共处理 ${processedFiles} 个文件`, 100);
       this.showResults = true;
       
+      // 显示导入结果Toast
+      if (successfulImports > 0) {
+        this.showToast(`导入完成: 成功 ${successfulImports} 个，失败 ${totalFiles - successfulImports} 个`);
+      } else {
+        this.showToast(`导入完成: 全部失败 (${totalFiles} 个文件)`);
+      }
+      
       // 发布漫画导入完成事件，通知书库页面刷新
       if (successfulImports > 0) {
         logger.info(TAG, `发布漫画导入完成事件，成功导入 ${successfulImports} 个漫画`);
@@ -3312,6 +3444,7 @@ struct DataManagementPage {
     } catch (error) {
       logger.error(TAG, '导入过程失败', String(error instanceof Error ? error.message : error));
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${error}`, 0);
+      this.showToast(`批量导入失败: ${error instanceof Error ? error.message : String(error)}`);
       this.batchImportStrategy = 'ask';
     }
   }
@@ -4541,15 +4674,16 @@ struct DataManagementPage {
       for (let i = 0; i < imageFiles.length; i++) {
         const imageFile = imageFiles[i];
         
+        // [修复] 使用 i 而不是 i + 1，确保 index 是 0-indexed
         const pageInfoInput: PageInfoInput = {
           chapterId: chapterId,
-          index: i + 1,
+          index: i, // [修复] 使用0-indexed数组索引
           imageUrl: imageFile.path, // 使用正式存储路径
           localPath: imageFile.path, // 本地文件路径
           width: Math.floor(imageFile.width || 0), // 确保为整数
           height: Math.floor(imageFile.height || 0), // 确保为整数
           fileSize: Math.floor(imageFile.fileSize || imageFile.size || 0), // 确保为整数，优先使用fileSize
-          pageNumber: i + 1
+          pageNumber: i + 1 // pageNumber 保持 1-indexed，用于显示
         };
 
         try {
@@ -4591,15 +4725,16 @@ struct DataManagementPage {
       for (let i = 0; i < imageFiles.length; i++) {
         const imageFile = imageFiles[i];
         
+        // [修复] 使用 i 而不是 i + 1，确保 index 是 0-indexed
         const pageInfoInput: PageInfoInput = {
           chapterId: chapterId,
-          index: i + 1,
+          index: i, // [修复] 使用0-indexed数组索引
           imageUrl: imageFile.path,
           localPath: imageFile.path, // 本地文件路径
           width: Math.floor(imageFile.width || 0), // 确保为整数
           height: Math.floor(imageFile.height || 0), // 确保为整数
           fileSize: Math.floor(imageFile.fileSize || imageFile.size || 0), // 确保为整数，优先使用fileSize
-          pageNumber: i + 1
+          pageNumber: i + 1 // pageNumber 保持 1-indexed，用于显示
         };
 
         try {

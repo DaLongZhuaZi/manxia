@@ -272,7 +272,7 @@ struct MainMenuPage {
 
   // 书库筛选和视图相关状态
   @State libraryContentType: LibraryContentType = LibraryContentType.MANGA; // 书库内容类型（漫画/电子书）
-  @State libraryFilterType: LibraryFilterType = LibraryFilterType.FAVORITE;
+  @State libraryFilterType: LibraryFilterType = LibraryFilterType.ALL; // 默认选择"全部"
   @State libraryViewMode: LibraryViewMode = LibraryViewMode.GRID;
   @State showLibraryFilterDialog: boolean = false;
   @State showLibraryFilterPopup: boolean = false;
@@ -302,6 +302,10 @@ struct MainMenuPage {
   @State isEBookMultiSelectMode: boolean = false;
   @State selectedEBookIds: Set<string> = new Set();
   @State isDeletingEBook: boolean = false;
+  // 电子书列表条目左滑删除手势相关状态
+  @State private activeEBookSwipeId: string = '';
+  @State private isEBookSwipeActive: boolean = false;
+  @State private ebookSwipeOffset: number = 0;
 
   // 图源仓库相关状态
   @State showSourceRepoDialog: boolean = false;
@@ -1451,28 +1455,45 @@ struct MainMenuPage {
   private applyEBookFilter(): void {
     let filtered: EBook[] = [];
     let filteredPdf: Manga[] = [];
-
+    
     switch (this.libraryFilterType) {
       case LibraryFilterType.ALL:
         filtered = this.ebookList;
         filteredPdf = this.pdfEbookList;
         break;
       case LibraryFilterType.UNREAD:
+        // 未读：状态为未读，且没有阅读进度
         filtered = this.ebookList.filter((ebook: EBook) => {
-          return ebook.status === EBookStatus.UNREAD;
+          // 检查状态或阅读进度，两者都表明未读才算未读
+          const hasNoProgress = ebook.readingProgress.progress === 0 && 
+                                ebook.readingProgress.currentPosition === 0;
+          return ebook.status === EBookStatus.UNREAD && hasNoProgress;
         });
         filteredPdf = this.pdfEbookList.filter((manga: Manga) => {
-          return manga.readingProgress.currentPageIndex === 0 &&
-            manga.readingProgress.currentChapterId === '';
+          return manga.readingProgress.currentPageIndex === 0 && 
+                 manga.readingProgress.currentChapterId === '' &&
+                 manga.readingProgress.readingStatus !== ReadingStatus.READING;
         });
         break;
       case LibraryFilterType.READING:
+        // 阅读中：状态为阅读中，或有实际阅读进度但未完成
         filtered = this.ebookList.filter((ebook: EBook) => {
-          return ebook.status === EBookStatus.READING;
+          // 状态为阅读中，或者有实际阅读进度（不包括lastReadTime，因为它可能在添加时就被设置）
+          const hasActualProgress = ebook.readingProgress.progress > 0 || 
+                                    ebook.readingProgress.currentPosition > 0;
+          const isNotCompleted = ebook.status !== EBookStatus.COMPLETED && 
+                                 ebook.readingProgress.progress < 100;
+          const isReading = ebook.status === EBookStatus.READING;
+          const result = isReading || (hasActualProgress && isNotCompleted);
+          logger.debug(TAG, `[READING筛选] "${ebook.metadata.title}": isReading=${isReading}, hasActualProgress=${hasActualProgress}, isNotCompleted=${isNotCompleted}, 结果=${result}`);
+          return result;
         });
         filteredPdf = this.pdfEbookList.filter((manga: Manga) => {
-          return manga.readingProgress.currentChapterId !== '' &&
-            manga.readingProgress.readingStatus !== ReadingStatus.COMPLETED;
+          // 有阅读进度且未完成
+          const hasProgress = manga.readingProgress.currentPageIndex > 0 || 
+                              manga.readingProgress.currentChapterId !== '' ||
+                              manga.readingProgress.readingStatus === ReadingStatus.READING;
+          return hasProgress && manga.readingProgress.readingStatus !== ReadingStatus.COMPLETED;
         });
         break;
       case LibraryFilterType.COMPLETED:
@@ -1495,10 +1516,17 @@ struct MainMenuPage {
         filtered = this.ebookList;
         filteredPdf = this.pdfEbookList;
     }
-
+    
     this.filteredEbookList = filtered;
     this.filteredPdfEbookList = filteredPdf;
-    logger.debug(TAG, `电子书筛选完成: 普通电子书=${filtered.length}, PDF电子书=${filteredPdf.length}, 类型=${this.libraryFilterType}`);
+    
+    // 详细日志：输出每本电子书的状态和进度信息（用于调试）
+    if (this.libraryFilterType === LibraryFilterType.READING || this.libraryFilterType === LibraryFilterType.UNREAD) {
+      for (const ebook of this.ebookList) {
+        logger.debug(TAG, `电子书 "${ebook.metadata.title}": status=${ebook.status}, progress=${ebook.readingProgress.progress}%, position=${ebook.readingProgress.currentPosition}, lastRead=${ebook.readingProgress.lastReadTime}`);
+      }
+    }
+    logger.info(TAG, `电子书筛选完成: 普通电子书=${filtered.length}/${this.ebookList.length}, PDF电子书=${filteredPdf.length}/${this.pdfEbookList.length}, 筛选类型=${this.libraryFilterType}`);
   }
 
   /**
@@ -1508,9 +1536,9 @@ struct MainMenuPage {
     if (this.libraryContentType !== type) {
       this.libraryContentType = type;
       logger.info(TAG, `切换书库内容类型: ${type}`);
-
-      // 重置筛选条件
-      this.libraryFilterType = LibraryFilterType.FAVORITE;
+      
+      // 重置筛选条件为"全部"
+      this.libraryFilterType = LibraryFilterType.ALL;
 
       // 切换到电子书时，刷新列表（可能有新导入的书）
       if (type === LibraryContentType.EBOOK) {
@@ -2819,7 +2847,9 @@ struct MainMenuPage {
       this.getUIContext().getPromptAction().showActionMenu({
         title: '更多选项',
         buttons: [
-          { text: '主题切换', color: '#007DFF' },
+          { text: '首页', color: '#007DFF' },
+          { text: '我的书库', color: '#007DFF' },
+          { text: '发现', color: '#007DFF' },
           { text: '设置', color: '#007DFF' },
           { text: '关于应用', color: '#007DFF' }
         ]
@@ -2836,14 +2866,18 @@ struct MainMenuPage {
         }
         switch (result.index) {
           case 0:
-            this.themeManager.toggleTheme();
-            this.showToast('主题已切换');
+            this.handleTabButtonClick(TabIndex.HOME);
             break;
           case 1:
-            this.currentTabIndex = TabIndex.SETTINGS;
-            this.tabsController.changeIndex(this.currentTabIndex);
+            this.handleTabButtonClick(TabIndex.LIBRARY);
             break;
           case 2:
+            this.handleTabButtonClick(TabIndex.DISCOVER);
+            break;
+          case 3:
+            this.handleTabButtonClick(TabIndex.SETTINGS);
+            break;
+          case 4:
             try {
               const navigationPath: NavigationPath = {
                 name: 'AboutPage',
@@ -3006,10 +3040,10 @@ struct MainMenuPage {
       .width('100%')
       .height(56)
       .padding({ left: 16, right: 16 })
-      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-      .borderRadius(ThemeManager.getInstance().getGlassRadius())
-      .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor() })
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor() })
       .justifyContent(FlexAlign.SpaceBetween)
       .margin({ left: 12, right: 12 })
       .animation({ duration: 300, curve: Curve.Smooth })
@@ -3074,10 +3108,10 @@ struct MainMenuPage {
     .width('100%')
     .height(56)
     .padding({ left: 16, right: 16 })
-    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-    .borderRadius(ThemeManager.getInstance().getGlassRadius())
-    .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor() })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor() })
     .margin({ left: 12, right: 12 })
     .animation({ duration: 300, curve: Curve.Smooth })
   }
@@ -3216,10 +3250,10 @@ struct MainMenuPage {
           .width('100%')
           .height(120)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-          .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-          .borderRadius(ThemeManager.getInstance().getGlassRadius())
-          .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+          .backgroundColor(this.getGlassBackground())
+          .backgroundBlurStyle(this.getGlassBlur())
+          .borderRadius(this.getGlassRadius())
+          .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
         } else if (this.recentReadingList.length === 0) {
           // 空状态
           Column({ space: 8 }) {
@@ -3245,10 +3279,10 @@ struct MainMenuPage {
           .width('100%')
           .height(120)
           .justifyContent(FlexAlign.Center)
-          .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-          .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-          .borderRadius(ThemeManager.getInstance().getGlassRadius())
-          .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+          .backgroundColor(this.getGlassBackground())
+          .backgroundBlurStyle(this.getGlassBlur())
+          .borderRadius(this.getGlassRadius())
+          .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
         } else {
           // 统一的瀑布流（漫画和电子书混合显示）
           this.buildRecentReadingWaterfall()
@@ -3775,7 +3809,7 @@ struct MainMenuPage {
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-      .borderRadius(ThemeManager.getInstance().getGlassRadius())
+      .borderRadius(this.getGlassRadius())
       .opacity(this.activeSwipeId === manga.id ? Math.min(1, this.getItemSwipeOffset(manga.id) / this.swipeThreshold) : 0.15)
       .position({ x: '100%', y: 0 })
 
@@ -3806,8 +3840,14 @@ struct MainMenuPage {
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
-          // 空白
-          Blank(2)
+          // 阅读进度信息（仅显示章节名称和页数，不显示进度条）
+          if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
+            Text(this.getMangaReadingProgressText(manga))
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
 
           // 漫画描述
           Text(manga.description)
@@ -3815,8 +3855,6 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -3827,10 +3865,10 @@ struct MainMenuPage {
       .width('100%')
       .height(140)
       .padding(12)
-      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-      .borderRadius(ThemeManager.getInstance().getGlassRadius())
-      .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetY: 2 })
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
       .gesture(
         GestureGroup(GestureMode.Parallel,
           LongPressGesture({ repeat: false })
@@ -3910,12 +3948,19 @@ struct MainMenuPage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
           .textAlign(TextAlign.Center)
+
+        // 阅读进度（GRID模式）- 显示当前阅读页数
+        if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
+          Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
+            .fontSize(10)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
       }
       .width('100%')
       .padding(8)
-      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-      .borderRadius(ThemeManager.getInstance().getGlassRadius())
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
       .border({
         width: this.isMultiSelectMode && this.selectedMangaIds.has(manga.id) ? 2 : 0,
         color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -3973,112 +4018,122 @@ struct MainMenuPage {
     }
     .width('100%')
     .padding(8)
-    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-    .borderRadius(ThemeManager.getInstance().getGlassRadius())
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
     .onClick(() => {
       this.openMangaDetail(manga);
     })
   }
 
   /**
-   * 构建电子书List卡片
+   * 构建电子书List卡片（支持长按左滑删除）
    */
   @Builder
   buildEBookCard(ebook: EBook) {
-    Row({ space: 12 }) {
-      // 封面图片
+    Stack() {
+      // 右侧删除提示面板
       Column() {
-        Image(this.getEBookCoverSource(ebook))
-          .width(this.hasValidEBookCover(ebook) ? '100%' : 50)
-          .height(this.hasValidEBookCover(ebook) ? '100%' : 50)
-          .objectFit(ImageFit.Cover)
-          .fillColor(this.hasValidEBookCover(ebook) ? undefined : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      }
-      .width(80)
-      .height(120)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
-      .justifyContent(FlexAlign.Center)
-      .shadow({
-        radius: 8,
-        color: '#1F000000',
-        offsetY: 4
-      })
-
-      // 电子书信息
-      Column({ space: 8 }) {
-        Text(ebook.metadata.title)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(`${ebook.metadata.author} · ${ebook.format}`)
+        Text(this.getEBookSwipeProgressText(ebook.id))
           .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-        Text(ebook.metadata.description || '暂无简介')
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        Text('松手删除')
           .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+      }
+      .width(96)
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .borderRadius(this.getGlassRadius())
+      .opacity(this.activeEBookSwipeId === ebook.id ? Math.min(1, this.getEBookSwipeOffset(ebook.id) / this.swipeThreshold) : 0.15)
+      .position({ x: '100%', y: 0 })
 
-        Blank()
+      // 卡片内容层
+      Row({ space: 12 }) {
+        // 封面图片
+        Column() {
+          Image(this.getEBookCoverSource(ebook))
+            .width(this.hasValidEBookCover(ebook) ? '100%' : 50)
+            .height(this.hasValidEBookCover(ebook) ? '100%' : 50)
+            .objectFit(ImageFit.Cover)
+            .fillColor(this.hasValidEBookCover(ebook) ? undefined : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .width(80)
+        .height(120)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .justifyContent(FlexAlign.Center)
+        .shadow({
+          radius: 8,
+          color: '#1F000000',
+          offsetY: 4
+        })
 
-        // 操作按钮
-        Row({ space: 12 }) {
+        // 电子书信息
+        Column({ space: 6 }) {
+          Text(ebook.metadata.title)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(`${ebook.metadata.author} · ${ebook.format}`)
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+          // 阅读进度条和百分比
           if (ebook.readingProgress && ebook.readingProgress.progress > 0) {
-            Text(`已读 ${Math.floor(ebook.readingProgress.progress)}%`)
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Row({ space: 6 }) {
+              Progress({
+                value: ebook.readingProgress.progress,
+                total: 100,
+                type: ProgressType.Linear
+              })
+                .width(80)
+                .height(4)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+              Text(`${Math.floor(ebook.readingProgress.progress)}%`)
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
           }
 
-          Blank()
-
-          // 根据阅读进度显示不同的按钮文本
-          Button(this.hasEBookReadingProgress(ebook) ? '继续阅读' : '开始阅读')
-            .fontSize(14)
-            .height(32)
-            .padding({ left: 16, right: 16 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .onClick(() => {
-              this.openEBookReader(ebook);
-            })
-
-          Button('删除')
+          Text(ebook.metadata.description || '暂无简介')
             .fontSize(12)
-            .height(32)
-            .padding({ left: 12, right: 12 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .onClick(() => {
-              this.deleteEBookItem(ebook);
-            })
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        .width('100%')
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.Start)
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .justifyContent(FlexAlign.SpaceBetween)
+      .translate({ x: -this.getEBookSwipeOffset(ebook.id), y: 0 })
+      .onClick(() => { this.openEBookDetail(ebook); })
+      .width('100%')
+      .height(140)
+      .padding(12)
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
+      .gesture(
+        GestureGroup(GestureMode.Parallel,
+          LongPressGesture({ repeat: false })
+            .onAction(() => { this.activateEBookSwipeFor(ebook.id); }),
+          PanGesture({ fingers: 1, direction: PanDirection.Left, distance: 1 })
+            .onActionUpdate((event: GestureEvent) => { this.updateEBookSwipeOffset(ebook.id, event); })
+            .onActionEnd((event: GestureEvent) => { this.endEBookSwipe(ebook.id); })
+        )
+      )
     }
     .width('100%')
     .height(140)
-    .padding(12)
-    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-    .borderRadius(ThemeManager.getInstance().getGlassRadius())
-    .shadow({
-      radius: ThemeManager.getInstance().getGlassRadius(),
-      color: ThemeManager.getInstance().getGlassShadowColor(),
-      offsetY: 2
-    })
-    .onClick(() => {
-      // 点击卡片打开详情页
-      this.openEBookDetail(ebook);
-    })
   }
 
   /**
@@ -4150,6 +4205,36 @@ struct MainMenuPage {
       return true;
     }
     return false;
+  }
+
+  /**
+   * 获取漫画阅读进度文本
+   * 显示当前章节名称和页数
+   */
+  private getMangaReadingProgressText(manga: Manga): string {
+    if (!manga.readingProgress) {
+      return '';
+    }
+    const progress = manga.readingProgress;
+    
+    // 尝试获取当前章节名称
+    let chapterName = '';
+    if (progress.currentChapterId && manga.chapters && manga.chapters.length > 0) {
+      const currentChapter = manga.chapters.find(ch => ch.id === progress.currentChapterId);
+      if (currentChapter) {
+        chapterName = currentChapter.title;
+      }
+    }
+    
+    // 构建进度文本
+    const pageText = `第${progress.currentPageIndex + 1}页`;
+    if (chapterName) {
+      return `${chapterName} · ${pageText}`;
+    } else if (progress.readingPercentage > 0) {
+      return `${Math.floor(progress.readingPercentage)}% · ${pageText}`;
+    } else {
+      return pageText;
+    }
   }
 
   private async deleteEBookItem(ebook: EBook): Promise<void> {
@@ -4288,6 +4373,117 @@ struct MainMenuPage {
   }
 
 
+  // ==================== 电子书左滑删除：辅助方法与确认弹窗 ====================
+  private activateEBookSwipeFor(ebookId: string): void {
+    if (this.isEBookMultiSelectMode) { return; }
+    this.activeEBookSwipeId = ebookId;
+    this.isEBookSwipeActive = true;
+    this.ebookSwipeOffset = 0;
+    logger.info(TAG, `长按激活电子书左滑删除: ${ebookId}`);
+  }
+
+  private updateEBookSwipeOffset(ebookId: string, event: GestureEvent): void {
+    if (!this.isEBookSwipeActive || this.activeEBookSwipeId !== ebookId) { return; }
+    const deltaX: number = -event.offsetX;
+    const maxHintWidth: number = 120;
+    const newOffset: number = Math.max(0, deltaX);
+    this.ebookSwipeOffset = Math.min(newOffset, maxHintWidth);
+  }
+
+  private endEBookSwipe(ebookId: string): void {
+    if (!this.isEBookSwipeActive || this.activeEBookSwipeId !== ebookId) { return; }
+    const reached: boolean = this.ebookSwipeOffset >= this.swipeThreshold;
+    this.isEBookSwipeActive = false;
+    if (reached) {
+      this.showDeleteEBookDialog(ebookId);
+    } else {
+      this.resetEBookSwipeState();
+    }
+  }
+
+  private resetEBookSwipeState(): void {
+    this.activeEBookSwipeId = '';
+    this.isEBookSwipeActive = false;
+    this.ebookSwipeOffset = 0;
+  }
+
+  private getEBookSwipeOffset(ebookId: string): number {
+    return (this.activeEBookSwipeId === ebookId && this.isEBookSwipeActive) ? this.ebookSwipeOffset : 0;
+  }
+
+  private getEBookSwipeProgressText(ebookId: string): string {
+    const progress: number = this.activeEBookSwipeId === ebookId ? Math.min(100, Math.floor((this.getEBookSwipeOffset(ebookId) / this.swipeThreshold) * 100)) : 0;
+    return progress >= 100 ? '释放删除' : `左滑 ${progress}%`;
+  }
+
+  private getEBookById(ebookId: string): EBook | null {
+    for (let i: number = 0; i < this.filteredEbookList.length; i++) {
+      const e: EBook = this.filteredEbookList[i];
+      if (e.id === ebookId) { return e; }
+    }
+    return null;
+  }
+
+  /**
+   * 显示删除电子书确认对话框
+   */
+  private showDeleteEBookDialog(ebookId: string): void {
+    const ebook = this.getEBookById(ebookId);
+    if (!ebook) {
+      logger.error(TAG, `未找到电子书ID为 ${ebookId} 的电子书`);
+      this.resetEBookSwipeState();
+      return;
+    }
+
+    logger.info(TAG, `显示删除电子书确认对话框: ${ebook.metadata.title} (ID: ${ebookId})`);
+
+    this.getUIContext().showAlertDialog({
+      title: '删除电子书',
+      message: `确定要删除电子书"${ebook.metadata.title}"吗？\n\n此操作将删除该电子书的所有数据和文件，且不可恢复。`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消删除电子书');
+          this.resetEBookSwipeState();
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
+        action: async () => {
+          try {
+            logger.info(TAG, `开始删除电子书: ${ebookId}`);
+            await this.ebookDataManager.deleteEBook(ebookId);
+
+            const newEbookList: EBook[] = [];
+            for (let i: number = 0; i < this.ebookList.length; i++) {
+              const eb: EBook = this.ebookList[i];
+              if (eb.id !== ebookId) { newEbookList.push(eb); }
+            }
+            this.ebookList = newEbookList;
+
+            const newFilteredList: EBook[] = [];
+            for (let j: number = 0; j < this.filteredEbookList.length; j++) {
+              const fe: EBook = this.filteredEbookList[j];
+              if (fe.id !== ebookId) { newFilteredList.push(fe); }
+            }
+            this.filteredEbookList = newFilteredList;
+
+            this.showToast('电子书已删除');
+            logger.info(TAG, `电子书删除成功: ${ebookId}`);
+            this.resetEBookSwipeState();
+          } catch (error) {
+            logger.error(TAG, '删除电子书失败', String(error));
+            this.showToast('删除失败');
+            this.resetEBookSwipeState();
+          }
+        }
+      }
+    });
+  }
+
   /**
    * 构建电子书Grid卡片
    */
@@ -4389,9 +4585,9 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding(8)
-      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-      .borderRadius(ThemeManager.getInstance().getGlassRadius())
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
       .border({
         width: this.isEBookMultiSelectMode && this.selectedEBookIds.has(ebook.id) ? 2 : 0,
         color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -4506,12 +4702,12 @@ struct MainMenuPage {
     .width('100%')
     .height(140)
     .padding(12)
-    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-    .borderRadius(ThemeManager.getInstance().getGlassRadius())
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
     .shadow({
-      radius: ThemeManager.getInstance().getGlassRadius(),
-      color: ThemeManager.getInstance().getGlassShadowColor(),
+      radius: this.getGlassRadius(),
+      color: this.getGlassShadowColor(),
       offsetY: 2
     })
     .onClick(() => {
@@ -4581,11 +4777,11 @@ struct MainMenuPage {
             .width('100%')
             .textAlign(TextAlign.Center)
 
-          // 阅读进度
-          if (manga.readingProgress && manga.readingProgress.currentPageIndex > 0) {
+          // 阅读进度（PDF电子书GRID模式）- 显示当前阅读页数
+          if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
             Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
               .fontSize(10)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
         }
         .width('100%')
@@ -4593,9 +4789,9 @@ struct MainMenuPage {
       }
       .width('100%')
       .padding(8)
-      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-      .borderRadius(ThemeManager.getInstance().getGlassRadius())
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
     }
     .onClick(() => {
       // 点击打开漫画详情页
@@ -4609,7 +4805,7 @@ struct MainMenuPage {
   @Builder
   buildLibraryFilterPopup() {
     Column() {
-      Text('筛选漫画')
+      Text(this.libraryContentType === LibraryContentType.MANGA ? '筛选漫画' : '筛选电子书')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .margin({ bottom: 12 })
@@ -4619,7 +4815,11 @@ struct MainMenuPage {
         .margin({ bottom: 8 })
         .onClick(() => {
           this.libraryFilterType = LibraryFilterType.ALL;
-          this.applyLibraryFilter();
+          if (this.libraryContentType === LibraryContentType.MANGA) {
+            this.applyLibraryFilter();
+          } else {
+            this.applyEBookFilter();
+          }
           this.showLibraryFilterPopup = false;
         })
 
@@ -4628,7 +4828,11 @@ struct MainMenuPage {
         .margin({ bottom: 8 })
         .onClick(() => {
           this.libraryFilterType = LibraryFilterType.UNREAD;
-          this.applyLibraryFilter();
+          if (this.libraryContentType === LibraryContentType.MANGA) {
+            this.applyLibraryFilter();
+          } else {
+            this.applyEBookFilter();
+          }
           this.showLibraryFilterPopup = false;
         })
 
@@ -4637,7 +4841,11 @@ struct MainMenuPage {
         .margin({ bottom: 8 })
         .onClick(() => {
           this.libraryFilterType = LibraryFilterType.READING;
-          this.applyLibraryFilter();
+          if (this.libraryContentType === LibraryContentType.MANGA) {
+            this.applyLibraryFilter();
+          } else {
+            this.applyEBookFilter();
+          }
           this.showLibraryFilterPopup = false;
         })
     }
@@ -4663,7 +4871,7 @@ struct MainMenuPage {
       Column({ space: 16 }) {
         // 标题
         Row() {
-          Text('筛选漫画')
+          Text(this.libraryContentType === LibraryContentType.MANGA ? '筛选漫画' : '筛选电子书')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -4691,10 +4899,10 @@ struct MainMenuPage {
       }
       .width('89%')
       .padding(20)
-      .backgroundColor(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.POPUP).backgroundColorResource)
-      .backgroundBlurStyle(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.POPUP).blurStyle)
-      .borderRadius(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.POPUP).radius)
-      .shadow({ radius: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.POPUP).radius, color: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.POPUP).shadowColor, offsetX: 0, offsetY: 4 })
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     }
     .width('100%')
     .height('100%')
@@ -4727,7 +4935,11 @@ struct MainMenuPage {
     .borderRadius(8)
     .onClick(() => {
       this.libraryFilterType = filterType;
-      this.applyLibraryFilter();
+      if (this.libraryContentType === LibraryContentType.MANGA) {
+        this.applyLibraryFilter();
+      } else {
+        this.applyEBookFilter();
+      }
       this.showLibraryFilterDialog = false;
       logger.info(TAG, `筛选已更改为: ${filterType}`);
     })
@@ -5810,10 +6022,10 @@ struct MainMenuPage {
         }
         .width('100%')
         .padding(16)
-        .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-        .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-        .borderRadius(ThemeManager.getInstance().getGlassRadius())
-        .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+        .backgroundColor(this.getGlassBackground())
+        .backgroundBlurStyle(this.getGlassBlur())
+        .borderRadius(this.getGlassRadius())
+        .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
         .margin({ bottom: 16 })
         .onClick(() => {
           try {
@@ -5979,10 +6191,10 @@ struct MainMenuPage {
             }
           })
         }
-        .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-        .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-        .borderRadius(ThemeManager.getInstance().getGlassRadius())
-        .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+        .backgroundColor(this.getGlassBackground())
+        .backgroundBlurStyle(this.getGlassBlur())
+        .borderRadius(this.getGlassRadius())
+        .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
       }
       .width('100%')
       .padding(16)
@@ -6147,10 +6359,10 @@ struct MainMenuPage {
     .width('100%')
     .height(this.BOTTOM_BAR_HEIGHT)
     .padding({ left: 16, right: 16 })
-    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-    .borderRadius(ThemeManager.getInstance().getGlassRadius())
-    .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
   }
 
   /**
@@ -6253,6 +6465,48 @@ struct MainMenuPage {
       .margin({ left: 12, right: 12, bottom: 8 })
       .padding({ left: 16, right: 16 });
     return modifier;
+  }
+
+  /**
+   * 获取玻璃效果背景资源（根据当前主题返回不同的颜色）
+   * 深色模式：半透明深色背景；浅色模式：半透明浅色背景
+   */
+  private getGlassBackground(): ResourceColor {
+    if (this.themeState.currentTheme === ThemeType.LIGHT) {
+      return 'rgba(255, 255, 255, 0.7)'; // 浅色模式：半透明白色
+    } else {
+      return 'rgba(30, 30, 30, 0.7)'; // 深色模式：半透明深灰色
+    }
+  }
+
+  /**
+   * 获取玻璃效果模糊样式（根据当前主题返回不同的模糊样式）
+   */
+  private getGlassBlur(): BlurStyle {
+    if (this.themeState.currentTheme === ThemeType.LIGHT) {
+      return BlurStyle.Thin; // 浅色模式使用较薄的模糊
+    } else {
+      return BlurStyle.Regular; // 深色模式使用常规模糊
+    }
+  }
+
+  /**
+   * 获取玻璃效果圆角（依赖 themeState 以触发 UI 更新）
+   */
+  private getGlassRadius(): number {
+    const _theme = this.themeState.currentTheme;
+    return this.themeManager.getGlassRadius();
+  }
+
+  /**
+   * 获取玻璃效果阴影颜色（根据当前主题返回不同的阴影颜色）
+   */
+  private getGlassShadowColor(): string {
+    if (this.themeState.currentTheme === ThemeType.LIGHT) {
+      return 'rgba(0, 0, 0, 0.1)'; // 浅色模式：较浅的阴影
+    } else {
+      return 'rgba(0, 0, 0, 0.3)'; // 深色模式：较深的阴影
+    }
   }
 
   build() {

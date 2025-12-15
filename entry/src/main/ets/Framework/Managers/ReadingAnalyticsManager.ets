@@ -69,7 +69,7 @@ export class ReadingAnalyticsManager {
    */
   public async initialize(): Promise<void> {
     if (this.isInitialized) {
-      logger.debug(TAG, '阅读报告管理器已初始化，跳过');
+      logger.debug(TAG, `阅读报告管理器已初始化，跳过。当前状态: enabled=${this.settings.enabled}, hasAsked=${this.settings.hasAskedPermission}`);
       return;
     }
 
@@ -148,6 +148,7 @@ export class ReadingAnalyticsManager {
    * 是否启用阅读数据收集
    */
   public isEnabled(): boolean {
+    logger.debug(TAG, `isEnabled() 被调用，返回: ${this.settings.enabled}`);
     return this.settings.enabled;
   }
 

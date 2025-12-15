@@ -344,6 +344,7 @@ export interface ComicInfoInput {
   author: string;
   description: string;
   coverUrl: string;
+  coverLocalPath?: string;     // 封面本地路径（可选）
   sourceId: string;
   externalId: string;          // 外部图源漫画ID（必需）
   status: MangaStatus;
@@ -1048,6 +1049,7 @@ export class DataManager {
         author: comicData.author || '',  // 确保不为undefined
         description: comicData.description || '',  // 确保不为undefined
         coverUrl: comicData.coverUrl || '',  // 确保不为undefined
+        coverLocalPath: comic.coverLocalPath || '',  // 封面本地路径
         sourceId: comicData.sourceId,
         externalId: finalExternalId,  // 确保不为undefined
         status: String(comicData.status),  // 确保转换为字符串
@@ -1955,7 +1957,8 @@ export class DataManager {
    */
   public async getUserReadHistory(userId: string, limit: number = 50): Promise<ReadHistory[]> {
     try {
-      const records = await this.databaseManager.query(
+      // [修复] 同时获取本地和在线阅读历史
+      const localRecords = await this.databaseManager.query(
         'read_history',
         undefined,
         'userId = ?',
@@ -1963,7 +1966,30 @@ export class DataManager {
         'readTime DESC',
         limit
       );
-      return records.map(record => this.convertRecordToReadHistory(record as ReadHistoryDatabaseRecord));
+      const localHistory = localRecords.map(record => this.convertRecordToReadHistory(record as ReadHistoryDatabaseRecord));
+      
+      // 获取在线阅读历史
+      let onlineHistory: ReadHistory[] = [];
+      try {
+        const onlineRecords = await this.databaseManager.query(
+          'online_read_history',
+          undefined,
+          'userId = ?',
+          [userId],
+          'readTime DESC',
+          limit
+        );
+        onlineHistory = onlineRecords.map(record => this.convertRecordToReadHistory(record as ReadHistoryDatabaseRecord));
+      } catch (onlineErr) {
+        logger.warn(TAG, `获取在线阅读历史失败: ${String(onlineErr)}`);
+      }
+      
+      // 合并并按时间排序
+      const allHistory = [...localHistory, ...onlineHistory];
+      allHistory.sort((a, b) => b.readTime - a.readTime);
+      
+      // 返回限制数量
+      return allHistory.slice(0, limit);
     } catch (error) {
       logger.error(TAG, `获取阅读历史失败: ${error}`);
       throw error as Error;
@@ -2447,7 +2473,8 @@ export class DataManager {
    */
   public async getReadHistoryByComic(comicId: string, userId: string, limit: number = 10): Promise<ReadHistory[]> {
     try {
-      const sql = `
+      // [修复] 同时查询本地和在线阅读历史表
+      const localSql = `
         SELECT 
           id,
           comicId,
@@ -2463,42 +2490,72 @@ export class DataManager {
         LIMIT ?
       `;
       
-      const result: DatabaseRecord[] = await this.databaseManager.querySql(sql, [comicId, userId, String(limit)]);
-      
-      if (!result || result.length === 0) {
-        return [];
-      }
+      const onlineSql = `
+        SELECT 
+          id,
+          comicId,
+          chapterId,
+          userId,
+          pageNumber,
+          readTime,
+          duration,
+          createTime
+        FROM online_read_history 
+        WHERE comicId = ? AND userId = ? 
+        ORDER BY readTime DESC 
+        LIMIT ?
+      `;
       
       const historyList: ReadHistory[] = [];
-      for (let i = 0; i < result.length; i++) {
-        const row: ReadHistoryQueryResult = result[i] as ReadHistoryQueryResult;
-        
-        // 调试：检查DatabaseRecord的所有键
-        const keys = Object.keys(row);
-        logger.debug(TAG, `数据库记录[${i}]的所有键: ${keys.join(', ')}`);
-        logger.debug(TAG, `数据库记录[${i}]完整内容: ${JSON.stringify(row)}`);
-        
-        // 调试：检查原始数据库记录
-        logger.debug(TAG, `数据库原始记录[${i}]: chapterId=${row.chapterId}, pageNumber=${row.pageNumber}, comicId=${row.comicId}`);
-        
-        const history: ReadHistory = {
-          id: String(row.id),
-          comicId: String(row.comicId),
-          chapterId: String(row.chapterId),
-          pageIndex: Number(row.pageNumber) || 0,      // 数据库字段pageNumber映射到ReadHistory.pageIndex
-          userId: String(row.userId),
-          readTime: Number(row.readTime),
-          readDuration: Number(row.duration) || 0       // 数据库字段duration映射到ReadHistory.readDuration
-        };
-        
-        // 调试：检查转换后的ReadHistory对象
-        logger.debug(TAG, `转换后ReadHistory[${i}]: chapterId=${history.chapterId}, pageIndex=${history.pageIndex}, comicId=${history.comicId}`);
-        
-        historyList.push(history);
+      
+      // 查询本地阅读历史
+      try {
+        const localResult: DatabaseRecord[] = await this.databaseManager.querySql(localSql, [comicId, userId, String(limit)]);
+        if (localResult && localResult.length > 0) {
+          for (const row of localResult) {
+            const r = row as ReadHistoryQueryResult;
+            historyList.push({
+              id: String(r.id),
+              comicId: String(r.comicId),
+              chapterId: String(r.chapterId),
+              pageIndex: Number(r.pageNumber) || 0,
+              userId: String(r.userId),
+              readTime: Number(r.readTime),
+              readDuration: Number(r.duration) || 0
+            });
+          }
+        }
+      } catch (localErr) {
+        logger.debug(TAG, `查询本地阅读历史失败: ${String(localErr)}`);
       }
       
-      logger.debug(TAG, `getReadHistoryByComic返回${historyList.length}条记录`);
-      return historyList;
+      // 查询在线阅读历史
+      try {
+        const onlineResult: DatabaseRecord[] = await this.databaseManager.querySql(onlineSql, [comicId, userId, String(limit)]);
+        if (onlineResult && onlineResult.length > 0) {
+          for (const row of onlineResult) {
+            const r = row as ReadHistoryQueryResult;
+            historyList.push({
+              id: String(r.id),
+              comicId: String(r.comicId),
+              chapterId: String(r.chapterId),
+              pageIndex: Number(r.pageNumber) || 0,
+              userId: String(r.userId),
+              readTime: Number(r.readTime),
+              readDuration: Number(r.duration) || 0
+            });
+          }
+        }
+      } catch (onlineErr) {
+        logger.debug(TAG, `查询在线阅读历史失败: ${String(onlineErr)}`);
+      }
+      
+      // 按时间排序并限制数量
+      historyList.sort((a, b) => b.readTime - a.readTime);
+      const result = historyList.slice(0, limit);
+      
+      logger.debug(TAG, `getReadHistoryByComic返回${result.length}条记录`);
+      return result;
     } catch (error) {
       logger.error(TAG, `获取漫画阅读历史失败: comicId=${comicId}`, String(error));
       throw new Error(String(error));

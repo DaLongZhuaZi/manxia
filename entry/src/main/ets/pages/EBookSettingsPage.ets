@@ -12,7 +12,8 @@ import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat } from '../Models/EBookModels';
+import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookSettingsPageParams } from './EBookDetailPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
@@ -27,6 +28,7 @@ import {
   PresetBackground,
   DEFAULT_TEXT_READER_SETTINGS
 } from '../Models/TextReaderModels';
+import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -65,7 +67,6 @@ export struct EBookSettingsPage {
   @State settings: EBookReadingSettings | null = null;
   @State isLoading: boolean = true;
   @State errorMessage: string = '';
-  @State isSaving: boolean = false;
 
   // 字体设置
   @State settingFontSize: number = 18;
@@ -183,54 +184,241 @@ export struct EBookSettingsPage {
 
       this.ebook = ebook;
       
+      // [修复] 初始化封面路径状态变量
+      this.coverImagePath = ebook.metadata.coverImagePath || '';
+      
+      // [修复] 先获取全局设置
+      const settingsManager = SettingsManager.getInstance();
+      const isTextFormat = ebook.format === EBookFormat.TXT;
+      
+      // 电子书全局设置
+      const globalThemeIndex = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_THEME, 0);
+      const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_FONT_SIZE, DEFAULT_EBOOK_READING_SETTINGS.fontSize);
+      const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_LINE_HEIGHT, DEFAULT_EBOOK_READING_SETTINGS.lineHeight);
+      const globalPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_EBOOK_PAGE_MARGIN, DEFAULT_EBOOK_READING_SETTINGS.pageMargin);
+      const globalPageMode = settingsManager.getString(SettingKeys.GLOBAL_EBOOK_PAGE_MODE, DEFAULT_EBOOK_READING_SETTINGS.pageMode) as EBookPageMode;
+      const themePreset: EBookThemePreset = EBOOK_THEME_PRESETS[globalThemeIndex] || EBOOK_THEME_PRESETS[0];
+      
+      // 纯文本阅读器全局设置
+      const globalTextFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, 18);
+      const globalTextLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, 1.8);
+      const globalTextParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, 16);
+      const globalTextFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, 2);
+      const globalTextPageMargin = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, 24);
+      const globalTextBgColorIndex = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, 0);
+      const globalTextUseBgImage = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, false);
+      const globalTextBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
+      const globalTextBgImageOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, 1.0);
+      const globalTextPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, TextPageTurnAnimation.SLIDE) as TextPageTurnAnimation;
+      const globalTextKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, true);
+      const globalTextVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, true);
+      const globalTextTapToTurn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_TAP_TO_TURN, true);
+      const globalTextBgPreset = PRESET_BACKGROUNDS[globalTextBgColorIndex] || PRESET_BACKGROUNDS[0];
+      
       // 加载阅读设置
       if (ebook.readingSettings) {
-        this.settings = ebook.readingSettings;
-        // 字体设置
-        this.settingFontSize = ebook.readingSettings.fontSize;
-        this.settingFontFamily = ebook.readingSettings.fontFamily;
-        this.settingFontPath = ebook.readingSettings.fontPath || '';
-        this.settingFontWeight = ebook.readingSettings.fontWeight || 400;
-        // 排版设置
-        this.settingLineHeight = ebook.readingSettings.lineHeight;
-        // 颜色主题设置
-        this.settingBgColor = ebook.readingSettings.backgroundColor;
-        this.settingTextColor = ebook.readingSettings.textColor;
-        this.settingThemeBgImage = ebook.readingSettings.themeBgImage || '';
-        this.settingNightMode = ebook.readingSettings.nightMode || false;
-        // 查找匹配的主题索引
-        this.selectedThemeIndex = EBOOK_THEME_PRESETS.findIndex(
-          (theme: EBookThemePreset) => theme.backgroundColor === this.settingBgColor
-        );
-        if (this.selectedThemeIndex < 0) this.selectedThemeIndex = 0;
-        // 翻页设置
-        this.settingPageMargin = ebook.readingSettings.pageMargin;
-        this.settingPageMode = ebook.readingSettings.pageMode || EBookPageMode.SIMULATION;
-        // 系统设置
-        this.settingBrightness = ebook.readingSettings.brightness;
-        this.settingAutoSave = ebook.readingSettings.autoSave;
-        this.settingSaveInterval = ebook.readingSettings.saveInterval;
+        // [修复] 检查是否是默认设置（followSystemTheme=true 且背景色是默认白色或夜间黑色）
+        const isDefaultSettings = ebook.readingSettings.followSystemTheme === true &&
+          (ebook.readingSettings.backgroundColor === '#FFFFFF' || 
+           ebook.readingSettings.backgroundColor === '#1E1E1E' ||
+           ebook.readingSettings.backgroundColor === '#F5F0E1' ||
+           ebook.readingSettings.backgroundColor === DEFAULT_EBOOK_READING_SETTINGS.backgroundColor);
         
-        // ========== 加载纯文本阅读器专用设置 ==========
-        // 高级字体设置
-        this.settingLetterSpacing = ebook.readingSettings.letterSpacing ?? 0;
-        this.settingParagraphSpacing = ebook.readingSettings.paragraphSpacing ?? 8;
-        this.settingFirstLineIndent = ebook.readingSettings.firstLineIndent ?? 2;
-        this.settingTextAlignment = (ebook.readingSettings.textAlignment as TextAlignment) ?? TextAlignment.JUSTIFY;
-        // 翻页动画设置
-        this.settingPageTurnAnimation = (ebook.readingSettings.pageTurnAnimation as TextPageTurnAnimation) ?? TextPageTurnAnimation.SLIDE;
-        this.settingTapToTurn = ebook.readingSettings.tapToTurn ?? true;
-        this.settingVolumeKeyNavigation = ebook.readingSettings.volumeKeyNavigation ?? true;
-        this.settingKeepScreenOn = ebook.readingSettings.keepScreenOn ?? false;
-        // 显示设置
-        this.settingShowPageNumber = ebook.readingSettings.showPageNumber ?? true;
-        this.settingShowProgress = ebook.readingSettings.showProgress ?? false;
-        this.settingShowTime = ebook.readingSettings.showTime ?? true;
-        this.settingShowBattery = ebook.readingSettings.showBattery ?? false;
-        // 背景设置
-        this.settingBackgroundType = (ebook.readingSettings.backgroundType as BackgroundType) ?? BackgroundType.COLOR;
-        this.settingBackgroundImagePath = ebook.readingSettings.backgroundImagePath ?? '';
-        this.settingBackgroundImageOpacity = ebook.readingSettings.backgroundImageOpacity ?? 0.3;
+        if (isDefaultSettings) {
+          if (isTextFormat) {
+            // 纯文本格式：使用纯文本阅读器全局设置
+            logger.info(TAG, `纯文本格式检测到默认设置，应用全局设置: 字体大小=${globalTextFontSize}, 背景色=${globalTextBgPreset.backgroundColor}`);
+            
+            this.settingFontSize = globalTextFontSize;
+            this.settingFontFamily = DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+            this.settingFontPath = '';
+            this.settingFontWeight = 400;
+            this.settingLineHeight = globalTextLineHeight;
+            this.settingBgColor = globalTextBgPreset.backgroundColor;
+            this.settingTextColor = globalTextBgPreset.textColor;
+            this.settingThemeBgImage = '';
+            this.settingNightMode = false;
+            this.selectedThemeIndex = globalTextBgColorIndex;
+            this.settingPageMargin = globalTextPageMargin;
+            this.settingPageMode = EBookPageMode.SIMULATION;
+            this.settingAutoSave = DEFAULT_EBOOK_READING_SETTINGS.autoSave;
+            this.settingSaveInterval = DEFAULT_EBOOK_READING_SETTINGS.saveInterval;
+            
+            // 纯文本阅读器专用设置从全局设置读取
+            this.settingLetterSpacing = 0;
+            this.settingParagraphSpacing = globalTextParagraphSpacing;
+            this.settingFirstLineIndent = globalTextFirstLineIndent;
+            this.settingTextAlignment = TextAlignment.JUSTIFY;
+            this.settingPageTurnAnimation = globalTextPageTurnAnimation;
+            this.settingTapToTurn = globalTextTapToTurn;
+            this.settingVolumeKeyNavigation = globalTextVolumeKeyNav;
+            this.settingKeepScreenOn = globalTextKeepScreenOn;
+            this.settingShowPageNumber = true;
+            this.settingShowProgress = false;
+            this.settingShowTime = true;
+            this.settingShowBattery = false;
+            this.settingBackgroundType = globalTextUseBgImage ? BackgroundType.IMAGE : BackgroundType.COLOR;
+            this.settingBackgroundImagePath = globalTextBgImagePath;
+            this.settingBackgroundImageOpacity = globalTextBgImageOpacity;
+          } else {
+            // 其他格式：使用电子书全局设置
+            logger.info(TAG, `检测到默认设置，应用全局设置: 主题索引=${globalThemeIndex}, 背景色=${themePreset.backgroundColor}, 字体大小=${globalFontSize}`);
+            
+            this.settingFontSize = globalFontSize;
+            this.settingFontFamily = DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+            this.settingFontPath = '';
+            this.settingFontWeight = DEFAULT_EBOOK_READING_SETTINGS.fontWeight || 400;
+            this.settingLineHeight = globalLineHeight;
+            this.settingBgColor = themePreset.backgroundColor;
+            this.settingTextColor = themePreset.textColor;
+            this.settingThemeBgImage = themePreset.themeBgImage || '';
+            this.settingNightMode = themePreset.nightMode;
+            this.selectedThemeIndex = globalThemeIndex;
+            this.settingPageMargin = globalPageMargin;
+            this.settingPageMode = globalPageMode;
+            this.settingAutoSave = DEFAULT_EBOOK_READING_SETTINGS.autoSave;
+            this.settingSaveInterval = DEFAULT_EBOOK_READING_SETTINGS.saveInterval;
+            
+            // 纯文本阅读器专用设置使用默认值
+            this.settingLetterSpacing = 0;
+            this.settingParagraphSpacing = 8;
+            this.settingFirstLineIndent = 2;
+            this.settingTextAlignment = TextAlignment.JUSTIFY;
+            this.settingPageTurnAnimation = TextPageTurnAnimation.SLIDE;
+            this.settingTapToTurn = true;
+            this.settingVolumeKeyNavigation = true;
+            this.settingKeepScreenOn = false;
+            this.settingShowPageNumber = true;
+            this.settingShowProgress = false;
+            this.settingShowTime = true;
+            this.settingShowBattery = false;
+            this.settingBackgroundType = BackgroundType.COLOR;
+            this.settingBackgroundImagePath = '';
+            this.settingBackgroundImageOpacity = 0.3;
+          }
+        } else {
+          // 用户已修改过设置，使用保存的设置
+          logger.info(TAG, `使用用户自定义设置: 背景色=${ebook.readingSettings.backgroundColor}, 字体大小=${ebook.readingSettings.fontSize}`);
+          
+          this.settings = ebook.readingSettings;
+          // 字体设置
+          this.settingFontSize = ebook.readingSettings.fontSize;
+          this.settingFontFamily = ebook.readingSettings.fontFamily;
+          this.settingFontPath = ebook.readingSettings.fontPath || '';
+          this.settingFontWeight = ebook.readingSettings.fontWeight || 400;
+          // 排版设置
+          this.settingLineHeight = ebook.readingSettings.lineHeight;
+          // 颜色主题设置
+          this.settingBgColor = ebook.readingSettings.backgroundColor;
+          this.settingTextColor = ebook.readingSettings.textColor;
+          this.settingThemeBgImage = ebook.readingSettings.themeBgImage || '';
+          this.settingNightMode = ebook.readingSettings.nightMode || false;
+          // 查找匹配的主题索引
+          this.selectedThemeIndex = EBOOK_THEME_PRESETS.findIndex(
+            (theme: EBookThemePreset) => theme.backgroundColor === this.settingBgColor
+          );
+          if (this.selectedThemeIndex < 0) this.selectedThemeIndex = 0;
+          // 翻页设置
+          this.settingPageMargin = ebook.readingSettings.pageMargin;
+          this.settingPageMode = ebook.readingSettings.pageMode || EBookPageMode.SIMULATION;
+          // 系统设置
+          this.settingAutoSave = ebook.readingSettings.autoSave;
+          this.settingSaveInterval = ebook.readingSettings.saveInterval;
+          
+          // ========== 加载纯文本阅读器专用设置 ==========
+          // 高级字体设置
+          this.settingLetterSpacing = ebook.readingSettings.letterSpacing ?? 0;
+          this.settingParagraphSpacing = ebook.readingSettings.paragraphSpacing ?? 8;
+          this.settingFirstLineIndent = ebook.readingSettings.firstLineIndent ?? 2;
+          this.settingTextAlignment = (ebook.readingSettings.textAlignment as TextAlignment) ?? TextAlignment.JUSTIFY;
+          // 翻页动画设置
+          this.settingPageTurnAnimation = (ebook.readingSettings.pageTurnAnimation as TextPageTurnAnimation) ?? TextPageTurnAnimation.SLIDE;
+          this.settingTapToTurn = ebook.readingSettings.tapToTurn ?? true;
+          this.settingVolumeKeyNavigation = ebook.readingSettings.volumeKeyNavigation ?? true;
+          this.settingKeepScreenOn = ebook.readingSettings.keepScreenOn ?? false;
+          // 显示设置
+          this.settingShowPageNumber = ebook.readingSettings.showPageNumber ?? true;
+          this.settingShowProgress = ebook.readingSettings.showProgress ?? false;
+          this.settingShowTime = ebook.readingSettings.showTime ?? true;
+          this.settingShowBattery = ebook.readingSettings.showBattery ?? false;
+          // 背景设置
+          this.settingBackgroundType = (ebook.readingSettings.backgroundType as BackgroundType) ?? BackgroundType.COLOR;
+          this.settingBackgroundImagePath = ebook.readingSettings.backgroundImagePath ?? '';
+          this.settingBackgroundImageOpacity = ebook.readingSettings.backgroundImageOpacity ?? 0.3;
+        }
+      } else {
+        // 没有保存的设置，使用全局设置
+        if (isTextFormat) {
+          // 纯文本格式：使用纯文本阅读器全局设置
+          logger.info(TAG, `纯文本格式无保存设置，应用全局设置: 字体大小=${globalTextFontSize}, 背景色=${globalTextBgPreset.backgroundColor}`);
+          
+          this.settingFontSize = globalTextFontSize;
+          this.settingFontFamily = DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+          this.settingFontPath = '';
+          this.settingFontWeight = 400;
+          this.settingLineHeight = globalTextLineHeight;
+          this.settingBgColor = globalTextBgPreset.backgroundColor;
+          this.settingTextColor = globalTextBgPreset.textColor;
+          this.settingThemeBgImage = '';
+          this.settingNightMode = false;
+          this.selectedThemeIndex = globalTextBgColorIndex;
+          this.settingPageMargin = globalTextPageMargin;
+          this.settingPageMode = EBookPageMode.SIMULATION;
+          this.settingAutoSave = DEFAULT_EBOOK_READING_SETTINGS.autoSave;
+          this.settingSaveInterval = DEFAULT_EBOOK_READING_SETTINGS.saveInterval;
+          
+          // 纯文本阅读器专用设置从全局设置读取
+          this.settingLetterSpacing = 0;
+          this.settingParagraphSpacing = globalTextParagraphSpacing;
+          this.settingFirstLineIndent = globalTextFirstLineIndent;
+          this.settingTextAlignment = TextAlignment.JUSTIFY;
+          this.settingPageTurnAnimation = globalTextPageTurnAnimation;
+          this.settingTapToTurn = globalTextTapToTurn;
+          this.settingVolumeKeyNavigation = globalTextVolumeKeyNav;
+          this.settingKeepScreenOn = globalTextKeepScreenOn;
+          this.settingShowPageNumber = true;
+          this.settingShowProgress = false;
+          this.settingShowTime = true;
+          this.settingShowBattery = false;
+          this.settingBackgroundType = globalTextUseBgImage ? BackgroundType.IMAGE : BackgroundType.COLOR;
+          this.settingBackgroundImagePath = globalTextBgImagePath;
+          this.settingBackgroundImageOpacity = globalTextBgImageOpacity;
+        } else {
+          // 其他格式：使用电子书全局设置
+          logger.info(TAG, `无保存设置，应用全局设置: 主题索引=${globalThemeIndex}, 字体大小=${globalFontSize}`);
+          
+          this.settingFontSize = globalFontSize;
+          this.settingFontFamily = DEFAULT_EBOOK_READING_SETTINGS.fontFamily;
+          this.settingFontPath = '';
+          this.settingFontWeight = DEFAULT_EBOOK_READING_SETTINGS.fontWeight || 400;
+          this.settingLineHeight = globalLineHeight;
+          this.settingBgColor = themePreset.backgroundColor;
+          this.settingTextColor = themePreset.textColor;
+          this.settingThemeBgImage = themePreset.themeBgImage || '';
+          this.settingNightMode = themePreset.nightMode;
+          this.selectedThemeIndex = globalThemeIndex;
+          this.settingPageMargin = globalPageMargin;
+          this.settingPageMode = globalPageMode;
+          this.settingAutoSave = DEFAULT_EBOOK_READING_SETTINGS.autoSave;
+          this.settingSaveInterval = DEFAULT_EBOOK_READING_SETTINGS.saveInterval;
+          
+          // 纯文本阅读器专用设置使用默认值
+          this.settingLetterSpacing = 0;
+          this.settingParagraphSpacing = 8;
+          this.settingFirstLineIndent = 2;
+          this.settingTextAlignment = TextAlignment.JUSTIFY;
+          this.settingPageTurnAnimation = TextPageTurnAnimation.SLIDE;
+          this.settingTapToTurn = true;
+          this.settingVolumeKeyNavigation = true;
+          this.settingKeepScreenOn = false;
+          this.settingShowPageNumber = true;
+          this.settingShowProgress = false;
+          this.settingShowTime = true;
+          this.settingShowBattery = false;
+          this.settingBackgroundType = BackgroundType.COLOR;
+          this.settingBackgroundImagePath = '';
+          this.settingBackgroundImageOpacity = 0.3;
+        }
       }
 
       logger.info(TAG, `电子书设置加载完成: ${ebook.metadata.title}`);
@@ -243,16 +431,15 @@ export struct EBookSettingsPage {
   }
 
   /**
-   * 保存设置
+   * 即时保存设置到数据库
+   * 每次设置变更时自动调用，无需手动点击保存按钮
    */
-  private async saveSettings(): Promise<void> {
+  private async saveSettingsImmediately(): Promise<void> {
     if (!this.ebook) {
       return;
     }
 
     try {
-      this.isSaving = true;
-      
       // 更新设置
       const newSettings: EBookReadingSettings = {
         // 字体设置
@@ -301,12 +488,12 @@ export struct EBookSettingsPage {
       this.ebook.readingSettings = newSettings;
       await this.ebookDataManager.saveEBook(this.ebook);
       
-      logger.info(TAG, '设置保存成功');
-      this.pathStack.pop();
+      // [修复] 发布电子书更新事件，通知其他页面刷新
+      eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
+      
+      logger.debug(TAG, '设置已即时保存');
     } catch (error) {
-      logger.error(TAG, `保存设置失败: ${String(error)}`);
-    } finally {
-      this.isSaving = false;
+      logger.error(TAG, `即时保存设置失败: ${String(error)}`);
     }
   }
 
@@ -575,18 +762,6 @@ export struct EBookSettingsPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .borderRadius(12)
 
-    // 保存按钮
-    Button('保存设置')
-      .fontSize(16)
-      .width('100%')
-      .height(48)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-      .borderRadius(12)
-      .enabled(!this.isSaving)
-      .onClick(() => {
-        this.saveSettings();
-      })
   }
 
   /**
@@ -684,21 +859,6 @@ export struct EBookSettingsPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .borderRadius(12)
 
-    // 显示设置
-    Column({ space: 12 }) {
-      Text('显示设置')
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .width('100%')
-
-      this.buildDisplaySettings()
-    }
-    .width('100%')
-    .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-
     // 阅读设置
     Column({ space: 12 }) {
       Text('阅读设置')
@@ -714,17 +874,6 @@ export struct EBookSettingsPage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
       .borderRadius(12)
 
-      // 保存按钮
-      Button(this.isSaving ? '保存中...' : '保存设置')
-        .width('100%')
-        .height(48)
-        .fontSize(16)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-        .enabled(!this.isSaving)
-        .onClick(() => {
-          this.saveSettings();
-        })
     }
   
 
@@ -775,6 +924,7 @@ export struct EBookSettingsPage {
             this.settingTextColor = theme.textColor;
             this.settingThemeBgImage = theme.themeBgImage;
             this.settingNightMode = theme.nightMode;
+            this.saveSettingsImmediately();
           })
         })
       }
@@ -798,6 +948,7 @@ export struct EBookSettingsPage {
             .onChange((isChecked: boolean) => {
               if (isChecked) {
                 this.settingPageMode = EBookPageMode.SIMULATION;
+                this.saveSettingsImmediately();
               }
             })
           Text('仿真翻页')
@@ -812,6 +963,7 @@ export struct EBookSettingsPage {
             .onChange((isChecked: boolean) => {
               if (isChecked) {
                 this.settingPageMode = EBookPageMode.HORIZONTAL;
+                this.saveSettingsImmediately();
               }
             })
           Text('横向滑动')
@@ -846,6 +998,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingFontSize = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingFontSize}`)
@@ -872,6 +1025,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingLineHeight = value / 10;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingLineHeight.toFixed(1)}`)
@@ -881,17 +1035,8 @@ export struct EBookSettingsPage {
           .textAlign(TextAlign.End)
       }
       .width('100%')
-    }
-    .width('100%')
-  }
 
-  /**
-   * 构建显示设置
-   */
-  @Builder
-  buildDisplaySettings() {
-    Column({ space: 16 }) {
-      // 页边距
+      // 页边距（从显示设置移到这里）
       Row() {
         Text('页边距')
           .fontSize(14)
@@ -907,38 +1052,13 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingPageMargin = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingPageMargin}`)
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width(40)
-          .textAlign(TextAlign.End)
-      }
-      .width('100%')
-
-      // 亮度
-      Row() {
-        Text('亮度')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width(80)
-
-        Slider({
-          value: this.settingBrightness,
-          min: 10,
-          max: 100,
-          step: 5
-        })
-          .layoutWeight(1)
-          .onChange((value: number) => {
-            this.settingBrightness = value;
-          })
-
-        Text(`${this.settingBrightness}%`)
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .width(50)
           .textAlign(TextAlign.End)
       }
       .width('100%')
@@ -962,6 +1082,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingAutoSave })
           .onChange((isOn: boolean) => {
             this.settingAutoSave = isOn;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
@@ -983,6 +1104,7 @@ export struct EBookSettingsPage {
             .layoutWeight(1)
             .onChange((value: number) => {
               this.settingSaveInterval = value;
+              this.saveSettingsImmediately();
             })
 
           Text(`${this.settingSaveInterval}秒`)
@@ -1055,6 +1177,10 @@ export struct EBookSettingsPage {
       if (this.ebook) {
         this.ebook.metadata.coverImagePath = coverTarget;
       }
+      
+      // [修复] 发布封面变更事件，通知其他页面刷新
+      eventBus.publish(GameEvent.EBOOK_COVER_CHANGED, new BasePayload());
+      
       this.showToast('封面已更新');
       logger.info(TAG, '封面图片更新成功');
     } catch (error) {
@@ -1096,22 +1222,117 @@ export struct EBookSettingsPage {
   }
 
   /**
+   * 获取封面图片源
+   * 支持沙箱路径、媒体资源路径和网络URL
+   */
+  private getCoverImageSource(): string | Resource {
+    const coverPath = this.ebook?.metadata.coverImagePath;
+    if (!coverPath || coverPath.length === 0) {
+      return $r('app.media.ic_ebook');
+    }
+    
+    // 检查是否为媒体资源路径 (app.media.xxx 格式)
+    if (coverPath.startsWith('app.media.')) {
+      // 提取资源名称并返回 Resource 类型
+      const resourceName = coverPath.replace('app.media.', '');
+      // 使用动态资源引用
+      return $r(`app.media.${resourceName}`);
+    }
+    
+    // 沙箱路径需要添加 file:// 前缀
+    if (coverPath.startsWith('/')) {
+      return `file://${coverPath}`;
+    }
+    
+    // 其他情况（如网络URL）直接返回
+    return coverPath;
+  }
+
+  /**
+   * 获取显示用的封面路径
+   * 优先使用 @State coverImagePath，确保封面更新后 UI 能响应式刷新
+   */
+  private getDisplayCoverPath(): string {
+    return this.coverImagePath || this.ebook?.metadata.coverImagePath || '';
+  }
+
+  /**
+   * 计算电子书整体阅读进度百分比
+   * 考虑章节数量，基于当前章节索引和章节内进度计算整体进度
+   * 与 EBookDetailPage 保持一致的计算方法
+   */
+  private calculateOverallProgress(): number {
+    if (!this.ebook || !this.ebook.readingProgress) {
+      return 0;
+    }
+
+    const totalChapters = this.ebook.chapters.length;
+    if (totalChapters === 0) {
+      // 没有章节信息时，直接返回存储的进度值
+      return Math.floor(this.ebook.readingProgress.progress);
+    }
+
+    const progress = this.ebook.readingProgress;
+    const currentChapterIndex = progress.currentChapterIndex;
+    const chapterProgress = progress.progress;
+
+    // 计算整体进度：已完成的章节数 + 当前章节的进度比例
+    const completedChapters = currentChapterIndex;
+    const currentChapterContribution = chapterProgress / 100;
+    const overallProgress = ((completedChapters + currentChapterContribution) / totalChapters) * 100;
+
+    return Math.floor(Math.min(overallProgress, 100));
+  }
+
+  /**
+   * 检查是否有阅读进度
+   */
+  private hasReadingProgress(): boolean {
+    if (!this.ebook || !this.ebook.readingProgress) {
+      return false;
+    }
+    const progress = this.ebook.readingProgress;
+    if (progress.domPos && progress.domPos.length > 0) {
+      return true;
+    }
+    if (progress.currentChapterIndex > 0) {
+      return true;
+    }
+    if (progress.progress > 0) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * 构建电子书信息展示区域
    */
   @Builder
   buildEBookInfoSection() {
     if (this.ebook) {
       Column({ space: 16 }) {
-        // 封面图片
+        // 封面图片 - 使用 @State coverImagePath 来确保封面更新后 UI 能响应式刷新
         Stack() {
-          if (this.ebook.metadata.coverImagePath && this.ebook.metadata.coverImagePath.length > 0) {
-            Image(this.ebook.metadata.coverImagePath.startsWith('/') 
-              ? `file://${this.ebook.metadata.coverImagePath}` 
-              : this.ebook.metadata.coverImagePath)
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
-              .borderRadius(8)
+          if (this.getDisplayCoverPath().length > 0) {
+            // 根据路径类型选择不同的图片加载方式
+            if (this.getDisplayCoverPath().startsWith('app.media.')) {
+              // 媒体资源路径 - 使用 $r() 加载
+              Image($r(`app.media.${this.getDisplayCoverPath().replace('app.media.', '')}`))
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .borderRadius(8)
+            } else {
+              // 沙箱路径或网络URL - 使用 key 强制刷新图片
+              Image(this.getDisplayCoverPath().startsWith('/') 
+                ? `file://${this.getDisplayCoverPath()}` 
+                : this.getDisplayCoverPath())
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .borderRadius(8)
+                .key(`ebook_cover_${this.coverImagePath}`)
+            }
           } else {
             Column() {
               Image($r('app.media.ic_ebook'))
@@ -1177,14 +1398,14 @@ export struct EBookSettingsPage {
         .width('100%')
         .justifyContent(FlexAlign.Center)
 
-        // 阅读进度
-        if (this.ebook.readingProgress && this.ebook.readingProgress.progress > 0) {
+        // 阅读进度 - 使用与 EBookDetailPage 一致的计算方法
+        if (this.hasReadingProgress()) {
           Column({ space: 4 }) {
-            Text(`已读 ${Math.floor(this.ebook.readingProgress.progress)}%`)
+            Text(`已读 ${this.calculateOverallProgress()}%`)
               .fontSize(11)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Progress({
-              value: this.ebook.readingProgress.progress,
+              value: this.calculateOverallProgress(),
               total: 100,
               type: ProgressType.Linear
             })
@@ -1308,17 +1529,6 @@ export struct EBookSettingsPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .borderRadius(12)
 
-    // 保存按钮
-    Button(this.isSaving ? '保存中...' : '保存设置')
-      .width('100%')
-      .height(48)
-      .fontSize(16)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-      .enabled(!this.isSaving)
-      .onClick(() => {
-        this.saveSettings();
-      })
   }
 
   /**
@@ -1343,6 +1553,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingFontSize = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingFontSize}`)
@@ -1369,6 +1580,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingLineHeight = value / 10;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingLineHeight.toFixed(1)}`)
@@ -1395,6 +1607,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingLetterSpacing = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingLetterSpacing.toFixed(1)}`)
@@ -1421,6 +1634,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingParagraphSpacing = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingParagraphSpacing}`)
@@ -1447,6 +1661,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingFirstLineIndent = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingFirstLineIndent}字`)
@@ -1473,6 +1688,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingFontWeight = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingFontWeight}`)
@@ -1509,6 +1725,7 @@ export struct EBookSettingsPage {
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .onClick(() => {
                 this.settingTextAlignment = item.align;
+                this.saveSettingsImmediately();
               })
           })
         }
@@ -1565,6 +1782,7 @@ export struct EBookSettingsPage {
             this.settingBgColor = preset.backgroundColor;
             this.settingTextColor = preset.textColor;
             this.settingNightMode = isDarkBackground(preset.backgroundColor);
+            this.saveSettingsImmediately();
           })
         })
       }
@@ -1583,6 +1801,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingBackgroundType === BackgroundType.IMAGE })
           .onChange((isOn: boolean) => {
             this.settingBackgroundType = isOn ? BackgroundType.IMAGE : BackgroundType.COLOR;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
@@ -1604,6 +1823,7 @@ export struct EBookSettingsPage {
             .layoutWeight(1)
             .onChange((value: number) => {
               this.settingBackgroundImageOpacity = value / 100;
+              this.saveSettingsImmediately();
             })
 
           Text(`${Math.round(this.settingBackgroundImageOpacity * 100)}%`)
@@ -1677,6 +1897,7 @@ export struct EBookSettingsPage {
         const savedPath = await this.copyImageToSandbox(sourceUri, context);
         if (savedPath) {
           this.settingBackgroundImagePath = savedPath;
+          this.saveSettingsImmediately();
           this.showToast('背景图片已保存');
         }
       }
@@ -1752,6 +1973,7 @@ export struct EBookSettingsPage {
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .onClick(() => {
                 this.settingPageTurnAnimation = item.anim;
+                this.saveSettingsImmediately();
               })
           })
         }
@@ -1771,6 +1993,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingTapToTurn })
           .onChange((isOn: boolean) => {
             this.settingTapToTurn = isOn;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
@@ -1785,6 +2008,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingVolumeKeyNavigation })
           .onChange((isOn: boolean) => {
             this.settingVolumeKeyNavigation = isOn;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
@@ -1799,6 +2023,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingKeepScreenOn })
           .onChange((isOn: boolean) => {
             this.settingKeepScreenOn = isOn;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
@@ -1828,6 +2053,7 @@ export struct EBookSettingsPage {
           .layoutWeight(1)
           .onChange((value: number) => {
             this.settingPageMargin = value;
+            this.saveSettingsImmediately();
           })
 
         Text(`${this.settingPageMargin}`)
@@ -1868,6 +2094,7 @@ export struct EBookSettingsPage {
             .onClick(() => {
               this.settingShowPageNumber = true;
               this.settingShowProgress = false;
+              this.saveSettingsImmediately();
             })
 
           Button('进度')
@@ -1883,6 +2110,7 @@ export struct EBookSettingsPage {
             .onClick(() => {
               this.settingShowPageNumber = false;
               this.settingShowProgress = true;
+              this.saveSettingsImmediately();
             })
 
           Button('不显示')
@@ -1898,6 +2126,7 @@ export struct EBookSettingsPage {
             .onClick(() => {
               this.settingShowPageNumber = false;
               this.settingShowProgress = false;
+              this.saveSettingsImmediately();
             })
         }
         .width('100%')
@@ -1914,6 +2143,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingShowTime })
           .onChange((isOn: boolean) => {
             this.settingShowTime = isOn;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
@@ -1928,6 +2158,7 @@ export struct EBookSettingsPage {
         Toggle({ type: ToggleType.Switch, isOn: this.settingShowBattery })
           .onChange((isOn: boolean) => {
             this.settingShowBattery = isOn;
+            this.saveSettingsImmediately();
           })
       }
       .width('100%')
