@@ -404,6 +404,7 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       createTime INTEGER NOT NULL,
       updateTime INTEGER NOT NULL,
       sourceName TEXT,
+      sourcePkg TEXT DEFAULT '',
       UNIQUE(sourceId, externalId)
     )
   `,
@@ -882,5 +883,12 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
     'ALTER TABLE ebook_reading_settings ADD COLUMN backgroundType TEXT DEFAULT \'COLOR\'',
     'ALTER TABLE ebook_reading_settings ADD COLUMN backgroundImagePath TEXT DEFAULT \'\'',
     'ALTER TABLE ebook_reading_settings ADD COLUMN backgroundImageOpacity REAL DEFAULT 0.3'
+  ],
+  12: [
+    // 版本12：为在线漫画表添加 sourcePkg 字段
+    // sourcePkg 是图源的唯一包名标识符，用于在图源删除后重新导入时正确识别图源
+    // 这解决了图源删除后 sourceId 失效导致无法识别图源的问题
+    'ALTER TABLE online_comic_info ADD COLUMN sourcePkg TEXT DEFAULT \'\'',
+    'CREATE INDEX IF NOT EXISTS idx_online_comic_pkg ON online_comic_info (sourcePkg)'
   ]
 };

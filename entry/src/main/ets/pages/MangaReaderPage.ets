@@ -4214,6 +4214,53 @@ export struct MangaReaderPage {
   }
 
   /**
+   * 显示条漫模式切换提示
+   * 当检测到图片是条漫格式时，提示用户切换到条漫模式
+   */
+  private showWebtoonModePrompt(avgAspectRatio: number): void {
+    try {
+      const promptAction = this.getUIContext().getPromptAction();
+      promptAction.showDialog({
+        title: '检测到条漫格式',
+        message: `当前漫画图片的平均宽高比为 ${avgAspectRatio.toFixed(1)}:1，建议使用条漫模式阅读以获得更好的体验。\n\n是否切换到条漫模式？`,
+        buttons: [
+          {
+            text: '切换',
+            color: '#007AFF'
+          },
+          {
+            text: '保持当前模式',
+            color: '#8E8E93'
+          }
+        ]
+      }).then((result) => {
+        if (result.index === 0) {
+          // 用户选择切换到条漫模式
+          logger.info(TAG, '用户选择切换到条漫模式');
+          this.readingSettings.readingMode = ReadingMode.WEBTOON;
+          // 保存设置到数据库
+          if (this.readerState.currentManga) {
+            ComicConverter.saveReadingSettings(this.readerState.currentManga.id, this.readingSettings).catch((err: Error) => {
+              logger.warn(TAG, `保存阅读设置失败: ${err.message}`);
+            });
+          }
+          // 显示提示
+          promptAction.showToast({
+            message: '已切换到条漫模式',
+            duration: 2000
+          });
+        } else {
+          logger.info(TAG, '用户选择保持当前阅读模式');
+        }
+      }).catch((err: Error) => {
+        logger.warn(TAG, `显示条漫切换对话框失败: ${err.message}`);
+      });
+    } catch (e) {
+      logger.warn(TAG, `显示条漫模式提示失败: ${String(e)}`);
+    }
+  }
+
+  /**
    * 滚动到条漫模式的指定页面
    * 使用平滑滚动实现信息流式的翻页效果
    * 支持屏幕滚动模式，提供更自然的阅读体验
@@ -5038,11 +5085,33 @@ export struct MangaReaderPage {
             onDoubleTap: (event: ClickEvent) => {
               this.handleDoubleTap(event);
             },
+            onWebtoonDetected: (isWebtoon: boolean, avgAspectRatio: number) => {
+              // 条漫自动检测回调 - 自动切换模式
+              if (isWebtoon && !this.isWebtoonMode()) {
+                logger.info(TAG, `🎯 检测到条漫格式: 平均宽高比=${avgAspectRatio.toFixed(2)}，自动切换到条漫模式`);
+                // 自动切换到条漫模式
+                this.readingSettings.readingMode = ReadingMode.WEBTOON;
+                // 保存设置到数据库
+                if (this.readerState.currentManga) {
+                  ComicConverter.saveReadingSettings(this.readerState.currentManga.id, this.readingSettings).catch((err: Error) => {
+                    logger.warn(TAG, `保存阅读设置失败: ${err.message}`);
+                  });
+                }
+                // 显示toast提示
+                try {
+                  this.getUIContext().getPromptAction().showToast({
+                    message: `已自动切换到条漫模式（宽高比 ${avgAspectRatio.toFixed(1)}:1）`,
+                    duration: 2500
+                  });
+                } catch (e) {
+                  logger.warn(TAG, `显示toast失败: ${String(e)}`);
+                }
+              }
+            },
             onComponentReady: (component: MangaViewer) => {
               // 获取MangaViewer组件实例引用
               this.mangaViewerComponent = component;
               logger.info(TAG, '🔔 触发MangaViewer预加载');
-              component.kickstartLoading();
               const chapter = this.readerState.currentChapter;
               const expectedIndex = this.readerState.currentPageIndex;
               
@@ -5051,12 +5120,16 @@ export struct MangaReaderPage {
               const viewerIndex = component.currentPageIndex;
               logger.info(TAG, `🔧 [修复] 页面索引检查: viewer=${viewerIndex}, expected=${expectedIndex}`);
               if (viewerIndex !== expectedIndex && expectedIndex >= 0) {
-                logger.info(TAG, `🔧 [修复] 检测到页面索引不一致: viewer=${viewerIndex}, expected=${expectedIndex}，通过readerState同步`);
-                // 通过更新 readerState.currentPageIndex 来同步 MangaViewer（@Prop绑定）
-                this.readerState.currentPageIndex = expectedIndex;
+                logger.info(TAG, `🔧 [修复] 检测到页面索引不一致: viewer=${viewerIndex}, expected=${expectedIndex}，通过setPageIndex直接同步`);
+                // [修复] 使用 setPageIndex 方法直接设置 MangaViewer 的内部页面索引
+                // 这绕过了 @Prop @Watch 的时序问题，确保页面索引立即生效
+                component.setPageIndex(expectedIndex);
               } else {
                 logger.info(TAG, `🔧 [修复] 页面索引一致，无需跳转`);
               }
+              
+              // 在页面索引同步后再触发预加载
+              component.kickstartLoading();
               
               if (chapter && this.isWebtoonMode() && expectedIndex > 0) {
                 let savedPos: number = 0;

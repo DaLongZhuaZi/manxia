@@ -609,13 +609,19 @@ export class ImageCacheManager {
         const httpRequest = http.createHttp();
         const startTs: number = Date.now();
         
-        const defaultUa: string = 'HarmonyOS-Comic-Reader/1.0';
+        const defaultUa: string = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
         const defaultAccept: string = 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
         const defaultLang: string = 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
         const ua: string = options && options.headers && options.headers.userAgent ? String(options.headers.userAgent) : defaultUa;
         const acceptHdr: string = options && options.headers && options.headers.accept ? String(options.headers.accept) : defaultAccept;
-        const refererHdr: string = options && options.headers && options.headers.referer ? String(options.headers.referer) : '';
-        const originHdr: string = options && options.headers && options.headers.origin ? String(options.headers.origin) : '';
+        let refererHdr: string = options && options.headers && options.headers.referer ? String(options.headers.referer) : '';
+        let originHdr: string = options && options.headers && options.headers.origin ? String(options.headers.origin) : '';
+        
+        // 自动为特定CDN添加Referer（解决防盗链和SSL问题）
+        if (refererHdr.length === 0 && (url.includes('amh1234.wszwhg.net') || url.includes('gmh1234.wszwhg.net'))) {
+          refererHdr = 'https://b.amh1234.com/';
+          originHdr = 'https://b.amh1234.com';
+        }
         
         // 优化：使用内存缓存获取Cookie，避免每次都查询数据库
         let cookieHdr: string = options && options.headers && options.headers.cookie ? String(options.headers.cookie) : '';
@@ -724,8 +730,24 @@ export class ImageCacheManager {
         }
         
       } catch (error) {
-        retryCount++;
+        const errCode = (error as Record<string, Object>)['code'];
         const errMsg: string = error instanceof Error ? error.message : String(error);
+        
+        // 如果是SSL错误(2300060)且URL是HTTPS，尝试降级为HTTP
+        if (errCode === 2300060 && url.startsWith('https://')) {
+          const httpUrl = url.replace('https://', 'http://');
+          logger.info(TAG, `SSL错误，尝试HTTP降级: ${httpUrl.substring(0, 80)}`);
+          
+          try {
+            // 递归调用自己，使用HTTP URL
+            return await this.loadFromNetwork(httpUrl, options);
+          } catch (retryError) {
+            logger.warn(TAG, `HTTP降级也失败: ${httpUrl.substring(0, 80)}`);
+            // 继续正常的重试逻辑
+          }
+        }
+        
+        retryCount++;
         logger.warn(TAG, `网络加载失败 (${retryCount}/${maxRetries + 1}): url=${url}, msg=${errMsg}`);
         
         if (retryCount <= maxRetries) {

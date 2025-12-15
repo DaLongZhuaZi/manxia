@@ -44,6 +44,7 @@ import { common } from '@kit.AbilityKit';
 import webview from '@ohos.web.webview';
 import { DatabaseRecord, ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
+import { OnlineImageLoader, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 
 const TAG: string = 'MangaDetailPage';
 
@@ -298,6 +299,7 @@ struct MangaDetailPage {
   @State coverImageLoaded: boolean = false;
   @State coverDisplayWidth: number = COVER_IMAGE_WIDTH;
   @State coverDisplayHeight: number = COVER_IMAGE_HEIGHT;
+  @State coverPixelMap: image.PixelMap | null = null; // 使用PixelMap加载封面（支持headers）
   @State isChapterLoading: boolean = true;
   @State expandDescription: boolean = false;
   @State retryCount: number = 0;
@@ -595,9 +597,13 @@ struct MangaDetailPage {
   }
 
   /**
-   * 提供封面图片的 UI 渲染源：返回规范化后的路径或资源占位图
+   * 提供封面图片的 UI 渲染源：返回规范化后的路径、PixelMap或资源占位图
    */
-  getCoverImageSourceForUI(): string | ResourceStr {
+  getCoverImageSourceForUI(): string | ResourceStr | image.PixelMap {
+    // 优先使用PixelMap（通过OnlineImageLoader加载的带headers的图片）
+    if (this.coverPixelMap) {
+      return this.coverPixelMap;
+    }
     const mg: Manga | null = this.currentManga;
     if (mg && mg.coverImagePath && mg.coverImagePath.length > 0 && mg.coverSourceType !== undefined) {
       const normalized: string = this.normalizeDisplayPath(mg.coverImagePath as string, mg.coverSourceType as ImageSourceType);
@@ -1992,28 +1998,37 @@ struct MangaDetailPage {
       if (onlineComic.sourceId) {
         this.sourceId = Number(onlineComic.sourceId);
         
-        // 如果数据库中的sourceName为空，尝试从comic_source表查询
-        if (!onlineComic.sourceName || onlineComic.sourceName.trim().length === 0) {
-          try {
-            const sources = await dm.getAllComicSources();
-            for (let i = 0; i < sources.length; i++) {
-              const s: ESObject = sources[i] as ESObject;
-              if (Number(s.id) === this.sourceId) {
-                this.sourceName = String(s.name);
-                logger.info(TAG, `从comic_source表获取图源名称: ${this.sourceName}`);
-                break;
-              }
+        // [修复] 定义无效的图源名称列表
+        const invalidSourceNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', 'WebView Source', ''];
+        const dbSourceName = onlineComic.sourceName || '';
+        const isInvalidName = invalidSourceNames.some(inv => dbSourceName.startsWith(inv));
+        
+        // [修复] 优先从comic_source表查询正确的图源名称
+        // 因为数据库中的sourceName可能是错误的（之前的bug导致）
+        try {
+          const sources = await dm.getAllComicSources();
+          for (let i = 0; i < sources.length; i++) {
+            const s: ESObject = sources[i] as ESObject;
+            if (Number(s.id) === this.sourceId) {
+              this.sourceName = String(s.name);
+              logger.info(TAG, `从comic_source表获取图源名称: ${this.sourceName}`);
+              break;
             }
-          } catch (err) {
-            logger.warn(TAG, `查询图源名称失败: ${String(err)}`);
           }
-        } else {
-          this.sourceName = onlineComic.sourceName;
+        } catch (err) {
+          logger.warn(TAG, `查询图源名称失败: ${String(err)}`);
         }
         
-        // 如果还是没有，使用默认值
+        // 如果从comic_source表没有获取到，且数据库中的名称有效，则使用数据库中的名称
+        if (!this.sourceName && !isInvalidName && dbSourceName.length > 0) {
+          this.sourceName = dbSourceName;
+          logger.info(TAG, `使用数据库中的图源名称: ${this.sourceName}`);
+        }
+        
+        // 如果还是没有，使用默认值（不应该到达这里）
         if (!this.sourceName) {
           this.sourceName = `WebView Source ${this.sourceId}`;
+          logger.warn(TAG, `⚠️ 无法获取有效图源名称，使用默认值: ${this.sourceName}`);
         }
         
         logger.info(TAG, `设置图源信息: sourceId=${this.sourceId}, sourceName=${this.sourceName}`);
@@ -2074,12 +2089,74 @@ struct MangaDetailPage {
       if (this.currentManga) {
         this.currentManga.chapters = dbChapters;
         this.filteredChapters = dbChapters;
+        // [修复] 同步数据源以供LazyForEach使用
+        this.chapterDataSource.setChapters(dbChapters);
       }
       
       // 加载阅读进度和收藏状态
       await this.loadReadingProgressFromDatabase(onlineComic.id);
       await this.loadFavoriteStatus(onlineComic.id);
       await this.loadChapterProgressData();
+      
+      // [修复] 初始化MangaEngine用于网络请求
+      if (!this.mangaEngine && this.sourceId > 0) {
+        try {
+          // 获取图源名称
+          if (!this.sourceName) {
+            const sources = await dm.getAllComicSources();
+            for (let i = 0; i < sources.length; i++) {
+              const s: ESObject = sources[i] as ESObject;
+              if (Number(s.id) === this.sourceId) {
+                this.sourceName = String(s.name);
+                logger.info(TAG, `[场景2] 获取图源名称: ${this.sourceName}`);
+                break;
+              }
+            }
+          }
+          
+          if (this.sourceName) {
+            logger.info(TAG, `[场景2] 初始化MangaEngine: sourceName="${this.sourceName}", sourceId=${this.sourceId}`);
+            this.mangaEngine = await this.webViewManager.getMangaEngine(this.sourceId, this.sourceName);
+          } else {
+            logger.warn(TAG, `[场景2] 无法获取图源名称，跳过MangaEngine初始化`);
+          }
+        } catch (engineErr) {
+          logger.warn(TAG, `[场景2] MangaEngine初始化失败: ${String(engineErr)}`);
+        }
+      }
+      
+      // [修复] 从网络获取漫画详情（作者、简介、标签等）
+      if (this.mangaEngine && this.currentManga) {
+        try {
+          logger.info(TAG, `📡 [场景2] 开始获取漫画详情...`);
+          const detailResult = await this.mangaEngine.getMangaDetail(externalId);
+          if (detailResult.success && detailResult.data) {
+            const detail = detailResult.data;
+            // 更新漫画详情信息
+            if (detail.author) {
+              this.currentManga.metadata.authors = [detail.author];
+              this.currentManga.metadata.artists = [detail.author];
+            }
+            if (detail.description) {
+              this.currentManga.description = detail.description;
+            }
+            if (detail.genres && detail.genres.length > 0) {
+              this.currentManga.metadata.genres = detail.genres;
+            }
+            if (detail.status) {
+              // 转换状态
+              if (detail.status === '连载中') {
+                this.currentManga.status = MangaStatus.ONGOING;
+              } else if (detail.status === '已完结') {
+                this.currentManga.status = MangaStatus.COMPLETED;
+              }
+            }
+            logger.info(TAG, `✅ [场景2] 漫画详情已更新: 作者=${detail.author || '未知'}, 简介长度=${detail.description?.length || 0}`);
+          }
+        } catch (detailErr) {
+          logger.warn(TAG, `[场景2] 获取漫画详情失败: ${String(detailErr)}`);
+        }
+      }
       
       logger.info(TAG, `📡 开始网络请求更新章节列表...`);
       
@@ -2094,6 +2171,8 @@ struct MangaDetailPage {
         if (this.currentManga) {
           this.currentManga.chapters = updatedChapters;
           this.filteredChapters = updatedChapters;
+          // [修复] 同步数据源以供LazyForEach使用
+          this.chapterDataSource.setChapters(updatedChapters);
         }
         
         logger.info(TAG, `✅ [场景2] 章节列表已更新: ${updatedChapters.length} 个章节`);
@@ -2521,7 +2600,7 @@ struct MangaDetailPage {
       isFavorite: false,
       lastUpdatedAt: info.updated ? new Date(info.updated).getTime() : Date.now(),
       sourceInfo: {
-        sourceName: `WebView Source ${this.sourceId}`,
+        sourceName: this.sourceName || `WebView Source ${this.sourceId}`,
         sourceUrl: info.url || info.id || '',
         sourceId: this.sourceId.toString(),
         sourceLanguage: 'zh',
@@ -3189,6 +3268,60 @@ struct MangaDetailPage {
   }
 
   /**
+   * 使用OnlineImageLoader加载封面图片（支持自定义headers）
+   * 用于加载需要Referer等headers的网络封面图片
+   */
+  private async loadCoverWithHeaders(coverUrl: string): Promise<void> {
+    if (!coverUrl || coverUrl.trim() === '') {
+      logger.warn(TAG, '封面URL为空，跳过加载');
+      return;
+    }
+    
+    try {
+      logger.info(TAG, `使用OnlineImageLoader加载封面: ${coverUrl}`);
+      
+      // 构建请求headers - 从coverHttpHeaders获取或使用默认值
+      const headers: OnlineRequestHeaders = {
+        referer: this.coverHttpHeaders['Referer'] || coverUrl.split('/').slice(0, 3).join('/') + '/',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      };
+      
+      // 使用OnlineImageLoader加载
+      const loader = OnlineImageLoader.getInstance();
+      const pixelMap: image.PixelMap | null = await loader.load(coverUrl, { 
+        headers,
+        priority: 10  // 高优先级
+      });
+      
+      if (pixelMap) {
+        this.coverPixelMap = pixelMap;
+        logger.info(TAG, `封面PixelMap加载成功: ${coverUrl}`);
+        
+        // 获取图片尺寸用于显示
+        try {
+          const imageInfo: image.ImageInfo = await pixelMap.getImageInfo();
+          const width: number = imageInfo.size.width;
+          const height: number = imageInfo.size.height;
+          if (width > 0 && height > 0) {
+            const ratio = height / width;
+            const newWidth = COVER_IMAGE_WIDTH;
+            const newHeight = Math.min(Math.round(newWidth * ratio), COVER_IMAGE_HEIGHT * 1.5);
+            this.coverDisplayWidth = newWidth;
+            this.coverDisplayHeight = newHeight;
+            logger.info(TAG, `封面尺寸: ${width}x${height}, 显示: ${newWidth}x${newHeight}`);
+          }
+        } catch (e) {
+          logger.warn(TAG, `获取封面尺寸失败: ${String(e)}`);
+        }
+      } else {
+        logger.warn(TAG, `封面PixelMap加载返回null: ${coverUrl}`);
+      }
+    } catch (err) {
+      logger.error(TAG, `使用OnlineImageLoader加载封面失败: ${String(err)}`);
+    }
+  }
+
+  /**
    * 触发章节预加载
    */
   private triggerChapterPreload(): void {
@@ -3299,7 +3432,7 @@ struct MangaDetailPage {
       readerParams.mangaId = this.pageParams.mangaId; // 传递外部ID用于API请求
       let sn1: string = '';
       const dm = DataManager.getInstance();
-      const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', ''];
+      const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', 'WebView Source', ''];
       
       // [关键修复] 优先使用当前页面已确定的图源名称（this.sourceName）
       // 这是最可靠的来源，因为 MangaDetailPage 在初始化时已经正确设置了 sourceName
@@ -3318,12 +3451,28 @@ struct MangaDetailPage {
         }
       }
       
-      // 降级方案2：从 online_comic_info 表获取图源名称（可能不准确，仅作为最后手段）
+      // 降级方案2：从 online_comic_info 表获取图源名称，并尝试通过 sourcePkg 恢复图源关联
       if (!sn1 && this.pageParams.mangaId) {
         const onlineInfo = await dm.getOnlineComicInfoById(this.pageParams.mangaId);
-        if (onlineInfo && onlineInfo.sourceName && !invalidNames.includes(onlineInfo.sourceName)) {
-          sn1 = onlineInfo.sourceName;
-          logger.debug(TAG, `从online_comic_info获取图源名称: "${sn1}"`);
+        if (onlineInfo) {
+          // [修复] 优先通过 sourcePkg 查找图源（解决图源删除后重新导入的问题）
+          if (onlineInfo.sourcePkg) {
+            const newSourceId = await dm.findSourceIdByPkgOrName(onlineInfo.sourcePkg, onlineInfo.sourceName);
+            if (newSourceId !== null) {
+              // 更新 pageParams.sourceId 以便后续使用正确的图源ID
+              this.pageParams.sourceId = newSourceId;
+              const srcRecord = await dm.getComicSourceById(newSourceId);
+              if (srcRecord && srcRecord.name) {
+                sn1 = srcRecord.name;
+                logger.info(TAG, `[修复] 通过sourcePkg="${onlineInfo.sourcePkg}"恢复图源: "${sn1}" (newSourceId=${newSourceId})`);
+              }
+            }
+          }
+          // 如果仍未找到，使用 online_comic_info 中的 sourceName
+          if (!sn1 && onlineInfo.sourceName && !invalidNames.includes(onlineInfo.sourceName)) {
+            sn1 = onlineInfo.sourceName;
+            logger.debug(TAG, `从online_comic_info获取图源名称: "${sn1}"`);
+          }
         }
       }
       
@@ -3598,7 +3747,7 @@ struct MangaDetailPage {
       readerParams.sourceId = this.pageParams.sourceId;
       let sn2: string = '';
       const dm = DataManager.getInstance();
-      const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', ''];
+      const invalidNames = ['本地导入', 'LOCAL', 'UNKNOWN', 'WEBVIEW', 'WebView Source', ''];
       
       // [关键修复] 优先使用当前页面已确定的图源名称（this.sourceName）
       // 这是最可靠的来源，因为 MangaDetailPage 在初始化时已经正确设置了 sourceName
@@ -3610,9 +3759,24 @@ struct MangaDetailPage {
       // 降级方案1：从online_comic_info表获取图源名称
       if (!sn2 && this.pageParams.mangaId) {
         const onlineInfo = await dm.getOnlineComicByExternalId(this.pageParams.mangaId);
-        if (onlineInfo && onlineInfo.sourceName && !invalidNames.includes(onlineInfo.sourceName)) {
-          sn2 = onlineInfo.sourceName;
-          logger.debug(TAG, `从online_comic_info获取有效图源名称: "${sn2}"`);
+        if (onlineInfo) {
+          // [修复] 优先通过 sourcePkg 查找图源（解决图源删除后重新导入的问题）
+          if (onlineInfo.sourcePkg) {
+            const newSourceId = await dm.findSourceIdByPkgOrName(onlineInfo.sourcePkg, onlineInfo.sourceName);
+            if (newSourceId !== null) {
+              this.pageParams.sourceId = newSourceId;
+              const srcRecord = await dm.getComicSourceById(newSourceId);
+              if (srcRecord && srcRecord.name) {
+                sn2 = srcRecord.name;
+                logger.info(TAG, `[修复] 通过sourcePkg="${onlineInfo.sourcePkg}"恢复图源: "${sn2}" (newSourceId=${newSourceId})`);
+              }
+            }
+          }
+          // 如果仍未找到，使用 online_comic_info 中的 sourceName
+          if (!sn2 && onlineInfo.sourceName && !invalidNames.includes(onlineInfo.sourceName)) {
+            sn2 = onlineInfo.sourceName;
+            logger.debug(TAG, `从online_comic_info获取有效图源名称: "${sn2}"`);
+          }
         }
       }
       
@@ -3767,14 +3931,24 @@ struct MangaDetailPage {
                 .objectFit(ImageFit.Contain) // 仅缩放，完整显示，不裁剪
                 .backgroundColor(Color.Transparent)
                 .onError(() => {
-                  // 图片加载失败时的回调
-                  logger.warn(TAG, `封面图片加载失败: raw='${String(this.currentManga?.coverImagePath)}', display='${this.getCoverDisplayPathForLog()}', source=${String(this.currentManga?.coverSourceType)}`);
-                  if (this.currentManga) {
-                    this.currentManga.coverImagePath = '';
+                  // 图片加载失败时的回调 - 尝试使用OnlineImageLoader加载（支持headers）
+                  const coverUrl = this.currentManga?.coverImagePath as string;
+                  logger.warn(TAG, `封面图片加载失败，尝试使用OnlineImageLoader: raw='${coverUrl}', source=${String(this.currentManga?.coverSourceType)}`);
+                  
+                  // 如果是网络图片且尚未使用PixelMap加载，尝试用OnlineImageLoader加载
+                  if (coverUrl && coverUrl.startsWith('http') && !this.coverPixelMap) {
+                    this.loadCoverWithHeaders(coverUrl).catch((err: Error) => {
+                      logger.warn(TAG, `OnlineImageLoader加载封面也失败: ${err.message}`);
+                    });
+                  } else {
+                    // 非网络图片或已尝试过，回退到占位图
+                    if (this.currentManga) {
+                      this.currentManga.coverImagePath = '';
+                    }
+                    this.refreshCoverSize().catch((err: Error) => {
+                      logger.warn(TAG, `封面尺寸回退失败: ${err.message}`);
+                    });
                   }
-                  this.refreshCoverSize().catch((err: Error) => {
-                    logger.warn(TAG, `封面尺寸回退失败: ${err.message}`);
-                  });
                 })
                 .alt($r('app.media.mangabook')) // 设置加载失败时的替代图片
             }

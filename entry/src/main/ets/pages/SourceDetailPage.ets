@@ -125,6 +125,9 @@ export struct SourceDetailPage {
   @State filterOrdering: string = '-datetime_updated'; // 筛选排序
   @State filterRegion: string = 'all'; // 筛选地区
   @State filterTheme: string = 'all'; // 筛选题材
+  @State searchResults: ComicInfo[] = []; // 搜索结果（独立存储）
+  @State lastSearchKeyword: string = ''; // 上次搜索的关键词
+  @State searchTabVisible: boolean = false; // 搜索标签是否可见
 
   private sourceId: number = 0;
   private sourceName: string = '';
@@ -846,12 +849,10 @@ export struct SourceDetailPage {
             result = await this.mangaSourceEngine.getLeaderboard(this.currentPage);
             break;
           
-          case TabType.CUSTOM:
-            // 自定义工作流标签
-            const workflowName = currentTab.workflowName || currentTab.id;
-            logger.info(TAG, `开始执行自定义工作流: ${workflowName}, 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
-            result = await this.mangaSourceEngine.executeCustomWorkflow(workflowName, this.currentPage, currentTab.filterParams);
-            break;
+          case TabType.SEARCH:
+            // 搜索标签 - 直接返回已缓存的搜索结果
+            logger.info(TAG, `搜索标签: 使用缓存的搜索结果，共 ${this.searchResults.length} 条`);
+            return this.searchResults;
           
           default:
             logger.warn(TAG, `未知的标签类型: ${currentTab.type}，使用热门漫画`);
@@ -1006,8 +1007,17 @@ export struct SourceDetailPage {
 
     this.currentTabId = tabId;
     this.currentPage = 1;
-    this.comicList = [];
     this.hasMore = true;
+    
+    // 如果切换到搜索标签，使用缓存的搜索结果
+    if (tabId === 'search') {
+      this.comicList = this.searchResults;
+      this.comicDataSource.updateItems(this.searchResults);
+      return;
+    }
+    
+    // 切换到其他标签时，清空列表并重新加载
+    this.comicList = [];
     await this.loadComics();
   }
 
@@ -1263,29 +1273,81 @@ export struct SourceDetailPage {
 
     this.showSearchDialog = false;
     this.isLoading = true;
-    this.comicList = [];
+    this.lastSearchKeyword = this.searchKeyword.trim();
+    
+    // 添加或更新搜索标签页
+    this.addOrUpdateSearchTab();
+    
+    // 切换到搜索标签页
+    this.currentTabId = 'search';
+    this.searchResults = [];
+    this.comicList = []; // 清空列表以显示加载动画
+    this.comicDataSource.updateItems([]);
     
     try {
       let comics: ComicInfo[] = [];
       
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
-        logger.info(TAG, `使用WebView系统搜索: 关键词="${this.searchKeyword}"`);
-        const result = await this.mangaSourceEngine.searchManga(this.searchKeyword, 1);
+        logger.info(TAG, `使用WebView系统搜索: 关键词="${this.lastSearchKeyword}"`);
+        const result = await this.mangaSourceEngine.searchManga(this.lastSearchKeyword, 1);
         if (result && result.success && result.data) {
           comics = this.convertMangaInfoToComicInfo(result.data.mangas);
         }
       } else {
-        logger.info(TAG, `使用HTTP系统搜索: 关键词="${this.searchKeyword}"`);
-        comics = await this.sourceManager.search(this.sourceId, this.searchKeyword, 1, 20);
+        logger.info(TAG, `使用HTTP系统搜索: 关键词="${this.lastSearchKeyword}"`);
+        comics = await this.sourceManager.search(this.sourceId, this.lastSearchKeyword, 1, 20);
       }
       
-      this.comicList = comics;
-      this.comicDataSource.updateItems(this.comicList);
+      this.searchResults = comics;
+      this.comicList = comics; // 同步更新 comicList 以正确显示结果
+      this.comicDataSource.updateItems(this.searchResults);
       logger.info(TAG, `搜索完成，找到 ${comics.length} 个结果`);
     } catch (error) {
       logger.error(TAG, '搜索失败', String(error));
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  /**
+   * 添加或更新搜索标签页
+   */
+  private addOrUpdateSearchTab(): void {
+    // 检查是否已存在搜索标签
+    const existingSearchTabIndex = this.tabsConfig.findIndex(t => t.type === TabType.SEARCH);
+    
+    const searchTab: TabConfig = {
+      id: 'search',
+      type: TabType.SEARCH,
+      name: `搜索: ${this.searchKeyword.trim()}`,
+      enabled: true,
+      order: 999, // 放在最后
+      requiresLogin: false
+    };
+    
+    if (existingSearchTabIndex >= 0) {
+      // 更新现有搜索标签
+      this.tabsConfig[existingSearchTabIndex] = searchTab;
+    } else {
+      // 添加新的搜索标签
+      this.tabsConfig.push(searchTab);
+    }
+    
+    this.searchTabVisible = true;
+    logger.info(TAG, `搜索标签已${existingSearchTabIndex >= 0 ? '更新' : '添加'}: "${this.searchKeyword.trim()}"`);
+  }
+
+  /**
+   * 移除搜索标签页
+   */
+  private removeSearchTab(): void {
+    const searchTabIndex = this.tabsConfig.findIndex(t => t.type === TabType.SEARCH);
+    if (searchTabIndex >= 0) {
+      this.tabsConfig.splice(searchTabIndex, 1);
+      this.searchTabVisible = false;
+      this.searchResults = [];
+      this.lastSearchKeyword = '';
+      logger.info(TAG, '搜索标签已移除');
     }
   }
 
@@ -1958,12 +2020,27 @@ export struct SourceDetailPage {
   @Builder
   buildTabItem(tab: TabConfig) {
     Column() {
-      Text(tab.name)
-        .fontSize(15)
-        .fontWeight(this.currentTabId === tab.id ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(this.currentTabId === tab.id ?
-          ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      Row({ space: 4 }) {
+        Text(tab.name)
+          .fontSize(15)
+          .fontWeight(this.currentTabId === tab.id ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.currentTabId === tab.id ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .constraintSize({ maxWidth: 120 })
+
+        // 搜索标签显示关闭按钮
+        if (tab.type === TabType.SEARCH) {
+          Text('×')
+            .fontSize(16)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.closeSearchTab();
+            })
+        }
+      }
 
       // 指示器
       if (this.currentTabId === tab.id) {
@@ -1980,6 +2057,22 @@ export struct SourceDetailPage {
     .onClick(() => {
       this.switchToTab(tab.id);
     })
+  }
+
+  /**
+   * 关闭搜索标签
+   */
+  private closeSearchTab(): void {
+    // 如果当前在搜索标签，先切换到第一个标签
+    if (this.currentTabId === 'search' && this.tabsConfig.length > 1) {
+      const firstNonSearchTab = this.tabsConfig.find(t => t.type !== TabType.SEARCH);
+      if (firstNonSearchTab) {
+        this.switchToTab(firstNonSearchTab.id);
+      }
+    }
+    
+    // 移除搜索标签
+    this.removeSearchTab();
   }
 
   /**

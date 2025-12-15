@@ -13,7 +13,8 @@ export enum TabType {
   FAVORITES = 'favorites',
   HISTORY = 'history',
   LEADERBOARD = 'leaderboard',  // 排行榜
-  CUSTOM = 'custom'  // 自定义工作流标签
+  CUSTOM = 'custom',  // 自定义工作流标签
+  SEARCH = 'search'  // 搜索结果标签
 }
 
 /**

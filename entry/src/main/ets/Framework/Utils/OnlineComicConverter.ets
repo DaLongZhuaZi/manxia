@@ -43,7 +43,8 @@ export class OnlineComicConverter {
       addTime: Number(obj.addTime) || 0,
       createTime: Number(obj.createTime) || 0,
       updateTime: Number(obj.updateTime) || 0,
-      sourceName: String(obj.sourceName || '')
+      sourceName: String(obj.sourceName || ''),
+      sourcePkg: String(obj.sourcePkg || '')
     };
     
     logger.debug(TAG, `  ✅ [DB→OnlineComicInfo] 转换完成: id="${info.id}", externalId="${info.externalId}"`);

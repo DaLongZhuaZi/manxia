@@ -69,6 +69,8 @@ export interface MangaViewerParams {
   onDoubleTap?: (event: ClickEvent) => void;
   /** 滚动位置变化回调 */
   onScrollPositionChange?: (position: number) => void;
+  /** 条漫检测回调 - 当检测到图片是条漫格式时触发 */
+  onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;
 }
 
 /**
@@ -191,6 +193,7 @@ interface MangaViewerCallbacks {
   onDoubleTap: (event: ClickEvent) => void;
   onScrollPositionChange?: (position: number) => void;
   onComponentReady?: (component: MangaViewer) => void;
+  onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;  // 条漫检测回调
 }
 
 @Component
@@ -271,6 +274,12 @@ export struct MangaViewer {
   @State private lastSwipeAt: number = 0;
   private readonly SWIPE_COOLDOWN_MS: number = 250;
   @State private pageChangeCommitted: boolean = false;
+  
+  // 条漫自动检测相关
+  private webtoonDetectionDone: boolean = false;  // 是否已完成检测
+  private detectedAspectRatios: number[] = [];    // 已检测的图片宽高比
+  private readonly WEBTOON_ASPECT_RATIO_THRESHOLD: number = 2.0;  // 条漫判定阈值（高/宽 > 2）
+  private readonly WEBTOON_DETECTION_SAMPLE_COUNT: number = 3;    // 检测样本数量
   @State private isCommittingPageTurn: boolean = false;
 
   // 条漫优化相关状态
@@ -326,6 +335,8 @@ export struct MangaViewer {
   // 翻页动画状态
   @State private isPageTurning: boolean = false;
   @State private suppressExternalIndex: boolean = false;
+  // [修复] 初始化保护标志，防止 onCurrentPageIndexChange 在初始化期间被错误触发
+  private isInitialized: boolean = false;
   @State private pageTurnDirection: 'left' | 'right' | 'up' | 'down' | null = null;
   @State private pageTurnProgress: number = 0;
   @State private renderEpoch: number = 0;
@@ -383,6 +394,12 @@ export struct MangaViewer {
     this.currentScale = this.zoomScale;
     this.animationId = AnimationUtils.generateAnimationId();
     this.uiContext = this.getUIContext();
+    
+    // [修复] 在初始化期间设置保护标志，防止 onCurrentPageIndexChange 覆盖正确的页面索引
+    // 问题：ArkUI 的 @Prop @Watch 机制在组件初始化后会触发 @Watch 回调，
+    // 但此时 currentPageIndex 的值可能还没有被父组件正确设置
+    this.isInitialized = false;
+    
     this.viewCurrentPageIndex = this.currentPageIndex;
     this.updateSinglePageDisplay();
 
@@ -424,6 +441,10 @@ export struct MangaViewer {
     if (this.callbacks.onComponentReady) {
       this.callbacks.onComponentReady(this);
     }
+    
+    // [修复] 立即设置初始化完成标志，允许父组件通过 setPageIndex 方法同步页面索引
+    this.isInitialized = true;
+    logger.debug(TAG, `✅ MangaViewer初始化完成，当前页面索引: ${this.viewCurrentPageIndex + 1}`);
 
     // 添加空值检查，防止访问null对象的属性
     const chapterTitle = this.chapter ? this.chapter.title : '未知章节';
@@ -520,6 +541,21 @@ export struct MangaViewer {
   }
 
   /**
+   * [修复] 公开方法：强制设置页面索引
+   * 用于父组件在 onComponentReady 中同步正确的页面索引
+   * 这个方法绕过 @Prop @Watch 的时序问题，直接设置内部状态
+   */
+  public setPageIndex(pageIndex: number): void {
+    if (pageIndex >= 0 && this.chapter && this.chapter.pages && pageIndex < this.chapter.pages.length) {
+      logger.info(TAG, `[修复] 强制设置页面索引: ${this.viewCurrentPageIndex + 1} -> ${pageIndex + 1}`);
+      this.viewCurrentPageIndex = pageIndex;
+      this.updateSinglePageDisplay();
+      this.updateSinglePagePreview();
+      this.loadCurrentAndNeighborPages();
+    }
+  }
+
+  /**
    * 当前页面索引变化时的回调（@Watch监听）
    */
   onCurrentPageIndexChange(): void {
@@ -527,6 +563,15 @@ export struct MangaViewer {
       logger.debug(TAG, `忽略外部索引更新: 外部=${this.currentPageIndex + 1}, 本地=${this.viewCurrentPageIndex + 1}`);
       return;
     }
+    
+    // [修复] 在初始化期间忽略 @Watch 回调，防止错误的页面索引覆盖正确的初始值
+    // 问题：ArkUI 的 @Prop @Watch 机制在组件初始化后会触发 @Watch 回调，
+    // 但此时传入的 currentPageIndex 可能是默认值（0或1），而不是父组件期望的值
+    if (!this.isInitialized) {
+      logger.debug(TAG, `[修复] 忽略初始化期间的页面索引变化: 外部=${this.currentPageIndex + 1}, 本地=${this.viewCurrentPageIndex + 1}`);
+      return;
+    }
+    
     logger.debug(TAG, `页面索引变化: 新页面=${this.currentPageIndex + 1}`);
     this.viewCurrentPageIndex = this.currentPageIndex;
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
@@ -4323,9 +4368,8 @@ export struct MangaViewer {
     this.renderEpoch = this.renderEpoch + 1;
 
     this.singlePagePageId = page.id;
-    // 始终使用URL，不使用PixelMap作为Image的src
-    // PixelMap仅用于预加载和缓存，Image组件会从缓存中读取
-    this.singlePageImageInput = this.getImageResource(page);
+    // 优先使用PixelMap（支持加密图片解密后显示），否则使用URL
+    this.singlePageImageInput = this.getDisplayImageInput(page);
 
     // 记录当前状态用于调试
     const hasPm = this.pagePixelMaps.has(page.id);
@@ -4341,8 +4385,8 @@ export struct MangaViewer {
     if (prevIdx >= 0) {
       const prevPage: MangaPage = this.chapter.pages[prevIdx];
       this.previewPrevPageId = prevPage.id;
-      // 始终使用URL，不使用PixelMap
-      this.previewPrevImageInput = this.getImageResource(prevPage);
+      // 优先使用PixelMap（支持加密图片），否则使用URL
+      this.previewPrevImageInput = this.getDisplayImageInput(prevPage);
       // 确保预览页也触发加载
       const st = this.getPageLoadState(prevPage);
       const hasPm = this.pagePixelMaps.has(prevPage.id);
@@ -4356,8 +4400,8 @@ export struct MangaViewer {
     if (nextIdx >= 0) {
       const nextPage: MangaPage = this.chapter.pages[nextIdx];
       this.previewNextPageId = nextPage.id;
-      // 始终使用URL，不使用PixelMap
-      this.previewNextImageInput = this.getImageResource(nextPage);
+      // 优先使用PixelMap（支持加密图片），否则使用URL
+      this.previewNextImageInput = this.getDisplayImageInput(nextPage);
       // 确保预览页也触发加载
       const st = this.getPageLoadState(nextPage);
       const hasPm = this.pagePixelMaps.has(nextPage.id);
@@ -4385,13 +4429,13 @@ export struct MangaViewer {
       const prevRightIdx: number = prevPairStart + 1;
       const prevRightValid: boolean = prevRightIdx < total;
       this.previewPrevLeftPageId = prevLeft.id;
-      // 始终使用URL，不使用PixelMap
-      this.previewPrevLeftImageInput = this.getImageResource(prevLeft);
+      // 优先使用PixelMap（支持加密图片），否则使用URL
+      this.previewPrevLeftImageInput = this.getDisplayImageInput(prevLeft);
       if (prevRightValid) {
         const prevRight: MangaPage = this.chapter.pages[prevRightIdx];
         this.previewPrevRightPageId = prevRight.id;
-        // 始终使用URL，不使用PixelMap
-        this.previewPrevRightImageInput = this.getImageResource(prevRight);
+        // 优先使用PixelMap（支持加密图片），否则使用URL
+        this.previewPrevRightImageInput = this.getDisplayImageInput(prevRight);
       } else {
         this.previewPrevRightPageId = '';
         this.previewPrevRightImageInput = $r('app.media.ic_image');
@@ -4408,13 +4452,13 @@ export struct MangaViewer {
       const nextRightIdx: number = nextPairStart + 1;
       const nextRightValid: boolean = nextRightIdx < total;
       this.previewNextLeftPageId = nextLeft.id;
-      // 始终使用URL，不使用PixelMap
-      this.previewNextLeftImageInput = this.getImageResource(nextLeft);
+      // 优先使用PixelMap（支持加密图片），否则使用URL
+      this.previewNextLeftImageInput = this.getDisplayImageInput(nextLeft);
       if (nextRightValid) {
         const nextRight: MangaPage = this.chapter.pages[nextRightIdx];
         this.previewNextRightPageId = nextRight.id;
-        // 始终使用URL，不使用PixelMap
-        this.previewNextRightImageInput = this.getImageResource(nextRight);
+        // 优先使用PixelMap（支持加密图片），否则使用URL
+        this.previewNextRightImageInput = this.getDisplayImageInput(nextRight);
       } else {
         this.previewNextRightPageId = '';
         this.previewNextRightImageInput = $r('app.media.ic_image');
@@ -4437,8 +4481,8 @@ export struct MangaViewer {
     if (this.leftPageIndex >= 0 && this.leftPageIndex < this.chapter.pages.length) {
       const lp: MangaPage = this.chapter.pages[this.leftPageIndex];
       this.doubleLeftPageId = lp.id;
-      // 始终使用URL，不使用PixelMap作为Image的src
-      this.doubleLeftImageInput = this.getImageResource(lp);
+      // 优先使用PixelMap（支持加密图片解密后显示），否则使用URL
+      this.doubleLeftImageInput = this.getDisplayImageInput(lp);
       const hasLPm = this.pagePixelMaps.has(lp.id);
       logger.debug(TAG, `双页左侧更新: idx=${this.leftPageIndex}, id=${lp.id}, hasPm=${hasLPm}, src=${String(this.doubleLeftImageInput)}`);
     } else {
@@ -4448,8 +4492,8 @@ export struct MangaViewer {
     if (this.rightPageIndex >= 0 && this.rightPageIndex < this.chapter.pages.length) {
       const rp: MangaPage = this.chapter.pages[this.rightPageIndex];
       this.doubleRightPageId = rp.id;
-      // 始终使用URL，不使用PixelMap作为Image的src
-      this.doubleRightImageInput = this.getImageResource(rp);
+      // 优先使用PixelMap（支持加密图片解密后显示），否则使用URL
+      this.doubleRightImageInput = this.getDisplayImageInput(rp);
       const hasRPm = this.pagePixelMaps.has(rp.id);
       logger.debug(TAG, `双页右侧更新: idx=${this.rightPageIndex}, id=${rp.id}, hasPm=${hasRPm}, src=${String(this.doubleRightImageInput)}`);
     } else {
@@ -4781,6 +4825,9 @@ export struct MangaViewer {
     if (pageIdx < 0) {
       return;
     }
+    
+    // 条漫自动检测：分析已加载图片的宽高比
+    this.analyzeImageForWebtoonDetection(page);
 
     // 检查是否是当前可见页面
     const isVisible = this.isPageCurrentlyVisible(page);
@@ -4796,6 +4843,58 @@ export struct MangaViewer {
       this.updateDoublePageDisplay();
     } else {
       this.updateSinglePageDisplay();
+    }
+  }
+  
+  /**
+   * 分析图片宽高比，用于条漫自动检测
+   * 条漫特征：图片高度远大于宽度（高/宽 > 2）
+   */
+  private async analyzeImageForWebtoonDetection(page: MangaPage): Promise<void> {
+    // 如果已完成检测或当前是条漫/连续滚动模式，跳过
+    if (this.webtoonDetectionDone) {
+      return;
+    }
+    if (this.readingSettings.readingMode === ReadingMode.WEBTOON ||
+        this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL ||
+        this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL) {
+      this.webtoonDetectionDone = true;
+      return;
+    }
+    
+    try {
+      const pm = this.pagePixelMaps.get(page.id);
+      if (!pm) {
+        return;
+      }
+      
+      const imageInfo = await pm.getImageInfo();
+      const width = imageInfo.size.width;
+      const height = imageInfo.size.height;
+      
+      if (width > 0 && height > 0) {
+        const aspectRatio = height / width;
+        this.detectedAspectRatios.push(aspectRatio);
+        logger.debug(TAG, `条漫检测: page=${page.id}, 尺寸=${width}x${height}, 宽高比=${aspectRatio.toFixed(2)}`);
+        
+        // 收集足够样本后进行判定
+        if (this.detectedAspectRatios.length >= this.WEBTOON_DETECTION_SAMPLE_COUNT) {
+          this.webtoonDetectionDone = true;
+          
+          // 计算平均宽高比
+          const avgRatio = this.detectedAspectRatios.reduce((a, b) => a + b, 0) / this.detectedAspectRatios.length;
+          const isWebtoon = avgRatio >= this.WEBTOON_ASPECT_RATIO_THRESHOLD;
+          
+          logger.info(TAG, `条漫检测完成: 样本数=${this.detectedAspectRatios.length}, 平均宽高比=${avgRatio.toFixed(2)}, 判定=${isWebtoon ? '条漫' : '普通漫画'}`);
+          
+          // 触发回调通知父组件
+          if (this.callbacks && this.callbacks.onWebtoonDetected) {
+            this.callbacks.onWebtoonDetected(isWebtoon, avgRatio);
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn(TAG, `条漫检测分析失败: ${String(e)}`);
     }
   }
 
