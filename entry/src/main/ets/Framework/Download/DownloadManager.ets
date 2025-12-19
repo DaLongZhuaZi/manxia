@@ -28,6 +28,14 @@ export enum TaskStatus {
 }
 
 /**
+ * 下载任务类型
+ */
+export enum DownloadTaskType {
+  MANGA_CHAPTER = 'manga_chapter',  // 漫画章节
+  EBOOK = 'ebook'                   // 电子书
+}
+
+/**
  * 下载任务信息
  */
 export interface DownloadTaskInfo {
@@ -45,7 +53,10 @@ export interface DownloadTaskInfo {
   createdTime: number;           // 创建时间
   completedTime?: number;        // 完成时间
   error?: string;                // 错误信息
-  isOnlineManga?: boolean;       // [新增] 是否为在线漫画（用于区分存储表）
+  isOnlineManga?: boolean;       // 是否为在线漫画（用于区分存储表）
+  taskType?: DownloadTaskType;   // 任务类型
+  fileFormat?: string;           // 电子书格式（epub/mobi/pdf等）
+  sourceId?: number;             // 图源ID
 }
 
 /**
@@ -169,9 +180,16 @@ export class MangaDownloadManager {
         const task = this.tasks.get(taskId)!;
         if (task.status === TaskStatus.PENDING) {
           this.activeDownloads.add(taskId);
-          this.downloadTask(taskId).catch((error: Error) => {
-            logger.error(TAG, `下载任务执行失败: ${taskId}, ${error.message}`);
-          });
+          // 根据任务类型分发到不同的下载方法
+          if (task.taskType === DownloadTaskType.EBOOK) {
+            this.downloadEBookTask(taskId).catch((error: Error) => {
+              logger.error(TAG, `电子书下载任务执行失败: ${taskId}, ${error.message}`);
+            });
+          } else {
+            this.downloadTask(taskId).catch((error: Error) => {
+              logger.error(TAG, `下载任务执行失败: ${taskId}, ${error.message}`);
+            });
+          }
         }
       }
     }
@@ -526,6 +544,232 @@ export class MangaDownloadManager {
       default:
         return DownloadStatus.PENDING;
     }
+  }
+
+  // ==================== 电子书下载支持 ====================
+
+  /**
+   * 创建电子书下载任务
+   */
+  public async createEBookDownloadTask(
+    bookId: string,
+    bookTitle: string,
+    downloadUrl: string,
+    fileFormat: string,
+    sourceId?: number
+  ): Promise<string> {
+    try {
+      if (!this.context) {
+        throw new Error('应用上下文未设置');
+      }
+
+      // 生成任务ID
+      const taskId = `ebook_${bookId}_${Date.now()}`;
+      
+      // 创建保存目录
+      const savePath = `${this.context.filesDir}/ebooks/${bookId}`;
+      await this.ensureDirectory(savePath);
+      const filePath = `${savePath}/${bookTitle}.${fileFormat}`;
+
+      // 创建任务信息
+      const taskInfo: DownloadTaskInfo = {
+        id: taskId,
+        mangaId: bookId,
+        chapterId: bookId,
+        chapterTitle: fileFormat.toUpperCase(),
+        mangaTitle: bookTitle,
+        urls: [downloadUrl],
+        savePath: filePath,
+        status: TaskStatus.PENDING,
+        progress: 0,
+        downloadedCount: 0,
+        totalCount: 1,
+        createdTime: Date.now(),
+        taskType: DownloadTaskType.EBOOK,
+        fileFormat: fileFormat,
+        sourceId: sourceId
+      };
+
+      // 保存到内存
+      this.tasks.set(taskId, taskInfo);
+      
+      // 保存到数据库
+      await this.saveTaskToDatabase(taskInfo);
+
+      // 添加到下载队列
+      this.downloadQueue.push(taskId);
+      
+      logger.info(TAG, `电子书下载任务已创建: ${taskId}, 书名: ${bookTitle}, 格式: ${fileFormat}`);
+      
+      // 开始处理队列
+      this.processQueue();
+      
+      return taskId;
+    } catch (error) {
+      const err = error as BusinessError;
+      logger.error(TAG, `创建电子书下载任务失败: ${err.message}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 下载电子书任务
+   */
+  private async downloadEBookTask(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      logger.warn(TAG, `任务不存在: ${taskId}`);
+      return;
+    }
+
+    try {
+      logger.info(TAG, `开始下载电子书: ${taskId}`);
+      task.status = TaskStatus.DOWNLOADING;
+      await this.updateTaskInDatabase(task);
+
+      // 发送开始下载通知
+      await this.notificationManager.sendDownloadProgressNotification(
+        taskId,
+        `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`,
+        0,
+        100
+      );
+
+      // 下载文件
+      const downloadUrl = task.urls[0];
+      await this.downloadFileWithProgress(downloadUrl, task.savePath, (progress: number) => {
+        task.progress = progress;
+        // 每10%更新一次通知
+        if (progress % 10 === 0) {
+          this.notificationManager.sendDownloadProgressNotification(
+            taskId,
+            `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`,
+            progress,
+            100
+          );
+        }
+      });
+
+      // 下载完成
+      task.status = TaskStatus.COMPLETED;
+      task.progress = 100;
+      task.downloadedCount = 1;
+      task.completedTime = Date.now();
+      await this.updateTaskInDatabase(task);
+      
+      // 发送完成通知
+      await this.notificationManager.sendDownloadCompleteNotification(
+        taskId,
+        `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`
+      );
+      
+      logger.info(TAG, `电子书下载完成: ${taskId}, 保存路径: ${task.savePath}`);
+    } catch (error) {
+      const err = error as Error;
+      task.status = TaskStatus.FAILED;
+      task.error = err.message;
+      await this.updateTaskInDatabase(task);
+      
+      // 发送失败通知
+      await this.notificationManager.sendDownloadFailedNotification(
+        taskId,
+        `${task.mangaTitle} (${task.fileFormat?.toUpperCase() || 'EBOOK'})`,
+        err.message
+      );
+      
+      logger.error(TAG, `电子书下载失败: ${taskId}, ${err.message}`);
+    } finally {
+      // 从活动下载中移除
+      this.activeDownloads.delete(taskId);
+      
+      // 继续处理队列
+      this.processQueue();
+    }
+  }
+
+  /**
+   * 带进度回调的文件下载
+   */
+  private async downloadFileWithProgress(
+    url: string, 
+    filePath: string, 
+    onProgress: (progress: number) => void
+  ): Promise<void> {
+    if (!this.context) {
+      throw new Error('应用上下文未设置');
+    }
+
+    try {
+      const downloadConfig: request.DownloadConfig = {
+        url: url,
+        filePath: filePath,
+        enableMetered: true,
+        enableRoaming: true
+      };
+
+      const downloadTask = await request.downloadFile(this.context, downloadConfig);
+      
+      return new Promise<void>((resolve, reject) => {
+        downloadTask.on('progress', (receivedSize: number, totalSize: number) => {
+          if (totalSize > 0) {
+            const progress = Math.floor((receivedSize / totalSize) * 100);
+            onProgress(progress);
+          }
+        });
+
+        downloadTask.on('complete', () => {
+          logger.debug(TAG, `电子书下载完成: ${filePath}`);
+          onProgress(100);
+          resolve();
+        });
+
+        downloadTask.on('fail', (err: number) => {
+          logger.error(TAG, `电子书下载失败: ${filePath}, 错误码: ${err}`);
+          reject(new Error(`下载失败: ${err}`));
+        });
+      });
+    } catch (error) {
+      const err = error as BusinessError;
+      logger.error(TAG, `创建下载任务失败: ${err.message}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 获取电子书下载任务列表
+   */
+  public getEBookTasks(): DownloadTaskInfo[] {
+    return Array.from(this.tasks.values()).filter(
+      (task: DownloadTaskInfo) => task.taskType === DownloadTaskType.EBOOK
+    );
+  }
+
+  /**
+   * 获取指定电子书的下载任务
+   */
+  public getEBookTask(bookId: string): DownloadTaskInfo | undefined {
+    return Array.from(this.tasks.values()).find(
+      (task: DownloadTaskInfo) => task.taskType === DownloadTaskType.EBOOK && task.mangaId === bookId
+    );
+  }
+
+  /**
+   * 检查电子书是否已下载
+   */
+  public isEBookDownloaded(bookId: string): boolean {
+    const task = this.getEBookTask(bookId);
+    return task?.status === TaskStatus.COMPLETED;
+  }
+
+  /**
+   * 获取电子书本地路径
+   */
+  public getEBookLocalPath(bookId: string): string | undefined {
+    const task = this.getEBookTask(bookId);
+    if (task?.status === TaskStatus.COMPLETED) {
+      return task.savePath;
+    }
+    return undefined;
   }
 }
 

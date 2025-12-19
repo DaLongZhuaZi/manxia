@@ -17,6 +17,7 @@ import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Fr
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
+import { startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -167,7 +168,7 @@ export struct EBookDetailPage {
   private getCoverSource(): ResourceStr {
     const raw = this.ebook?.metadata?.coverImagePath || '';
     if (raw.length === 0) {
-      return $r('app.media.ic_ebook');
+      return $r('app.media.ebook');
     }
     
     // 检查是否为应用资源路径 (app.media.xxx)
@@ -175,12 +176,14 @@ export struct EBookDetailPage {
       const resourceName = raw.substring('app.media.'.length);
       if (resourceName === 'mangabook') {
         return $r('app.media.mangabook');
+      } else if (resourceName === 'ebook') {
+        return $r('app.media.ebook');
       } else if (resourceName === 'ic_ebook') {
         return $r('app.media.ic_ebook');
       } else if (resourceName === 'icon') {
         return $r('app.media.icon');
       }
-      return $r('app.media.ic_ebook');
+      return $r('app.media.ebook');
     }
     
     // 本地文件路径
@@ -224,11 +227,33 @@ export struct EBookDetailPage {
       return;
     }
 
-    logger.info(TAG, `开始阅读: ${this.ebook.metadata.title}`);
+    logger.info(TAG, `点击开始/继续阅读按钮`);
+    
+    // 触发翻开过渡动画（使用组件ID获取准确封面位置）
+    const coverPath: string = this.ebook.metadata.coverImagePath || '';
+    const coverComponentId: string = `cover_ebook_detail_${this.ebook.id}`;
     const readerParams: EBookReaderParams = {
       bookId: this.ebook.id
     };
-    this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+    const hasProgress = this.hasReadingProgress();
+    const bookTitle = this.ebook?.metadata.title;
+    
+    // 获取电子书背景设置
+    const ebookBackground = this.getEBookBackgroundSettings();
+    
+    logger.info(TAG, `触发翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, 有背景设置=${ebookBackground ? '是' : '否'}`);
+    startBookOpenTransitionWithComponentId(
+      coverPath,
+      coverComponentId,
+      this.ebook.id,
+      'ebook',
+      () => {
+        // 动画到达95%进度时触发导航，确保翻开动画完整播放
+        logger.info(TAG, `翻开过渡动画触发导航: ${hasProgress ? '继续' : '开始'}阅读电子书: ${bookTitle}`);
+        this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+      },
+      ebookBackground
+    );
   }
 
   /**
@@ -256,6 +281,41 @@ export struct EBookDetailPage {
   }
 
   /**
+   * 获取电子书背景设置（用于翻开动画）
+   * 注意：只有 TXT 格式支持背景图片，MOBI/AZW3/EPUB 只支持背景色
+   */
+  private getEBookBackgroundSettings(): EBookBackgroundSettings | undefined {
+    if (!this.ebook) {
+      return undefined;
+    }
+    
+    let bgSettings: EBookBackgroundSettings = {
+      backgroundColor: '#FFFFFF'  // 默认白色背景
+    };
+    
+    // 读取电子书保存的背景设置
+    if (this.ebook.readingSettings) {
+      bgSettings.backgroundColor = this.ebook.readingSettings.backgroundColor || '#FFFFFF';
+      
+      // 只有 TXT 格式支持背景图片
+      if (this.ebook.format === EBookFormat.TXT) {
+        if (this.ebook.readingSettings.backgroundType === 'IMAGE' && 
+            this.ebook.readingSettings.backgroundImagePath && 
+            this.ebook.readingSettings.backgroundImagePath.length > 0) {
+          bgSettings.backgroundImagePath = this.ebook.readingSettings.backgroundImagePath;
+          bgSettings.backgroundImageOpacity = this.ebook.readingSettings.backgroundImageOpacity ?? 0.3;
+        }
+      }
+      
+      logger.info(TAG, `电子书背景设置(${this.ebook.format}): color=${bgSettings.backgroundColor}, image=${bgSettings.backgroundImagePath || '无'}, opacity=${bgSettings.backgroundImageOpacity ?? 'N/A'}`);
+    } else {
+      logger.info(TAG, `电子书无阅读设置，使用默认白色背景`);
+    }
+    
+    return bgSettings;
+  }
+
+  /**
    * 计算电子书整体阅读进度百分比
    * 考虑章节数量，基于当前章节索引和章节内进度计算整体进度
    * @returns 阅读进度百分比 (0-100)
@@ -267,7 +327,8 @@ export struct EBookDetailPage {
 
     const totalChapters = this.ebook.chapters.length;
     if (totalChapters === 0) {
-      return 0;
+      // 没有章节信息时，直接返回存储的进度值（与MainMenuPage保持一致）
+      return Math.floor(this.ebook.readingProgress.progress);
     }
 
     const progress = this.ebook.readingProgress;
@@ -671,30 +732,17 @@ export struct EBookDetailPage {
       Row({ space: 16 }) {
         // 封面
         Stack() {
-          if (this.hasValidCover()) {
-            // 有封面图片
-            Image(this.getCoverSource())
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
-              .borderRadius(12)
-          } else {
-            // 默认图标
-            Column() {
-              Image($r('app.media.ic_ebook'))
-                .width(60)
-                .height(60)
-                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            }
+          // 封面图片（有封面或使用默认封面）
+          Image(this.getCoverSource())
             .width('100%')
             .height('100%')
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .objectFit(ImageFit.Cover)
             .borderRadius(12)
-            .justifyContent(FlexAlign.Center)
-          }
+            .id(`cover_ebook_detail_${this.ebook?.id || ''}`)
         }
         .width(120)
         .height(180)
+        .clip(true)
         .shadow({
           radius: 12,
           color: '#1F000000',
@@ -749,18 +797,18 @@ export struct EBookDetailPage {
               .borderRadius(4)
           }
 
-          // 阅读进度 - 使用考虑章节的整体进度
+          // 阅读进度 - 直接使用存储的进度值（与书库、阅读报告保持一致）
           if (this.hasReadingProgress()) {
             Column({ space: 4 }) {
               Row() {
-                Text(`已读 ${this.calculateOverallProgress()}%`)
+                Text(`已读 ${Math.floor(this.ebook!.readingProgress.progress)}%`)
                   .fontSize(12)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
               .width('100%')
 
               Progress({
-                value: this.calculateOverallProgress(),
+                value: this.ebook!.readingProgress.progress,
                 total: 100,
                 type: ProgressType.Linear
               })
@@ -1180,28 +1228,15 @@ export struct EBookDetailPage {
           Column({ space: 16 }) {
             // 封面图片
             Stack() {
-              if (this.hasValidCover()) {
-                Image(this.getCoverSource())
-                  .width('100%')
-                  .height('100%')
-                  .objectFit(ImageFit.Cover)
-                  .borderRadius(8)
-              } else {
-                Column() {
-                  Image($r('app.media.ic_ebook'))
-                    .width(50)
-                    .height(50)
-                    .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                }
+              Image(this.getCoverSource())
                 .width('100%')
                 .height('100%')
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                .objectFit(ImageFit.Cover)
                 .borderRadius(8)
-                .justifyContent(FlexAlign.Center)
-              }
             }
             .width(100)
             .height(150)
+            .clip(true)
             .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
 
             // 标题
@@ -1240,14 +1275,14 @@ export struct EBookDetailPage {
             .width('100%')
             .justifyContent(FlexAlign.Center)
 
-            // 阅读进度 - 使用考虑章节的整体进度
+            // 阅读进度 - 直接使用存储的进度值（与书库、阅读报告保持一致）
             if (this.hasReadingProgress()) {
               Column({ space: 4 }) {
-                Text(`已读 ${this.calculateOverallProgress()}%`)
+                Text(`已读 ${Math.floor(this.ebook!.readingProgress.progress)}%`)
                   .fontSize(11)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 Progress({
-                  value: this.calculateOverallProgress(),
+                  value: this.ebook!.readingProgress.progress,
                   total: 100,
                   type: ProgressType.Linear
                 })

@@ -44,6 +44,7 @@ import { PrivacyPolicyPage } from './PrivacyPolicyPage';
 import { SourceGuidePage } from './SourceGuidePage';
 import { SourceDetailPage } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
+import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
@@ -68,7 +69,7 @@ import { MangaStatus, ReadingStatus, StatusConverter, DownloadStatus } from '../
 
 // 导入图源相关
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
-import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult } from '../Framework/Source/SourceRepositoryManager';
+import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback } from '../Framework/Source/SourceRepositoryManager';
 
 // 导入数据管理器
 import { DataManager, ComicInfo, ReadHistory, PageInfo, ChapterInfo } from '../Framework/Data/DataManager';
@@ -79,8 +80,9 @@ import { DataService } from '../Framework/Services/DataService';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 
 // 导入电子书相关模型
-import { EBook, EBookStatus } from '../Models/EBookModels';
+import { EBook, EBookStatus, EBookFormat } from '../Models/EBookModels';
 import { EBookDetailPage, EBookDetailPageParams, EBookSettingsPageParams } from './EBookDetailPage';
+import { OnlineEBookDetailPage } from './OnlineEBookDetailPage';
 import { EBookSettingsPage } from './EBookSettingsPage';
 
 // 导入事件总线
@@ -316,6 +318,9 @@ struct MainMenuPage {
   @State showRepositorySelector: boolean = false;
   @State showDeleteRepoPopup: boolean = false;
   @State repositoryToDelete: SavedRepository | null = null;
+  @State syncLogMessages: string[] = []; // 同步日志消息
+  @State syncProgress: number = 0; // 同步进度 (0-100)
+  @State syncProgressMessage: string = ''; // 同步进度消息
   private sourceRepoDialogController: CustomDialogController | undefined = undefined;
   private repositoryManager: SourceRepositoryManager = SourceRepositoryManager.getInstance();
 
@@ -344,6 +349,8 @@ struct MainMenuPage {
   @State isLoadingSourceList: boolean = false; // 是否正在加载图源列表
   @State isRefreshingSourceList: boolean = false; // 是否正在下拉刷新图源列表
   @State hasSourceUpdate: boolean = false; // 是否有图源更新
+  @State sourceViewMode: LibraryViewMode = LibraryViewMode.LIST; // 图源视图模式（LIST/GRID）
+  @State sourceTypeFilter: 'all' | 'manga' | 'ebook' | 'novel' = 'all'; // 图源类型筛选
   private sourceManager: SourceManager = SourceManager.getInstance(); // 图源管理器
   private sourceUpdateManager: SourceUpdateManager = SourceUpdateManager.getInstance(); // 图源更新管理器
   // WebView容器引用
@@ -445,7 +452,7 @@ struct MainMenuPage {
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
-  @StorageLink('advanced_mode_enabled') private advancedModeEnabled: boolean = false;
+  @StorageLink('advanced_mode_enabled') private advancedModeEnabled: boolean = true;
   @StorageProp('force_tablet_mode') private forceTabletMode: boolean = false;
   @StorageProp('force_landscape_mode') private forceLandscapeMode: boolean = false;
 
@@ -718,7 +725,7 @@ struct MainMenuPage {
       logger.info(TAG, '开始加载图源列表...');
 
       this.sourceList = await this.sourceManager.getAllSources();
-      this.filteredSourceList = [...this.sourceList];
+      this.applySourceFilters(); // 应用当前筛选条件
 
       logger.info(TAG, `加载了 ${this.sourceList.length} 个图源`);
     } catch (error) {
@@ -734,20 +741,238 @@ struct MainMenuPage {
    */
   private searchSources(keyword: string): void {
     this.sourceSearchKeyword = keyword;
+    this.applySourceFilters();
+  }
 
-    if (!keyword.trim()) {
-      this.filteredSourceList = [...this.sourceList];
-      return;
+  /**
+   * 应用图源筛选（关键词 + 类型）
+   */
+  private applySourceFilters(): void {
+    let filtered = [...this.sourceList];
+    
+    // 先按类型筛选
+    if (this.sourceTypeFilter !== 'all') {
+      filtered = filtered.filter((source: SourceInfo) => {
+        return source.type === this.sourceTypeFilter;
+      });
     }
+    
+    // 再按关键词筛选
+    const keyword = this.sourceSearchKeyword.trim();
+    if (keyword) {
+      const lowerKeyword = keyword.toLowerCase();
+      filtered = filtered.filter((source: SourceInfo) => {
+        return source.name.toLowerCase().includes(lowerKeyword) ||
+               source.baseUrl.toLowerCase().includes(lowerKeyword) ||
+               (source.description && source.description.toLowerCase().includes(lowerKeyword));
+      });
+    }
+    
+    this.filteredSourceList = filtered;
+    logger.debug(TAG, `筛选图源: type=${this.sourceTypeFilter}, keyword="${keyword}", 结果=${this.filteredSourceList.length}个`);
+  }
 
-    const lowerKeyword = keyword.toLowerCase();
-    this.filteredSourceList = this.sourceList.filter((source: SourceInfo) => {
-      return source.name.toLowerCase().includes(lowerKeyword) ||
-             source.baseUrl.toLowerCase().includes(lowerKeyword) ||
-             (source.description && source.description.toLowerCase().includes(lowerKeyword));
-    });
+  /**
+   * 切换图源类型筛选
+   */
+  private cycleSourceTypeFilter(): void {
+    const types: Array<'all' | 'manga' | 'ebook' | 'novel'> = ['all', 'manga', 'ebook', 'novel'];
+    const currentIndex = types.indexOf(this.sourceTypeFilter);
+    const nextIndex = (currentIndex + 1) % types.length;
+    this.sourceTypeFilter = types[nextIndex];
+    this.applySourceFilters();
+    
+    const typeNames: Record<string, string> = {
+      'all': '全部',
+      'manga': '漫画源',
+      'ebook': '电子书源',
+      'novel': '小说源'
+    };
+    this.showToast(`显示: ${typeNames[this.sourceTypeFilter]}`);
+  }
 
-    logger.debug(TAG, `搜索"${keyword}"，找到${this.filteredSourceList.length}个结果`);
+  /**
+   * 获取当前图源类型筛选的图标
+   */
+  private getSourceTypeFilterIcon(): Resource {
+    switch (this.sourceTypeFilter) {
+      case 'manga':
+        return $r('app.media.ic_source_manga');
+      case 'ebook':
+        return $r('app.media.ic_source_ebook');
+      case 'novel':
+        return $r('app.media.ic_source_novel');
+      default:
+        return $r('app.media.ic_source_all');
+    }
+  }
+
+  /**
+   * 获取图源列表标题
+   */
+  private getSourceListTitle(): string {
+    const typeNames: Record<string, string> = {
+      'all': '全部图源',
+      'manga': '漫画源',
+      'ebook': '电子书源',
+      'novel': '小说源'
+    };
+    const typeName = typeNames[this.sourceTypeFilter];
+    return `${typeName} (${this.filteredSourceList.length}/${this.sourceList.length})`;
+  }
+
+  /**
+   * 获取空状态标题
+   */
+  private getEmptySourceTitle(): string {
+    if (this.sourceSearchKeyword) {
+      return '未找到匹配的图源';
+    }
+    switch (this.sourceTypeFilter) {
+      case 'manga':
+        return '暂无漫画源';
+      case 'ebook':
+        return '暂无电子书源';
+      case 'novel':
+        return '暂无小说源';
+      default:
+        return '暂无图源';
+    }
+  }
+
+  /**
+   * 获取空状态描述
+   */
+  private getEmptySourceDescription(): string {
+    switch (this.sourceTypeFilter) {
+      case 'manga':
+        return '漫画源用于获取在线漫画内容';
+      case 'ebook':
+        return '电子书源用于获取在线电子书内容';
+      case 'novel':
+        return '小说源用于获取在线小说内容';
+      default:
+        return '本应用不包含任何内置图源';
+    }
+  }
+
+  /**
+   * 获取空状态提示
+   */
+  private getEmptySourceHint(): string {
+    switch (this.sourceTypeFilter) {
+      case 'manga':
+        return '可通过图源仓库同步漫画源，或切换到"全部"查看其他类型';
+      case 'ebook':
+        return '可通过图源仓库同步电子书源，或切换到"全部"查看其他类型';
+      case 'novel':
+        return '可通过图源仓库同步小说源，或切换到"全部"查看其他类型';
+      default:
+        return '推荐使用图源仓库方式同步在线仓库的图源';
+    }
+  }
+
+  /**
+   * 构建图源使用说明
+   */
+  @Builder
+  buildSourceUsageGuide() {
+    Column({ space: 8 }) {
+      if (this.sourceTypeFilter === 'all') {
+        // 全部模式下显示完整使用说明
+        Text('使用说明')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text('• 本应用不包含任何内置图源，需用户自行导入')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 图源是JSON格式的配置文件，定义了漫画数据的获取方式')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 点击"导入图源"按钮，选择.json文件进行本地导入')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 点击图源卡片可进入图源，长按可删除图源')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 点击"图源仓库"按钮，可以输入仓库地址同步在线仓库的图源')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 用户需自行承担使用第三方图源的风险和责任')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .opacity(0.8)
+      } else if (this.sourceTypeFilter === 'manga') {
+        // 漫画源模式
+        Text('漫画源说明')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text('• 漫画源用于获取在线漫画内容，支持搜索、浏览和阅读')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 点击漫画源卡片可进入该图源浏览漫画')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 漫画源需要在source.json中设置 "type": "manga"')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .opacity(0.8)
+      } else if (this.sourceTypeFilter === 'ebook') {
+        // 电子书源模式
+        Text('电子书源说明')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text('• 电子书源用于获取在线电子书内容，支持EPUB、PDF等格式')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 点击电子书源卡片可进入该图源浏览电子书')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 电子书源需要在source.json中设置 "type": "ebook"')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .opacity(0.8)
+      } else if (this.sourceTypeFilter === 'novel') {
+        // 小说源模式
+        Text('小说源说明')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text('• 小说源用于获取在线小说内容，支持章节阅读')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 点击小说源卡片可进入该图源浏览小说')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Text('• 小说源需要在source.json中设置 "type": "novel"')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .opacity(0.8)
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(12)
+    .margin({ left: 16, right: 16 })
   }
 
   /**
@@ -936,6 +1161,20 @@ struct MainMenuPage {
   }
 
   /**
+   * 添加同步日志消息
+   */
+  private addSyncLog(level: 'info' | 'warn' | 'error', message: string): void {
+    const timestamp = new Date().toLocaleTimeString();
+    const prefix = level === 'info' ? '✓' : (level === 'warn' ? '⚠' : '✗');
+    const logLine = `[${timestamp}] ${prefix} ${message}`;
+    this.syncLogMessages = [...this.syncLogMessages, logLine];
+    // 限制日志行数，保留最近100条
+    if (this.syncLogMessages.length > 100) {
+      this.syncLogMessages = this.syncLogMessages.slice(-100);
+    }
+  }
+
+  /**
    * 同步图源仓库
    */
   private async syncSourceRepository(): Promise<void> {
@@ -956,35 +1195,84 @@ struct MainMenuPage {
 
     try {
       this.isSyncingRepo = true;
+      this.syncLogMessages = []; // 清空日志
+      this.syncProgress = 0;
+      this.syncProgressMessage = '正在连接仓库...';
+      
+      this.addSyncLog('info', `开始同步仓库: ${urlToSync}`);
       logger.info(TAG, `开始同步图源仓库: ${urlToSync}`);
       
-      // 使用仓库管理器同步
+      // 创建进度回调
+      const progressCallback: SyncProgressCallback = {
+        onProgress: (current: number, total: number, message: string) => {
+          this.syncProgress = current;
+          this.syncProgressMessage = message;
+        },
+        onLog: (level: 'info' | 'warn' | 'error', message: string) => {
+          this.addSyncLog(level, message);
+        }
+      };
+      
+      // 使用仓库管理器同步（带进度回调）
       const result = await this.repositoryManager.syncRepositoryFromUrl(
         urlToSync,
-        this.selectedRepositoryId ? undefined : '自定义仓库'
+        this.selectedRepositoryId ? undefined : '自定义仓库',
+        progressCallback
       );
       
       if (result.success) {
-        this.showToast(result.message);
+        this.addSyncLog('info', result.message);
+        this.syncProgress = 100;
+        this.syncProgressMessage = '同步完成！';
         logger.info(TAG, `图源仓库同步成功: ${result.message}`);
         
-        // 关闭弹窗
-        this.sourceRepoDialogController?.close();
-        this.showSourceRepoDialog = false;
+        // 延迟2秒后关闭弹窗，让用户看到完成状态
+        setTimeout(() => {
+          this.sourceRepoDialogController?.close();
+          this.showSourceRepoDialog = false;
+          this.isSyncingRepo = false;
+        }, 2000);
         
         // 刷新图源列表和已保存仓库
         await this.loadSources();
         await this.loadSavedRepositories();
       } else {
-        this.showToast(result.message);
+        this.addSyncLog('error', result.message);
+        this.syncProgress = 0;
+        this.syncProgressMessage = '同步失败 - 请查看上方日志了解详情';
         logger.error(TAG, `图源仓库同步失败: ${result.message}`);
+        // 不关闭窗口，让用户能看到错误信息
+        // isSyncingRepo 保持 true 以显示日志窗口
       }
       
     } catch (error) {
-      logger.error(TAG, '同步图源仓库失败', String(error));
-      this.showToast(`同步失败: ${String(error)}`);
-    } finally {
-      this.isSyncingRepo = false;
+      // 提取有意义的错误信息
+      let errMsg: string;
+      if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        const errObj = error as Record<string, string | number | boolean>;
+        if (errObj.message && typeof errObj.message === 'string') {
+          errMsg = errObj.message;
+        } else if (errObj.code !== undefined) {
+          errMsg = `错误代码: ${String(errObj.code)}`;
+        } else {
+          try {
+            errMsg = JSON.stringify(error);
+          } catch {
+            errMsg = '未知错误';
+          }
+        }
+      } else {
+        errMsg = String(error);
+      }
+      
+      this.addSyncLog('error', `同步异常: ${errMsg}`);
+      this.syncProgress = 0;
+      this.syncProgressMessage = '同步失败 - 请查看上方日志了解详情';
+      logger.error(TAG, '同步图源仓库失败', errMsg);
+      // 不关闭窗口，让用户能看到错误信息
+      // isSyncingRepo 保持 true 以显示日志窗口
     }
   }
 
@@ -1354,9 +1642,14 @@ struct MainMenuPage {
                 .onError(() => {
                   logger.warn('MainMenuPage', `封面加载失败: ${manga.id}`);
                 })
+                .id(`cover_manga_home_${manga.id}`)
             }
             .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
             .borderRadius(8)
+            .onClick(() => {
+              // 点击封面直接开始阅读（带翻开动画）
+              this.openMangaReaderWithAnimation(manga, `cover_manga_home_${manga.id}`);
+            })
 
             Text(manga.title)
               .fontSize(14)
@@ -1365,9 +1658,9 @@ struct MainMenuPage {
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
+              .onClick(() => { this.openMangaDetail(manga); })
           }
           .width('100%')
-          .onClick(() => { this.openMangaDetail(manga); })
         }
       }, (manga: Manga) => `manga_${manga.id}`)
 
@@ -1385,9 +1678,14 @@ struct MainMenuPage {
                 .onError(() => {
                   logger.warn('MainMenuPage', `电子书封面加载失败: ${ebook.id}`);
                 })
+                .id(`cover_ebook_home_${ebook.id}`)
             }
             .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
             .borderRadius(8)
+            .onClick(() => {
+              // 点击封面直接开始阅读（带翻开动画）
+              this.openEBookReaderFromHome(ebook);
+            })
 
             Text(ebook.metadata.title)
               .fontSize(14)
@@ -1396,9 +1694,9 @@ struct MainMenuPage {
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
+              .onClick(() => { this.openEBookDetail(ebook); })
           }
           .width('100%')
-          .onClick(() => { this.openEBookDetail(ebook); })
         }
       }, (ebook: EBook) => `ebook_${ebook.id}`)
     }
@@ -3000,7 +3298,7 @@ struct MainMenuPage {
 
         // 搜索按钮
         Button() {
-          Image($r('app.media.ic_search'))
+          Image($r('app.media.ic_search_selected'))
             .width(24)
             .height(24)
         }
@@ -3071,7 +3369,7 @@ struct MainMenuPage {
       }
 
       Button() {
-        Image($r('app.media.ic_search'))
+        Image($r('app.media.ic_search_selected'))
           .width(24)
           .height(24)
       }
@@ -3825,6 +4123,7 @@ struct MainMenuPage {
           .onError(() => {
             logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
           })
+          .id(`cover_manga_lib_${manga.id}`)
 
         Column({ space: 8 }) {
           // 漫画标题
@@ -4071,6 +4370,7 @@ struct MainMenuPage {
           color: '#1F000000',
           offsetY: 4
         })
+        .id(`cover_ebook_lib_${ebook.id}`)
 
         // 电子书信息
         Column({ space: 6 }) {
@@ -4103,15 +4403,35 @@ struct MainMenuPage {
             }
           }
 
+          // 电子书简介
           Text(ebook.metadata.description || '暂无简介')
             .fontSize(12)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .maxLines(2)
+            .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Blank()
+
+          // 开始阅读按钮
+          Row({ space: 12 }) {
+            Blank()
+
+            Button(this.hasEBookReadingProgress(ebook) ? '继续阅读' : '开始阅读')
+              .fontSize(14)
+              .height(32)
+              .padding({ left: 16, right: 16 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .onClick(() => {
+                // 使用电子书阅读器打开（带翻开动画）
+                this.openEBookReader(ebook);
+              })
+          }
+          .width('100%')
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
-        .justifyContent(FlexAlign.Start)
+        .justifyContent(FlexAlign.SpaceBetween)
       }
       .translate({ x: -this.getEBookSwipeOffset(ebook.id), y: 0 })
       .onClick(() => { this.openEBookDetail(ebook); })
@@ -4137,15 +4457,216 @@ struct MainMenuPage {
   }
 
   /**
-   * 打开电子书阅读器
+   * 获取电子书背景设置（用于翻开动画）
+   */
+  private getEBookBackgroundSettings(ebook: EBook): EBookBackgroundSettings | undefined {
+    let bgSettings: EBookBackgroundSettings = {
+      backgroundColor: '#FFFFFF'  // 默认白色背景
+    };
+    
+    // 读取电子书保存的背景设置
+    if (ebook.readingSettings) {
+      bgSettings.backgroundColor = ebook.readingSettings.backgroundColor || '#FFFFFF';
+      
+      // 只有 TXT 格式支持背景图片
+      if (ebook.format === EBookFormat.TXT) {
+        if (ebook.readingSettings.backgroundType === 'IMAGE' && 
+            ebook.readingSettings.backgroundImagePath && 
+            ebook.readingSettings.backgroundImagePath.length > 0) {
+          bgSettings.backgroundImagePath = ebook.readingSettings.backgroundImagePath;
+          bgSettings.backgroundImageOpacity = ebook.readingSettings.backgroundImageOpacity ?? 0.3;
+        }
+      }
+      
+      logger.info(TAG, `电子书背景设置(${ebook.format}): color=${bgSettings.backgroundColor}, image=${bgSettings.backgroundImagePath || '无'}, opacity=${bgSettings.backgroundImageOpacity ?? 'N/A'}`);
+    } else {
+      logger.info(TAG, `电子书无阅读设置，使用默认白色背景`);
+    }
+    
+    return bgSettings;
+  }
+
+  /**
+   * 打开漫画阅读器（带翻开动画）
+   * @param manga 漫画对象
+   * @param componentId 封面组件ID（用于获取位置）
+   */
+  private async openMangaReaderWithAnimation(manga: Manga, componentId: string): Promise<void> {
+    logger.info(TAG, `打开漫画阅读器（带翻开动画）: ${manga.title}`);
+    
+    try {
+      // 获取漫画的sourceId和相关信息
+      const comicInfo: ComicInfo | null = await this.dataManager.getComicById(manga.id);
+      let sourceIdNum: number = -1;
+      let hasWebSource: boolean = false;
+      if (comicInfo && typeof comicInfo.sourceId === 'string' && comicInfo.sourceId.length > 0) {
+        const parsed: number = Number(comicInfo.sourceId);
+        if (!isNaN(parsed)) {
+          sourceIdNum = parsed;
+          hasWebSource = true;
+        }
+      }
+      let sourceNameVal: string = 'LOCAL';
+      if (hasWebSource) {
+        const srcRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(sourceIdNum);
+        if (srcRecord && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
+          sourceNameVal = srcRecord.name;
+        } else {
+          sourceNameVal = 'WEBVIEW';
+        }
+      }
+
+      // 确定恢复目标
+      const target = await this.determineResumeTarget(manga);
+      
+      // 准备阅读器参数
+      let readerParams: MangaReaderPageParams;
+      
+      if (!target) {
+        // 无阅读记录，从第一章开始
+        if (hasWebSource) {
+          const onlineChapterInfos = await this.dataManager.getOnlineComicChapters(manga.id);
+          if (onlineChapterInfos && onlineChapterInfos.length > 0) {
+            let firstChapterId: string = onlineChapterInfos[0].id;
+            let minChapterNumber: number = onlineChapterInfos[0].chapterNumber;
+            for (let i: number = 1; i < onlineChapterInfos.length; i++) {
+              const info = onlineChapterInfos[i];
+              if (info.chapterNumber < minChapterNumber) {
+                minChapterNumber = info.chapterNumber;
+                firstChapterId = info.id;
+              }
+            }
+            const ct: MangaReaderContentType = onlineChapterInfos[0].isDownloaded
+              ? MangaReaderContentType.OnlineDownloaded
+              : MangaReaderContentType.OnlineUndownloaded;
+
+            readerParams = {
+              mangaId: manga.id,
+              chapterId: firstChapterId,
+              pageIndex: 0,
+              fromPage: 'MainMenuPage',
+              contentType: ct,
+              sourceId: sourceIdNum,
+              sourceName: sourceNameVal
+            } as MangaReaderPageParams;
+          } else {
+            this.showToast('未找到章节，无法进入阅读器');
+            return;
+          }
+        } else {
+          const chapterInfos = await this.dataManager.getComicChapters(manga.id);
+          if (chapterInfos && chapterInfos.length > 0) {
+            let firstChapterId: string = chapterInfos[0].id;
+            let minIndex: number = chapterInfos[0].index;
+            for (let i: number = 1; i < chapterInfos.length; i++) {
+              const info = chapterInfos[i];
+              if (info.index < minIndex) {
+                minIndex = info.index;
+                firstChapterId = info.id;
+              }
+            }
+            readerParams = {
+              mangaId: manga.id,
+              chapterId: firstChapterId,
+              pageIndex: 0,
+              fromPage: 'MainMenuPage',
+              contentType: MangaReaderContentType.Local,
+              sourceId: undefined,
+              sourceName: sourceNameVal
+            } as MangaReaderPageParams;
+          } else {
+            this.showToast('未找到章节，无法进入阅读器');
+            return;
+          }
+        }
+      } else {
+        // 有阅读记录，恢复到上次位置
+        let ct2: MangaReaderContentType = MangaReaderContentType.Local;
+        if (hasWebSource) {
+          const targetChapterInfo = await this.dataManager.getOnlineChapterById(target.chapterId);
+          if (targetChapterInfo && targetChapterInfo.isDownloaded) {
+            ct2 = MangaReaderContentType.OnlineDownloaded;
+          } else {
+            ct2 = MangaReaderContentType.OnlineUndownloaded;
+          }
+        }
+        readerParams = {
+          mangaId: manga.id,
+          chapterId: target.chapterId,
+          pageIndex: target.pageIndex,
+          fromPage: 'MainMenuPage',
+          contentType: ct2,
+          sourceId: hasWebSource ? sourceIdNum : undefined,
+          sourceName: sourceNameVal
+        } as MangaReaderPageParams;
+      }
+
+      // 触发翻开过渡动画
+      const coverPath: string = this.normalizeDisplayPathForManga(manga) || '';
+      logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${componentId}`);
+      
+      startBookOpenTransitionWithComponentId(
+        coverPath,
+        componentId,
+        manga.id,
+        'manga',
+        () => {
+          // 动画完成时触发导航
+          logger.info(TAG, '漫画翻开过渡动画触发导航');
+          this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+        }
+      );
+    } catch (error) {
+      const errMsg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '打开漫画阅读器（带动画）失败', errMsg);
+      this.showToast('打开漫画阅读器失败');
+    }
+  }
+
+  /**
+   * 打开电子书阅读器（带翻开动画）- 从书库页面调用
    */
   private openEBookReader(ebook: EBook): void {
+    this.openEBookReaderWithComponentId(ebook, `cover_ebook_lib_${ebook.id}`);
+  }
+
+  /**
+   * 打开电子书阅读器（带翻开动画）- 从首页调用
+   */
+  private openEBookReaderFromHome(ebook: EBook): void {
+    this.openEBookReaderWithComponentId(ebook, `cover_ebook_home_${ebook.id}`);
+  }
+
+  /**
+   * 打开电子书阅读器（带翻开动画）- 通用方法
+   * @param ebook 电子书对象
+   * @param componentId 封面组件ID
+   */
+  private openEBookReaderWithComponentId(ebook: EBook, componentId: string): void {
     logger.info(TAG, `打开电子书阅读器: ${ebook.metadata.title}`);
-    // 定义明确的参数对象
+    
+    // 触发翻开过渡动画（使用组件ID获取实际位置）
+    const coverPath: string = ebook.metadata.coverImagePath || '';
     const readerParams: EBookReaderParams = {
       bookId: ebook.id
     };
-    this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+    
+    // 获取电子书背景设置
+    const ebookBackground = this.getEBookBackgroundSettings(ebook);
+    
+    logger.info(TAG, `触发翻开过渡动画: coverPath=${coverPath}, componentId=${componentId}`);
+    startBookOpenTransitionWithComponentId(
+      coverPath,
+      componentId,
+      ebook.id,
+      'ebook',
+      () => {
+        // 动画完成时触发导航
+        logger.info(TAG, '翻开过渡动画触发导航');
+        this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+      },
+      ebookBackground
+    );
   }
 
   /**
@@ -5659,34 +6180,96 @@ struct MainMenuPage {
         .width('100%')
       }
       
-      // 自定义URL输入
-      TextInput({ placeholder: '请输入仓库地址 (如: https://example.com/sources.json)', text: this.sourceRepoUrl })
+      // 自定义URL输入（同步时隐藏）
+      if (!this.isSyncingRepo) {
+        TextInput({ placeholder: '请输入仓库地址 (如: https://example.com/sources.json)', text: this.sourceRepoUrl })
+          .width('100%')
+          .onChange((value: string) => {
+            this.sourceRepoUrl = value;
+            this.selectedRepositoryId = ''; // 清除选中的仓库
+          })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .borderRadius(8)
+      }
+      
+      // 同步进度和日志窗口（同步时显示）
+      if (this.isSyncingRepo) {
+        Column({ space: 12 }) {
+          // 进度条
+          Row({ space: 8 }) {
+            Progress({
+              value: this.syncProgress,
+              total: 100,
+              type: ProgressType.Linear
+            })
+              .layoutWeight(1)
+              .height(8)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            
+            Text(`${this.syncProgress}%`)
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .width(50)
+              .textAlign(TextAlign.End)
+          }
+          .width('100%')
+          
+          // 当前进度消息
+          Text(this.syncProgressMessage)
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+          
+          // 命令行风格日志窗口
+          Column() {
+            Scroll() {
+              Column({ space: 2 }) {
+                ForEach(this.syncLogMessages, (logLine: string, index: number) => {
+                  Text(logLine)
+                    .fontSize(12)
+                    .fontFamily('monospace')
+                    .fontColor(logLine.includes('✗') ? '#FF6B6B' : 
+                              (logLine.includes('⚠') ? '#FFB347' : '#98FB98'))
+                    .width('100%')
+                    .textAlign(TextAlign.Start)
+                }, (logLine: string, index: number) => `log_${index}_${logLine.substring(0, 20)}`)
+              }
+              .width('100%')
+              .padding(8)
+            }
+            .width('100%')
+            .height(200)
+            .scrollBar(BarState.Auto)
+          }
+          .width('100%')
+          .backgroundColor('#1A1A2E')
+          .borderRadius(8)
+          .border({ width: 1, color: '#333' })
+        }
         .width('100%')
-        .onChange((value: string) => {
-          this.sourceRepoUrl = value;
-          this.selectedRepositoryId = ''; // 清除选中的仓库
-        })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-        .borderRadius(8)
+      }
       
       Row({ space: 12 }) {
-        Button('取消')
+        Button(this.isSyncingRepo ? '关闭' : '取消')
           .layoutWeight(1)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .onClick(() => {
             this.sourceRepoDialogController?.close();
             this.showSourceRepoDialog = false;
+            this.isSyncingRepo = false;
           })
         
-        Button(this.isSyncingRepo ? '同步中...' : '确认同步')
-          .layoutWeight(1)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .fontColor(Color.White)
-          .enabled(!this.isSyncingRepo)
-          .onClick(async () => {
-            await this.syncSourceRepository();
-          })
+        if (!this.isSyncingRepo) {
+          Button('确认同步')
+            .layoutWeight(1)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .fontColor(Color.White)
+            .onClick(async () => {
+              await this.syncSourceRepository();
+            })
+        }
       }
       .width('100%')
     }
@@ -5769,6 +6352,39 @@ struct MainMenuPage {
                 await this.quickSyncSourceRepository();
               })
           }
+          
+          // 类型筛选按钮
+          Button() {
+            Image(this.getSourceTypeFilterIcon())
+              .width(24)
+              .height(24)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          }
+          .type(ButtonType.Circle)
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.cycleSourceTypeFilter();
+          })
+          
+          // 视图切换按钮
+          Button() {
+            Image(this.sourceViewMode === LibraryViewMode.LIST
+              ? $r('app.media.ic_view_list_selected')
+              : $r('app.media.ic_view_grid_selected'))
+              .width(24)
+              .height(24)
+          }
+          .type(ButtonType.Circle)
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.sourceViewMode = this.sourceViewMode === LibraryViewMode.LIST
+              ? LibraryViewMode.GRID
+              : LibraryViewMode.LIST;
+          })
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
@@ -5783,7 +6399,7 @@ struct MainMenuPage {
 
           // 图源列表
           Column({ space: 8 }) {
-          Text(`已安装图源 (${this.sourceList.length})`)
+          Text(this.getSourceListTitle())
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -5808,25 +6424,28 @@ struct MainMenuPage {
           } else if (this.filteredSourceList.length === 0) {
             // 空状态提示
             Column({ space: 12 }) {
-              Image($r('app.media.ic_source_normal'))
+              Image(this.getSourceTypeFilterIcon())
                 .width(64)
                 .height(64)
                 .opacity(0.3)
+                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               
-              Text(this.sourceSearchKeyword ? '未找到匹配的图源' : '暂无图源')
+              Text(this.getEmptySourceTitle())
                 .fontSize(16)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               
               if (!this.sourceSearchKeyword) {
                 Column({ space: 8 }) {
-                  Text('本应用不包含任何内置图源')
+                  Text(this.getEmptySourceDescription())
                     .fontSize(14)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .textAlign(TextAlign.Center)
                   
-                  Text('请点击"导入图源"按钮选择JSON格式的图源文件')
+                  Text(this.getEmptySourceHint())
                     .fontSize(13)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     .opacity(0.8)
+                    .textAlign(TextAlign.Center)
                 }
               }
             }
@@ -5834,55 +6453,37 @@ struct MainMenuPage {
             .padding(40)
             .justifyContent(FlexAlign.Center)
           } else {
-            // 图源卡片列表
-            Column({ space: 12 }) {
-              ForEach(this.filteredSourceList, (source: SourceInfo) => {
-                this.buildSourceCard(source)
-              })
+            // 根据视图模式显示列表或网格
+            if (this.sourceViewMode === LibraryViewMode.LIST) {
+              // 图源卡片列表
+              Column({ space: 12 }) {
+                ForEach(this.filteredSourceList, (source: SourceInfo) => {
+                  this.buildSourceCard(source)
+                })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16 })
+            } else {
+              // 图源网格视图
+              Grid() {
+                ForEach(this.filteredSourceList, (source: SourceInfo) => {
+                  GridItem() {
+                    this.buildSourceGridCard(source)
+                  }
+                }, (source: SourceInfo) => String(source.id))
+              }
+              .columnsTemplate(this.getLibraryGridColumnsTemplate())
+              .columnsGap(this.responsive_gridGap)
+              .rowsGap(this.responsive_gridGap)
+              .width('100%')
+              .padding({ left: 16, right: 16 })
             }
-            .width('100%')
-            .padding({ left: 16, right: 16 })
           }
         }
         .width('100%')
 
-        // 使用说明
-        Column({ space: 8 }) {
-          Text('使用说明')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          
-          Text('• 本应用不包含任何内置图源，需用户自行导入')
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text('• 图源是JSON格式的配置文件，定义了漫画数据的获取方式')
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text('• 点击"导入图源"按钮，选择.json文件进行导入')
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text('• 点击图源卡片可查看详情，长按可删除图源')
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text('• 导入后可以启用/禁用图源，测试图源可用性')
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text('• 用户需自行承担使用第三方图源的风险和责任')
-            .fontSize(13)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .opacity(0.8)
-        }
-        .width('100%')
-        .padding(16)
-        .backgroundColor(Color.Transparent)
-        .borderRadius(12)
-        .margin({ left: 16, right: 16 })
+        // 使用说明（根据筛选模式显示不同内容）
+        this.buildSourceUsageGuide()
           }
           .width('100%')
         }
@@ -5974,6 +6575,95 @@ struct MainMenuPage {
     .padding(12)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .onClick(() => {
+      this.openSourceDetail(source);
+    })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          logger.info(TAG, `长按图源卡片: ${source.name}`);
+          this.deleteSource(source);
+        })
+    )
+  }
+
+  /**
+   * 构建图源网格卡片
+   */
+  @Builder
+  buildSourceGridCard(source: SourceInfo) {
+    Column({ space: 8 }) {
+      // 图源图标
+      Stack() {
+        if (source.iconPath) {
+          Image('file://' + source.iconPath)
+            .width('100%')
+            .height(80)
+            .borderRadius(12)
+            .objectFit(ImageFit.Cover)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        } else {
+          Column() {
+            Image($r('app.media.ic_source_normal'))
+              .width(48)
+              .height(48)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .height(80)
+          .borderRadius(12)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
+        }
+
+        // 禁用状态遮罩
+        if (!source.isEnabled) {
+          Column() {
+            Text('已禁用')
+              .fontSize(10)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#80000000')
+          .borderRadius(12)
+          .justifyContent(FlexAlign.Center)
+        }
+
+        // 需要代理标识
+        if (source.requireProxy) {
+          Text('🌐')
+            .fontSize(14)
+            .position({ x: 4, y: 4 })
+        }
+      }
+      .width('100%')
+      .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+
+      // 图源名称
+      Text(source.name)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .textAlign(TextAlign.Center)
+
+      // 版本和语言
+      Text(`${source.language} · v${source.version}`)
+        .fontSize(11)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
     .onClick(() => {
       this.openSourceDetail(source);
     })
@@ -6322,6 +7012,8 @@ struct MainMenuPage {
       SourceSettingsPage()
     } else if (name === 'SourceLoginPage') {
       SourceLoginPage()
+    } else if (name === 'OnlineEBookDetailPage') {
+      OnlineEBookDetailPage()
       // 测试页面导航已移除
       // } else if (name === 'ReaderKitTestPage') {
       //   ReaderKitTestPage()
@@ -6510,6 +7202,7 @@ struct MainMenuPage {
   }
 
   build() {
+    Stack() {
     Navigation(this.pathStack) {
       Stack() {
         // 背景层 - 自动显示自定义主题背景或默认背景色
@@ -6660,6 +7353,12 @@ struct MainMenuPage {
       // 需要通过GlobalWebViewContainer的静态方法来管理
       logger.info(TAG, '全局WebView容器已创建');
     })
+      
+    // 书籍翻开/关闭过渡动画覆盖层（放在Navigation外部的最顶层）
+    BookTransitionOverlay()
+    }
+    .width('100%')
+    .height('100%')
   }
 }
 

@@ -93,7 +93,7 @@ export default class EntryAbility extends UIAbility {
       settingsManager.syncToAppStorage();
 
       // 记录关键设置
-      const advancedMode = settingsManager.getBoolean(SettingKeys.ADVANCED_MODE_ENABLED, false);
+      const advancedMode = settingsManager.getBoolean(SettingKeys.ADVANCED_MODE_ENABLED, true);
       logger.info('EntryAbility', `✅ 高级模式设置: ${advancedMode}`);
       
       logger.info('EntryAbility', '✅ 设置管理器初始化完成，所有设置已同步到AppStorage');

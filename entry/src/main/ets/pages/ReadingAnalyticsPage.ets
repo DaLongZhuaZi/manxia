@@ -37,6 +37,8 @@ interface ReadingStatistics {
   favoriteReadingHour: number;    // 最喜欢的阅读时段（小时）
   mostReadComicId: string;        // 阅读最多的漫画ID
   mostReadComicTitle: string;     // 阅读最多的漫画标题
+  mostReadEBookId: string;        // 阅读最多的电子书ID
+  mostReadEBookTitle: string;     // 阅读最多的电子书标题
   continuousReadingDays: number;  // 连续阅读天数
   lastReadTime: number;           // 最后阅读时间
   // 电子书统计
@@ -64,6 +66,17 @@ interface DailyMangaItem {
   readingTime: number;            // 阅读时长（秒）
   chaptersRead: number;
   pagesRead: number;
+}
+
+/**
+ * 日视图电子书阅读项
+ */
+interface DailyEBookItem {
+  ebookId: string;
+  title: string;
+  coverPath: string;
+  readingTime: number;            // 阅读时长（秒）
+  progress: number;               // 阅读进度百分比
 }
 
 /**
@@ -150,7 +163,7 @@ interface MangaDetailParams {
  * 电子书详情页导航参数
  */
 interface EBookDetailParams {
-  ebookId: string;
+  bookId: string;
 }
 
 @Component
@@ -187,9 +200,11 @@ struct ReadingAnalyticsPage {
     totalChaptersRead: 0,
     totalPagesRead: 0,
     averageReadingTime: 0,
-    favoriteReadingHour: 0,
+    favoriteReadingHour: -1,  // -1 表示没有数据
     mostReadComicId: '',
     mostReadComicTitle: '暂无数据',
+    mostReadEBookId: '',
+    mostReadEBookTitle: '暂无数据',
     continuousReadingDays: 0,
     lastReadTime: 0,
     totalEBooksRead: 0,
@@ -217,9 +232,14 @@ struct ReadingAnalyticsPage {
   @State currentMonth: Date = new Date(); // 日视图当前显示的月份
   @State dailyViewData: DailyReadingData | null = null; // 日视图当天的阅读数据
   @State dailyMangaList: DailyMangaItem[] = []; // 日视图当天阅读的漫画列表
+  @State dailyEBookList: DailyEBookItem[] = []; // 日视图当天阅读的电子书列表
+  @State isDailyLoading: boolean = false; // 日视图加载状态
   
   // 缓存原始阅读历史数据（用于日视图查询）
   private cachedReadHistory: ReadHistory[] = [];
+  
+  // 缓存所有日期的阅读数据（用于日历视图，不受时间范围限制）
+  @State allDailyData: DailyReadingData[] = [];
 
   onPageShow(): void {
     try {
@@ -388,15 +408,18 @@ struct ReadingAnalyticsPage {
         totalChaptersRead: 0,
         totalPagesRead: 0,
         averageReadingTime: 0,
-        favoriteReadingHour: 0,
+        favoriteReadingHour: -1,  // -1 表示没有数据
         mostReadComicId: '',
         mostReadComicTitle: '暂无数据',
+        mostReadEBookId: '',
+        mostReadEBookTitle: '暂无数据',
         continuousReadingDays: 0,
         lastReadTime: 0,
         totalEBooksRead: 0,
         totalEBookReadingTime: 0
       };
       this.dailyData = [];
+      this.allDailyData = [];
       this.hourlyDistribution = [];
       this.readingRankList = [];
       this.interestItems = [];
@@ -430,15 +453,18 @@ struct ReadingAnalyticsPage {
         totalChaptersRead: 0,
         totalPagesRead: 0,
         averageReadingTime: 0,
-        favoriteReadingHour: 0,
+        favoriteReadingHour: -1,  // -1 表示没有数据
         mostReadComicId: '',
         mostReadComicTitle: '暂无数据',
+        mostReadEBookId: '',
+        mostReadEBookTitle: '暂无数据',
         continuousReadingDays: 0,
         lastReadTime: 0,
         totalEBooksRead: 0,
         totalEBookReadingTime: 0
       };
       this.dailyData = [];
+      this.allDailyData = [];
       this.hourlyDistribution = [];
       this.readingRankList = [];
       this.interestItems = [];
@@ -470,10 +496,12 @@ struct ReadingAnalyticsPage {
    * 加载日视图数据
    */
   private async loadDailyViewData(date: Date): Promise<void> {
+    this.isDailyLoading = true;
+    
     const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     
-    // 从已加载的每日数据中查找
-    const dayData = this.dailyData.find(d => d.date === dateKey);
+    // 从所有历史数据中查找（使用 allDailyData 而不是 dailyData）
+    const dayData = this.allDailyData.find(d => d.date === dateKey);
     
     if (dayData) {
       this.dailyViewData = dayData;
@@ -490,7 +518,38 @@ struct ReadingAnalyticsPage {
     // 加载当天阅读的漫画列表
     await this.loadDailyMangaList(date);
     
-    logger.debug(TAG, `日视图数据: ${dateKey}, 时长: ${this.dailyViewData.readingTime}秒, 漫画数: ${this.dailyMangaList.length}`);
+    // 加载当天阅读的电子书列表
+    await this.loadDailyEBookList(date);
+    
+    // 从漫画列表计算阅读页数
+    let mangaPagesRead = 0;
+    let mangaChaptersRead = 0;
+    let mangaReadingTime = 0;
+    this.dailyMangaList.forEach(manga => {
+      mangaPagesRead += manga.pagesRead;
+      mangaChaptersRead += manga.chaptersRead;
+      mangaReadingTime += manga.readingTime;
+    });
+    
+    // 从电子书列表计算阅读时长和章节数
+    let ebookReadingTime = 0;
+    let ebookChapters = 0;
+    this.dailyEBookList.forEach(ebook => {
+      ebookReadingTime += ebook.readingTime;
+      ebookChapters += 1;  // 每本电子书算作一个阅读项
+    });
+    
+    // 更新日视图数据，使用从列表计算的数据
+    this.dailyViewData = {
+      date: dateKey,
+      readingTime: mangaReadingTime + ebookReadingTime,
+      chaptersRead: mangaChaptersRead + ebookChapters,
+      pagesRead: mangaPagesRead
+    };
+    
+    logger.debug(TAG, `日视图数据: ${dateKey}, 时长: ${this.dailyViewData?.readingTime || 0}秒, 漫画数: ${this.dailyMangaList.length}, 电子书数: ${this.dailyEBookList.length}`);
+    
+    this.isDailyLoading = false;
   }
 
   /**
@@ -557,6 +616,48 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 加载当天阅读的电子书列表
+   */
+  private async loadDailyEBookList(date: Date): Promise<void> {
+    const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    
+    try {
+      // 获取所有有阅读记录的电子书
+      const ebooksWithProgress = await this.ebookDataManager.getEBooksWithReadingProgress();
+      
+      // 筛选当天有阅读记录的电子书（通过检查 lastReadTime）
+      const ebookList: DailyEBookItem[] = [];
+      
+      for (const ebook of ebooksWithProgress) {
+        if (ebook.readingProgress && ebook.readingProgress.lastReadTime) {
+          const lastReadDate = new Date(ebook.readingProgress.lastReadTime);
+          const lastReadDateKey = `${lastReadDate.getFullYear()}-${String(lastReadDate.getMonth() + 1).padStart(2, '0')}-${String(lastReadDate.getDate()).padStart(2, '0')}`;
+          
+          // 检查是否是当天阅读的
+          if (lastReadDateKey === dateKey) {
+            const progressValue = ebook.readingProgress.progress || 0;
+            logger.debug(TAG, `电子书 ${ebook.metadata.title} 进度: ${progressValue}%`);
+            ebookList.push({
+              ebookId: ebook.id,
+              title: ebook.metadata.title,
+              coverPath: ebook.metadata.coverImagePath || '',
+              readingTime: Math.round((ebook.readingProgress.totalReadingTime || 0) * 60), // 分钟转秒
+              progress: progressValue
+            });
+          }
+        }
+      }
+      
+      // 按阅读时长排序
+      ebookList.sort((a, b) => b.readingTime - a.readingTime);
+      this.dailyEBookList = ebookList;
+    } catch (error) {
+      logger.warn(TAG, `加载当天电子书列表失败: ${String(error)}`);
+      this.dailyEBookList = [];
+    }
+  }
+
+  /**
    * 选择日期（日视图）
    */
   private selectDate(date: Date): void {
@@ -601,7 +702,7 @@ struct ReadingAnalyticsPage {
    */
   private hasReadingDataOnDate(date: Date): boolean {
     const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    return this.dailyData.some(d => d.date === dateKey && d.readingTime > 0);
+    return this.allDailyData.some(d => d.date === dateKey && d.readingTime > 0);
   }
 
   /**
@@ -650,8 +751,20 @@ struct ReadingAnalyticsPage {
       // 分析漫画数据
       await this.analyzeReadingData(readHistory);
       
-      // 分析电子书数据
-      this.analyzeEBookData(ebooksWithProgress);
+      // 分析电子书数据（传入时间范围进行过滤）
+      const now = Date.now();
+      const timeRangeMs = this.selectedTimeRange * 24 * 60 * 60 * 1000;
+      const startTime = now - timeRangeMs;
+      this.analyzeEBookData(ebooksWithProgress, startTime);
+      
+      // 重新计算日均阅读时长（合并漫画和电子书的阅读天数）
+      this.recalculateAverageReadingTime(readHistory, ebooksWithProgress, startTime);
+      
+      // 重新计算连续阅读天数（合并漫画和电子书的阅读日期）
+      this.recalculateContinuousReadingDays(readHistory, ebooksWithProgress);
+      
+      // 重新计算最喜欢的阅读时段（合并漫画和电子书的阅读时间）
+      this.recalculateFavoriteReadingHour(readHistory, ebooksWithProgress, startTime);
       
       // 加载阅读时长排行（包含漫画和电子书）
       await this.loadReadingRank(readHistory, ebooksWithProgress);
@@ -669,25 +782,55 @@ struct ReadingAnalyticsPage {
 
   /**
    * 分析电子书数据
+   * @param ebooks 电子书列表
+   * @param startTime 时间范围开始时间（用于过滤）
    */
-  private analyzeEBookData(ebooks: EBook[]): void {
+  private analyzeEBookData(ebooks: EBook[], startTime: number): void {
     try {
-      this.statistics.totalEBooksRead = ebooks.length;
+      // 过滤时间范围内有阅读记录的电子书
+      const filteredEbooks = ebooks.filter((ebook: EBook) => {
+        if (!ebook.readingProgress || !ebook.readingProgress.lastReadTime) {
+          return false;
+        }
+        return ebook.readingProgress.lastReadTime >= startTime;
+      });
+      
+      this.statistics.totalEBooksRead = filteredEbooks.length;
       
       // 计算电子书总阅读时长（电子书的 totalReadingTime 是分钟，需要转换为秒）
       let totalEBookTimeMinutes = 0;
-      ebooks.forEach((ebook: EBook) => {
-        if (ebook.readingProgress && ebook.readingProgress.totalReadingTime > 0) {
-          totalEBookTimeMinutes += ebook.readingProgress.totalReadingTime;
+      let totalEBookChapters = 0;
+      let totalEBookPages = 0;
+      
+      filteredEbooks.forEach((ebook: EBook) => {
+        if (ebook.readingProgress) {
+          // 累加阅读时长
+          if (ebook.readingProgress.totalReadingTime > 0) {
+            totalEBookTimeMinutes += ebook.readingProgress.totalReadingTime;
+          }
+          // 累加已读章节数（当前章节索引+1表示已读到第几章）
+          if (ebook.readingProgress.currentChapterIndex >= 0) {
+            totalEBookChapters += ebook.readingProgress.currentChapterIndex + 1;
+          }
+          // 估算阅读页数：基于阅读进度和电子书总章节数
+          // 每本电子书按平均每章10页估算，乘以阅读进度百分比
+          const estimatedTotalPages = ebook.chapters.length * 10;
+          const readPages = Math.round(estimatedTotalPages * (ebook.readingProgress.progress / 100));
+          totalEBookPages += Math.max(1, readPages); // 至少1页
         }
       });
+      
       // 分钟转秒
       this.statistics.totalEBookReadingTime = Math.round(totalEBookTimeMinutes * 60);
       
       // 将电子书阅读时长加入总阅读时长（都是秒）
       this.statistics.totalReadingTime += this.statistics.totalEBookReadingTime;
       
-      logger.debug(TAG, `电子书统计: ${this.statistics.totalEBooksRead} 本, 时长 ${this.statistics.totalEBookReadingTime} 秒`);
+      // 将电子书章节数和页数加入总统计
+      this.statistics.totalChaptersRead += totalEBookChapters;
+      this.statistics.totalPagesRead += totalEBookPages;
+      
+      logger.debug(TAG, `电子书统计: ${this.statistics.totalEBooksRead} 本, 时长 ${this.statistics.totalEBookReadingTime} 秒, 章节 ${totalEBookChapters}, 页数 ${totalEBookPages}`);
     } catch (error) {
       logger.error(TAG, `分析电子书数据失败: ${String(error)}`);
     }
@@ -726,19 +869,32 @@ struct ReadingAnalyticsPage {
       this.statistics.totalChaptersRead = chapterIds.size;
       this.statistics.totalPagesRead = totalPages;
 
-      // 计算平均每天阅读时长
-      this.statistics.averageReadingTime = this.selectedTimeRange > 0
-        ? Math.round(this.statistics.totalReadingTime / this.selectedTimeRange)
+      // 计算平均每天阅读时长（基于有阅读记录的实际天数）
+      const uniqueReadDates = new Set<string>();
+      filteredHistory.forEach(record => {
+        const date = new Date(record.readTime);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        uniqueReadDates.add(dateKey);
+      });
+      const actualReadingDays = uniqueReadDates.size;
+      this.statistics.averageReadingTime = actualReadingDays > 0
+        ? Math.round(this.statistics.totalReadingTime / actualReadingDays)
         : 0;
 
       // 分析阅读时段分布
       this.analyzeHourlyDistribution(filteredHistory);
 
-      // 分析每日阅读数据
+      // 分析每日阅读数据（用于统计展示）
       this.analyzeDailyData(filteredHistory);
+      
+      // 分析所有历史的每日数据（用于日历视图，不受时间范围限制）
+      this.analyzeAllDailyData(readHistory);
 
       // 查找阅读最多的漫画
       await this.findMostReadComic(filteredHistory);
+
+      // 查找阅读最多的电子书
+      await this.findMostReadEBook();
 
       // 计算连续阅读天数
       this.calculateContinuousReadingDays(filteredHistory);
@@ -790,7 +946,7 @@ struct ReadingAnalyticsPage {
 
     // 找出最喜欢的阅读时段
     let maxCount = 0;
-    let favoriteHour = 0;
+    let favoriteHour = -1;  // 使用 -1 表示没有数据
     hourlyMap.forEach((value, hour) => {
       if (value.count > maxCount) {
         maxCount = value.count;
@@ -843,6 +999,49 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 分析所有历史的每日阅读数据（用于日历视图，不受时间范围限制）
+   */
+  private analyzeAllDailyData(readHistory: ReadHistory[]): void {
+    const dailyMap = new Map<string, DailyStatData>();
+
+    readHistory.forEach(record => {
+      const date = new Date(record.readTime);
+      const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+      const existing = dailyMap.get(dateKey);
+      if (existing) {
+        existing.time += Math.round(record.readDuration / 1000);  // 毫秒转秒
+        existing.chapters.add(record.chapterId);
+        existing.pages += 1;
+        dailyMap.set(dateKey, existing);
+      } else {
+        const chapters = new Set<string>();
+        chapters.add(record.chapterId);
+        const newData: DailyStatData = {
+          time: Math.round(record.readDuration / 1000),  // 毫秒转秒
+          chapters: chapters,
+          pages: 1
+        };
+        dailyMap.set(dateKey, newData);
+      }
+    });
+
+    // 转换为数组并排序
+    this.allDailyData = [];
+    dailyMap.forEach((value, dateKey) => {
+      this.allDailyData.push({
+        date: dateKey,
+        readingTime: value.time,
+        chaptersRead: value.chapters.size,
+        pagesRead: value.pages
+      });
+    });
+
+    this.allDailyData.sort((a, b) => b.date.localeCompare(a.date));
+    logger.debug(TAG, `分析完成所有历史每日数据: ${this.allDailyData.length} 天`);
+  }
+
+  /**
    * 查找阅读最多的漫画
    */
   private async findMostReadComic(readHistory: ReadHistory[]): Promise<void> {
@@ -876,6 +1075,46 @@ struct ReadingAnalyticsPage {
       }
     } else {
       this.statistics.mostReadComicTitle = '暂无数据';
+    }
+  }
+
+  /**
+   * 查找阅读最多的电子书
+   */
+  private async findMostReadEBook(): Promise<void> {
+    try {
+      const ebookDataManager = EBookDataManager.getInstance();
+      const allEBooks: EBook[] = await ebookDataManager.getEBooksWithReadingProgress();
+      
+      if (allEBooks.length === 0) {
+        this.statistics.mostReadEBookId = '';
+        this.statistics.mostReadEBookTitle = '暂无数据';
+        return;
+      }
+      
+      // 根据阅读时长找出阅读最多的电子书
+      let maxReadingTime = 0;
+      let mostReadEBook: EBook | null = null;
+      
+      for (const ebook of allEBooks) {
+        const readingTime: number = ebook.readingProgress?.totalReadingTime || 0;
+        if (readingTime > maxReadingTime) {
+          maxReadingTime = readingTime;
+          mostReadEBook = ebook;
+        }
+      }
+      
+      if (mostReadEBook && maxReadingTime > 0) {
+        this.statistics.mostReadEBookId = mostReadEBook.id;
+        this.statistics.mostReadEBookTitle = mostReadEBook.metadata.title;
+      } else {
+        this.statistics.mostReadEBookId = '';
+        this.statistics.mostReadEBookTitle = '暂无数据';
+      }
+    } catch (error) {
+      logger.warn(TAG, `查找阅读最多的电子书失败: ${String(error)}`);
+      this.statistics.mostReadEBookId = '';
+      this.statistics.mostReadEBookTitle = '暂无数据';
     }
   }
 
@@ -927,6 +1166,136 @@ struct ReadingAnalyticsPage {
     }
 
     this.statistics.continuousReadingDays = continuousDays;
+  }
+
+  /**
+   * 重新计算日均阅读时长（合并漫画和电子书的阅读天数）
+   */
+  private recalculateAverageReadingTime(readHistory: ReadHistory[], ebooks: EBook[], startTime: number): void {
+    const uniqueReadDates = new Set<string>();
+    
+    // 添加漫画阅读日期
+    readHistory.forEach(record => {
+      if (record.readTime >= startTime) {
+        const date = new Date(record.readTime);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        uniqueReadDates.add(dateKey);
+      }
+    });
+    
+    // 添加电子书阅读日期
+    ebooks.forEach((ebook: EBook) => {
+      if (ebook.readingProgress && ebook.readingProgress.lastReadTime && ebook.readingProgress.lastReadTime >= startTime) {
+        const date = new Date(ebook.readingProgress.lastReadTime);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        uniqueReadDates.add(dateKey);
+      }
+    });
+    
+    const actualReadingDays = uniqueReadDates.size;
+    this.statistics.averageReadingTime = actualReadingDays > 0
+      ? Math.round(this.statistics.totalReadingTime / actualReadingDays)
+      : 0;
+    
+    logger.debug(TAG, `日均阅读时长重新计算: 总时长=${this.statistics.totalReadingTime}秒, 阅读天数=${actualReadingDays}, 日均=${this.statistics.averageReadingTime}秒`);
+  }
+
+  /**
+   * 重新计算连续阅读天数（合并漫画和电子书的阅读日期）
+   */
+  private recalculateContinuousReadingDays(readHistory: ReadHistory[], ebooks: EBook[]): void {
+    const readDates = new Set<string>();
+    
+    // 添加漫画阅读日期
+    readHistory.forEach(record => {
+      const date = new Date(record.readTime);
+      const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      readDates.add(dateKey);
+    });
+    
+    // 添加电子书阅读日期
+    ebooks.forEach((ebook: EBook) => {
+      if (ebook.readingProgress && ebook.readingProgress.lastReadTime) {
+        const date = new Date(ebook.readingProgress.lastReadTime);
+        const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        readDates.add(dateKey);
+      }
+    });
+    
+    if (readDates.size === 0) {
+      this.statistics.continuousReadingDays = 0;
+      return;
+    }
+    
+    // 从今天开始倒推计算连续天数
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const yesterdayDate = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayKey = `${yesterdayDate.getFullYear()}-${String(yesterdayDate.getMonth() + 1).padStart(2, '0')}-${String(yesterdayDate.getDate()).padStart(2, '0')}`;
+    
+    if (!readDates.has(todayKey) && !readDates.has(yesterdayKey)) {
+      this.statistics.continuousReadingDays = 0;
+      return;
+    }
+    
+    let continuousDays = 0;
+    let currentDate = new Date(today);
+    
+    while (true) {
+      const dateKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+      if (readDates.has(dateKey)) {
+        continuousDays++;
+        currentDate = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
+      } else {
+        break;
+      }
+    }
+    
+    this.statistics.continuousReadingDays = continuousDays;
+    logger.debug(TAG, `连续阅读天数重新计算: ${continuousDays}天`);
+  }
+
+  /**
+   * 重新计算最喜欢的阅读时段（合并漫画和电子书的阅读时间）
+   */
+  private recalculateFavoriteReadingHour(readHistory: ReadHistory[], ebooks: EBook[], startTime: number): void {
+    const hourlyMap = new Map<number, number>();
+    
+    // 初始化24小时数据
+    for (let hour = 0; hour < 24; hour++) {
+      hourlyMap.set(hour, 0);
+    }
+    
+    // 统计漫画阅读时段
+    readHistory.forEach(record => {
+      if (record.readTime >= startTime) {
+        const date = new Date(record.readTime);
+        const hour = date.getHours();
+        hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
+      }
+    });
+    
+    // 统计电子书阅读时段
+    ebooks.forEach((ebook: EBook) => {
+      if (ebook.readingProgress && ebook.readingProgress.lastReadTime && ebook.readingProgress.lastReadTime >= startTime) {
+        const date = new Date(ebook.readingProgress.lastReadTime);
+        const hour = date.getHours();
+        hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
+      }
+    });
+    
+    // 找出最喜欢的阅读时段
+    let maxCount = 0;
+    let favoriteHour = -1;
+    hourlyMap.forEach((count, hour) => {
+      if (count > maxCount) {
+        maxCount = count;
+        favoriteHour = hour;
+      }
+    });
+    
+    this.statistics.favoriteReadingHour = favoriteHour;
+    logger.debug(TAG, `最喜欢的阅读时段重新计算: ${favoriteHour}点`);
   }
 
   /**
@@ -1119,7 +1488,7 @@ struct ReadingAnalyticsPage {
         const params: MangaDetailParams = { mangaId: item.id };
         this.pathStack.pushPathByName('MangaDetailPage', params);
       } else {
-        const params: EBookDetailParams = { ebookId: item.id };
+        const params: EBookDetailParams = { bookId: item.id };
         this.pathStack.pushPathByName('EBookDetailPage', params);
       }
     } catch (error) {
@@ -1136,11 +1505,21 @@ struct ReadingAnalyticsPage {
   }
 
   /**
-   * 规范化封面路径：本地文件添加 file:// 前缀
+   * 规范化封面路径：本地文件添加 file:// 前缀，资源文件返回 Resource 类型
+   * @param path 封面路径
+   * @param isEBook 是否为电子书（电子书无封面时使用默认电子书图标）
    */
-  private normalizeCoverPath(path: string): string {
+  private normalizeCoverPath(path: string, isEBook: boolean = false): string | Resource {
     if (!path || path.length === 0) {
+      // 电子书无封面时使用默认电子书图标
+      if (isEBook) {
+        return $r('app.media.ebook');
+      }
       return '';
+    }
+    // 如果是资源路径（app.media.xxx 格式），转换为 $r() 格式
+    if (path.startsWith('app.media.')) {
+      return $r(path);
     }
     // 如果是本地路径（以 / 开头），添加 file:// 前缀
     if (path.startsWith('/')) {
@@ -1440,7 +1819,7 @@ struct ReadingAnalyticsPage {
     const year = this.currentMonth.getFullYear();
     const month = this.currentMonth.getMonth();
     const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`;
-    return this.dailyData.some(d => d.date === dateKey && d.readingTime > 0);
+    return this.allDailyData.some(d => d.date === dateKey && d.readingTime > 0);
   }
 
   /**
@@ -1473,7 +1852,21 @@ struct ReadingAnalyticsPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .alignSelf(ItemAlign.Start)
         
-        if (this.dailyViewData && this.dailyViewData.readingTime > 0) {
+        if (this.isDailyLoading) {
+          // 加载中效果
+          Column({ space: 8 }) {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Text('加载中...')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .padding(32)
+          .alignItems(HorizontalAlign.Center)
+        } else if (this.dailyViewData && this.dailyViewData.readingTime > 0) {
           // 有阅读数据
           Row({ space: 16 }) {
             // 阅读时长
@@ -1507,19 +1900,19 @@ struct ReadingAnalyticsPage {
             .alignItems(HorizontalAlign.Center)
             
             // 阅读页数
-            Column({ space: 4 }) {
-              Text('📄')
-                .fontSize(24)
-              Text(`${this.dailyViewData.pagesRead}`)
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              Text('阅读页数')
-                .fontSize(12)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Center)
+            // Column({ space: 4 }) {
+            //   Text('📄')
+            //     .fontSize(24)
+            //   Text(`${this.dailyViewData.pagesRead}`)
+            //     .fontSize(18)
+            //     .fontWeight(FontWeight.Bold)
+            //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            //   Text('阅读页数')
+            //     .fontSize(12)
+            //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            // }
+            // .layoutWeight(1)
+            // .alignItems(HorizontalAlign.Center)
           }
           .width('100%')
           .padding(16)
@@ -1557,6 +1950,29 @@ struct ReadingAnalyticsPage {
           
           ForEach(this.dailyMangaList, (item: DailyMangaItem) => {
             this.buildDailyMangaCard(item)
+          })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(this.getBlurPanelBackground())
+        .borderRadius(12)
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .margin({ left: 16, right: 16 })
+      }
+      
+      // 当天阅读的电子书列表
+      if (this.dailyEBookList.length > 0) {
+        Column({ space: 12 }) {
+          Text('阅读的电子书')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .alignSelf(ItemAlign.Start)
+          
+          ForEach(this.dailyEBookList, (item: DailyEBookItem) => {
+            this.buildDailyEBookCard(item)
           })
         }
         .width('100%')
@@ -1625,6 +2041,54 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 构建日视图电子书卡片
+   */
+  @Builder
+  buildDailyEBookCard(item: DailyEBookItem) {
+    Row({ space: 12 }) {
+      // 封面图片
+      Image(this.normalizeCoverPath(item.coverPath, true))
+        .width(60)
+        .height(80)
+        .borderRadius(6)
+        .objectFit(ImageFit.Cover)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      
+      // 电子书信息
+      Column({ space: 4 }) {
+        Text(item.title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        
+        Row({ space: 8 }) {
+          Text(`⏱️ ${this.formatDuration(item.readingTime)}`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          
+          Text(`📊 ${item.progress.toFixed(1)}%`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+    .onClick(() => {
+      // 点击跳转到电子书详情页
+      const params: EBookDetailParams = { bookId: item.ebookId };
+      this.pathStack.pushPathByName('EBookDetailPage', params);
+    })
+  }
+
+  /**
    * 获取统计卡片渐变背景色
    */
   private getStatCardGradient(index: number): LinearGradient {
@@ -1653,7 +2117,7 @@ struct ReadingAnalyticsPage {
    * 构建统计卡片（带模糊效果磁贴设计）
    */
   @Builder
-  buildStatCard(title: string, value: string, icon: string, subtitle?: string) {
+  buildStatCard(title: string, value: string, icon: string, unit?: string) {
     Column({ space: 6 }) {
       // 图标
       Text(icon)
@@ -1662,25 +2126,28 @@ struct ReadingAnalyticsPage {
       
       Blank().layoutWeight(1)
       
-      // 数值
-      Text(value)
-        .fontSize(24)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
+      // 数值和单位（同一行显示）
+      Row({ space: 2 }) {
+        Text(value)
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        if (unit) {
+          Text(unit)
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .alignSelf(ItemAlign.End)
+            .margin({ bottom: 2 })
+        }
+      }
+      .alignSelf(ItemAlign.Start)
       
       // 标题
       Text(title)
         .fontSize(12)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
-      
-      if (subtitle) {
-        Text(subtitle)
-          .fontSize(10)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .alignSelf(ItemAlign.Start)
-      }
     }
     .width('100%')
     .height(120)
@@ -1851,7 +2318,9 @@ struct ReadingAnalyticsPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
           
-          Text(`${this.statistics.favoriteReadingHour}:00 - ${this.statistics.favoriteReadingHour + 1}:00`)
+          Text(this.statistics.favoriteReadingHour >= 0 
+            ? `${this.statistics.favoriteReadingHour}:00 - ${this.statistics.favoriteReadingHour + 1}:00` 
+            : '暂无数据')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1911,6 +2380,38 @@ struct ReadingAnalyticsPage {
           .width('100%')
           
           Text(this.statistics.mostReadComicTitle)
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(this.getBlurPanelBackground())
+        .borderRadius(12)
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .alignItems(HorizontalAlign.Start)
+      }
+
+      // 阅读最多的电子书
+      if (this.statistics.mostReadEBookId.length > 0) {
+        Column({ space: 8 }) {
+          Row({ space: 8 }) {
+            Text('📚')
+              .fontSize(20)
+            
+            Text('阅读最多的电子书')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .layoutWeight(1)
+          }
+          .width('100%')
+          
+          Text(this.statistics.mostReadEBookTitle)
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(2)
@@ -2059,18 +2560,25 @@ struct ReadingAnalyticsPage {
                 // 封面图片
                 Stack() {
                   if (item.coverPath && item.coverPath.length > 0) {
-                    Image(this.normalizeCoverPath(item.coverPath))
+                    Image(this.normalizeCoverPath(item.coverPath, item.type === 'ebook'))
                       .width('100%')
-                      .height(120)
+                      .aspectRatio(0.7)
+                      .objectFit(ImageFit.Cover)
+                      .borderRadius(8)
+                  } else if (item.type === 'ebook') {
+                    // 电子书无封面时使用默认电子书图标
+                    Image($r('app.media.ebook'))
+                      .width('100%')
+                      .aspectRatio(0.7)
                       .objectFit(ImageFit.Cover)
                       .borderRadius(8)
                   } else {
                     Column() {
-                      Text(item.type === 'manga' ? '📚' : '📖')
+                      Text('📚')
                         .fontSize(32)
                     }
                     .width('100%')
-                    .height(120)
+                    .aspectRatio(0.7)
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                     .borderRadius(8)
                     .justifyContent(FlexAlign.Center)

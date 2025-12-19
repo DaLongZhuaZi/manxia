@@ -14,7 +14,8 @@ export enum TabType {
   HISTORY = 'history',
   LEADERBOARD = 'leaderboard',  // 排行榜
   CUSTOM = 'custom',  // 自定义工作流标签
-  SEARCH = 'search'  // 搜索结果标签
+  SEARCH = 'search',  // 搜索结果标签
+  CATEGORY = 'category'  // 分类页面标签（电子书等）
 }
 
 /**
@@ -93,6 +94,8 @@ export interface TabConfig {
   filterConfig?: FilterConfig;
   /** 工作流名称（用于CUSTOM类型，指定要执行的工作流） */
   workflowName?: string;
+  /** 分类URL（用于CATEGORY类型，指定分类页面的URL） */
+  categoryUrl?: string;
   /** 图标名称（可选，用于显示标签图标） */
   icon?: string;
   /** 描述文字 */
@@ -261,6 +264,8 @@ function parseTabDefinition(tabDef: Record<string, Object>, defaultOrder: number
     case 'favorites': type = TabType.FAVORITES; break;
     case 'history': type = TabType.HISTORY; break;
     case 'leaderboard': type = TabType.LEADERBOARD; break;
+    case 'category': type = TabType.CATEGORY; break;
+    case 'search': type = TabType.SEARCH; break;
     default: type = TabType.CUSTOM; break;
   }
 
@@ -272,6 +277,7 @@ function parseTabDefinition(tabDef: Record<string, Object>, defaultOrder: number
     order: typeof tabDef['order'] === 'number' ? tabDef['order'] as number : defaultOrder,
     requiresLogin: tabDef['requiresLogin'] === true,
     workflowName: tabDef['workflowName'] as string | undefined,
+    categoryUrl: tabDef['categoryUrl'] as string | undefined,
     icon: tabDef['icon'] as string | undefined,
     description: tabDef['description'] as string | undefined
   };

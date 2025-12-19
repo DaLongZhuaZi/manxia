@@ -4,7 +4,7 @@
  * 提供漫画文件导入、解压缩、XML解析和数据库导入功能
  */
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
+import { LengthMetrics, UIContext, promptAction, componentSnapshot } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { logger } from '../Utils/Logger';
@@ -1824,9 +1824,14 @@ struct DataManagementPage {
         const targetPath = await this.copyEBookFileToSandboxSync(uri, context);
         
         if (targetPath) {
-          // 等待导入完成
-          await this.continueImportEBook(targetPath);
-          successCount++;
+          // 等待导入完成，根据返回值判断是否成功
+          const importSuccess = await this.continueImportEBook(targetPath);
+          if (importSuccess) {
+            successCount++;
+          } else {
+            // 用户取消或导入失败
+            failCount++;
+          }
         } else {
           failCount++;
         }
@@ -2051,8 +2056,9 @@ struct DataManagementPage {
   
   /**
    * 继续导入电子书（文件已复制到沙箱后）
+   * @returns true 表示导入成功，false 表示用户取消或失败
    */
-  private async continueImportEBook(sandboxPath: string): Promise<void> {
+  private async continueImportEBook(sandboxPath: string): Promise<boolean> {
     try {
       logger.info(TAG, `继续导入电子书: ${sandboxPath}`);
       
@@ -2091,17 +2097,20 @@ struct DataManagementPage {
       // 显示确认对话框，让用户查看和编辑解析到的信息
       logger.info(TAG, `显示电子书确认对话框: ${ebook.metadata.title}, 章节数: ${ebook.chapters.length}`);
       this.updateProgress(ImportStatus.IDLE, '', 0); // 隐藏进度，显示对话框
-      await this.showEBookMetadataDialog(ebook);
+      const confirmed = await this.showEBookMetadataDialog(ebook);
+      return confirmed;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '导入电子书失败', errorMsg);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${errorMsg}`, 0);
       this.showToast('导入失败: ' + errorMsg);
+      return false;
     }
   }
 
   /**
    * 尝试提取电子书封面
+   * 如果提取失败（如 TXT 文件没有封面），则使用封面生成器生成带标题的封面
    */
   private async tryExtractEBookCover(ebook: EBook, filePath: string): Promise<void> {
     try {
@@ -2118,11 +2127,178 @@ struct DataManagementPage {
         ebook.metadata.coverImagePath = result.coverPath;
         logger.info(TAG, `封面提取成功: ${result.coverPath}`);
       } else {
-        logger.info(TAG, `封面提取失败: ${result.errorMessage || '未知原因'}`);
+        // 封面提取失败，尝试生成带标题的封面
+        logger.info(TAG, `封面提取失败: ${result.errorMessage || '未知原因'}，尝试生成封面`);
+        await this.generateEBookCover(ebook, coverDir);
       }
     } catch (error) {
-      logger.warn(TAG, `封面提取异常: ${String(error)}`);
-      // 封面提取失败不影响导入流程
+      logger.warn(TAG, `封面提取异常: ${String(error)}，尝试生成封面`);
+      // 封面提取失败不影响导入流程，尝试生成封面
+      try {
+        const context = getContext(this);
+        const coverDir = `${context.filesDir}/ebook_covers`;
+        await this.generateEBookCover(ebook, coverDir);
+      } catch (genError) {
+        logger.warn(TAG, `封面生成也失败: ${String(genError)}`);
+      }
+    }
+  }
+  
+  // 封面生成器常量（基于 ebook.webp 图片精确测量）
+  // 图片原始尺寸约 400x600，白色留白区域（金色边框内）位置：
+  private static readonly COVER_WIDTH = 400;
+  private static readonly COVER_HEIGHT = 600;
+  // 标题区域位置（精确测量金色边框内的白色区域）
+  private static readonly TITLE_AREA_TOP_PERCENT = 0.130;    // 顶部 3.5%
+  private static readonly TITLE_AREA_BOTTOM_PERCENT = 0.345; // 底部 32.5%
+  private static readonly TITLE_AREA_LEFT_PERCENT = 0.110;    // 左侧 7%
+  private static readonly TITLE_AREA_RIGHT_PERCENT = 0.895;   // 右侧 93%
+  
+  /**
+   * 格式化封面标题（处理过长的标题）
+   */
+  private formatCoverTitle(title: string): string {
+    // 移除文件扩展名
+    let cleanTitle = title.replace(/\.(txt|epub|pdf|mobi|azw3?)$/i, '');
+    // 如果标题过长，截断并添加省略号
+    if (cleanTitle.length > 20) {
+      cleanTitle = cleanTitle.substring(0, 17) + '...';
+    }
+    return cleanTitle;
+  }
+  
+  /**
+   * 根据标题长度计算合适的字体大小
+   * 标题区域高度约 147px (600 * 0.245)，宽度约 332px (400 * 0.83)
+   * 需要确保文字足够大且能完整显示
+   */
+  private calculateCoverFontSize(title: string): number {
+    const length = title.length;
+    if (length <= 2) {
+      return 70;  // 超短标题，使用大字体
+    } else if (length <= 4) {
+      return 56;
+    } else if (length <= 6) {
+      return 48;
+    } else if (length <= 8) {
+      return 36;
+    } else if (length <= 12) {
+      return 32;
+    } else if (length <= 16) {
+      return 28;
+    } else {
+      return 24;  // 较长标题
+    }
+  }
+  
+  /**
+   * 构建封面组件（用于 componentSnapshot）
+   */
+  @Builder
+  buildCoverForSnapshot(title: string) {
+    Stack() {
+      // 底层：默认封面图片
+      Image($r('app.media.ebook'))
+        .width(DataManagementPage.COVER_WIDTH)
+        .height(DataManagementPage.COVER_HEIGHT)
+        .objectFit(ImageFit.Cover)
+      
+      // 标题文字层 - 精确定位到金色边框内的白色区域中心
+      // 计算标题区域的中心位置
+      Text(this.formatCoverTitle(title))
+        .fontSize(this.calculateCoverFontSize(title))
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#1a1a1a')
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .lineHeight(this.calculateCoverFontSize(title) * 1.3)
+        .width(DataManagementPage.COVER_WIDTH * (DataManagementPage.TITLE_AREA_RIGHT_PERCENT - DataManagementPage.TITLE_AREA_LEFT_PERCENT) - 24)
+        .constraintSize({
+          maxHeight: DataManagementPage.COVER_HEIGHT * (DataManagementPage.TITLE_AREA_BOTTOM_PERCENT - DataManagementPage.TITLE_AREA_TOP_PERCENT) - 20
+        })
+        .position({
+          x: DataManagementPage.COVER_WIDTH * DataManagementPage.TITLE_AREA_LEFT_PERCENT + 12,
+          y: DataManagementPage.COVER_HEIGHT * (DataManagementPage.TITLE_AREA_TOP_PERCENT + DataManagementPage.TITLE_AREA_BOTTOM_PERCENT) / 2 - this.calculateCoverFontSize(title) * 0.65
+        })
+    }
+    .width(DataManagementPage.COVER_WIDTH)
+    .height(DataManagementPage.COVER_HEIGHT)
+  }
+  
+  /**
+   * 使用封面生成器生成电子书封面
+   * 在默认封面图片的留白区域添加标题文字
+   */
+  private async generateEBookCover(ebook: EBook, coverDir: string): Promise<void> {
+    try {
+      logger.info(TAG, `开始生成封面: ${ebook.metadata.title}`);
+      
+      // 使用 componentSnapshot.createFromBuilder 生成 PixelMap
+      const pixelMap = await componentSnapshot.createFromBuilder(
+        () => { this.buildCoverForSnapshot(ebook.metadata.title); }
+      );
+      
+      if (!pixelMap) {
+        logger.warn(TAG, '封面生成失败: PixelMap 为空');
+        return;
+      }
+      
+      // 保存 PixelMap 为图片文件
+      const outputPath = `${coverDir}/${ebook.id}_generated_cover.webp`;
+      const saveSuccess = await this.savePixelMapToFile(pixelMap, outputPath);
+      
+      // 释放 PixelMap
+      pixelMap.release();
+      
+      if (saveSuccess) {
+        ebook.metadata.coverImagePath = outputPath;
+        logger.info(TAG, `封面生成成功: ${outputPath}`);
+      } else {
+        logger.warn(TAG, '封面生成失败: 保存图片失败');
+      }
+    } catch (error) {
+      logger.warn(TAG, `封面生成异常: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 将 PixelMap 保存为图片文件
+   */
+  private async savePixelMapToFile(pixelMap: image.PixelMap, filePath: string): Promise<boolean> {
+    try {
+      // 确保目录存在
+      const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+      try {
+        await fileIo.mkdir(dirPath);
+      } catch (e) {
+        // 目录可能已存在，忽略错误
+      }
+      
+      // 创建图片打包器
+      const imagePacker = image.createImagePacker();
+      
+      // 打包为 WebP 格式
+      const packOptions: image.PackingOption = {
+        format: 'image/webp',
+        quality: 90
+      };
+      
+      const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
+      
+      // 写入文件
+      const file = await fileIo.open(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      await fileIo.write(file.fd, arrayBuffer);
+      await fileIo.close(file.fd);
+      
+      // 释放打包器
+      imagePacker.release();
+      
+      logger.info(TAG, `封面图片已保存: ${filePath}`);
+      return true;
+    } catch (error) {
+      logger.error(TAG, `保存图片失败: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 
@@ -2318,9 +2494,10 @@ struct DataManagementPage {
 
   /**
    * 显示电子书元数据补充对话框
+   * @returns true 表示用户确认导入，false 表示用户取消
    */
-  private async showEBookMetadataDialog(ebook: EBook): Promise<void> {
-    return new Promise<void>((resolve) => {
+  private async showEBookMetadataDialog(ebook: EBook): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
       this.ebookMetadataDialogController = new CustomDialogController({
         builder: EBookMetadataDialog({
           themeState: this.themeState,
@@ -2349,12 +2526,55 @@ struct DataManagementPage {
             // 显示成功提示
             this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${ebook.metadata.title}`, 100);
             this.showToast(`导入成功: ${ebook.metadata.title}`);
-            resolve();
+            resolve(true);
           },
-          onCancel: () => {
+          onCancel: async () => {
             logger.info(TAG, '用户取消导入电子书');
+            
+            // 删除已生成的封面图片（如果有）
+            if (ebook.metadata.coverImagePath && ebook.metadata.coverImagePath.length > 0) {
+              try {
+                await fileIo.unlink(ebook.metadata.coverImagePath);
+                logger.info(TAG, `已删除生成的封面图片: ${ebook.metadata.coverImagePath}`);
+              } catch (e) {
+                logger.warn(TAG, `删除封面图片失败: ${String(e)}`);
+              }
+            }
+            
             this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
-            resolve();
+            resolve(false);
+          },
+          onRegenerateCover: async (title: string, oldCoverPath: string): Promise<string> => {
+            logger.info(TAG, `重新生成封面: 标题=${title}, 旧封面=${oldCoverPath}`);
+            
+            // 删除旧封面
+            if (oldCoverPath && oldCoverPath.length > 0) {
+              try {
+                await fileIo.unlink(oldCoverPath);
+                logger.info(TAG, `已删除旧封面: ${oldCoverPath}`);
+              } catch (e) {
+                logger.warn(TAG, `删除旧封面失败: ${String(e)}`);
+              }
+            }
+            
+            // 使用新标题生成封面
+            const context = getContext(this);
+            const coverDir = `${context.filesDir}/ebook_covers`;
+            
+            // 临时更新 ebook 的标题用于生成封面
+            const originalTitle = ebook.metadata.title;
+            ebook.metadata.title = title;
+            
+            try {
+              await this.generateEBookCover(ebook, coverDir);
+              const newCoverPath = ebook.metadata.coverImagePath || '';
+              logger.info(TAG, `封面重新生成成功: ${newCoverPath}`);
+              return newCoverPath;
+            } catch (error) {
+              logger.error(TAG, `封面重新生成失败: ${String(error)}`);
+              ebook.metadata.title = originalTitle;  // 恢复原标题
+              return '';
+            }
           }
         }),
         autoCancel: false,

@@ -49,6 +49,11 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_BG_IMAGE_PATH = 'global_text_bg_image_path';
   static readonly GLOBAL_TEXT_BG_IMAGE_OPACITY = 'global_text_bg_image_opacity';
   static readonly GLOBAL_TEXT_USE_BG_IMAGE = 'global_text_use_bg_image';
+  // 底部信息栏设置
+  static readonly GLOBAL_TEXT_SHOW_TIME = 'global_text_show_time';
+  static readonly GLOBAL_TEXT_SHOW_BATTERY = 'global_text_show_battery';
+  static readonly GLOBAL_TEXT_SHOW_PAGE_NUMBER = 'global_text_show_page_number';
+  static readonly GLOBAL_TEXT_SHOW_PROGRESS = 'global_text_show_progress';
   
   // 下载设置
   static readonly DOWNLOAD_WIFI_ONLY = 'download_wifi_only';

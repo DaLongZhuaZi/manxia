@@ -40,6 +40,7 @@ import fs from '@ohos.file.fs';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
 import { MangaReaderChapterList } from '../components/MangaReaderChapterList';
 import { MangaInteractionOverlay, MangaInteractionOverlayParams } from '../components/MangaInteractionOverlay';
+import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition } from '../components/BookTransitionOverlay';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { DownloadStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
 import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from '../Framework/Utils/AutoPageTurnController';
@@ -2326,6 +2327,11 @@ export struct MangaReaderPage {
       }
       this.readerState.isLoading = false;
       logger.info(TAG, '✅ 漫画阅读器初始化完成');
+      
+      // 通知过渡动画：阅读器已就绪
+      setReaderReady();
+      logger.info(TAG, '📤 已通知过渡动画阅读器就绪');
+      
       logger.info(TAG, `📊 初始化摘要:`);
       logger.info(TAG, `  - 漫画: ${this.readerState.currentManga?.title}`);
       logger.info(TAG, `  - 当前章节: ${this.readerState.currentChapter?.title}`);
@@ -3711,8 +3717,16 @@ export struct MangaReaderPage {
       return;
     }
 
-    // 使用 readerState.currentPageIndex 作为当前页面索引
+    // [修复] 优先从 MangaViewer 获取当前页面索引，避免 readerState.currentPageIndex 与 viewCurrentPageIndex 不同步
+    // 这在退出阅读器时尤其重要，因为 readerState.currentPageIndex 可能已经过时
     let pageIndex: number = this.readerState.currentPageIndex;
+    if (this.mangaViewerComponent) {
+      const viewerPageIndex: number = this.mangaViewerComponent.currentPageIndex;
+      if (viewerPageIndex >= 0 && viewerPageIndex !== pageIndex) {
+        logger.debug(TAG, `[修复] 页面索引不同步: readerState=${pageIndex}, viewer=${viewerPageIndex}，使用viewer的值`);
+        pageIndex = viewerPageIndex;
+      }
+    }
     const now: number = Date.now();
 
     // 限流：同页且1秒内不重复写入
@@ -4188,15 +4202,34 @@ export struct MangaReaderPage {
   /**
    * 返回上一页
    */
-  private goBack(): void {
+  private async goBack(): Promise<void> {
     try {
+      // 使用当前漫画ID构建封面组件ID，获取正确的封面位置
+      const mangaId = this.readerState.currentManga?.id || '';
+      const coverComponentId = mangaId ? `cover_manga_lib_${mangaId}` : '';
+      
+      // 触发关闭过渡动画（带截图和动态封面位置）
+      logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
+      await startBookCloseTransitionWithComponentId(
+        'manga_reader_root',
+        coverComponentId,
+        () => {
+          logger.info(TAG, '关闭过渡动画完成');
+        }
+      );
+      
       this.saveReadingProgressInternal('goBack').then(() => {
-        this.pathStack.pop();
-        logger.info(TAG, '返回上一页');
+        // 延迟返回，让动画先开始
+        setTimeout(() => {
+          this.pathStack.pop();
+          logger.info(TAG, '返回上一页');
+        }, 50);
       }).catch((error: Error) => {
         logger.error(TAG, '返回前保存阅读进度失败', error.message);
-        this.pathStack.pop();
-        logger.info(TAG, '返回上一页（忽略保存失败）');
+        setTimeout(() => {
+          this.pathStack.pop();
+          logger.info(TAG, '返回上一页（忽略保存失败）');
+        }, 50);
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -4211,53 +4244,6 @@ export struct MangaReaderPage {
     return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
            this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
            this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
-  }
-
-  /**
-   * 显示条漫模式切换提示
-   * 当检测到图片是条漫格式时，提示用户切换到条漫模式
-   */
-  private showWebtoonModePrompt(avgAspectRatio: number): void {
-    try {
-      const promptAction = this.getUIContext().getPromptAction();
-      promptAction.showDialog({
-        title: '检测到条漫格式',
-        message: `当前漫画图片的平均宽高比为 ${avgAspectRatio.toFixed(1)}:1，建议使用条漫模式阅读以获得更好的体验。\n\n是否切换到条漫模式？`,
-        buttons: [
-          {
-            text: '切换',
-            color: '#007AFF'
-          },
-          {
-            text: '保持当前模式',
-            color: '#8E8E93'
-          }
-        ]
-      }).then((result) => {
-        if (result.index === 0) {
-          // 用户选择切换到条漫模式
-          logger.info(TAG, '用户选择切换到条漫模式');
-          this.readingSettings.readingMode = ReadingMode.WEBTOON;
-          // 保存设置到数据库
-          if (this.readerState.currentManga) {
-            ComicConverter.saveReadingSettings(this.readerState.currentManga.id, this.readingSettings).catch((err: Error) => {
-              logger.warn(TAG, `保存阅读设置失败: ${err.message}`);
-            });
-          }
-          // 显示提示
-          promptAction.showToast({
-            message: '已切换到条漫模式',
-            duration: 2000
-          });
-        } else {
-          logger.info(TAG, '用户选择保持当前阅读模式');
-        }
-      }).catch((err: Error) => {
-        logger.warn(TAG, `显示条漫切换对话框失败: ${err.message}`);
-      });
-    } catch (e) {
-      logger.warn(TAG, `显示条漫模式提示失败: ${String(e)}`);
-    }
   }
 
   /**
@@ -5085,51 +5071,24 @@ export struct MangaReaderPage {
             onDoubleTap: (event: ClickEvent) => {
               this.handleDoubleTap(event);
             },
-            onWebtoonDetected: (isWebtoon: boolean, avgAspectRatio: number) => {
-              // 条漫自动检测回调 - 自动切换模式
-              if (isWebtoon && !this.isWebtoonMode()) {
-                logger.info(TAG, `🎯 检测到条漫格式: 平均宽高比=${avgAspectRatio.toFixed(2)}，自动切换到条漫模式`);
-                // 自动切换到条漫模式
-                this.readingSettings.readingMode = ReadingMode.WEBTOON;
-                // 保存设置到数据库
-                if (this.readerState.currentManga) {
-                  ComicConverter.saveReadingSettings(this.readerState.currentManga.id, this.readingSettings).catch((err: Error) => {
-                    logger.warn(TAG, `保存阅读设置失败: ${err.message}`);
-                  });
-                }
-                // 显示toast提示
-                try {
-                  this.getUIContext().getPromptAction().showToast({
-                    message: `已自动切换到条漫模式（宽高比 ${avgAspectRatio.toFixed(1)}:1）`,
-                    duration: 2500
-                  });
-                } catch (e) {
-                  logger.warn(TAG, `显示toast失败: ${String(e)}`);
-                }
-              }
-            },
             onComponentReady: (component: MangaViewer) => {
               // 获取MangaViewer组件实例引用
               this.mangaViewerComponent = component;
               logger.info(TAG, '🔔 触发MangaViewer预加载');
+              component.kickstartLoading();
               const chapter = this.readerState.currentChapter;
               const expectedIndex = this.readerState.currentPageIndex;
               
               // [修复] 检查 MangaViewer 的当前页面索引是否与期望的页面索引一致
               // 由于异步初始化，MangaViewer 可能在 readerState.currentPageIndex 被正确设置之前就被创建了
-              const viewerIndex = component.currentPageIndex;
+              const viewerIndex: number = component.currentPageIndex;
               logger.info(TAG, `🔧 [修复] 页面索引检查: viewer=${viewerIndex}, expected=${expectedIndex}`);
               if (viewerIndex !== expectedIndex && expectedIndex >= 0) {
-                logger.info(TAG, `🔧 [修复] 检测到页面索引不一致: viewer=${viewerIndex}, expected=${expectedIndex}，通过setPageIndex直接同步`);
-                // [修复] 使用 setPageIndex 方法直接设置 MangaViewer 的内部页面索引
-                // 这绕过了 @Prop @Watch 的时序问题，确保页面索引立即生效
+                logger.info(TAG, `🔧 [修复] 检测到页面索引不一致: viewer=${viewerIndex}, expected=${expectedIndex}，强制跳转`);
                 component.setPageIndex(expectedIndex);
               } else {
                 logger.info(TAG, `🔧 [修复] 页面索引一致，无需跳转`);
               }
-              
-              // 在页面索引同步后再触发预加载
-              component.kickstartLoading();
               
               if (chapter && this.isWebtoonMode() && expectedIndex > 0) {
                 let savedPos: number = 0;
@@ -5756,6 +5715,7 @@ export struct MangaReaderPage {
       .opacity(this.contentOpacity)
       .focusable(true)
       .defaultFocus(true)
+      .id('manga_reader_root')
       .onKeyEvent((event: KeyEvent) => {
         // 处理音量键翻页
         if (event.type === KeyType.Up) {
@@ -5769,8 +5729,9 @@ export struct MangaReaderPage {
     .title(this.isImageLoaded ? '' : (this.readerState.currentManga?.title || '漫画阅读器'))
     .hideTitleBar(true)
     .onBackPressed(() => {
-      // 返回键处理
-      return false;
+      // 返回键处理 - 调用 goBack() 触发关闭过渡动画
+      this.goBack();
+      return true;  // 返回 true 表示已处理返回事件
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;

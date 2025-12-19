@@ -23,9 +23,15 @@ export interface JSONSourceConfig {
   changelog?: ChangelogEntry[];
 }
 
+/**
+ * 图源类型
+ */
+export type SourceType = 'manga' | 'ebook' | 'novel' | 'video' | 'audio' | 'image';
+
 export interface SourceMetadata {
   id: string;
   name: string;
+  type?: SourceType;  // 图源类型（默认为manga）
   version: string;
   language: string;
   baseUrl: string;

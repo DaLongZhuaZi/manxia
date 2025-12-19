@@ -36,6 +36,7 @@ export struct EBookMetadataDialog {
   // 回调函数不能使用@Prop装饰器，应使用普通属性
   onConfirm: (result: EBookMetadataDialogResult) => void = (result: EBookMetadataDialogResult) => {};
   onCancel: () => void = () => {};
+  onRegenerateCover: (title: string, oldCoverPath: string) => Promise<string> = async () => '';  // 重新生成封面回调
 
   // 表单状态
   @State title: string = '';
@@ -49,6 +50,8 @@ export struct EBookMetadataDialog {
   // 封面相关
   @State coverPath: string = '';
   @State customCoverPath: string = '';  // 用户选择的自定义封面
+  @State isRegeneratingCover: boolean = false;  // 是否正在重新生成封面
+  @State coverRefreshKey: number = 0;  // 用于强制刷新封面图片
   
   // 当前显示的标签页：'info' | 'chapters'
   @State currentTab: string = 'info';
@@ -262,38 +265,45 @@ export struct EBookMetadataDialog {
           // 封面预览
           Column() {
             if (this.customCoverPath || this.coverPath) {
-              Image(this.customCoverPath || this.coverPath)
+              Image(this.normalizeCoverPath(this.customCoverPath || this.coverPath) + `?refresh=${this.coverRefreshKey}`)
                 .width(80)
                 .height(110)
                 .objectFit(ImageFit.Cover)
                 .borderRadius(4)
             } else {
-              Column() {
-                Text('📚')
-                  .fontSize(32)
-                Text('无封面')
-                  .fontSize(10)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              }
-              .width(80)
-              .height(110)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(4)
-              .justifyContent(FlexAlign.Center)
+              // 无封面时使用默认电子书图标
+              Image($r('app.media.ebook'))
+                .width(80)
+                .height(110)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(4)
             }
           }
           
           // 封面操作按钮
           Column({ space: 8 }) {
-            Button('选择封面')
-              .fontSize(12)
-              .height(32)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .onClick(() => {
-                this.selectCustomCover();
-              })
+            Row({ space: 8 }) {
+              Button('选择封面')
+                .fontSize(12)
+                .height(32)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
+                .borderRadius(6)
+                .onClick(() => {
+                  this.selectCustomCover();
+                })
+              
+              Button(this.isRegeneratingCover ? '生成中...' : '重新生成')
+                .fontSize(12)
+                .height(32)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_secondary', this.themeState.currentTheme))
+                .fontColor(Color.White)
+                .borderRadius(6)
+                .enabled(!this.isRegeneratingCover)
+                .onClick(async () => {
+                  await this.regenerateCover();
+                })
+            }
             
             if (this.customCoverPath) {
               Button('清除')
@@ -499,6 +509,34 @@ export struct EBookMetadataDialog {
   }
   
   /**
+   * 重新生成封面
+   */
+  private async regenerateCover(): Promise<void> {
+    if (this.isRegeneratingCover) {
+      return;
+    }
+    
+    this.isRegeneratingCover = true;
+    try {
+      const oldCoverPath = this.coverPath || this.customCoverPath || '';
+      const newCoverPath = await this.onRegenerateCover(this.title, oldCoverPath);
+      
+      if (newCoverPath && newCoverPath.length > 0) {
+        this.coverPath = newCoverPath;
+        this.customCoverPath = '';  // 清除自定义封面，使用新生成的封面
+        this.coverRefreshKey++;  // 强制刷新封面图片
+        logger.info(TAG, `封面重新生成成功: ${newCoverPath}`);
+      } else {
+        logger.warn(TAG, '封面重新生成失败');
+      }
+    } catch (error) {
+      logger.error(TAG, `重新生成封面失败: ${String(error)}`);
+    } finally {
+      this.isRegeneratingCover = false;
+    }
+  }
+
+  /**
    * 选择自定义封面
    */
   private async selectCustomCover(): Promise<void> {
@@ -579,6 +617,20 @@ export struct EBookMetadataDialog {
     });
 
     this.scraperDialogController.open();
+  }
+
+  /**
+   * 规范化封面路径：本地文件添加 file:// 前缀
+   */
+  private normalizeCoverPath(path: string): string {
+    if (!path || path.length === 0) {
+      return '';
+    }
+    // 本地文件路径需要添加 file:// 前缀
+    if (path.startsWith('/')) {
+      return `file://${path}`;
+    }
+    return path;
   }
 
   /**

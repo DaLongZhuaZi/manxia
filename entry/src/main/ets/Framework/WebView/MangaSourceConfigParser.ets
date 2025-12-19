@@ -251,6 +251,12 @@ export class MangaSourceConfigParser {
         return this.getWorkflowByType(workflow, WorkflowType.LOGIN);
       case 'getLeaderboard':
         return this.getWorkflowByType(workflow, WorkflowType.GET_LEADERBOARD);
+      case 'getCategory':
+        return this.getWorkflowByType(workflow, WorkflowType.GET_CATEGORY);
+      case 'getBookDetail':
+        return this.getWorkflowByType(workflow, WorkflowType.GET_BOOK_DETAIL);
+      case 'getDownloadUrl':
+        return this.getWorkflowByType(workflow, WorkflowType.GET_DOWNLOAD_URL);
       default:
         return undefined;
     }
@@ -291,6 +297,12 @@ export class MangaSourceConfigParser {
         return workflow.login;
       case WorkflowType.GET_LEADERBOARD:
         return workflow.getLeaderboard;
+      case WorkflowType.GET_CATEGORY:
+        return workflow.getCategory;
+      case WorkflowType.GET_BOOK_DETAIL:
+        return workflow.getBookDetail;
+      case WorkflowType.GET_DOWNLOAD_URL:
+        return workflow.getDownloadUrl;
       default:
         return undefined;
     }
@@ -345,6 +357,15 @@ export class MangaSourceConfigParser {
         break;
       case WorkflowType.GET_LEADERBOARD:
         workflow.getLeaderboard = actions;
+        break;
+      case WorkflowType.GET_CATEGORY:
+        workflow.getCategory = actions;
+        break;
+      case WorkflowType.GET_BOOK_DETAIL:
+        workflow.getBookDetail = actions;
+        break;
+      case WorkflowType.GET_DOWNLOAD_URL:
+        workflow.getDownloadUrl = actions;
         break;
     }
   }
@@ -463,6 +484,36 @@ export class MangaSourceConfigParser {
       throw new MangaSourceError(
         MangaSourceErrorCode.INVALID_CONFIG,
         '缺少筛选工作流配置'
+      );
+    }
+
+    return this.processActions(workflow, {});
+  }
+
+  /**
+   * 构建分类页面操作序列（电子书等）
+   */
+  buildCategoryActions(config: MangaSourceConfig): Action[] {
+    const workflow = this.getWorkflow(config, 'getCategory');
+    if (!workflow) {
+      throw new MangaSourceError(
+        MangaSourceErrorCode.INVALID_CONFIG,
+        '缺少分类工作流配置'
+      );
+    }
+
+    return this.processActions(workflow, {});
+  }
+
+  /**
+   * 构建电子书详情操作序列
+   */
+  buildBookDetailActions(config: MangaSourceConfig): Action[] {
+    const workflow = this.getWorkflow(config, 'getBookDetail');
+    if (!workflow) {
+      throw new MangaSourceError(
+        MangaSourceErrorCode.INVALID_CONFIG,
+        '缺少电子书详情工作流配置'
       );
     }
 
@@ -1108,6 +1159,29 @@ export class MangaSourceConfigParser {
           case 'history':
             this.setWorkflowByType(config.workflows, WorkflowType.HISTORY, actions);
             break;
+          // 电子书相关工作流
+          case 'getCategory':
+            this.setWorkflowByType(config.workflows, WorkflowType.GET_CATEGORY, actions);
+            break;
+          case 'getBookDetail':
+            this.setWorkflowByType(config.workflows, WorkflowType.GET_BOOK_DETAIL, actions);
+            break;
+          case 'getDownloadUrl':
+            this.setWorkflowByType(config.workflows, WorkflowType.GET_DOWNLOAD_URL, actions);
+            break;
+          // 电子书下载流程工作流
+          case 'clickSearchButton':
+            this.setWorkflowByType(config.workflows, WorkflowType.CLICK_SEARCH_BUTTON, actions);
+            break;
+          case 'waitForDownloadSources':
+            this.setWorkflowByType(config.workflows, WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES, actions);
+            break;
+          case 'selectDownloadSource':
+            this.setWorkflowByType(config.workflows, WorkflowType.SELECT_DOWNLOAD_SOURCE, actions);
+            break;
+          case 'extractFileList':
+            this.setWorkflowByType(config.workflows, WorkflowType.EXTRACT_FILE_LIST, actions);
+            break;
           default:
             warnings.push(`未知的工作流类型: ${name}`);
             logger.warn(TAG, `未知的工作流类型: ${name}`);
@@ -1123,7 +1197,18 @@ export class MangaSourceConfigParser {
    * 验证工作流配置
    */
   private validateWorkflows(config: MangaSourceConfig): ValidateWorkflowsResult {
-    const requiredWorkflows: string[] = ['search', 'getMangaDetail', 'getChapterList', 'getPageList', 'getImageUrl'];
+    // 根据图源类型确定必需的工作流
+    const sourceType = config.metadata?.type || 'manga';
+    let requiredWorkflows: string[];
+    
+    if (sourceType === 'ebook') {
+      // 电子书源只需要search和getBookDetail
+      requiredWorkflows = ['search'];
+      logger.info(TAG, `电子书源验证: 仅验证search工作流`);
+    } else {
+      // 漫画源需要完整的工作流
+      requiredWorkflows = ['search', 'getMangaDetail', 'getChapterList', 'getPageList', 'getImageUrl'];
+    }
     
     for (let i = 0; i < requiredWorkflows.length; i++) {
       const workflowName = requiredWorkflows[i];
@@ -1297,6 +1382,15 @@ export class MangaSourceConfigParser {
     if (this.getWorkflowByType(workflows, WorkflowType.HISTORY)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.INITIALIZE)) count++;
     if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_LIST)) count++;
+    // 电子书相关工作流
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_CATEGORY)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_BOOK_DETAIL)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_DOWNLOAD_URL)) count++;
+    // 电子书下载流程工作流
+    if (this.getWorkflowByType(workflows, WorkflowType.CLICK_SEARCH_BUTTON)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.SELECT_DOWNLOAD_SOURCE)) count++;
+    if (this.getWorkflowByType(workflows, WorkflowType.EXTRACT_FILE_LIST)) count++;
     return count;
   }
 
@@ -1318,6 +1412,15 @@ export class MangaSourceConfigParser {
     if (this.getWorkflowByType(workflows, WorkflowType.FILTER)) names.push('filter');
     if (this.getWorkflowByType(workflows, WorkflowType.INITIALIZE)) names.push('initialize');
     if (this.getWorkflowByType(workflows, WorkflowType.GET_MANGA_LIST)) names.push('getMangaList');
+    // 电子书相关工作流
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_CATEGORY)) names.push('getCategory');
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_BOOK_DETAIL)) names.push('getBookDetail');
+    if (this.getWorkflowByType(workflows, WorkflowType.GET_DOWNLOAD_URL)) names.push('getDownloadUrl');
+    // 电子书下载流程工作流
+    if (this.getWorkflowByType(workflows, WorkflowType.CLICK_SEARCH_BUTTON)) names.push('clickSearchButton');
+    if (this.getWorkflowByType(workflows, WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES)) names.push('waitForDownloadSources');
+    if (this.getWorkflowByType(workflows, WorkflowType.SELECT_DOWNLOAD_SOURCE)) names.push('selectDownloadSource');
+    if (this.getWorkflowByType(workflows, WorkflowType.EXTRACT_FILE_LIST)) names.push('extractFileList');
     return names;
   }
 
