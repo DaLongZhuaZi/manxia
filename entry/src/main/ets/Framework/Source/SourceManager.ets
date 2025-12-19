@@ -11,8 +11,14 @@ import { JSONSourceParser } from './JSONSourceParser';
 import { fileIo } from '@kit.CoreFileKit';
 import { SourceRepositoryManager } from './SourceRepositoryManager';
 import { WebViewSourceManager } from '../WebView/WebViewSourceManager';
+import { CoverCacheManager } from '../Cache/CoverCacheManager';
 
 const TAG = 'SourceManager';
+
+/**
+ * 图源类型
+ */
+export type SourceType = 'manga' | 'ebook' | 'novel' | 'video' | 'audio' | 'image';
 
 /**
  * 图源信息
@@ -20,6 +26,7 @@ const TAG = 'SourceManager';
 export interface SourceInfo {
   id: number;
   name: string;
+  type: SourceType;  // 图源类型：manga=漫画, novel=小说, video=视频, audio=音频, image=图片
   pkg?: string;  // 图源包名，用于文件管理
   baseUrl: string;
   version: string;
@@ -326,6 +333,15 @@ export class SourceManager {
       logger.warn(TAG, `清理WebView引擎缓存失败: ${e}`);
     }
     
+    // 【关键】清理封面缓存目录（必须在删除数据库记录之前，因为需要 pkg 信息）
+    try {
+      const coverCacheManager = CoverCacheManager.getInstance();
+      await coverCacheManager.cleanSourceCovers(sourceId);
+      logger.info(TAG, `封面缓存已清理: ${sourceId}`);
+    } catch (e) {
+      logger.warn(TAG, `清理封面缓存失败: ${e}`);
+    }
+    
     await this.dataManager.deleteComicSource(sourceId);
     this.executor.clearCache(sourceId);
     logger.info(TAG, `图源已删除: ${sourceId}${pkg ? `, pkg: ${pkg}` : ''}`);
@@ -422,9 +438,14 @@ export class SourceManager {
       logger.warn(TAG, `图源 ${source.name} 没有 pkg 字段`);
     }
     
+    // 获取图源类型，默认为manga
+    const sourceType = (source.type as SourceType) || 'manga';
+    logger.debug(TAG, `图源 ${source.name} 类型: ${source.type} -> ${sourceType}`);
+    
     return {
       id: source.id as number,
       name: source.name as string,
+      type: sourceType,
       pkg: pkg,
       baseUrl: source.baseUrl as string,
       version: source.version as string,

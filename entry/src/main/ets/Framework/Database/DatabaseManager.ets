@@ -71,7 +71,7 @@ interface DatabaseConfigType {
 // 数据库配置常量
 const DATABASE_CONFIG: DatabaseConfigType = {
   DATABASE_NAME: 'manxia_comic.db',
-  DATABASE_VERSION: 12,
+  DATABASE_VERSION: 13,
   ENCRYPT: false
 };
 
@@ -1306,6 +1306,12 @@ export class DatabaseManager {
         record.backgroundImagePath = value;
       } else if (columnName === 'backgroundImageOpacity') {
         record.backgroundImageOpacity = value;
+      } else if (columnName === 'type') {
+        record.type = value;
+      } else if (columnName === 'requireProxy') {
+        record.requireProxy = value;
+      } else if (columnName === 'sourcePkg') {
+        record.sourcePkg = value;
       }
       // 其他字段可以根据需要继续添加
     }

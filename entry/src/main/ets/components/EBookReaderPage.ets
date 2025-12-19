@@ -36,7 +36,6 @@ import {
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition } from '../components/BookTransitionOverlay';
 
 const TAG = 'EBookReaderPage';
 
@@ -71,8 +70,6 @@ struct EBookReaderPage {
   @State bgColor: string = '#FFFFFF';
   @State textColor: string = '#333333';
   @State pageMargin: number = 20;
-  @State bgImagePath: string = '';  // 背景图片路径
-  @State bgImageOpacity: number = 0.3;  // 背景图片透明度
 
   // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
   @State showTopToolbar: boolean = false;
@@ -116,8 +113,6 @@ struct EBookReaderPage {
   @State textReaderSettings: TextReaderSettings = DEFAULT_TEXT_READER_SETTINGS;
   @State textCurrentPageIndex: number = 0;
   @State textContent: string = '';
-  // 跟踪最新的文本阅读进度百分比（避免退出时被旧值覆盖）
-  private latestTextProgress: number = 0;
   @State showTextReaderSettings: boolean = false;
   @State textReaderSettingsOpacity: number = 0;
   @State textReaderSettingsScale: number = 0.95;
@@ -146,7 +141,6 @@ struct EBookReaderPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
       // [修复] 只有当用户选择跟随系统主题时才更新背景色
-      // 检查当前电子书是否设置了 followSystemTheme
       if (this.ebook?.readingSettings?.followSystemTheme === true) {
         if (theme === 'dark') {
           this.bgColor = '#1E1E1E';
@@ -275,8 +269,8 @@ struct EBookReaderPage {
       // 音量上键配置
       const volumeUpConfig: inputConsumer.KeyPressedConfig = {
         key: KeyCode.KEYCODE_VOLUME_UP,
-        action: 1, // 按下按键的行为
-        isRepeat: false // 不重复触发
+        action: 1,
+        isRepeat: false
       };
 
       // 音量下键配置
@@ -289,7 +283,6 @@ struct EBookReaderPage {
       // 音量上键回调 - 上一页
       this.volumeUpCallback = (event: InputKeyEvent) => {
         logger.info(TAG, '音量键翻页: 上一页 (inputConsumer)');
-        // 只在 TXT 格式时处理
         if (this.ebook?.format === EBookFormat.TXT) {
           if (this.textCurrentPageIndex > 0) {
             this.textCurrentPageIndex--;
@@ -300,7 +293,6 @@ struct EBookReaderPage {
       // 音量下键回调 - 下一页
       this.volumeDownCallback = (event: InputKeyEvent) => {
         logger.info(TAG, '音量键翻页: 下一页 (inputConsumer)');
-        // 只在 TXT 格式时处理
         if (this.ebook?.format === EBookFormat.TXT) {
           this.textCurrentPageIndex++;
         }
@@ -555,15 +547,6 @@ struct EBookReaderPage {
       this.isLoading = false;
       logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
       
-      // 通知过渡动画阅读器就绪
-      // 注意：TXT 格式由 TextReaderComponent 的 onReady 回调通知，确保分页完成后才显示
-      if (ebook.format !== EBookFormat.TXT) {
-        setReaderReady();
-        logger.info(TAG, '📤 已通知过渡动画阅读器就绪');
-      } else {
-        logger.info(TAG, '📤 TXT格式等待TextReaderComponent分页完成后通知');
-      }
-      
       // 设置沉浸式模式
       this.setupFullscreenMode();
       
@@ -688,9 +671,6 @@ struct EBookReaderPage {
     this.bgColor = bgPreset.backgroundColor;
     this.textColor = bgPreset.textColor;
     this.pageMargin = pageMargin;
-    // 同步背景图片设置
-    this.bgImagePath = useBgImage ? bgImagePath : '';
-    this.bgImageOpacity = bgImageOpacity;
   }
 
   /**
@@ -746,14 +726,6 @@ struct EBookReaderPage {
       autoScrollSpeed: 50,
       curlBackOpacity: 90
     };
-    
-    // 同步背景图片设置到页面状态
-    if (settings.backgroundType === 'IMAGE' && settings.backgroundImagePath && settings.backgroundImagePath.length > 0) {
-      this.bgImagePath = settings.backgroundImagePath;
-      this.bgImageOpacity = settings.backgroundImageOpacity ?? 0.3;
-    } else {
-      this.bgImagePath = '';
-    }
 
     logger.info(TAG, `从数据库加载文本阅读器设置: volumeKeyNavigation=${this.textReaderSettings.volumeKeyNavigation}, fontSize=${this.textReaderSettings.textStyle.fontSize}, bgType=${this.textReaderSettings.background.type}, bgColor=${this.textReaderSettings.background.color}, textColor=${this.textReaderSettings.textStyle.textColor}, bgImagePath=${this.textReaderSettings.background.imagePath}`);
   }
@@ -834,17 +806,7 @@ struct EBookReaderPage {
 
     this.currentChapterIndex--;
     this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
-    // TXT格式使用页码进度保存，其他格式使用通用方法
-    if (this.ebook.format === EBookFormat.TXT) {
-      this.textCurrentPageIndex = 0;
-      this.textContent = this.getTextContent();
-      // 计算全书进度：当前章节索引 / 总章节数 * 100
-      const totalChapters = this.ebook.chapters?.length || 1;
-      const overallProgress = (this.currentChapterIndex / totalChapters) * 100;
-      this.saveTextReadingProgressWithPage(overallProgress, 0);
-    } else {
-      this.saveReadingProgress();
-    }
+    this.saveReadingProgress();
     logger.info(TAG, `切换到上一章: ${this.currentChapter?.title}`);
   }
 
@@ -859,17 +821,7 @@ struct EBookReaderPage {
 
     this.currentChapterIndex++;
     this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
-    // TXT格式使用页码进度保存，其他格式使用通用方法
-    if (this.ebook.format === EBookFormat.TXT) {
-      this.textCurrentPageIndex = 0;
-      this.textContent = this.getTextContent();
-      // 计算全书进度：当前章节索引 / 总章节数 * 100
-      const totalChapters = this.ebook.chapters?.length || 1;
-      const overallProgress = (this.currentChapterIndex / totalChapters) * 100;
-      this.saveTextReadingProgressWithPage(overallProgress, 0);
-    } else {
-      this.saveReadingProgress();
-    }
+    this.saveReadingProgress();
     logger.info(TAG, `切换到下一章: ${this.currentChapter?.title}`);
   }
 
@@ -942,14 +894,6 @@ struct EBookReaderPage {
     if (!this.ebook) {
       return;
     }
-    
-    // 互斥锁：如果正在保存，跳过本次请求
-    if (this.isSavingProgress) {
-      logger.debug(TAG, '正在保存进度，跳过重复请求');
-      return;
-    }
-    
-    this.isSavingProgress = true;
 
     try {
       // 对于 TXT 格式，使用页码信息
@@ -962,8 +906,9 @@ struct EBookReaderPage {
         domPos = `page:${this.textCurrentPageIndex}`;
         currentPosition = this.textCurrentPageIndex;
         chapterId = this.currentChapter?.id || '';
-        // TXT格式：使用翻页时记录的最新进度值，避免被旧值覆盖
-        progressPercent = this.latestTextProgress > 0 ? this.latestTextProgress : (this.ebook.readingProgress?.progress || 0);
+        progressPercent = this.ebook.chapters.length > 0 
+          ? (this.currentChapterIndex / this.ebook.chapters.length) * 100 
+          : 0;
       } else {
         // EPUB/MOBI 格式：使用 Reader Kit 的 domPos
         chapterId = this.currentChapter?.id || `chapter_${this.currentChapterIndex}`;
@@ -1010,8 +955,6 @@ struct EBookReaderPage {
       logger.info(TAG, `阅读进度已保存: 章节=${this.currentChapterIndex}, domPos长度=${domPos.length}, 累计阅读时间=${totalReadingTime.toFixed(2)}分钟`);
     } catch (error) {
       logger.error(TAG, '保存阅读进度失败', String(error instanceof Error ? error.message : error));
-    } finally {
-      this.isSavingProgress = false;
     }
   }
 
@@ -1019,8 +962,6 @@ struct EBookReaderPage {
   private lastProgressSaveTime: number = 0;
   // 进度保存的最小间隔（毫秒）
   private static readonly PROGRESS_SAVE_INTERVAL: number = 2000;
-  // 互斥锁：防止并发保存导致 SQLite 约束违反
-  private isSavingProgress: boolean = false;
 
   /**
    * 处理 Reader Kit 进度变化回调（带防抖）
@@ -1063,19 +1004,13 @@ struct EBookReaderPage {
       // 更新文本内容（触发 TextReaderComponent 重新分页）
       this.textContent = this.getTextContent();
       logger.info(TAG, `纯文本阅读器跳转到章节 ${chapterIndex}，内容长度: ${this.textContent.length}`);
-      // 计算全书进度：当前章节索引 / 总章节数 * 100
-      const totalChapters = this.ebook.chapters?.length || 1;
-      const overallProgress = (chapterIndex / totalChapters) * 100;
-      this.saveTextReadingProgressWithPage(overallProgress, 0);
     } else if (this.readerKitController && this.readerKitController.isControllerReady()) {
       // Reader Kit 格式：通过控制器跳转
       await this.readerKitController.goToChapter(chapterIndex, '');
-      // 保存阅读进度
-      this.saveReadingProgress();
-    } else {
-      // 其他格式：保存阅读进度
-      this.saveReadingProgress();
     }
+    
+    // 保存阅读进度
+    this.saveReadingProgress();
   }
 
   /**
@@ -1371,44 +1306,19 @@ struct EBookReaderPage {
   /**
    * 返回上一页
    */
-  private async goBack(): Promise<void> {
-    try {
-      // 使用当前电子书ID构建封面组件ID，获取正确的封面位置
-      const ebookId: string = this.ebook?.id || '';
-      const coverComponentId: string = ebookId ? `cover_ebook_lib_${ebookId}` : '';
-      
-      // 触发关闭过渡动画（带截图和动态封面位置）
-      logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
-      await startBookCloseTransitionWithComponentId(
-        'ebook_reader_root',
-        coverComponentId,
-        () => {
-          logger.info(TAG, '关闭过渡动画完成');
-        }
-      );
-      
-      this.saveReadingProgress();
-      setTimeout(() => {
-        this.pathStack.pop();
-        logger.info(TAG, '返回上一页');
-      }, 50);
-    } catch (error) {
-      logger.error(TAG, `goBack error: ${error instanceof Error ? error.message : String(error)}`);
-      this.saveReadingProgress();
-      this.pathStack.pop();
-    }
+  private goBack(): void {
+    this.saveReadingProgress();
+    this.pathStack.pop();
   }
 
   build() {
     NavDestination() {
       Stack() {
         // 背景层 - 扩展到系统栏区域实现完全沉浸式
-        // 加载时使用透明背景，让翻开动画的背景层可见
-        // 加载完成后，背景由 TextReaderComponent 或 ReaderKitViewerComponent 提供
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor(Color.Transparent)
+          .backgroundColor(this.bgColor)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层 - 占满全屏
@@ -1486,7 +1396,6 @@ struct EBookReaderPage {
       }
       .width('100%')
       .height('100%')
-      .id('ebook_reader_root')
       .onAreaChange((oldValue: Area, newValue: Area) => {
         // 检测屏幕方向变化
         const newWidth = newValue.width as number;
@@ -1513,11 +1422,6 @@ struct EBookReaderPage {
     })
     .hideTitleBar(true)
     .backgroundColor(Color.Transparent)
-    .onBackPressed(() => {
-      // 返回键处理 - 调用 goBack() 触发关闭过渡动画
-      this.goBack();
-      return true;  // 返回 true 表示已处理返回事件
-    })
   }
 
   /**
@@ -1529,18 +1433,18 @@ struct EBookReaderPage {
       LoadingProgress()
         .width(50)
         .height(50)
-        .color(Color.White)  // 白色加载图标配合黑色背景
+        .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
 
       Text('加载中...')
         .fontSize(16)
-        .fontColor('rgba(255, 255, 255, 0.8)')  // 白色半透明文字
+        .fontColor(this.textColor)
         .margin({ top: 16 })
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .backgroundColor(Color.Transparent)  // 透明背景，配合翻开动画的黑色底页
+    .backgroundColor(this.bgColor)
     .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
   }
 
@@ -1734,13 +1638,9 @@ struct EBookReaderPage {
         onPageChange: (pageIndex: number, totalPages: number) => {
           this.textCurrentPageIndex = pageIndex;
           logger.debug(TAG, `文本阅读器页面切换: ${pageIndex + 1}/${totalPages}`);
-          // 计算全书进度（而非章节内进度）
-          // 公式: (当前章节索引 + 当前页在章节内的比例) / 总章节数 * 100
-          const totalChapters = this.ebook?.chapters?.length || 1;
-          const chapterProgress = totalPages > 0 ? (pageIndex + 1) / totalPages : 0;
-          const overallProgress = ((this.currentChapterIndex + chapterProgress) / totalChapters) * 100;
-          logger.debug(TAG, `文本阅读进度: ${overallProgress.toFixed(1)}%`);
-          this.saveTextReadingProgressWithPage(overallProgress, pageIndex);
+          // 在页面切换时保存进度，确保页码正确
+          const progress = totalPages > 0 ? (pageIndex + 1) / totalPages * 100 : 0;
+          this.saveTextReadingProgressWithPage(progress, pageIndex);
         },
         onChapterChange: (chapterIndex: number) => {
           this.currentChapterIndex = chapterIndex;
@@ -1754,11 +1654,6 @@ struct EBookReaderPage {
         },
         onTap: () => {
           this.toggleToolbar();
-        },
-        onReady: () => {
-          // 文本阅读器分页完成，通知过渡动画阅读器就绪
-          logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
-          setReaderReady();
         }
       })
       .width('100%')
@@ -1859,17 +1754,6 @@ struct EBookReaderPage {
       return;
     }
     
-    // 互斥锁：如果正在保存，跳过本次请求
-    if (this.isSavingProgress) {
-      logger.debug(TAG, '正在保存进度，跳过重复请求');
-      return;
-    }
-    
-    this.isSavingProgress = true;
-    
-    // 记录最新进度，避免退出时被旧值覆盖
-    this.latestTextProgress = progress;
-    
     try {
       const readingProgress: EBookReadingProgress = {
         bookId: this.ebook.id,
@@ -1883,11 +1767,9 @@ struct EBookReaderPage {
       };
       
       await this.ebookDataManager.saveReadingProgress(readingProgress);
-      logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}, 进度=${progress.toFixed(1)}%`);
+      logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读进度失败: ${String(error)}`);
-    } finally {
-      this.isSavingProgress = false;
     }
   }
   
@@ -2117,13 +1999,10 @@ struct EBookReaderPage {
           .layoutWeight(1)
           .trackColor($r('app.color.divider_primary'))
           .selectedColor($r('app.color.accent_primary'))
-          .onChange((value: number, mode: SliderChangeMode) => {
-            // 只在用户释放滑块时触发章节切换，避免拖动过程中频繁触发分页导致卡死
-            if (mode === SliderChangeMode.End) {
-              const targetIndex = Math.round(value);
-              if (targetIndex !== this.currentChapterIndex) {
-                this.jumpToChapter(targetIndex);
-              }
+          .onChange((value: number) => {
+            const targetIndex = Math.round(value);
+            if (targetIndex !== this.currentChapterIndex) {
+              this.jumpToChapter(targetIndex);
             }
           })
       }
@@ -2143,6 +2022,7 @@ struct EBookReaderPage {
         .height(48)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
+          logger.info(TAG, `目录按钮被点击，当前章节: ${this.currentChapterIndex}`);
           this.showChapterListWithAnimation();
         })
 
@@ -2345,7 +2225,7 @@ struct EBookReaderPage {
         Divider().color($r('app.color.divider'))
 
         // 章节列表
-        List({ scroller: this.chapterListScroller }) {
+        List({ scroller: this.chapterListScroller, initialIndex: this.currentChapterIndex }) {
           ForEach(this.ebook?.chapters || [], (chapter: EBookChapter, index: number) => {
             ListItem() {
               Row() {

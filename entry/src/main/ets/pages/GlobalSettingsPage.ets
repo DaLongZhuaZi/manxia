@@ -5,7 +5,7 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
@@ -21,6 +21,8 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { TextPageTurnAnimation, TextAlignment, PRESET_BACKGROUNDS, PresetBackground, DEFAULT_TEXT_READER_SETTINGS } from '../Models/TextReaderModels';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WindowManager } from '../Utils/WindowManager';
+import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
+import { fileIo } from '@kit.CoreFileKit';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -88,6 +90,7 @@ struct GlobalSettingsPage {
   @State textAlignment: TextAlignment = DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment;
   @State textPageMargin: number = DEFAULT_TEXT_READER_SETTINGS.pageMargins.left;
   @State textBgColorIndex: number = 0;
+  @State textTextColor: string = DEFAULT_TEXT_READER_SETTINGS.textStyle.textColor;
   @State textPageTurnAnimation: TextPageTurnAnimation = DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation;
   @State textKeepScreenOn: boolean = DEFAULT_TEXT_READER_SETTINGS.keepScreenOn;
   @State textVolumeKeyNav: boolean = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
@@ -95,6 +98,16 @@ struct GlobalSettingsPage {
   @State textBgImagePath: string = '';
   @State textBgImageOpacity: number = 0.3;
   @State textUseBgImage: boolean = false;
+  // 底部信息栏设置
+  @State textShowTime: boolean = true;
+  @State textShowBattery: boolean = true;
+  @State textShowPageNumber: boolean = true;
+  @State textShowProgress: boolean = false;
+  
+  // 背景图片管理
+  @State allBackgroundImages: BackgroundImageInfo[] = [];
+  @State showBackgroundManager: boolean = false;
+  private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
 
   // 下载设置
   @State downloadOnWifiOnly: boolean = true;
@@ -109,7 +122,7 @@ struct GlobalSettingsPage {
   @State autoCheckUpdates: boolean = true;
   @State clearCacheOnExit: boolean = false;
   @State enableLogFloatingWindow: boolean = true;
-  @State advancedModeEnabled: boolean = false;
+  @State advancedModeEnabled: boolean = true;
   @State forceTabletMode: boolean = false;
   @State forceLandscapeMode: boolean = false;
   @State showRestartDialog: boolean = false;
@@ -261,7 +274,7 @@ struct GlobalSettingsPage {
 
       this.advancedModeEnabled = this.settingsManager.getBoolean(
         SettingKeys.ADVANCED_MODE_ENABLED,
-        false
+        true
       );
 
       this.forceTabletMode = this.settingsManager.getBoolean(
@@ -339,6 +352,10 @@ struct GlobalSettingsPage {
         SettingKeys.GLOBAL_TEXT_BG_COLOR,
         0
       );
+      this.textTextColor = this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_TEXT_COLOR,
+        DEFAULT_TEXT_READER_SETTINGS.textStyle.textColor
+      );
       this.textPageTurnAnimation = this.settingsManager.getString(
         SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION,
         DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation
@@ -365,6 +382,23 @@ struct GlobalSettingsPage {
       );
       this.textUseBgImage = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE,
+        false
+      );
+      // 底部信息栏设置
+      this.textShowTime = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_SHOW_TIME,
+        true
+      );
+      this.textShowBattery = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_SHOW_BATTERY,
+        true
+      );
+      this.textShowPageNumber = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_SHOW_PAGE_NUMBER,
+        true
+      );
+      this.textShowProgress = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS,
         false
       );
 
@@ -418,7 +452,7 @@ struct GlobalSettingsPage {
   @Builder
   buildReadingSettings() {
     Column({ space: 16 }) {
-      Text('漫画阅读设置')
+      Text('漫画默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -719,9 +753,17 @@ struct GlobalSettingsPage {
         .alignSelf(ItemAlign.Start)
 
       Row() {
-        Text('仅在Wi-Fi下下载')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Column({ space: 4 }) {
+          Text('仅WiFi下载')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('仅在WiFi网络下进行下载')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.downloadOnWifiOnly })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onChange(async (isOn: boolean) => {
@@ -733,6 +775,7 @@ struct GlobalSettingsPage {
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween)
 
+      // 最大并发下载数
       Column({ space: 8 }) {
         Row() {
           Text('最大并发下载数')
@@ -1348,10 +1391,43 @@ struct GlobalSettingsPage {
         .width('100%')
       }
 
+      // 文字颜色（仅在使用背景图片时需要手动选择）
+      if (this.textUseBgImage) {
+        Column({ space: 8 }) {
+          Text('文字颜色')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+
+          Row({ space: 8 }) {
+            ForEach(['#333333', '#FFFFFF', '#5D4037', '#2E7D32', '#1565C0', '#D4D4D4'], (color: string) => {
+              Column()
+                .width(32)
+                .height(32)
+                .backgroundColor(color)
+                .borderRadius(16)
+                .border({
+                  width: this.textTextColor === color ? 2 : 1,
+                  color: this.textTextColor === color ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
+                })
+                .onClick(async () => {
+                  this.textTextColor = color;
+                  await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_TEXT_COLOR, this.textTextColor);
+                  this.settingsManager.syncToAppStorage();
+                })
+            })
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }
+
       // 自定义背景图片
       Column({ space: 12 }) {
         Row() {
-          Text('使用背景图片')
+          Text('使用默认背景图片')
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Blank()
@@ -1397,14 +1473,14 @@ struct GlobalSettingsPage {
           }
 
           // 选择图片按钮
-          Button('选择背景图片')
+          Button('选择默认背景图片')
             .width('100%')
             .height(40)
             .fontSize(14)
             .type(ButtonType.Normal)
             .borderRadius(8)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_secondary', this.themeState.currentTheme))
+            .fontColor(Color.White)
             .onClick(() => {
               this.selectTextBackgroundImage();
             })
@@ -1412,7 +1488,7 @@ struct GlobalSettingsPage {
           // 当前背景图片预览
           if (this.textBgImagePath && this.textBgImagePath.length > 0) {
             Column({ space: 8 }) {
-              Text('当前背景图片')
+              Text('当前默认背景图片(只有新电子书会自动使用默认背景图片)')
                 .fontSize(12)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .width('100%')
@@ -1420,13 +1496,141 @@ struct GlobalSettingsPage {
               Image(this.textBgImagePath.startsWith('/') ? 'file://' + this.textBgImagePath : this.textBgImagePath)
                 .width('100%')
                 .height(100)
-                .objectFit(ImageFit.Cover)
+                .objectFit(ImageFit.Contain)
                 .borderRadius(8)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                 .opacity(this.textBgImageOpacity)
             }
             .width('100%')
           }
         }
+        
+        // [修复] 背景图片管理按钮移到条件外，即使不使用全局默认背景图片也可以管理各电子书的背景图片
+        Button('管理所有背景图片')
+          .width('100%')
+          .height(40)
+          .fontSize(14)
+          .type(ButtonType.Normal)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(Color.White)
+          .onClick(() => {
+            this.loadAllBackgroundImages();
+            this.showBackgroundManager = true;
+          })
+        
+        // 背景图片管理面板
+        if (this.showBackgroundManager) {
+          this.buildBackgroundManagerPanel()
+        }
+      }
+
+      // 底部信息栏设置
+      Column({ space: 12 }) {
+        Text('阅读进度显示')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+
+        // 显示时间
+        Row() {
+          Text('显示时间')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.textShowTime })
+            .onChange(async (isOn: boolean) => {
+              this.textShowTime = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_TIME, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+
+        // 显示电量
+        Row() {
+          Text('显示电量')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.textShowBattery })
+            .onChange(async (isOn: boolean) => {
+              this.textShowBattery = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_BATTERY, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+
+        // 右下角显示选项
+        Text('右下角显示信息')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Row({ space: 8 }) {
+          Button('页码')
+            .fontSize(13)
+            .height(36)
+            .layoutWeight(1)
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor(this.textShowPageNumber && !this.textShowProgress
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(this.textShowPageNumber && !this.textShowProgress
+              ? Color.White
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .onClick(async () => {
+              this.textShowPageNumber = true;
+              this.textShowProgress = false;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PAGE_NUMBER, true);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS, false);
+              this.settingsManager.syncToAppStorage();
+            })
+
+          Button('百分比')
+            .fontSize(13)
+            .height(36)
+            .layoutWeight(1)
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor(!this.textShowPageNumber && this.textShowProgress
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(!this.textShowPageNumber && this.textShowProgress
+              ? Color.White
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .onClick(async () => {
+              this.textShowPageNumber = false;
+              this.textShowProgress = true;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PAGE_NUMBER, false);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS, true);
+              this.settingsManager.syncToAppStorage();
+            })
+
+          Button('不显示')
+            .fontSize(13)
+            .height(36)
+            .layoutWeight(1)
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor(!this.textShowPageNumber && !this.textShowProgress
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(!this.textShowPageNumber && !this.textShowProgress
+              ? Color.White
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .onClick(async () => {
+              this.textShowPageNumber = false;
+              this.textShowProgress = false;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PAGE_NUMBER, false);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS, false);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
       }
 
       // 翻页动画
@@ -1548,6 +1752,11 @@ struct GlobalSettingsPage {
           await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, savedPath);
           this.settingsManager.syncToAppStorage();
           logger.info(TAG, `背景图片已保存: ${savedPath}`);
+          
+          // 如果背景图片管理面板已打开，刷新列表
+          if (this.showBackgroundManager) {
+            await this.loadAllBackgroundImages();
+          }
         }
       }
     } catch (error) {
@@ -1630,6 +1839,7 @@ struct GlobalSettingsPage {
             this.textAlignment = DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment;
             this.textPageMargin = DEFAULT_TEXT_READER_SETTINGS.pageMargins.left;
             this.textBgColorIndex = 0;
+            this.textTextColor = DEFAULT_TEXT_READER_SETTINGS.textStyle.textColor;
             this.textPageTurnAnimation = DEFAULT_TEXT_READER_SETTINGS.pageTurnAnimation;
             this.textKeepScreenOn = DEFAULT_TEXT_READER_SETTINGS.keepScreenOn;
             this.textVolumeKeyNav = DEFAULT_TEXT_READER_SETTINGS.volumeKeyNavigation;
@@ -1637,6 +1847,11 @@ struct GlobalSettingsPage {
             this.textUseBgImage = false;
             this.textBgImagePath = '';
             this.textBgImageOpacity = 0.3;
+            // 底部信息栏设置恢复默认
+            this.textShowTime = true;
+            this.textShowBattery = true;
+            this.textShowPageNumber = true;
+            this.textShowProgress = false;
 
             // 恢复下载设置
             this.downloadOnWifiOnly = true;
@@ -1672,6 +1887,7 @@ struct GlobalSettingsPage {
               await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_ALIGNMENT, this.textAlignment);
               await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_PAGE_MARGIN, this.textPageMargin);
               await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, this.textBgColorIndex);
+              await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_TEXT_COLOR, this.textTextColor);
               await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, this.textPageTurnAnimation);
               await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, this.textKeepScreenOn);
               await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, this.textVolumeKeyNav);
@@ -1679,6 +1895,11 @@ struct GlobalSettingsPage {
               await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, this.textUseBgImage);
               await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, this.textBgImagePath);
               await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, this.textBgImageOpacity);
+              // 底部信息栏设置
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_TIME, this.textShowTime);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_BATTERY, this.textShowBattery);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PAGE_NUMBER, this.textShowPageNumber);
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS, this.textShowProgress);
 
               // 下载设置
               await this.settingsManager.setBoolean(SettingKeys.DOWNLOAD_WIFI_ONLY, this.downloadOnWifiOnly);
@@ -1752,13 +1973,13 @@ struct GlobalSettingsPage {
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
-                  this.buildDownloadSettings()
+                  this.buildNotificationSettings()
                 }
                 .width('48%')
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
-                  this.buildNotificationSettings()
+                  this.buildDownloadSettings()
                 }
                 .width('48%')
                 .margin({ bottom: 16 })
@@ -1915,6 +2136,254 @@ struct GlobalSettingsPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /**
+   * 加载所有背景图片（包括全局设置的默认图片）
+   * [修复] 显示所有使用背景图片的电子书，不再去重，同时标记默认背景
+   */
+  private async loadAllBackgroundImages(): Promise<void> {
+    try {
+      // 获取电子书的自定义背景图片（包含所有使用背景图片的电子书）
+      const ebookImages = await this.ebookDataManager.getAllCustomBackgroundImages();
+      
+      const allImages: BackgroundImageInfo[] = [];
+      
+      // [修复] 直接添加所有电子书的背景图片，不去重
+      // 这样每本使用背景图片的电子书都会显示，即使它们使用相同的图片
+      for (const img of ebookImages) {
+        allImages.push(img);
+      }
+      
+      this.allBackgroundImages = allImages;
+      logger.info(TAG, `加载到 ${this.allBackgroundImages.length} 张背景图片`);
+    } catch (error) {
+      logger.error(TAG, `加载背景图片失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 删除背景图片
+   */
+  private async deleteBackgroundImage(imagePath: string): Promise<void> {
+    // 判断是否是全局默认背景图片
+    const isGlobalDefault = this.textBgImagePath === imagePath;
+    
+    // 先检查删除后是否还有其他背景图片
+    const currentEbookImages = await this.ebookDataManager.getAllCustomBackgroundImages();
+    // 计算删除后剩余的图片数量（排除当前要删除的图片）
+    const remainingEbookImages = currentEbookImages.filter(img => img.imagePath !== imagePath);
+    const willHaveOtherImages = remainingEbookImages.length > 0 || 
+      (this.textBgImagePath.length > 0 && !isGlobalDefault);
+    
+    // 根据情况生成提示信息
+    let dialogMessage: string;
+    if (isGlobalDefault) {
+      if (willHaveOtherImages) {
+        // 删除全局默认背景，但还有其他背景图片
+        dialogMessage = '确定要删除这张全局默认背景图片吗？\n删除后，新添加的电子书将使用纯色背景。';
+      } else {
+        // 删除全局默认背景，且这是最后一张图片
+        dialogMessage = '确定要删除这张全局默认背景图片吗？\n删除后，全局自定义背景功能将被关闭。';
+      }
+    } else {
+      if (!willHaveOtherImages && this.textBgImagePath.length === 0) {
+        // 删除的不是全局默认，但这是最后一张图片
+        dialogMessage = '确定要删除这张背景图片吗？\n删除后，全局自定义背景功能将被关闭。';
+      } else {
+        // 删除的不是全局默认，还有其他图片
+        dialogMessage = '确定要删除这张背景图片吗？\n删除后，使用此背景的电子书将恢复为默认背景。';
+      }
+    }
+    
+    AlertDialog.show({
+      title: '确认删除',
+      message: dialogMessage,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消删除背景图片');
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: Color.Red,
+        action: async () => {
+          try {
+            // 尝试删除文件（文件可能已不存在）
+            try {
+              await fileIo.unlink(imagePath);
+              logger.info(TAG, `已删除背景图片文件: ${imagePath}`);
+            } catch (fileError) {
+              logger.warn(TAG, `背景图片文件可能已不存在: ${String(fileError)}`);
+            }
+            
+            // 清除所有使用该背景图片的电子书阅读设置
+            await this.ebookDataManager.clearBackgroundImageFromSettings(imagePath);
+            
+            // 如果删除的是当前全局背景图片，只清除全局背景路径（不关闭背景功能）
+            if (isGlobalDefault) {
+              this.textBgImagePath = '';
+              await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
+              this.settingsManager.syncToAppStorage();
+              logger.info(TAG, `已清除全局背景图片路径`);
+            }
+            
+            // 刷新列表（从数据库重新获取）
+            await this.loadAllBackgroundImages();
+            
+            // 只有当所有背景图片都被删除时，才关闭管理面板和背景功能
+            const remainingImages = await this.ebookDataManager.getAllCustomBackgroundImages();
+            if (remainingImages.length === 0 && this.textBgImagePath.length === 0) {
+              this.showBackgroundManager = false;
+              this.textUseBgImage = false;
+              await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, false);
+              this.settingsManager.syncToAppStorage();
+              // 显示toast提示
+              promptAction.showToast({
+                message: '已关闭自定义背景图片功能',
+                duration: 2000
+              });
+              logger.info(TAG, `所有背景图片已删除，关闭管理面板和背景功能`);
+            }
+          } catch (error) {
+            logger.error(TAG, `删除背景图片失败: ${String(error)}`);
+          }
+        }
+      }
+    });
+  }
+  
+  /**
+   * 构建背景图片管理面板
+   */
+  @Builder
+  buildBackgroundManagerPanel() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('背景图片管理')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Text('收起')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.showBackgroundManager = false;
+          })
+      }
+      .width('100%')
+      
+      Text('以下是所有电子书使用的自定义背景图片，可以在此统一管理')
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+      
+      if (this.allBackgroundImages.length === 0) {
+        Column() {
+          Text('暂无自定义背景图片')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height(100)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        // 背景图片网格
+        Grid() {
+          ForEach(this.allBackgroundImages, (item: BackgroundImageInfo) => {
+            GridItem() {
+              Column({ space: 8 }) {
+                // 图片预览
+                Stack({ alignContent: Alignment.TopEnd }) {
+                  Image(item.imagePath.startsWith('/') ? 'file://' + item.imagePath : item.imagePath)
+                    .width('100%')
+                    .height(100)
+                    .objectFit(ImageFit.Contain)
+                    .borderRadius(8)
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  
+                  // 标记当前使用
+                  if (this.textBgImagePath === item.imagePath) {
+                    Text('默认')
+                      .fontSize(10)
+                      .fontColor(Color.White)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .borderRadius(4)
+                      .margin(4)
+                  }
+                }
+                .width('100%')
+                
+                // 书名
+                Text(item.bookTitle)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                
+                // 操作按钮（放在图片下方，使用 emoji）
+                Row({ space: 16 }) {
+                  // 设为全局背景
+                  Text('✓')
+                    .fontSize(20)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                    .padding(8)
+                    .border({
+                      width: 2,
+                      color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme),
+                      radius: 8
+                    })
+                    .onClick(async () => {
+                      this.textBgImagePath = item.imagePath;
+                      this.textUseBgImage = true;
+                      await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, item.imagePath);
+                      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, true);
+                      this.settingsManager.syncToAppStorage();
+                    })
+                  
+                  // 删除
+                  Text('✗')
+                    .fontSize(20)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+                    .padding(8)
+                    .border({
+                      width: 2,
+                      color: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
+                      radius: 8
+                    })
+                    .onClick(() => {
+                      this.deleteBackgroundImage(item.imagePath);
+                    })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Center)
+              }
+              .width('100%')
+              .padding(8)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(8)
+            }
+          })
+        }
+        .columnsTemplate('1fr 1fr')
+        .columnsGap(12)
+        .rowsGap(12)
+        .width('100%')
+        .height(this.allBackgroundImages.length <= 2 ? 200 : 420)
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+    .margin({ top: 8 })
   }
 
   /**

@@ -273,6 +273,7 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       version TEXT NOT NULL,
       description TEXT,
       language TEXT DEFAULT 'zh-CN',
+      type TEXT DEFAULT 'manga',
       isEnabled INTEGER DEFAULT 1,
       priority INTEGER DEFAULT 0,
       lastUpdateTime INTEGER DEFAULT 0,
@@ -890,5 +891,9 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
     // 这解决了图源删除后 sourceId 失效导致无法识别图源的问题
     'ALTER TABLE online_comic_info ADD COLUMN sourcePkg TEXT DEFAULT \'\'',
     'CREATE INDEX IF NOT EXISTS idx_online_comic_pkg ON online_comic_info (sourcePkg)'
+  ],
+  13: [
+    // 版本13：为图源表添加 type 字段，用于区分图源类型（manga/ebook/novel等）
+    'ALTER TABLE comic_source ADD COLUMN type TEXT DEFAULT \'manga\''
   ]
 };

@@ -366,19 +366,21 @@ export struct PageCurlEffectV2 {
     const isCorner: boolean = this.curlStartPosition !== CurlStartPosition.LEFT_EDGE &&
                               this.curlStartPosition !== CurlStartPosition.RIGHT_EDGE;
 
-    // 热路径：移除日志输出
-
     // 清空画布（保持透明背景）
     ctx.globalAlpha = 1.0;
     ctx.clearRect(0, 0, cw, ch);
 
+    // 检查 ImageBitmap 是否可用，如果不可用则跳过渲染
+    // 这样可以避免空白画布遮挡底层内容
+    if (!this.currentImageBitmap) {
+      return;
+    }
+
     // 进度为0时显示当前页
     if (progress < 0.01) {
-      if (this.currentImageBitmap) {
-        try {
-          ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih);
-        } catch (e) { /* ignore */ }
-      }
+      try {
+        ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih);
+      } catch (e) { /* ignore */ }
       return;
     }
 

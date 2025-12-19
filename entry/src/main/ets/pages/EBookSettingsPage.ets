@@ -14,7 +14,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
-import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
 import { EBookSettingsPageParams } from './EBookDetailPage';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
@@ -114,6 +114,9 @@ export struct EBookSettingsPage {
   @State settingBackgroundType: BackgroundType = BackgroundType.COLOR;
   @State settingBackgroundImagePath: string = '';
   @State settingBackgroundImageOpacity: number = 0.3;
+  // 可用的背景图片列表（来自其他电子书）
+  @State availableBackgroundImages: BackgroundImageInfo[] = [];
+  @State showBackgroundImagePicker: boolean = false;
 
   // 主题相关
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -146,6 +149,48 @@ export struct EBookSettingsPage {
       this.isLandscape = deviceInfo.isLandscape;
     };
     this.deviceAdaptationManager.addListener(this.deviceOrientationListener);
+    
+    // 加载可用的背景图片列表
+    this.loadAvailableBackgroundImages();
+  }
+  
+  /**
+   * 加载可用的背景图片列表（来自其他电子书和全局设置）
+   */
+  private async loadAvailableBackgroundImages(): Promise<void> {
+    try {
+      const ebookImages = await this.ebookDataManager.getAllCustomBackgroundImages();
+      
+      // 添加全局设置的背景图片
+      const allImages: BackgroundImageInfo[] = [];
+      const seenPaths = new Set<string>();
+      
+      // 先添加全局设置的背景图片
+      const settingsManager = SettingsManager.getInstance();
+      const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
+      if (globalBgImagePath && globalBgImagePath.length > 0) {
+        seenPaths.add(globalBgImagePath);
+        const globalBgInfo: BackgroundImageInfo = {
+          bookId: 'global',
+          bookTitle: '全局默认背景',
+          imagePath: globalBgImagePath
+        };
+        allImages.push(globalBgInfo);
+      }
+      
+      // 添加电子书的背景图片（去重，排除当前电子书）
+      for (const img of ebookImages) {
+        if (!seenPaths.has(img.imagePath) && img.bookId !== this.ebook?.id) {
+          seenPaths.add(img.imagePath);
+          allImages.push(img);
+        }
+      }
+      
+      this.availableBackgroundImages = allImages;
+      logger.info(TAG, `加载到 ${this.availableBackgroundImages.length} 张可用背景图片`);
+    } catch (error) {
+      logger.error(TAG, `加载背景图片列表失败: ${String(error)}`);
+    }
   }
 
   aboutToDisappear(): void {
@@ -208,7 +253,7 @@ export struct EBookSettingsPage {
       const globalTextBgColorIndex = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_COLOR, 0);
       const globalTextUseBgImage = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_USE_BG_IMAGE, false);
       const globalTextBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
-      const globalTextBgImageOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, 1.0);
+      const globalTextBgImageOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_BG_IMAGE_OPACITY, 0.3);
       const globalTextPageTurnAnimation = settingsManager.getString(SettingKeys.GLOBAL_TEXT_PAGE_TURN_ANIMATION, TextPageTurnAnimation.SLIDE) as TextPageTurnAnimation;
       const globalTextKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_KEEP_SCREEN_ON, true);
       const globalTextVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_VOLUME_KEY_NAV, true);
@@ -217,12 +262,10 @@ export struct EBookSettingsPage {
       
       // 加载阅读设置
       if (ebook.readingSettings) {
-        // [修复] 检查是否是默认设置（followSystemTheme=true 且背景色是默认白色或夜间黑色）
-        const isDefaultSettings = ebook.readingSettings.followSystemTheme === true &&
-          (ebook.readingSettings.backgroundColor === '#FFFFFF' || 
-           ebook.readingSettings.backgroundColor === '#1E1E1E' ||
-           ebook.readingSettings.backgroundColor === '#F5F0E1' ||
-           ebook.readingSettings.backgroundColor === DEFAULT_EBOOK_READING_SETTINGS.backgroundColor);
+        // [修复] 简化判断逻辑：只依赖 followSystemTheme 标志
+        // followSystemTheme=true 表示用户从未自定义过设置，应使用全局设置
+        // followSystemTheme=false 表示用户已自定义设置，应使用保存的设置
+        const isDefaultSettings = ebook.readingSettings.followSystemTheme === true;
         
         if (isDefaultSettings) {
           if (isTextFormat) {
@@ -422,6 +465,9 @@ export struct EBookSettingsPage {
       }
 
       logger.info(TAG, `电子书设置加载完成: ${ebook.metadata.title}`);
+      
+      // 加载可用的背景图片列表（在 ebook 设置完成后调用）
+      await this.loadAvailableBackgroundImages();
     } catch (error) {
       this.errorMessage = `加载失败: ${String(error instanceof Error ? error.message : error)}`;
       logger.error(TAG, this.errorMessage);
@@ -1228,7 +1274,7 @@ export struct EBookSettingsPage {
   private getCoverImageSource(): string | Resource {
     const coverPath = this.ebook?.metadata.coverImagePath;
     if (!coverPath || coverPath.length === 0) {
-      return $r('app.media.ic_ebook');
+      return $r('app.media.ebook');
     }
     
     // 检查是否为媒体资源路径 (app.media.xxx 格式)
@@ -1334,17 +1380,12 @@ export struct EBookSettingsPage {
                 .key(`ebook_cover_${this.coverImagePath}`)
             }
           } else {
-            Column() {
-              Image($r('app.media.ic_ebook'))
-                .width(50)
-                .height(50)
-                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            }
-            .width('100%')
-            .height('100%')
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(8)
-            .justifyContent(FlexAlign.Center)
+            // 无封面时使用默认电子书图标
+            Image($r('app.media.ebook'))
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .borderRadius(8)
           }
         }
         .width(100)
@@ -1398,14 +1439,14 @@ export struct EBookSettingsPage {
         .width('100%')
         .justifyContent(FlexAlign.Center)
 
-        // 阅读进度 - 使用与 EBookDetailPage 一致的计算方法
+        // 阅读进度 - 直接使用存储的进度值（与书库、阅读报告保持一致）
         if (this.hasReadingProgress()) {
           Column({ space: 4 }) {
-            Text(`已读 ${this.calculateOverallProgress()}%`)
+            Text(`已读 ${Math.floor(this.ebook!.readingProgress.progress)}%`)
               .fontSize(11)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Progress({
-              value: this.calculateOverallProgress(),
+              value: this.ebook!.readingProgress.progress,
               total: 100,
               type: ProgressType.Linear
             })
@@ -1732,6 +1773,38 @@ export struct EBookSettingsPage {
         .width('100%')
       }
       .width('100%')
+
+      // 文字颜色（仅在使用图片背景时需要手动选择，纯色背景已自动匹配）
+      if (this.settingBackgroundType === BackgroundType.IMAGE) {
+        Column({ space: 8 }) {
+          Text('文字颜色')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+
+          Row({ space: 8 }) {
+            ForEach(['#333333', '#FFFFFF', '#5D4037', '#2E7D32', '#1565C0', '#D4D4D4'], (color: string) => {
+              Column()
+                .width(32)
+                .height(32)
+                .backgroundColor(color)
+                .borderRadius(16)
+                .border({
+                  width: this.settingTextColor === color ? 2 : 1,
+                  color: this.settingTextColor === color ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
+                })
+                .onClick(() => {
+                  this.settingTextColor = color;
+                  this.saveSettingsImmediately();
+                })
+            })
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }
     }
     .width('100%')
   }
@@ -1758,8 +1831,9 @@ export struct EBookSettingsPage {
                 .backgroundColor(preset.backgroundColor)
                 .borderRadius(20)
                 .border({
-                  width: this.settingBgColor === preset.backgroundColor ? 2 : 1,
-                  color: this.settingBgColor === preset.backgroundColor
+                  // [修复] 只有当使用纯色背景时才高亮选中的预设颜色
+                  width: (this.settingBgColor === preset.backgroundColor && this.settingBackgroundType === BackgroundType.COLOR) ? 2 : 1,
+                  color: (this.settingBgColor === preset.backgroundColor && this.settingBackgroundType === BackgroundType.COLOR)
                     ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                     : ThemeAwareHelper.getTestManagementThemedColor('border_light', this.themeState.currentTheme)
                 })
@@ -1835,17 +1909,35 @@ export struct EBookSettingsPage {
         .width('100%')
 
         // 选择背景图片按钮
-        Button('选择背景图片')
-          .width('100%')
-          .height(40)
-          .fontSize(14)
-          .type(ButtonType.Normal)
-          .borderRadius(8)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.selectBackgroundImage();
-          })
+        Row({ space: 8 }) {
+          Button('从相册选择')
+            .layoutWeight(1)
+            .height(40)
+            .fontSize(14)
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.selectBackgroundImage();
+            })
+          
+          // 选择其他电子书背景按钮
+          if (this.availableBackgroundImages.length > 0) {
+            Button('使用已有背景')
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(14)
+              .type(ButtonType.Normal)
+              .borderRadius(8)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(Color.White)
+              .onClick(() => {
+                this.showBackgroundImagePicker = true;
+              })
+          }
+        }
+        .width('100%')
 
         // 当前背景图片预览
         if (this.settingBackgroundImagePath && this.settingBackgroundImagePath.length > 0) {
@@ -1861,10 +1953,80 @@ export struct EBookSettingsPage {
               : this.settingBackgroundImagePath)
               .width('100%')
               .height(120)
-              .objectFit(ImageFit.Cover)
+              .objectFit(ImageFit.Contain)
               .borderRadius(8)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           }
           .width('100%')
+        }
+        
+        // 可用背景图片选择器
+        if (this.showBackgroundImagePicker && this.availableBackgroundImages.length > 0) {
+          Column({ space: 12 }) {
+            Row() {
+              Text('选择已有背景图片')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Blank()
+              Text('关闭')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .onClick(() => {
+                  this.showBackgroundImagePicker = false;
+                })
+            }
+            .width('100%')
+            
+            Text('以下背景图片来自其他电子书，选择后将直接使用，不会重复存储')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .width('100%')
+            
+            // 背景图片网格
+            Grid() {
+              ForEach(this.availableBackgroundImages, (item: BackgroundImageInfo) => {
+                GridItem() {
+                  Column({ space: 4 }) {
+                    Image(item.imagePath.startsWith('/') ? 'file://' + item.imagePath : item.imagePath)
+                      .width('100%')
+                      .height(80)
+                      .objectFit(ImageFit.Contain)
+                      .borderRadius(6)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .border({
+                        width: this.settingBackgroundImagePath === item.imagePath ? 2 : 0,
+                        color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                      })
+                    
+                    Text(item.bookTitle)
+                      .fontSize(10)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .width('100%')
+                      .textAlign(TextAlign.Center)
+                  }
+                  .width('100%')
+                  .onClick(() => {
+                    this.settingBackgroundImagePath = item.imagePath;
+                    this.saveSettingsImmediately();
+                    this.showBackgroundImagePicker = false;
+                    this.showToast('已应用背景图片');
+                  })
+                }
+              })
+            }
+            .columnsTemplate('1fr 1fr 1fr')
+            .columnsGap(8)
+            .rowsGap(8)
+            .width('100%')
+            .height(this.availableBackgroundImages.length <= 3 ? 110 : 230)
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(8)
         }
       }
     }
@@ -2068,14 +2230,14 @@ export struct EBookSettingsPage {
 
       // 底部信息显示
       Column({ space: 8 }) {
-        Text('底部信息显示')
+        Text('阅读进度显示')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width('100%')
 
         // 右下角显示选项（页码/进度/不显示，三选一）
-        Text('右下角显示')
+        Text('右下角显示信息')
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .width('100%')

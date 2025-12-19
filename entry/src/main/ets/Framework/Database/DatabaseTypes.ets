@@ -32,11 +32,17 @@ export interface ComicTagsArray extends ReadonlyArray<string> {}
 // ==================== 明确的数据库记录接口定义 ====================
 
 /**
+ * 图源类型
+ */
+export type SourceType = 'manga' | 'ebook' | 'novel' | 'video' | 'audio' | 'image';
+
+/**
  * 漫画源数据库记录
  */
 export interface ComicSourceDatabaseRecord {
   id: string;
   pkg?: string; // 图源唯一包名
+  type?: SourceType; // 图源类型（默认为manga）
   name: string;
   baseUrl: string;
   pluginId: string;
@@ -553,6 +559,8 @@ export class DatabaseRecordFactory {
 export function convertComicSourceToDbFormat(record: ComicSourceDatabaseRecord): Record<string, DatabaseValue> {
   return {
     "id": record.id,
+    "pkg": record.pkg ?? '',
+    "type": record.type ?? 'manga',
     "name": record.name,
     "baseUrl": record.baseUrl,
     "pluginId": record.pluginId,
@@ -575,6 +583,7 @@ export function convertComicInfoToDbFormat(record: ComicInfoDatabaseRecord): Rec
     "author": record.author,
     "description": record.description,
     "coverUrl": record.coverUrl,
+    "coverLocalPath": record.coverLocalPath || '',  // 封面本地路径
     "sourceId": record.sourceId,
     "externalId": record.externalId,  // 外部图源ID
     "status": record.status,
@@ -950,6 +959,9 @@ export interface GenericQueryRecord {
   cookies?: DatabaseValue;
   pkg?: DatabaseValue;         // 图源包名
   iconPath?: DatabaseValue;    // 图源图标路径
+  type?: DatabaseValue;        // 图源类型 (manga/ebook/novel)
+  requireProxy?: DatabaseValue; // 是否需要代理
+  sourcePkg?: DatabaseValue;   // 在线漫画关联的图源包名
   // favorite 表字段
   favoriteType?: DatabaseValue;
   favoriteTime?: DatabaseValue;

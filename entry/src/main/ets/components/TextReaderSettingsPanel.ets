@@ -24,6 +24,8 @@ import { picker } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
+import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 
 const TAG = 'TextReaderSettingsPanel';
 
@@ -76,7 +78,56 @@ export struct TextReaderSettingsPanel {
   /** 强制刷新计数器 - 用于触发UI更新 */
   @State private refreshCounter: number = 0;
   /** 预览文本 */
-  private previewText: string = '这是一段预览文字，用于展示当前的字体设置效果。';
+  private previewText: string = '这是一段预览文字，用于展示当前的字体设置和背景颜色效果。';
+  /** 所有可用的背景图片（来自其他电子书和全局设置） */
+  @State private allAvailableBackgroundImages: BackgroundImageInfo[] = [];
+  /** 是否显示其他电子书背景图片选择器 */
+  @State private showOtherBgImagePicker: boolean = false;
+  /** 电子书数据管理器 */
+  private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  
+  aboutToAppear(): void {
+    // 加载所有可用的背景图片
+    this.loadAllAvailableBackgroundImages();
+  }
+  
+  /**
+   * 加载所有可用的背景图片（来自其他电子书和全局设置）
+   */
+  private async loadAllAvailableBackgroundImages(): Promise<void> {
+    try {
+      const ebookImages = await this.ebookDataManager.getAllCustomBackgroundImages();
+      
+      const allImages: BackgroundImageInfo[] = [];
+      const seenPaths = new Set<string>();
+      
+      // 先添加全局设置的背景图片
+      const settingsManager = SettingsManager.getInstance();
+      const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
+      if (globalBgImagePath && globalBgImagePath.length > 0) {
+        seenPaths.add(globalBgImagePath);
+        const globalBgInfo: BackgroundImageInfo = {
+          bookId: 'global',
+          bookTitle: '全局默认背景',
+          imagePath: globalBgImagePath
+        };
+        allImages.push(globalBgInfo);
+      }
+      
+      // 添加电子书的背景图片（去重）
+      for (const img of ebookImages) {
+        if (!seenPaths.has(img.imagePath)) {
+          seenPaths.add(img.imagePath);
+          allImages.push(img);
+        }
+      }
+      
+      this.allAvailableBackgroundImages = allImages;
+      logger.info(TAG, `加载到 ${this.allAvailableBackgroundImages.length} 张可用背景图片`);
+    } catch (error) {
+      logger.error(TAG, `加载背景图片列表失败: ${String(error)}`);
+    }
+  }
   
   /**
    * 强制刷新设置并通知变化
@@ -439,7 +490,7 @@ export struct TextReaderSettingsPanel {
     Column({ space: 20 }) {
       // 预设背景颜色
       Column({ space: 12 }) {
-        Text('预设主题')
+        Text('预设主题(同时设置背景主题与文本颜色)')
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
@@ -488,16 +539,80 @@ export struct TextReaderSettingsPanel {
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
           Blank()
-          Button('添加')
-            .fontSize(12)
-            .height(28)
-            .backgroundColor($r('app.color.accent_primary'))
-            .fontColor(Color.White)
-            .onClick(() => {
-              this.selectBackgroundImage();
-            })
+          Row({ space: 8 }) {
+            // 使用已有背景按钮
+            if (this.allAvailableBackgroundImages.length > 0) {
+              Button('已有')
+                .fontSize(12)
+                .height(28)
+                .backgroundColor($r('app.color.accent_secondary'))
+                .fontColor(Color.White)
+                .onClick(() => {
+                  this.showOtherBgImagePicker = !this.showOtherBgImagePicker;
+                })
+            }
+            Button('添加')
+              .fontSize(12)
+              .height(28)
+              .backgroundColor($r('app.color.accent_primary'))
+              .fontColor(Color.White)
+              .onClick(() => {
+                this.selectBackgroundImage();
+              })
+          }
         }
         .width('100%')
+        
+        // 其他电子书背景图片选择器
+        if (this.showOtherBgImagePicker && this.allAvailableBackgroundImages.length > 0) {
+          Column({ space: 8 }) {
+            Text('选择已有背景图片')
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+              ForEach(this.allAvailableBackgroundImages, (item: BackgroundImageInfo) => {
+                Column({ space: 2 }) {
+                  Image(item.imagePath.startsWith('/') ? 'file://' + item.imagePath : item.imagePath)
+                    .width(60)
+                    .height(45)
+                    .objectFit(ImageFit.Contain)
+                    .borderRadius(6)
+                    .backgroundColor($r('app.color.comp_background_tertiary'))
+                    .border({
+                      width: this.settings.background.imagePath === item.imagePath ? 2 : 0,
+                      color: $r('app.color.accent_primary')
+                    })
+                  
+                  Text(item.bookTitle)
+                    .fontSize(9)
+                    .fontColor($r('app.color.text_secondary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width(60)
+                    .textAlign(TextAlign.Center)
+                }
+                .margin({ right: 8, bottom: 8 })
+                .onClick(() => {
+                  // 选择此图片作为背景
+                  this.settings.background = {
+                    type: BackgroundType.IMAGE,
+                    imagePath: item.imagePath,
+                    imageOpacity: this.settings.background.imageOpacity || 1.0
+                  };
+                  this.showOtherBgImagePicker = false;
+                  this.updateAndNotify();
+                })
+              })
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding(8)
+          .backgroundColor($r('app.color.comp_background_tertiary'))
+          .borderRadius(8)
+        }
         
         // 已保存的背景图片缩略图
         if (this.settings.savedBackgroundImages && this.settings.savedBackgroundImages.length > 0) {
@@ -507,8 +622,9 @@ export struct TextReaderSettingsPanel {
                 Image(savedImg.path.startsWith('/') ? 'file://' + savedImg.path : savedImg.path)
                   .width(60)
                   .height(45)
-                  .objectFit(ImageFit.Cover)
+                  .objectFit(ImageFit.Contain)
                   .borderRadius(6)
+                  .backgroundColor($r('app.color.comp_background_tertiary'))
                   .border({
                     width: (this.settings.background.type === BackgroundType.IMAGE && 
                            this.settings.background.imagePath === savedImg.path) ? 2 : 0,
@@ -642,7 +758,7 @@ export struct TextReaderSettingsPanel {
           .width('100%')
         
         Row({ space: 8 }) {
-          Button('翻页')
+          Button('左右翻页')
             .fontSize(13)
             .height(36)
             .layoutWeight(1)
@@ -655,7 +771,7 @@ export struct TextReaderSettingsPanel {
               this.updateAndNotify();
             })
           
-          Button('滚动')
+          Button('上下滚动')
             .fontSize(13)
             .height(36)
             .layoutWeight(1)
@@ -731,14 +847,14 @@ export struct TextReaderSettingsPanel {
       
       // 底部信息显示设置
       Column({ space: 8 }) {
-        Text('底部信息显示')
+        Text('阅读进度显示')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .width('100%')
         
         // 右下角显示选项（页码/进度/不显示，三选一）
-        Text('右下角显示')
+        Text('右下角显示信息')
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')

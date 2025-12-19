@@ -24,8 +24,11 @@ import {
   MangaSourceErrorCode,
   AntiCrawlerConfig,
   Workflow,
-  WorkflowType
+  WorkflowType,
+  TaskDefinition,
+  TaskResult
 } from './MangaSourceTypes';
+import { TaskExecutor, TaskExecutorConfig } from './TaskExecutor';
 
 const TAG = 'MangaSourceEngine';
 
@@ -142,12 +145,23 @@ export class MangaSourceEngine {
   private lastChapterAccessDenied: boolean = false;
   // [修复] 存储当前会话的 Token，登录成功后立即可用
   private currentToken: string | undefined = undefined;
+  // 任务执行器
+  private taskExecutor: TaskExecutor | null = null;
 
   constructor(engineConfig: EngineConfig) {
     this.engineConfig = engineConfig;
     this.actionEngine = new MangaSourceActionEngine(engineConfig.webViewController, engineConfig.antiCrawlerConfig);
     this.selectorEngine = new MangaSourceSelectorEngine();
     this.configParser = new MangaSourceConfigParser();
+    
+    // 初始化任务执行器
+    const taskConfig: TaskExecutorConfig = {
+      webViewController: engineConfig.webViewController,
+      antiCrawlerConfig: engineConfig.antiCrawlerConfig,
+      debug: engineConfig.debug,
+      defaultTimeout: engineConfig.timeout
+    };
+    this.taskExecutor = new TaskExecutor(taskConfig);
   }
 
   /**
@@ -688,6 +702,213 @@ export class MangaSourceEngine {
       const errorStack = error instanceof Error ? error.stack : '';
       
       logger.error(TAG, `筛选漫画失败: ${errorMessage}`);
+      logger.debug(TAG, `错误堆栈: ${errorStack}`);
+      
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 获取分类页面内容（电子书等）
+   */
+  async getCategory(categoryUrl: string, page: number = 1): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法获取分类内容');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始获取分类内容: url=${categoryUrl}, 页码=${page}`);
+
+    try {
+      // 构建分类操作序列
+      logger.debug(TAG, '构建分类操作序列');
+      const actions = this.configParser.buildCategoryActions(this.config);
+      logger.debug(TAG, `分类操作序列包含 ${actions.length} 个操作`);
+      
+      // 执行操作序列
+      const context = this.createActionContext();
+      context.variables['useCookies'] = 'false';
+      context.variables['page'] = page.toString();
+      context.variables['offset'] = ((page - 1) * 30).toString();
+      context.variables['categoryUrl'] = categoryUrl;
+      logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
+      
+      let results: MangaInfo[] = [];
+      
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        logger.debug(TAG, `执行操作 ${i + 1}/${actions.length}: ${action.type}`);
+        
+        const result = await this.actionEngine.executeAction(action, context);
+        
+        logger.debug(TAG, `操作 ${i + 1} 结果: success=${result.success}, hasData=${!!result.data}`);
+        
+        if (!result.success) {
+          logger.error(TAG, `操作 ${i + 1} 失败: ${result.error}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.ACTION_FAILED,
+            `分类操作失败: ${result.error}`
+          );
+        }
+
+        if ((action.type === 'extract' || action.type === 'api') && result.data) {
+          const resultData = result.data as Record<string, Object> | Array<Record<string, Object>>;
+          const extractedData = Array.isArray(resultData) ? resultData : [resultData];
+          results = extractedData.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+          logger.debug(TAG, `提取到 ${results.length} 条数据`);
+        }
+        
+        // 支持 script 操作直接返回列表
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          if (scriptData.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
+                results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条数据`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是列表格式: ${e}`);
+            }
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      
+      logger.info(TAG, `获取分类内容完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: {
+          mangas: results,
+          total: results.length,
+          page,
+          hasNext: results.length >= 20
+        },
+        duration,
+        actionCount: actions.length
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      
+      logger.error(TAG, `获取分类内容失败: ${errorMessage}`);
+      logger.debug(TAG, `错误堆栈: ${errorStack}`);
+      
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 获取电子书详情
+   */
+  async getBookDetail(bookId: string): Promise<EngineResult<Record<string, Object>>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法获取电子书详情');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始获取电子书详情: bookId=${bookId}`);
+
+    try {
+      // 构建电子书详情操作序列
+      logger.debug(TAG, '构建电子书详情操作序列');
+      const actions = this.configParser.buildBookDetailActions(this.config);
+      logger.debug(TAG, `电子书详情操作序列包含 ${actions.length} 个操作`);
+      
+      // 执行操作序列
+      const context = this.createActionContext();
+      context.variables['useCookies'] = 'false';
+      context.variables['bookId'] = bookId;
+      logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
+      
+      let bookDetail: Record<string, Object> = {};
+      
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        logger.debug(TAG, `执行操作 ${i + 1}/${actions.length}: ${action.type}`);
+        
+        const result = await this.actionEngine.executeAction(action, context);
+        
+        logger.debug(TAG, `操作 ${i + 1} 结果: success=${result.success}, hasData=${!!result.data}`);
+        
+        if (!result.success) {
+          logger.error(TAG, `操作 ${i + 1} 失败: ${result.error}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.ACTION_FAILED,
+            `电子书详情操作失败: ${result.error}`
+          );
+        }
+
+        // 支持 script 操作直接返回详情对象
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          if (scriptData.startsWith('{')) {
+            try {
+              bookDetail = JSON.parse(scriptData) as Record<string, Object>;
+              logger.debug(TAG, `从脚本结果提取到电子书详情: ${bookDetail['title']}`);
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是对象格式: ${e}`);
+            }
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      
+      logger.info(TAG, `获取电子书详情完成，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: bookDetail,
+        duration,
+        actionCount: actions.length
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      
+      logger.error(TAG, `获取电子书详情失败: ${errorMessage}`);
       logger.debug(TAG, `错误堆栈: ${errorStack}`);
       
       return {
@@ -2374,6 +2595,38 @@ export class MangaSourceEngine {
   }
 
   /**
+   * 获取WebView当前URL
+   */
+  public async getCurrentUrl(): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      try {
+        const timeout = setTimeout(() => {
+          reject(new Error('WebView URL获取超时'));
+        }, 3000);
+        
+        this.engineConfig.webViewController.runJavaScript(
+          'location.href',
+          (error, result) => {
+            clearTimeout(timeout);
+            if (error) {
+              reject(new Error(`获取URL失败: ${error.message}`));
+              return;
+            }
+            // 结果可能带引号，需要去掉
+            let url = String(result);
+            if (url.startsWith('"') && url.endsWith('"')) {
+              url = url.slice(1, -1);
+            }
+            resolve(url);
+          }
+        );
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
    * 获取当前配置
    */
   getConfig(): MangaSourceConfig | undefined {
@@ -2527,5 +2780,202 @@ export class MangaSourceEngine {
         actionCount: 0
       };
     }
+  }
+
+  // ==================== 任务系统方法 ====================
+
+  /**
+   * 注册任务和工作流（从配置JSON中解析）
+   */
+  registerTasksFromConfig(): void {
+    if (!this.rawConfigJson || !this.taskExecutor) {
+      logger.warn(TAG, '无法注册任务：配置或任务执行器未初始化');
+      return;
+    }
+
+    try {
+      const configObj = JSON.parse(this.rawConfigJson) as Record<string, ESObject>;
+      
+      // 注册工作流
+      const workflows = configObj['workflows'] as Record<string, ESObject> | undefined;
+      if (workflows) {
+        const workflowNames = Object.keys(workflows);
+        for (let i = 0; i < workflowNames.length; i++) {
+          const name = workflowNames[i];
+          const workflow: ESObject = workflows[name];
+          if (workflow && typeof workflow === 'object') {
+            const workflowObj = workflow as Record<string, ESObject>;
+            const actions = workflowObj['actions'] as Action[] | undefined;
+            if (actions && Array.isArray(actions)) {
+              this.taskExecutor.registerWorkflow(name, actions);
+            }
+          }
+        }
+      }
+
+      // 注册任务
+      const tasks = configObj['tasks'] as Record<string, TaskDefinition> | undefined;
+      if (tasks) {
+        this.taskExecutor.registerTasks(tasks);
+        logger.info(TAG, `已注册 ${Object.keys(tasks).length} 个任务`);
+      }
+
+    } catch (error) {
+      logger.error(TAG, `注册任务失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * 执行任务
+   * @param taskId 任务ID
+   * @param params 初始参数
+   */
+  async executeTask(taskId: string, params?: Record<string, ESObject>): Promise<TaskResult> {
+    if (!this.taskExecutor) {
+      return {
+        taskId,
+        success: false,
+        error: '任务执行器未初始化',
+        duration: 0,
+        stepResults: {}
+      };
+    }
+
+    // 确保任务已注册
+    this.registerTasksFromConfig();
+
+    // 添加基础变量
+    const fullParams: Record<string, ESObject> = {};
+    fullParams['baseUrl'] = this.config?.metadata?.baseUrl || '';
+    fullParams['sourceId'] = String(this.engineConfig.sourceId || '');
+    if (params) {
+      const paramKeys = Object.keys(params);
+      for (let i = 0; i < paramKeys.length; i++) {
+        const key = paramKeys[i];
+        fullParams[key] = params[key];
+      }
+    }
+
+    logger.info(TAG, `执行任务: ${taskId}, 参数: ${JSON.stringify(fullParams)}`);
+    return await this.taskExecutor.executeTask(taskId, fullParams);
+  }
+
+  /**
+   * 获取下载源列表（电子书专用）
+   * @param bookId 书籍ID
+   */
+  async getDownloadSources(bookId: string): Promise<EngineResult<ESObject[]>> {
+    const startTime = Date.now();
+    
+    try {
+      const taskParams: Record<string, ESObject> = {};
+      taskParams['bookId'] = bookId;
+      const result = await this.executeTask('getDownloadSources', taskParams);
+      
+      if (result.success && result.data) {
+        let sources: ESObject[] = [];
+        if (typeof result.data === 'string') {
+          sources = JSON.parse(result.data) as ESObject[];
+        } else if (Array.isArray(result.data)) {
+          sources = result.data;
+        }
+
+        return {
+          success: true,
+          data: sources,
+          duration: Date.now() - startTime,
+          actionCount: Object.keys(result.stepResults).length
+        };
+      }
+
+      return {
+        success: false,
+        error: result.error || '获取下载源失败',
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 从下载源获取文件列表（电子书专用）
+   * @param sourceUrl 下载源URL
+   */
+  async getFileListFromSource(sourceUrl: string): Promise<EngineResult<ESObject[]>> {
+    const startTime = Date.now();
+    
+    try {
+      const taskParams: Record<string, ESObject> = {};
+      taskParams['sourceUrl'] = sourceUrl;
+      const result = await this.executeTask('getFileListFromSource', taskParams);
+      
+      if (result.success && result.data) {
+        let files: ESObject[] = [];
+        if (typeof result.data === 'string') {
+          files = JSON.parse(result.data) as ESObject[];
+        } else if (Array.isArray(result.data)) {
+          files = result.data;
+        }
+
+        return {
+          success: true,
+          data: files,
+          duration: Date.now() - startTime,
+          actionCount: Object.keys(result.stepResults).length
+        };
+      }
+
+      return {
+        success: false,
+        error: result.error || '获取文件列表失败',
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 取消正在执行的任务
+   * @param taskId 任务ID
+   */
+  cancelTask(taskId: string): boolean {
+    if (!this.taskExecutor) {
+      return false;
+    }
+    return this.taskExecutor.cancelTask(taskId);
+  }
+
+  /**
+   * 恢复等待中的任务（用户交互完成后）
+   * @param taskId 任务ID
+   * @param userInput 用户输入的数据
+   */
+  async resumeTask(taskId: string, userInput?: Record<string, ESObject>): Promise<void> {
+    if (this.taskExecutor) {
+      await this.taskExecutor.resumeTask(taskId, userInput);
+    }
+  }
+
+  /**
+   * 获取任务执行器（供外部直接使用）
+   */
+  getTaskExecutor(): TaskExecutor | null {
+    return this.taskExecutor;
   }
 }

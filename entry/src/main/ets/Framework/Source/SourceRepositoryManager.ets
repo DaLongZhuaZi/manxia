@@ -22,11 +22,17 @@ export interface SourceSubEntry {
 }
 
 /**
+ * 图源类型
+ */
+export type SourceType = 'manga' | 'ebook' | 'novel' | 'video' | 'audio' | 'image';
+
+/**
  * 图源仓库条目（参考Tachiyomi格式）
  */
 export interface SourceRepositoryEntry {
   name: string;           // 图源名称
   pkg: string;            // 包名
+  type?: SourceType;      // 图源类型（默认为manga）
   apk?: string;           // APK文件名（可选）
   lang: string;           // 语言
   code: number;           // 版本代码
@@ -63,6 +69,14 @@ export interface SyncResult {
   success: boolean;
   message: string;
   sourceCount?: number;
+}
+
+/**
+ * 同步进度回调接口
+ */
+export interface SyncProgressCallback {
+  onProgress: (current: number, total: number, message: string) => void;
+  onLog: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
 /**
@@ -265,18 +279,26 @@ export class SourceRepositoryManager {
   }
 
   /**
-   * 从URL同步仓库
+   * 从URL同步仓库（带进度回调）
    */
-  async syncRepositoryFromUrl(url: string, repositoryName?: string): Promise<SyncResult> {
+  async syncRepositoryFromUrl(url: string, repositoryName?: string, progressCallback?: SyncProgressCallback): Promise<SyncResult> {
+    const log = (level: 'info' | 'warn' | 'error', message: string) => {
+      if (level === 'info') logger.info(TAG, message);
+      else if (level === 'warn') logger.warn(TAG, message);
+      else logger.error(TAG, message);
+      progressCallback?.onLog(level, message);
+    };
+    
     try {
-      logger.info(TAG, `开始同步仓库: ${url}`);
+      log('info', `开始同步仓库: ${url}`);
+      progressCallback?.onProgress(0, 100, '正在连接仓库...');
 
-      // 下载仓库索引文件
+      // 下载仓库索引文件（超时10秒）
       const httpRequest = http.createHttp();
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
-        connectTimeout: 30000,
-        readTimeout: 30000,
+        connectTimeout: 10000,
+        readTimeout: 10000,
         header: {
           'Content-Type': 'application/json'
         }
@@ -288,35 +310,45 @@ export class SourceRepositoryManager {
 
       const responseData = response.result as string;
       const repositoryData = JSON.parse(responseData) as SourceRepositoryEntry[];
+      
+      log('info', `获取到 ${repositoryData.length} 个图源`);
+      progressCallback?.onProgress(10, 100, `获取到 ${repositoryData.length} 个图源`);
 
       // 下载每个图源的实际配置文件和图标
       const sourceConfigs: Record<string, string> = {};
       const sourceIcons: Record<string, SourceIconInfo> = {};
+      const totalSources = repositoryData.length;
+      let processedSources = 0;
       
       for (const entry of repositoryData) {
-        // 下载图源配置文件 (新格式: pkg/source.json, 旧格式: pkg.json)
+        processedSources++;
+        const progressPercent = 10 + Math.floor((processedSources / totalSources) * 60);
+        progressCallback?.onProgress(progressPercent, 100, `下载图源配置 (${processedSources}/${totalSources}): ${entry.name}`);
+        
+        // 下载图源配置文件（超时5秒）
         const sourceConfigUrl = this.resolveSourceConfigUrl(url, entry.pkg);
         try {
           const configResponse = await httpRequest.request(sourceConfigUrl, {
             method: http.RequestMethod.GET,
-            connectTimeout: 30000,
-            readTimeout: 30000,
+            connectTimeout: 5000,
+            readTimeout: 5000,
             header: {
               'Content-Type': 'application/json'
             }
           });
 
           if (configResponse.responseCode !== 200 || !configResponse.result) {
-            logger.warn(TAG, `下载图源配置失败: ${entry.pkg}, code: ${configResponse.responseCode}`);
+            log('warn', `下载图源配置失败: ${entry.pkg}, code: ${configResponse.responseCode}`);
             continue;
           }
 
           sourceConfigs[entry.pkg] = configResponse.result as string;
+          log('info', `下载图源配置成功: ${entry.name}`);
         } catch (error) {
-          logger.warn(TAG, `下载图源配置异常: ${entry.pkg}`, String(error));
+          log('warn', `下载图源配置超时: ${entry.pkg} (5秒)`);
         }
         
-        // 如果有图标，下载图标文件（尝试多种格式）
+        // 如果有图标，下载图标文件（超时3秒，只尝试一种格式）
         if (entry.hasIcon) {
           const iconFormats = ['webp', 'png', 'jpg'];
           let iconDownloaded = false;
@@ -328,8 +360,8 @@ export class SourceRepositoryManager {
             try {
               const iconResponse = await httpRequest.request(iconUrl, {
                 method: http.RequestMethod.GET,
-                connectTimeout: 15000,
-                readTimeout: 15000,
+                connectTimeout: 3000,
+                readTimeout: 3000,
                 expectDataType: http.HttpDataType.ARRAY_BUFFER
               });
               
@@ -340,19 +372,20 @@ export class SourceRepositoryManager {
                 };
                 sourceIcons[entry.pkg] = iconInfo;
                 iconDownloaded = true;
-                logger.info(TAG, `下载图源图标成功: ${entry.pkg} (${ext})`);
+                log('info', `下载图源图标成功: ${entry.pkg} (${ext})`);
               }
             } catch (iconError) {
-              // 尝试下一个格式
-              logger.debug(TAG, `尝试下载图标 ${entry.pkg}.${ext} 失败，尝试其他格式`);
+              // 尝试下一个格式（静默失败）
             }
           }
           
           if (!iconDownloaded) {
-            logger.warn(TAG, `下载图源图标失败: ${entry.pkg}，所有格式都不可用`);
+            log('warn', `下载图源图标失败: ${entry.pkg}，跳过图标`);
           }
         }
       }
+      
+      progressCallback?.onProgress(70, 100, '正在保存图源配置...');
 
       // 读取当前索引
       const currentIndex = await this.readIndexFile();
@@ -386,44 +419,51 @@ export class SourceRepositoryManager {
       // 保存仓库配置
       await this.saveRepositoryConfig(url, repositoryName || this.deriveRepositoryName(url), repositoryData.length);
 
+      progressCallback?.onProgress(75, 100, '正在保存图源文件...');
       // 保存各个图源的JSON文件和图标
       await this.saveSourceFiles(sourceConfigs);
       await this.saveSourceIcons(sourceIcons);
 
+      progressCallback?.onProgress(80, 100, '正在导入图源到数据库...');
       // 导入新增的图源
       if (sourcesToImport.length > 0) {
         await this.importNewSources(sourcesToImport);
+        log('info', `导入 ${sourcesToImport.length} 个新图源`);
       }
 
       // 对于更新的图源，也需要重新导入到数据库
       if (updatedCount > 0) {
-        logger.info(TAG, `检测到${updatedCount}个图源更新，重新导入到数据库`);
+        log('info', `检测到${updatedCount}个图源更新，重新导入到数据库`);
+        let reimportedCount = 0;
         for (const source of repositoryData) {
           if (existingIds.has(source.pkg)) {
+            reimportedCount++;
+            progressCallback?.onProgress(80 + Math.floor((reimportedCount / updatedCount) * 15), 100, `重新导入图源: ${source.name}`);
             try {
               // 先删除旧的图源（如果存在）
               const existingSources = await this.sourceManager.getAllSources();
               const existingSource = existingSources.find(s => s.name === source.name);
               if (existingSource) {
                 await this.sourceManager.deleteSource(existingSource.id);
-                logger.info(TAG, `删除旧图源: ${source.name}`);
+                log('info', `删除旧图源: ${source.name}`);
               }
               
               // 重新导入
               const result = await this.importSourceFromRepository(source.pkg);
               if (result.success) {
-                logger.info(TAG, `更新图源已重新导入: ${source.name}`);
+                log('info', `更新图源已重新导入: ${source.name}`);
               } else {
-                logger.warn(TAG, `重新导入图源失败: ${source.name}`, result.error ?? '未知错误');
+                log('warn', `重新导入图源失败: ${source.name} - ${result.error ?? '未知错误'}`);
               }
             } catch (error) {
-              logger.warn(TAG, `重新导入图源异常: ${source.name}`, String(error));
+              log('warn', `重新导入图源异常: ${source.name} - ${String(error)}`);
             }
           }
         }
       }
 
-      logger.info(TAG, `仓库同步成功: 新增${addedCount}个, 更新${updatedCount}个图源`);
+      progressCallback?.onProgress(100, 100, '同步完成！');
+      log('info', `仓库同步成功: 新增${addedCount}个, 更新${updatedCount}个图源`);
 
       return {
         success: true,
@@ -431,10 +471,32 @@ export class SourceRepositoryManager {
         sourceCount: repositoryData.length
       };
     } catch (error) {
-      logger.error(TAG, '同步仓库失败', String(error));
+      // 提取有意义的错误信息
+      let errorMessage: string;
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        // 尝试提取常见的错误属性
+        const errObj = error as Record<string, string | number | boolean>;
+        if (errObj.message && typeof errObj.message === 'string') {
+          errorMessage = errObj.message;
+        } else if (errObj.code !== undefined) {
+          errorMessage = `错误代码: ${String(errObj.code)}`;
+        } else {
+          try {
+            errorMessage = JSON.stringify(error);
+          } catch {
+            errorMessage = '未知错误';
+          }
+        }
+      } else {
+        errorMessage = String(error);
+      }
+      
+      log('error', `同步仓库失败: ${errorMessage}`);
       return {
         success: false,
-        message: `同步失败: ${String(error)}`
+        message: `同步失败: ${errorMessage}`
       };
     }
   }

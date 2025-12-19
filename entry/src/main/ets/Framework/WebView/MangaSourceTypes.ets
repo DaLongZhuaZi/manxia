@@ -21,6 +21,8 @@ export interface MangaSourceMetadata {
   baseUrl: string;
   /** 语言 */
   language: string;
+  /** 图源类型 (manga/ebook/novel) */
+  type?: string;
   /** 创建时间 */
   created: string;
   /** 更新时间 */
@@ -533,7 +535,16 @@ export enum WorkflowType {
   FAVORITES = 'favorites',
   HISTORY = 'history',
   GET_USER_AVATAR = 'getUserAvatar',
-  GET_LEADERBOARD = 'getLeaderboard'
+  GET_LEADERBOARD = 'getLeaderboard',
+  // 电子书相关工作流
+  GET_CATEGORY = 'getCategory',
+  GET_BOOK_DETAIL = 'getBookDetail',
+  GET_DOWNLOAD_URL = 'getDownloadUrl',
+  // 电子书下载流程工作流
+  CLICK_SEARCH_BUTTON = 'clickSearchButton',
+  WAIT_FOR_DOWNLOAD_SOURCES = 'waitForDownloadSources',
+  SELECT_DOWNLOAD_SOURCE = 'selectDownloadSource',
+  EXTRACT_FILE_LIST = 'extractFileList'
 }
 
 /**
@@ -557,6 +568,15 @@ export interface Workflow {
   [WorkflowType.HISTORY]?: Action[];
   [WorkflowType.GET_USER_AVATAR]?: Action[];
   [WorkflowType.GET_LEADERBOARD]?: Action[];
+  // 电子书相关工作流
+  [WorkflowType.GET_CATEGORY]?: Action[];
+  [WorkflowType.GET_BOOK_DETAIL]?: Action[];
+  [WorkflowType.GET_DOWNLOAD_URL]?: Action[];
+  // 电子书下载流程工作流
+  [WorkflowType.CLICK_SEARCH_BUTTON]?: Action[];
+  [WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES]?: Action[];
+  [WorkflowType.SELECT_DOWNLOAD_SOURCE]?: Action[];
+  [WorkflowType.EXTRACT_FILE_LIST]?: Action[];
 }
 
 // ==================== 错误处理和重试 ====================
@@ -998,6 +1018,178 @@ export interface HTTPRequestAction extends BaseAction {
   headers?: Record<string, string>;
   body?: string | ESObject;
   timeout?: number;
+}
+
+// ==================== 任务系统类型定义 ====================
+
+/**
+ * 任务执行模式
+ */
+export enum TaskExecutionMode {
+  /** 顺序执行 */
+  SEQUENTIAL = 'sequential',
+  /** 并行执行 */
+  PARALLEL = 'parallel',
+  /** 条件执行 */
+  CONDITIONAL = 'conditional'
+}
+
+/**
+ * 任务状态
+ */
+export enum TaskStatus {
+  PENDING = 'pending',
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELLED = 'cancelled',
+  WAITING = 'waiting'
+}
+
+/**
+ * 任务步骤定义
+ * 每个步骤可以是一个工作流引用或内联操作
+ */
+export interface TaskStep {
+  /** 步骤ID */
+  id: string;
+  /** 步骤名称 */
+  name?: string;
+  /** 步骤描述 */
+  description?: string;
+  /** 引用的工作流名称（使用已定义的工作流） */
+  workflow?: string;
+  /** 内联操作（不使用工作流时） */
+  actions?: Action[];
+  /** 输入参数映射：{ 目标参数名: 来源表达式 } */
+  inputMapping?: Record<string, string>;
+  /** 输出参数映射：{ 输出变量名: 提取表达式 } */
+  outputMapping?: Record<string, string>;
+  /** 条件表达式（返回true才执行此步骤） */
+  condition?: string;
+  /** 超时时间(毫秒) */
+  timeout?: number;
+  /** 重试配置 */
+  retry?: TaskRetryConfig;
+  /** 失败时是否继续执行后续步骤 */
+  continueOnError?: boolean;
+  /** 等待用户交互 */
+  waitForUserInteraction?: boolean;
+  /** 用户交互提示 */
+  userInteractionPrompt?: string;
+}
+
+/**
+ * 任务重试配置
+ */
+export interface TaskRetryConfig {
+  /** 最大重试次数 */
+  maxRetries: number;
+  /** 重试延迟(毫秒) */
+  delay: number;
+  /** 退避策略 */
+  backoff?: 'linear' | 'exponential';
+  /** 重试条件表达式 */
+  retryCondition?: string;
+}
+
+/**
+ * 任务定义
+ * 一个任务由多个步骤组成，可以顺序或并行执行
+ */
+export interface TaskDefinition {
+  /** 任务ID */
+  id: string;
+  /** 任务名称 */
+  name: string;
+  /** 任务描述 */
+  description?: string;
+  /** 执行模式 */
+  mode: TaskExecutionMode;
+  /** 任务步骤 */
+  steps: TaskStep[];
+  /** 初始参数 */
+  initialParams?: Record<string, string>;
+  /** 全局超时(毫秒) */
+  timeout?: number;
+  /** 失败时的回退任务ID */
+  fallbackTask?: string;
+  /** 成功后的回调任务ID */
+  onSuccess?: string;
+  /** 失败后的回调任务ID */
+  onFailure?: string;
+}
+
+/**
+ * 任务执行上下文
+ * 用于在步骤之间传递数据
+ */
+export interface TaskContext {
+  /** 任务ID */
+  taskId: string;
+  /** 当前步骤索引 */
+  currentStepIndex: number;
+  /** 任务状态 */
+  status: TaskStatus;
+  /** 变量存储 */
+  variables: Record<string, ESObject>;
+  /** 步骤结果 */
+  stepResults: Record<string, ESObject>;
+  /** 错误信息 */
+  errors: TaskError[];
+  /** 开始时间 */
+  startTime: number;
+  /** 结束时间 */
+  endTime?: number;
+}
+
+/**
+ * 任务错误
+ */
+export interface TaskError {
+  stepId: string;
+  message: string;
+  code?: string;
+  timestamp: number;
+  recoverable: boolean;
+}
+
+/**
+ * 任务结果
+ */
+export interface TaskResult {
+  /** 任务ID */
+  taskId: string;
+  /** 是否成功 */
+  success: boolean;
+  /** 最终数据 */
+  data?: ESObject;
+  /** 错误信息 */
+  error?: string;
+  /** 执行耗时(毫秒) */
+  duration: number;
+  /** 各步骤结果 */
+  stepResults: Record<string, ESObject>;
+}
+
+/**
+ * 任务配置（在source.json中使用）
+ */
+export interface TasksConfig {
+  /** 任务定义列表 */
+  tasks: Record<string, TaskDefinition>;
+}
+
+/**
+ * 电子书下载任务专用配置
+ */
+export interface EbookDownloadTaskConfig {
+  /** 获取下载源列表的任务 */
+  getDownloadSources: TaskDefinition;
+  /** 获取文件列表的任务 */
+  getFileList: TaskDefinition;
+  /** 下载文件的任务 */
+  downloadFile: TaskDefinition;
 }
 
 // ==================== 错误处理 ====================

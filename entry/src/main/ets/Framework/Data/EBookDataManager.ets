@@ -14,6 +14,15 @@ import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
 const TAG = 'EBookDataManager';
 
 /**
+ * 背景图片信息接口
+ */
+export interface BackgroundImageInfo {
+  bookId: string;
+  bookTitle: string;
+  imagePath: string;
+}
+
+/**
  * 从DatabaseRecord安全地获取字段值
  * 使用Reflect.get避免索引访问限制
  */
@@ -926,6 +935,69 @@ export class EBookDataManager {
     } catch (error) {
       logger.error(TAG, `搜索电子书失败: ${String(error instanceof Error ? error.message : error)}`);
       return [];
+    }
+  }
+
+  /**
+   * 获取所有电子书的自定义背景图片路径
+   * 用于在设置页面中选择已有的背景图片
+   * [修复] 不再去重，显示每本使用背景图片的电子书
+   */
+  public async getAllCustomBackgroundImages(): Promise<BackgroundImageInfo[]> {
+    try {
+      const sql = `
+        SELECT s.bookId, s.backgroundImagePath, i.title
+        FROM ebook_reading_settings s
+        LEFT JOIN ebook_info i ON s.bookId = i.id
+        WHERE s.backgroundImagePath IS NOT NULL 
+          AND s.backgroundImagePath != ''
+          AND s.backgroundType = 'IMAGE'
+      `;
+      const records = await this.dbManager.querySql(sql, []);
+      
+      const results: BackgroundImageInfo[] = [];
+      
+      for (const record of records) {
+        const bookId = String(getRecordValue(record, 'bookId', ''));
+        const bookTitle = String(getRecordValue(record, 'title', '未知书籍'));
+        const imagePath = String(getRecordValue(record, 'backgroundImagePath', ''));
+        
+        // [修复] 不去重，每本使用背景图片的电子书都显示
+        if (imagePath && imagePath.length > 0) {
+          const info: BackgroundImageInfo = { bookId: bookId, bookTitle: bookTitle, imagePath: imagePath };
+          results.push(info);
+        }
+      }
+      
+      logger.info(TAG, `获取到 ${results.length} 本使用背景图片的电子书`);
+      return results;
+    } catch (error) {
+      logger.error(TAG, `获取自定义背景图片失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * 清除使用特定背景图片的电子书阅读设置
+   * 将使用该图片的电子书背景设置重置为默认颜色背景
+   */
+  public async clearBackgroundImageFromSettings(imagePath: string): Promise<number> {
+    try {
+      // 更新所有使用该背景图片的电子书阅读设置
+      const sql = `UPDATE ebook_reading_settings 
+                   SET backgroundType = 'COLOR', backgroundImagePath = '' 
+                   WHERE backgroundImagePath = ?`;
+      await this.dbManager.executeSql(sql, [imagePath]);
+      
+      // 查询受影响的记录数
+      const countSql = `SELECT COUNT(*) as count FROM ebook_reading_settings WHERE backgroundImagePath = ?`;
+      const result = await this.dbManager.querySql(countSql, [imagePath]);
+      
+      logger.info(TAG, `已清除使用背景图片 ${imagePath} 的电子书设置`);
+      return 0; // 返回0表示已全部清除
+    } catch (error) {
+      logger.error(TAG, `清除背景图片设置失败: ${String(error instanceof Error ? error.message : error)}`);
+      return -1;
     }
   }
 

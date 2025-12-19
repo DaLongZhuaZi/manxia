@@ -19,6 +19,7 @@ import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager'
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from '../Framework/WebView/TabConfig';
 import { MangaDetailPageParams } from './MangaDetailPage';
+import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 import { SourceSettingsPageParams } from './SourceSettingsPage';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
@@ -854,6 +855,13 @@ export struct SourceDetailPage {
             logger.info(TAG, `搜索标签: 使用缓存的搜索结果，共 ${this.searchResults.length} 条`);
             return this.searchResults;
           
+          case TabType.CATEGORY:
+            // 分类页面标签（电子书等）
+            const categoryUrl = currentTab.categoryUrl || '';
+            logger.info(TAG, `开始获取分类内容: url=${categoryUrl}, 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
+            result = await this.mangaSourceEngine.getCategory(categoryUrl, this.currentPage);
+            break;
+          
           default:
             logger.warn(TAG, `未知的标签类型: ${currentTab.type}，使用热门漫画`);
             result = await this.mangaSourceEngine.getPopular(this.currentPage);
@@ -1362,21 +1370,37 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 打开漫画详情
+   * 打开内容详情（根据图源类型导航到不同的详情页）
    */
   private async openComicDetail(comic: ComicInfo): Promise<void> {
     // 获取本地封面路径
     const coverCache = CoverCacheManager.getInstance();
     const localCoverPath = await coverCache.getLocalCoverPath(this.sourceId, comic.id);
     
-    const params: MangaDetailPageParams = {
-      sourceId: this.sourceId,
-      mangaId: comic.id,
-      cachedCoverPath: localCoverPath || undefined,  // 传递已缓存的封面路径
-      cachedTitle: comic.title || undefined,         // 传递已缓存的标题
-      cachedCover: comic.coverUrl || undefined       // 传递已缓存的封面URL
-    };
-    this.pathStack.pushPathByName('MangaDetailPage', params);
+    // 根据图源类型导航到不同的详情页
+    const sourceType = this.sourceInfo?.type || 'manga';
+    
+    if (sourceType === 'ebook') {
+      // 电子书源 -> 在线电子书详情页
+      const params: OnlineEBookDetailPageParams = {
+        sourceId: this.sourceId,
+        bookId: comic.id,
+        cachedCoverPath: localCoverPath || undefined,
+        cachedTitle: comic.title || undefined,
+        cachedCover: comic.coverUrl || undefined
+      };
+      this.pathStack.pushPathByName('OnlineEBookDetailPage', params);
+    } else {
+      // 漫画源（默认）-> 漫画详情页
+      const params: MangaDetailPageParams = {
+        sourceId: this.sourceId,
+        mangaId: comic.id,
+        cachedCoverPath: localCoverPath || undefined,
+        cachedTitle: comic.title || undefined,
+        cachedCover: comic.coverUrl || undefined
+      };
+      this.pathStack.pushPathByName('MangaDetailPage', params);
+    }
   }
 
   build() {

@@ -202,7 +202,9 @@ export class MangaSourceActionEngine {
    */
   private async executeNavigate(action: NavigateAction, context: ActionContext): Promise<string> {
     const url = this.replaceVariables(action.url, context.variables);
-    const waitTime = action.timeout || 1000; // 优化：默认等待1秒，提升性能
+    // 注意：timeout是最大超时时间，不是固定等待时间
+    // 使用waitAfterLoad作为导航后的固定等待时间，默认1秒
+    const waitAfterLoad = (action as ESObject)['waitAfterLoad'] as number || 1000;
     
     logger.info(TAG, `导航到: ${url}`);
 
@@ -212,8 +214,8 @@ export class MangaSourceActionEngine {
       
       // 等待页面加载（简单的固定时间等待）
       // 注意：WebView的onPageEnd等事件只能在UI组件层面监听，无法在控制器层面注册
-      logger.debug(TAG, `等待页面加载，时间: ${waitTime}ms`);
-      await this.sleep(waitTime);
+      logger.debug(TAG, `等待页面加载，时间: ${waitAfterLoad}ms`);
+      await this.sleep(waitAfterLoad);
       
       // 更新上下文URL
       context.currentUrl = url;

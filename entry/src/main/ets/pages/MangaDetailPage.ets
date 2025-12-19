@@ -28,6 +28,8 @@ import { MangaReaderPageParams, MangaReaderContentType } from './MangaReaderPage
 import { DataService } from '../Framework/Services/DataService';
 import { MangaSettingsPageParams } from './MangaSettingsPage';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
+import { startBookOpenTransition, startBookOpenTransitionWithComponentId, setReaderReady } from '../components/BookTransitionOverlay';
+import { CoverPosition } from '../components/BookOpenTransition';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
@@ -3541,8 +3543,27 @@ struct MangaDetailPage {
         const mSrcName: string = readerParams.manga.sourceInfo && readerParams.manga.sourceInfo.sourceName ? String(readerParams.manga.sourceInfo.sourceName) : '未指定';
         logger.info(TAG, `传递漫画对象: title=${mTitle}, id=${mId}, sourceName=${mSrcName}`);
       }
-      this.pathStack.pushPathByName('MangaReaderPage', readerParams);
-      logger.info(TAG, `${this.hasReadingProgress() ? '继续' : '开始'}阅读漫画: ${this.currentManga.title}`);
+      
+      // 触发翻开过渡动画（使用组件ID获取准确封面位置）
+      const coverPath: string = this.currentManga.coverImagePath || '';
+      const coverComponentId: string = `cover_manga_detail_${this.currentManga.id}`;
+      
+      logger.info(TAG, `触发翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+      startBookOpenTransitionWithComponentId(
+        coverPath,
+        coverComponentId,
+        this.currentManga.id,
+        'manga',
+        () => {
+          logger.info(TAG, '翻开过渡动画完成');
+        }
+      );
+      
+      // 延迟导航，让过渡动画先开始
+      setTimeout(() => {
+        this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+        logger.info(TAG, `${this.hasReadingProgress() ? '继续' : '开始'}阅读漫画: ${this.currentManga?.title}`);
+      }, 100);
     } catch (error) {
       logger.error(TAG, `导航到阅读页面失败: ${String(error)}`);
     }
@@ -3839,8 +3860,27 @@ struct MangaDetailPage {
         const mSrcName2: string = readerParams.manga.sourceInfo && readerParams.manga.sourceInfo.sourceName ? String(readerParams.manga.sourceInfo.sourceName) : '未指定';
         logger.info(TAG, `传递漫画对象(章节): title=${mTitle2}, id=${mId2}, sourceName=${mSrcName2}`);
       }
-      this.pathStack.pushPathByName('MangaReaderPage', readerParams);
-      logger.info(TAG, `开始阅读章节: ${chapter.title}`);
+      
+      // 触发翻开过渡动画（使用组件ID获取准确封面位置）
+      const coverPath2: string = this.currentManga?.coverImagePath || '';
+      const coverComponentId2: string = `cover_manga_detail_${this.currentManga?.id || ''}`;
+      
+      logger.info(TAG, `触发翻开过渡动画(章节): coverPath=${coverPath2}, componentId=${coverComponentId2}`);
+      startBookOpenTransitionWithComponentId(
+        coverPath2,
+        coverComponentId2,
+        this.currentManga?.id || '',
+        'manga',
+        () => {
+          logger.info(TAG, '翻开过渡动画完成(章节)');
+        }
+      );
+      
+      // 延迟导航，让过渡动画先开始
+      setTimeout(() => {
+        this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+        logger.info(TAG, `开始阅读章节: ${chapter.title}`);
+      }, 100);
     } catch (error) {
       logger.error(TAG, `导航到章节阅读失败: ${String(error)}`);
     }
@@ -3930,6 +3970,7 @@ struct MangaDetailPage {
                 .height(this.coverDisplayHeight)
                 .objectFit(ImageFit.Contain) // 仅缩放，完整显示，不裁剪
                 .backgroundColor(Color.Transparent)
+                .id(`cover_manga_detail_${this.currentManga?.id || ''}`)  // 用于翻开动画定位
                 .onError(() => {
                   // 图片加载失败时的回调 - 尝试使用OnlineImageLoader加载（支持headers）
                   const coverUrl = this.currentManga?.coverImagePath as string;
