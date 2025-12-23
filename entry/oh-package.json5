@@ -5,6 +5,9 @@
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "libjsvm_engine.so": "file:./src/main/cpp/types/libjsvm_engine"
+  }
 }
 

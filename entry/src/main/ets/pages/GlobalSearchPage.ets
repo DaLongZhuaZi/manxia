@@ -1,11 +1,13 @@
 /**
  * 全局搜索页面
- * 仅搜索本地书库（漫画和电子书）
+ * 搜索本地书库（漫画、电子书和小说）
  */
 import { DataService } from '../Framework/Services/DataService';
 import { DataManager, ComicInfo } from '../Framework/Data/DataManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { EBook } from '../Models/EBookModels';
+import { NovelBook } from '../Models/NovelModels';
 import { Manga, ImageSourceType, MangaStatus, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { ReadingStatus } from '../Framework/Types/StatusEnums';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -13,6 +15,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
+import { NovelDetailPageParams } from './NovelBookshelfPage';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
@@ -28,13 +31,14 @@ enum FilterType {
 }
 
 // 搜索结果项类型
-type SearchItemType = 'manga' | 'ebook';
+type SearchItemType = 'manga' | 'ebook' | 'novel';
 
 // 搜索结果项
 interface SearchResultItem {
   manga?: Manga;
   ebook?: EBook;
-  source: string;         // 来源：'本地-漫画' 或 '本地-电子书'
+  novel?: NovelBook;
+  source: string;         // 来源：'本地-漫画'、'本地-电子书' 或 '本地-小说'
   sourceId: string;       // 分组ID
   isLocal: boolean;       // 是否本地
   itemType: SearchItemType; // 项目类型
@@ -42,7 +46,7 @@ interface SearchResultItem {
 
 // 本地分组
 interface SourceGroup {
-  sourceId: string;          // 分组ID：'local-manga' 或 'local-ebook'
+  sourceId: string;          // 分组ID：'local-manga'、'local-ebook' 或 'local-novel'
   sourceName: string;
   items: SearchResultItem[];
   isSearching: boolean;      // 是否正在搜索
@@ -94,6 +98,7 @@ export struct GlobalSearchPage {
   private dataService: DataService = DataService.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private novelDataManager = getNovelDataManager();
   private pathStack: NavPathStack = new NavPathStack();
   
   // 页面参数
@@ -244,7 +249,7 @@ export struct GlobalSearchPage {
       logger.info(TAG, `开始本地搜索: "${this.searchKeyword}"`);
       this.saveSearchHistory(this.searchKeyword);
 
-      // 初始化分组：本地漫画 + 本地电子书
+      // 初始化分组：本地漫画 + 本地电子书 + 本地小说
       const groups: SourceGroup[] = [];
       
       // 添加本地漫画分组
@@ -269,12 +274,24 @@ export struct GlobalSearchPage {
       };
       groups.push(ebookGroup);
 
+      // 添加本地小说分组
+      const novelGroup: SourceGroup = {
+        sourceId: 'local-novel',
+        sourceName: '本地 - 小说',
+        items: [],
+        isSearching: true,
+        hasError: false,
+        itemType: 'novel'
+      };
+      groups.push(novelGroup);
+
       this.sourceGroups = groups;
 
-      // 并发搜索本地漫画和电子书
+      // 并发搜索本地漫画、电子书和小说
       await Promise.allSettled([
         this.searchLocalManga(),
-        this.searchLocalEBooks()
+        this.searchLocalEBooks(),
+        this.searchLocalNovels()
       ]);
 
       logger.info(TAG, `本地搜索完成`);
@@ -358,6 +375,43 @@ export struct GlobalSearchPage {
       logger.info(TAG, `本地电子书搜索完成: ${items.length}条结果`);
     } catch (error) {
       logger.error(TAG, `本地电子书搜索失败: ${error}`);
+      this.sourceGroups[groupIndex].isSearching = false;
+      this.sourceGroups[groupIndex].hasError = true;
+      this.sourceGroups = this.cloneSourceGroups();
+    }
+  }
+
+  /**
+   * 搜索本地小说
+   */
+  private async searchLocalNovels(): Promise<void> {
+    const groupIndex = this.sourceGroups.findIndex(g => g.sourceId === 'local-novel');
+    if (groupIndex < 0) return;
+
+    try {
+      // 搜索书库中的小说
+      const allNovels: NovelBook[] = await this.novelDataManager.searchBooks(this.searchKeyword);
+      
+      const items: SearchResultItem[] = allNovels.map((novel: NovelBook): SearchResultItem => {
+        const item: SearchResultItem = {
+          novel: novel,
+          source: '本地 - 小说',
+          sourceId: 'local-novel',
+          isLocal: true,
+          itemType: 'novel'
+        };
+        return item;
+      });
+
+      this.sourceGroups[groupIndex].items = items;
+      this.sourceGroups[groupIndex].isSearching = false;
+      this.sourceGroups[groupIndex].hasError = false;
+
+      // 触发响应式更新
+      this.sourceGroups = this.cloneSourceGroups();
+      logger.info(TAG, `本地小说搜索完成: ${items.length}条结果`);
+    } catch (error) {
+      logger.error(TAG, `本地小说搜索失败: ${error}`);
       this.sourceGroups[groupIndex].isSearching = false;
       this.sourceGroups[groupIndex].hasError = true;
       this.sourceGroups = this.cloneSourceGroups();
@@ -454,6 +508,18 @@ export struct GlobalSearchPage {
         const navParam: EBookDetailNavParam = { bookId: item.ebook.id };
         stack.pushPath({ name: 'EBookDetailPage', param: navParam });
         logger.debug(TAG, `导航到电子书详情页: ${item.ebook.id}`);
+      } else if (item.itemType === 'novel' && item.novel) {
+        const navParam: NovelDetailPageParams = { 
+          sourceId: item.novel.sourceId,
+          bookUrl: item.novel.bookUrl,
+          bookName: item.novel.name,
+          author: item.novel.author,
+          coverUrl: item.novel.coverUrl,
+          intro: item.novel.intro,
+          sourceName: item.novel.sourceName
+        };
+        stack.pushPath({ name: 'NovelDetailPage', param: navParam });
+        logger.debug(TAG, `导航到小说详情页: ${item.novel.name}`);
       }
     } catch (error) {
       logger.error(TAG, `打开详情页失败: ${error}`);
@@ -778,7 +844,7 @@ export struct GlobalSearchPage {
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
           } else {
-            Text(`${group.items.length}${group.itemType === 'manga' ? '本漫画' : '本电子书'}`)
+            Text(`${group.items.length}${group.itemType === 'manga' ? '本漫画' : group.itemType === 'ebook' ? '本电子书' : '本小说'}`)
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
@@ -846,6 +912,8 @@ export struct GlobalSearchPage {
       return item.manga.id;
     } else if (item.itemType === 'ebook' && item.ebook) {
       return item.ebook.id;
+    } else if (item.itemType === 'novel' && item.novel) {
+      return item.novel.id;
     }
     return '';
   }
@@ -927,7 +995,7 @@ export struct GlobalSearchPage {
   }
 
   /**
-   * 构建项目卡片（漫画或电子书）
+   * 构建项目卡片（漫画、电子书或小说）
    */
   @Builder
   buildItemCard(item: SearchResultItem) {
@@ -949,11 +1017,32 @@ export struct GlobalSearchPage {
           .objectFit(ImageFit.Cover)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .alt($r('app.media.ic_ebook'))
+      } else if (item.itemType === 'novel' && item.novel) {
+        if (item.novel.coverUrl) {
+          Image(item.novel.coverUrl)
+            .width(100)
+            .height(140)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        } else {
+          // 无封面时显示书名首字
+          Column() {
+            Text(item.novel.name.substring(0, 1))
+              .fontSize(32)
+              .fontColor('#FFFFFF')
+              .fontWeight(FontWeight.Bold)
+          }
+          .width(100)
+          .height(140)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
+        }
       }
 
       // 标题
-      Text(item.itemType === 'manga' && item.manga ? item.manga.title : 
-           (item.itemType === 'ebook' && item.ebook ? item.ebook.metadata.title : ''))
+      Text(this.getItemTitle(item))
         .fontSize(13)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
@@ -965,5 +1054,19 @@ export struct GlobalSearchPage {
     .onClick(() => {
       this.openDetail(item);
     })
+  }
+
+  /**
+   * 获取项目标题
+   */
+  private getItemTitle(item: SearchResultItem): string {
+    if (item.itemType === 'manga' && item.manga) {
+      return item.manga.title;
+    } else if (item.itemType === 'ebook' && item.ebook) {
+      return item.ebook.metadata.title;
+    } else if (item.itemType === 'novel' && item.novel) {
+      return item.novel.name;
+    }
+    return '';
   }
 }

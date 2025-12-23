@@ -54,6 +54,22 @@ import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { SourceSettingsPage } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
+
+// 小说页面导入
+import { NovelBookshelfPage, NovelDetailPageParams, NovelSearchPageParams, NovelReaderPageParams, NovelSourceManagementPageParams } from './NovelBookshelfPage';
+import { NovelSearchPage } from './NovelSearchPage';
+import { NovelDetailPage } from './NovelDetailPage';
+import { NovelReaderPage } from './NovelReaderPage';
+import { NovelSourceManagementPage } from './NovelSourceManagementPage';
+import { NovelExplorePage } from './NovelExplorePage';
+import { NovelSourceLoginPage } from './NovelSourceLoginPage';
+import { NovelReplaceRulePage } from './NovelReplaceRulePage';
+import { NovelSettingsPage } from './NovelSettingsPage';
+import { NovelSourceDebugPage } from './NovelSourceDebugPage';
+import { NovelTxtTocRulePage } from './NovelTxtTocRulePage';
+import { NovelDictRulePage } from './NovelDictRulePage';
+import { JsvmPlaygroundPage } from './JsvmPlaygroundPage';
+
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
 // import { PdfKitTestPage } from './PdfKitTestPage';
@@ -84,6 +100,10 @@ import { EBook, EBookStatus, EBookFormat } from '../Models/EBookModels';
 import { EBookDetailPage, EBookDetailPageParams, EBookSettingsPageParams } from './EBookDetailPage';
 import { OnlineEBookDetailPage } from './OnlineEBookDetailPage';
 import { EBookSettingsPage } from './EBookSettingsPage';
+
+// 导入小说相关模型
+import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
+import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 
 // 导入事件总线
 import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload } from '../Framework/EventBus';
@@ -176,7 +196,8 @@ enum TabIndex {
  */
 enum LibraryContentType {
   MANGA = 'manga',     // 漫画
-  EBOOK = 'ebook'      // 电子书
+  EBOOK = 'ebook',     // 电子书
+  NOVEL = 'novel'      // 小说
 }
 
 /**
@@ -309,6 +330,20 @@ struct MainMenuPage {
   @State private isEBookSwipeActive: boolean = false;
   @State private ebookSwipeOffset: number = 0;
 
+  // 小说相关状态
+  @State novelList: NovelBook[] = [];
+  @State filteredNovelList: NovelBook[] = [];
+  @State isLoadingNovelList: boolean = false;
+  private novelDataManager: NovelDataManager | null = null;
+  // 小说多选模式相关状态
+  @State isNovelMultiSelectMode: boolean = false;
+  @State selectedNovelIds: Set<string> = new Set();
+  @State isDeletingNovel: boolean = false;
+  // 小说列表条目左滑删除手势相关状态
+  @State private activeNovelSwipeId: string = '';
+  @State private isNovelSwipeActive: boolean = false;
+  @State private novelSwipeOffset: number = 0;
+
   // 图源仓库相关状态
   @State showSourceRepoDialog: boolean = false;
   @State sourceRepoUrl: string = '';
@@ -327,6 +362,7 @@ struct MainMenuPage {
   // 最近阅读相关状态
   @State recentReadingList: Manga[] = [];
   @State recentEBookList: EBook[] = [];
+  @State recentNovelList: NovelBook[] = []; // 最近阅读的小说
   @State isLoadingRecentReading: boolean = false;
   private readonly RECENT_HISTORY_LIMIT: number = 100;
 
@@ -339,7 +375,8 @@ struct MainMenuPage {
   @State showAuthorPopup: boolean = false; // 是否显示作者选择弹窗
   @State discoveredMangaList: Manga[] = []; // 发现页面筛选后的漫画列表
   @State discoveredEBookList: EBook[] = []; // 发现页面筛选后的电子书列表
-  @State discoverContentType: 'manga' | 'ebook' | 'all' = 'all'; // 发现页面内容类型筛选
+  @State discoveredNovelList: NovelBook[] = []; // 发现页面筛选后的小说列表
+  @State discoverContentType: 'manga' | 'ebook' | 'novel' | 'all' = 'all'; // 发现页面内容类型筛选
   @State isRefreshingDiscover: boolean = false; // 是否正在刷新发现页面
 
   // 图源相关状态
@@ -1480,6 +1517,22 @@ struct MainMenuPage {
         logger.warn(TAG, `电子书列表加载失败: ${eMsg}`);
         this.recentEBookList = [];
       }
+      
+      // 加载最近阅读的小说
+      try {
+        if (!this.novelDataManager) {
+          const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          this.novelDataManager = getNovelDataManager();
+          await this.novelDataManager.initialize(context);
+        }
+        const novels = await this.novelDataManager.getRecentBooks(20);
+        this.recentNovelList = novels;
+        logger.info(TAG, `首页最近内容：小说加载完成，共 ${novels.length} 本`);
+      } catch (novelErr) {
+        const nMsg: string = novelErr instanceof Error ? novelErr.message : String(novelErr);
+        logger.warn(TAG, `小说列表加载失败: ${nMsg}`);
+        this.recentNovelList = [];
+      }
     } catch (error) {
       logger.error(TAG, `加载最近阅读列表失败: ${String(error)}`);
       this.recentReadingList = [];
@@ -1699,6 +1752,51 @@ struct MainMenuPage {
           .width('100%')
         }
       }, (ebook: EBook) => `ebook_${ebook.id}`)
+      
+      // 显示小说
+      ForEach(this.recentNovelList, (novel: NovelBook) => {
+        GridItem() {
+          Column({ space: 8 }) {
+            Stack() {
+              Image(novel.coverLocalPath || novel.coverUrl || $r('app.media.mangabook'))
+                .width('100%')
+                .aspectRatio(0.7)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(8)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .onError(() => {
+                  logger.warn('MainMenuPage', `小说封面加载失败: ${novel.id}`);
+                })
+                .id(`cover_novel_home_${novel.id}`)
+              
+              // 小说标识
+              Text('小说')
+                .fontSize(10)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#4CAF50')
+                .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+                .borderRadius(4)
+                .position({ x: 4, y: 4 })
+            }
+            .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+            .borderRadius(8)
+            .onClick(() => {
+              // 点击封面打开小说详情页
+              this.openNovelDetail(novel);
+            })
+
+            Text(novel.name)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .onClick(() => { this.openNovelDetail(novel); })
+          }
+          .width('100%')
+        }
+      }, (novel: NovelBook) => `novel_${novel.id}`)
     }
     .columnsTemplate(this.getHomeGridColumnsTemplate())
     .columnsGap(this.responsive_gridGap)
@@ -1828,6 +1926,74 @@ struct MainMenuPage {
   }
 
   /**
+   * 加载小说列表
+   */
+  private async loadNovelList(): Promise<void> {
+    try {
+      this.isLoadingNovelList = true;
+      logger.info(TAG, '开始加载小说列表...');
+
+      // 初始化小说数据管理器
+      if (!this.novelDataManager) {
+        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        this.novelDataManager = getNovelDataManager();
+        await this.novelDataManager.initialize(context);
+      }
+
+      // 获取收藏的小说
+      const novels = await this.novelDataManager.getFavoriteBooks();
+      logger.info(TAG, `从数据库获取到 ${novels.length} 本小说`);
+
+      this.novelList = novels;
+      this.applyNovelFilter(); // 应用筛选
+
+    } catch (error) {
+      logger.error(TAG, `加载小说列表失败: ${String(error instanceof Error ? error.message : error)}`);
+      this.novelList = [];
+      this.filteredNovelList = [];
+    } finally {
+      this.isLoadingNovelList = false;
+    }
+  }
+
+  /**
+   * 应用小说筛选
+   */
+  private applyNovelFilter(): void {
+    let filtered: NovelBook[] = [];
+    
+    switch (this.libraryFilterType) {
+      case LibraryFilterType.ALL:
+        filtered = this.novelList;
+        break;
+      case LibraryFilterType.UNREAD:
+        filtered = this.novelList.filter((novel: NovelBook) => {
+          return novel.readStatus === NovelReadStatus.UNREAD;
+        });
+        break;
+      case LibraryFilterType.READING:
+        filtered = this.novelList.filter((novel: NovelBook) => {
+          return novel.readStatus === NovelReadStatus.READING;
+        });
+        break;
+      case LibraryFilterType.COMPLETED:
+        filtered = this.novelList.filter((novel: NovelBook) => {
+          return novel.readStatus === NovelReadStatus.FINISHED;
+        });
+        break;
+      case LibraryFilterType.FAVORITE:
+        // 小说列表本身就是收藏的，所以全部显示
+        filtered = this.novelList;
+        break;
+      default:
+        filtered = this.novelList;
+    }
+    
+    this.filteredNovelList = filtered;
+    logger.info(TAG, `小说筛选完成: ${filtered.length}/${this.novelList.length}, 筛选类型=${this.libraryFilterType}`);
+  }
+
+  /**
    * 切换书库内容类型
    */
   private toggleLibraryContentType(type: LibraryContentType): void {
@@ -1838,10 +2004,13 @@ struct MainMenuPage {
       // 重置筛选条件为"全部"
       this.libraryFilterType = LibraryFilterType.ALL;
 
-      // 切换到电子书时，刷新列表（可能有新导入的书）
+      // 根据类型刷新列表
       if (type === LibraryContentType.EBOOK) {
         logger.info(TAG, '切换到电子书，刷新列表');
         this.loadEBookList();
+      } else if (type === LibraryContentType.NOVEL) {
+        logger.info(TAG, '切换到小说，刷新列表');
+        this.loadNovelList();
       } else {
         // 漫画：只应用筛选
         this.applyLibraryFilter();
@@ -1905,9 +2074,10 @@ struct MainMenuPage {
     try {
       logger.info(TAG, '开始初始化内容数据...');
 
-      // 先加载漫画和电子书列表
+      // 先加载漫画、电子书和小说列表
       await this.loadMangaList();
       await this.loadEBookList();
+      await this.loadNovelList();
 
       // 数据加载完成后提取标签和作者
       await this.extractTagsAndAuthors();
@@ -1981,17 +2151,19 @@ struct MainMenuPage {
       authorEntries.sort((a, b) => b[1] - a[1]);
       this.allAuthors = authorEntries.map(entry => entry[0]);
 
-      // 初始化发现页面的漫画和电子书列表
+      // 初始化发现页面的漫画、电子书和小说列表
       this.discoveredMangaList = [...this.mangaList];
       this.discoveredEBookList = [...this.ebookList];
+      this.discoveredNovelList = [...this.novelList];
 
-      logger.info(TAG, `提取完成: ${this.allTags.length}个标签, ${this.allAuthors.length}个作者, ${this.mangaList.length}本漫画, ${this.ebookList.length}本电子书`);
+      logger.info(TAG, `提取完成: ${this.allTags.length}个标签, ${this.allAuthors.length}个作者, ${this.mangaList.length}本漫画, ${this.ebookList.length}本电子书, ${this.novelList.length}本小说`);
     } catch (error) {
       logger.error(TAG, `提取标签和作者信息失败: ${String(error)}`);
       this.allTags = [];
       this.allAuthors = [];
       this.discoveredMangaList = [];
       this.discoveredEBookList = [];
+      this.discoveredNovelList = [];
     }
   }
 
@@ -2054,25 +2226,43 @@ struct MainMenuPage {
         });
       }
 
+      // 筛选小说
+      let filteredNovel = [...this.novelList];
+      
+      // 多作者筛选小说
+      if (this.selectedAuthors.size > 0) {
+        filteredNovel = filteredNovel.filter((novel: NovelBook) => {
+          return this.selectedAuthors.has(novel.author);
+        });
+      }
+
       // 根据内容类型筛选
       if (this.discoverContentType === 'manga') {
         this.discoveredMangaList = filteredManga;
         this.discoveredEBookList = [];
+        this.discoveredNovelList = [];
       } else if (this.discoverContentType === 'ebook') {
         this.discoveredMangaList = [];
         this.discoveredEBookList = filteredEBook;
+        this.discoveredNovelList = [];
+      } else if (this.discoverContentType === 'novel') {
+        this.discoveredMangaList = [];
+        this.discoveredEBookList = [];
+        this.discoveredNovelList = filteredNovel;
       } else {
         this.discoveredMangaList = filteredManga;
         this.discoveredEBookList = filteredEBook;
+        this.discoveredNovelList = filteredNovel;
       }
 
       const selectedTagsStr = Array.from(this.selectedTags).join(',');
       const selectedAuthorsStr = Array.from(this.selectedAuthors).join(',');
-      logger.info(TAG, `发现页面筛选: 标签=[${selectedTagsStr}], 作者=[${selectedAuthorsStr}], 类型=${this.discoverContentType}, 漫画=${this.discoveredMangaList.length}本, 电子书=${this.discoveredEBookList.length}本`);
+      logger.info(TAG, `发现页面筛选: 标签=[${selectedTagsStr}], 作者=[${selectedAuthorsStr}], 类型=${this.discoverContentType}, 漫画=${this.discoveredMangaList.length}本, 电子书=${this.discoveredEBookList.length}本, 小说=${this.discoveredNovelList.length}本`);
     } catch (error) {
       logger.error(TAG, `应用发现页面筛选失败: ${String(error)}`);
       this.discoveredMangaList = [...this.mangaList];
       this.discoveredEBookList = [...this.ebookList];
+      this.discoveredNovelList = [...this.novelList];
     }
   }
 
@@ -2170,8 +2360,18 @@ struct MainMenuPage {
       } catch (ebookErr) {
         logger.warn(TAG, `静默刷新电子书列表失败: ${ebookErr instanceof Error ? ebookErr.message : String(ebookErr)}`);
       }
+      
+      // 加载新的小说列表
+      try {
+        if (this.novelDataManager) {
+          const newNovels = await this.novelDataManager.getRecentBooks(20);
+          this.recentNovelList = newNovels;
+        }
+      } catch (novelErr) {
+        logger.warn(TAG, `静默刷新小说列表失败: ${novelErr instanceof Error ? novelErr.message : String(novelErr)}`);
+      }
 
-      logger.debug(TAG, `静默刷新完成：漫画 ${this.recentReadingList.length} 部，电子书 ${this.recentEBookList.length} 本`);
+      logger.debug(TAG, `静默刷新完成：漫画 ${this.recentReadingList.length} 部，电子书 ${this.recentEBookList.length} 本，小说 ${this.recentNovelList.length} 本`);
     } catch (error) {
       logger.warn(TAG, `静默刷新最近阅读列表失败: ${String(error)}`);
     }
@@ -3502,6 +3702,52 @@ struct MainMenuPage {
   }
 
   /**
+   * 构建小说入口卡片
+   */
+  @Builder
+  buildNovelEntryCard() {
+    Row() {
+      Column() {
+        Image($r('app.media.legado'))
+          .width(50)
+          .height(50)
+      }
+      .width(50)
+      .height(50)
+      .justifyContent(FlexAlign.Center)
+      
+      Column() {
+        Text('小说阅读')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text('支持Legado书源，海量小说资源')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .margin({ top: 4 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .margin({ left: 12 })
+      .layoutWeight(1)
+      
+      Image($r('app.media.ic_arrow_right'))
+        .width(20)
+        .height(20)
+        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .onClick(() => {
+      this.pathStack.pushPathByName('NovelBookshelfPage', null);
+    })
+  }
+
+  /**
    * 构建首页内容
    */
   @Builder
@@ -3509,6 +3755,9 @@ struct MainMenuPage {
     Column({ space: 16 }) {
       // 轮播横幅
       this.buildBannerSwiper()
+
+      // 小说入口卡片
+      this.buildNovelEntryCard()
 
       // 最近阅读
       Column({ space: 12 }) {
@@ -3749,7 +3998,7 @@ struct MainMenuPage {
       }
 
       // 内容类型切换栏
-      if (!this.isMultiSelectMode && !this.isEBookMultiSelectMode) {
+      if (!this.isMultiSelectMode && !this.isEBookMultiSelectMode && !this.isNovelMultiSelectMode) {
         Row({ space: 12 }) {
           Button('漫画')
             .fontSize(16)
@@ -3777,6 +4026,19 @@ struct MainMenuPage {
               this.toggleLibraryContentType(LibraryContentType.EBOOK);
             })
 
+          Button('小说')
+            .fontSize(16)
+            .height(40)
+            .backgroundColor(this.libraryContentType === LibraryContentType.NOVEL
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : Color.Transparent)
+            .fontColor(this.libraryContentType === LibraryContentType.NOVEL
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.toggleLibraryContentType(LibraryContentType.NOVEL);
+            })
+
           Blank()
         }
         .width('100%')
@@ -3799,6 +4061,8 @@ struct MainMenuPage {
             this.libraryFilterType = LibraryFilterType.ALL;
             if (this.libraryContentType === LibraryContentType.MANGA) {
               this.applyLibraryFilter();
+            } else if (this.libraryContentType === LibraryContentType.NOVEL) {
+              this.applyNovelFilter();
             } else {
               this.applyEBookFilter();
             }
@@ -3818,6 +4082,8 @@ struct MainMenuPage {
             this.libraryFilterType = LibraryFilterType.UNREAD;
             if (this.libraryContentType === LibraryContentType.MANGA) {
               this.applyLibraryFilter();
+            } else if (this.libraryContentType === LibraryContentType.NOVEL) {
+              this.applyNovelFilter();
             } else {
               this.applyEBookFilter();
             }
@@ -3837,6 +4103,8 @@ struct MainMenuPage {
             this.libraryFilterType = LibraryFilterType.READING;
             if (this.libraryContentType === LibraryContentType.MANGA) {
               this.applyLibraryFilter();
+            } else if (this.libraryContentType === LibraryContentType.NOVEL) {
+              this.applyNovelFilter();
             } else {
               this.applyEBookFilter();
             }
@@ -3980,7 +4248,7 @@ struct MainMenuPage {
             .edgeEffect(EdgeEffect.Spring)
           }
         }
-      } else {
+      } else if (this.libraryContentType === LibraryContentType.EBOOK) {
         // 电子书列表
         if (this.isLoadingEbookList) {
           // 加载状态
@@ -4068,6 +4336,89 @@ struct MainMenuPage {
                   this.buildPdfEBookGridCard(manga)
                 }
               })
+            }
+            .columnsTemplate(this.getLibraryGridColumnsTemplate())
+            .columnsGap(this.responsive_gridGap)
+            .rowsGap(this.responsive_gridGap)
+            .width('100%')
+            .layoutWeight(1)
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+          }
+        }
+      } else if (this.libraryContentType === LibraryContentType.NOVEL) {
+        // 小说列表
+        if (this.isLoadingNovelList) {
+          // 加载状态
+          Column({ space: 16 }) {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+            Text('正在加载小说列表...')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else if (this.filteredNovelList.length === 0) {
+          // 空状态
+          Column({ space: 16 }) {
+            Image($r('app.media.ic_library_empty'))
+              .width(80)
+              .height(80)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+            Text(this.novelList.length === 0 ? '小说书架为空' : '没有符合条件的小说')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Text(this.novelList.length === 0 ? '去小说书架添加一些小说吧' : '尝试更换筛选条件')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+            if (this.novelList.length === 0) {
+              Button('前往小说书架')
+                .fontSize(14)
+                .height(36)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+                .onClick(() => {
+                  this.pathStack.pushPathByName('NovelBookshelfPage', null);
+                })
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          // 小说列表
+          if (this.libraryViewMode === LibraryViewMode.LIST) {
+            // 列表视图
+            List({ space: 16 }) {
+              ForEach(this.filteredNovelList, (novel: NovelBook, index: number) => {
+                ListItem() {
+                  this.buildNovelCard(novel)
+                }
+              })
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+          } else {
+            // 网格视图（响应式）
+            Grid() {
+              ForEach(this.filteredNovelList, (novel: NovelBook, index: number) => {
+                GridItem() {
+                  this.buildNovelGridCard(novel)
+                }
+              }, (novel: NovelBook) => novel.id)
             }
             .columnsTemplate(this.getLibraryGridColumnsTemplate())
             .columnsGap(this.responsive_gridGap)
@@ -4326,6 +4677,56 @@ struct MainMenuPage {
   }
 
   /**
+   * 构建发现页小说网格卡片
+   */
+  @Builder
+  buildDiscoverNovelGridCard(novel: NovelBook) {
+    Column({ space: 8 }) {
+      // 封面图片
+      Stack() {
+        Image(novel.coverLocalPath || novel.coverUrl || $r('app.media.mangabook'))
+          .width('100%')
+          .aspectRatio(0.7)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .shadow({
+            radius: 8,
+            color: '#1F000000',
+            offsetY: 4
+          })
+        
+        // 小说标识
+        Text('小说')
+          .fontSize(10)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#4CAF50')
+          .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+          .borderRadius(4)
+          .position({ x: 4, y: 4 })
+      }
+
+      // 小说标题
+      Text(novel.name)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .onClick(() => {
+      this.openNovelDetail(novel);
+    })
+  }
+
+  /**
    * 构建电子书List卡片（支持长按左滑删除）
    */
   @Builder
@@ -4354,11 +4755,18 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         // 封面图片
         Column() {
-          Image(this.getEBookCoverSource(ebook))
-            .width(this.hasValidEBookCover(ebook) ? '100%' : 50)
-            .height(this.hasValidEBookCover(ebook) ? '100%' : 50)
-            .objectFit(ImageFit.Cover)
-            .fillColor(this.hasValidEBookCover(ebook) ? undefined : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          if (this.hasValidEBookCover(ebook)) {
+            Image(this.getEBookCoverSource(ebook))
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+          } else {
+            Image(this.getEBookCoverSource(ebook))
+              .width(50)
+              .height(50)
+              .objectFit(ImageFit.Cover)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
         }
         .width(80)
         .height(120)
@@ -5015,11 +5423,18 @@ struct MainMenuPage {
         // 封面区域
         Stack() {
           Column() {
-            Image(this.getEBookCoverSource(ebook))
-              .width(this.hasValidEBookCover(ebook) ? '100%' : 60)
-              .height(this.hasValidEBookCover(ebook) ? '100%' : 60)
-              .objectFit(ImageFit.Cover)
-              .fillColor(this.hasValidEBookCover(ebook) ? undefined : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            if (this.hasValidEBookCover(ebook)) {
+              Image(this.getEBookCoverSource(ebook))
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+            } else {
+              Image(this.getEBookCoverSource(ebook))
+                .width(60)
+                .height(60)
+                .objectFit(ImageFit.Cover)
+                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
           }
           .width('100%')
           .height(140)
@@ -5133,6 +5548,179 @@ struct MainMenuPage {
           }
         })
     )
+  }
+
+  /**
+   * 构建小说List卡片
+   */
+  @Builder
+  buildNovelCard(novel: NovelBook) {
+    Row({ space: 12 }) {
+      // 封面图片
+      Column() {
+        if (novel.coverUrl || novel.coverLocalPath) {
+          Image(novel.coverLocalPath || novel.coverUrl || '')
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+        } else {
+          Image($r('app.media.ic_source_novel'))
+            .width(50)
+            .height(50)
+            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+      }
+      .width(80)
+      .height(120)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(8)
+      .justifyContent(FlexAlign.Center)
+      .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+
+      // 小说信息
+      Column({ space: 6 }) {
+        Text(novel.name)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(novel.author || '未知作者')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(novel.sourceName || '未知来源')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(1)
+
+        Blank()
+
+        // 阅读状态和章节数
+        Row({ space: 8 }) {
+          Text(this.getNovelReadStatusText(novel.readStatus))
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+            .borderRadius(4)
+
+          Text(`${novel.chapterCount}章`)
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .height(120)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .onClick(() => {
+      this.openNovelDetail(novel);
+    })
+  }
+
+  /**
+   * 构建小说Grid卡片
+   */
+  @Builder
+  buildNovelGridCard(novel: NovelBook) {
+    Column({ space: 8 }) {
+      // 封面区域
+      Stack() {
+        Column() {
+          if (novel.coverUrl || novel.coverLocalPath) {
+            Image(novel.coverLocalPath || novel.coverUrl || '')
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+          } else {
+            Image($r('app.media.ic_source_novel'))
+              .width(60)
+              .height(60)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+        .height(140)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .justifyContent(FlexAlign.Center)
+        .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+
+        // 阅读状态标签
+        Text(this.getNovelReadStatusText(novel.readStatus))
+          .fontSize(10)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(4)
+          .position({ x: 4, y: 4 })
+      }
+      .width('100%')
+
+      // 小说标题
+      Text(novel.name)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+
+      // 作者
+      Text(novel.author || '未知作者')
+        .fontSize(11)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .onClick(() => {
+      this.openNovelDetail(novel);
+    })
+  }
+
+  /**
+   * 获取小说阅读状态文本
+   */
+  private getNovelReadStatusText(status: NovelReadStatus): string {
+    switch (status) {
+      case NovelReadStatus.UNREAD:
+        return '未读';
+      case NovelReadStatus.READING:
+        return '阅读中';
+      case NovelReadStatus.FINISHED:
+        return '已完成';
+      default:
+        return '未读';
+    }
+  }
+
+  /**
+   * 打开小说详情页
+   */
+  private openNovelDetail(novel: NovelBook): void {
+    const params: NovelDetailPageParams = {
+      sourceId: novel.sourceId,
+      bookUrl: novel.bookUrl,
+      bookName: novel.name,
+      author: novel.author,
+      coverUrl: novel.coverUrl
+    };
+    this.pathStack.pushPathByName('NovelDetailPage', params);
   }
 
   /**
@@ -6013,7 +6601,7 @@ struct MainMenuPage {
       // 筛选结果提示
       if (this.selectedTags.size > 0 || this.selectedAuthors.size > 0 || this.discoverContentType !== 'all') {
         Row() {
-          Text(`找到 ${this.discoveredMangaList.length} 本漫画, ${this.discoveredEBookList.length} 本电子书`)
+          Text(`找到 ${this.discoveredMangaList.length} 本漫画, ${this.discoveredEBookList.length} 本电子书, ${this.discoveredNovelList.length} 本小说`)
             .fontSize(13)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
@@ -6022,13 +6610,13 @@ struct MainMenuPage {
       }
 
       // 内容列表（响应式）
-      if (this.discoveredMangaList.length > 0 || this.discoveredEBookList.length > 0) {
+      if (this.discoveredMangaList.length > 0 || this.discoveredEBookList.length > 0 || this.discoveredNovelList.length > 0) {
         List() {
           // 漫画部分
           if (this.discoveredMangaList.length > 0) {
             ListItem() {
               Column() {
-                if (this.discoverContentType === 'all' && this.discoveredEBookList.length > 0) {
+                if (this.discoverContentType === 'all' && (this.discoveredEBookList.length > 0 || this.discoveredNovelList.length > 0)) {
                   Text(`漫画 (${this.discoveredMangaList.length})`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
@@ -6055,7 +6643,7 @@ struct MainMenuPage {
           if (this.discoveredEBookList.length > 0) {
             ListItem() {
               Column() {
-                if (this.discoverContentType === 'all' && this.discoveredMangaList.length > 0) {
+                if (this.discoverContentType === 'all' && (this.discoveredMangaList.length > 0 || this.discoveredNovelList.length > 0)) {
                   Text(`电子书 (${this.discoveredEBookList.length})`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
@@ -6077,6 +6665,33 @@ struct MainMenuPage {
               }
             }
           }
+          
+          // 小说部分
+          if (this.discoveredNovelList.length > 0) {
+            ListItem() {
+              Column() {
+                if (this.discoverContentType === 'all' && (this.discoveredMangaList.length > 0 || this.discoveredEBookList.length > 0)) {
+                  Text(`小说 (${this.discoveredNovelList.length})`)
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .width('100%')
+                    .margin({ top: 16, bottom: 8 })
+                }
+                Grid() {
+                  ForEach(this.discoveredNovelList, (novel: NovelBook) => {
+                    GridItem() {
+                      this.buildDiscoverNovelGridCard(novel)
+                    }
+                  }, (novel: NovelBook) => novel.id)
+                }
+                .columnsTemplate(this.getDiscoverGridColumnsTemplate())
+                .rowsGap(this.responsive_gridGap)
+                .columnsGap(this.responsive_gridGap)
+                .width('100%')
+              }
+            }
+          }
         }
         .layoutWeight(1)
         .padding({ left: 16, right: 16, top: 12, bottom: 16 })
@@ -6084,7 +6699,7 @@ struct MainMenuPage {
         .edgeEffect(EdgeEffect.Spring)
       } else {
         Column() {
-          Text(this.mangaList.length === 0 && this.ebookList.length === 0 ? '暂无数据' : '没有符合条件的内容')
+          Text(this.mangaList.length === 0 && this.ebookList.length === 0 && this.novelList.length === 0 ? '暂无数据' : '没有符合条件的内容')
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
@@ -7014,6 +7629,32 @@ struct MainMenuPage {
       SourceLoginPage()
     } else if (name === 'OnlineEBookDetailPage') {
       OnlineEBookDetailPage()
+    } else if (name === 'NovelBookshelfPage') {
+      NovelBookshelfPage()
+    } else if (name === 'NovelSearchPage') {
+      NovelSearchPage()
+    } else if (name === 'NovelDetailPage') {
+      NovelDetailPage()
+    } else if (name === 'NovelReaderPage') {
+      NovelReaderPage()
+    } else if (name === 'NovelSourceManagementPage') {
+      NovelSourceManagementPage()
+    } else if (name === 'NovelExplorePage') {
+      NovelExplorePage()
+    } else if (name === 'NovelSourceLoginPage') {
+      NovelSourceLoginPage()
+    } else if (name === 'NovelReplaceRulePage') {
+      NovelReplaceRulePage()
+    } else if (name === 'NovelSettingsPage') {
+      NovelSettingsPage()
+    } else if (name === 'NovelSourceDebugPage') {
+      NovelSourceDebugPage()
+    } else if (name === 'NovelTxtTocRulePage') {
+      NovelTxtTocRulePage()
+    } else if (name === 'NovelDictRulePage') {
+      NovelDictRulePage()
+    } else if (name === 'JsvmPlaygroundPage') {
+      JsvmPlaygroundPage()
       // 测试页面导航已移除
       // } else if (name === 'ReaderKitTestPage') {
       //   ReaderKitTestPage()

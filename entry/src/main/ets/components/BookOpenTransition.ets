@@ -178,7 +178,7 @@ export struct BookOpenTransition {
   // 封面图片原始尺寸（用于保持宽高比）
   private coverOriginalWidth: number = 0;
   private coverOriginalHeight: number = 0;
-  private isSystemResource: boolean = false;  // 是否为系统资源图片
+  @State private isSystemResource: boolean = false;  // 是否为系统资源图片（网络图片或app.media资源）
   
   // ========== 生命周期 ==========
   aboutToAppear(): void {
@@ -264,6 +264,23 @@ export struct BookOpenTransition {
       this.coverOriginalWidth = 210;  // 默认封面宽度
       this.coverOriginalHeight = 300; // 默认封面高度（0.7比例）
       this.isSystemResource = true;
+      // 直接开始动画，使用默认渐变效果
+      if (this.componentWidth > 0 && this.componentHeight > 0) {
+        this.startTransition();
+      } else {
+        this.pendingAnimationStart = true;
+        logger.info(TAG, '等待组件尺寸就绪后启动动画');
+      }
+      return;
+    }
+    
+    // 检查是否为网络图片（HTTP/HTTPS URL）
+    if (this.coverImagePath.startsWith('http://') || this.coverImagePath.startsWith('https://')) {
+      logger.info(TAG, `检测到网络图片: ${this.coverImagePath}，跳过PixelMap加载，使用默认封面尺寸`);
+      // 网络图片无法直接通过createImageSource加载，设置默认封面尺寸比例
+      this.coverOriginalWidth = 210;  // 默认封面宽度
+      this.coverOriginalHeight = 300; // 默认封面高度（0.7比例）
+      this.isSystemResource = true;   // 标记为特殊资源，使用渐变效果
       // 直接开始动画，使用默认渐变效果
       if (this.componentWidth > 0 && this.componentHeight > 0) {
         this.startTransition();
@@ -1292,6 +1309,18 @@ export struct BookOpenTransition {
               logger.info(TAG, `Canvas已就绪, mode=${this.mode}, imagePath=${this.readerContentImagePath ? '有' : '无'}`);
               this.renderFrame();
             })
+          
+          // 网络图片封面覆盖层（当coverPixelMap为空且是网络图片时显示）
+          if (this.isSystemResource && this.coverImagePath && 
+              (this.coverImagePath.startsWith('http://') || this.coverImagePath.startsWith('https://'))) {
+            Image(this.coverImagePath)
+              .width(this.currentWidth)
+              .height(this.currentHeight)
+              .position({ x: this.currentX, y: this.currentY })
+              .objectFit(ImageFit.Cover)
+              .opacity(this.currentOpacity)
+              .borderRadius(4)
+          }
         }
         .width('100%')
         .height('100%')

@@ -68,6 +68,11 @@ export class SettingKeys {
   static readonly CLEAR_CACHE_ON_EXIT = 'clear_cache_on_exit';
   static readonly FORCE_TABLET_MODE = 'force_tablet_mode';
   static readonly FORCE_LANDSCAPE_MODE = 'force_landscape_mode';
+  
+  // 小说阅读器设置（使用TextReaderSettings）
+  static readonly NOVEL_READER_SETTINGS = 'novel_reader_settings';
+  // 小说搜索设置
+  static readonly NOVEL_SEARCH_MAX_SOURCES = 'novel_search_max_sources';
 }
 
 /**
