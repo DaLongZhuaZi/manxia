@@ -38,6 +38,16 @@ interface RGBColor {
 }
 
 /**
+ * 分页模式枚举
+ */
+export enum PaginationMode {
+  /** 本地文件模式：使用保守的字符估算（0.92系数） */
+  LOCAL = 'LOCAL',
+  /** 在线小说模式：使用更宽松的字符估算（1.0系数，让Text组件自动换行） */
+  ONLINE = 'ONLINE'
+}
+
+/**
  * 文本阅读器组件
  */
 @Component
@@ -55,6 +65,8 @@ export struct TextReaderComponent {
   @Link @Watch('onPageIndexChange') currentPageIndex: number;
   /** 底部状态栏高度（用于避让底部信息显示区域） */
   @Prop bottomStatusBarHeight: number = 28;
+  /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
+  @Prop paginationMode: PaginationMode = PaginationMode.LOCAL;
   
   // ========== 内容变化追踪 ==========
   /** 上一次的内容（用于检测变化） */
@@ -70,7 +82,8 @@ export struct TextReaderComponent {
   onPageChange: (pageIndex: number, totalPages: number) => void = () => {};
   onChapterChange: (chapterIndex: number) => void = () => {};
   onProgressChange: (progress: number) => void = () => {};
-  onTap: (event: ClickEvent) => void = () => {};
+  /** 点击中间区域回调（用于显示/隐藏工具栏） */
+  onTapCenter: () => void = () => {};
   /** 分页完成回调（组件就绪） */
   onReady: () => void = () => {};
   
@@ -510,8 +523,12 @@ export struct TextReaderComponent {
     
     // 获取平均字符宽度用于估算
     const avgCharWidth = this.getAvgCharWidth();
-    // 估算每行字符数（保守估算，留一些余量）
-    const charsPerLine = Math.max(1, Math.floor(maxWidth / avgCharWidth * 0.92));
+    
+    // 根据分页模式选择不同的系数
+    // LOCAL模式：使用0.92的保守系数，适合本地TXT文件
+    // ONLINE模式：使用1.0的系数，让每行尽可能填满，适合在线小说
+    const widthFactor = this.paginationMode === PaginationMode.ONLINE ? 1.0 : 0.92;
+    const charsPerLine = Math.max(1, Math.floor(maxWidth / avgCharWidth * widthFactor));
     
     // 纯字符估算分割，不调用 measureTextSize
     while (currentText.length > 0) {
@@ -1492,12 +1509,12 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 简化的点击回调（不需要完整的 ClickEvent）
+   * 点击中间区域回调（用于显示/隐藏工具栏）
    */
   private onTapSimple(): void {
     // 直接调用外部回调，不传递事件对象
-    // 这里我们传递一个简化的事件对象
-    this.onTap({} as ClickEvent);
+    // TextReaderComponent 内部已经处理了点击区域判断，外部只需要知道"用户点击了中间区域"
+    this.onTapCenter();
   }
   
   /**

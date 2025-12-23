@@ -18,7 +18,10 @@ export enum NotificationType {
   DOWNLOAD_COMPLETE = 'download_complete',  // 下载完成
   DOWNLOAD_FAILED = 'download_failed',      // 下载失败
   UPDATE_AVAILABLE = 'update_available',    // 更新可用
-  CHAPTER_UPDATE = 'chapter_update'         // 章节更新
+  CHAPTER_UPDATE = 'chapter_update',        // 章节更新
+  VALIDATION_PROGRESS = 'validation_progress', // 校验进度
+  VALIDATION_COMPLETE = 'validation_complete', // 校验完成
+  VALIDATION_CANCELLED = 'validation_cancelled' // 校验已取消
 }
 
 /**
@@ -90,7 +93,7 @@ export class AppNotificationManager {
    * 请求通知权限
    * 应在应用首次启动时调用
    */
-  public async requestPermission(context?: common.UIAbilityContext): Promise<boolean> {
+  public async requestPermission(context: common.UIAbilityContext): Promise<boolean> {
     try {
       // 先检查是否已有权限
       const hasPermission = await this.checkPermission();
@@ -217,6 +220,63 @@ export class AppNotificationManager {
       text: fileName,
       additionalText: reason,
       type: NotificationType.DOWNLOAD_FAILED
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送校验进度通知
+   */
+  public async sendValidationProgressNotification(
+    taskId: string,
+    current: number,
+    total: number,
+    validCount: number,
+    invalidCount: number
+  ): Promise<boolean> {
+    const progress = Math.floor((current / total) * 100);
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '书源校验中',
+      text: `进度: ${current}/${total} (有效:${validCount} 失效:${invalidCount})`,
+      additionalText: `${progress}%`,
+      progress: { current, max: total },
+      type: NotificationType.VALIDATION_PROGRESS
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送校验完成通知
+   */
+  public async sendValidationCompleteNotification(
+    taskId: string,
+    total: number,
+    validCount: number,
+    invalidCount: number
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '书源校验完成',
+      text: `共${total}个书源，有效:${validCount}，失效:${invalidCount}`,
+      type: NotificationType.VALIDATION_COMPLETE
+    };
+    return this.sendNotification(config);
+  }
+
+  /**
+   * 发送校验取消通知
+   */
+  public async sendValidationCancelledNotification(
+    taskId: string,
+    completed: number,
+    total: number
+  ): Promise<boolean> {
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: '书源校验已取消',
+      text: `已完成 ${completed}/${total}`,
+      type: NotificationType.VALIDATION_CANCELLED
     };
     return this.sendNotification(config);
   }

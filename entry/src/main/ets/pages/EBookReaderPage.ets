@@ -1752,7 +1752,7 @@ struct EBookReaderPage {
           logger.debug(TAG, `文本阅读进度: ${progress.toFixed(1)}%`);
           // 不在这里保存，改为在 onPageChange 中保存
         },
-        onTap: () => {
+        onTapCenter: () => {
           this.toggleToolbar();
         },
         onReady: () => {

@@ -297,8 +297,8 @@ export interface TextReaderCallbacks {
   onChapterChange?: (chapterIndex: number) => void;
   /** 进度变化回调 */
   onProgressChange?: (progress: number) => void;
-  /** 点击回调 */
-  onTap?: (event: ClickEvent) => void;
+  /** 点击中间区域回调（用于显示/隐藏工具栏） */
+  onTapCenter?: () => void;
   /** 长按回调（选择文字） */
   onLongPress?: (event: GestureEvent) => void;
   /** 设置变化回调 */

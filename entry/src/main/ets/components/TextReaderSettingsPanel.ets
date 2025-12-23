@@ -232,6 +232,8 @@ export struct TextReaderSettingsPanel {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor($r('app.color.background'))
+    .borderRadius({ topLeft: 16, topRight: 16 })
   }
   
   @Builder

@@ -8,6 +8,7 @@ import { logger } from '../../Utils/Logger';
 import { DataService } from '../Services/DataService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
+import { initializeNovelModule } from '../Novel/NovelInitializer';
 
 const TAG = 'DataInitializer';
 
@@ -207,6 +208,22 @@ export class DataInitializer {
         const errorMsg = `数据服务层初始化失败: ${error}`;
         errors.push(errorMsg);
         logger.error(TAG, errorMsg + String(error));
+      }
+
+      // 第六步半：初始化小说模块
+      try {
+        const novelResult = await initializeNovelModule(context);
+        if (novelResult.success) {
+          logger.info(TAG, `小说模块初始化完成，耗时: ${novelResult.duration}ms`);
+        } else {
+          const warningMsg = `小说模块初始化部分失败: ${novelResult.errors.join(', ')}`;
+          warnings.push(warningMsg);
+          logger.warn(TAG, warningMsg);
+        }
+      } catch (error) {
+        const warningMsg = `小说模块初始化失败: ${error}`;
+        warnings.push(warningMsg); // 小说模块初始化失败不影响核心功能
+        logger.warn(TAG, warningMsg + String(error));
       }
 
       // 第七步：执行数据迁移和升级

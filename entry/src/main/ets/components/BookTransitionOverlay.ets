@@ -31,7 +31,7 @@ export interface TransitionRequest {
   coverPosition: CoverPosition;
   readerContentPixelMap?: image.PixelMap;
   targetBookId?: string;
-  targetBookType?: 'manga' | 'ebook';
+  targetBookType?: 'manga' | 'ebook' | 'novel';
 }
 
 /**
@@ -55,7 +55,7 @@ export class GlobalTransitionState {
   readerContentImagePath: string = '';  // 压缩后的临时截图路径
   isReaderReady: boolean = false;
   targetBookId: string = '';
-  targetBookType: 'manga' | 'ebook' = 'manga';
+  targetBookType: 'manga' | 'ebook' | 'novel' = 'manga';
   ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
 }
 
@@ -113,7 +113,7 @@ export class TransitionController {
     coverImagePath: string,
     coverPosition: CoverPosition,
     targetBookId: string,
-    targetBookType: 'manga' | 'ebook',
+    targetBookType: 'manga' | 'ebook' | 'novel',
     onComplete?: () => void,
     ebookBackground?: EBookBackgroundSettings
   ): void {
@@ -433,7 +433,7 @@ export function startBookOpenTransition(
   coverImagePath: string,
   coverPosition: CoverPosition,
   targetBookId: string,
-  targetBookType: 'manga' | 'ebook',
+  targetBookType: 'manga' | 'ebook' | 'novel',
   onComplete?: () => void
 ): void {
   TransitionController.getInstance().startOpenTransition(
@@ -541,7 +541,7 @@ export function startBookOpenTransitionWithComponentId(
   coverImagePath: string,
   componentId: string,
   targetBookId: string,
-  targetBookType: 'manga' | 'ebook',
+  targetBookType: 'manga' | 'ebook' | 'novel',
   onComplete?: () => void,
   ebookBackground?: EBookBackgroundSettings
 ): void {

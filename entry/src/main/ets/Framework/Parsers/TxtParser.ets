@@ -5,6 +5,9 @@ import { EBookParser } from './EBookParser';
 import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
+import { getNovelTxtTocRuleManager } from '../Novel/NovelTxtTocRuleManager';
+import { getNovelContentProcessor } from '../Novel/NovelContentProcessor';
+import { ReplaceScope } from '../Novel/NovelReplaceRuleManager';
 
 const TAG = 'TxtParser';
 
@@ -13,14 +16,21 @@ const TAG = 'TxtParser';
  * 支持自动章节识别和分割
  */
 export class TxtParser extends EBookParser {
-  // 章节标题正则表达式
-  private readonly CHAPTER_PATTERNS: string[] = [
-    '^第[0-9一二三四五六七八九十百千零]+[章节回集部卷篇]',
+  // 默认章节标题正则表达式（作为后备）
+  private readonly DEFAULT_CHAPTER_PATTERNS: string[] = [
+    '^\\s*第[0-9一二三四五六七八九十百千零]+[章节回集部卷篇]',
     '^Chapter\\s+\\d+',
     '^CHAPTER\\s+\\d+',
     '^\\d+\\.',
     '^[0-9]+、'
   ];
+  
+  // TXT目录规则管理器
+  private txtTocRuleManager = getNovelTxtTocRuleManager();
+  // 内容处理器
+  private contentProcessor = getNovelContentProcessor();
+  // 编译后的章节模式（从规则管理器获取）
+  private compiledPattern: RegExp | null = null;
 
   /**
    * 解析TXT文件
@@ -28,6 +38,9 @@ export class TxtParser extends EBookParser {
   async parse(filePath: string): Promise<EBook> {
     try {
       logger.info(TAG, `开始解析TXT文件: ${filePath}`);
+
+      // 初始化TXT目录规则
+      await this.initTocRules();
 
       // 读取文件内容
       const content = await this.readFileContent(filePath);
@@ -116,6 +129,19 @@ export class TxtParser extends EBookParser {
   }
 
   /**
+   * 初始化TXT目录规则
+   */
+  private async initTocRules(): Promise<void> {
+    try {
+      await this.txtTocRuleManager.initialize();
+      this.compiledPattern = this.txtTocRuleManager.getCombinedPattern();
+      logger.info(TAG, `TXT目录规则初始化完成，启用规则数: ${this.txtTocRuleManager.getEnabledRules().length}`);
+    } catch (error) {
+      logger.warn(TAG, `初始化TXT目录规则失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 分割章节
    */
   private splitChapters(content: string, bookTitle: string): EBookChapter[] {
@@ -132,15 +158,20 @@ export class TxtParser extends EBookParser {
       const line = lines[i].trim();
       const lineLength = lines[i].length + 1; // +1 for newline
 
-      // 检查是否是章节标题
+      // 检查是否是章节标题（优先使用规则管理器）
       if (this.isChapterTitle(line)) {
         // 保存上一章节
         if (currentChapterTitle || currentChapterContent) {
+          // 应用替换规则到章节内容
+          const processedContent = this.contentProcessor.quickReplace(
+            currentChapterContent, 
+            ReplaceScope.CONTENT
+          );
           chapters.push(this.createChapter(
             bookTitle,
             chapterNumber,
             currentChapterTitle || `第${chapterNumber + 1}章`,
-            currentChapterContent,
+            processedContent,
             currentChapterStart,
             position
           ));
@@ -164,11 +195,15 @@ export class TxtParser extends EBookParser {
 
     // 保存最后一章
     if (currentChapterTitle || currentChapterContent) {
+      const processedContent = this.contentProcessor.quickReplace(
+        currentChapterContent, 
+        ReplaceScope.CONTENT
+      );
       chapters.push(this.createChapter(
         bookTitle,
         chapterNumber,
         currentChapterTitle || `第${chapterNumber + 1}章`,
-        currentChapterContent,
+        processedContent,
         currentChapterStart,
         position
       ));
@@ -176,31 +211,48 @@ export class TxtParser extends EBookParser {
 
     // 如果没有识别到章节，将整本书作为一个章节
     if (chapters.length === 0) {
+      const processedContent = this.contentProcessor.quickReplace(content, ReplaceScope.CONTENT);
       chapters.push(this.createChapter(
         bookTitle,
         0,
         bookTitle,
-        content,
+        processedContent,
         0,
         content.length
       ));
     }
 
+    logger.info(TAG, `章节分割完成，共 ${chapters.length} 章`);
     return chapters;
   }
 
   /**
    * 判断是否是章节标题
+   * 优先使用TXT目录规则管理器的规则
    */
   private isChapterTitle(line: string): boolean {
-    if (line.length === 0 || line.length > 50) {
+    if (line.length === 0 || line.length > 100) {
       return false;
     }
 
-    for (let i = 0; i < this.CHAPTER_PATTERNS.length; i++) {
-      const pattern = new RegExp(this.CHAPTER_PATTERNS[i]);
-      if (pattern.test(line)) {
+    // 优先使用规则管理器的编译模式
+    if (this.compiledPattern) {
+      // 重置正则表达式的lastIndex
+      this.compiledPattern.lastIndex = 0;
+      if (this.compiledPattern.test(line)) {
         return true;
+      }
+    }
+
+    // 回退到默认模式
+    for (let i = 0; i < this.DEFAULT_CHAPTER_PATTERNS.length; i++) {
+      try {
+        const pattern = new RegExp(this.DEFAULT_CHAPTER_PATTERNS[i]);
+        if (pattern.test(line)) {
+          return true;
+        }
+      } catch (error) {
+        // 忽略无效的正则表达式
       }
     }
 

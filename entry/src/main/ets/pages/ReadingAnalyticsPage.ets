@@ -16,6 +16,8 @@ import { ReadHistory, DataManager, ComicInfo } from '../Framework/Data/DataManag
 import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS } from '../Framework/Managers/ReadingAnalyticsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBook } from '../Models/EBookModels';
+import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
+import { NovelBook } from '../Models/NovelModels';
 
 const TAG = 'ReadingAnalyticsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -44,6 +46,9 @@ interface ReadingStatistics {
   // 电子书统计
   totalEBooksRead: number;        // 阅读过的电子书总数
   totalEBookReadingTime: number;  // 电子书总阅读时长（秒）
+  // 小说统计
+  totalNovelsRead: number;        // 阅读过的小说总数
+  totalNovelReadingTime: number;  // 小说总阅读时长（秒）
 }
 
 /**
@@ -208,7 +213,9 @@ struct ReadingAnalyticsPage {
     continuousReadingDays: 0,
     lastReadTime: 0,
     totalEBooksRead: 0,
-    totalEBookReadingTime: 0
+    totalEBookReadingTime: 0,
+    totalNovelsRead: 0,
+    totalNovelReadingTime: 0
   };
 
   @State dailyData: DailyReadingData[] = [];
@@ -416,7 +423,9 @@ struct ReadingAnalyticsPage {
         continuousReadingDays: 0,
         lastReadTime: 0,
         totalEBooksRead: 0,
-        totalEBookReadingTime: 0
+        totalEBookReadingTime: 0,
+        totalNovelsRead: 0,
+        totalNovelReadingTime: 0
       };
       this.dailyData = [];
       this.allDailyData = [];
@@ -461,7 +470,9 @@ struct ReadingAnalyticsPage {
         continuousReadingDays: 0,
         lastReadTime: 0,
         totalEBooksRead: 0,
-        totalEBookReadingTime: 0
+        totalEBookReadingTime: 0,
+        totalNovelsRead: 0,
+        totalNovelReadingTime: 0
       };
       this.dailyData = [];
       this.allDailyData = [];
@@ -757,6 +768,9 @@ struct ReadingAnalyticsPage {
       const startTime = now - timeRangeMs;
       this.analyzeEBookData(ebooksWithProgress, startTime);
       
+      // 分析小说数据
+      await this.analyzeNovelData(startTime);
+      
       // 重新计算日均阅读时长（合并漫画和电子书的阅读天数）
       this.recalculateAverageReadingTime(readHistory, ebooksWithProgress, startTime);
       
@@ -833,6 +847,54 @@ struct ReadingAnalyticsPage {
       logger.debug(TAG, `电子书统计: ${this.statistics.totalEBooksRead} 本, 时长 ${this.statistics.totalEBookReadingTime} 秒, 章节 ${totalEBookChapters}, 页数 ${totalEBookPages}`);
     } catch (error) {
       logger.error(TAG, `分析电子书数据失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 分析小说数据
+   * @param startTime 时间范围开始时间（用于过滤）
+   */
+  private async analyzeNovelData(startTime: number): Promise<void> {
+    try {
+      const novelDataManager = getNovelDataManager();
+      const novels = await novelDataManager.getBooksWithReadingTime();
+      
+      // 过滤时间范围内有阅读记录的小说
+      const filteredNovels = novels.filter((novel: NovelBook) => {
+        if (!novel.lastReadTime) {
+          return false;
+        }
+        return novel.lastReadTime >= startTime;
+      });
+      
+      this.statistics.totalNovelsRead = filteredNovels.length;
+      
+      // 计算小说总阅读时长（小说的 totalReadingTime 是秒）
+      let totalNovelTime = 0;
+      let totalNovelChapters = 0;
+      
+      filteredNovels.forEach((novel: NovelBook) => {
+        // 累加阅读时长
+        if (novel.totalReadingTime > 0) {
+          totalNovelTime += novel.totalReadingTime;
+        }
+        // 累加已读章节数
+        if (novel.lastReadChapterIndex !== undefined && novel.lastReadChapterIndex >= 0) {
+          totalNovelChapters += novel.lastReadChapterIndex + 1;
+        }
+      });
+      
+      this.statistics.totalNovelReadingTime = totalNovelTime;
+      
+      // 将小说阅读时长加入总阅读时长
+      this.statistics.totalReadingTime += this.statistics.totalNovelReadingTime;
+      
+      // 将小说章节数加入总统计
+      this.statistics.totalChaptersRead += totalNovelChapters;
+      
+      logger.debug(TAG, `小说统计: ${this.statistics.totalNovelsRead} 本, 时长 ${this.statistics.totalNovelReadingTime} 秒, 章节 ${totalNovelChapters}`);
+    } catch (error) {
+      logger.error(TAG, `分析小说数据失败: ${String(error)}`);
     }
   }
 
@@ -3020,6 +3082,12 @@ struct ReadingAnalyticsPage {
               }
               GridItem() {
                 this.buildStatCard('电子书时长', this.formatDuration(this.statistics.totalEBookReadingTime), '📖')
+              }
+              GridItem() {
+                this.buildStatCard('阅读小说', `${this.statistics.totalNovelsRead}`, '📗', '本')
+              }
+              GridItem() {
+                this.buildStatCard('小说时长', this.formatDuration(this.statistics.totalNovelReadingTime), '📗')
               }
               GridItem() {
                 this.buildStatCard('阅读页数', `${this.statistics.totalPagesRead}`, '📄', '页')

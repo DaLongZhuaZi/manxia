@@ -1,0 +1,351 @@
+[
+  {
+    "bookSourceComment": "晴天小说4.0 - JSON API书源，使用JSONPath解析",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "🌞晴天小说4.0",
+    "bookSourceType": 0,
+    "bookSourceUrl": "http://v1.gyks.cf/#小说/",
+    "customOrder": 0,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "exploreUrl": "[{\"title\":\"推荐榜\",\"url\":\"/get_discover?source=番茄&tab=小说&type=10&gender=1&is_ranking=1\"},{\"title\":\"完结榜\",\"url\":\"/get_discover?source=番茄&tab=小说&type=11&gender=1&is_ranking=1\"},{\"title\":\"热搜榜\",\"url\":\"/get_discover?source=番茄&tab=小说&type=12&gender=1&is_ranking=1\"},{\"title\":\"都市\",\"url\":\"/get_discover?source=番茄&tab=小说&type=1&gender=1&page={{page}}\"}]",
+    "loginUrl": "http://v1.gyks.cf/login",
+    "ruleBookInfo": {
+      "author": "$.author",
+      "coverUrl": "$.thumb_url",
+      "init": "$.data",
+      "intro": "{{$.abstract}}",
+      "kind": "$.tags",
+      "lastChapter": "$.last_chapter_title",
+      "name": "$.book_name",
+      "tocUrl": "/catalog?book_id={{$.book_id}}&source={{$.source}}&tab={{$.tab}}",
+      "wordCount": "$.word_number"
+    },
+    "ruleContent": {
+      "content": "$.content",
+      "title": "$.title"
+    },
+    "ruleExplore": {
+      "author": "$.author",
+      "bookList": "$.data",
+      "bookUrl": "/detail?book_id={{$.book_id}}&source={{$.source}}",
+      "coverUrl": "$.thumb_url",
+      "intro": "$.abstract",
+      "kind": "$.category",
+      "lastChapter": "$.last_chapter_title",
+      "name": "$.book_name",
+      "wordCount": "$.word_number"
+    },
+    "ruleSearch": {
+      "author": "$.author",
+      "bookList": "$.data",
+      "bookUrl": "/detail?book_id={{$.book_id}}&source={{$.source}}&tab={{$.tab}}",
+      "coverUrl": "$.thumb_url",
+      "intro": "$.abstract",
+      "kind": "$.tags",
+      "lastChapter": "{{$.source}} {{$.last_chapter_title}}",
+      "name": "$.book_name",
+      "wordCount": "$.word_number"
+    },
+    "ruleToc": {
+      "chapterList": "$.data",
+      "chapterName": "$.title",
+      "chapterUrl": "/content?item_id={{$.item_id}}&source={{$.source}}&tab={{$.tab}}&version=4.6.29",
+      "isVolume": "$.is_volume"
+    },
+    "searchUrl": "/search?title={{key}}&tab=小说&source=全部",
+    "weight": 100
+  },
+  {
+    "bookSourceComment": "猫眼看书 - JSON API书源，使用JSONPath $[*]语法",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "猫眼看书",
+    "bookSourceType": 0,
+    "bookSourceUrl": "http://api.lemiyigou.com",
+    "customOrder": 1,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "exploreUrl": "[{\"title\":\"玄幻\",\"url\":\"/novel?sort=1&page={{page}}&categoryId=lejRej\"},{\"title\":\"武侠\",\"url\":\"/novel?sort=1&page={{page}}&categoryId=nel5aK\"},{\"title\":\"都市\",\"url\":\"/novel?sort=1&page={{page}}&categoryId=mbk5ez\"},{\"title\":\"仙侠\",\"url\":\"/novel?sort=1&page={{page}}&categoryId=vbmOeY\"}]",
+    "header": "{\"User-Agent\":\"okhttp/4.9.2\",\"client-device\":\"0cdeb38dd0f2a381b06c0a02926ee317\",\"client-brand\":\"iqoo\",\"client-version\":\"2.3.0\",\"client-name\":\"app.maoyankanshu.novel\",\"client-source\":\"android\"}",
+    "ruleBookInfo": {
+      "author": "$.authorName",
+      "coverUrl": "$.cover",
+      "init": "$.data",
+      "intro": "$.summary",
+      "kind": "{{$.className}}",
+      "lastChapter": "$.lastChapter.chapterName",
+      "name": "$.novelName",
+      "tocUrl": "/novel/{{$.novelId}}/chapters?readNum=1",
+      "wordCount": "$.wordNum"
+    },
+    "ruleContent": {
+      "content": "$.content"
+    },
+    "ruleSearch": {
+      "author": "$.authorName",
+      "bookList": "$.data[*]",
+      "bookUrl": "/novel/{{$.novelId}}?isSearch=1",
+      "coverUrl": "$.cover",
+      "intro": "$.summary",
+      "kind": "{{$.className}}",
+      "name": "$.novelName"
+    },
+    "ruleToc": {
+      "chapterList": "$.data.list[*]",
+      "chapterName": "$.chapterName",
+      "chapterUrl": "$.path"
+    },
+    "searchUrl": "/search?page={{page}}&keyword={{key}}",
+    "weight": 90
+  },
+  {
+    "bookSourceComment": "全本同人 - 使用Legado链式规则",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "全本同人",
+    "bookSourceType": 0,
+    "bookSourceUrl": "https://qbtr.me",
+    "customOrder": 2,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "exploreUrl": "同人小说::https://qbtr.me/tongren/<,index_{{page}}.html>\n常规小说::https://qbtr.me/changgui/<,index_{{page}}.html>",
+    "header": "{\"User-Agent\":\"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.96 Safari/537.36\"}",
+    "ruleBookInfo": {
+      "author": ".date span@text",
+      "intro": "p@text",
+      "kind": "div.date@text",
+      "name": "h1@text",
+      "tocUrl": ".clearfix@li@tag.a"
+    },
+    "ruleContent": {
+      "content": ".read_chapterDetail p@all"
+    },
+    "ruleExplore": {
+      "author": "class.booknews@text",
+      "bookList": ".bk",
+      "bookUrl": "tag.a@href",
+      "coverUrl": "img@src",
+      "intro": "p@text",
+      "kind": "class.date@text",
+      "name": "h3@text"
+    },
+    "ruleSearch": {
+      "author": "div.booknews@text",
+      "bookList": "div.bk",
+      "bookUrl": "h3 a@href",
+      "intro": "p@all",
+      "kind": "label@text",
+      "name": "h3 a@text"
+    },
+    "ruleToc": {
+      "chapterList": ".clearfix@li@tag.a",
+      "chapterName": "text",
+      "chapterUrl": "href"
+    },
+    "searchUrl": "/e/search/index.php,{\"charset\":\"gb2312\",\"method\":\"POST\",\"body\":\"keyboard={{key}}&show=title&classid=0\"}",
+    "weight": 80
+  },
+  {
+    "bookSourceComment": "芙蓉小说 - 使用class.xxx@tag.xxx链式规则",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "芙蓉小说",
+    "bookSourceType": 0,
+    "bookSourceUrl": "http://www.frtxt.com",
+    "customOrder": 3,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "exploreUrl": "日人气::/top/0_0_{{page}}.html\n周人气::/top/1_0_{{page}}.html\n月人气::/top/2_0_{{page}}.html",
+    "ruleBookInfo": {
+      "author": "class.booktable@tag.td.3@text",
+      "coverUrl": "class.booktable@tag.td.0@src",
+      "intro": "class.jianjie@text",
+      "kind": "class.booktable@tag.td.1@text",
+      "name": "tag.h1@text"
+    },
+    "ruleContent": {
+      "content": "class.chapter@text",
+      "nextContentUrl": "text.下一页@href"
+    },
+    "ruleExplore": {
+      "bookList": "class.list@tag.tbody",
+      "bookUrl": "class.name@tag.a@href",
+      "coverUrl": "class.cover@tag.img@src",
+      "intro": "class.intro@text",
+      "name": "class.name@tag.a@text"
+    },
+    "ruleSearch": {
+      "bookList": "class.list@tag.table",
+      "bookUrl": "class.name@tag.a@href",
+      "coverUrl": "class.cover@tag.img@src",
+      "intro": "class.intro@text",
+      "name": "class.name@tag.a@text"
+    },
+    "ruleToc": {
+      "chapterList": "class.list@tag.li",
+      "chapterName": "tag.a@text",
+      "chapterUrl": "tag.a@href"
+    },
+    "searchUrl": "/search.php?keyword={{key}}&submit=%CB%D1+%CB%F7,{\"charset\":\"gbk\"}",
+    "weight": 70
+  },
+  {
+    "bookSourceComment": "唔唔小说 - 使用class.xxx@tag.xxx.index@text链式规则",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "唔唔小说",
+    "bookSourceType": 0,
+    "bookSourceUrl": "https://www.changduzw.com",
+    "customOrder": 4,
+    "enabled": true,
+    "enabledCookieJar": false,
+    "enabledExplore": true,
+    "ruleBookInfo": {
+      "author": "class.status@tag.p.1@text",
+      "coverUrl": "class.imgbox@tag.img@src",
+      "intro": "class.con@tag.p@text",
+      "kind": "class.status@tag.a.0@text",
+      "lastChapter": "class.red.1@text",
+      "name": "class.status@tag.h1@text",
+      "tocUrl": "text.点击阅读@href",
+      "wordCount": "class.status@tag.p.-3@text"
+    },
+    "ruleContent": {
+      "content": "id.htmlContent@html"
+    },
+    "ruleSearch": {
+      "author": "class.grid@tag.td.2@text",
+      "bookList": "class.odd",
+      "bookUrl": "class.odd.0@tag.a.0@href",
+      "kind": "class.even@text",
+      "name": "class.odd@tag.a.0@text"
+    },
+    "ruleToc": {
+      "chapterList": "class.mulu_list@tag.a",
+      "chapterName": "text",
+      "chapterUrl": "href"
+    },
+    "searchUrl": "https://www.changduzw.com/modules/article/search.php,{\"charset\":\"utf-8\",\"method\":\"POST\",\"body\":\"searchkey={{key}}&type=submit\"}",
+    "weight": 60
+  },
+  {
+    "bookSourceComment": "爱尚小说 - 使用复杂链式规则和||备选规则",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "爱尚小说",
+    "bookSourceType": 0,
+    "bookSourceUrl": "http://www.23hh.la",
+    "customOrder": 5,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "ruleBookInfo": {
+      "coverUrl": "class.book_info@class.pic@tag.img.0@src",
+      "intro": "class.book_info@class.bookinfo_intro@text"
+    },
+    "ruleContent": {
+      "content": "id.htmlContent@text"
+    },
+    "ruleSearch": {
+      "author": "class.c_row@tag.span.3@text",
+      "bookList": "class.book_info",
+      "bookUrl": "class.c_row@tag.span.0@tag.a.0@href",
+      "coverUrl": "class.c_row@tag.a.0@tag.img.0@src",
+      "kind": "class.c_row@tag.span.5@text",
+      "lastChapter": "class.c_row@tag.span.13@tag.a.0@text",
+      "name": "class.c_row@tag.span.0@tag.a.0@text"
+    },
+    "ruleToc": {
+      "chapterList": "class.book_list@tag.li@tag.a",
+      "chapterName": "text",
+      "chapterUrl": "href"
+    },
+    "searchUrl": "http://www.23hh.la/modules/article/search.php,{\"charset\":\"gbk\",\"method\":\"POST\",\"body\":\"searchkey={{key}}&action=login\"}",
+    "weight": 50
+  },
+  {
+    "bookSourceComment": "松鹤阅读 - QQ阅读API，使用JSONPath",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "松鹤阅读",
+    "bookSourceType": 0,
+    "bookSourceUrl": "https://bookshelf.html5.qq.com",
+    "customOrder": 6,
+    "enabled": true,
+    "enabledCookieJar": true,
+    "enabledExplore": true,
+    "exploreUrl": "[{\"title\":\"都市\",\"url\":\"/qbread/api/rank/list?groupid=1505&start={{page}}&count=20&sub=\"},{\"title\":\"玄幻\",\"url\":\"/qbread/api/rank/list?groupid=1501&start={{page}}&count=20&sub=\"},{\"title\":\"仙侠\",\"url\":\"/qbread/api/rank/list?groupid=1502&start={{page}}&count=20&sub=\"}]",
+    "header": "{\"user-agent\":\"Mozilla/5.0 (Linux; Android 10; MI 8 Build/QKQ1.190828.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.101 Mobile Safari/537.36\",\"Referer\":\"https://bookshelf.html5.qq.com/qbread\"}",
+    "ruleBookInfo": {
+      "author": "$.author",
+      "init": "$.data.bookInfo",
+      "intro": "$.intro",
+      "lastChapter": "$.lastSerialname",
+      "name": "$.resourceName",
+      "tocUrl": "https://bookshelf.html5.qq.com/qbread/api/book/all-chapter?bookId={{$.resourceID}}",
+      "wordCount": "$.contentsize"
+    },
+    "ruleContent": {
+      "content": "$.data.Content[0].Content"
+    },
+    "ruleExplore": {
+      "author": "$.author",
+      "bookList": "$.rows[*]",
+      "bookUrl": "https://bookshelf.html5.qq.com/qbread/api/novel/intro-info?bookid={{$.resourceID}}",
+      "coverUrl": "$.picurl",
+      "intro": "$.summary",
+      "name": "$.resourceName"
+    },
+    "ruleSearch": {
+      "author": "$.author",
+      "bookList": "$.data.bookList[*]",
+      "bookUrl": "https://bookshelf.html5.qq.com/qbread/api/novel/intro-info?bookid={{$.resourceID}}",
+      "coverUrl": "$.picurl",
+      "intro": "$.summary",
+      "name": "$.resourceName"
+    },
+    "ruleToc": {
+      "chapterList": "$.data.chapterList[*]",
+      "chapterName": "$.chapterName",
+      "chapterUrl": "https://bookshelf.html5.qq.com/qbread/api/book/chapter?bookId={{$.bookId}}&chapterId={{$.chapterId}}"
+    },
+    "searchUrl": "https://bookshelf.html5.qq.com/qbread/api/book/search?keyword={{key}}&start={{page}}&count=20",
+    "weight": 85
+  },
+  {
+    "bookSourceComment": "笔趣阁77 - 标准CSS选择器",
+    "bookSourceGroup": "修复后可用",
+    "bookSourceName": "🌐 笔趣阁77",
+    "bookSourceType": 0,
+    "bookSourceUrl": "http://www.biquge77.net",
+    "customOrder": 7,
+    "enabled": true,
+    "enabledCookieJar": false,
+    "enabledExplore": true,
+    "ruleBookInfo": {
+      "author": "[property$=author]@content",
+      "coverUrl": ".container@img@src",
+      "intro": "class.desc@html",
+      "kind": "[property~=category]@content",
+      "lastChapter": "[property*=_chapter_name]@content",
+      "name": "[property$=book_name]@content"
+    },
+    "ruleContent": {
+      "content": "#content@html"
+    },
+    "ruleSearch": {
+      "author": ".s4@text",
+      "bookList": ".container ul@li",
+      "bookUrl": ".s2 a@href",
+      "kind": ".s1@text",
+      "lastChapter": ".s3 a@text",
+      "name": ".s2 a@text"
+    },
+    "ruleToc": {
+      "chapterList": "ul.-1@li",
+      "chapterName": "a@text",
+      "chapterUrl": "a@href"
+    },
+    "searchUrl": "http://www.biquge77.net/search/,{\"body\":\"searchkey={{key}}&Submit=搜索\",\"method\":\"POST\"}",
+    "weight": 75
+  }
+]
