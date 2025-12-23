@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**一款基于 HarmonyOS Next 的现代化漫画阅读应用**
+**一款基于 HarmonyOS Next 的现代化漫画与小说阅读应用**
 
 [![HarmonyOS](https://img.shields.io/badge/HarmonyOS-Next-blue)](https://developer.huawei.com/consumer/cn/harmonyos/)
 [![ArkTS](https://img.shields.io/badge/Language-ArkTS-green)](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-get-started-0000001504769321)
@@ -12,27 +12,31 @@
 
 ## 📖 项目简介
 
-漫匣是一款专为 HarmonyOS Next 平台开发的漫画阅读应用，采用纯 ArkTS 架构，提供流畅的阅读体验和丰富的功能特性。
+漫匣是一款专为 HarmonyOS Next 平台开发的综合阅读应用，支持**漫画**、**电子书**和**网络小说**三大内容类型。采用纯 ArkTS 架构，提供流畅的阅读体验和丰富的功能特性。
 
 ### ✨ 核心特性
 
 - 🎨 **现代化UI设计** - 遵循 HarmonyOS 设计规范，支持深色/浅色主题自动切换
 - 📚 **多图源支持** - 支持 WebView 和 API 两种图源类型，可扩展的图源系统
-- 🔍 **智能搜索** - 支持跨图源搜索，快速定位想看的漫画
-- 📖 **优秀的阅读体验** - 支持单页/双页模式，图片预加载，流畅翻页
-- 💾 **本地管理** - 支持本地漫画导入，电子书阅读（EPUB/PDF）
-- 🔐 **图源登录** - 支持图源账号登录，访问个人收藏和历史记录
+- 📖 **网络小说** - 兼容 Legado 书源格式，支持数千书源导入，海量小说资源
+- 🔍 **智能搜索** - 支持跨图源/书源搜索，快速定位想看的内容（暂未实现）
+- 📖 **优秀的阅读体验** - 漫画支持单页/双页/卷页模式，小说支持自定义排版
+- 💾 **本地管理** - 支持本地漫画导入，电子书阅读（EPUB/PDF/TXT/MOBI/AZW3）
+- 🔐 **源站登录** - 支持图源/书源账号登录，访问个人收藏和历史记录
 - 🎯 **图片处理** - 支持特殊图源的图片解扰算法（如禁漫天堂）
-- 🌐 **离线阅读** - 支持漫画下载，随时随地阅读
+- 🌐 **离线阅读** - 支持漫画/小说下载缓存，随时随地阅读
+- 📊 **阅读统计** - 详细的阅读时长、进度统计和分析
 
 ### 🏗️ 技术架构
 
-- **开发语言**: ArkTS (HarmonyOS Next API 18)
+- **开发语言**: ArkTS + C++ (HarmonyOS Next API 18)
 - **架构模式**: ECS (Entity-Component-System)
 - **UI框架**: ArkUI
 - **数据存储**: 关系型数据库 (RDB)
 - **网络请求**: HTTP Client + WebView
 - **图片处理**: Image Kit + 自定义解扰算法
+- **JS引擎**: JSVM (用于书源规则执行)
+- **HTML解析**: 自定义 HTML Parser (支持 CSS/XPath/JSONPath 选择器)
 
 ## 🚀 快速开始(由于本项目仍处于早期开发阶段，暂不建议作为学习对象)
 
@@ -133,7 +137,24 @@ manxia/
 │       │   │   │   ├── SearchHistoryManager.ets     # 搜索历史管理
 │       │   │   │   └── SettingsManager.ets          # 设置管理
 │       │   │   ├── Parsers/        # 解析器
-│       │   │   │   └── EBookParser.ets              # 电子书解析器
+│       │   │   │   ├── EBookParser.ets              # 电子书解析器
+│       │   │   │   ├── EpubParser.ets               # EPUB解析器
+│       │   │   │   ├── PdfParser.ets                # PDF解析器
+│       │   │   │   └── TxtParser.ets                # TXT解析器
+│       │   │   ├── Novel/          # 小说模块
+│       │   │   │   ├── NovelDataManager.ets         # 小说数据管理
+│       │   │   │   ├── NovelSourceManager.ets       # 书源管理
+│       │   │   │   ├── NovelSourceExecutor.ets      # 书源执行器
+│       │   │   │   ├── NovelSourceValidator.ets     # 书源校验器
+│       │   │   │   ├── NovelChapterCacheManager.ets # 章节缓存
+│       │   │   │   ├── NovelContentProcessor.ets    # 内容处理器
+│       │   │   │   ├── NovelReplaceRuleManager.ets  # 替换规则
+│       │   │   │   ├── NovelTxtTocRuleManager.ets   # TXT目录规则
+│       │   │   │   ├── LegadoSourceParser.ets       # Legado书源解析
+│       │   │   │   ├── LegadoRuleAnalyzer.ets       # 规则分析器
+│       │   │   │   ├── LegadoUrlAnalyzer.ets        # URL分析器
+│       │   │   │   ├── LegadoJsEngine.ets           # JS引擎
+│       │   │   │   └── index.ets                    # 模块导出
 │       │   │   ├── Plugin/         # 插件系统
 │       │   │   ├── Services/       # 服务层
 │       │   │   ├── Source/         # 图源系统
@@ -152,6 +173,12 @@ manxia/
 │       │   │   ├── Workflow/       # 工作流系统
 │       │   │   ├── DependencyContainer.ets          # 依赖注入容器
 │       │   │   └── EventBus.ets                     # 事件总线
+│       │   ├── libs/               # 第三方库
+│       │   │   └── htmlparser/     # HTML解析库
+│       │   │       ├── HTMLElement.ets              # HTML元素
+│       │   │       ├── Parser.ets                   # 解析器
+│       │   │       ├── LegadoHtmlBridge.ets         # Legado桥接
+│       │   │       └── index.ets                    # 模块导出
 │       │   ├── pages/              # 页面组件
 │       │   │   ├── AboutPage.ets                    # 关于页面
 │       │   │   ├── CoverSelectionPage.ets           # 封面选择页面
@@ -168,6 +195,16 @@ manxia/
 │       │   │   ├── MangaReaderPage.ets              # 漫画阅读页
 │       │   │   ├── MangaSettingsPage.ets            # 漫画设置页面
 │       │   │   ├── MangaSourceTestPage.ets          # 图源测试页面
+│       │   │   ├── NovelBookshelfPage.ets           # 小说书架页
+│       │   │   ├── NovelSearchPage.ets              # 小说搜索页
+│       │   │   ├── NovelDetailPage.ets              # 小说详情页
+│       │   │   ├── NovelReaderPage.ets              # 小说阅读页
+│       │   │   ├── NovelExplorePage.ets             # 小说发现页
+│       │   │   ├── NovelSourceManagementPage.ets    # 书源管理页
+│       │   │   ├── NovelSourceDebugPage.ets         # 书源调试页
+│       │   │   ├── NovelSettingsPage.ets            # 小说设置页
+│       │   │   ├── NovelReplaceRulePage.ets         # 替换规则页
+│       │   │   ├── NovelTxtTocRulePage.ets          # TXT目录规则页
 │       │   │   ├── ReadingAnalyticsPage.ets         # 阅读分析页面
 │       │   │   ├── SearchPage.ets                   # 搜索页面（旧）
 │       │   │   ├── SourceDetailPage.ets             # 图源详情页
@@ -195,6 +232,7 @@ manxia/
 │       │   ├── Models/             # 数据模型
 │       │   │   ├── EBookModels.ets                  # 电子书模型
 │       │   │   ├── MangaModels.ets                  # 漫画模型
+│       │   │   ├── NovelModels.ets                  # 小说模型
 │       │   │   └── TempMangaModels.ets              # 临时漫画模型
 │       │   ├── Utils/              # 工具类
 │       │   │   ├── AvifTranscoder.ets               # AVIF转码器（未实现）
@@ -212,6 +250,11 @@ manxia/
 │       │   ├── ShareExtAbility/    # 分享扩展能力
 │       │   ├── GlobalContext.ets   # 全局上下文
 │       │   └── MyAbilityStage.ets  # 应用生命周期
+│       ├── cpp/                    # C++ Native代码
+│       │   ├── CMakeLists.txt                       # CMake配置
+│       │   ├── jsvm_engine.cpp                      # JSVM引擎实现
+│       │   └── types/                               # 类型定义
+│       │       └── libjsvm_engine/                  # JSVM引擎类型
 │       ├── resources/              # 资源文件
 │       │   ├── base/               # 基础资源
 │       │   ├── dark/               # 深色主题资源
@@ -246,7 +289,7 @@ manxia/
 
 ## 🎯 主要功能
 
-### 1. 图源系统
+### 1. 漫画图源系统
 
 支持两种图源类型：
 
@@ -262,26 +305,47 @@ manxia/
 - 支持复杂的认证和加密
 - 示例：Komiic、PicaComic
 
-### 2. 图片处理
+### 2. 小说书源系统
+
+兼容 **Legado（阅读）** 书源格式，支持数千书源导入：
+
+- **书源解析**: 完整支持 Legado 书源 JSON 格式
+- **规则引擎**: 支持 CSS选择器、XPath、JSONPath、正则表达式
+- **JS执行**: 内置 JSVM 引擎，支持书源中的 JavaScript 代码
+- **书源校验**: 批量校验书源可用性
+- **替换规则**: 支持内容净化和替换规则
+- **章节缓存**: 智能缓存已读章节
+
+### 3. 图片处理
 
 - **图片解扰**: 支持禁漫天堂等特殊图源的图片解扰算法
 - **图片缓存**: 智能缓存机制，减少网络请求
 - **图片预加载**: 提前加载下一页，流畅阅读体验
 - **懒加载**: 优化内存使用，支持大量图片
 
-### 3. 阅读器
+### 4. 漫画阅读器
 
 - **单页模式**: 传统的上下滚动阅读
 - **双页模式**: 模拟实体书的翻页效果
-- **缩放功能**: 双击放大，捏合缩放
+- **卷页模式**: 逼真的翻书动画效果
+- **缩放功能**: 双击放大，捷合缩放
 - **进度保存**: 自动记录阅读进度
 
-### 4. 本地管理
+### 5. 小说阅读器
 
-- **漫画导入**: 支持 ZIP/CBZ/TAR/GZ 等压缩格式
+- **自定义排版**: 字体、字号、行距、边距等全面可调
+- **背景主题**: 多种预设背景色，保护视力
+- **翻页方式**: 支持点击、滑动翻页
+- **自动翻页**: 可设置自动翻页速度
+- **章节导航**: 快速跳转章节
+
+### 6. 本地管理
+
+- **漫画导入**: 支持 ZIP/CBZ/TAR/GZ/7Z 等压缩格式
 - **电子书阅读**: 支持 EPUB/PDF/TXT/MOBI/AZW3 格式
-- **书库管理**: 分类、排序、搜索
+- **书库管理**: 分类、排序、搜索、标签
 - **阅读历史**: 记录阅读轨迹
+- **阅读统计**: 详细的阅读时长和进度分析
 
 ## 🔧 配置说明
 
@@ -330,6 +394,12 @@ manxia/
 - **许可证**: 未明确声明（该项目基于 stevenyomi/copymanga 的延伸版本）
 - **说明**: 该项目是 stevenyomi/copymanga 的社区维护版本，提供了拷贝漫画的 API 接口文档和实现示例。本项目参考了其 API 调用方式和数据结构设计，并根据 HarmonyOS 平台特性进行了重新实现。
 
+#### 3. Legado (阅读)
+- **项目地址**: https://github.com/gedoor/legado
+- **使用内容**: 书源格式规范、规则解析引擎设计参考
+- **许可证**: GPL-3.0 License
+- **说明**: Legado 是一款优秀的开源阅读应用，本项目的小说模块完全兼容其书源 JSON 格式，支持导入数千个社区书源。本项目参考了其规则解析引擎的设计思路（包括 CSS 选择器、XPath、JSONPath、正则表达式等），并使用 ArkTS 和 JSVM 进行了完全重写。
+
 ### 技术栈
 
 - **HarmonyOS Next SDK** - 华为官方 SDK
@@ -347,14 +417,20 @@ manxia/
 | snappyjs | 0.7.0 | MIT | Snappy压缩/解压支持 |
 | text-encoding | 0.7.0 | Unlicense | 文本编码转换 |
 
-### 图源实现参考
+### 源实现参考
 
-本项目的图源实现参考了多个开源项目的思路和代码：
+本项目的图源/书源实现参考了多个开源项目的思路和代码：
 
+#### 漫画图源
 - **禁漫天堂图源**: 参考 Keiyoushi Extensions 中的 JMComic 实现
 - **拷贝漫画图源**: 参考 CopyManga Copy20 项目
 - **Komiic 图源**: 参考官方 API 文档和社区实现
 - **图片解扰算法**: 参考 Tachiyomi 社区的解扰算法实现
+
+#### 小说书源
+- **书源格式**: 完全兼容 Legado 书源 JSON 格式
+- **规则引擎**: 参考 Legado 的规则解析设计，使用 ArkTS 重写
+- **JS执行**: 使用 HarmonyOS JSVM 替代 Rhino/QuickJS
 
 ### 特别说明
 
