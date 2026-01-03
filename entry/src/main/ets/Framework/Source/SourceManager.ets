@@ -190,8 +190,17 @@ export class SourceManager {
       }
 
       const sourceName: string = metadata.name as string;
+      const pkg: string = metadata.id as string;
 
-      // 检查是否已存在
+      // 检查是否已存在（通过pkg匹配）
+      const existingByPkg = await this.dataManager.getComicSourceByPkg(pkg);
+      if (existingByPkg) {
+        // 图源已存在，执行更新
+        logger.info(TAG, `图源已存在，执行更新: ${sourceName} (pkg: ${pkg})`);
+        return await this.updateSourceFromJSON(jsonContent, Number(existingByPkg.id));
+      }
+
+      // 检查是否已存在（通过名称匹配，向后兼容）
       const existing = await this.findSourceByName(sourceName);
       if (existing) {
         logger.warn(TAG, `图源已存在: ${sourceName}`);
@@ -202,7 +211,7 @@ export class SourceManager {
       }
 
       // 导入到数据库
-      const pkg: string = await this.dataManager.importSourceFromJSON(jsonContent);
+      const importedPkg: string = await this.dataManager.importSourceFromJSON(jsonContent);
       
       // 获取数字 ID
       const sourceRecord = await this.dataManager.getComicSourceByPkg(pkg);
@@ -230,6 +239,48 @@ export class SourceManager {
       };
     } catch (error) {
       logger.error(TAG, '导入图源失败', String(error));
+      return {
+        success: false,
+        error: String(error)
+      };
+    }
+  }
+
+  /**
+   * 更新已存在的图源配置
+   */
+  async updateSourceFromJSON(jsonContent: string, sourceId: number): Promise<ImportResult> {
+    try {
+      const config: ESObject = JSON.parse(jsonContent) as ESObject;
+      const metadata: ESObject = config.metadata as ESObject;
+      const sourceName: string = metadata.name as string;
+      const baseUrl: string = metadata.baseUrl as string || '';
+      const version: string = metadata.version as string || '1.0.0';
+      const description: string = metadata.description as string || '';
+      const language: string = metadata.language as string || 'zh-CN';
+      const sourceType: string = metadata.type as string || 'manga';
+
+      // 更新数据库中的图源配置
+      await this.dataManager.updateComicSource(sourceId, {
+        name: sourceName,
+        baseUrl: baseUrl,
+        version: version,
+        description: description,
+        language: language,
+        type: sourceType,
+        configJson: jsonContent,
+        lastUpdateTime: Date.now()
+      });
+
+      logger.info(TAG, `图源更新成功: ${sourceName} (ID: ${sourceId})`);
+
+      return {
+        success: true,
+        sourceId: sourceId,
+        sourceName: sourceName
+      };
+    } catch (error) {
+      logger.error(TAG, '更新图源失败', String(error));
       return {
         success: false,
         error: String(error)

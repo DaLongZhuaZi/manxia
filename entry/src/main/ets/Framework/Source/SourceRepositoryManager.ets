@@ -8,6 +8,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { Context } from '@kit.AbilityKit';
 import { SourceManager, ImportResult } from './SourceManager';
 import { http } from '@kit.NetworkKit';
+import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'SourceRepositoryManager';
 
@@ -295,14 +296,23 @@ export class SourceRepositoryManager {
 
       // 下载仓库索引文件（超时10秒）
       const httpRequest = http.createHttp();
-      const response = await httpRequest.request(url, {
+      const requestOptions: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
         connectTimeout: 10000,
         readTimeout: 10000,
         header: {
           'Content-Type': 'application/json'
         }
-      });
+      };
+      
+      // 应用代理配置
+      const proxyManager = ProxyManager.getInstance();
+      if (proxyManager.isEnabled()) {
+        requestOptions.usingProxy = true;
+        log('info', '使用代理连接图源仓库');
+      }
+      
+      const response = await httpRequest.request(url, requestOptions);
 
       if (response.responseCode !== 200) {
         throw new Error(`HTTP请求失败: ${response.responseCode}`);
@@ -328,14 +338,18 @@ export class SourceRepositoryManager {
         // 下载图源配置文件（超时5秒）
         const sourceConfigUrl = this.resolveSourceConfigUrl(url, entry.pkg);
         try {
-          const configResponse = await httpRequest.request(sourceConfigUrl, {
+          const configOptions: http.HttpRequestOptions = {
             method: http.RequestMethod.GET,
             connectTimeout: 5000,
             readTimeout: 5000,
             header: {
               'Content-Type': 'application/json'
             }
-          });
+          };
+          if (proxyManager.isEnabled()) {
+            configOptions.usingProxy = true;
+          }
+          const configResponse = await httpRequest.request(sourceConfigUrl, configOptions);
 
           if (configResponse.responseCode !== 200 || !configResponse.result) {
             log('warn', `下载图源配置失败: ${entry.pkg}, code: ${configResponse.responseCode}`);
@@ -358,12 +372,16 @@ export class SourceRepositoryManager {
             
             const iconUrl = this.resolveSourceIconUrl(url, entry.pkg, ext);
             try {
-              const iconResponse = await httpRequest.request(iconUrl, {
+              const iconOptions: http.HttpRequestOptions = {
                 method: http.RequestMethod.GET,
                 connectTimeout: 3000,
                 readTimeout: 3000,
                 expectDataType: http.HttpDataType.ARRAY_BUFFER
-              });
+              };
+              if (proxyManager.isEnabled()) {
+                iconOptions.usingProxy = true;
+              }
+              const iconResponse = await httpRequest.request(iconUrl, iconOptions);
               
               if (iconResponse.responseCode === 200 && iconResponse.result) {
                 const iconInfo: SourceIconInfo = {
@@ -431,32 +449,24 @@ export class SourceRepositoryManager {
         log('info', `导入 ${sourcesToImport.length} 个新图源`);
       }
 
-      // 对于更新的图源，也需要重新导入到数据库
+      // 对于更新的图源，直接更新数据库配置（不删除再导入）
       if (updatedCount > 0) {
-        log('info', `检测到${updatedCount}个图源更新，重新导入到数据库`);
+        log('info', `检测到${updatedCount}个图源更新，更新数据库配置`);
         let reimportedCount = 0;
         for (const source of repositoryData) {
           if (existingIds.has(source.pkg)) {
             reimportedCount++;
-            progressCallback?.onProgress(80 + Math.floor((reimportedCount / updatedCount) * 15), 100, `重新导入图源: ${source.name}`);
+            progressCallback?.onProgress(80 + Math.floor((reimportedCount / updatedCount) * 15), 100, `更新图源: ${source.name}`);
             try {
-              // 先删除旧的图源（如果存在）
-              const existingSources = await this.sourceManager.getAllSources();
-              const existingSource = existingSources.find(s => s.name === source.name);
-              if (existingSource) {
-                await this.sourceManager.deleteSource(existingSource.id);
-                log('info', `删除旧图源: ${source.name}`);
-              }
-              
-              // 重新导入
+              // 直接重新导入（importFromJSON现在会自动检测并更新已存在的图源）
               const result = await this.importSourceFromRepository(source.pkg);
               if (result.success) {
-                log('info', `更新图源已重新导入: ${source.name}`);
+                log('info', `图源已更新: ${source.name}`);
               } else {
-                log('warn', `重新导入图源失败: ${source.name} - ${result.error ?? '未知错误'}`);
+                log('warn', `更新图源失败: ${source.name} - ${result.error ?? '未知错误'}`);
               }
             } catch (error) {
-              log('warn', `重新导入图源异常: ${source.name} - ${String(error)}`);
+              log('warn', `更新图源异常: ${source.name} - ${String(error)}`);
             }
           }
         }
