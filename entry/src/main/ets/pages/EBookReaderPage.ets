@@ -8,6 +8,7 @@
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from '../Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
@@ -53,6 +54,7 @@ struct EBookReaderPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private componentId: string = 'EBookReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private lifecycle = new PageLifecycleManager('EBookReaderPage', { enableDebug: true });
 
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -189,6 +191,7 @@ struct EBookReaderPage {
   }
 
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     // 注销音量键翻页监听
     this.unregisterVolumeKeyListener();
@@ -2229,10 +2232,9 @@ struct EBookReaderPage {
             .fontColor($r('app.color.text_primary'))
             .fontSize(16)
           Blank().layoutWeight(1)
-          Image($r('app.media.ic_arrow_right'))
-            .width(16)
-            .height(16)
-            .fillColor($r('app.color.text_secondary'))
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(16)
+            .fontColor([$r('app.color.text_secondary')])
         }
         .height(44)
         .padding({ left: 16, right: 16 })

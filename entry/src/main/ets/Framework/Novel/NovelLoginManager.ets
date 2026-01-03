@@ -7,19 +7,34 @@
 
 import { logger } from '../../Utils/Logger';
 import { LegadoBookSource, LegadoLoginUiItem } from './LegadoSourceTypes';
-import { getLegadoJsEngine } from './LegadoJsEngine';
+import { getLegadoRhinoEngine } from './LegadoRhinoEngine';
+import { ToastMessage, CookieChange } from './LegadoJsEngine';
+import { getCookieStore } from './LegadoCookieStore';
 import { preferences } from '@kit.ArkData';
+import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'NovelLoginManager';
+
+/**
+ * 登录UI项样式
+ */
+export interface LoginUiItemStyle {
+  flexGrow?: number;
+  flexBasisPercent?: number;
+}
 
 /**
  * 登录UI项
  */
 export interface LoginUiItem {
-  type: 'text' | 'password' | 'button';
+  type: 'text' | 'password' | 'button' | 'checkbox' | 'spinner';
   name: string;
   hint?: string;
   value?: string;
+  /** 按钮点击时执行的JS函数名 */
+  action?: string;
+  /** 样式配置 */
+  style?: LoginUiItemStyle;
 }
 
 /**
@@ -41,9 +56,13 @@ export interface SourceLoginStatus {
   cookies?: Record<string, string>;
 }
 
-// 持久化存储的key前缀
-const COOKIE_STORAGE_PREFIX = 'novel_source_cookie_';
+// 持久化存储的key
 const LOGIN_STATUS_STORAGE_KEY = 'novel_login_status';
+const LOGIN_INFO_STORAGE_KEY = 'novel_login_info';
+const LOGIN_HEADER_STORAGE_KEY = 'novel_login_header';
+const SOURCE_VARIABLE_STORAGE_KEY = 'novel_source_variable';
+const SOURCE_DATA_STORAGE_KEY = 'novel_source_data';
+const LOGIN_FORM_DATA_STORAGE_KEY = 'novel_login_form_data';
 
 /**
  * 小说书源登录管理器
@@ -54,6 +73,14 @@ export class NovelLoginManager {
   private cookies: Map<string, Record<string, string>> = new Map();
   private dataPreferences: preferences.Preferences | null = null;
   private initialized: boolean = false;
+  
+  // 登录信息存储（兼容Legado原版）
+  private loginInfoStore: Map<string, string> = new Map();
+  private loginHeaderStore: Map<string, string> = new Map();
+  private sourceVariableStore: Map<string, string> = new Map();
+  private sourceDataStore: Map<string, string> = new Map();
+  // 登录表单数据存储（用于记住用户输入的账号密码等）
+  private loginFormDataStore: Map<string, Record<string, string>> = new Map();
 
   private constructor() {}
 
@@ -105,6 +132,61 @@ export class NovelLoginManager {
       } else {
         logger.info(TAG, '没有持久化的登录状态数据');
       }
+      
+      // 加载登录信息
+      const loginInfoJson = await this.dataPreferences.get(LOGIN_INFO_STORAGE_KEY, '') as string;
+      if (loginInfoJson) {
+        const loginInfoMap = JSON.parse(loginInfoJson) as Record<string, string>;
+        const keys = Object.keys(loginInfoMap);
+        for (let i = 0; i < keys.length; i++) {
+          this.loginInfoStore.set(keys[i], loginInfoMap[keys[i]]);
+        }
+        logger.info(TAG, `加载了 ${keys.length} 个书源的登录信息`);
+      }
+      
+      // 加载登录头信息
+      const loginHeaderJson = await this.dataPreferences.get(LOGIN_HEADER_STORAGE_KEY, '') as string;
+      if (loginHeaderJson) {
+        const loginHeaderMap = JSON.parse(loginHeaderJson) as Record<string, string>;
+        const keys = Object.keys(loginHeaderMap);
+        for (let i = 0; i < keys.length; i++) {
+          this.loginHeaderStore.set(keys[i], loginHeaderMap[keys[i]]);
+        }
+        logger.info(TAG, `加载了 ${keys.length} 个书源的登录头信息`);
+      }
+      
+      // 加载书源变量
+      const sourceVariableJson = await this.dataPreferences.get(SOURCE_VARIABLE_STORAGE_KEY, '') as string;
+      if (sourceVariableJson) {
+        const sourceVariableMap = JSON.parse(sourceVariableJson) as Record<string, string>;
+        const keys = Object.keys(sourceVariableMap);
+        for (let i = 0; i < keys.length; i++) {
+          this.sourceVariableStore.set(keys[i], sourceVariableMap[keys[i]]);
+        }
+        logger.info(TAG, `加载了 ${keys.length} 个书源变量`);
+      }
+      
+      // 加载书源数据
+      const sourceDataJson = await this.dataPreferences.get(SOURCE_DATA_STORAGE_KEY, '') as string;
+      if (sourceDataJson) {
+        const sourceDataMap = JSON.parse(sourceDataJson) as Record<string, string>;
+        const keys = Object.keys(sourceDataMap);
+        for (let i = 0; i < keys.length; i++) {
+          this.sourceDataStore.set(keys[i], sourceDataMap[keys[i]]);
+        }
+        logger.info(TAG, `加载了 ${keys.length} 个书源数据项`);
+      }
+      
+      // 加载登录表单数据
+      const loginFormDataJson = await this.dataPreferences.get(LOGIN_FORM_DATA_STORAGE_KEY, '') as string;
+      if (loginFormDataJson) {
+        const loginFormDataMap = JSON.parse(loginFormDataJson) as Record<string, Record<string, string>>;
+        const keys = Object.keys(loginFormDataMap);
+        for (let i = 0; i < keys.length; i++) {
+          this.loginFormDataStore.set(keys[i], loginFormDataMap[keys[i]]);
+        }
+        logger.info(TAG, `加载了 ${keys.length} 个书源的登录表单数据`);
+      }
     } catch (error) {
       logger.error(TAG, `加载持久化数据失败: ${String(error)}`);
     }
@@ -113,7 +195,7 @@ export class NovelLoginManager {
   /**
    * 保存持久化数据
    */
-  private async savePersistedData(): Promise<void> {
+  async savePersistedData(): Promise<void> {
     if (!this.dataPreferences) {
       logger.warn(TAG, 'dataPreferences 未初始化，无法保存数据');
       return;
@@ -132,8 +214,43 @@ export class NovelLoginManager {
         };
         statusArray.push(statusWithCookies);
       });
-
       await this.dataPreferences.put(LOGIN_STATUS_STORAGE_KEY, JSON.stringify(statusArray));
+      
+      // 保存登录信息
+      const loginInfoMap: Record<string, string> = {};
+      this.loginInfoStore.forEach((value, key) => {
+        loginInfoMap[key] = value;
+      });
+      await this.dataPreferences.put(LOGIN_INFO_STORAGE_KEY, JSON.stringify(loginInfoMap));
+      
+      // 保存登录头信息
+      const loginHeaderMap: Record<string, string> = {};
+      this.loginHeaderStore.forEach((value, key) => {
+        loginHeaderMap[key] = value;
+      });
+      await this.dataPreferences.put(LOGIN_HEADER_STORAGE_KEY, JSON.stringify(loginHeaderMap));
+      
+      // 保存书源变量
+      const sourceVariableMap: Record<string, string> = {};
+      this.sourceVariableStore.forEach((value, key) => {
+        sourceVariableMap[key] = value;
+      });
+      await this.dataPreferences.put(SOURCE_VARIABLE_STORAGE_KEY, JSON.stringify(sourceVariableMap));
+      
+      // 保存书源数据
+      const sourceDataMap: Record<string, string> = {};
+      this.sourceDataStore.forEach((value, key) => {
+        sourceDataMap[key] = value;
+      });
+      await this.dataPreferences.put(SOURCE_DATA_STORAGE_KEY, JSON.stringify(sourceDataMap));
+      
+      // 保存登录表单数据
+      const loginFormDataMap: Record<string, Record<string, string>> = {};
+      this.loginFormDataStore.forEach((value, key) => {
+        loginFormDataMap[key] = value;
+      });
+      await this.dataPreferences.put(LOGIN_FORM_DATA_STORAGE_KEY, JSON.stringify(loginFormDataMap));
+      
       await this.dataPreferences.flush();
       logger.debug(TAG, `保存了 ${statusArray.length} 个书源的登录状态`);
     } catch (error) {
@@ -165,21 +282,130 @@ export class NovelLoginManager {
       return [
         { type: 'text', name: 'username', hint: '用户名' },
         { type: 'password', name: 'password', hint: '密码' },
-        { type: 'button', name: 'login', hint: '登录' }
+        { type: 'button', name: 'login', hint: '登录', action: 'login(true)' }
       ];
     }
 
     try {
-      const parsed = JSON.parse(source.loginUi) as LegadoLoginUiItem[];
-      return parsed.map((item): LoginUiItem => ({
-        type: item.type as 'text' | 'password' | 'button',
-        name: item.name,
-        hint: item.hint
-      }));
+      // 预处理：将单引号转换为双引号（某些书源的loginUi使用非标准JSON格式）
+      let jsonStr = this.normalizeJsonString(source.loginUi);
+      
+      logger.debug(TAG, `预处理后的loginUi: ${jsonStr.substring(0, 200)}...`);
+      
+      const parsed = JSON.parse(jsonStr) as LegadoLoginUiItem[];
+      return parsed.map((item): LoginUiItem => {
+        const uiItem: LoginUiItem = {
+          type: item.type as 'text' | 'password' | 'button' | 'checkbox' | 'spinner',
+          name: item.name,
+          hint: item.hint,
+          value: item.value,
+          action: item.action
+        };
+        
+        // 转换样式
+        if (item.style) {
+          uiItem.style = {
+            flexGrow: item.style.layout_flexGrow,
+            flexBasisPercent: item.style.layout_flexBasisPercent
+          };
+        }
+        
+        return uiItem;
+      });
     } catch (e) {
       logger.warn(TAG, `解析loginUi失败: ${String(e)}`);
       return [];
     }
+  }
+
+  /**
+   * 规范化JSON字符串（将非标准JSON转换为标准JSON）
+   * 主要处理单引号替换为双引号的问题
+   */
+  private normalizeJsonString(jsonStr: string): string {
+    // 方法：逐字符扫描，智能替换单引号
+    let result = '';
+    let inDoubleQuote = false;
+    let inSingleQuote = false;
+    let escapeNext = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+      
+      if (char === '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+        result += char;
+        continue;
+      }
+      
+      if (char === "'" && !inDoubleQuote) {
+        // 单引号：判断是属性名/值的引号还是字符串内容中的撇号
+        // 如果前一个非空白字符是 : , [ { 或者后一个非空白字符是 : , ] }
+        // 则认为是JSON的引号，需要替换为双引号
+        const beforeTrimmed = jsonStr.substring(0, i).replace(/\s+$/, '');
+        const lastNonSpace = beforeTrimmed.length > 0 ? beforeTrimmed[beforeTrimmed.length - 1] : '';
+        
+        if (!inSingleQuote) {
+          // 开始单引号字符串
+          if (lastNonSpace === ':' || lastNonSpace === ',' || lastNonSpace === '[' || lastNonSpace === '{') {
+            inSingleQuote = true;
+            result += '"';
+            continue;
+          }
+        } else {
+          // 结束单引号字符串
+          // 查看后面的非空白字符
+          let afterTrimmed = jsonStr.substring(i + 1).replace(/^\s+/, '');
+          const nextNonSpace = afterTrimmed.length > 0 ? afterTrimmed[0] : '';
+          
+          if (nextNonSpace === ':' || nextNonSpace === ',' || nextNonSpace === ']' || nextNonSpace === '}') {
+            inSingleQuote = false;
+            result += '"';
+            continue;
+          }
+        }
+        
+        // 其他情况保持单引号（可能是字符串内容中的撇号）
+        result += char;
+        continue;
+      }
+      
+      result += char;
+    }
+    
+    return result;
+  }
+
+  /**
+   * 获取保存的登录表单数据
+   * @param sourceId 书源ID
+   * @returns 保存的表单数据，如果没有则返回空对象
+   */
+  getLoginFormData(sourceId: string): Record<string, string> {
+    return this.loginFormDataStore.get(sourceId) || {};
+  }
+
+  /**
+   * 保存登录表单数据
+   * @param sourceId 书源ID
+   * @param formData 表单数据
+   */
+  async saveLoginFormData(sourceId: string, formData: Record<string, string>): Promise<void> {
+    this.loginFormDataStore.set(sourceId, formData);
+    await this.savePersistedData();
+    logger.debug(TAG, `保存了书源 ${sourceId} 的登录表单数据`);
   }
 
   /**
@@ -210,7 +436,7 @@ export class NovelLoginManager {
    * 执行JS登录
    */
   private async executeJsLogin(source: LegadoBookSource, formData: Record<string, string>): Promise<LoginResult> {
-    const jsEngine = getLegadoJsEngine();
+    const jsEngine = getLegadoRhinoEngine();
     
     // 提取JS代码
     let jsCode = source.loginUrl!;
@@ -267,6 +493,185 @@ export class NovelLoginManager {
   }
 
   /**
+   * 执行按钮action（JS函数调用）
+   * @param source 书源
+   * @param action 要执行的JS函数名，如 "login(true)" 或 "register()"
+   * @param formData 表单数据，会作为result变量传入JS环境
+   */
+  async executeButtonAction(source: LegadoBookSource, action: string, formData: Record<string, string>): Promise<LoginResult> {
+    if (!action) {
+      return { success: false, message: '未指定操作' };
+    }
+
+    try {
+      logger.info(TAG, `执行按钮操作: ${action}, 书源: ${source.bookSourceName}`);
+      
+      const jsEngine = getLegadoRhinoEngine();
+      const sourceId = source.bookSourceUrl;
+      
+      // 设置jsLib（书源的JS库）
+      if (source.jsLib) {
+        jsEngine.setJsLib(source.jsLib);
+      }
+      
+      // 先保存登录信息（用户输入的表单数据）
+      // 这样JS代码中的source.getLoginInfo()可以获取到
+      this.putLoginInfo(sourceId, JSON.stringify(formData));
+      
+      // 构建完整的JS代码
+      // loginUrl中包含了所有登录相关的函数定义
+      // 我们需要先加载这些函数，然后调用action指定的函数
+      let jsCode = '';
+      
+      // 如果有loginUrl，先加载它（包含函数定义）
+      if (source.loginUrl) {
+        let loginUrlCode = source.loginUrl;
+        if (loginUrlCode.startsWith('@js:')) {
+          loginUrlCode = loginUrlCode.substring(4);
+        } else if (loginUrlCode.startsWith('<js>')) {
+          const endIndex = loginUrlCode.lastIndexOf('</js>');
+          loginUrlCode = loginUrlCode.substring(4, endIndex > 0 ? endIndex : undefined);
+        }
+        jsCode = loginUrlCode + '\n';
+      }
+      
+      // 添加action调用
+      jsCode += action;
+      
+      // 构建变量对象，包含登录信息
+      const variables: Record<string, string> = {};
+      const keys = Object.keys(formData);
+      for (let i = 0; i < keys.length; i++) {
+        variables[keys[i]] = formData[keys[i]];
+      }
+      variables['sourceUrl'] = sourceId;
+      
+      // 注入已保存的登录信息和书源变量
+      variables['__loginInfo'] = this.getLoginInfo(sourceId);
+      variables['__loginHeader'] = this.getLoginHeader(sourceId);
+      variables['__sourceVariable'] = this.getSourceVariable(sourceId);
+      
+      // 执行JS，将formData作为result变量传入
+      const result = await jsEngine.execute(jsCode, {
+        baseUrl: sourceId,
+        result: JSON.stringify(formData),
+        variables: variables
+      });
+
+      logger.info(TAG, `按钮操作执行结果: success=${result.success}, result=${result.result?.substring(0, 200)}`);
+
+      // 显示Toast消息（如果有）
+      if (result.toasts && result.toasts.length > 0) {
+        this.showToasts(result.toasts);
+      }
+      
+      // 同步Cookie变化到持久化存储
+      if (result.cookieChanges && result.cookieChanges.length > 0) {
+        await this.syncCookieChanges(result.cookieChanges);
+      }
+
+      if (result.success) {
+        // 检查结果是否包含需要保存的数据
+        this.processJsResult(sourceId, result.result);
+        
+        // 操作成功
+        return { 
+          success: true, 
+          message: result.result || '操作成功'
+        };
+      } else {
+        return { 
+          success: false, 
+          message: result.error || '操作失败' 
+        };
+      }
+    } catch (error) {
+      logger.error(TAG, `执行按钮操作失败: ${String(error)}`);
+      return { success: false, message: String(error) };
+    }
+  }
+
+  /**
+   * 处理JS执行结果，提取需要保存的数据
+   */
+  private processJsResult(sourceId: string, resultStr: string | undefined): void {
+    if (!resultStr) return;
+    
+    try {
+      // 尝试解析为JSON
+      const result = JSON.parse(resultStr) as Record<string, ESObject>;
+      
+      // 检查是否有loginHeader需要保存
+      if (result['loginHeader']) {
+        const header = typeof result['loginHeader'] === 'string' 
+          ? result['loginHeader'] 
+          : JSON.stringify(result['loginHeader']);
+        this.putLoginHeader(sourceId, header);
+        logger.info(TAG, `保存登录头信息: ${sourceId}`);
+      }
+      
+      // 检查是否有cookie需要保存
+      if (result['cookie'] || result['Cookie']) {
+        const cookieStr = (result['cookie'] || result['Cookie']) as string;
+        this.parseCookieString(sourceId, cookieStr);
+        logger.info(TAG, `保存Cookie: ${sourceId}`);
+      }
+      
+      // 检查是否有variable需要保存
+      if (result['variable'] !== undefined) {
+        const variable = typeof result['variable'] === 'string'
+          ? result['variable']
+          : JSON.stringify(result['variable']);
+        this.setSourceVariable(sourceId, variable);
+        logger.info(TAG, `保存书源变量: ${sourceId}`);
+      }
+    } catch (e) {
+      // 不是JSON格式，忽略
+    }
+  }
+
+  /**
+   * 显示Toast消息
+   * @param toasts Toast消息列表
+   */
+  private showToasts(toasts: ToastMessage[]): void {
+    for (const toast of toasts) {
+      try {
+        const duration = toast.type === 'long' ? 3500 : 2000;
+        promptAction.showToast({
+          message: toast.msg,
+          duration: duration
+        });
+        logger.debug(TAG, `显示Toast: ${toast.msg} (${toast.type})`);
+      } catch (e) {
+        logger.warn(TAG, `显示Toast失败: ${String(e)}`);
+      }
+    }
+  }
+  
+  /**
+   * 同步Cookie变化到持久化存储
+   * @param changes Cookie变化列表
+   */
+  private async syncCookieChanges(changes: CookieChange[]): Promise<void> {
+    const cookieStore = getCookieStore();
+    
+    for (const change of changes) {
+      try {
+        if (change.action === 'set' && change.value) {
+          await cookieStore.setCookie(change.url, change.value);
+          logger.debug(TAG, `Cookie已保存: ${change.url}`);
+        } else if (change.action === 'remove') {
+          await cookieStore.removeCookie(change.url);
+          logger.debug(TAG, `Cookie已删除: ${change.url}`);
+        }
+      } catch (e) {
+        logger.warn(TAG, `同步Cookie失败: ${String(e)}`);
+      }
+    }
+  }
+
+  /**
    * 检查登录状态
    */
   async checkLoginStatus(source: LegadoBookSource): Promise<boolean> {
@@ -275,7 +680,7 @@ export class NovelLoginManager {
     }
 
     try {
-      const jsEngine = getLegadoJsEngine();
+      const jsEngine = getLegadoRhinoEngine();
       const result = await jsEngine.execute(source.loginCheckJs, {
         variables: this.getVariables(source.bookSourceUrl)
       });
@@ -374,13 +779,163 @@ export class NovelLoginManager {
     return result;
   }
 
+  // ========== 登录信息存储方法（兼容Legado原版） ==========
+
+  /**
+   * 保存登录信息（对应Legado的putLoginInfo）
+   * @param sourceId 书源ID
+   * @param info 登录信息JSON字符串
+   */
+  putLoginInfo(sourceId: string, info: string): boolean {
+    try {
+      this.loginInfoStore.set(sourceId, info);
+      logger.info(TAG, `保存登录信息: sourceId=${sourceId}`);
+      this.savePersistedData();
+      return true;
+    } catch (error) {
+      logger.error(TAG, `保存登录信息失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 获取登录信息（对应Legado的getLoginInfo）
+   */
+  getLoginInfo(sourceId: string): string {
+    return this.loginInfoStore.get(sourceId) || '';
+  }
+
+  /**
+   * 获取登录信息Map（对应Legado的getLoginInfoMap）
+   */
+  getLoginInfoMap(sourceId: string): Record<string, string> {
+    const info = this.getLoginInfo(sourceId);
+    if (!info) return {};
+    try {
+      return JSON.parse(info) as Record<string, string>;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /**
+   * 删除登录信息
+   */
+  removeLoginInfo(sourceId: string): void {
+    this.loginInfoStore.delete(sourceId);
+    this.savePersistedData();
+  }
+
+  /**
+   * 保存登录头信息（对应Legado的putLoginHeader）
+   */
+  putLoginHeader(sourceId: string, header: string): void {
+    this.loginHeaderStore.set(sourceId, header);
+    // 如果header中包含Cookie，也保存到cookies中
+    try {
+      const headerMap = JSON.parse(header) as Record<string, string>;
+      const cookie = headerMap['Cookie'] || headerMap['cookie'];
+      if (cookie) {
+        this.parseCookieString(sourceId, cookie);
+      }
+    } catch (e) {
+      // ignore
+    }
+    this.savePersistedData();
+  }
+
+  /**
+   * 获取登录头信息（对应Legado的getLoginHeader）
+   */
+  getLoginHeader(sourceId: string): string {
+    return this.loginHeaderStore.get(sourceId) || '';
+  }
+
+  /**
+   * 获取登录头信息Map
+   */
+  getLoginHeaderMap(sourceId: string): Record<string, string> {
+    const header = this.getLoginHeader(sourceId);
+    if (!header) return {};
+    try {
+      return JSON.parse(header) as Record<string, string>;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  /**
+   * 删除登录头信息
+   */
+  removeLoginHeader(sourceId: string): void {
+    this.loginHeaderStore.delete(sourceId);
+    this.cookies.delete(sourceId);
+    this.savePersistedData();
+  }
+
+  /**
+   * 设置书源变量（对应Legado的source.setVariable）
+   */
+  setSourceVariable(sourceId: string, variable: string | null): void {
+    if (variable !== null) {
+      this.sourceVariableStore.set(sourceId, variable);
+    } else {
+      this.sourceVariableStore.delete(sourceId);
+    }
+    this.savePersistedData();
+  }
+
+  /**
+   * 获取书源变量（对应Legado的source.getVariable）
+   */
+  getSourceVariable(sourceId: string): string {
+    return this.sourceVariableStore.get(sourceId) || '';
+  }
+
+  /**
+   * 保存数据（对应Legado的source.put）
+   */
+  putSourceData(sourceId: string, key: string, value: string): string {
+    this.sourceDataStore.set(`${sourceId}_${key}`, value);
+    this.savePersistedData();
+    return value;
+  }
+
+  /**
+   * 获取数据（对应Legado的source.get）
+   */
+  getSourceData(sourceId: string, key: string): string {
+    return this.sourceDataStore.get(`${sourceId}_${key}`) || '';
+  }
+
+  /**
+   * 解析Cookie字符串并保存
+   */
+  private parseCookieString(sourceId: string, cookieStr: string): void {
+    const cookies: Record<string, string> = {};
+    const parts = cookieStr.split(';');
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i].trim();
+      const eqIndex = part.indexOf('=');
+      if (eqIndex > 0) {
+        const key = part.substring(0, eqIndex).trim();
+        const value = part.substring(eqIndex + 1).trim();
+        cookies[key] = value;
+      }
+    }
+    this.setCookies(sourceId, cookies);
+  }
+
   /**
    * 登出
    */
   logout(sourceId: string): void {
     this.loginStatus.delete(sourceId);
     this.cookies.delete(sourceId);
+    this.loginInfoStore.delete(sourceId);
+    this.loginHeaderStore.delete(sourceId);
     logger.info(TAG, `书源 ${sourceId} 已登出`);
+    this.savePersistedData();
   }
 
   /**

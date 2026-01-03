@@ -11,6 +11,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DataService } from '../Framework/Services/DataService';
 import { ReadHistory, DataManager, ComicInfo } from '../Framework/Data/DataManager';
 import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS } from '../Framework/Managers/ReadingAnalyticsManager';
@@ -274,7 +275,10 @@ struct ReadingAnalyticsPage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('ReadingAnalyticsPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 移除设备变化监听器
@@ -2711,10 +2715,9 @@ struct ReadingAnalyticsPage {
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         
-        Image($r('app.media.ic_arrow_right'))
-          .width(16)
-          .height(16)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        SymbolGlyph($r('sys.symbol.arrow_right'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           .margin({ left: 4 })
       }
       .width('100%')

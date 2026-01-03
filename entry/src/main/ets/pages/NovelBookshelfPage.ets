@@ -9,6 +9,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -102,6 +103,7 @@ export struct NovelBookshelfPage {
   @State recentBooks: NovelBook[] = [];
   @State browseHistory: BrowseHistoryItem[] = [];
   @State isLoading: boolean = true;
+  @State isRefreshing: boolean = false;
   @State currentTab: number = 0;
   @State bookGroups: string[] = [];
   @State selectedGroup: string = '';
@@ -132,7 +134,10 @@ export struct NovelBookshelfPage {
     this.settingsManager.addBrowseHistoryListener(this.browseHistoryListener);
   }
 
+  private lifecycle = new PageLifecycleManager('NovelBookshelfPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 移除历史浏览监听器
@@ -143,7 +148,10 @@ export struct NovelBookshelfPage {
   }
 
   async loadBooks(): Promise<void> {
-    this.isLoading = true;
+    logger.info(TAG, `开始加载书籍列表`);
+    if (!this.isRefreshing) {
+      this.isLoading = true;
+    }
     try {
       // 加载设置
       await this.settingsManager.loadSettings();
@@ -151,24 +159,39 @@ export struct NovelBookshelfPage {
       
       // 加载分组
       this.bookGroups = await this.dataManager.getBookGroups();
+      logger.info(TAG, `加载分组: ${this.bookGroups.length}个`);
       
       // 根据分组和排序加载书籍
       if (this.selectedGroup) {
         this.favoriteBooks = await this.dataManager.getBooksByGroup(this.selectedGroup);
+        logger.info(TAG, `加载分组书籍: ${this.selectedGroup}, 数量: ${this.favoriteBooks.length}`);
       } else {
         this.favoriteBooks = await this.dataManager.getFavoriteBooksSorted(
           this.bookshelfSettings.sortType,
           this.bookshelfSettings.sortAscending
         );
+        logger.info(TAG, `加载收藏书籍: 数量: ${this.favoriteBooks.length}, 排序: ${this.bookshelfSettings.sortType}`);
       }
       this.recentBooks = await this.dataManager.getRecentBooks(20);
+      logger.info(TAG, `加载最近阅读: ${this.recentBooks.length}本`);
       
       // 加载历史浏览记录
       this.browseHistory = this.settingsManager.getBrowseHistory();
+      logger.info(TAG, `加载浏览历史: ${this.browseHistory.length}条`);
     } catch (error) {
       logger.error(TAG, `加载书籍失败: ${String(error)}`);
     }
     this.isLoading = false;
+    this.isRefreshing = false;
+  }
+  
+  /**
+   * 下拉刷新
+   */
+  async onRefresh(): Promise<void> {
+    logger.info(TAG, `下拉刷新书籍列表`);
+    this.isRefreshing = true;
+    await this.loadBooks();
   }
 
   /**
@@ -348,8 +371,10 @@ export struct NovelBookshelfPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
-        // 内容层：预留标题栏高度
+        // 内容层
         Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
           
           // Tab切换
           this.buildTabs()
@@ -363,7 +388,6 @@ export struct NovelBookshelfPage {
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
       }
       .width('100%')
       .height('100%')
@@ -648,62 +672,66 @@ export struct NovelBookshelfPage {
 
   @Builder
   buildBrowseHistoryList() {
-    if (this.browseHistory.length === 0) {
-      Column() {
-        Text('暂无浏览记录')
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        
-        Text('进入小说详情页即可记录')
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-          .margin({ top: 8 })
-        
-        Button('去搜索小说')
-          .fontSize(14)
-          .fontColor('#FFFFFF')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .borderRadius(20)
-          .padding({ left: 24, right: 24, top: 10, bottom: 10 })
-          .margin({ top: 24 })
-          .onClick(() => this.goToSearch())
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
-      Column() {
-        // 清空按钮
-        Row() {
-          Blank()
-          Text('清空历史')
+    Refresh({ refreshing: $$this.isRefreshing }) {
+      if (this.browseHistory.length === 0) {
+        Column() {
+          Text('暂无浏览记录')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          
+          Text('进入小说详情页即可记录')
             .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .onClick(() => this.clearBrowseHistory())
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .margin({ top: 8 })
+          
+          Button('去搜索小说')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .borderRadius(20)
+            .padding({ left: 24, right: 24, top: 10, bottom: 10 })
+            .margin({ top: 24 })
+            .onClick(() => this.goToSearch())
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-        
-        List() {
-          ForEach(this.browseHistory, (item: BrowseHistoryItem) => {
-            ListItem() {
-              this.buildBrowseHistoryItem(item)
-            }
-            .swipeAction({
-              end: {
-                builder: () => {
-                  this.buildDeleteButton(item)
-                }
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Column() {
+          // 清空按钮
+          Row() {
+            Blank()
+            Text('清空历史')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .onClick(() => this.clearBrowseHistory())
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          
+          List() {
+            ForEach(this.browseHistory, (item: BrowseHistoryItem) => {
+              ListItem() {
+                this.buildBrowseHistoryItem(item)
               }
-            })
-          }, (item: BrowseHistoryItem) => `${item.sourceId}_${item.bookUrl}`)
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.buildDeleteButton(item)
+                  }
+                }
+              })
+            }, (item: BrowseHistoryItem) => `${item.sourceId}_${item.bookUrl}`)
+          }
+          .width('100%')
+          .layoutWeight(1)
         }
         .width('100%')
-        .layoutWeight(1)
       }
-      .width('100%')
-      .layoutWeight(1)
     }
+    .onRefreshing(() => this.onRefresh())
+    .width('100%')
+    .layoutWeight(1)
   }
 
   @Builder
@@ -810,36 +838,40 @@ export struct NovelBookshelfPage {
 
   @Builder
   buildBookList(books: NovelBook[], emptyText: string) {
-    if (books.length === 0) {
-      Column() {
-        Text(emptyText)
-          .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-        
-        Button('去搜索小说')
-          .fontSize(14)
-          .fontColor('#FFFFFF')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .borderRadius(20)
-          .padding({ left: 24, right: 24, top: 10, bottom: 10 })
-          .margin({ top: 24 })
-          .onClick(() => this.goToSearch())
+    Refresh({ refreshing: $$this.isRefreshing }) {
+      if (books.length === 0) {
+        Column() {
+          Text(emptyText)
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          
+          Button('去搜索小说')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .borderRadius(20)
+            .padding({ left: 24, right: 24, top: 10, bottom: 10 })
+            .margin({ top: 24 })
+            .onClick(() => this.goToSearch())
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List() {
+          ForEach(books, (book: NovelBook) => {
+            ListItem() {
+              this.buildBookItem(book)
+            }
+          })
+        }
+        .width('100%')
+        .padding({ top: 8 })
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
-      List() {
-        ForEach(books, (book: NovelBook) => {
-          ListItem() {
-            this.buildBookItem(book)
-          }
-        })
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .padding({ top: 8 })
     }
+    .onRefreshing(() => this.onRefresh())
+    .width('100%')
+    .layoutWeight(1)
   }
 
   @Builder

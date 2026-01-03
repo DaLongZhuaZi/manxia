@@ -5,6 +5,7 @@
 import { logger } from '../Utils/Logger';
 import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -165,8 +166,11 @@ export struct ThemeSettingsPage {
     this.availablePrimaryColors = colorsInit;
   }
 
+  private lifecycle = new PageLifecycleManager('ThemeSettingsPage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(TAG);
     
     // 移除设备变化监听器

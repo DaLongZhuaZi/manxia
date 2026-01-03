@@ -9,6 +9,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo } from '../Framework/Managers/DeviceAdaptationManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
@@ -142,7 +143,10 @@ export struct OnlineEBookDetailPage {
     this.deviceAdaptationManager.addListener(this.deviceOrientationListener);
   }
 
+  private lifecycle = new PageLifecycleManager('OnlineEBookDetailPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     if (this.deviceOrientationListener) {
       this.deviceAdaptationManager.removeListener(this.deviceOrientationListener);

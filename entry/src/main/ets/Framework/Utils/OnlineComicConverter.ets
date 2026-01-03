@@ -26,8 +26,8 @@ export class OnlineComicConverter {
   public static convertToOnlineComicInfo(record: DatabaseRecord): OnlineComicInfo {
     const obj: DatabaseObject = record as DatabaseObject;
     
-    // [调试] 输出原始数据
-    logger.debug(TAG, `📋 [DB→OnlineComicInfo] 原始记录: id="${obj.id}", externalId="${obj.externalId}", title="${obj.title}"`);
+    // [调试] 输出原始数据 - 仅在出错时启用
+    // logger.debug(TAG, `📋 [DB→OnlineComicInfo] 原始记录: id="${obj.id}", externalId="${obj.externalId}", title="${obj.title}"`);
     
     const info: OnlineComicInfo = {
       id: String(obj.id || ''),
@@ -44,10 +44,11 @@ export class OnlineComicConverter {
       createTime: Number(obj.createTime) || 0,
       updateTime: Number(obj.updateTime) || 0,
       sourceName: String(obj.sourceName || ''),
-      sourcePkg: String(obj.sourcePkg || '')
+      sourcePkg: String(obj.sourcePkg || ''),
+      isNSFW: Number(obj.isNSFW) || 0
     };
     
-    logger.debug(TAG, `  ✅ [DB→OnlineComicInfo] 转换完成: id="${info.id}", externalId="${info.externalId}"`);
+    // logger.debug(TAG, `  ✅ [DB→OnlineComicInfo] 转换完成: id="${info.id}", externalId="${info.externalId}"`);
     
     return info;
   }
@@ -60,17 +61,17 @@ export class OnlineComicConverter {
   public static convertToOnlineChapterInfo(record: DatabaseRecord): OnlineChapterInfo {
     const obj: DatabaseObject = record as DatabaseObject;
     
-    // [调试] 输出原始数据 - 重点关注 externalId
-    const rawId = obj.id;
-    const rawComicId = obj.comicId;
+    // [调试] 输出原始数据 - 仅在出错时启用
+    // const rawId = obj.id;
+    // const rawComicId = obj.comicId;
     const rawExternalId = obj.externalId;
-    const rawTitle = obj.title;
+    // const rawTitle = obj.title;
     
-    logger.debug(TAG, `📋 [DB→OnlineChapterInfo] 原始记录详细信息:`);
-    logger.debug(TAG, `  - id: type=${typeof rawId}, value="${rawId}"`);
-    logger.debug(TAG, `  - comicId: type=${typeof rawComicId}, value="${rawComicId}"`);
-    logger.debug(TAG, `  - externalId: type=${typeof rawExternalId}, value="${rawExternalId}", isNull=${rawExternalId === null}, isUndefined=${rawExternalId === undefined}`);
-    logger.debug(TAG, `  - title: type=${typeof rawTitle}, value="${rawTitle}"`);
+    // logger.debug(TAG, `📋 [DB→OnlineChapterInfo] 原始记录详细信息:`);
+    // logger.debug(TAG, `  - id: type=${typeof rawId}, value="${rawId}"`);
+    // logger.debug(TAG, `  - comicId: type=${typeof rawComicId}, value="${rawComicId}"`);
+    // logger.debug(TAG, `  - externalId: type=${typeof rawExternalId}, value="${rawExternalId}", isNull=${rawExternalId === null}, isUndefined=${rawExternalId === undefined}`);
+    // logger.debug(TAG, `  - title: type=${typeof rawTitle}, value="${rawTitle}"`);
     
     // 严格的字符串转换，确保 externalId 不会丢失
     const info: OnlineChapterInfo = {
@@ -90,11 +91,11 @@ export class OnlineComicConverter {
       index: Number(obj.index) || Number(obj.chapterNumber) || 0
     };
     
-    // [调试] 输出转换后的数据
-    logger.debug(TAG, `  ✅ [DB→OnlineChapterInfo] 转换完成:`);
-    logger.debug(TAG, `  - id="${info.id}"`);
-    logger.debug(TAG, `  - externalId="${info.externalId}" (长度: ${info.externalId.length})`);
-    logger.debug(TAG, `  - title="${info.title}"`);
+    // [调试] 输出转换后的数据 - 仅在出错时启用
+    // logger.debug(TAG, `  ✅ [DB→OnlineChapterInfo] 转换完成:`);
+    // logger.debug(TAG, `  - id="${info.id}"`);
+    // logger.debug(TAG, `  - externalId="${info.externalId}" (长度: ${info.externalId.length})`);
+    // logger.debug(TAG, `  - title="${info.title}"`);
     
     // [验证] 如果 externalId 为空，发出警告
     if (!info.externalId || info.externalId === 'undefined' || info.externalId === 'null') {
@@ -133,19 +134,27 @@ export class OnlineComicConverter {
    * @returns OnlineChapterInfo 数组
    */
   public static convertToOnlineChapterInfoArray(records: DatabaseRecord[]): OnlineChapterInfo[] {
-    logger.info(TAG, `开始批量转换 ${records.length} 个在线章节记录`);
+    // 简化日志：仅在有错误时输出详细信息
+    // logger.info(TAG, `开始批量转换 ${records.length} 个在线章节记录`);
     
     const chapters: OnlineChapterInfo[] = [];
+    let errorCount = 0;
+    
     for (let i = 0; i < records.length; i++) {
       try {
         const chapter = OnlineComicConverter.convertToOnlineChapterInfo(records[i]);
         chapters.push(chapter);
       } catch (error) {
+        errorCount++;
         logger.error(TAG, `转换第 ${i + 1} 个章节记录失败: ${error}`);
       }
     }
     
-    logger.info(TAG, `批量转换完成，成功转换 ${chapters.length}/${records.length} 个章节`);
+    // 仅在有错误时输出详细日志
+    if (errorCount > 0) {
+      logger.warn(TAG, `批量转换完成，成功 ${chapters.length}/${records.length} 个章节，失败 ${errorCount} 个`);
+    }
+    // logger.info(TAG, `批量转换完成，成功转换 ${chapters.length}/${records.length} 个章节`);
     
     return chapters;
   }

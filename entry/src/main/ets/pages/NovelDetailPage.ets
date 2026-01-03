@@ -7,8 +7,9 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { curves, LengthMetrics, promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
@@ -20,6 +21,11 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
+import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS } from '../Models/TextReaderModels';
+import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 
 const TAG = 'NovelDetailPage';
 
@@ -52,6 +58,13 @@ export struct NovelDetailPage {
   @State isSearchingSource: boolean = false;
   @State lastReadChapterIndex: number = -1; // 上次阅读的章节索引，-1表示未阅读
   @State lastReadChapterTitle: string = ''; // 上次阅读的章节标题
+  @State showNovelSettingsPanel: boolean = false; // 显示小说设置面板
+  @State novelSettings: TextReaderSettings = DEFAULT_TEXT_READER_SETTINGS; // 小说阅读设置
+  
+  // 设置面板动画状态
+  @State settingsPanelOpacity: number = 0;
+  @State settingsPanelScale: number = 0.95;
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private sourceId: string = '';
   private bookUrl: string = '';
   private bookId: string = ''; // 用于获取阅读进度
@@ -70,7 +83,10 @@ export struct NovelDetailPage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('NovelDetailPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -101,6 +117,22 @@ export struct NovelDetailPage {
         // 获取章节列表
         this.chapters = await this.sourceManager.getChapterList(this.sourceId, this.book);
         logger.info(TAG, `加载完成: ${this.book.name}, ${this.chapters.length}章`);
+        
+        // 检查SFW模式
+        const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
+        if (sfwEnabled && this.book.isNSFW) {
+          logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
+          promptAction.showToast({
+            message: 'SFW模式已启用，无法查看NSFW内容',
+            duration: 2000
+          });
+          // 返回上一页
+          if (this.pathStack) {
+            this.pathStack.pop();
+          }
+          this.isLoading = false;
+          return;
+        }
         
         // 检查收藏状态
         await this.checkFavoriteStatus();
@@ -220,6 +252,8 @@ export struct NovelDetailPage {
         // 内容层：预留标题栏高度
         Scroll() {
           Column() {
+            // 标题栏占位
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
             
             if (this.isLoading) {
               this.buildLoading()
@@ -243,7 +277,6 @@ export struct NovelDetailPage {
         .width('100%')
         .height('100%')
         .align(Alignment.TopStart)
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
         
         // 章节列表面板
         Column() {
@@ -304,6 +337,45 @@ export struct NovelDetailPage {
         .translate({ y: this.showDownloadPanel ? 0 : '100%' })
         .animation({ duration: 250, curve: Curve.EaseOut })
         .hitTestBehavior(this.showDownloadPanel ? HitTestMode.Default : HitTestMode.None)
+        
+        // 小说设置面板
+        if (this.showNovelSettingsPanel) {
+          Stack() {
+            // 遮罩
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('rgba(0,0,0,0.5)')
+              .opacity(this.settingsPanelOpacity)
+              .onClick(() => {
+                this.hideNovelSettingsPanelWithAnimation();
+              })
+            
+            // 设置面板
+            Column() {
+              TextReaderSettingsPanel({
+                settings: this.novelSettings,
+                onClose: () => {
+                  this.hideNovelSettingsPanelWithAnimation();
+                },
+                onSettingsChange: (newSettings: TextReaderSettings) => {
+                  this.saveNovelSettings(newSettings);
+                }
+              })
+            }
+            .width('95%')
+            .height('80%')
+            .constraintSize({ maxWidth: 450, minWidth: 320 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+            .borderRadius(16)
+            .opacity(this.settingsPanelOpacity)
+            .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
+            .clip(true)
+          }
+          .width('100%')
+          .height('100%')
+          .alignContent(Alignment.Center)
+        }
       }
       .width('100%')
       .height('100%')
@@ -570,14 +642,13 @@ export struct NovelDetailPage {
       }
       .width('100%')
       
-      // 次要操作按钮（换源、下载）
+      // 次要操作按钮（换源、下载、设置）
       Row() {
         // 换源按钮
         Column() {
-          Image($r('app.media.ic_refresh'))
-            .width(20)
-            .height(20)
-            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           Text('换源')
             .fontSize(12)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -596,10 +667,9 @@ export struct NovelDetailPage {
                 .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
           } else {
-            Image($r('app.media.ic_download'))
-              .width(20)
-              .height(20)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+            SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           }
           Text(this.isDownloading ? `${Math.round(this.downloadProgress)}%` : '缓存')
             .fontSize(12)
@@ -612,6 +682,21 @@ export struct NovelDetailPage {
             this.showDownloadOptions();
           }
         })
+        
+        // 小说设置按钮（仅在已收藏时显示）
+        if (this.isFavorite) {
+          Column() {
+            SymbolGlyph($r('sys.symbol.sun_max'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+            Text('设置')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .margin({ top: 4 })
+          }
+          .layoutWeight(1)
+          .onClick(() => this.showNovelSettings())
+        }
       }
       .width('100%')
       .margin({ top: 16 })
@@ -715,9 +800,14 @@ export struct NovelDetailPage {
   }
 
   async toggleFavorite(): Promise<void> {
-    if (!this.book) return;
+    logger.info(TAG, `toggleFavorite 被调用: isFavorite=${this.isFavorite}, book=${this.book?.name}`);
+    if (!this.book) {
+      logger.warn(TAG, 'toggleFavorite: book 为空，无法操作');
+      return;
+    }
     
     this.isFavorite = !this.isFavorite;
+    logger.info(TAG, `切换收藏状态: ${this.isFavorite ? '添加到书架' : '从书架移除'}`);
     
     const bookId = `${this.sourceId}_${encodeURIComponent(this.bookUrl)}`;
     let coverLocalPath: string | undefined = undefined;
@@ -764,7 +854,14 @@ export struct NovelDetailPage {
       updateDbTime: Date.now()
     };
     
-    await this.dataManager.saveBook(novelBook);
+    logger.info(TAG, `准备保存书籍: id=${bookId}, name=${this.book.name}, isFavorite=${this.isFavorite}`);
+    try {
+      await this.dataManager.saveBook(novelBook);
+      logger.info(TAG, `书籍保存成功: ${this.book.name}`);
+    } catch (error) {
+      logger.error(TAG, `书籍保存失败: ${String(error)}`);
+      throw error as Error;
+    }
     
     if (this.isFavorite) {
       promptAction.showToast({ message: coverLocalPath ? '已加入书架（已生成封面）' : '已加入书架' });
@@ -975,6 +1072,111 @@ export struct NovelDetailPage {
     return count;
   }
 
+  /**
+   * 显示小说设置面板（带动画）
+   */
+  private showNovelSettingsPanelWithAnimation(): void {
+    this.showNovelSettingsPanel = true;
+    animateTo({
+      duration: 250,
+      curve: curves.springMotion(0.5, 0.8)
+    }, () => {
+      this.settingsPanelOpacity = 1;
+      this.settingsPanelScale = 1;
+    });
+  }
+  
+  /**
+   * 隐藏小说设置面板（带动画）
+   */
+  private hideNovelSettingsPanelWithAnimation(): void {
+    animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.settingsPanelOpacity = 0;
+      this.settingsPanelScale = 0.95;
+    });
+    setTimeout(() => {
+      this.showNovelSettingsPanel = false;
+    }, 200);
+  }
+
+  /**
+   * 加载小说设置
+   */
+  async showNovelSettings(): Promise<void> {
+    // 加载当前书籍的设置
+    await this.loadNovelSettings();
+    // 使用带动画的方法显示面板
+    this.showNovelSettingsPanelWithAnimation();
+  }
+
+  /**
+   * 加载小说设置（优先书籍专属，否则全局）
+   */
+  async loadNovelSettings(): Promise<void> {
+    try {
+      let bookSettings: TextReaderSettings | undefined = undefined;
+      
+      if (this.bookId) {
+        const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
+        try {
+          bookSettings = this.settingsManager.getJSON<TextReaderSettings>(settingsKey, DEFAULT_TEXT_READER_SETTINGS);
+          // 检查是否真的有书籍专属设置（通过检查key是否存在）
+          const hasBookSettings = this.settingsManager.getString(settingsKey, '');
+          if (!hasBookSettings) {
+            bookSettings = undefined;
+          }
+        } catch (e) {
+          bookSettings = undefined;
+        }
+      }
+      
+      if (bookSettings) {
+        this.novelSettings = bookSettings;
+        logger.info(TAG, `加载书籍专属设置: ${this.bookId}`);
+      } else {
+        // 使用全局设置
+        const globalSettings = this.settingsManager.getJSON<TextReaderSettings>(
+          SettingKeys.NOVEL_READER_SETTINGS, 
+          DEFAULT_TEXT_READER_SETTINGS
+        );
+        this.novelSettings = globalSettings;
+        logger.info(TAG, `使用全局小说阅读器设置`);
+      }
+    } catch (error) {
+      logger.error(TAG, `加载小说设置失败: ${String(error)}`);
+      this.novelSettings = DEFAULT_TEXT_READER_SETTINGS;
+    }
+  }
+
+  /**
+   * 保存小说设置
+   */
+  async saveNovelSettings(settings: TextReaderSettings): Promise<void> {
+    try {
+      // 保存为全局设置
+      await this.settingsManager.setJSON<TextReaderSettings>(
+        SettingKeys.NOVEL_READER_SETTINGS, 
+        settings
+      );
+      
+      // 同时保存为书籍专属设置
+      if (this.bookId) {
+        const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
+        await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, settings);
+        logger.info(TAG, `保存书籍专属设置: ${this.bookId}`);
+      }
+      
+      this.novelSettings = settings;
+      promptAction.showToast({ message: '设置已保存' });
+    } catch (error) {
+      logger.error(TAG, `保存小说设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存设置失败' });
+    }
+  }
+
   @Builder
   buildDownloadPanel() {
     Column() {
@@ -987,10 +1189,9 @@ export struct NovelDetailPage {
         
         Blank()
         
-        Image($r('app.media.ic_close'))
-          .width(24)
-          .height(24)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           .onClick(() => {
             this.showDownloadPanel = false;
           })
@@ -1143,10 +1344,9 @@ export struct NovelDetailPage {
         
         Blank()
         
-        Image($r('app.media.ic_close'))
-          .width(24)
-          .height(24)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           .onClick(() => {
             this.showChapterPanel = false;
           })
@@ -1228,10 +1428,9 @@ export struct NovelDetailPage {
         
         Blank()
         
-        Image($r('app.media.ic_close'))
-          .width(24)
-          .height(24)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           .onClick(() => {
             this.showChangeSourcePanel = false;
           })

@@ -21,12 +21,14 @@ import {
   TextReaderSettings, 
   DEFAULT_TEXT_READER_SETTINGS,
   TextChapter,
-  BackgroundType
+  BackgroundType,
+  PageMargins
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { curves } from '@kit.ArkUI';
 import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition } from '../components/BookTransitionOverlay';
@@ -37,13 +39,14 @@ const TAG = 'NovelReaderPage';
 export struct NovelReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  private lifecycle = new PageLifecycleManager('NovelReaderPage', { enableDebug: true });
   private componentId: string = 'NovelReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
-  
+
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
-  
+
   // 内容状态
   @State content: string = '';
   @State chapterTitle: string = '';
@@ -53,22 +56,22 @@ export struct NovelReaderPage {
   @State totalChapters: number = 0;
   @State currentPageIndex: number = 0;
   @State chapters: TextChapter[] = [];
-  
+
   // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
   @State toolbarOpacity: number = 0.0;
   @State showSettingsPanel: boolean = false;
   @State showChapterList: boolean = false;
-  
+
   // 动画状态
   @State settingsPanelOpacity: number = 0;
   @State settingsPanelScale: number = 0.95;
   @State chapterListOpacity: number = 0;
-  
+
   // 章节列表滚动控制器
   private chapterListScroller: Scroller = new Scroller();
-  
+
   private sourceId: string = '';
   private bookUrl: string = '';
   private bookName: string = '';
@@ -95,14 +98,15 @@ export struct NovelReaderPage {
   }
 
   aboutToDisappear(): void {
-    // 清理主题感知
+    logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     // 页面退出时保存阅读进度
     this.saveReadProgress();
     // 恢复正常显示模式
     this.restoreNormalMode();
   }
-  
+
   /**
    * 设置完全沉浸式模式
    */
@@ -115,7 +119,7 @@ export struct NovelReaderPage {
         logger.error(TAG, '无法获取UIContext，设置全屏模式失败');
         return;
       }
-      
+
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       logger.info(TAG, '设置完全沉浸式阅读模式');
     } catch (error) {
@@ -135,24 +139,24 @@ export struct NovelReaderPage {
         logger.error(TAG, '无法获取UIContext，恢复正常模式失败');
         return;
       }
-      
+
       WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.uiContext);
       logger.info(TAG, '恢复默认显示模式');
     } catch (error) {
       logger.error(TAG, `恢复正常模式失败: ${String(error)}`);
     }
   }
-  
+
   /**
    * 关闭阅读器（带动画）
    */
   private async closeReader(): Promise<void> {
     // 先保存阅读进度
     this.saveReadProgress();
-    
+
     // 获取封面组件ID（用于关闭动画）
     const coverComponentId = `novel_cover_${this.bookId}`;
-    
+
     try {
       // 触发关闭过渡动画
       logger.info(TAG, `触发关闭过渡动画，封面组件ID: ${coverComponentId}`);
@@ -170,7 +174,7 @@ export struct NovelReaderPage {
       this.pathStack.pop();
     }
   }
-  
+
   /**
    * 切换工具栏显示/隐藏
    */
@@ -181,7 +185,7 @@ export struct NovelReaderPage {
       this.showToolbarWithAnimation();
     }
   }
-  
+
   /**
    * 显示工具栏（带动画）
    */
@@ -195,7 +199,7 @@ export struct NovelReaderPage {
       this.toolbarOpacity = 1.0;
     });
   }
-  
+
   /**
    * 隐藏工具栏（带动画）
    */
@@ -211,7 +215,7 @@ export struct NovelReaderPage {
       this.showBottomToolbar = false;
     }, 200);
   }
-  
+
   /**
    * 显示章节列表（带动画）
    */
@@ -228,7 +232,7 @@ export struct NovelReaderPage {
       this.chapterListScroller.scrollToIndex(this.currentChapterIndex, true, ScrollAlign.CENTER);
     }, 300);
   }
-  
+
   /**
    * 隐藏章节列表（带动画）
    */
@@ -243,7 +247,7 @@ export struct NovelReaderPage {
       this.showChapterList = false;
     }, 200);
   }
-  
+
   /**
    * 显示设置面板（带动画）
    */
@@ -257,7 +261,7 @@ export struct NovelReaderPage {
       this.settingsPanelScale = 1;
     });
   }
-  
+
   /**
    * 隐藏设置面板（带动画）
    */
@@ -276,10 +280,43 @@ export struct NovelReaderPage {
 
   async loadSettings(): Promise<void> {
     try {
-      // 从设置管理器加载小说阅读器设置
-      const savedSettings = this.settingsManager.getJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, DEFAULT_TEXT_READER_SETTINGS);
-      if (savedSettings) {
-        this.settings = savedSettings;
+      // 优先加载书籍专属设置，如果不存在则使用全局设置
+      let bookSettings: TextReaderSettings | undefined = undefined;
+
+      // 为在线小说使用更小的页边距，提高屏幕利用率
+      const onlineNovelMargins: PageMargins = {
+        top: 32,
+        bottom: 0,
+        left: 8,
+        right: 8
+      };
+      
+      if (this.bookId) {
+        const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
+        try {
+          bookSettings = this.settingsManager.getJSON<TextReaderSettings>(settingsKey, DEFAULT_TEXT_READER_SETTINGS);
+          // 检查是否真的有书籍专属设置（通过检查key是否存在）
+          const hasBookSettings = this.settingsManager.getString(settingsKey, '');
+          if (!hasBookSettings) {
+            bookSettings = undefined;
+          }
+        } catch (e) {
+          bookSettings = undefined;
+        }
+      }
+      
+      if (bookSettings) {
+        logger.info(TAG, `加载书籍专属设置: ${this.bookId}`);
+        // 为在线小说调整页边距
+        bookSettings.pageMargins = onlineNovelMargins;
+        this.settings = bookSettings;
+      } else {
+        // 使用全局设置
+        const globalSettings = this.settingsManager.getJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, DEFAULT_TEXT_READER_SETTINGS);
+        // 为在线小说调整页边距
+        globalSettings.pageMargins = onlineNovelMargins;
+        this.settings = globalSettings;
+        logger.info(TAG, `使用全局小说阅读器设置，已调整为在线小说页边距`);
       }
     } catch (e) {
       logger.warn(TAG, `加载设置失败: ${String(e)}`);
@@ -398,15 +435,26 @@ export struct NovelReaderPage {
 
   async saveSettings(): Promise<void> {
     try {
+      // 保存为全局设置
       await this.settingsManager.setJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, this.settings);
+      
+      // 同时保存为书籍专属设置（如果有bookId）
+      if (this.bookId) {
+        const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
+        await this.settingsManager.setJSON<TextReaderSettings>(settingsKey, this.settings);
+        logger.debug(TAG, `保存书籍专属设置: ${this.bookId}`);
+      }
     } catch (e) {
       logger.warn(TAG, `保存设置失败: ${String(e)}`);
     }
   }
 
   onSettingsChange(newSettings: TextReaderSettings): void {
+    // 直接更新settings状态，触发UI响应式更新
     this.settings = newSettings;
+    // 异步保存设置（不阻塞UI）
     this.saveSettings();
+    logger.debug(TAG, `设置已更新并保存`);
   }
 
   onPageChange(pageIndex: number, totalPages: number): void {
@@ -684,10 +732,9 @@ export struct NovelReaderPage {
     Row() {
       // 返回按钮
       Button() {
-        Image($r('app.media.ic_arrow_back'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(24)
+          .fontColor([$r('app.color.text_primary')])
       }
       .width(48)
       .height(48)
@@ -762,10 +809,9 @@ export struct NovelReaderPage {
       Row() {
         // 目录按钮
         Button() {
-          Image($r('app.media.ic_list'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.list_bullet'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
         }
         .width(64)
         .height(48)
@@ -779,10 +825,9 @@ export struct NovelReaderPage {
 
         // 设置按钮
         Button() {
-          Image($r('app.media.ic_brightness_high'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.sun_max'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
         }
         .width(64)
         .height(48)

@@ -35,6 +35,7 @@ export enum TransitionPhase {
   COVER_LIFTING = 'cover_lifting',   // 封面掀起
   TRANSITIONING = 'transitioning',   // 过渡到阅读器
   // 关闭模式阶段
+  FADE_IN = 'fade_in',               // 截图淡入（无缝过渡）
   SHRINKING = 'shrinking',           // 阅读器内容缩小
   RETURNING = 'returning',           // 缩回到封面位置
   FADING = 'fading',                 // 淡出消失
@@ -245,13 +246,13 @@ export struct BookOpenTransition {
   private async loadCoverImage(): Promise<void> {
     if (!this.coverImagePath || this.coverImagePath.length === 0) {
       logger.warn(TAG, '封面图片路径为空');
-      // 关闭模式不需要封面图片，检查尺寸后开始动画
+      // 关闭模式：需要等待isReaderReady为true（截图完成）后才能开始动画
       if (this.mode === TransitionMode.CLOSE) {
-        if (this.componentWidth > 0 && this.componentHeight > 0) {
+        if (this.isReaderReady && this.componentWidth > 0 && this.componentHeight > 0) {
           this.startTransition();
         } else {
           this.pendingAnimationStart = true;
-          logger.info(TAG, '等待组件尺寸就绪后启动动画');
+          logger.info(TAG, `等待关闭动画条件就绪: isReaderReady=${this.isReaderReady}, size=${this.componentWidth}x${this.componentHeight}`);
         }
       }
       return;
@@ -354,7 +355,19 @@ export struct BookOpenTransition {
   
   // ========== 阅读器就绪状态变化监听 ==========
   private onReaderReadyChange(): void {
-    // 只有在等待阶段且动画未完成时才响应
+    logger.info(TAG, `onReaderReadyChange: isReaderReady=${this.isReaderReady}, mode=${this.mode}, phase=${this.currentPhase}, pendingStart=${this.pendingAnimationStart}`);
+    
+    // 关闭模式：截图完成后启动动画
+    if (this.isReaderReady && this.mode === TransitionMode.CLOSE && this.pendingAnimationStart && !this.isAnimating) {
+      if (this.componentWidth > 0 && this.componentHeight > 0) {
+        logger.info(TAG, '关闭模式：截图完成，启动动画');
+        this.pendingAnimationStart = false;
+        this.startTransition();
+      }
+      return;
+    }
+    
+    // 翻开模式：只有在等待阶段且动画未完成时才响应
     if (this.isReaderReady && this.currentPhase === TransitionPhase.WAITING_READY && !this.animationCompleted) {
       logger.info(TAG, '检测到阅读器就绪，开始掀开动画');
       this.clearReaderReadyTimers();  // 清除等待计时器
@@ -437,20 +450,56 @@ export struct BookOpenTransition {
       logger.warn(TAG, `📷 关闭动画：截图不可用，将使用Canvas备用效果`);
     }
     
-    // 设置初始状态（从全屏开始）
+    // 设置初始状态（从全屏开始，透明度为1）
+    // 关键：截图内容和阅读器内容完全一样，所以直接显示不会有视觉差异
     this.currentX = 0;
     this.currentY = 0;
     this.currentWidth = this.componentWidth;
     this.currentHeight = this.componentHeight;
     this.currentScale = 1;
-    this.currentOpacity = 1;
+    this.currentOpacity = 1;  // 直接显示，因为截图和阅读器内容一样
     this.liftAngle = 0;
     
     logger.info(TAG, `关闭动画初始状态: pos=(${this.currentX}, ${this.currentY}), size=${this.currentWidth}x${this.currentHeight}`);
     
-    // 开始第一阶段：缩小
+    // 直接开始缩小阶段（跳过淡入，因为截图和阅读器内容一样）
     this.setPhase(TransitionPhase.SHRINKING);
     this.animateShrink();
+  }
+  
+  /**
+   * 淡入动画（关闭模式第一阶段）
+   * 让截图从透明渐变到不透明，实现无缝过渡
+   */
+  private animateFadeIn(): void {
+    const duration = 100;  // 100ms快速淡入
+    const startTime = Date.now();
+    
+    const animate = () => {
+      if (this.animationCompleted) {
+        clearInterval(this.animationTimer);
+        return;
+      }
+      
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // 使用ease-out曲线让淡入更自然
+      const easedProgress = 1 - Math.pow(1 - progress, 2);
+      
+      // 更新透明度
+      this.currentOpacity = easedProgress;
+      
+      if (progress >= 1) {
+        // 淡入完成，停止计时器并进入缩小阶段
+        clearInterval(this.animationTimer);
+        this.currentOpacity = 1;
+        this.setPhase(TransitionPhase.SHRINKING);
+        this.animateShrink();
+      }
+    };
+    
+    this.animationTimer = setInterval(animate, 16);
   }
   
   /**
@@ -1211,30 +1260,38 @@ export struct BookOpenTransition {
   // ========== UI构建 ==========
   build() {
     Stack() {
-      // 关闭模式：使用Image组件显示压缩后的截图文件 + 封面盖住效果
-      if (this.mode === TransitionMode.CLOSE && this.readerContentImagePath && this.readerContentImagePath.length > 0) {
-        // 半透明背景遮罩
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(`rgba(0, 0, 0, ${this.currentOpacity * 0.6})`)
-          .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])
-        
+      // 关闭模式：优先使用原始PixelMap（无损），备用压缩文件
+      // 使用原始PixelMap可以避免压缩导致的质量损失和延迟
+      if (this.mode === TransitionMode.CLOSE && (this.localReaderPixelMap || (this.readerContentImagePath && this.readerContentImagePath.length > 0))) {
         // ========== 底层：阅读器截图 ==========
-        Image(`file://${this.readerContentImagePath}`)
-          .width(this.currentWidth)
-          .height(this.currentHeight)
-          .position({ x: this.currentX, y: this.currentY })
-          .objectFit(ImageFit.Contain)
-          .opacity(this.currentOpacity)
-          .borderRadius(8)
-          .backgroundColor(Color.Transparent)
-          .onComplete(() => {
-            logger.info(TAG, `📷 关闭动画截图加载完成: ${this.readerContentImagePath}`);
-          })
-          .onError((error) => {
-            logger.error(TAG, `📷 关闭动画截图加载失败: ${JSON.stringify(error)}`);
-          })
+        // 优先使用原始PixelMap（无损质量），备用压缩文件
+        if (this.localReaderPixelMap) {
+          // 使用原始PixelMap - 无损质量，与阅读器完全一致
+          Image(this.localReaderPixelMap)
+            .width(this.currentWidth)
+            .height(this.currentHeight)
+            .position({ x: this.currentX, y: this.currentY })
+            .objectFit(ImageFit.Fill)
+            .opacity(this.currentOpacity)
+            .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
+            .backgroundColor(Color.Transparent)
+        } else if (this.readerContentImagePath && this.readerContentImagePath.length > 0) {
+          // 备用：使用压缩文件
+          Image(`file://${this.readerContentImagePath}`)
+            .width(this.currentWidth)
+            .height(this.currentHeight)
+            .position({ x: this.currentX, y: this.currentY })
+            .objectFit(ImageFit.Fill)
+            .opacity(this.currentOpacity)
+            .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
+            .backgroundColor(Color.Transparent)
+            .onComplete(() => {
+              logger.info(TAG, `📷 关闭动画截图加载完成: ${this.readerContentImagePath}`);
+            })
+            .onError((error) => {
+              logger.error(TAG, `📷 关闭动画截图加载失败: ${JSON.stringify(error)}`);
+            })
+        }
         
         // ========== 上层：封面图片（带翻页盖住效果） ==========
         if (this.coverImagePath && this.coverImagePath.length > 0 && this.coverFlipProgress > 0) {
@@ -1343,10 +1400,16 @@ export struct BookOpenTransition {
         this.calculateCenterPosition();
         
         // 如果有等待启动的动画，现在启动它
+        // 关闭模式需要额外检查isReaderReady（等待截图完成）
         if (this.pendingAnimationStart && !this.isAnimating) {
-          this.pendingAnimationStart = false;
-          logger.info(TAG, '尺寸就绪，启动等待中的动画');
-          this.startTransition();
+          if (this.mode === TransitionMode.CLOSE && !this.isReaderReady) {
+            // 关闭模式但截图未完成，继续等待
+            logger.info(TAG, `尺寸就绪但截图未完成，继续等待: isReaderReady=${this.isReaderReady}`);
+          } else {
+            this.pendingAnimationStart = false;
+            logger.info(TAG, '条件就绪，启动等待中的动画');
+            this.startTransition();
+          }
         }
       }
     })

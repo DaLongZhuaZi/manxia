@@ -9,6 +9,8 @@ import { DataService } from '../Services/DataService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { initializeNovelModule } from '../Novel/NovelInitializer';
+import { DiskCacheManager } from '../Cache/DiskCacheManager';
+import { SandboxManager } from '../Storage/SandboxManager';
 
 const TAG = 'DataInitializer';
 
@@ -322,13 +324,24 @@ export class DataInitializer {
    */
   private async initializeSandboxManager(context: common.UIAbilityContext): Promise<void> {
     try {
-      // 这里需要导入并初始化SandboxManager
-      // const sandboxManager = SandboxManager.getInstance();
-      // await sandboxManager.initialize(context);
+      logger.info(TAG, '开始初始化沙箱存储管理器...');
       
-      logger.debug(TAG, '沙箱存储管理器初始化占位符');
+      const sandboxManager = SandboxManager.getInstance();
+      await sandboxManager.initialize(context);
+      
+      // 验证关键目录路径
+      const cacheDir = sandboxManager.getDirectory('cache');
+      const filesDir = sandboxManager.getDirectory('files');
+      
+      if (!cacheDir || !filesDir) {
+        throw new Error(`沙箱目录路径无效: cache=${cacheDir}, files=${filesDir}`);
+      }
+      
+      logger.info(TAG, `✅ 沙箱存储管理器初始化完成: cache=${cacheDir}`);
     } catch (error) {
-      throw new Error(`沙箱存储管理器初始化失败: ${error}`);
+      const err = error as Error;
+      logger.error(TAG, `❌ 沙箱存储管理器初始化失败: ${err.message}, stack: ${err.stack}`);
+      throw new Error(`沙箱存储管理器初始化失败: ${err.message}`);
     }
   }
 
@@ -352,13 +365,28 @@ export class DataInitializer {
    */
   private async initializeCacheManager(config: CacheConfig): Promise<void> {
     try {
-      // 这里需要导入并初始化ImageCacheManager
-      // const cacheManager = ImageCacheManager.getInstance();
-      // await cacheManager.initialize(config);
+      logger.info(TAG, '开始初始化磁盘缓存管理器...');
       
-      logger.debug(TAG, '图片缓存管理器初始化占位符');
+      // 初始化磁盘缓存管理器
+      const sandboxManager = SandboxManager.getInstance();
+      const cacheBaseDir = sandboxManager.getDirectory('cache');
+      
+      logger.debug(TAG, `缓存目录: ${cacheBaseDir}`);
+      
+      const diskCacheManager = DiskCacheManager.getInstance();
+      await diskCacheManager.initialize(cacheBaseDir);
+      
+      // 验证初始化是否成功
+      if (!diskCacheManager.isInitialized()) {
+        throw new Error('磁盘缓存管理器初始化后状态仍为未初始化');
+      }
+      
+      const stats = diskCacheManager.getStats();
+      logger.info(TAG, `✅ 磁盘缓存管理器初始化完成: 缓存数=${stats.count}, 大小=${(stats.totalSize / 1024 / 1024).toFixed(2)}MB`);
     } catch (error) {
-      throw new Error(`图片缓存管理器初始化失败: ${error}`);
+      const err = error as Error;
+      logger.error(TAG, `❌ 图片缓存管理器初始化失败: ${err.message}, stack: ${err.stack}`);
+      throw new Error(`图片缓存管理器初始化失败: ${err.message}`);
     }
   }
 

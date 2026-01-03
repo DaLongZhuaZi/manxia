@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { curves, UIContext, LengthMetrics } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
@@ -120,8 +121,11 @@ struct MangaSourceTestPage {
     this.startEntranceAnimation();
   }
 
+  private lifecycle = new PageLifecycleManager('MangaSourceTestPage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.lifecycle.destroy();
     
     // 清理主题感知功能
     ThemeAwareHelper.cleanupThemeAware(this.componentId);

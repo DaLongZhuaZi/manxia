@@ -6,41 +6,62 @@
 import { image } from '@kit.ImageKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { logger } from '../../Utils/Logger';
-import { DescramblerAlgorithm } from './ImageDescramblerRegistry';
+import { util } from '@kit.ArkTS';
 
 const TAG = 'JinmantiantangDescrambler';
+
+/**
+ * 模数规则接口
+ */
+interface ModulusRule {
+  minAid: number;
+  modulus: number;
+}
 
 /**
  * 禁漫天堂解扰算法参数
  */
 export interface JinmantiantangParameters {
-  /** 章节ID */
   aid: number;
-  /** 图片索引 */
   imgIndex: string;
-  /** 解扰ID阈值（默认220980） */
   scrambleIdThreshold?: number;
-  /** 模数规则 */
-  modulusRules?: Array<{ minAid: number; modulus: number }>;
-  /** 输出质量（1-100，默认90） */
   outputQuality?: number;
+}
+
+/**
+ * 图片信息接口
+ */
+export interface ImageInfo {
+  aid: number;
+  imgIndex: string;
 }
 
 /**
  * 禁漫天堂图片解扰器
  */
-export class JinmantiantangDescrambler implements DescramblerAlgorithm {
-  readonly name = 'jinmantiantang';
-  readonly version = '1.0.0';
-  readonly description = '禁漫天堂图片解扰算法 - 基于MD5哈希的图片分割还原';
+export class JinmantiantangDescrambler {
+  readonly name: string = 'jinmantiantang';
+  readonly version: string = '1.0.0';
+  readonly description: string = '禁漫天堂图片解扰算法 - 基于MD5哈希的图片分割还原';
 
-  private readonly DEFAULT_SCRAMBLE_ID = 220980;
-  private readonly DEFAULT_MODULUS_RULES = [
-    { minAid: 421926, modulus: 8 },
-    { minAid: 268850, modulus: 10 },
-    { minAid: 0, modulus: 10 }
-  ];
-  private readonly DEFAULT_QUALITY = 90;
+  private readonly DEFAULT_SCRAMBLE_ID: number = 220980;
+  private readonly DEFAULT_QUALITY: number = 90;
+
+  // 模数规则
+  private getModulusRules(): ModulusRule[] {
+    const rule1: ModulusRule = { minAid: 421926, modulus: 8 };
+    const rule2: ModulusRule = { minAid: 268850, modulus: 10 };
+    const rule3: ModulusRule = { minAid: 0, modulus: 10 };
+    return [rule1, rule2, rule3];
+  }
+
+  /**
+   * 字符串转Uint8Array
+   */
+  private stringToUint8Array(str: string): Uint8Array {
+    const encoder = new util.TextEncoder();
+    return encoder.encodeInto(str);
+  }
 
   /**
    * 计算MD5哈希的最后一个字符的字符码
@@ -48,8 +69,8 @@ export class JinmantiantangDescrambler implements DescramblerAlgorithm {
   private async md5LastCharCode(input: string): Promise<number> {
     try {
       const md = cryptoFramework.createMd('MD5');
-      const inputData = new Uint8Array(Buffer.from(input, 'utf-8'));
-      await md.update({ data: inputData });
+      const inputData: cryptoFramework.DataBlob = { data: this.stringToUint8Array(input) };
+      await md.update(inputData);
       const result = await md.digest();
 
       // 获取最后一个字节
@@ -60,16 +81,17 @@ export class JinmantiantangDescrambler implements DescramblerAlgorithm {
 
       return lastChar.charCodeAt(0);
     } catch (error) {
-      logger.error(TAG, `MD5计算失败: ${error}`);
-      throw error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `MD5计算失败: ${errMsg}`);
+      throw new Error(`MD5计算失败: ${errMsg}`);
     }
   }
 
   /**
    * 根据章节ID和图片索引计算分割行数
    */
-  private async getRows(aid: number, imgIndex: string, modulusRules?: Array<{ minAid: number; modulus: number }>): Promise<number> {
-    const rules = modulusRules || this.DEFAULT_MODULUS_RULES;
+  private async getRows(aid: number, imgIndex: string): Promise<number> {
+    const rules = this.getModulusRules();
 
     // 根据章节ID确定模数
     let modulus = 10;
@@ -91,43 +113,40 @@ export class JinmantiantangDescrambler implements DescramblerAlgorithm {
   /**
    * 检查是否需要解扰
    */
-  shouldDescramble(url: string, parameters: ESObject): boolean {
-    const params = parameters as JinmantiantangParameters;
-    const threshold = params.scrambleIdThreshold || this.DEFAULT_SCRAMBLE_ID;
-    return url.includes('media/photos') && params.aid >= threshold;
+  shouldDescramble(url: string, parameters: JinmantiantangParameters): boolean {
+    const threshold = parameters.scrambleIdThreshold !== undefined ? parameters.scrambleIdThreshold : this.DEFAULT_SCRAMBLE_ID;
+    return url.includes('media/photos') && parameters.aid >= threshold;
   }
 
   /**
    * 解扰图片
    */
-  async descramble(imageData: ArrayBuffer, parameters: ESObject): Promise<ArrayBuffer> {
-    const params = parameters as JinmantiantangParameters;
+  async descramble(imageData: ArrayBuffer, parameters: JinmantiantangParameters): Promise<ArrayBuffer> {
     const startTime = Date.now();
 
     try {
-      logger.info(TAG, `开始解扰图片: aid=${params.aid}, imgIndex=${params.imgIndex}`);
+      logger.info(TAG, `开始解扰图片: aid=${parameters.aid}, imgIndex=${parameters.imgIndex}`);
 
-      // 1. 创建ImageSource
+      // 1. 创建ImageSource和PixelMap
       const imageSource = image.createImageSource(imageData);
       const imageInfo = await imageSource.getImageInfo();
-
       const width = imageInfo.size.width;
       const height = imageInfo.size.height;
       logger.debug(TAG, `图片尺寸: ${width}x${height}`);
 
       // 2. 计算分割参数
-      const rows = await this.getRows(params.aid, params.imgIndex, params.modulusRules);
+      const rows = await this.getRows(parameters.aid, parameters.imgIndex);
       const remainder = height % rows;
 
-      // 3. 创建源PixelMap
+      // 3. 创建源PixelMap并读取所有像素
       const sourcePixelMap = await imageSource.createPixelMap();
+      const sourceBuffer = new ArrayBuffer(width * height * 4);
+      await sourcePixelMap.readPixelsToBuffer(sourceBuffer);
+      const sourcePixels = new Uint8Array(sourceBuffer);
 
-      // 4. 创建目标PixelMap
-      const resultPixelMap = await image.createPixelMap({
-        size: { width, height },
-        pixelFormat: image.PixelMapFormat.RGBA_8888,
-        editable: true
-      });
+      // 4. 创建目标像素数组
+      const resultBuffer = new ArrayBuffer(width * height * 4);
+      const resultPixels = new Uint8Array(resultBuffer);
 
       // 5. 逆序拼接图片
       for (let x = 0; x < rows; x++) {
@@ -141,37 +160,36 @@ export class JinmantiantangDescrambler implements DescramblerAlgorithm {
           py += remainder;
         }
 
-        // 读取源区域
-        const sourceRegion = {
-          x: 0,
-          y: y,
-          size: { width: width, height: copyH }
-        };
-
-        const pixels = new ArrayBuffer(width * copyH * 4);
-        await sourcePixelMap.readPixelsToBuffer(pixels);
-
-        // 写入目标区域
-        const targetRegion = {
-          x: 0,
-          y: py,
-          size: { width: width, height: copyH }
-        };
-
-        await resultPixelMap.writeBufferToPixels(pixels);
+        // 复制像素行
+        for (let row = 0; row < copyH; row++) {
+          const srcOffset = ((y + row) * width) * 4;
+          const dstOffset = ((py + row) * width) * 4;
+          const rowBytes = width * 4;
+          
+          for (let i = 0; i < rowBytes; i++) {
+            resultPixels[dstOffset + i] = sourcePixels[srcOffset + i];
+          }
+        }
       }
 
-      // 6. 编码为JPEG
+      // 6. 创建结果PixelMap
+      const initOptions: image.InitializationOptions = {
+        size: { width: width, height: height },
+        pixelFormat: image.PixelMapFormat.RGBA_8888,
+        editable: true
+      };
+      const resultPixelMap = await image.createPixelMap(resultBuffer, initOptions);
+
+      // 7. 编码为JPEG
       const packer = image.createImagePacker();
-      const quality = params.outputQuality || this.DEFAULT_QUALITY;
+      const quality = parameters.outputQuality !== undefined ? parameters.outputQuality : this.DEFAULT_QUALITY;
       const packOpts: image.PackingOption = {
         format: 'image/jpeg',
         quality: quality
       };
-
       const resultData = await packer.packing(resultPixelMap, packOpts);
 
-      // 7. 清理资源
+      // 8. 清理资源
       await sourcePixelMap.release();
       await resultPixelMap.release();
 
@@ -180,27 +198,30 @@ export class JinmantiantangDescrambler implements DescramblerAlgorithm {
 
       return resultData;
     } catch (error) {
-      logger.error(TAG, `图片解扰失败: ${error}`);
-      throw error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `图片解扰失败: ${errMsg}`);
+      throw new Error(`图片解扰失败: ${errMsg}`);
     }
   }
 
   /**
    * 从URL提取章节ID和图片索引
    */
-  static extractImageInfo(url: string): { aid: number; imgIndex: string } | null {
+  static extractImageInfo(url: string): ImageInfo | null {
     try {
       // URL格式: https://cdn.xxx.com/media/photos/123456/00001.jpg
       const match = url.match(/\/photos\/(\d+)\/(\d+)\./);
-      if (match) {
-        return {
+      if (match !== null && match.length >= 3) {
+        const result: ImageInfo = {
           aid: parseInt(match[1]),
           imgIndex: match[2]
         };
+        return result;
       }
       return null;
     } catch (error) {
-      logger.error(TAG, `提取图片信息失败: ${error}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `提取图片信息失败: ${errMsg}`);
       return null;
     }
   }

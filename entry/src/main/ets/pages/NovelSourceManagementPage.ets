@@ -15,12 +15,13 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
-import { pasteboard } from '@kit.BasicServicesKit';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceValidator, ValidationConfig, DEFAULT_VALIDATION_CONFIG, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
@@ -32,6 +33,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { NovelSourceManagementPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { NovelSourceLoginPageParams } from './NovelSourceLoginPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
+import { GroupManagementDialog, GroupInfo, GroupOperationCallback, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 
 const TAG = 'NovelSourceManagementPage';
@@ -74,6 +76,8 @@ export struct NovelSourceManagementPage {
   @State validationProgress: string = '';
   @State sourceGroups: string[] = [];
   @State selectedGroup: string = '';
+  // 分组统计（分组名 -> 书源数量）
+  @State groupCounts: Map<string, number> = new Map();
   // 书源搜索
   @State searchKeyword: string = '';
   @State showSearchBar: boolean = false;
@@ -98,6 +102,8 @@ export struct NovelSourceManagementPage {
   // 校验进度对话框
   private validationProgressController: ValidationProgressController | null = null;
   private validationDialogController: CustomDialogController | null = null;
+  // 存储最近一次校验的失效书源ID列表
+  private lastValidationInvalidSourceIds: string[] = [];
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -105,7 +111,10 @@ export struct NovelSourceManagementPage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('NovelSourceManagementPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -153,15 +162,28 @@ export struct NovelSourceManagementPage {
     const realGroups = Array.from(groupSet).sort();
     this.sourceGroups = [];
     
+    // 统计每个分组的书源数量
+    const newGroupCounts = new Map<string, number>();
+    
     // 添加"未分组"虚拟分组（如果有未分组的书源）
     if (ungroupedCount > 0) {
       this.sourceGroups.push(SPECIAL_GROUP_NAMES.UNGROUPED);
+      newGroupCounts.set(SPECIAL_GROUP_NAMES.UNGROUPED, ungroupedCount);
     }
     
-    // 添加真实分组
+    // 添加真实分组并统计数量
     for (const g of realGroups) {
       this.sourceGroups.push(g);
+      // 统计该分组的书源数量
+      const count = this.allSources.filter(s => {
+        if (!s.group) return false;
+        const groups = s.group.split(',').map(grp => grp.trim());
+        return groups.includes(g);
+      }).length;
+      newGroupCounts.set(g, count);
     }
+    
+    this.groupCounts = newGroupCounts;
     
     // 应用筛选并重置分页
     this.applyFilter();
@@ -276,6 +298,8 @@ export struct NovelSourceManagementPage {
         
         // 内容层：预留标题栏高度
         Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
           
           // 搜索栏（可隐藏，带动画）
           Column() {
@@ -306,7 +330,6 @@ export struct NovelSourceManagementPage {
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
 
         // 导入对话框
         if (this.showImportDialog) {
@@ -431,11 +454,10 @@ export struct NovelSourceManagementPage {
   @Builder
   buildTitleBar() {
     Row() {
-      Image($r('app.media.ic_back'))
-        .width(24)
-        .height(24)
+      SymbolGlyph($r('sys.symbol.chevron_left'))
+        .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ left: 16 })
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
         .onClick(() => this.pathStack.pop())
       
       Text('书源管理')
@@ -447,11 +469,10 @@ export struct NovelSourceManagementPage {
       Blank()
       
       // 搜索图标
-      Image($r('app.media.ic_search'))
-        .width(24)
-        .height(24)
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ right: 12 })
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
         .onClick(() => {
           this.showSearchBar = !this.showSearchBar;
           if (!this.showSearchBar) {
@@ -461,27 +482,24 @@ export struct NovelSourceManagementPage {
         })
       
       // 导入图标
-      Image($r('app.media.ic_add'))
-        .width(24)
-        .height(24)
+      SymbolGlyph($r('sys.symbol.plus'))
+        .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ right: 12 })
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
         .onClick(() => this.showImportOptions())
       
       // 校验图标
-      Image($r('app.media.ic_check'))
-        .width(24)
-        .height(24)
+      SymbolGlyph($r('sys.symbol.checkmark'))
+        .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ right: 12 })
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
         .onClick(() => this.validateAllSources())
       
       // 更多操作图标
-      Image($r('app.media.ic_more'))
-        .width(24)
-        .height(24)
+      SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+        .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ right: 16 })
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
         .onClick(() => this.showMoreOptions())
     }
     .width('100%')
@@ -683,8 +701,7 @@ export struct NovelSourceManagementPage {
       title: '导入书源',
       buttons: [
         { text: '从文件导入', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') }
+        { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
       if (result.index === 0) {
@@ -704,8 +721,7 @@ export struct NovelSourceManagementPage {
       buttons: [
         { text: '替换规则', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '批量启用', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '批量禁用', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') }
+        { text: '批量禁用', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
       if (result.index === 0) {
@@ -790,7 +806,7 @@ export struct NovelSourceManagementPage {
             
             // 分组按钮
             ForEach(this.sourceGroups, (group: string) => {
-              Text(group)
+              Text(`${group}(${this.groupCounts.get(group) || 0})`)
                 .fontSize(12)
                 .fontColor(this.selectedGroup === group ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
@@ -1147,10 +1163,10 @@ export struct NovelSourceManagementPage {
 
   async pasteFromClipboard(): Promise<void> {
     try {
-      const pasteData = pasteboard.getSystemPasteboard();
-      const data = await pasteData.getData();
+      const pasteData: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+      const data: pasteboard.PasteData = await pasteData.getData();
       if (data.hasType(pasteboard.MIMETYPE_TEXT_PLAIN)) {
-        const text = data.getPrimaryText();
+        const text: string = data.getPrimaryText();
         if (text) {
           this.importText = text;
         }
@@ -1236,7 +1252,7 @@ export struct NovelSourceManagementPage {
   }
 
   /**
-   * 从文件导入书源
+   * 从文件导入书源（支持多文件选择，最多99个）
    */
   async importFromFile(): Promise<void> {
     try {
@@ -1251,13 +1267,14 @@ export struct NovelSourceManagementPage {
       // 创建文档选择器
       const documentPicker = new picker.DocumentViewPicker(context);
       
-      // 设置选择选项 - 只允许选择JSON文件
+      // 设置选择选项 - 允许选择多个书源文件（最多99个）
+      // 支持.json和.txt格式（txt文件内容也应为JSON格式）
       const selectOptions: picker.DocumentSelectOptions = {
-        maxSelectNumber: 1,
-        fileSuffixFilters: ['.json'],
+        maxSelectNumber: 99,
+        fileSuffixFilters: ['.json', '.txt'],
       };
 
-      logger.info(TAG, '打开文件选择器，选择书源JSON文件');
+      logger.info(TAG, '打开文件选择器，选择书源文件（支持.json和.txt，支持多选）');
       
       // 打开文件选择器
       const selectResult = await documentPicker.select(selectOptions);
@@ -1267,52 +1284,79 @@ export struct NovelSourceManagementPage {
         return;
       }
 
-      const fileUri = selectResult[0];
-      logger.info(TAG, `用户选择了文件: ${fileUri}`);
+      const fileCount = selectResult.length;
+      logger.info(TAG, `用户选择了 ${fileCount} 个文件`);
       
       // 显示加载状态
       this.isOperating = true;
-      this.operatingMessage = '正在读取文件...';
+      this.operatingMessage = `正在读取 ${fileCount} 个文件...`;
       
-      // 读取文件内容
-      const file = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(file.fd);
-      const fileSize = stat.size;
-      logger.info(TAG, `文件大小: ${fileSize} 字节`);
+      let totalSuccessCount = 0;
+      let totalFailCount = 0;
+      let fileProcessed = 0;
       
-      // 根据文件大小动态分配缓冲区（最大50MB）
-      const maxBufferSize = 50 * 1024 * 1024;
-      const bufferSize = Math.min(fileSize, maxBufferSize);
-      const buffer = new ArrayBuffer(bufferSize);
-      const readLen = fs.readSync(file.fd, buffer);
-      fs.closeSync(file);
-      
-      if (readLen < fileSize) {
-        logger.warn(TAG, `文件过大，只读取了 ${readLen}/${fileSize} 字节`);
+      // 逐个处理选中的文件
+      for (const fileUri of selectResult) {
+        fileProcessed++;
+        this.operatingMessage = `正在处理文件 ${fileProcessed}/${fileCount}...`;
+        logger.info(TAG, `处理文件 ${fileProcessed}/${fileCount}: ${fileUri}`);
+        
+        try {
+          // 读取文件内容
+          const file: fs.File = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
+          const stat: fs.Stat = fs.statSync(file.fd);
+          const fileSize: number = stat.size;
+          logger.info(TAG, `文件大小: ${fileSize} 字节`);
+          
+          // 根据文件大小动态分配缓冲区（最大50MB）
+          const maxBufferSize = 50 * 1024 * 1024;
+          const bufferSize = Math.min(fileSize, maxBufferSize);
+          const buffer = new ArrayBuffer(bufferSize);
+          const readLen: number = fs.readSync(file.fd, buffer);
+          fs.closeSync(file);
+          
+          if (readLen < fileSize) {
+            logger.warn(TAG, `文件过大，只读取了 ${readLen}/${fileSize} 字节`);
+          }
+          
+          // 使用TextDecoder正确解码UTF-8
+          const uint8Array = new Uint8Array(buffer, 0, readLen);
+          const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
+          const jsonContent = decoder.decode(uint8Array);
+          
+          logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
+          
+          // 更新加载状态
+          this.operatingMessage = `正在导入文件 ${fileProcessed}/${fileCount} 的书源...`;
+          
+          // 导入书源
+          const results = await this.sourceManager.importFromJSON(jsonContent);
+          
+          const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
+          const failCount = results.filter((r: LegadoSourceImportResult) => !r.success).length;
+          
+          totalSuccessCount += successCount;
+          totalFailCount += failCount;
+          
+          logger.info(TAG, `文件 ${fileProcessed} 导入完成: 成功${successCount}个, 失败${failCount}个`);
+        } catch (fileError) {
+          logger.error(TAG, `处理文件 ${fileUri} 失败: ${String(fileError)}`);
+          // 继续处理下一个文件
+        }
       }
       
-      // 使用TextDecoder正确解码UTF-8
-      const uint8Array = new Uint8Array(buffer, 0, readLen);
-      const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-      const jsonContent = decoder.decode(uint8Array);
-      
-      logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
-      
-      // 更新加载状态
-      this.operatingMessage = '正在导入书源...';
-      
-      // 导入书源
-      const results = await this.sourceManager.importFromJSON(jsonContent);
-      
-      const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
-      const failCount = results.filter((r: LegadoSourceImportResult) => !r.success).length;
-      
-      if (successCount > 0) {
+      // 刷新书源列表
+      if (totalSuccessCount > 0) {
         this.loadSources();
-        promptAction.showToast({ 
-          message: `成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}` 
-        });
-        logger.info(TAG, `书源导入完成: 成功${successCount}个, 失败${failCount}个`);
+      }
+      
+      // 显示最终结果
+      if (totalSuccessCount > 0) {
+        const message = fileCount > 1 
+          ? `从 ${fileCount} 个文件成功导入 ${totalSuccessCount} 个书源${totalFailCount > 0 ? `，${totalFailCount} 个失败` : ''}`
+          : `成功导入 ${totalSuccessCount} 个书源${totalFailCount > 0 ? `，${totalFailCount} 个失败` : ''}`;
+        promptAction.showToast({ message });
+        logger.info(TAG, `书源导入完成: 共处理${fileCount}个文件, 成功${totalSuccessCount}个书源, 失败${totalFailCount}个`);
       } else {
         promptAction.showToast({ message: '导入失败，请检查JSON格式' });
         logger.error(TAG, '书源导入失败: 没有成功导入任何书源');
@@ -1444,8 +1488,7 @@ export struct NovelSourceManagementPage {
       buttons: [
         { text: '快速校验（仅搜索）', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '标准校验（搜索+详情+目录）', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '完整校验（全部项目）', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') }
+        { text: '完整校验（全部项目）', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
       let config: Partial<ValidationConfig>;
@@ -1565,6 +1608,15 @@ export struct NovelSourceManagementPage {
         true  // 显示系统通知
       );
       
+      // 收集失效书源的ID列表
+      const invalidSourceIds: string[] = [];
+      for (const r of result.results) {
+        if (!r.isValid) {
+          invalidSourceIds.push(r.sourceId);
+        }
+      }
+      this.lastValidationInvalidSourceIds = invalidSourceIds;
+      
       // 更新对话框为完成状态
       if (this.validationProgressController) {
         const progressInfo: ValidationProgressInfo = {
@@ -1574,7 +1626,8 @@ export struct NovelSourceManagementPage {
           invalidCount: result.invalid,
           currentSourceName: '',
           isComplete: true,
-          isCancelled: validator.isRunning() === false && result.results.length < idsToValidate.length
+          isCancelled: validator.isRunning() === false && result.results.length < idsToValidate.length,
+          invalidSourceIds: invalidSourceIds
         };
         this.validationProgressController.updateProgress(progressInfo);
       }
@@ -1651,6 +1704,9 @@ export struct NovelSourceManagementPage {
             isComplete: false,
             isCancelled: false
           });
+        },
+        onCloseInvalidSources: () => {
+          this.closeInvalidSources();
         }
       }),
       autoCancel: false,
@@ -1663,6 +1719,71 @@ export struct NovelSourceManagementPage {
 
   async validateAllSources(): Promise<void> {
     this.showValidationConfigDialog();
+  }
+
+  /**
+   * 关闭失效书源（根据最近一次校验结果）
+   * 保留置顶状态，仅禁用书源
+   */
+  async closeInvalidSources(): Promise<void> {
+    if (this.lastValidationInvalidSourceIds.length === 0) {
+      promptAction.showToast({ message: '没有失效的书源需要关闭' });
+      return;
+    }
+
+    this.isOperating = true;
+    this.operatingMessage = '正在关闭失效书源...';
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const sourceId of this.lastValidationInvalidSourceIds) {
+      try {
+        // 获取书源信息
+        const rawSource = this.sourceManager.getSource(sourceId);
+        if (rawSource) {
+          // 保存当前的weight（置顶状态）
+          const currentWeight = rawSource.weight;
+          
+          // 仅禁用书源，不改变weight
+          await this.sourceManager.setSourceEnabled(sourceId, false);
+          
+          // 确保weight没有被改变
+          const updatedSource = this.sourceManager.getSource(sourceId);
+          if (updatedSource && updatedSource.weight !== currentWeight) {
+            const dataManager = getNovelDataManager();
+            updatedSource.weight = currentWeight;
+            await dataManager.saveSource(updatedSource);
+          }
+          
+          successCount++;
+        }
+      } catch (error) {
+        logger.error(TAG, `关闭书源失败 ${sourceId}: ${String(error)}`);
+        failCount++;
+      }
+    }
+
+    this.isOperating = false;
+    this.operatingMessage = '';
+
+    // 显示结果
+    const message = failCount > 0 
+      ? `已关闭 ${successCount} 个失效书源，${failCount} 个失败`
+      : `已关闭 ${successCount} 个失效书源`;
+    
+    promptAction.showToast({ message });
+    
+    // 关闭对话框
+    if (this.validationDialogController) {
+      this.validationDialogController.close();
+    }
+    
+    // 刷新书源列表
+    this.loadSources();
+    
+    // 清空失效书源列表
+    this.lastValidationInvalidSourceIds = [];
   }
 
   // ==================== 多选模式操作 ====================
@@ -2009,31 +2130,224 @@ export struct NovelSourceManagementPage {
       return;
     }
 
-    promptAction.showActionMenu({
-      title: '分组管理',
-      buttons: [
-        { text: '重命名分组', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '删除分组', color: '#FF4D4F' },
-        { text: '查看分组统计', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '取消', color: $r('sys.color.ohos_id_color_text_secondary') }
-      ]
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      switch (result.index) {
-        case 0:
-          this.showRenameGroupDialog();
-          break;
-        case 1:
-          this.showDeleteGroupDialog();
-          break;
-        case 2:
-          this.showGroupStats();
-          break;
-      }
-    }).catch(() => {});
+    // 构建分组信息列表
+    const groupInfos = this.buildGroupInfos();
+
+    // 创建对话框
+    const dialogController = new CustomDialogController({
+      builder: GroupManagementDialog({
+        themeState: this.themeState,
+        groups: groupInfos,
+        callbacks: {
+          onRename: async (oldName: string, newName: string) => {
+            await this.renameGroupOperation(oldName, newName);
+          },
+          onMerge: async (sourceGroups: string[], targetGroup: string) => {
+            await this.mergeGroupsOperation(sourceGroups, targetGroup);
+          },
+          onSplit: async (groupName: string, condition: SplitCondition) => {
+            await this.splitGroupOperation(groupName, condition);
+          },
+          onDelete: async (groupName: string) => {
+            await this.deleteGroupOperation(groupName);
+          },
+          onRefresh: (): GroupInfo[] => {
+            return this.buildGroupInfos();
+          }
+        }
+      }),
+      autoCancel: true,
+      customStyle: true,
+      alignment: DialogAlignment.Center
+    });
+    
+    dialogController.open();
   }
 
   /**
-   * 显示重命名分组对话框
+   * 构建分组信息列表
+   */
+  buildGroupInfos(): GroupInfo[] {
+    const existingGroups = this.sourceManager.getAllGroups();
+    const groupInfos: GroupInfo[] = [];
+    
+    for (const groupName of existingGroups) {
+      const sourcesInGroup = this.allSources.filter(s => {
+        if (!s.group) return false;
+        const groups = s.group.split(',').map(g => g.trim());
+        return groups.includes(groupName);
+      });
+      
+      const enabledCount = sourcesInGroup.filter(s => s.enabled).length;
+      const disabledCount = sourcesInGroup.filter(s => !s.enabled).length;
+      const pinnedCount = sourcesInGroup.filter(s => s.weight > 0).length;
+      
+      groupInfos.push({
+        name: groupName,
+        count: sourcesInGroup.length,
+        enabledCount,
+        disabledCount,
+        pinnedCount
+      });
+    }
+    
+    return groupInfos;
+  }
+
+  /**
+   * 重命名分组操作
+   */
+  async renameGroupOperation(oldName: string, newName: string): Promise<void> {
+    this.isOperating = true;
+    this.operatingMessage = '正在重命名分组...';
+    
+    try {
+      const count = await this.sourceManager.renameGroup(oldName, newName);
+      promptAction.showToast({ message: `已将 ${count} 个书源的分组从 "${oldName}" 改为 "${newName}"` });
+      this.loadSources();
+    } catch (error) {
+      logger.error(TAG, `重命名分组失败: ${String(error)}`);
+      throw new Error(String(error));
+    } finally {
+      this.isOperating = false;
+      this.operatingMessage = '';
+    }
+  }
+
+  /**
+   * 合并分组操作
+   */
+  async mergeGroupsOperation(sourceGroups: string[], targetGroup: string): Promise<void> {
+    this.isOperating = true;
+    this.operatingMessage = '正在合并分组...';
+    
+    try {
+      const dataManager = getNovelDataManager();
+      let totalCount = 0;
+      
+      // 遍历所有书源，将属于源分组的书源移动到目标分组
+      for (const source of this.allSources) {
+        if (!source.group) continue;
+        
+        const groups = source.group.split(',').map(g => g.trim());
+        const hasSourceGroup = sourceGroups.some(sg => groups.includes(sg));
+        
+        if (hasSourceGroup) {
+          // 移除源分组，添加目标分组
+          const newGroups = groups.filter(g => !sourceGroups.includes(g));
+          if (!newGroups.includes(targetGroup)) {
+            newGroups.push(targetGroup);
+          }
+          
+          const rawSource = this.sourceManager.getSource(source.id);
+          if (rawSource) {
+            rawSource.bookSourceGroup = newGroups.join(',');
+            await dataManager.saveSource(rawSource);
+            totalCount++;
+          }
+        }
+      }
+      
+      promptAction.showToast({ message: `已合并 ${sourceGroups.length} 个分组，影响 ${totalCount} 个书源` });
+      this.loadSources();
+    } catch (error) {
+      logger.error(TAG, `合并分组失败: ${String(error)}`);
+      throw new Error(String(error));
+    } finally {
+      this.isOperating = false;
+      this.operatingMessage = '';
+    }
+  }
+
+  /**
+   * 拆分分组操作
+   */
+  async splitGroupOperation(groupName: string, condition: SplitCondition): Promise<void> {
+    this.isOperating = true;
+    this.operatingMessage = '正在拆分分组...';
+    
+    try {
+      const dataManager = getNovelDataManager();
+      let group1Count = 0;
+      let group2Count = 0;
+      
+      // 根据条件拆分分组
+      const sourcesInGroup = this.allSources.filter(s => {
+        if (!s.group) return false;
+        const groups = s.group.split(',').map(g => g.trim());
+        return groups.includes(groupName);
+      });
+      
+      for (const source of sourcesInGroup) {
+        let shouldMoveToGroup1 = false;
+        let group1Name = '';
+        let group2Name = '';
+        
+        if (condition.type === 'enabled') {
+          shouldMoveToGroup1 = source.enabled;
+          group1Name = `${groupName}-启用`;
+          group2Name = `${groupName}-禁用`;
+        } else if (condition.type === 'pinned') {
+          shouldMoveToGroup1 = source.weight > 0;
+          group1Name = `${groupName}-置顶`;
+          group2Name = `${groupName}-普通`;
+        } else if (condition.type === 'keyword' && condition.keyword) {
+          shouldMoveToGroup1 = source.name.includes(condition.keyword);
+          group1Name = `${groupName}-${condition.keyword}`;
+          group2Name = `${groupName}-其他`;
+        }
+        
+        const rawSource = this.sourceManager.getSource(source.id);
+        if (rawSource) {
+          const groups = (rawSource.bookSourceGroup || '').split(',').map(g => g.trim()).filter(g => g);
+          const newGroups = groups.filter(g => g !== groupName);
+          
+          if (shouldMoveToGroup1) {
+            newGroups.push(group1Name);
+            group1Count++;
+          } else {
+            newGroups.push(group2Name);
+            group2Count++;
+          }
+          
+          rawSource.bookSourceGroup = newGroups.join(',');
+          await dataManager.saveSource(rawSource);
+        }
+      }
+      
+      promptAction.showToast({ message: `拆分完成：组一 ${group1Count} 个，组二 ${group2Count} 个` });
+      this.loadSources();
+    } catch (error) {
+      logger.error(TAG, `拆分分组失败: ${String(error)}`);
+      throw new Error(String(error));
+    } finally {
+      this.isOperating = false;
+      this.operatingMessage = '';
+    }
+  }
+
+  /**
+   * 删除分组操作
+   */
+  async deleteGroupOperation(groupName: string): Promise<void> {
+    this.isOperating = true;
+    this.operatingMessage = '正在删除分组...';
+    
+    try {
+      const count = await this.sourceManager.deleteGroup(groupName);
+      promptAction.showToast({ message: `已删除分组 "${groupName}"，影响 ${count} 个书源` });
+      this.loadSources();
+    } catch (error) {
+      logger.error(TAG, `删除分组失败: ${String(error)}`);
+      throw new Error(String(error));
+    } finally {
+      this.isOperating = false;
+      this.operatingMessage = '';
+    }
+  }
+
+  /**
+   * 显示重命名分组对话框（旧版，保留以防兼容性问题）
    */
   showRenameGroupDialog(): void {
     const existingGroups = this.sourceManager.getAllGroups();

@@ -9,6 +9,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Novel/NovelSettingsManager';
 import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
@@ -112,7 +113,10 @@ export struct NovelSearchPage {
     }
   }
 
+  private lifecycle = new PageLifecycleManager('NovelSearchPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     if (this.boundDeviceChangeHandler) {
       this.deviceManager.removeListener(this.boundDeviceChangeHandler);
@@ -553,10 +557,9 @@ export struct NovelSearchPage {
                         .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
                       
-                      Image($r('app.media.ic_close'))
-                        .width(14)
-                        .height(14)
-                        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                      SymbolGlyph($r('sys.symbol.xmark'))
+                        .fontSize(14)
+                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
                         .onClick(() => {
                           this.removeHistoryItem(historyKeyword);
                         })

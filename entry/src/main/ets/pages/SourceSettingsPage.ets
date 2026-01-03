@@ -46,6 +46,29 @@ interface PageTurnAnimationOption {
   label: string;
 }
 
+// 图源自定义设置项接口
+interface SourceCustomSetting {
+  key: string;
+  type: 'text' | 'select' | 'boolean' | 'number';
+  name: string;
+  description?: string;
+  default?: string;
+  options?: SourceSettingOption[];
+  min?: number;
+  max?: number;
+}
+
+interface SourceSettingOption {
+  value: string;
+  label: string;
+}
+
+// 镜像站点信息
+interface MirrorSiteInfo {
+  url: string;
+  label: string;
+}
+
 @Component
 export struct SourceSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -102,6 +125,18 @@ export struct SourceSettingsPage {
   @State sourceEbookPageMode: EBookPageMode = DEFAULT_EBOOK_READING_SETTINGS.pageMode;
   @State sourceEbookSettingsEnabled: boolean = false;
 
+  // 换源功能（镜像站点）
+  @State mirrorSites: string[] = [];
+  @State currentMirrorIndex: number = 0;
+  @State currentBaseUrl: string = '';
+  
+  // 图源自定义设置（从source.json的settings字段读取）
+  @State sourceCustomSettings: SourceCustomSetting[] = [];
+  @State sourceCustomSettingValues: Map<string, string> = new Map();
+  
+  // 图源类型（用于控制显示哪些设置）
+  @State sourceType: string = 'manga'; // 'manga' | 'ebook' | 'novel'
+
   aboutToAppear(): void {
     logger.info(TAG, '=== aboutToAppear 开始 ===');
     const ui = this.getUIContext();
@@ -132,6 +167,190 @@ export struct SourceSettingsPage {
   }
 
 
+  /**
+   * 加载图源配置中的镜像站点和自定义设置
+   */
+  private async loadSourceConfigSettings(): Promise<void> {
+    if (!this.pageParams || !this.pageParams.sourceName) {
+      return;
+    }
+    
+    try {
+      const sourceName: string = this.pageParams.sourceName;
+      const sourceRecord = await this.dataManager.getComicSourceByName(sourceName);
+      if (!sourceRecord) {
+        return;
+      }
+      
+      // 获取图源配置JSON
+      const pkg = sourceRecord.pkg || sourceName;
+      const config: ESObject | null = await this.dataManager.getSourceConfigByPkg(pkg);
+      if (!config) {
+        logger.warn(TAG, `未找到图源配置: pkg=${pkg}`);
+        return;
+      }
+      
+      // 解析镜像站点列表
+      const mirrors: string[] | undefined = config._MIRRORS as string[] || config.mirrors as string[];
+      if (mirrors && Array.isArray(mirrors) && mirrors.length > 0) {
+        this.mirrorSites = mirrors;
+        logger.info(TAG, `加载到 ${mirrors.length} 个镜像站点`);
+        
+        // 加载当前选择的镜像索引
+        const sid: number = Number(sourceRecord.id);
+        const savedMirror = await this.dataManager.getSourceUserSetting(sid, 'source.mirrorIndex');
+        if (savedMirror && savedMirror.settingValue) {
+          this.currentMirrorIndex = Number(savedMirror.settingValue);
+        }
+      }
+      
+      // 获取当前baseUrl
+      this.currentBaseUrl = sourceRecord.baseUrl || '';
+      
+      // 获取图源类型
+      const metadata: ESObject | undefined = config.metadata as ESObject;
+      if (metadata && metadata.type) {
+        this.sourceType = String(metadata.type);
+        logger.info(TAG, `图源类型: ${this.sourceType}`);
+      }
+      
+      // 解析自定义设置
+      const settings: ESObject | undefined = config.settings as ESObject;
+      if (settings && typeof settings === 'object') {
+        const customSettings: SourceCustomSetting[] = [];
+        const settingKeys = Object.keys(settings);
+        
+        for (const key of settingKeys) {
+          const setting: ESObject = settings[key] as ESObject;
+          if (setting && typeof setting === 'object') {
+            const settingType = (setting.type as string) || 'text';
+            const settingName = (setting.name as string) || key;
+            const settingDesc = setting.description as string;
+            const settingDefault = setting.default !== undefined ? String(setting.default) : '';
+            
+            const customSetting: SourceCustomSetting = {
+              key: key,
+              type: settingType as 'text' | 'select' | 'boolean' | 'number',
+              name: settingName,
+              description: settingDesc,
+              default: settingDefault
+            };
+            
+            // 解析选项（select类型）
+            if (setting.options && Array.isArray(setting.options)) {
+              const optionsArray: SourceSettingOption[] = [];
+              const rawOptions: ESObject[] = setting.options as ESObject[];
+              for (let i = 0; i < rawOptions.length; i++) {
+                const optObj: ESObject = rawOptions[i] as ESObject;
+                const optItem: SourceSettingOption = {
+                  value: String(optObj.value || ''),
+                  label: String(optObj.label || optObj.value || '')
+                };
+                optionsArray.push(optItem);
+              }
+              customSetting.options = optionsArray;
+            }
+            
+            // 解析数值范围
+            if (setting.min !== undefined) {
+              customSetting.min = Number(setting.min);
+            }
+            if (setting.max !== undefined) {
+              customSetting.max = Number(setting.max);
+            }
+            
+            customSettings.push(customSetting);
+          }
+        }
+        
+        this.sourceCustomSettings = customSettings;
+        logger.info(TAG, `加载到 ${customSettings.length} 个自定义设置项`);
+        
+        // 加载已保存的自定义设置值
+        const sid: number = Number(sourceRecord.id);
+        for (const setting of customSettings) {
+          const savedValue = await this.dataManager.getSourceUserSetting(sid, `custom.${setting.key}`);
+          if (savedValue && savedValue.settingValue) {
+            this.sourceCustomSettingValues.set(setting.key, savedValue.settingValue);
+          } else if (setting.default) {
+            this.sourceCustomSettingValues.set(setting.key, setting.default);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, '加载图源配置设置失败', String(error));
+    }
+  }
+
+  /**
+   * 保存自定义设置值
+   */
+  private async saveCustomSetting(key: string, value: string): Promise<void> {
+    if (!this.pageParams || !this.pageParams.sourceName) {
+      return;
+    }
+    
+    try {
+      const sourceRecord = await this.dataManager.getComicSourceByName(this.pageParams.sourceName);
+      if (!sourceRecord) {
+        return;
+      }
+      const sid: number = Number(sourceRecord.id);
+      
+      await this.dataManager.saveSourceUserSetting(sid, `custom.${key}`, value, 'string');
+      this.sourceCustomSettingValues.set(key, value);
+      logger.info(TAG, `自定义设置已保存: ${key}=${value}`);
+    } catch (error) {
+      logger.error(TAG, `保存自定义设置失败: ${key}`, String(error));
+    }
+  }
+
+  /**
+   * 切换镜像站点
+   */
+  private async switchMirror(index: number): Promise<void> {
+    if (!this.pageParams || !this.pageParams.sourceName || index < 0 || index >= this.mirrorSites.length) {
+      return;
+    }
+    
+    try {
+      const sourceRecord = await this.dataManager.getComicSourceByName(this.pageParams.sourceName);
+      if (!sourceRecord) {
+        return;
+      }
+      const sid: number = Number(sourceRecord.id);
+      
+      // 保存镜像索引
+      await this.dataManager.saveSourceUserSetting(sid, 'source.mirrorIndex', String(index), 'number');
+      this.currentMirrorIndex = index;
+      
+      // 解析镜像URL
+      const mirrorStr = this.mirrorSites[index];
+      let mirrorUrl = mirrorStr;
+      
+      // 处理带描述的镜像格式，如 "cn.baozimh.com (简体-主站)"
+      const parenIndex = mirrorStr.indexOf('(');
+      if (parenIndex > 0) {
+        mirrorUrl = mirrorStr.substring(0, parenIndex).trim();
+      }
+      
+      // 确保URL格式正确
+      if (!mirrorUrl.startsWith('http://') && !mirrorUrl.startsWith('https://')) {
+        mirrorUrl = 'https://' + mirrorUrl;
+      }
+      
+      // 更新数据库中的baseUrl
+      await this.dataManager.updateSourceBaseUrl(sid, mirrorUrl);
+      this.currentBaseUrl = mirrorUrl;
+      
+      this.showToast(`已切换到: ${mirrorUrl}`);
+      logger.info(TAG, `镜像站点已切换: index=${index}, url=${mirrorUrl}`);
+    } catch (error) {
+      logger.error(TAG, '切换镜像站点失败', String(error));
+      this.showToast('切换失败');
+    }
+  }
+
   private async loadSettings(): Promise<void> {
     if (!this.pageParams || !this.pageParams.sourceName) {
       logger.error(TAG, '无效的sourceName，无法加载设置');
@@ -142,6 +361,9 @@ export struct SourceSettingsPage {
     try {
       const sourceName: string = this.pageParams.sourceName;
       logger.info(TAG, `开始加载图源设置: sourceName=${sourceName}`);
+      
+      // 加载图源配置中的镜像站点和自定义设置
+      await this.loadSourceConfigSettings();
       
       // 获取图源记录以获取数字 ID（用于设置查询）
       const sourceRecord = await this.dataManager.getComicSourceByName(sourceName);
@@ -492,6 +714,156 @@ export struct SourceSettingsPage {
 
         Scroll(this.scroller) {
           Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+            // 换源设置分组（仅当有镜像站点时显示）
+            if (this.mirrorSites.length > 0) {
+              Column() {
+                Text('换源')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .margin({ bottom: 12 })
+
+                Text(`当前站点: ${this.currentBaseUrl}`)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .margin({ bottom: 8 })
+
+                Column({ space: 8 }) {
+                  ForEach(this.mirrorSites, (mirror: string, index: number) => {
+                    Row() {
+                      Radio({ value: String(index), group: 'mirrorGroup' })
+                        .checked(this.currentMirrorIndex === index)
+                        .onChange((isChecked: boolean) => {
+                          if (isChecked) {
+                            this.switchMirror(index);
+                          }
+                        })
+                      Text(mirror)
+                        .fontSize(14)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                        .margin({ left: 8 })
+                        .layoutWeight(1)
+                    }
+                    .width('100%')
+                    .padding({ top: 4, bottom: 4 })
+                  })
+                }
+                .width('100%')
+              }
+              .width(this.isLandscape ? '48%' : '100%')
+              .padding(16)
+              .margin({ bottom: 16 })
+              .borderRadius(12)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            }
+
+            // 图源自定义设置分组（仅当有自定义设置时显示）
+            if (this.sourceCustomSettings.length > 0) {
+              Column() {
+                Text('图源设置')
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .margin({ bottom: 12 })
+
+                ForEach(this.sourceCustomSettings, (setting: SourceCustomSetting) => {
+                  Column() {
+                    Row() {
+                      Text(setting.name)
+                        .fontSize(14)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      if (setting.description) {
+                        Text('?')
+                          .fontSize(12)
+                          .fontColor(Color.Gray)
+                          .width(16)
+                          .height(16)
+                          .textAlign(TextAlign.Center)
+                          .borderRadius(8)
+                          .border({ width: 1, color: Color.Gray })
+                          .margin({ left: 4 })
+                      }
+                    }
+                    .width('100%')
+                    .margin({ bottom: 4 })
+
+                    if (setting.type === 'text') {
+                      TextInput({ text: this.sourceCustomSettingValues.get(setting.key) || setting.default || '' })
+                        .width('100%')
+                        .onChange((value: string) => {
+                          this.saveCustomSetting(setting.key, value);
+                        })
+                    } else if (setting.type === 'boolean') {
+                      Row() {
+                        Blank()
+                        Toggle({ type: ToggleType.Switch, isOn: (this.sourceCustomSettingValues.get(setting.key) || setting.default) === 'true' })
+                          .onChange((isOn: boolean) => {
+                            this.saveCustomSetting(setting.key, isOn ? 'true' : 'false');
+                          })
+                      }
+                      .width('100%')
+                    } else if (setting.type === 'select' && setting.options) {
+                      Column({ space: 4 }) {
+                        ForEach(setting.options, (option: SourceSettingOption) => {
+                          Row() {
+                            Radio({ value: option.value, group: `setting_${setting.key}` })
+                              .checked((this.sourceCustomSettingValues.get(setting.key) || setting.default) === option.value)
+                              .onChange((isChecked: boolean) => {
+                                if (isChecked) {
+                                  this.saveCustomSetting(setting.key, option.value);
+                                }
+                              })
+                            Text(option.label)
+                              .fontSize(14)
+                              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                              .margin({ left: 8 })
+                          }
+                          .width('100%')
+                        })
+                      }
+                      .width('100%')
+                    } else if (setting.type === 'number') {
+                      Row() {
+                        Blank()
+                        Text(this.sourceCustomSettingValues.get(setting.key) || setting.default || '0')
+                          .fontSize(14)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      }
+                      .width('100%')
+                      .margin({ bottom: 4 })
+
+                      Slider({
+                        value: Number(this.sourceCustomSettingValues.get(setting.key) || setting.default || 0),
+                        min: setting.min || 0,
+                        max: setting.max || 100,
+                        step: 1,
+                        style: SliderStyle.InSet
+                      })
+                        .width('100%')
+                        .trackThickness(4)
+                        .onChange((value: number) => {
+                          this.saveCustomSetting(setting.key, String(Math.round(value)));
+                        })
+                    }
+
+                    if (setting.description) {
+                      Text(setting.description)
+                        .fontSize(11)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                        .margin({ top: 4 })
+                    }
+                  }
+                  .width('100%')
+                  .margin({ bottom: 12 })
+                })
+              }
+              .width(this.isLandscape ? '48%' : '100%')
+              .padding(16)
+              .margin({ bottom: 16 })
+              .borderRadius(12)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            }
+
             // 基础设置分组
             Column() {
               Text('基础')
@@ -884,7 +1256,8 @@ export struct SourceSettingsPage {
             .borderRadius(12)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
 
-            // 漫画默认阅读设置分组
+            // 漫画默认阅读设置分组（仅漫画图源显示）
+            if (this.sourceType === 'manga') {
             Column() {
               Row() {
                 Text('漫画默认阅读设置')
@@ -1027,8 +1400,10 @@ export struct SourceSettingsPage {
             .margin({ top: 16 })
             .borderRadius(12)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            }
 
-            // 电子书默认阅读设置分组
+            // 电子书默认阅读设置分组（仅电子书图源显示）
+            if (this.sourceType === 'ebook') {
             Column() {
               Row() {
                 Text('电子书默认阅读设置')
@@ -1235,6 +1610,7 @@ export struct SourceSettingsPage {
             .margin({ top: 16 })
             .borderRadius(12)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+            }
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: this.statusBarHeight + 8, bottom: this.navigationBarHeight + 8 })

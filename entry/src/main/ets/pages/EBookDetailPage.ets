@@ -6,8 +6,9 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { EBook, EBookChapter, EBookFormat, EBookStatus } from '../Models/EBookModels';
@@ -18,6 +19,7 @@ import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Fram
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
+import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -92,7 +94,10 @@ export struct EBookDetailPage {
     this.deviceAdaptationManager.addListener(this.deviceOrientationListener);
   }
 
+  private lifecycle = new PageLifecycleManager('EBookDetailPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 移除设备方向监听器
@@ -211,6 +216,22 @@ export struct EBookDetailPage {
 
       this.ebook = ebook;
       logger.info(TAG, `电子书详情加载完成: ${ebook.metadata.title}`);
+      
+      // 检查SFW模式
+      const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
+      if (sfwEnabled && ebook.isNSFW) {
+        logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
+        promptAction.showToast({
+          message: 'SFW模式已启用，无法查看NSFW内容',
+          duration: 2000
+        });
+        // 返回上一页
+        if (this.pathStack) {
+          this.pathStack.pop();
+        }
+        this.isLoading = false;
+        return;
+      }
     } catch (error) {
       this.errorMessage = `加载失败: ${String(error instanceof Error ? error.message : error)}`;
       logger.error(TAG, this.errorMessage);
@@ -866,10 +887,9 @@ export struct EBookDetailPage {
 
       // 设置按钮
       Button() {
-        Image($r('app.media.ic_settings'))
-          .width(24)
-          .height(24)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        SymbolGlyph($r('sys.symbol.gearshape'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
       }
       .width(48)
       .height(48)
@@ -1326,10 +1346,9 @@ export struct EBookDetailPage {
               .onClick(() => this.toggleFavorite())
 
               Button() {
-                Image($r('app.media.ic_settings'))
-                  .width(16)
-                  .height(16)
-                  .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                SymbolGlyph($r('sys.symbol.gearshape'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
               }
               .width(32)
               .height(32)

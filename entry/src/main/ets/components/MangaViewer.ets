@@ -31,7 +31,12 @@ import fs from '@ohos.file.fs';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { image } from '@kit.ImageKit';
 import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
+import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
+// 新增：预加载管理系统
+import { PreloadManager, PreloadTaskItem } from './PreloadManager';
+import { ImageLoadStateManager, ImageLoadState as NewImageLoadState, PageState } from './ImageLoadStateManager';
+import { PreloadDebugInfo } from './PreloadDebugOverlay';
 
 const TAG = 'MangaViewer';
 
@@ -211,6 +216,15 @@ export struct MangaViewer {
   @Prop sourceId?: number;
   @Prop mangaId?: string;
 
+  // 新增：预加载调试信息（用于传递给MangaReaderPage）
+  @Link preloadDebugInfo: PreloadDebugInfo;
+
+  // 新增：预加载管理器
+  private preloadManager: PreloadManager = new PreloadManager();
+
+  // 新增：图片加载状态管理器
+  private imageLoadStateManager: ImageLoadStateManager = new ImageLoadStateManager();
+
   // 屏幕尺寸属性
   @State private screenWidth: number = 0;
   @State private screenHeight: number = 0;
@@ -236,7 +250,8 @@ export struct MangaViewer {
   private priorityLoadQueue: string[] = []; // 高优先级加载队列（当前页和相邻页）
 
   public kickstartLoading(): void {
-    this.preloadSinglePageWebtoonStyle();
+    // 使用新的统一预加载方法
+    this.triggerUnifiedPreload();
     try {
       if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
         const idx: number = (this.viewCurrentPageIndex >= 0 && this.viewCurrentPageIndex < this.chapter.pages.length) ? this.viewCurrentPageIndex : 0;
@@ -247,8 +262,6 @@ export struct MangaViewer {
           this.loadImage(page);
           logger.debug(TAG, `触发首图加载: index=${idx}, id=${page.id}`);
         }
-        // 触发预加载相邻页面
-        this.preloadSinglePageNeighbors();
       }
     } catch (e) {
       logger.warn(TAG, '触发首图加载失败' + String(e));
@@ -391,6 +404,9 @@ export struct MangaViewer {
   private pageDataSource: MangaPageDataSource = new MangaPageDataSource([]);
 
   aboutToAppear() {
+    // 新增：初始化预加载管理器
+    this.initializePreloadManagers();
+    
     this.currentScale = this.zoomScale;
     this.animationId = AnimationUtils.generateAnimationId();
     this.uiContext = this.getUIContext();
@@ -428,9 +444,8 @@ export struct MangaViewer {
     // 初始化可见页面
     this.updateVisiblePages();
 
-    // 预加载初始图片
-    this.preloadNearbyImages();
-    this.preloadImages();
+    // 预加载初始图片 - 使用新的统一预加载方法
+    this.triggerUnifiedPreload();
 
     // 初始化 LazyForEach 数据源
     if (this.chapter && this.chapter.pages) {
@@ -523,13 +538,8 @@ export struct MangaViewer {
         logger.info(TAG, `🔄 触发 ${retryCount} 张图片的重试加载`);
 
         // 2. 重新触发预加载逻辑
-        if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
-          this.ensureDoublePageImagesPreloaded();
-        } else if (this.isWebtoonMode()) {
-          this.preloadNearbyImages();
-        } else {
-          this.preloadSinglePageWebtoonStyle();
-        }
+        // 使用新的统一预加载方法
+        this.triggerUnifiedPreload();
 
         // 3. 确保当前页立即加载
         const currentPageData = this.getCurrentPageData();
@@ -595,19 +605,11 @@ export struct MangaViewer {
     // 优先加载当前页和相邻页
     this.loadCurrentAndNeighborPages();
 
-    // 对于条漫模式，也触发预加载
+    // 触发统一预加载
     if (this.isWebtoonMode()) {
       this.updateVisiblePages();
-      this.preloadNearbyImages();
-    } else {
-      // 非条漫模式，触发预加载
-      this.preloadImages();
     }
-    if (this.isSinglePageMode()) {
-      this.preloadSinglePageWebtoonStyle();
-    } else {
-      this.preloadImages();
-    }
+    this.triggerUnifiedPreload();
     // 双页模式：更新左右页索引
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.preloadDoublePageNeighbors();
@@ -671,6 +673,57 @@ export struct MangaViewer {
   }
 
   /**
+   * 新增：初始化预加载管理器
+   */
+  private initializePreloadManagers(): void {
+    // 配置预加载参数（可根据需要调整）
+    this.preloadManager.updateConfig({
+      maxConcurrentOnline: 3,      // 在线漫画最大并发加载数
+      maxConcurrentLocal: 5,       // 本地漫画最大并发加载数
+      webtoonVisibleBuffer: 1.5,   // 条漫模式可见区域缓冲（屏幕高度倍数）
+      webtoonPreloadRange: 8,      // 条漫模式预加载范围（页数）
+      normalPreloadRange: 3        // 普通模式预加载范围（页数）
+    });
+    
+    // 设置预加载管理器的调试信息回调
+    this.preloadManager.setDebugInfoUpdateCallback((info: PreloadDebugInfo) => {
+      this.preloadDebugInfo = info;
+    });
+    
+    // 设置图片加载状态管理器的状态变化回调
+    this.imageLoadStateManager.setStateChangeCallback((pageId: string, state: PageState) => {
+      this.onPageStateChanged(pageId, state);
+    });
+    
+    // 初始化页面信息
+    if (this.chapter && this.chapter.pages) {
+      this.preloadManager.setPageInfo(this.currentPageIndex, this.chapter.pages.length);
+      
+      // 初始化所有页面状态
+      this.chapter.pages.forEach((page, index) => {
+        this.imageLoadStateManager.initPage(page.id, index);
+      });
+      
+      logger.info(TAG, `预加载管理器初始化完成: 总页数=${this.chapter.pages.length}, 当前页=${this.currentPageIndex}`);
+    }
+  }
+
+  /**
+   * 新增：页面状态变化回调
+   */
+  private onPageStateChanged(pageId: string, state: PageState): void {
+    // 当页面状态变化时，更新UI相关的状态
+    // 这里可以根据需要触发UI刷新
+    logger.debug(TAG, `页面状态变化: ${pageId}, state=${state.loadState}`);
+    
+    // 如果是当前页，更新显示
+    const currentPage = this.chapter?.pages[this.viewCurrentPageIndex];
+    if (currentPage && currentPage.id === pageId) {
+      this.updateSinglePageDisplay();
+    }
+  }
+
+  /**
    * 初始化图片加载状态
    */
   private initializeImageStates(): void {
@@ -705,7 +758,10 @@ export struct MangaViewer {
       return;
     }
 
-    this.preloadSinglePageWebtoonStyle();
+    // 条漫模式使用统一的预加载方法
+    if (this.isWebtoonMode()) {
+      this.triggerWebtoonPreload();
+    }
   }
 
   /**
@@ -776,6 +832,49 @@ export struct MangaViewer {
     }
     // 调用原有的loadImage方法
     this.loadImage(page);
+  }
+
+  /**
+   * 新增：重试加载页面
+   */
+  private retryLoadPage(page: MangaPage): void {
+    logger.info(TAG, `重试加载页面: pageId=${page.id}, url=${page.imageUrl}`);
+    
+    // 清除旧的错误状态
+    const oldState = this.imageLoadStates.get(page.id);
+    if (oldState) {
+      oldState.error = undefined;
+      oldState.isLoading = false;
+      oldState.isLoaded = false;
+      this.imageLoadStates.set(page.id, oldState);
+      this.imageLoadStates = new Map(this.imageLoadStates);
+    }
+    
+    // 清除新状态管理器中的状态
+    this.imageLoadStateManager.clearPage(page.id);
+    this.preloadManager.clearPage(this.getPageIndexById(page.id));
+    
+    // 清除 PixelMap
+    const existedPm = this.pagePixelMaps.get(page.id);
+    if (existedPm) {
+      try {
+        existedPm.release();
+      } catch (e) {
+        logger.warn(TAG, `释放PixelMap失败: ${e}`);
+      }
+      this.pagePixelMaps.delete(page.id);
+      this.pagePixelMapMeta.delete(page.id);
+      this.incrementPixelMapEpoch(page.id);
+    }
+    
+    // 重新初始化页面状态
+    this.imageLoadStateManager.initPage(page.id, this.getPageIndexById(page.id));
+    
+    // 重新加载图片
+    this.loadImage(page);
+    
+    // 更新显示
+    this.updateSinglePageDisplay();
   }
 
   /**
@@ -929,8 +1028,8 @@ export struct MangaViewer {
       this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_LTR ||
       this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_RTL ||
       this.readingSettings.readingMode === ReadingMode.SINGLE_PAGE_TTB) {
-      this.preloadSinglePageNeighbors();
-      this.preloadSinglePageWebtoonStyle();
+      // 使用新的统一预加载方法
+      this.triggerUnifiedPreload();
       // 卷页模式下不更新预览（由Canvas层处理）
       if (animationType !== PageTurnAnimationType.CURL) {
         this.updateSinglePagePreview();
@@ -1490,26 +1589,23 @@ export struct MangaViewer {
               const newIndex: number = this.viewCurrentPageIndex - 1;
               const newPage: MangaPage = this.chapter.pages[newIndex];
 
-              // 【修复】先确保目标页面PixelMap已加载，再执行翻页
-              if (!this.pagePixelMaps.has(newPage.id)) {
-                logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
-                this.ensurePixelMapLoaded(newPage).then(() => {
-                  this.viewCurrentPageIndex = newIndex;
-                  this.currentPageIndex = newIndex;
-                  this.suppressExternalIndex = true;
-                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                  this.updateSinglePageDisplay();
-                  this.incrementPixelMapEpoch(newPage.id);
-                  this.renderEpoch = this.renderEpoch + 1;
-                }).catch((_e: Error) => {});
-              } else {
-                this.viewCurrentPageIndex = newIndex;
-                this.currentPageIndex = newIndex;
-                this.suppressExternalIndex = true;
-                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                this.updateSinglePageDisplay();
-                this.incrementPixelMapEpoch(newPage.id);
-                this.renderEpoch = this.renderEpoch + 1;
+              // 【修复】允许翻页，但确保触发加载并显示加载状态
+              const targetLoadState = this.getPageLoadState(newPage);
+              const hasPixelMap = this.pagePixelMaps.has(newPage.id);
+              
+              // 立即切换页面索引，让UI显示加载动画
+              this.viewCurrentPageIndex = newIndex;
+              this.currentPageIndex = newIndex;
+              this.suppressExternalIndex = true;
+              if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+              this.updateSinglePageDisplay();
+              this.incrementPixelMapEpoch(newPage.id);
+              this.renderEpoch = this.renderEpoch + 1;
+              
+              // 如果目标页面未加载，触发加载
+              if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
+                logger.debug(TAG, `翻页后触发目标页面加载: ${newPage.id}`);
+                this.loadImage(newPage);
               }
               pageChanged = true;
             } else if (this.callbacks.onChapterChange) {
@@ -1523,26 +1619,23 @@ export struct MangaViewer {
               const newIndex: number = this.viewCurrentPageIndex + 1;
               const newPage: MangaPage = this.chapter.pages[newIndex];
 
-              // 【修复】先确保目标页面PixelMap已加载，再执行翻页
-              if (!this.pagePixelMaps.has(newPage.id)) {
-                logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
-                this.ensurePixelMapLoaded(newPage).then(() => {
-                  this.viewCurrentPageIndex = newIndex;
-                  this.currentPageIndex = newIndex;
-                  this.suppressExternalIndex = true;
-                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                  this.updateSinglePageDisplay();
-                  this.incrementPixelMapEpoch(newPage.id);
-                  this.renderEpoch = this.renderEpoch + 1;
-                }).catch((_e: Error) => {});
-              } else {
-                this.viewCurrentPageIndex = newIndex;
-                this.currentPageIndex = newIndex;
-                this.suppressExternalIndex = true;
-                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                this.updateSinglePageDisplay();
-                this.incrementPixelMapEpoch(newPage.id);
-                this.renderEpoch = this.renderEpoch + 1;
+              // 【修复】允许翻页，但确保触发加载并显示加载状态
+              const targetLoadState = this.getPageLoadState(newPage);
+              const hasPixelMap = this.pagePixelMaps.has(newPage.id);
+              
+              // 立即切换页面索引，让UI显示加载动画
+              this.viewCurrentPageIndex = newIndex;
+              this.currentPageIndex = newIndex;
+              this.suppressExternalIndex = true;
+              if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+              this.updateSinglePageDisplay();
+              this.incrementPixelMapEpoch(newPage.id);
+              this.renderEpoch = this.renderEpoch + 1;
+              
+              // 如果目标页面未加载，触发加载
+              if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
+                logger.debug(TAG, `翻页后触发目标页面加载: ${newPage.id}`);
+                this.loadImage(newPage);
               }
               pageChanged = true;
             } else if (this.callbacks.onChapterChange) {
@@ -1567,26 +1660,23 @@ export struct MangaViewer {
                 const newIndex: number = this.viewCurrentPageIndex + 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
 
-                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
-                if (!this.pagePixelMaps.has(newPage.id)) {
-                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
-                  this.ensurePixelMapLoaded(newPage).then(() => {
-                    this.viewCurrentPageIndex = newIndex;
-                    this.currentPageIndex = newIndex;
-                    this.suppressExternalIndex = true;
-                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                    this.updateSinglePageDisplay();
-                    this.incrementPixelMapEpoch(newPage.id);
-                    this.renderEpoch = this.renderEpoch + 1;
-                  }).catch((_e: Error) => {});
-                } else {
-                  this.viewCurrentPageIndex = newIndex;
-                  this.currentPageIndex = newIndex;
-                  this.suppressExternalIndex = true;
-                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                  this.updateSinglePageDisplay();
-                  this.incrementPixelMapEpoch(newPage.id);
-                  this.renderEpoch = this.renderEpoch + 1;
+                // 【修复】允许翻页，但确保触发加载并显示加载状态
+                const targetLoadState = this.getPageLoadState(newPage);
+                const hasPixelMap = this.pagePixelMaps.has(newPage.id);
+                
+                // 立即切换页面索引，让UI显示加载动画
+                this.viewCurrentPageIndex = newIndex;
+                this.currentPageIndex = newIndex;
+                this.suppressExternalIndex = true;
+                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                this.updateSinglePageDisplay();
+                this.incrementPixelMapEpoch(newPage.id);
+                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 如果目标页面未加载，触发加载
+                if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
+                  logger.debug(TAG, `翻页后触发目标页面加载: ${newPage.id}`);
+                  this.loadImage(newPage);
                 }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
@@ -1600,26 +1690,23 @@ export struct MangaViewer {
                 const newIndex: number = this.viewCurrentPageIndex - 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
 
-                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
-                if (!this.pagePixelMaps.has(newPage.id)) {
-                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
-                  this.ensurePixelMapLoaded(newPage).then(() => {
-                    this.viewCurrentPageIndex = newIndex;
-                    this.currentPageIndex = newIndex;
-                    this.suppressExternalIndex = true;
-                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                    this.updateSinglePageDisplay();
-                    this.incrementPixelMapEpoch(newPage.id);
-                    this.renderEpoch = this.renderEpoch + 1;
-                  }).catch((_e: Error) => {});
-                } else {
-                  this.viewCurrentPageIndex = newIndex;
-                  this.currentPageIndex = newIndex;
-                  this.suppressExternalIndex = true;
-                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                  this.updateSinglePageDisplay();
-                  this.incrementPixelMapEpoch(newPage.id);
-                  this.renderEpoch = this.renderEpoch + 1;
+                // 【修复】允许翻页，但确保触发加载并显示加载状态
+                const targetLoadState = this.getPageLoadState(newPage);
+                const hasPixelMap = this.pagePixelMaps.has(newPage.id);
+                
+                // 立即切换页面索引，让UI显示加载动画
+                this.viewCurrentPageIndex = newIndex;
+                this.currentPageIndex = newIndex;
+                this.suppressExternalIndex = true;
+                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                this.updateSinglePageDisplay();
+                this.incrementPixelMapEpoch(newPage.id);
+                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 如果目标页面未加载，触发加载
+                if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
+                  logger.debug(TAG, `翻页后触发目标页面加载: ${newPage.id}`);
+                  this.loadImage(newPage);
                 }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
@@ -1635,26 +1722,23 @@ export struct MangaViewer {
                 const newIndex: number = this.viewCurrentPageIndex - 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
 
-                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
-                if (!this.pagePixelMaps.has(newPage.id)) {
-                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
-                  this.ensurePixelMapLoaded(newPage).then(() => {
-                    this.viewCurrentPageIndex = newIndex;
-                    this.currentPageIndex = newIndex;
-                    this.suppressExternalIndex = true;
-                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                    this.updateSinglePageDisplay();
-                    this.incrementPixelMapEpoch(newPage.id);
-                    this.renderEpoch = this.renderEpoch + 1;
-                  }).catch((_e: Error) => {});
-                } else {
-                  this.viewCurrentPageIndex = newIndex;
-                  this.currentPageIndex = newIndex;
-                  this.suppressExternalIndex = true;
-                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                  this.updateSinglePageDisplay();
-                  this.incrementPixelMapEpoch(newPage.id);
-                  this.renderEpoch = this.renderEpoch + 1;
+                // 【修复】允许翻页，但确保触发加载并显示加载状态
+                const targetLoadState = this.getPageLoadState(newPage);
+                const hasPixelMap = this.pagePixelMaps.has(newPage.id);
+                
+                // 立即切换页面索引，让UI显示加载动画
+                this.viewCurrentPageIndex = newIndex;
+                this.currentPageIndex = newIndex;
+                this.suppressExternalIndex = true;
+                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                this.updateSinglePageDisplay();
+                this.incrementPixelMapEpoch(newPage.id);
+                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 如果目标页面未加载，触发加载
+                if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
+                  logger.debug(TAG, `翻页后触发目标页面加载: ${newPage.id}`);
+                  this.loadImage(newPage);
                 }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
@@ -1668,26 +1752,23 @@ export struct MangaViewer {
                 const newIndex: number = this.viewCurrentPageIndex + 1;
                 const newPage: MangaPage = this.chapter.pages[newIndex];
 
-                // 【修复】先确保目标页面PixelMap已加载，再执行翻页
-                if (!this.pagePixelMaps.has(newPage.id)) {
-                  logger.debug(TAG, `翻页前预加载目标页面: ${newPage.id}`);
-                  this.ensurePixelMapLoaded(newPage).then(() => {
-                    this.viewCurrentPageIndex = newIndex;
-                    this.currentPageIndex = newIndex;
-                    this.suppressExternalIndex = true;
-                    if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                    this.updateSinglePageDisplay();
-                    this.incrementPixelMapEpoch(newPage.id);
-                    this.renderEpoch = this.renderEpoch + 1;
-                  }).catch((_e: Error) => {});
-                } else {
-                  this.viewCurrentPageIndex = newIndex;
-                  this.currentPageIndex = newIndex;
-                  this.suppressExternalIndex = true;
-                  if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
-                  this.updateSinglePageDisplay();
-                  this.incrementPixelMapEpoch(newPage.id);
-                  this.renderEpoch = this.renderEpoch + 1;
+                // 【修复】允许翻页，但确保触发加载并显示加载状态
+                const targetLoadState = this.getPageLoadState(newPage);
+                const hasPixelMap = this.pagePixelMaps.has(newPage.id);
+                
+                // 立即切换页面索引，让UI显示加载动画
+                this.viewCurrentPageIndex = newIndex;
+                this.currentPageIndex = newIndex;
+                this.suppressExternalIndex = true;
+                if (this.callbacks.onPageChange) { this.callbacks.onPageChange(newIndex); }
+                this.updateSinglePageDisplay();
+                this.incrementPixelMapEpoch(newPage.id);
+                this.renderEpoch = this.renderEpoch + 1;
+                
+                // 如果目标页面未加载，触发加载
+                if (!hasPixelMap && (!targetLoadState || !targetLoadState.isLoading)) {
+                  logger.debug(TAG, `翻页后触发目标页面加载: ${newPage.id}`);
+                  this.loadImage(newPage);
                 }
                 pageChanged = true;
               } else if (this.callbacks.onChapterChange) {
@@ -2277,9 +2358,8 @@ export struct MangaViewer {
         this.callbacks.onPageChange(targetIndex);
       }
 
-      // 更新预加载
-      this.preloadSinglePageNeighbors();
-      this.preloadSinglePageWebtoonStyle();
+      // 更新预加载 - 使用新的统一预加载方法
+      this.triggerUnifiedPreload();
     }
 
     const startProgress: number = this.curlProgress;
@@ -2628,7 +2708,8 @@ export struct MangaViewer {
    * 处理单页模式滑动手势
    */
   private handleSinglePageSwipe(event: GestureEvent): void {
-    this.preloadSinglePageNeighbors();
+    // 使用新的统一预加载方法
+    this.triggerUnifiedPreload();
     const swipeDirection = event.angle || 0;
     const swipeSpeed = Math.abs(event.speed || 0);
 
@@ -2659,7 +2740,10 @@ export struct MangaViewer {
           this.viewCurrentPageIndex = newIndex;
           this.currentPageIndex = newIndex;
           this.suppressExternalIndex = true;
-          this.preloadSinglePageWebtoonStyle();
+          // 条漫模式使用统一的预加载方法
+          if (this.isWebtoonMode()) {
+            this.triggerWebtoonPreload();
+          }
           const newPage: MangaPage = this.chapter.pages[newIndex];
           this.updateSinglePageDisplay();
           this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
@@ -2687,7 +2771,10 @@ export struct MangaViewer {
           this.viewCurrentPageIndex = newIndex;
           this.currentPageIndex = newIndex;
           this.suppressExternalIndex = true;
-          this.preloadSinglePageWebtoonStyle();
+          // 条漫模式使用统一的预加载方法
+          if (this.isWebtoonMode()) {
+            this.triggerWebtoonPreload();
+          }
           const newPage: MangaPage = this.chapter.pages[newIndex];
           this.updateSinglePageDisplay();
           this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
@@ -2720,7 +2807,7 @@ export struct MangaViewer {
             this.viewCurrentPageIndex = newIndex;
             this.currentPageIndex = newIndex;
             this.suppressExternalIndex = true;
-            this.preloadSinglePageWebtoonStyle();
+            this.triggerWebtoonPreload();
             const newPage: MangaPage = this.chapter.pages[newIndex];
             this.updateSinglePageDisplay();
             this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
@@ -2748,7 +2835,7 @@ export struct MangaViewer {
             this.viewCurrentPageIndex = newIndex;
             this.currentPageIndex = newIndex;
             this.suppressExternalIndex = true;
-            this.preloadSinglePageWebtoonStyle();
+            this.triggerWebtoonPreload();
             const newPage: MangaPage = this.chapter.pages[newIndex];
             this.updateSinglePageDisplay();
             this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
@@ -2779,7 +2866,7 @@ export struct MangaViewer {
             this.viewCurrentPageIndex = newIndex;
             this.currentPageIndex = newIndex;
             this.suppressExternalIndex = true;
-            this.preloadSinglePageWebtoonStyle();
+            this.triggerWebtoonPreload();
             const newPage: MangaPage = this.chapter.pages[newIndex];
             this.updateSinglePageDisplay();
             this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
@@ -2807,7 +2894,7 @@ export struct MangaViewer {
             this.viewCurrentPageIndex = newIndex;
             this.currentPageIndex = newIndex;
             this.suppressExternalIndex = true;
-            this.preloadSinglePageWebtoonStyle();
+            this.triggerWebtoonPreload();
             const newPage: MangaPage = this.chapter.pages[newIndex];
             this.updateSinglePageDisplay();
             this.ensurePixelMapLoaded(newPage).then(() => { this.updateSinglePageDisplay(); }).catch((_e: Error) => {});
@@ -2862,40 +2949,42 @@ export struct MangaViewer {
 
     logger.debug(TAG, `预加载范围: 当前页=${currentIndex + 1}, 预加载前后${preloadCount}页, contentType=${this.contentType}`);
 
-    // 在线漫画：优先级策略预加载
-    if (this.contentType === 'OnlineUndownloaded') {
-      // 【修复】当前页：优先级10（已经在显示）
-      // 预加载接下来的N页（根据preloadCount）
-      for (let i = 1; i <= preloadCount; i++) {
-        const targetIndex = currentIndex + i;
-        if (targetIndex >= totalPages) break;
-
-        const page = this.chapter.pages[targetIndex];
+    // [优化] 统一使用优先级策略预加载，前后对称加载
+    // 优先级分级：当前页=10（最高）> 下一页=9 > 上一页=8 > 下下页=7 > 上上页=6 ...
+    interface LoadOrderItem {
+      idx: number;
+      priority: number;
+    }
+    const loadOrder: Array<LoadOrderItem> = [];
+    
+    // 当前页（如果未加载）
+    const currentItem: LoadOrderItem = { idx: currentIndex, priority: 10 };
+    loadOrder.push(currentItem);
+    
+    // 前后对称预加载：+1, -1, +2, -2, +3, -3 ...
+    for (let i = 1; i <= preloadCount; i++) {
+      // 下一页优先级更高（用户更可能向前翻页）
+      if (currentIndex + i < totalPages) {
+        const forwardItem: LoadOrderItem = { idx: currentIndex + i, priority: Math.max(1, 10 - i) };
+        loadOrder.push(forwardItem);
+      }
+      // 上一页
+      if (currentIndex - i >= 0) {
+        const backwardItem: LoadOrderItem = { idx: currentIndex - i, priority: Math.max(1, 10 - i - 1) };
+        loadOrder.push(backwardItem);
+      }
+    }
+    
+    // 按优先级顺序加载
+    for (const item of loadOrder) {
+      if (item.idx >= 0 && item.idx < totalPages) {
+        const page = this.chapter.pages[item.idx];
         const st = this.getPageLoadState(page);
         const hasPm = this.pagePixelMaps.has(page.id);
-
+        
         if (!hasPm && (!st || !st.isLoading)) {
-          // 【修复】提高优先级：下一页=9（卷页动画关键），下下页=7，第三页=5
-          const priority = Math.max(3, 11 - i * 2);
-          this.loadImageWithPriority(page, priority);
-          logger.debug(TAG, `预加载第${targetIndex + 1}页: priority=${priority}`);
-        }
-      }
-    } else {
-      // 本地漫画：预加载前后N页
-      for (let i = -preloadCount; i <= preloadCount; i++) {
-        if (i === 0) continue; // 跳过当前页（已经在显示）
-
-        const targetIndex = currentIndex + i;
-        if (targetIndex >= 0 && targetIndex < totalPages) {
-          const page = this.chapter.pages[targetIndex];
-          const st = this.getPageLoadState(page);
-          const hasPm = this.pagePixelMaps.has(page.id);
-
-          if (!hasPm && (!st || !st.isLoading)) {
-            this.loadImage(page);
-            logger.debug(TAG, `预加载第${targetIndex + 1}页: ${page.id}`);
-          }
+          this.loadImageWithPriority(page, item.priority);
+          logger.debug(TAG, `预加载第${item.idx + 1}页: priority=${item.priority}, id=${page.id}`);
         }
       }
     }
@@ -3774,79 +3863,139 @@ export struct MangaViewer {
   @Builder
   buildPageImageContent(page: MangaPage) {
     Stack() {
-      Image(this.singlePageImageInput)
-        .key(`${this.singlePagePageId}_${this.renderEpoch}_${this.getPixelMapEpoch(this.singlePagePageId)}_${this.pagePixelMaps.has(this.singlePagePageId) ? 'pm' : 'url'}`)
-        .width('100%')
-        .height('100%')
-        .objectFit(this.getImageFitMode(page))
-        .padding(0)
-        .margin(0)
-        .borderWidth(0)
-        // 应用滤镜效果
-        .brightness(this.getFilterBrightness())
-        .contrast(this.getFilterContrast())
-        .saturate(this.getFilterSaturation())
-        .grayscale(this.getFilterGrayscale())
-        .invert(this.getFilterInvert())
-        .sepia(this.getFilterSepia())
-        .onAppear(() => {
-          this.logImageDisplayBefore(page, this.singlePageImageInput);
-        })
-        .onComplete(() => {
-          const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-          const newState: ImageLoadState = {
-            isLoading: false,
-            isLoaded: true,
-            dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
-            error: undefined
-          } as ImageLoadState;
-          this.imageLoadStates.set(page.id, newState);
-          this.imageLoadStates = new Map(this.imageLoadStates);
-          this.logImageDisplayAfter(page, true);
-          const bindIdx: number = this.getPageIndexById(page.id);
-          if (bindIdx >= 0) {
-            this.pageImageBindings.set(bindIdx, page.id);
-            this.pageImageBindings = new Map(this.pageImageBindings);
-          }
-          logger.debug(TAG, `单页图片加载完成: id=${page.id}, src=${String(this.getImageResource(page))}, pm=${this.pagePixelMaps.has(page.id)}, epoch=${this.getPixelMapEpoch(page.id)}`);
-          const timerId = this.pendingLoadTimers.get(page.id);
-          if (typeof timerId === 'number') { clearTimeout(timerId); }
-          this.pendingLoadTimers.delete(page.id);
-        })
-        .onError((error: ImageError) => {
-          const newState: ImageLoadState = {
-            isLoading: false,
-            isLoaded: false,
-            error: '图片加载失败'
-          } as ImageLoadState;
-          const existedPm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
-          if (existedPm) {
-            try { existedPm.release(); } catch (_e) {}
-            this.pagePixelMaps.delete(page.id);
-            this.pagePixelMapMeta.delete(page.id);
-            this.incrementPixelMapEpoch(page.id);
-            this.singlePageImageInput = this.getImageResource(page);
-          }
-          this.imageLoadStates.set(page.id, newState);
-          this.imageLoadStates = new Map(this.imageLoadStates);
-          this.logDetailedImageError(page, error);
-          this.logImageDisplayAfter(page, false);
-          const timerId = this.pendingLoadTimers.get(page.id);
-          if (typeof timerId === 'number') { clearTimeout(timerId); }
-          this.pendingLoadTimers.delete(page.id);
-        })
+      // 【架构修复】显示Image组件的条件
+      // 网络图片：只有在有PixelMap或加载失败时才显示Image组件
+      // 加载中时不显示Image，让加载动画显示出来
+      // 本地图片：保持原逻辑
+      if (!(page.sourceType === ImageSourceType.NETWORK && 
+            this.shouldShowLoadingForPage(page) && 
+            !this.pagePixelMaps.has(page.id)) && 
+          (page.sourceType === ImageSourceType.NETWORK ||
+           (!this.shouldShowLoadingForPage(page) || this.pagePixelMaps.has(page.id)))) {
+        Image(this.singlePageImageInput)
+          .key(`${this.singlePagePageId}_${this.renderEpoch}_${this.getPixelMapEpoch(this.singlePagePageId)}_${this.pagePixelMaps.has(this.singlePagePageId) ? 'pm' : 'url'}`)
+          .width('100%')
+          .height('100%')
+          .objectFit(this.getImageFitMode(page))
+          .padding(0)
+          .margin(0)
+          .borderWidth(0)
+          // 应用滤镜效果
+          .brightness(this.getFilterBrightness())
+          .contrast(this.getFilterContrast())
+          .saturate(this.getFilterSaturation())
+          .grayscale(this.getFilterGrayscale())
+          .invert(this.getFilterInvert())
+          .sepia(this.getFilterSepia())
+          .onAppear(() => {
+            this.logImageDisplayBefore(page, this.singlePageImageInput);
+          })
+          .onComplete(() => {
+            const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+            const newState: ImageLoadState = {
+              isLoading: false,
+              isLoaded: true,
+              dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+              error: undefined
+            } as ImageLoadState;
+            this.imageLoadStates.set(page.id, newState);
+            this.imageLoadStates = new Map(this.imageLoadStates);
+            this.logImageDisplayAfter(page, true);
+            const bindIdx: number = this.getPageIndexById(page.id);
+            if (bindIdx >= 0) {
+              this.pageImageBindings.set(bindIdx, page.id);
+              this.pageImageBindings = new Map(this.pageImageBindings);
+              
+              // 更新PreloadManager状态
+              const hasPixelMap = this.pagePixelMaps.has(page.id);
+              if (hasPixelMap) {
+                // 如果有PixelMap，说明是从内存缓存加载的
+                this.preloadManager.markMemCacheHit(bindIdx);
+              } else {
+                // 否则标记为网络加载完成
+                this.preloadManager.onLoadComplete(bindIdx, true);
+              }
+            }
+            logger.debug(TAG, `单页图片加载完成: id=${page.id}, src=${String(this.getImageResource(page))}, pm=${this.pagePixelMaps.has(page.id)}, epoch=${this.getPixelMapEpoch(page.id)}`);
+            const timerId = this.pendingLoadTimers.get(page.id);
+            if (typeof timerId === 'number') { clearTimeout(timerId); }
+            this.pendingLoadTimers.delete(page.id);
+          })
+          .onError((error: ImageError) => {
+            const newState: ImageLoadState = {
+              isLoading: false,
+              isLoaded: false,
+              error: '图片加载失败'
+            } as ImageLoadState;
+            const existedPm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
+            if (existedPm) {
+              try { existedPm.release(); } catch (_e) {}
+              this.pagePixelMaps.delete(page.id);
+              this.pagePixelMapMeta.delete(page.id);
+              this.incrementPixelMapEpoch(page.id);
+              this.singlePageImageInput = this.getImageResource(page);
+            }
+            this.imageLoadStates.set(page.id, newState);
+            this.imageLoadStates = new Map(this.imageLoadStates);
+            
+            // 新增：调用新的状态管理器记录错误
+            this.imageLoadStateManager.onLoadError(page.id, error.message || '图片加载失败');
+            
+            this.logDetailedImageError(page, error);
+            this.logImageDisplayAfter(page, false);
+            const timerId = this.pendingLoadTimers.get(page.id);
+            if (typeof timerId === 'number') { clearTimeout(timerId); }
+            this.pendingLoadTimers.delete(page.id);
+          })
+      }
 
+      // 显示加载动画（单页模式）
+      if (this.shouldShowLoadingForPage(page)) {
+        Column() {
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            .color(colorMap.accent)
+          Text('加载中...')
+            .fontSize(14)
+            .fontColor(colorMap.textSecondary)
+            .margin({ top: 8 })
+        }
+        .justifyContent(FlexAlign.Center)
+      }
+
+      // 显示加载失败提示（增强版：添加重试按钮）
       if (this.getPageLoadState(page)?.error) {
         Column() {
           Image($r('app.media.ic_error'))
-            .width(32)
-            .height(32)
+            .width(48)
+            .height(48)
             .fillColor(colorMap.error)
           Text('加载失败')
+            .fontSize(14)
+            .fontColor(colorMap.textPrimary)
+            .fontWeight(FontWeight.Medium)
+            .margin({ top: 8 })
+          Text(this.getPageLoadState(page)?.error || '图片加载失败')
             .fontSize(12)
             .fontColor(colorMap.textSecondary)
             .margin({ top: 4 })
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Button('重试')
+            .fontSize(14)
+            .fontColor(Color.White)
+            .backgroundColor(colorMap.accent)
+            .borderRadius(8)
+            .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+            .margin({ top: 12 })
+            .onClick(() => {
+              logger.info(TAG, `用户点击重试加载: pageId=${page.id}`);
+              this.retryLoadPage(page);
+            })
         }
+        .justifyContent(FlexAlign.Center)
+        .padding(16)
       }
     }
   }
@@ -3883,70 +4032,82 @@ export struct MangaViewer {
   @Builder
   buildDoublePageImageContent(page: MangaPage) {
     Stack() {
-      Image(this.getDisplayImageInput(page))
-        .key(`${page.id}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}`)
-        .width('100%')
-        .height('100%')
-        .objectFit(ImageFit.Contain)
-        .padding(0)
-        .margin(0)
-        .borderWidth(0)
-        .onAppear(() => {
-          this.logImageDisplayBefore(page, this.getDisplayImageInput(page));
-        })
-        .onComplete(() => {
-          const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-          const newState: ImageLoadState = {
-            isLoading: false,
-            isLoaded: true,
-            dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
-            error: undefined
-          } as ImageLoadState;
-          this.imageLoadStates.set(page.id, newState);
-          this.imageLoadStates = new Map(this.imageLoadStates);
-          this.logImageDisplayAfter(page, true);
-          const bindIdx: number = this.getPageIndexById(page.id);
-          if (bindIdx >= 0) {
-            this.pageImageBindings.set(bindIdx, page.id);
-            this.pageImageBindings = new Map(this.pageImageBindings);
-          }
-          logger.debug(TAG, `双页图片加载完成: id=${page.id}, src=${String(this.getImageResource(page))}, left=${this.leftPageIndex}, right=${this.rightPageIndex}, pm=${this.pagePixelMaps.has(page.id)}, epoch=${this.getPixelMapEpoch(page.id)}`);
-          const timerId = this.pendingLoadTimers.get(page.id);
-          if (typeof timerId === 'number') { clearTimeout(timerId); }
-          this.pendingLoadTimers.delete(page.id);
-        })
-        .onError((error: ImageError) => {
-          const newState: ImageLoadState = {
-            isLoading: false,
-            isLoaded: false,
-            error: '图片加载失败'
-          } as ImageLoadState;
-          const existedPm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
-          if (existedPm) {
-            try { existedPm.release(); } catch (_e) {}
-            this.pagePixelMaps.delete(page.id);
-            this.pagePixelMapMeta.delete(page.id);
-            this.incrementPixelMapEpoch(page.id);
-            if (page.id === this.doubleLeftPageId) {
-              this.doubleLeftImageInput = this.getImageResource(page);
-            } else if (page.id === this.doubleRightPageId) {
-              this.doubleRightImageInput = this.getImageResource(page);
+      // 【修复】网络图片加载中时不显示Image组件，避免显示ic_image占位图
+      if (!(page.sourceType === ImageSourceType.NETWORK && 
+            this.shouldShowLoadingForPage(page) && 
+            !this.pagePixelMaps.has(page.id))) {
+        Image(this.getDisplayImageInput(page))
+          .key(`${page.id}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}_${this.getPixelMapEpoch(page.id)}`)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Contain)
+          .padding(0)
+          .margin(0)
+          .borderWidth(0)
+          .onAppear(() => {
+            this.logImageDisplayBefore(page, this.getDisplayImageInput(page));
+          })
+          .onComplete(() => {
+            const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+            const newState: ImageLoadState = {
+              isLoading: false,
+              isLoaded: true,
+              dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+              error: undefined
+            } as ImageLoadState;
+            this.imageLoadStates.set(page.id, newState);
+            this.imageLoadStates = new Map(this.imageLoadStates);
+            this.logImageDisplayAfter(page, true);
+            const bindIdx: number = this.getPageIndexById(page.id);
+            if (bindIdx >= 0) {
+              this.pageImageBindings.set(bindIdx, page.id);
+              this.pageImageBindings = new Map(this.pageImageBindings);
             }
-          }
-          this.imageLoadStates.set(page.id, newState);
-          this.imageLoadStates = new Map(this.imageLoadStates);
-          this.logDetailedImageError(page, error);
-          this.logImageDisplayAfter(page, false);
-          const timerId = this.pendingLoadTimers.get(page.id);
-          if (typeof timerId === 'number') { clearTimeout(timerId); }
-          this.pendingLoadTimers.delete(page.id);
-        })
+            logger.debug(TAG, `双页图片加载完成: id=${page.id}, src=${String(this.getImageResource(page))}, left=${this.leftPageIndex}, right=${this.rightPageIndex}, pm=${this.pagePixelMaps.has(page.id)}, epoch=${this.getPixelMapEpoch(page.id)}`);
+            const timerId = this.pendingLoadTimers.get(page.id);
+            if (typeof timerId === 'number') { clearTimeout(timerId); }
+            this.pendingLoadTimers.delete(page.id);
+          })
+          .onError((error: ImageError) => {
+            const newState: ImageLoadState = {
+              isLoading: false,
+              isLoaded: false,
+              error: '图片加载失败'
+            } as ImageLoadState;
+            const existedPm: image.PixelMap | undefined = this.pagePixelMaps.get(page.id);
+            if (existedPm) {
+              try { existedPm.release(); } catch (_e) {}
+              this.pagePixelMaps.delete(page.id);
+              this.pagePixelMapMeta.delete(page.id);
+              this.incrementPixelMapEpoch(page.id);
+              if (page.id === this.doubleLeftPageId) {
+                this.doubleLeftImageInput = this.getImageResource(page);
+              } else if (page.id === this.doubleRightPageId) {
+                this.doubleRightImageInput = this.getImageResource(page);
+              }
+            }
+            this.imageLoadStates.set(page.id, newState);
+            this.imageLoadStates = new Map(this.imageLoadStates);
+            this.logDetailedImageError(page, error);
+            this.logImageDisplayAfter(page, false);
+            const timerId = this.pendingLoadTimers.get(page.id);
+            if (typeof timerId === 'number') { clearTimeout(timerId); }
+            this.pendingLoadTimers.delete(page.id);
+          })
+      }
 
       if (this.shouldShowLoadingForPage(page)) {
-        LoadingProgress()
-          .width(32)
-          .height(32)
-          .color(colorMap.accent)
+        Column() {
+          LoadingProgress()
+            .width(32)
+            .height(32)
+            .color(colorMap.accent)
+          Text('加载中...')
+            .fontSize(12)
+            .fontColor(colorMap.textSecondary)
+            .margin({ top: 4 })
+        }
+        .justifyContent(FlexAlign.Center)
       }
 
       if (this.getPageLoadState(page)?.error) {
@@ -3959,7 +4120,15 @@ export struct MangaViewer {
             .fontSize(12)
             .fontColor(colorMap.textSecondary)
             .margin({ top: 4 })
+          Text('点击重试')
+            .fontSize(10)
+            .fontColor(colorMap.accent)
+            .margin({ top: 2 })
         }
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.retryLoadPage(page);
+        })
       }
     }
   }
@@ -4234,7 +4403,8 @@ export struct MangaViewer {
     .onScrollStop(() => {
       this.isScrolling = false;
       this.updateVisiblePages();
-      this.preloadNearbyImages();
+      // 条漫模式使用专用的预加载方法
+      this.triggerWebtoonPreload();
     })
     .gesture(
       // 使用Exclusive模式：双指缩放优先于单指滑动
@@ -4296,7 +4466,8 @@ export struct MangaViewer {
     .onScrollStop(() => {
       this.isScrolling = false;
       this.updateVisiblePages();
-      this.preloadNearbyImages();
+      // 条漫模式使用专用的预加载方法
+      this.triggerWebtoonPreload();
     })
   }
 
@@ -4331,18 +4502,44 @@ export struct MangaViewer {
     if (pm) {
       return pm;
     }
+    
+    // 【架构修复】网络图片必须转换为PixelMap后才能显示
+    // 避免Image组件使用URL缓存导致显示旧图片
+    if (page.sourceType === ImageSourceType.NETWORK) {
+      // 网络图片如果没有PixelMap，返回占位图
+      // 实际加载由loadImageWithNewManager处理
+      return $r('app.media.ic_image');
+    }
+    
+    // 本地图片可以直接使用路径
     return this.getImageResource(page);
   }
 
   private shouldShowLoadingForPage(page: MangaPage): boolean {
-    if (page.sourceType === ImageSourceType.LOCAL) {
-      const st: ImageLoadState | undefined = this.getPageLoadState(page);
-      const hasPm: boolean = this.pagePixelMaps.has(page.id);
-      return (!hasPm && !!st && st.isLoading === true);
-    } else {
-      const st: ImageLoadState | undefined = this.getPageLoadState(page);
-      return !!st && st.isLoading === true && st.isLoaded !== true;
+    const st: ImageLoadState | undefined = this.getPageLoadState(page);
+    const hasPm: boolean = this.pagePixelMaps.has(page.id);
+    
+    // 如果已经有PixelMap，不显示加载动画
+    if (hasPm) {
+      return false;
     }
+    
+    // 如果没有加载状态记录，说明还未开始加载，显示加载动画
+    if (!st) {
+      return true;
+    }
+    
+    // 如果正在加载且未完成，显示加载动画
+    if (st.isLoading && !st.isLoaded) {
+      return true;
+    }
+    
+    // 如果既没有加载中也没有加载完成，且没有错误，说明还未开始加载
+    if (!st.isLoading && !st.isLoaded && !st.error) {
+      return true;
+    }
+    
+    return false;
   }
 
   private computeImageInputForPage(page: MangaPage): Resource | string | image.PixelMap {
@@ -4364,17 +4561,44 @@ export struct MangaViewer {
       return;
     }
 
-    // 强制递增renderEpoch，确保Image组件重新渲染
-    this.renderEpoch = this.renderEpoch + 1;
+    // 【架构优化】只在页面ID真正变化时才递增renderEpoch
+    // 避免频繁重建Image组件导致的性能问题和缓存失效
+    const pageChanged = this.singlePagePageId !== page.id;
+    if (pageChanged) {
+      this.renderEpoch = this.renderEpoch + 1;
+      logger.debug(TAG, `[架构] 页面切换，递增renderEpoch: ${this.renderEpoch}`);
+    }
 
     this.singlePagePageId = page.id;
-    // 优先使用PixelMap（支持加密图片解密后显示），否则使用URL
-    this.singlePageImageInput = this.getDisplayImageInput(page);
+    
+    // 【架构核心】获取显示输入
+    // 网络图片：必须有PixelMap才返回，否则返回占位图
+    // 本地图片：可以直接使用路径
+    const newImageInput = this.getDisplayImageInput(page);
+    
+    // 【架构修复】检查PixelMap状态变化
+    const hasPm = this.pagePixelMaps.has(page.id);
+    const isNetwork = page.sourceType === ImageSourceType.NETWORK;
+    
+    // 判断是否是从占位图切换到PixelMap（关键修复）
+    // 简化判断：如果之前没有PixelMap，现在有了，就需要强制刷新
+    const hadPixelMapBefore = this.pagePixelMaps.has(page.id);
+    const nowHasPixelMap = hasPm && isNetwork;
+    
+    // 如果从无PixelMap切换到有PixelMap，必须强制递增renderEpoch
+    // 否则Image组件的key不变，不会重新渲染，导致黑屏
+    if (!pageChanged && nowHasPixelMap) {
+      // 当前页面没变，但PixelMap加载完成，强制刷新
+      this.renderEpoch = this.renderEpoch + 1;
+      logger.info(TAG, `[架构] PixelMap加载完成，强制递增renderEpoch: ${this.renderEpoch}`);
+    }
+    
+    // 总是更新singlePageImageInput，确保UI能响应PixelMap的加载完成
+    this.singlePageImageInput = newImageInput;
 
     // 记录当前状态用于调试
-    const hasPm = this.pagePixelMaps.has(page.id);
     const pmEpoch = this.getPixelMapEpoch(page.id);
-    logger.debug(TAG, `单页显示更新: idx=${idx}, id=${page.id}, hasPm=${hasPm}, epoch=${pmEpoch}, renderEpoch=${this.renderEpoch}, src=${String(this.singlePageImageInput)}`);
+    logger.debug(TAG, `[架构] 单页显示更新: idx=${idx}, id=${page.id}, network=${isNetwork}, hasPm=${hasPm}, epoch=${pmEpoch}, renderEpoch=${this.renderEpoch}, changed=${pageChanged}`);
   }
   private updateSinglePagePreview(): void {
     if (!this.chapter || !this.chapter.pages) {
@@ -4570,6 +4794,17 @@ export struct MangaViewer {
         this.notifyPixelMapLoaded(page);
       } catch (err) {
         this.logDetailedLoadError(page, err as BusinessError);
+        
+        // [修复] 本地加载失败，先更新状态
+        const st: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+        if (st) {
+          st.isLoading = false;
+          st.isLoaded = false;
+          st.error = '本地加载失败: ' + String(err);
+          this.imageLoadStates.set(page.id, st);
+          this.imageLoadStates = new Map(this.imageLoadStates);
+        }
+        
         // 本地加载失败时进行网络回退
         if (page.imageUrl && page.imageUrl.length > 0) {
           await this.loadNetworkPixelMapWithConcurrency(page);
@@ -4641,6 +4876,16 @@ export struct MangaViewer {
         }
       } catch (err) {
         this.logDetailedLoadError(page, err as BusinessError);
+        
+        // [修复] 异常时也要更新状态，避免一直显示加载中
+        const st: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+        if (st) {
+          st.isLoading = false;
+          st.isLoaded = false;
+          st.error = '加载异常: ' + String(err);
+          this.imageLoadStates.set(page.id, st);
+          this.imageLoadStates = new Map(this.imageLoadStates);
+        }
       } finally {
         this.networkLoadInProgress = Math.max(0, this.networkLoadInProgress - 1);
         if (this.pendingNetworkLoads.length > 0) {
@@ -4705,6 +4950,16 @@ export struct MangaViewer {
       }
     } catch (err2) {
       this.logDetailedLoadError(page, err2 as BusinessError);
+      
+      // [修复] 异常时也要更新状态，避免一直显示加载中
+      const st: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+      if (st) {
+        st.isLoading = false;
+        st.isLoaded = false;
+        st.error = '加载异常(回退): ' + String(err2);
+        this.imageLoadStates.set(page.id, st);
+        this.imageLoadStates = new Map(this.imageLoadStates);
+      }
     } finally {
       this.networkLoadInProgress = Math.max(0, this.networkLoadInProgress - 1);
       if (this.pendingNetworkLoads.length > 0) {
@@ -4730,11 +4985,33 @@ export struct MangaViewer {
     const protectedIndices = new Set<number>();
     const currentIndex = this.viewCurrentPageIndex;
 
-    // 保护范围：当前页 ± 2页（确保卷页动画所需的PixelMap始终可用）
-    for (let i = Math.max(0, currentIndex - 2);
-      i <= Math.min(totalPagesCount - 1, currentIndex + 2);
-      i++) {
-      protectedIndices.add(i);
+    // 【条漫模式修复】条漫模式需要更大的保护范围，防止滚动时图片被清理
+    if (this.isWebtoonMode()) {
+      // 保护所有可见页面
+      for (let i = 0; i < this.visiblePageIndices.length; i++) {
+        protectedIndices.add(this.visiblePageIndices[i]);
+      }
+      
+      // 额外保护可见区域前后各8页作为缓冲（用于预加载）
+      const minVisible = this.visiblePageIndices.length > 0 
+        ? Math.min(...this.visiblePageIndices) 
+        : currentIndex;
+      const maxVisible = this.visiblePageIndices.length > 0 
+        ? Math.max(...this.visiblePageIndices) 
+        : currentIndex;
+      
+      for (let i = Math.max(0, minVisible - 8);
+        i <= Math.min(totalPagesCount - 1, maxVisible + 8);
+        i++) {
+        protectedIndices.add(i);
+      }
+    } else {
+      // 单页/双页模式：保护范围：当前页 ± 2页（确保卷页动画所需的PixelMap始终可用）
+      for (let i = Math.max(0, currentIndex - 2);
+        i <= Math.min(totalPagesCount - 1, currentIndex + 2);
+        i++) {
+        protectedIndices.add(i);
+      }
     }
 
     const keys: string[] = Array.from(this.pagePixelMaps.keys());
@@ -5238,7 +5515,8 @@ export struct MangaViewer {
     this.scrollTimer = setTimeout(() => {
       this.isScrolling = false;
       this.updateVisiblePages();
-      this.preloadNearbyImages();
+      // 条漫模式使用专用的预加载方法
+      this.triggerWebtoonPreload();
       // 保存滚动位置
       this.saveScrollPosition();
     }, 150);
@@ -5338,78 +5616,7 @@ export struct MangaViewer {
     }
   }
 
-  /**
-   * 预加载附近的图片
-   */
-  private preloadNearbyImages(): void {
-    if (!this.isWebtoonMode()) {
-      return;
-    }
-
-    const preloadIndices = new Set<number>();
-
-    // 为每个可见页面添加前后PRELOAD_RANGE范围内的页面
-    const range: number = this.getDynamicPreloadRange();
-    for (let vi = 0; vi < this.visiblePageIndices.length; vi++) {
-      const visibleIndex: number = this.visiblePageIndices[vi];
-      const startIdx: number = Math.max(0, visibleIndex - range);
-      const endIdx: number = Math.min(this.chapter.pages.length - 1, visibleIndex + range);
-      for (let i = startIdx; i <= endIdx; i++) {
-        preloadIndices.add(i);
-      }
-    }
-
-    // 预加载新的图片
-    for (const index of preloadIndices) {
-      if (!this.preloadedImages.has(index)) {
-        this.preloadImageWithCache(index);
-      }
-    }
-
-    // 清理不需要的预加载图片
-    this.cleanupPreloadedImages(preloadIndices);
-  }
-
-  /**
-   * 带缓存的图片预加载
-   */
-  private preloadImageWithCache(pageIndex: number): void {
-    if (pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
-      return;
-    }
-
-    const page = this.chapter.pages[pageIndex];
-    const imageUrl = page.imageUrl;
-
-    // 检查缓存中是否已存在
-    if (this.imageCache.has(imageUrl)) {
-      this.preloadedImages.add(pageIndex);
-      return;
-    }
-
-    // 检查缓存大小，必要时清理
-    if (this.imageCacheSize > this.MAX_CACHE_SIZE * this.CACHE_CLEANUP_THRESHOLD) {
-      this.cleanupImageCache();
-    }
-
-    // 使用HarmonyOS支持的图片预加载方式
-    try {
-      let estimatedSize: number = 1024 * 1024;
-      if (page.width && page.height) {
-        estimatedSize = Math.floor(page.width * page.height * 4);
-      }
-      if (this.imageCacheSize + estimatedSize <= this.MAX_CACHE_SIZE) {
-        const fsPath: string | undefined = this.getFsPathFromPage(page);
-        const meta: PixelMapMeta = { path: fsPath ? fsPath : imageUrl, size: estimatedSize } as PixelMapMeta;
-        this.imageCache.set(imageUrl, meta);
-        this.preloadedImages.add(pageIndex);
-        this.imageCacheSize += estimatedSize;
-        logger.debug(TAG, `图片预加载成功: 页面${pageIndex}, 估算大小: ${Math.floor(estimatedSize / 1024)}KB, 缓存大小: ${this.imageCacheSize / 1024 / 1024}MB`);
-      }
-    } catch (error) {
-      logger.error(TAG, `图片预加载失败: 页面${pageIndex}`, String(error));
-    }
-  }
+  // 条漫预加载逻辑已移至 PreloadManager，使用 triggerWebtoonPreload() 方法
 
   /**
    * 处理图片加载完成
@@ -5521,24 +5728,73 @@ export struct MangaViewer {
   @Builder
   buildOptimizedImage(page: MangaPage, index: number) {
     if (this.shouldShowImage(index)) {
-      Image(this.getDisplayImageInput(page))
-        .width('100%')
-        .objectFit(this.getImageFitMode(page))
-        .onAppear(() => {
-          this.logImageDisplayBefore(page, this.getDisplayImageInput(page));
-        })
-        .onComplete(() => {
-          this.handleImageLoad(index);
-          // 图片加载完成后，添加到缓存
-          this.addToImageCache(page.imageUrl, index);
-          this.logImageDisplayAfter(page, true);
-        })
-        .onError((error: ImageError) => {
-          this.handleImageError(index);
-          this.logDetailedImageError(page, error);
-          this.logImageDisplayAfter(page, false);
-        })
-        .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+      Stack() {
+        // 【修复】网络图片加载中时不显示Image组件，避免显示ic_image占位图
+        if (!(page.sourceType === ImageSourceType.NETWORK && 
+              this.shouldShowLoadingForPage(page) && 
+              !this.pagePixelMaps.has(page.id))) {
+          Image(this.getDisplayImageInput(page))
+            .width('100%')
+            .objectFit(this.getImageFitMode(page))
+            .onAppear(() => {
+              this.logImageDisplayBefore(page, this.getDisplayImageInput(page));
+            })
+            .onComplete(() => {
+              this.handleImageLoad(index);
+              // 图片加载完成后，添加到缓存
+              this.addToImageCache(page.imageUrl, index);
+              this.logImageDisplayAfter(page, true);
+            })
+            .onError((error: ImageError) => {
+              this.handleImageError(index);
+              this.logDetailedImageError(page, error);
+              this.logImageDisplayAfter(page, false);
+            })
+            .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+        }
+        
+        // 显示加载动画
+        if (this.shouldShowLoadingForPage(page)) {
+          Column() {
+            LoadingProgress()
+              .width(48)
+              .height(48)
+              .color(colorMap.accent)
+            Text('加载中...')
+              .fontSize(14)
+              .fontColor(colorMap.textSecondary)
+              .margin({ top: 8 })
+          }
+          .width('100%')
+          .height(this.getEstimatedImageHeight(page))
+          .justifyContent(FlexAlign.Center)
+        }
+        
+        // 显示加载失败提示
+        if (this.getPageLoadState(page)?.error) {
+          Column() {
+            Image($r('app.media.ic_error'))
+              .width(48)
+              .height(48)
+              .fillColor(colorMap.error)
+            Text('加载失败')
+              .fontSize(14)
+              .fontColor(colorMap.textSecondary)
+              .margin({ top: 8 })
+            Text('点击重试')
+              .fontSize(12)
+              .fontColor(colorMap.accent)
+              .margin({ top: 4 })
+          }
+          .width('100%')
+          .height(this.getEstimatedImageHeight(page))
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.retryLoadPage(page);
+          })
+        }
+      }
+      .width('100%')
     } else {
       // 占位符，保持布局稳定
       Column()
@@ -5631,21 +5887,213 @@ export struct MangaViewer {
     return base;
   }
 
-  private preloadSinglePageWebtoonStyle(): void {
+  /**
+   * 新增：统一的预加载触发方法
+   * 使用新的PreloadManager管理预加载队列
+   */
+  private triggerUnifiedPreload(): void {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    const range: number = this.getDynamicPreloadRange();
-    const startIndex: number = Math.max(0, this.viewCurrentPageIndex - range);
-    const endIndex: number = Math.min(this.chapter.pages.length - 1, this.viewCurrentPageIndex + range);
+
+    const currentIndex = this.viewCurrentPageIndex;
+    const totalPages = this.chapter.pages.length;
+    const range = this.getDynamicPreloadRange();
+
+    // 更新预加载管理器的页面信息
+    this.preloadManager.setPageInfo(currentIndex, totalPages);
+    this.preloadManager.setPreloadRange(range);
+
+    // 计算预加载范围
+    const startIndex = Math.max(0, currentIndex - range);
+    const endIndex = Math.min(totalPages - 1, currentIndex + range);
+
+    // 批量添加预加载任务
+    const tasks: PreloadTaskItem[] = [];
+
     for (let i = startIndex; i <= endIndex; i++) {
-      const p: MangaPage = this.chapter.pages[i];
-      const st: ImageLoadState | undefined = this.getPageLoadState(p);
-      const hasPm: boolean = this.pagePixelMaps.has(p.id);
-      if (!hasPm && (!st || !st.isLoading)) {
-        this.loadImage(p);
+      const page = this.chapter.pages[i];
+      if (!page) continue;
+
+      // 计算优先级：距离当前页越近，优先级越高
+      const distance = Math.abs(i - currentIndex);
+      const priority = range - distance + 1;
+
+      const task: PreloadTaskItem = {
+        pageIndex: i,
+        pageId: page.id,
+        url: page.imageUrl || '',
+        priority: priority
+      };
+      tasks.push(task);
+    }
+
+    // 批量添加到预加载队列
+    this.preloadManager.addBatch(tasks);
+
+    // 处理预加载队列（加载优先级最高的项）
+    this.processPreloadQueue();
+  }
+
+  /**
+   * 新增：处理预加载队列
+   * 支持并发加载多个图片
+   */
+  private processPreloadQueue(): void {
+    if (!this.chapter || !this.chapter.pages) {
+      return;
+    }
+
+    // 计算当前正在加载的数量
+    let loadingCount = 0;
+    for (let i = 0; i < this.chapter.pages.length; i++) {
+      const page = this.chapter.pages[i];
+      if (this.imageLoadStateManager.isLoading(page.id)) {
+        loadingCount++;
       }
     }
+
+    // 获取可用的加载槽位数量
+    const isOnline = this.contentType === 'OnlineUndownloaded';
+    const availableSlots = this.preloadManager.getAvailableLoadSlots(isOnline, loadingCount);
+
+    if (availableSlots <= 0) {
+      return; // 已达到并发上限
+    }
+
+    // 批量获取下一批要加载的任务
+    const nextBatch = this.preloadManager.getNextBatchToLoad(availableSlots);
+    
+    // 开始加载每个任务
+    for (let i = 0; i < nextBatch.length; i++) {
+      const task = nextBatch[i];
+      
+      // 检查是否已经在加载或完成
+      if (this.imageLoadStateManager.isLoading(task.pageId) ||
+          this.imageLoadStateManager.isCompleted(task.pageId)) {
+        continue;
+      }
+
+      const page = this.chapter.pages[task.pageIndex];
+      if (page) {
+        this.loadImageWithNewManager(page, task.pageIndex);
+      }
+    }
+  }
+
+  /**
+   * 【架构核心】使用统一缓存机制加载网络图片
+   * 确保所有网络图片都转换为PixelMap后才显示
+   */
+  private async loadImageWithNewManager(page: MangaPage, pageIndex: number): Promise<void> {
+    const pageId = page.id;
+    const url = page.imageUrl || '';
+
+    // 标记为加载中
+    this.preloadManager.startLoad(pageIndex);
+    this.imageLoadStateManager.startLoading(pageId);
+
+    try {
+      // 1. 检查内存缓存（pagePixelMaps）
+      const memCached = this.pagePixelMaps.get(pageId);
+      if (memCached) {
+        logger.debug(TAG, `[架构] 内存缓存命中: P${pageIndex + 1}`);
+        this.preloadManager.markMemCacheHit(pageIndex);
+        this.imageLoadStateManager.onLoadComplete(pageId, memCached);
+        return;
+      }
+
+      // 2. 【核心】从统一缓存系统加载PixelMap
+      const cacheManager = ImageCacheManager.getInstance();
+      const cachedPixelMap = await cacheManager.loadImage(url, { headers: this.networkHeaders });
+      
+      if (cachedPixelMap) {
+        // 判断缓存来源（用于统计）
+        const onlineLoader = OnlineImageLoader.getInstance();
+        const stats = onlineLoader.getCacheStats();
+        
+        if (stats.count > 0) {
+          logger.info(TAG, `[架构] OnlineImageLoader缓存命中: P${pageIndex + 1}`);
+          this.preloadManager.markMemCacheHit(pageIndex);
+        } else {
+          logger.info(TAG, `[架构] 磁盘缓存命中: P${pageIndex + 1}`);
+          this.preloadManager.markDiskCacheHit(pageIndex);
+        }
+        
+        // 【关键】同步PixelMap到pagePixelMaps
+        this.pagePixelMaps.set(pageId, cachedPixelMap);
+        this.pagePixelMaps = new Map(this.pagePixelMaps); // 触发响应式更新
+        
+        // 更新加载状态
+        this.imageLoadStateManager.onLoadComplete(pageId, cachedPixelMap);
+        
+        // 【架构修复】如果是当前页，必须立即更新显示
+        // 否则用户会看到黑屏，因为网络图片没有PixelMap时返回占位图
+        if (pageIndex === this.viewCurrentPageIndex) {
+          logger.info(TAG, `[架构] 当前页PixelMap已就绪，立即更新显示: P${pageIndex + 1}`);
+          // 关键：调用updateSinglePageDisplay()重新获取ImageInput
+          // 此时getDisplayImageInput()会返回PixelMap而不是占位图
+          this.updateSinglePageDisplay();
+        } else {
+          logger.debug(TAG, `[架构] 预加载页PixelMap已就绪: P${pageIndex + 1}`);
+        }
+        
+        // 加载完成后，继续处理队列中的下一批任务
+        setTimeout(() => {
+          this.processPreloadQueue();
+        }, 10);
+        
+        return;
+      }
+
+      // 3. 缓存未命中，需要网络加载
+      logger.info(TAG, `[架构] 缓存未命中，开始网络加载: P${pageIndex + 1}`);
+      this.preloadManager.markNetworkLoad(pageIndex);
+      
+      // 【重要】网络加载失败说明图片真的不可用
+      // ImageCacheManager.loadImage已经尝试了内存缓存、磁盘缓存和网络加载
+      // 如果还是返回null，说明加载失败
+      throw new Error('网络加载失败：所有缓存层级均未命中');
+      
+    } catch (error) {
+      const errorMsg = String(error);
+      logger.error(TAG, `[架构] 加载失败: P${pageIndex + 1}, error=${errorMsg}`);
+      this.imageLoadStateManager.onLoadError(pageId, errorMsg);
+      this.preloadManager.onLoadComplete(pageIndex, false, errorMsg);
+      
+      // 【关键】如果是当前页加载失败，也要更新显示以显示错误提示
+      if (pageIndex === this.viewCurrentPageIndex) {
+        this.updateSinglePageDisplay();
+      }
+      
+      // 即使加载失败，也要继续处理队列中的下一批任务
+      setTimeout(() => {
+        this.processPreloadQueue();
+      }, 10);
+    }
+  }
+
+  /**
+   * 条漫模式专用：基于可见页面的统一预加载
+   */
+  private triggerWebtoonPreload(): void {
+    if (!this.chapter || !this.chapter.pages) {
+      return;
+    }
+
+    // 使用 PreloadManager 的条漫模式方法生成任务
+    const tasks = this.preloadManager.buildWebtoonPreloadTasks(
+      this.visiblePageIndices,
+      this.chapter.pages,
+      8 // 预加载可见区域前后各8页
+    );
+    this.preloadManager.addBatch(tasks);
+
+    // 处理预加载队列
+    this.processPreloadQueue();
+
+    // 清理远离可见区域的已完成项
+    this.preloadManager.cleanupDistantCompletedForWebtoon();
   }
 
   /**

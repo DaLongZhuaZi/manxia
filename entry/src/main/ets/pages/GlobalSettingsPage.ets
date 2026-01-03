@@ -10,11 +10,13 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { common, Want } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ReadingMode, ReadingDirection, DEFAULT_READING_SETTINGS, PageTurnAnimationType } from '../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -120,12 +122,16 @@ struct GlobalSettingsPage {
 
   // 其他设置
   @State autoCheckUpdates: boolean = true;
-  @State clearCacheOnExit: boolean = false;
   @State enableLogFloatingWindow: boolean = true;
   @State advancedModeEnabled: boolean = true;
   @State forceTabletMode: boolean = false;
   @State forceLandscapeMode: boolean = false;
+  @State preloadDebugMode: string = 'off'; // 预加载调试模式：off/on/always
   @State showRestartDialog: boolean = false;
+  
+  // 内容过滤设置
+  @State sfwModeEnabled: boolean = false;
+  private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
 
   onPageShow(): void {
     try {
@@ -151,7 +157,10 @@ struct GlobalSettingsPage {
     this.loadGlobalSettings();
   }
 
+  private lifecycle = new PageLifecycleManager('GlobalSettingsPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 移除设备变化监听器
@@ -262,10 +271,6 @@ struct GlobalSettingsPage {
         true
       );
 
-      this.clearCacheOnExit = this.settingsManager.getBoolean(
-        SettingKeys.CLEAR_CACHE_ON_EXIT,
-        false
-      );
 
       this.enableLogFloatingWindow = this.settingsManager.getBoolean(
         SettingKeys.ENABLE_LOG_FLOATING_WINDOW,
@@ -286,6 +291,14 @@ struct GlobalSettingsPage {
         SettingKeys.FORCE_LANDSCAPE_MODE,
         false
       );
+
+      this.preloadDebugMode = this.settingsManager.getString(
+        SettingKeys.PRELOAD_DEBUG_MODE,
+        'off'
+      );
+      
+      // 加载SFW模式设置
+      this.sfwModeEnabled = this.contentFilterManager.isSFWModeEnabled();
 
       // 加载漫画翻页动画设置
       this.defaultPageTurnAnimation = this.settingsManager.getString(
@@ -423,7 +436,6 @@ struct GlobalSettingsPage {
       await this.settingsManager.setBoolean(SettingKeys.ENABLE_DOWNLOAD_NOTIFICATIONS, this.enableDownloadNotifications);
       await this.settingsManager.setBoolean(SettingKeys.ENABLE_UPDATE_NOTIFICATIONS, this.enableUpdateNotifications);
       await this.settingsManager.setBoolean(SettingKeys.AUTO_CHECK_UPDATES, this.autoCheckUpdates);
-      await this.settingsManager.setBoolean(SettingKeys.CLEAR_CACHE_ON_EXIT, this.clearCacheOnExit);
       await this.settingsManager.setBoolean(SettingKeys.ENABLE_LOG_FLOATING_WINDOW, this.enableLogFloatingWindow);
       await this.settingsManager.setBoolean(SettingKeys.ADVANCED_MODE_ENABLED, this.advancedModeEnabled);
       await this.settingsManager.setBoolean(SettingKeys.FORCE_TABLET_MODE, this.forceTabletMode);
@@ -923,6 +935,64 @@ struct GlobalSettingsPage {
 
         Row() {
           Column({ space: 4 }) {
+            Text('预加载调试信息')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('显示漫画阅读器的预加载队列详情')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Select([
+            { value: '关闭' },
+            { value: '开启' },
+            { value: '常驻' }
+          ])
+            .selected(this.preloadDebugMode === 'off' ? 0 : (this.preloadDebugMode === 'on' ? 1 : 2))
+            .value(this.preloadDebugMode === 'off' ? '关闭' : (this.preloadDebugMode === 'on' ? '开启' : '常驻'))
+            .font({ size: 14 })
+            .selectedOptionFont({ size: 14 })
+            .optionFont({ size: 14 })
+            .onSelect(async (index: number) => {
+              const modes = ['off', 'on', 'always'];
+              this.preloadDebugMode = modes[index];
+              await this.settingsManager.setString(SettingKeys.PRELOAD_DEBUG_MODE, modes[index]);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('SFW模式')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('隐藏所有NSFW(成人)内容')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.sfwModeEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.sfwModeEnabled = isOn;
+              await this.contentFilterManager.setSFWMode(isOn);
+              promptAction.showToast({
+                message: isOn ? 'SFW模式已启用，已隐藏NSFW内容' : 'SFW模式已关闭',
+                duration: 2000
+              });
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
             Text('自动检查更新')
               .fontSize(14)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -944,28 +1014,6 @@ struct GlobalSettingsPage {
         .width('100%')
         .justifyContent(FlexAlign.SpaceBetween)
 
-        Row() {
-          Column({ space: 4 }) {
-            Text('退出时清理缓存')
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            Text('关闭应用时自动清理临时文件')
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          }
-          .alignItems(HorizontalAlign.Start)
-
-          Blank()
-          Toggle({ type: ToggleType.Switch, isOn: this.clearCacheOnExit })
-            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .onChange(async (isOn: boolean) => {
-              this.clearCacheOnExit = isOn;
-              await this.settingsManager.setBoolean(SettingKeys.CLEAR_CACHE_ON_EXIT, isOn);
-              this.settingsManager.syncToAppStorage();
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
       }
     }
     .width('100%')
@@ -1796,6 +1844,49 @@ struct GlobalSettingsPage {
       logger.error(TAG, `复制图片到沙箱失败: ${String(error)}`);
       return null;
     }
+  }
+
+  /**
+   * 构建数据管理区域
+   */
+  @Builder
+  buildDataManagement() {
+    Column({ space: 16 }) {
+      Text('数据管理')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 备份与恢复
+      Row() {
+        Column({ space: 4 }) {
+          Text('备份与恢复')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('备份所有数据或从备份恢复')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Text('>')
+          .fontSize(18)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .padding({ top: 8, bottom: 8 })
+      .justifyContent(FlexAlign.SpaceBetween)
+      .onClick(() => {
+        this.pathStack.pushPathByName('BackupPage', null);
+      })
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
   /**

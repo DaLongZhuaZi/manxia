@@ -4,12 +4,14 @@
  * 统一管理和分析应用的所有存储使用情况
  */
 
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, storageStatistics } from '@kit.CoreFileKit';
 import { logger } from '../../Utils/Logger';
 import { SandboxManager } from './SandboxManager';
 import { ImageCacheManager } from '../Cache/ImageCacheManager';
 import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
+import { uiContextManager } from '../Managers/UIContextManager';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 const TAG = 'StorageAnalyzer';
 
@@ -17,14 +19,18 @@ const TAG = 'StorageAnalyzer';
  * 存储项类型
  */
 export enum StorageType {
-  IMAGE_CACHE = 'IMAGE_CACHE',           // 图片缓存
+  IMAGE_CACHE = 'IMAGE_CACHE',           // 图片内存缓存
   WEBVIEW_CACHE = 'WEBVIEW_CACHE',       // WebView缓存
   DATABASE = 'DATABASE',                  // 数据库
   COMIC_FILES = 'COMIC_FILES',           // 漫画文件
   COVER_FILES = 'COVER_FILES',           // 封面文件
   CHAPTER_FILES = 'CHAPTER_FILES',       // 章节文件
   TEMP_FILES = 'TEMP_FILES',             // 临时文件
-  PLUGIN_FILES = 'PLUGIN_FILES'          // 插件文件
+  PLUGIN_FILES = 'PLUGIN_FILES',         // 插件文件
+  PERMANENT_CACHE = 'PERMANENT_CACHE',   // 永久图片缓存
+  TEMP_IMAGE_CACHE = 'TEMP_IMAGE_CACHE', // 临时图片缓存
+  EBOOK_FILES = 'EBOOK_FILES',           // 电子书文件
+  SYSTEM_CACHE = 'SYSTEM_CACHE'          // 系统缓存目录
 }
 
 /**
@@ -121,6 +127,9 @@ export class StorageAnalyzer {
 
       logger.info(TAG, '开始分析存储使用情况...');
       
+      // 【新增】尝试从系统API获取准确的存储信息
+      await this.logSystemStorageInfo();
+      
       const items: StorageItem[] = [];
       
       // 1. 分析图片缓存
@@ -154,6 +163,22 @@ export class StorageAnalyzer {
       // 8. 分析插件文件
       const pluginFilesItem = await this.analyzePluginFiles();
       items.push(pluginFilesItem);
+      
+      // 9. 分析永久图片缓存
+      const permanentCacheItem = await this.analyzePermanentCache();
+      items.push(permanentCacheItem);
+      
+      // 10. 分析临时图片缓存
+      const tempImageCacheItem = await this.analyzeTempImageCache();
+      items.push(tempImageCacheItem);
+      
+      // 11. 分析电子书文件
+      const ebookFilesItem = await this.analyzeEbookFiles();
+      items.push(ebookFilesItem);
+      
+      // 12. 分析系统缓存目录
+      const systemCacheItem = await this.analyzeSystemCache();
+      items.push(systemCacheItem);
       
       // 计算总大小
       const usedSize = items.reduce((sum, item) => sum + item.size, 0);
@@ -232,10 +257,20 @@ export class StorageAnalyzer {
    */
   private async analyzeDatabase(): Promise<StorageItem> {
     try {
-      const dbPath = this.sandboxManager.getDirectory('database');
+      // 【修复】使用实际的数据库目录路径
+      const context = uiContextManager.getAbilityContext();
+      if (!context) {
+        logger.warn(TAG, 'Context未初始化，无法分析数据库');
+        return this.createEmptyItem(StorageType.DATABASE, '数据库');
+      }
+      
+      // 数据库文件实际存储在 context.databaseDir 下
+      const dbPath = context.databaseDir;
       const dirInfo = await this.getDirectoryInfo(dbPath);
       const size = dirInfo.size;
       const count = dirInfo.count;
+      
+      logger.debug(TAG, `数据库路径: ${dbPath}, 大小: ${this.formatSize(size)}, 文件数: ${count}`);
       
       return {
         type: StorageType.DATABASE,
@@ -384,17 +419,185 @@ export class StorageAnalyzer {
   }
 
   /**
+   * 分析永久图片缓存
+   */
+  private async analyzePermanentCache(): Promise<StorageItem> {
+    try {
+      const context = uiContextManager.getAbilityContext();
+      if (!context) {
+        logger.warn(TAG, 'Context未初始化，无法分析永久缓存');
+        return this.createEmptyItem(StorageType.PERMANENT_CACHE, '永久图片缓存');
+      }
+      
+      const permanentCachePath = context.filesDir + '/permanent_cache';
+      const dirInfo = await this.getDirectoryInfo(permanentCachePath);
+      const size = dirInfo.size;
+      const count = dirInfo.count;
+      
+      return {
+        type: StorageType.PERMANENT_CACHE,
+        name: '永久图片缓存',
+        description: '已下载漫画的图片缓存',
+        size: size,
+        fileCount: count,
+        path: permanentCachePath,
+        canClear: true,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析永久缓存失败: ${error}`);
+      return this.createEmptyItem(StorageType.PERMANENT_CACHE, '永久图片缓存');
+    }
+  }
+
+  /**
+   * 分析临时图片缓存
+   */
+  private async analyzeTempImageCache(): Promise<StorageItem> {
+    try {
+      const context = uiContextManager.getAbilityContext();
+      if (!context) {
+        logger.warn(TAG, 'Context未初始化，无法分析临时图片缓存');
+        return this.createEmptyItem(StorageType.TEMP_IMAGE_CACHE, '临时图片缓存');
+      }
+      
+      const tempImageCachePath = context.cacheDir + '/temp_image_cache';
+      const dirInfo = await this.getDirectoryInfo(tempImageCachePath);
+      const size = dirInfo.size;
+      const count = dirInfo.count;
+      
+      return {
+        type: StorageType.TEMP_IMAGE_CACHE,
+        name: '临时图片缓存',
+        description: '在线阅读的临时图片缓存',
+        size: size,
+        fileCount: count,
+        path: tempImageCachePath,
+        canClear: true,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析临时图片缓存失败: ${error}`);
+      return this.createEmptyItem(StorageType.TEMP_IMAGE_CACHE, '临时图片缓存');
+    }
+  }
+
+  /**
+   * 分析电子书文件
+   */
+  private async analyzeEbookFiles(): Promise<StorageItem> {
+    try {
+      const ebooksPath = this.sandboxManager.getDirectory('ebooks');
+      const dirInfo = await this.getDirectoryInfo(ebooksPath);
+      const size = dirInfo.size;
+      const count = dirInfo.count;
+      
+      return {
+        type: StorageType.EBOOK_FILES,
+        name: '电子书文件',
+        description: '下载的电子书',
+        size: size,
+        fileCount: count,
+        path: ebooksPath,
+        canClear: false, // 用户数据，不能自动清理
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析电子书文件失败: ${error}`);
+      return this.createEmptyItem(StorageType.EBOOK_FILES, '电子书文件');
+    }
+  }
+
+  /**
+   * 分析系统缓存目录（context.cacheDir）
+   */
+  private async analyzeSystemCache(): Promise<StorageItem> {
+    try {
+      const context = uiContextManager.getAbilityContext();
+      if (!context) {
+        logger.warn(TAG, 'Context未初始化，无法分析系统缓存');
+        return this.createEmptyItem(StorageType.SYSTEM_CACHE, '系统缓存');
+      }
+      
+      // 系统缓存目录（包含所有cacheDir下的内容）
+      const cachePath = context.cacheDir;
+      const dirInfo = await this.getDirectoryInfo(cachePath);
+      const size = dirInfo.size;
+      const count = dirInfo.count;
+      
+      logger.debug(TAG, `系统缓存路径: ${cachePath}, 大小: ${this.formatSize(size)}, 文件数: ${count}`);
+      
+      return {
+        type: StorageType.SYSTEM_CACHE,
+        name: '系统缓存',
+        description: '应用缓存目录（包含图片、WebView等缓存）',
+        size: size,
+        fileCount: count,
+        path: cachePath,
+        canClear: true,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析系统缓存失败: ${error}`);
+      return this.createEmptyItem(StorageType.SYSTEM_CACHE, '系统缓存');
+    }
+  }
+
+  /**
    * 获取目录信息（大小和文件数）
    */
   private async getDirectoryInfo(dirPath: string): Promise<DirectoryInfo> {
     try {
+      // 检查目录是否存在
+      const exists = await this.sandboxManager.exists(dirPath);
+      if (!exists) {
+        logger.debug(TAG, `目录不存在: ${dirPath}`);
+        return { size: 0, count: 0 };
+      }
+      
       const size = await this.sandboxManager.getDirectorySize(dirPath);
       const files = await this.sandboxManager.listDirectory(dirPath);
       const result: DirectoryInfo = { size: size, count: files.length };
       return result;
     } catch (error) {
+      logger.debug(TAG, `获取目录信息失败: ${dirPath}, ${error}`);
       const emptyResult: DirectoryInfo = { size: 0, count: 0 };
       return emptyResult;
+    }
+  }
+
+  /**
+   * 【新增】记录系统存储信息（用于调试）
+   */
+  private async logSystemStorageInfo(): Promise<void> {
+    try {
+      const context = uiContextManager.getAbilityContext();
+      if (!context) {
+        return;
+      }
+      
+      // 使用 storageStatistics API 获取应用存储信息
+      storageStatistics.getCurrentBundleStats((err: BusinessError, bundleStats: storageStatistics.BundleStats) => {
+        if (err) {
+          logger.warn(TAG, `获取系统存储信息失败: code=${err.code}, message=${err.message}`);
+          return;
+        }
+        
+        logger.info(TAG, `=== 系统存储信息 ===`);
+        logger.info(TAG, `应用总大小: ${this.formatSize(bundleStats.appSize)}`);
+        logger.info(TAG, `缓存大小: ${this.formatSize(bundleStats.cacheSize)}`);
+        logger.info(TAG, `数据大小: ${this.formatSize(bundleStats.dataSize)}`);
+        logger.info(TAG, `==================`);
+      });
+      
+      // 记录关键路径
+      logger.debug(TAG, `filesDir: ${context.filesDir}`);
+      logger.debug(TAG, `cacheDir: ${context.cacheDir}`);
+      logger.debug(TAG, `databaseDir: ${context.databaseDir}`);
+      logger.debug(TAG, `tempDir: ${context.tempDir}`);
+      
+    } catch (error) {
+      logger.warn(TAG, `获取系统存储信息失败: ${error}`);
     }
   }
 
@@ -492,6 +695,36 @@ export class StorageAnalyzer {
         const tempResult = await this.clearDirectory(tempPath, options);
         result.clearedSize = tempResult.clearedSize;
         result.clearedCount = tempResult.clearedCount;
+        break;
+
+      case StorageType.PERMANENT_CACHE:
+        const context1 = uiContextManager.getAbilityContext();
+        if (context1) {
+          const permanentCachePath = context1.filesDir + '/permanent_cache';
+          const permanentResult = await this.clearDirectory(permanentCachePath, options);
+          result.clearedSize = permanentResult.clearedSize;
+          result.clearedCount = permanentResult.clearedCount;
+        }
+        break;
+
+      case StorageType.TEMP_IMAGE_CACHE:
+        const context2 = uiContextManager.getAbilityContext();
+        if (context2) {
+          const tempImageCachePath = context2.cacheDir + '/temp_image_cache';
+          const tempImageResult = await this.clearDirectory(tempImageCachePath, options);
+          result.clearedSize = tempImageResult.clearedSize;
+          result.clearedCount = tempImageResult.clearedCount;
+        }
+        break;
+
+      case StorageType.SYSTEM_CACHE:
+        const context3 = uiContextManager.getAbilityContext();
+        if (context3) {
+          const systemCachePath = context3.cacheDir;
+          const systemCacheResult = await this.clearDirectory(systemCachePath, options);
+          result.clearedSize = systemCacheResult.clearedSize;
+          result.clearedCount = systemCacheResult.clearedCount;
+        }
         break;
 
       default:

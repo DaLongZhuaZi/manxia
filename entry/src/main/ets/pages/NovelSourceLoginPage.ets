@@ -14,7 +14,8 @@ import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { webview } from '@kit.ArkWeb';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { getNovelLoginManager, LoginUiItem } from '../Framework/Novel/NovelLoginManager';
+import { getNovelLoginManager, LoginUiItem, LoginUiItemStyle } from '../Framework/Novel/NovelLoginManager';
+import { getLegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
 import { LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
@@ -40,6 +41,7 @@ export struct NovelSourceLoginPage {
   @State loginUiItems: LoginUiItem[] = [];
   @State formData: Record<string, string> = {};
   @State isLoading: boolean = false;
+  @State loadingAction: string = ''; // 当前正在执行的操作
   @State useWebView: boolean = false;
   @State webViewUrl: string = '';
   @State webViewTitle: string = '';
@@ -48,6 +50,8 @@ export struct NovelSourceLoginPage {
   private sourceManager = getNovelSourceManager();
   private loginManager = getNovelLoginManager();
   private webViewController: webview.WebviewController = new webview.WebviewController();
+  // Rhino沙箱专用的WebView控制器（独立于LegadoJsEngine的WebView）
+  private rhinoWebViewController: webview.WebviewController = new webview.WebviewController();
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -73,30 +77,66 @@ export struct NovelSourceLoginPage {
     this.source = this.sourceManager.getSource(this.sourceId) || null;
     if (this.source) {
       // 判断登录方式
-      if (this.source.loginUrl && !this.source.loginUrl.startsWith('@js:') && !this.source.loginUrl.startsWith('<js>')) {
-        // URL登录方式 - 使用WebView
-        this.useWebView = true;
-        this.webViewUrl = this.getFullLoginUrl(this.source.loginUrl, this.source.bookSourceUrl);
-        logger.info(TAG, `使用WebView登录: ${this.webViewUrl}`);
-      } else if (this.source.loginUi) {
-        // 表单登录方式
+      // 优先级：
+      // 1. 如果有loginUi配置，使用动态表单（无论loginUrl是什么）
+      // 2. 如果loginUrl是普通URL（非JS代码），使用WebView
+      // 3. 如果loginUrl是JS代码但没有loginUi，使用默认表单
+      
+      if (this.source.loginUi) {
+        // 有loginUi配置 - 使用动态表单
         this.useWebView = false;
         this.loginUiItems = this.loginManager.getLoginUi(this.source);
+        logger.info(TAG, `使用动态表单登录，共${this.loginUiItems.length}个UI项`);
+        
+        // 加载之前保存的表单数据
+        const savedFormData = this.loginManager.getLoginFormData(this.sourceId);
+        
+        // 初始化表单数据：优先使用保存的数据，否则使用默认值
         this.loginUiItems.forEach((item: LoginUiItem) => {
           if (item.type !== 'button') {
-            this.formData[item.name] = '';
+            this.formData[item.name] = savedFormData[item.name] || item.value || '';
           }
         });
       } else if (this.source.loginUrl) {
-        // JS登录但没有loginUi，显示默认表单
-        this.useWebView = false;
-        this.loginUiItems = this.loginManager.getLoginUi(this.source);
-        this.loginUiItems.forEach((item: LoginUiItem) => {
-          if (item.type !== 'button') {
-            this.formData[item.name] = '';
-          }
-        });
+        const isJsCode = this.source.loginUrl.startsWith('@js:') || 
+                         this.source.loginUrl.startsWith('<js>') ||
+                         this.source.loginUrl.includes('function ') ||
+                         this.source.loginUrl.includes('const ') ||
+                         this.source.loginUrl.includes('let ') ||
+                         this.source.loginUrl.includes('var ');
+        
+        if (!isJsCode && (this.source.loginUrl.startsWith('http://') || this.source.loginUrl.startsWith('https://'))) {
+          // 普通URL - 使用WebView
+          this.useWebView = true;
+          this.webViewUrl = this.getFullLoginUrl(this.source.loginUrl, this.source.bookSourceUrl);
+          logger.info(TAG, `使用WebView登录: ${this.webViewUrl}`);
+        } else {
+          // JS代码但没有loginUi - 使用默认表单
+          this.useWebView = false;
+          this.loginUiItems = this.loginManager.getLoginUi(this.source);
+          logger.info(TAG, `使用默认表单登录（JS登录）`);
+          
+          // 加载之前保存的表单数据
+          const savedFormData = this.loginManager.getLoginFormData(this.sourceId);
+          
+          this.loginUiItems.forEach((item: LoginUiItem) => {
+            if (item.type !== 'button') {
+              this.formData[item.name] = savedFormData[item.name] || item.value || '';
+            }
+          });
+        }
       }
+    }
+  }
+
+  /**
+   * 更新表单字段并保存
+   */
+  async updateFormField(name: string, value: string): Promise<void> {
+    this.formData[name] = value;
+    // 保存表单数据到持久化存储
+    if (this.sourceId) {
+      await this.loginManager.saveLoginFormData(this.sourceId, this.formData);
     }
   }
 
@@ -130,6 +170,25 @@ export struct NovelSourceLoginPage {
     this.isLoading = false;
   }
 
+  /**
+   * 保存表单数据（不执行登录，仅保存）
+   */
+  async saveFormData(): Promise<void> {
+    if (!this.source) return;
+    
+    try {
+      // 保存登录信息到持久化存储
+      this.loginManager.putLoginInfo(this.source.bookSourceUrl, JSON.stringify(this.formData));
+      await this.loginManager.savePersistedData();
+      
+      promptAction.showToast({ message: '保存成功' });
+      logger.info(TAG, `保存表单数据: ${this.source.bookSourceName}`);
+    } catch (error) {
+      logger.error(TAG, `保存失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存失败: ' + String(error) });
+    }
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -140,6 +199,42 @@ export struct NovelSourceLoginPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
+        
+        // 隐藏的WebView用于LegadoJsEngine的降级执行（网络请求等）
+        // 使用本地HTML页面而不是about:blank，避免跨域限制
+        Web({ src: $rawfile('js_executor.html'), controller: this.webViewController })
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -100, y: -100 })
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .fileAccess(true)
+          .mixedMode(MixedMode.All)
+          .onControllerAttached(() => {
+            // WebView控制器已附加，设置到LegadoJsEngine
+            const rhinoEngine = getLegadoRhinoEngine();
+            rhinoEngine.setWebviewController(this.webViewController);
+            logger.info(TAG, 'WebView控制器已设置到LegadoJsEngine');
+          })
+        
+        // Rhino沙箱专用的WebView（独立实例，用于运行沙箱脚本）
+        // 使用本地HTML页面而不是about:blank，避免跨域限制
+        Web({ src: $rawfile('js_executor.html'), controller: this.rhinoWebViewController })
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: -200, y: -200 })
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .fileAccess(true)
+          .mixedMode(MixedMode.All)
+          .onControllerAttached(() => {
+            // Rhino沙箱WebView控制器已附加
+            const rhinoEngine = getLegadoRhinoEngine();
+            rhinoEngine.setRhinoWebviewController(this.rhinoWebViewController);
+            logger.info(TAG, 'Rhino沙箱WebView控制器已设置');
+          })
         
         // 内容层：预留标题栏高度
         Column() {
@@ -161,22 +256,30 @@ export struct NovelSourceLoginPage {
     }
     .titleBar({
       padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
         originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
           },
           contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },
@@ -202,7 +305,16 @@ export struct NovelSourceLoginPage {
               action: () => this.onWebViewLoginComplete()
             }
           }]
-        } : undefined
+        } : {
+          value: [{
+            content: {
+              label: '保存',
+              icon: $r('app.media.ic_check'),
+              isEnabled: !this.isLoading,
+              action: () => this.saveFormData()
+            }
+          }]
+        }
       }
     })
     .backgroundColor(Color.Transparent)
@@ -370,38 +482,51 @@ export struct NovelSourceLoginPage {
 
   @Builder
   buildLoginForm() {
-    Column() {
+    Scroll() {
       Column() {
-        Text(this.source?.bookSourceName || '')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        // 书源信息头部
+        Column() {
+          Text(this.source?.bookSourceName || '')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          
+          Text(this.source?.bookSourceUrl || '')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .padding(20)
+        .alignItems(HorizontalAlign.Center)
         
-        Text(this.source?.bookSourceUrl || '')
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-          .margin({ top: 4 })
-      }
-      .width('100%')
-      .padding(20)
-      .alignItems(HorizontalAlign.Center)
-      
-      Column() {
-        ForEach(this.loginUiItems, (item: LoginUiItem) => {
-          if (item.type === 'text') {
-            this.buildTextInput(item)
-          } else if (item.type === 'password') {
-            this.buildPasswordInput(item)
-          } else if (item.type === 'button') {
+        // 输入字段区域
+        Column() {
+          ForEach(this.loginUiItems.filter((item: LoginUiItem) => item.type !== 'button'), (item: LoginUiItem) => {
+            if (item.type === 'text') {
+              this.buildTextInput(item)
+            } else if (item.type === 'password') {
+              this.buildPasswordInput(item)
+            }
+          })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20 })
+        
+        // 按钮区域 - 使用Flex布局支持多按钮排列
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+          ForEach(this.loginUiItems.filter((item: LoginUiItem) => item.type === 'button'), (item: LoginUiItem) => {
             this.buildButton(item)
-          }
-        })
+          })
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, bottom: 20 })
       }
       .width('100%')
-      .padding({ left: 20, right: 20 })
     }
     .width('100%')
     .layoutWeight(1)
+    .scrollBar(BarState.Off)
   }
 
   @Builder
@@ -419,7 +544,7 @@ export struct NovelSourceLoginPage {
         .borderRadius(8)
         .padding({ left: 16, right: 16 })
         .onChange((value: string) => {
-          this.formData[item.name] = value;
+          this.updateFormField(item.name, value);
         })
     }
     .width('100%')
@@ -443,7 +568,7 @@ export struct NovelSourceLoginPage {
         .borderRadius(8)
         .padding({ left: 16, right: 16 })
         .onChange((value: string) => {
-          this.formData[item.name] = value;
+          this.updateFormField(item.name, value);
         })
     }
     .width('100%')
@@ -453,17 +578,52 @@ export struct NovelSourceLoginPage {
 
   @Builder
   buildButton(item: LoginUiItem) {
-    Button(this.isLoading ? '登录中...' : (item.hint || item.name))
-      .width('100%')
-      .height(48)
-      .fontSize(16)
+    Button(this.isLoading && this.loadingAction === item.action ? '执行中...' : (item.name || item.hint || '按钮'))
+      .width(item.style?.flexBasisPercent ? `${Math.floor(item.style.flexBasisPercent * 100 - 2)}%` : '100%')
+      .height(44)
+      .fontSize(14)
       .fontColor('#FFFFFF')
       .backgroundColor(this.isLoading ? 
         ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme) :
         ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      .borderRadius(24)
-      .margin({ top: 16 })
+      .borderRadius(8)
+      .margin({ top: 8, bottom: 8 })
       .enabled(!this.isLoading)
-      .onClick(() => this.doLogin())
+      .onClick(() => this.executeButtonAction(item))
+  }
+
+  /**
+   * 执行按钮操作
+   */
+  async executeButtonAction(item: LoginUiItem): Promise<void> {
+    if (!this.source) return;
+    
+    const action = item.action;
+    if (!action) {
+      // 没有action，执行默认登录
+      await this.doLogin();
+      return;
+    }
+    
+    this.isLoading = true;
+    this.loadingAction = action;
+    
+    try {
+      logger.info(TAG, `执行按钮操作: ${action}`);
+      
+      const result = await this.loginManager.executeButtonAction(this.source, action, this.formData);
+      
+      if (result.success) {
+        promptAction.showToast({ message: result.message || '操作成功' });
+      } else {
+        promptAction.showToast({ message: result.message || '操作失败' });
+      }
+    } catch (error) {
+      logger.error(TAG, `执行按钮操作失败: ${String(error)}`);
+      promptAction.showToast({ message: '操作失败: ' + String(error) });
+    }
+    
+    this.isLoading = false;
+    this.loadingAction = '';
   }
 }

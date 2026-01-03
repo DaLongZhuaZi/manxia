@@ -174,6 +174,13 @@ export class MangaSourceEngine {
   }
 
   /**
+   * 设置CF验证需要用户交互时的回调
+   */
+  setOnNeedCfVerify(callback: () => void): void {
+    this.actionEngine.setOnNeedCfVerify(callback);
+  }
+
+  /**
    * 加载配置文件
    */
   async loadConfig(jsonContent: string): Promise<ParseResult> {

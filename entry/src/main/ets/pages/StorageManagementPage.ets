@@ -9,11 +9,16 @@ import { logger } from '../Utils/Logger';
 import { StorageAnalyzer, StorageStatistics, StorageItem, StorageType, ClearOptions } from '../Framework/Storage/StorageAnalyzer';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { LengthMetrics } from '@kit.ArkUI';
 import { PermanentImageCacheManager, MangaCacheStats } from '../Framework/Cache/PermanentImageCacheManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { ImageCacheManager } from '../Framework/Cache/ImageCacheManager';
+import { CacheConfigManager, CacheConfig } from '../Framework/Cache/CacheConfigManager';
+import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';
+import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
+import { CacheManagementPanel } from '../components/CacheManagementPanel';
 
 const TAG = 'StorageManagementPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -37,8 +42,14 @@ interface CacheDetailInfo {
   coverCacheList: SourceCoverInfo[];
 }
 
+interface DiskCacheStatsInfo {
+  count: number;
+  totalSize: number;
+  usagePercent: number;
+}
+
 @ComponentV2
-struct StorageManagementPage {
+export struct StorageManagementPage {
   @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
   @Local isLoading: boolean = true;
   @Local statistics: StorageStatistics | null = null;
@@ -46,25 +57,44 @@ struct StorageManagementPage {
   @Local isClearing: boolean = false;
   @Local cacheDetails: CacheDetailInfo | null = null;
   @Local showCacheDetails: boolean = false;
-  
+  @Local showCacheConfig: boolean = false;
+  @Local showPreloadStats: boolean = false;
+  @Local cacheConfig: CacheConfig | null = null;
+  @Local preloadStats: PreloadStats | null = null;
+  @Local diskCacheStats: DiskCacheStatsInfo | null = null;
   private storageAnalyzer: StorageAnalyzer = StorageAnalyzer.getInstance();
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private cacheConfigManager: CacheConfigManager = CacheConfigManager.getInstance();
+  private smartPreloadStrategy: SmartPreloadStrategy = SmartPreloadStrategy.getInstance();
+  private diskCacheManager: DiskCacheManager = DiskCacheManager.getInstance();
+  private lifecycle = new PageLifecycleManager('StorageManagementPage', { enableDebug: true });
+  private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   pathStack: NavPathStack = new NavPathStack();
 
   aboutToAppear(): void {
     logger.info(TAG, '存储管理页面初始化');
-    
-    // 初始化主题
+
+    // 初始化主题并监听变化
     this.themeManager.getCurrentTheme().then((theme: ThemeType) => {
-      this.themeState.currentTheme = theme;
+      this.themeState = { currentTheme: theme };
     });
-    
+    this.themeChangeCallback = (newTheme: ThemeType) => {
+      logger.info(TAG, `主题切换到: ${newTheme}`);
+      this.themeState = { currentTheme: newTheme };
+    };
+    this.themeManager.onThemeChange(this.themeChangeCallback);
+
     // 加载存储统计
     this.loadStorageStatistics();
   }
 
   aboutToDisappear(): void {
     logger.info(TAG, '存储管理页面销毁');
+    // 移除主题监听器
+    if (this.themeChangeCallback) {
+      this.themeManager.offThemeChange(this.themeChangeCallback);
+    }
+    this.lifecycle.destroy();
   }
 
   /**
@@ -246,9 +276,9 @@ struct StorageManagementPage {
       const options: ClearOptions = {
         types: Array.from(this.selectedItems)
       };
-      
+
       const result = await this.storageAnalyzer.clearStorage(options);
-      
+
       if (result.success) {
         this.getUIContext().getPromptAction().showToast({
           message: `清理完成: ${this.storageAnalyzer.formatSize(result.clearedSize)}`
@@ -307,7 +337,11 @@ struct StorageManagementPage {
           }
           .width('100%')
 
-          Progress({ value: this.statistics.usedSize, total: this.statistics.usedSize * 1.2, type: ProgressType.Linear })
+          Progress({
+            value: this.statistics.usedSize,
+            total: this.statistics.usedSize * 1.2,
+            type: ProgressType.Linear
+          })
             .width('100%')
             .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .height(8)
@@ -353,8 +387,14 @@ struct StorageManagementPage {
             Text('不可清理')
               .fontSize(10)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+              .padding({
+                left: 6,
+                right: 6,
+                top: 2,
+                bottom: 2
+              })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border',
+                this.themeState.currentTheme))
               .borderRadius(4)
           }
         }
@@ -399,7 +439,8 @@ struct StorageManagementPage {
       Button('刷新')
         .fontSize(14)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
+          this.themeState.currentTheme))
         .borderRadius(8)
         .layoutWeight(1)
         .enabled(!this.isLoading && !this.isClearing)
@@ -410,7 +451,7 @@ struct StorageManagementPage {
       Button(`清理选中 (${this.selectedItems.size})`)
         .fontSize(14)
         .fontColor(Color.White)
-        .backgroundColor(this.selectedItems.size > 0 
+        .backgroundColor(this.selectedItems.size > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
         .borderRadius(8)
@@ -426,104 +467,180 @@ struct StorageManagementPage {
 
   build() {
     HdsNavDestination() {
-      Column() {
-        // 空白区域
-        Blank()
+      Stack() {
+        // 背景层
+        Column()
           .width('100%')
-          .height(56)
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark',
+            this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        if (this.isLoading) {
-          // 加载中
-          Column({ space: 20 }) {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            Text('加载中...')
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else if (this.statistics) {
-          // 有数据时显示
-          Column({ space: 12 }) {
-            this.buildOverviewCard()
+        Column() {
+          // 空白区域
+          Blank()
+            .width('100%')
+            .height(56)
 
-            // 缓存详情按钮
-            Button(this.showCacheDetails ? '收起缓存详情' : '查看缓存详情')
-              .width('100%')
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(8)
-              .onClick(() => {
-                this.toggleCacheDetails();
-              })
+          if (this.isLoading) {
+            // 加载中
+            Column({ space: 20 }) {
+              LoadingProgress()
+                .width(40)
+                .height(40)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              Text('加载中...')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                  this.themeState.currentTheme))
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+          } else if (this.statistics) {
+            // 有数据时显示
+            Column({ space: 12 }) {
+              this.buildOverviewCard()
 
-            // 缓存详情内容
-            if (this.showCacheDetails && this.cacheDetails) {
-              Column({ space: 8 }) {
-                Text('缓存详情')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                
-                Text(`内存缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.memoryCacheSize)}`)
+              // 缓存管理按钮组
+              Row({ space: 8 }) {
+                Button('缓存管理')
+                  .layoutWeight(1)
                   .fontSize(14)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                
-                Text(`磁盘缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.diskCacheSize)}`)
+                  .fontColor(Color.White)
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue',
+                    this.themeState.currentTheme))
+                  .borderRadius(8)
+                  .onClick(() => {
+                    this.showCacheConfig = true;
+                  })
+
+                Button(this.showCacheDetails ? '收起详情' : '查看详情')
+                  .layoutWeight(1)
                   .fontSize(14)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                
-                Text(`永久缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.permanentCacheSize)}`)
-                  .fontSize(14)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                    this.themeState.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
+                    this.themeState.currentTheme))
+                  .borderRadius(8)
+                  .onClick(() => {
+                    this.toggleCacheDetails();
+                  })
               }
               .width('100%')
-              .padding(16)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(12)
-            }
 
-            // 存储项列表
-            List({ space: 12 }) {
-              ForEach(this.statistics.items, (item: StorageItem) => {
-                ListItem() {
-                  this.buildStorageItemCard(item)
+              // 缓存详情内容
+              if (this.showCacheDetails && this.cacheDetails) {
+                Column({ space: 8 }) {
+                  Text('缓存详情')
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                      this.themeState.currentTheme))
+
+                  Text(`内存缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.memoryCacheSize)}`)
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                      this.themeState.currentTheme))
+
+                  Text(`磁盘缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.diskCacheSize)}`)
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                      this.themeState.currentTheme))
+
+                  Text(`永久缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.permanentCacheSize)}`)
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                      this.themeState.currentTheme))
                 }
-              }, (item: StorageItem) => item.type)
+                .width('100%')
+                .padding(16)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
+                  this.themeState.currentTheme))
+                .borderRadius(12)
+              }
+
+              // 存储项列表
+              Column({ space: 8 }) {
+                Text('存储项目')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                    this.themeState.currentTheme))
+                  .margin({ bottom: 4 })
+
+                List({ space: 12 }) {
+                  ForEach(this.statistics.items, (item: StorageItem) => {
+                    ListItem() {
+                      this.buildStorageItemCard(item)
+                    }
+                  }, (item: StorageItem) => item.type)
+                }
+                .layoutWeight(1)
+                .scrollBar(BarState.Auto)
+                .edgeEffect(EdgeEffect.Spring)
+              }
+              .layoutWeight(1)
+              .width('100%')
             }
             .layoutWeight(1)
-            .scrollBar(BarState.Auto)
-            .edgeEffect(EdgeEffect.Spring)
-          }
-          .layoutWeight(1)
-          .padding({ left: 16, right: 16, top: 8 })
+            .padding({ left: 16, right: 16, top: 8 })
 
-          // 操作按钮
-          this.buildActionButtons()
-        } else {
-          // 错误状态
-          Column({ space: 20 }) {
-            Text('加载失败')
-              .fontSize(16)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            Button('重试')
+            // 操作按钮
+            this.buildActionButtons()
+          } else {
+            // 错误状态
+            Column({ space: 20 }) {
+              Text('加载失败')
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                  this.themeState.currentTheme))
+              Button('重试')
+                .onClick(() => {
+                  this.loadStorageStatistics();
+                })
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+
+        // 缓存管理面板弹窗
+        if (this.showCacheConfig) {
+          Stack() {
+            // 半透明背景
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('rgba(0, 0, 0, 0.5)')
               .onClick(() => {
-                this.loadStorageStatistics();
+                this.showCacheConfig = false;
               })
+
+            // 缓存管理面板
+            Column() {
+              CacheManagementPanel({
+                onClose: () => {
+                  this.showCacheConfig = false;
+                  this.refreshStatistics();
+                }
+              })
+            }
+            .width('90%')
+            .height('80%')
+            .backgroundColor(Color.White)
+            .borderRadius(16)
+            .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)' })
           }
           .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
+          .height('100%')
+          .position({ x: 0, y: 0 })
         }
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
     }
     .hideTitleBar(false)
     .mode(NavDestinationMode.STANDARD)
@@ -542,8 +659,15 @@ struct StorageManagementPage {
         originalStyle: {
           backgroundStyle: { backgroundColor: Color.Transparent },
           contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            titleStyle: {
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                this.themeState.currentTheme)
+            },
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
+                this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            }
           }
         },
         scrollEffectStyle: {
@@ -551,8 +675,15 @@ struct StorageManagementPage {
             backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
           },
           contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            titleStyle: {
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                this.themeState.currentTheme)
+            },
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary',
+                this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            }
           }
         }
       },
@@ -562,5 +693,3 @@ struct StorageManagementPage {
     })
   }
 }
-
-export { StorageManagementPage }

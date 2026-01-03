@@ -7,6 +7,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SearchHistoryManager } from '../Framework/Managers/SearchHistoryManager';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DataManager, ComicInfo, ChapterInfo } from '../Framework/Data/DataManager';
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
 import { MangaDetailPageParams } from './MangaDetailPage';
@@ -164,8 +165,11 @@ struct SearchPage {
     this.loadSearchHistory();
   }
 
+  private lifecycle = new PageLifecycleManager('SearchPage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '搜索页面销毁');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 清理设备变化监听

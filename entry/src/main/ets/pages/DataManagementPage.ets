@@ -9,6 +9,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { logger } from '../Utils/Logger';
 import { ThemeToggle } from '../Framework/Components/ThemeToggle';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
@@ -1573,11 +1574,14 @@ struct DataManagementPage {
     logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
   }
 
+  private lifecycle = new PageLifecycleManager('DataManagementPage', { enableDebug: true });
+
   /**
    * 页面隐藏时的回调
    */
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(TAG);
     
     // 移除设备变化监听器
@@ -6089,59 +6093,36 @@ struct DataManagementPage {
     }
     .titleBar({
       padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
       },
       style: {
         scrollEffectOpts: {
           enableScrollEffect: true,
           scrollEffectType: ScrollEffectType.COMMON_BLUR,
           blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(20)
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
         },
         originalStyle: {
-          backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
-          },
+          backgroundStyle: { backgroundColor: Color.Transparent },
           contentStyle: {
-            titleStyle: { 
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
-              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
-            },
-            menuStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
-            },
-            backIconStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
-            }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         },
         scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: this.themeState.currentTheme === ThemeType.LIGHT ? 
-              '#E6FFFFFF' : '#E6000000',
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
           },
           contentStyle: {
-            titleStyle: { 
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme), 
-              subTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) 
-            },
-            menuStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
-            },
-            backIconStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
-            }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },
       content: {
         title: {
-          mainTitle: "数据管理",
+          mainTitle: "文件导入",
         }
       }
     })

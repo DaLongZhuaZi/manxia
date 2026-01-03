@@ -17,6 +17,7 @@ import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManag
 import { AppNotificationManager } from './Framework/Managers/NotificationManager';
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { uiContextManager } from './Framework/Managers/UIContextManager';
+import { ProxyManager } from './Framework/Network/ProxyManager';
 
 export default class EntryAbility extends UIAbility {
 
@@ -75,6 +76,23 @@ export default class EntryAbility extends UIAbility {
 
     // 初始化数据管理系统
     this.initializeDataSystem();
+    
+    // 初始化代理管理器
+    this.initializeProxyManager();
+  }
+  
+  /**
+   * 初始化代理管理器
+   */
+  private async initializeProxyManager(): Promise<void> {
+    try {
+      const proxyManager = ProxyManager.getInstance();
+      await proxyManager.initialize();
+      logger.info('EntryAbility', `✅ 代理管理器初始化成功: enabled=${proxyManager.isEnabled()}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 代理管理器初始化失败: ${errorMessage}`);
+    }
   }
 
   /**

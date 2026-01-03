@@ -20,7 +20,8 @@ const TAG = 'ThemeManager';
 export enum ThemeType {
   LIGHT = 'light',
   DARK = 'dark',
-  AUTO = 'auto'
+  AUTO = 'auto',
+  PRIVACY = 'privacy'
 }
 
 /**
@@ -133,6 +134,16 @@ export const THEME_CONFIGS: Record<ThemeType, ThemeConfig> = {
     cardColor: '#F8F8F8',
     borderColor: '#E0E0E0',
     shadowColor: 'rgba(0, 0, 0, 0.1)'
+  },
+  [ThemeType.PRIVACY]: {
+    name: 'privacy',
+    displayName: '隐私模式',
+    primaryColor: '#8B00FF',
+    backgroundColor: '#0A0A0F',
+    textColor: '#E0D5FF',
+    cardColor: '#1A1A2E',
+    borderColor: '#4A3A6A',
+    shadowColor: 'rgba(139, 0, 255, 0.2)'
   }
 };
 

@@ -6,6 +6,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 
 const TAG = 'OpenSourceLicensePage';
 
@@ -41,8 +42,11 @@ export struct OpenSourceLicensePage {
     );
   }
 
+  private lifecycle = new PageLifecycleManager('OpenSourceLicensePage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -193,10 +197,9 @@ export struct OpenSourceLicensePage {
           // 顶部导航栏
           Row() {
             Button() {
-              Image($r('app.media.ic_arrow_left'))
-                .width(24)
-                .height(24)
-                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              SymbolGlyph($r('sys.symbol.arrow_left'))
+                .fontSize(24)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             }
             .width(40)
             .height(40)

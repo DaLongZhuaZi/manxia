@@ -298,6 +298,10 @@ export interface Manga {
   sourceInfo?: MangaSourceInfo;
   /** 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF（用于区分显示位置） */
   contentType?: string;
+  /** 是否为NSFW内容 */
+  isNSFW?: boolean;
+  /** 是否为隐私内容 */
+  isPrivate?: boolean;
 }
 
 /**
@@ -318,6 +322,8 @@ export interface MangaSourceInfo {
   requiresLogin: boolean;
   /** API版本 */
   apiVersion?: string;
+  /** 是否为成人内容源（NSFW） */
+  isNSFW?: boolean;
 }
 
 /**

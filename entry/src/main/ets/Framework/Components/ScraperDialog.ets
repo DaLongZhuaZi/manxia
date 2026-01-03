@@ -201,10 +201,9 @@ export struct ScraperDialog {
             .height(20)
             .color(Color.White)
         } else {
-          Image($r('app.media.ic_search'))
-            .width(20)
-            .height(20)
-            .fillColor(Color.White)
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(20)
+            .fontColor([Color.White])
         }
       }
       .width(44)

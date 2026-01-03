@@ -85,10 +85,9 @@ export struct PrivacyPolicyPage {
         Column() {
           Row() {
             Button() {
-              Image($r('app.media.ic_arrow_left'))
-                .width(24)
-                .height(24)
-                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              SymbolGlyph($r('sys.symbol.arrow_left'))
+                .fontSize(24)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             }
             .width(40)
             .height(40)

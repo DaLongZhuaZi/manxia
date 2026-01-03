@@ -199,6 +199,8 @@ export class EBook {
   lastUpdateTime: number;      // 最后更新时间
   isFavorite: boolean;         // 是否收藏
   totalWordCount: number;      // 总字数
+  isPrivate: boolean = false;  // 是否为隐私内容
+  isNSFW: boolean = false;     // 是否为NSFW内容
 
   constructor(
     id: string,
@@ -213,7 +215,9 @@ export class EBook {
     addTime: number = Date.now(),
     lastUpdateTime: number = Date.now(),
     isFavorite: boolean = false,
-    totalWordCount: number = 0
+    totalWordCount: number = 0,
+    isPrivate: boolean = false,
+    isNSFW: boolean = false
   ) {
     this.id = id;
     this.format = format;
@@ -226,6 +230,8 @@ export class EBook {
     this.lastUpdateTime = lastUpdateTime;
     this.isFavorite = isFavorite;
     this.totalWordCount = totalWordCount;
+    this.isPrivate = isPrivate;
+    this.isNSFW = isNSFW;
 
     // 初始化阅读进度
     if (readingProgress) {

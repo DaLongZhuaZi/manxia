@@ -9,6 +9,7 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DownloadStatus } from '../Framework/Types/StatusEnums';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus } from '../Framework/Download/DownloadManager';
 
@@ -75,7 +76,10 @@ struct DownloadManagerPage {
     this.loadDownloadTasks();
   }
 
+  private lifecycle = new PageLifecycleManager('DownloadManagerPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 清除定时器

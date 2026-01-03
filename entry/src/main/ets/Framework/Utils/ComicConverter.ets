@@ -85,7 +85,9 @@ export class ComicConverter {
         sourceLanguage: 'zh-CN',
         requiresLogin: false
       },
-      contentType: comic.contentType || 'manga'
+      contentType: comic.contentType || 'manga',
+      isNSFW: comic.isNSFW === 1 || comic.isNSFW === true,
+      isPrivate: comic.isPrivate === 1 || comic.isPrivate === true
     };
   }
 
@@ -97,6 +99,7 @@ export class ComicConverter {
    */
   public static async convertComicInfoToMangaAsync(comic: ComicInfo, userId: string = 'default_user'): Promise<Manga> {
     logger.info(TAG, `异步转换漫画信息: ${comic.title} (ID: ${comic.id})`);
+    logger.debug(TAG, `[NSFW调试] ComicInfo.isNSFW=${comic.isNSFW}, 类型=${typeof comic.isNSFW}`);
     
     // 根据封面路径判断图片来源类型（网络/本地/rawfile）
     const detectImageSourceType = (path: string): ImageSourceType => {
@@ -169,7 +172,9 @@ export class ComicConverter {
         sourceLanguage: 'zh-CN',
         requiresLogin: false
       },
-      contentType: comic.contentType || 'manga'
+      contentType: comic.contentType || 'manga',
+      isNSFW: comic.isNSFW === 1 || comic.isNSFW === true,
+      isPrivate: comic.isPrivate === 1 || comic.isPrivate === true
     };
   }
 
@@ -420,6 +425,9 @@ export class ComicConverter {
       logger.warn(TAG, `加载收藏状态失败: ${em}`);
     }
 
+    const isNSFWBoolean = onlineComic.isNSFW === 1;
+    logger.debug(TAG, `[NSFW调试] convertOnlineComicInfoToMangaAsync: title="${onlineComic.title}", OnlineComicInfo.isNSFW=${onlineComic.isNSFW}, Manga.isNSFW=${isNSFWBoolean}`);
+    
     return {
       id: onlineComic.id,
       title: onlineComic.title,
@@ -442,7 +450,10 @@ export class ComicConverter {
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false
-      }
+      },
+      contentType: 'manga',
+      isNSFW: isNSFWBoolean,
+      isPrivate: onlineComic.isPrivate === 1
     };
   }
 

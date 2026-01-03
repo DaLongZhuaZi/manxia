@@ -93,8 +93,8 @@ export class EBookDataManager {
       INSERT OR REPLACE INTO ebook_info (
         id, format, filePath, fileSize, title, author, publisher, publishDate,
         isbn, language, description, coverImagePath, tags, rating, status,
-        isFavorite, totalWordCount, addTime, lastUpdateTime
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        isFavorite, totalWordCount, addTime, lastUpdateTime, isPrivate
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const params = [
@@ -116,7 +116,8 @@ export class EBookDataManager {
       ebook.isFavorite ? 1 : 0,
       ebook.totalWordCount,
       ebook.addTime,
-      ebook.lastUpdateTime
+      ebook.lastUpdateTime,
+      ebook.isPrivate ? 1 : 0  // isPrivate默认为0（普通内容）
     ];
 
     await this.dbManager.executeSql(sql, params);
@@ -650,6 +651,98 @@ export class EBookDataManager {
   }
 
   /**
+   * [新增] 获取隐私电子书列表
+   * @returns Promise<EBook[]> 隐私电子书列表
+   */
+  public async getPrivateEBooks(): Promise<EBook[]> {
+    try {
+      const sql = `SELECT * FROM ebook_info WHERE isPrivate = 1 ORDER BY lastUpdateTime DESC`;
+      const records = await this.dbManager.querySql(sql, []);
+      
+      const ebooks: EBook[] = [];
+      for (const record of records) {
+        const ebook = await this.buildEBookFromRecord(record);
+        ebooks.push(ebook);
+      }
+
+      logger.info(TAG, `查询到 ${ebooks.length} 本隐私电子书`);
+      return ebooks;
+    } catch (error) {
+      logger.error(TAG, `获取隐私电子书列表失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * [新增] 获取非隐私电子书列表
+   * @returns Promise<EBook[]> 非隐私电子书列表
+   */
+  public async getNonPrivateEBooks(): Promise<EBook[]> {
+    try {
+      const sql = `SELECT * FROM ebook_info WHERE (isPrivate = 0 OR isPrivate IS NULL) ORDER BY lastUpdateTime DESC`;
+      const records = await this.dbManager.querySql(sql, []);
+      
+      const ebooks: EBook[] = [];
+      for (const record of records) {
+        const ebook = await this.buildEBookFromRecord(record);
+        ebooks.push(ebook);
+      }
+
+      logger.info(TAG, `查询到 ${ebooks.length} 本非隐私电子书`);
+      return ebooks;
+    } catch (error) {
+      logger.error(TAG, `获取非隐私电子书列表失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * [新增] 获取SFW（非NSFW）电子书列表
+   * @returns Promise<EBook[]> SFW电子书列表
+   */
+  public async getSFWEBooks(): Promise<EBook[]> {
+    try {
+      const sql = `SELECT * FROM ebook_info WHERE (isNSFW = 0 OR isNSFW IS NULL) ORDER BY lastUpdateTime DESC`;
+      const records = await this.dbManager.querySql(sql, []);
+      
+      const ebooks: EBook[] = [];
+      for (const record of records) {
+        const ebook = await this.buildEBookFromRecord(record);
+        ebooks.push(ebook);
+      }
+
+      logger.info(TAG, `查询到 ${ebooks.length} 本SFW电子书`);
+      return ebooks;
+    } catch (error) {
+      logger.error(TAG, `获取SFW电子书列表失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
+    }
+  }
+
+  /**
+   * [新增] 获取NSFW电子书列表
+   * @returns Promise<EBook[]> NSFW电子书列表
+   */
+  public async getNSFWEBooks(): Promise<EBook[]> {
+    try {
+      const sql = `SELECT * FROM ebook_info WHERE isNSFW = 1 ORDER BY lastUpdateTime DESC`;
+      const records = await this.dbManager.querySql(sql, []);
+      
+      const ebooks: EBook[] = [];
+      for (const record of records) {
+        const ebook = await this.buildEBookFromRecord(record);
+        ebooks.push(ebook);
+      }
+
+      logger.info(TAG, `查询到 ${ebooks.length} 本NSFW电子书`);
+      return ebooks;
+    } catch (error) {
+      logger.error(TAG, `获取NSFW电子书列表失败: ${String(error instanceof Error ? error.message : error)}`);
+      return [];
+    }
+  }
+
+  /**
    * 根据ID获取电子书
    */
   public async getEBookById(id: string): Promise<EBook | null> {
@@ -691,6 +784,7 @@ export class EBookDataManager {
     const totalWordCount = Number(getRecordValue(record, 'totalWordCount', 0));
     const addTime = Number(getRecordValue(record, 'addTime', 0));
     const lastUpdateTime = Number(getRecordValue(record, 'lastUpdateTime', 0));
+    const isPrivate = Number(getRecordValue(record, 'isPrivate', 0)) === 1;  // 读取隐私状态
 
     const tags = JSON.parse(tagsJson) as string[];
 
@@ -718,7 +812,7 @@ export class EBookDataManager {
       }
     }
 
-    return new EBook(
+    const ebook = new EBook(
       id,
       format,
       filePath,
@@ -744,6 +838,11 @@ export class EBookDataManager {
       isFavorite,
       totalWordCount
     );
+    
+    // 设置隐私状态
+    ebook.isPrivate = isPrivate;
+    
+    return ebook;
   }
 
   /**

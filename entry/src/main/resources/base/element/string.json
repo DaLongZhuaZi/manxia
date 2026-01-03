@@ -35,6 +35,10 @@
     {
       "name": "get_vibrate_reason",
       "value": "应用需要震动权限来增强用户交互体验"
+    },
+    {
+      "name": "biometric_permission_reason",
+      "value": "应用需要使用生物识别（指纹/面部识别）来保护隐私书库内容"
     }
   ]
 }

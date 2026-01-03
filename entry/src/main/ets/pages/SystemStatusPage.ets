@@ -9,6 +9,7 @@ import { ThemeToggle } from '../Framework/Components/ThemeToggle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 
 import { promptAction } from '@kit.ArkUI';
 
@@ -145,7 +146,10 @@ struct SystemStatusPage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('SystemStatusPage', { enableDebug: true });
+
   aboutToDisappear() {
+    this.lifecycle.destroy();
     this.stopAutoRefresh();
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);

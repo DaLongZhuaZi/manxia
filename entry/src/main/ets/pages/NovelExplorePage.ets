@@ -9,6 +9,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -66,7 +67,10 @@ export struct NovelExplorePage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('NovelExplorePage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -211,6 +215,9 @@ export struct NovelExplorePage {
         
         // 内容层
         Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          
           if (this.exploreSources.length === 0) {
             this.buildEmpty()
           } else {
@@ -242,7 +249,6 @@ export struct NovelExplorePage {
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
         
         // 书源选择弹窗
         if (this.showSourcePicker) {
@@ -330,10 +336,9 @@ export struct NovelExplorePage {
   @Builder
   buildSearchBar() {
     Row() {
-      Image($r('app.media.ic_search'))
-        .width(20)
-        .height(20)
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(20)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .margin({ left: 12 })
       
       TextInput({ placeholder: '搜索书源...', text: this.searchKeyword })
@@ -349,10 +354,9 @@ export struct NovelExplorePage {
         })
       
       if (this.searchKeyword) {
-        Image($r('app.media.ic_close'))
-          .width(18)
-          .height(18)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           .margin({ right: 12 })
           .onClick(() => {
             this.searchKeyword = '';
@@ -376,10 +380,9 @@ export struct NovelExplorePage {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
       
-      Image($r('app.media.ic_arrow_down'))
-        .width(16)
-        .height(16)
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+      SymbolGlyph($r('sys.symbol.chevron_down'))
+        .fontSize(16)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
         .rotate({ angle: this.showSourcePicker ? 180 : 0 })
         .animation({ duration: 200 })
     }
@@ -429,10 +432,9 @@ export struct NovelExplorePage {
         
         // 搜索框
         Row() {
-          Image($r('app.media.ic_search'))
-            .width(18)
-            .height(18)
-            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
             .margin({ left: 12 })
           
           TextInput({ placeholder: '搜索书源...', text: this.searchKeyword })
@@ -448,10 +450,9 @@ export struct NovelExplorePage {
             })
           
           if (this.searchKeyword) {
-            Image($r('app.media.ic_close'))
-              .width(16)
-              .height(16)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
               .margin({ right: 12 })
               .onClick(() => {
                 this.searchKeyword = '';
@@ -479,10 +480,9 @@ export struct NovelExplorePage {
                   .layoutWeight(1)
                 
                 if (this.selectedSourceId === source.id) {
-                  Image($r('app.media.ic_check'))
-                    .width(20)
-                    .height(20)
-                    .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(20)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
                 }
               }
               .width('100%')

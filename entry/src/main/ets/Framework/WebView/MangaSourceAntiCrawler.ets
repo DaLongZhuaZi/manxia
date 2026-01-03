@@ -46,10 +46,18 @@ export interface CaptchaResult {
 export class MangaSourceAntiCrawler {
   private webviewController: webview.WebviewController;
   private config: AntiCrawlerConfig;
+  private onNeedUserInteraction?: () => void;
 
   constructor(webviewController: webview.WebviewController, config: AntiCrawlerConfig) {
     this.webviewController = webviewController;
     this.config = config;
+  }
+
+  /**
+   * 设置用户交互回调（当需要用户手动完成验证时调用）
+   */
+  setOnNeedUserInteraction(callback: () => void): void {
+    this.onNeedUserInteraction = callback;
   }
 
   /**
@@ -127,60 +135,64 @@ export class MangaSourceAntiCrawler {
 
   /**
    * 绕过Cloudflare保护
+   * @param method 绕过方法，可选值: wait, click, refresh, interactive
+   * @param maxWait 最大等待时间（毫秒）
    */
-  async bypassCloudflare(): Promise<CloudflareBypassResult> {
+  async bypassCloudflare(method?: string, maxWait?: number): Promise<CloudflareBypassResult> {
     try {
       logger.info(TAG, '开始绕过Cloudflare保护');
 
-      const config = this.config.cloudflare as CloudflareConfig;
       const startTime = Date.now();
-      const maxWaitTime = config.maxWaitTime || 30000;
+      const maxWaitTime = maxWait || this.config.cloudflare?.maxWaitTime || 30000;
       let retryCount = 0;
-      const maxRetries = config.retryCount || 3;
+      const maxRetries = this.config.cloudflare?.retryCount || 5;
+      const bypassMethod = method || this.config.cloudflare?.bypassMethod || 'wait';
 
-      while (retryCount < maxRetries) {
-        const elapsed = Date.now() - startTime;
-        if (elapsed > maxWaitTime) {
-          return {
-            success: false,
-            waitTime: elapsed,
-            error: '等待时间超时'
-          };
-        }
+      // 首先检查是否需要绕过
+      const initialCheck = await this.isCloudflareBlocked();
+      if (!initialCheck) {
+        logger.info(TAG, 'Cloudflare绕过成功（页面无CF验证），耗时: 0ms');
+        return {
+          success: true,
+          waitTime: 0
+        };
+      }
+      
+      logger.info(TAG, `检测到Cloudflare验证，方法: ${bypassMethod}，最大等待时间: ${maxWaitTime}ms`);
 
-        // 检查是否仍在Cloudflare页面
-        const isStillBlocked = await this.isCloudflareBlocked();
-        if (!isStillBlocked) {
-          logger.info(TAG, `Cloudflare绕过成功，耗时: ${elapsed}ms`);
-          return {
-            success: true,
-            waitTime: elapsed
-          };
-        }
-
-        // 根据绕过方法执行相应操作
-        switch (config.bypassMethod) {
-          case 'wait':
-            await this.waitForCloudflarePass();
-            break;
-          case 'click':
-            await this.clickCloudflareButton();
-            break;
-          case 'refresh':
-            await this.refreshPage();
-            break;
-          default:
-            await this.waitForCloudflarePass();
-        }
-
-        retryCount++;
-        await this.sleep(2000); // 等待2秒后重试
+      // 无论什么模式，只要检测到CF验证且设置了回调，就通知UI层显示验证对话框
+      // 这样用户可以手动完成验证
+      if (this.onNeedUserInteraction) {
+        logger.info(TAG, '【CF验证】通知UI层显示验证对话框，等待用户手动完成');
+        this.onNeedUserInteraction();
       }
 
+      // 等待用户完成验证，每2秒检查一次
+      while (Date.now() - startTime < maxWaitTime) {
+        await this.sleep(2000);
+        
+        const isStillBlocked = await this.isCloudflareBlocked();
+        if (!isStillBlocked) {
+          const finalElapsed = Date.now() - startTime;
+          logger.info(TAG, `【CF验证】验证通过，耗时: ${finalElapsed}ms`);
+          return {
+            success: true,
+            waitTime: finalElapsed
+          };
+        }
+        
+        const elapsed = Date.now() - startTime;
+        if (elapsed % 10000 < 2000) {
+          logger.debug(TAG, `【CF验证】等待用户完成验证... 已等待: ${Math.floor(elapsed / 1000)}秒`);
+        }
+      }
+      
+      const totalTime = Date.now() - startTime;
+      logger.warn(TAG, `【CF验证】验证超时，用户未在${maxWaitTime / 1000}秒内完成`);
       return {
         success: false,
-        waitTime: Date.now() - startTime,
-        error: `重试${maxRetries}次后仍未绕过`
+        waitTime: totalTime,
+        error: `等待用户验证超时（${maxWaitTime / 1000}秒）`
       };
 
     } catch (error) {
@@ -307,10 +319,33 @@ export class MangaSourceAntiCrawler {
   }
 
   detectCloudflare(content: string, title: string): AntiCrawlerResult {
-    const indicators = this.config.cloudflare?.indicators || [];
+    // 默认的Cloudflare检测指标
+    const defaultIndicators = [
+      'Just a moment',
+      'Checking your browser',
+      'Please Wait',
+      'Cloudflare',
+      'cf-browser-verification',
+      'cf_chl_opt',
+      'challenge-platform',
+      'ray ID',
+      'cf-spinner',
+      'turnstile',
+      'Verifying you are human',
+      'DDoS protection',
+      'Enable JavaScript and cookies',
+      '请稍候',
+      '正在检查您的浏览器',
+      '请完成以下操作，验证您是真人。',
+      '正在验证您是否是真人。这可能需要几秒钟时间。'
+    ];
+    
+    const indicators = this.config.cloudflare?.indicators || defaultIndicators;
     
     for (const indicator of indicators) {
-      if (content.includes(indicator) || title.includes(indicator)) {
+      if (content.toLowerCase().includes(indicator.toLowerCase()) || 
+          title.toLowerCase().includes(indicator.toLowerCase())) {
+        logger.info(TAG, `检测到Cloudflare保护: ${indicator}`);
         return {
           detected: true,
           type: 'cloudflare',
@@ -387,13 +422,19 @@ export class MangaSourceAntiCrawler {
 
   async isCloudflareBlocked(): Promise<boolean> {
     try {
+      // 检查WebView是否已准备好
+      if (!this.isWebViewReady()) {
+        logger.warn(TAG, 'WebView未准备好，跳过CF检测');
+        return false; // WebView未准备好时返回false，避免无限等待
+      }
+      
       const content = await this.getPageContent();
       const title = await this.getPageTitle();
       const result = this.detectCloudflare(content, title);
       return result.detected;
     } catch (error) {
       logger.error(TAG, '检查Cloudflare状态时发生错误' + error);
-      return true; // 出错时假设仍被阻止
+      return false; // 出错时返回false，避免无限等待
     }
   }
 
@@ -410,24 +451,72 @@ export class MangaSourceAntiCrawler {
   }
 
   async waitForCloudflarePass(): Promise<void> {
-    // 等待Cloudflare自动通过
+    // 先尝试点击CF验证按钮
+    await this.clickCloudflareButton();
+    // 等待验证完成
     await this.sleep(5000);
   }
 
   async clickCloudflareButton(): Promise<void> {
     try {
-      // 尝试点击Cloudflare验证按钮
+      logger.info(TAG, '尝试点击Cloudflare验证按钮');
+      // 尝试点击各种可能的CF验证按钮
       await this.executeScript(`
-        const buttons = document.querySelectorAll('input[type="button"], button, .cb-lb');
-        for (let button of buttons) {
-          if (button.offsetParent !== null) {
-            button.click();
-            break;
+        (function() {
+          // Turnstile iframe 中的复选框
+          const turnstileIframe = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+          if (turnstileIframe) {
+            try {
+              const iframeDoc = turnstileIframe.contentDocument || turnstileIframe.contentWindow.document;
+              const checkbox = iframeDoc.querySelector('input[type="checkbox"]');
+              if (checkbox) {
+                checkbox.click();
+                console.log('[CF] 点击了Turnstile复选框');
+                return;
+              }
+            } catch(e) {
+              console.log('[CF] 无法访问iframe内容');
+            }
           }
-        }
+          
+          // 点击 Turnstile 容器
+          const turnstileContainer = document.querySelector('.cf-turnstile, [data-sitekey]');
+          if (turnstileContainer) {
+            turnstileContainer.click();
+            console.log('[CF] 点击了Turnstile容器');
+            return;
+          }
+          
+          // 点击验证按钮
+          const verifyButtons = document.querySelectorAll(
+            'input[type="button"][value*="Verify"], ' +
+            'button:contains("Verify"), ' +
+            '.challenge-form input[type="submit"], ' +
+            '#challenge-form input[type="submit"], ' +
+            '.cb-lb, ' +
+            'input[type="checkbox"]'
+          );
+          for (let btn of verifyButtons) {
+            if (btn.offsetParent !== null) {
+              btn.click();
+              console.log('[CF] 点击了验证按钮');
+              return;
+            }
+          }
+          
+          // 尝试点击页面中间区域（某些CF验证需要）
+          const centerX = window.innerWidth / 2;
+          const centerY = window.innerHeight / 2;
+          const element = document.elementFromPoint(centerX, centerY);
+          if (element && element.tagName !== 'BODY' && element.tagName !== 'HTML') {
+            element.click();
+            console.log('[CF] 点击了页面中心元素');
+          }
+        })();
       `);
+      await this.sleep(1000); // 等待点击生效
     } catch (error) {
-      logger.error(TAG, '点击Cloudflare验证按钮失败' + error);
+      logger.error(TAG, '点击Cloudflare验证按钮失败: ' + error);
     }
   }
 
@@ -512,7 +601,26 @@ export class MangaSourceAntiCrawler {
     };
   }
 
+  /**
+   * 检查WebView是否已准备好
+   */
+  private isWebViewReady(): boolean {
+    try {
+      // 尝试获取URL来检查WebView是否已关联
+      this.webviewController.getUrl();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async executeScript(script: string): Promise<Object> {
+    // 检查WebView是否已准备好
+    if (!this.isWebViewReady()) {
+      logger.warn(TAG, 'WebView未准备好，无法执行脚本');
+      return '';
+    }
+    
     return new Promise((resolve, reject) => {
       this.webviewController.runJavaScript(script, (error, result) => {
         if (error) {

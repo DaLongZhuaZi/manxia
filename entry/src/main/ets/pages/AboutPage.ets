@@ -9,6 +9,7 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { AppInfoManager } from '../Framework/Managers/AppInfoManager';
@@ -68,7 +69,10 @@ struct AboutPage {
     await this.loadAppInfo();
   }
 
+  private lifecycle = new PageLifecycleManager('AboutPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 移除设备变化监听器
@@ -244,10 +248,9 @@ struct AboutPage {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
-      Image($r('app.media.ic_chevron_right'))
-        .width(20)
-        .height(20)
-        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      SymbolGlyph($r('sys.symbol.arrow_right'))
+        .fontSize(20)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
     }
     .width('100%')
     .height(56)

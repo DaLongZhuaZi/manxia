@@ -2,6 +2,7 @@
 // 职责: 应用启动页面，显示品牌标识和加载状态
 
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType, CUSTOM_THEME_KEYS } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
@@ -203,8 +204,11 @@ struct SplashPage {
   /**
    * 页面即将销毁时的清理工作
    */
+  private lifecycle = new PageLifecycleManager('SplashPage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle('SplashPage', '页面即将销毁');
+    this.lifecycle.destroy();
     // 清理主题感知功能
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }

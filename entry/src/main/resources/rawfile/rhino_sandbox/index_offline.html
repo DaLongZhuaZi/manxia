@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rhino Sandbox (Offline Mode)</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: monospace; }
+        #status { padding: 10px; background: #f0f0f0; }
+        #console { padding: 10px; white-space: pre-wrap; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .error { color: red; }
+        .success { color: green; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <div id="status">Rhino Sandbox (Offline): Initializing...</div>
+    <div id="console"></div>
+    
+    <!-- 离线模式：使用纯JavaScript模拟Rhino环境 -->
+    <script src="rhino_offline.js"></script>
+    
+    <script>
+        // 初始化状态
+        window.rhinoSandbox = {
+            ready: false,
+            cheerpjReady: false, // 离线模式下始终为false
+            rhinoReady: false,
+            error: null,
+            pendingTasks: [],
+            results: {},
+            mode: 'offline' // 标记为离线模式
+        };
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const consoleDiv = document.getElementById('console');
+            if (consoleDiv) {
+                const line = document.createElement('div');
+                line.className = type;
+                line.textContent = `[${new Date().toISOString()}] ${message}`;
+                consoleDiv.appendChild(line);
+                consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            }
+            console.log(`[RhinoSandbox-Offline] ${message}`);
+        }
+
+        function updateStatus(text) {
+            const statusDiv = document.getElementById('status');
+            if (statusDiv) {
+                statusDiv.textContent = `Rhino Sandbox (Offline): ${text}`;
+            }
+        }
+
+        // 通知ArkTS
+        function notifyArkTS(event, data) {
+            const message = JSON.stringify({ event, data, timestamp: Date.now() });
+            console.log(`__RHINO_SANDBOX_EVENT__:${message}`);
+            window.rhinoSandbox.lastEvent = { event, data, timestamp: Date.now() };
+        }
+
+        // 初始化离线沙箱
+        async function initializeSandbox() {
+            try {
+                updateStatus('Initializing offline mode...');
+                log('Starting offline Rhino sandbox initialization...');
+
+                // 初始化离线Rhino环境
+                if (typeof initOfflineRhino === 'function') {
+                    await initOfflineRhino();
+                    window.rhinoSandbox.rhinoReady = true;
+                    log('Offline Rhino environment initialized', 'success');
+                } else {
+                    throw new Error('Offline Rhino module not loaded');
+                }
+
+                window.rhinoSandbox.ready = true;
+                updateStatus('Ready (Offline Mode)');
+                log('Sandbox fully initialized in offline mode', 'success');
+
+                // 处理等待中的任务
+                processPendingTasks();
+
+                // 通知ArkTS沙箱已就绪
+                notifyArkTS('sandboxReady', { success: true, mode: 'offline' });
+
+            } catch (error) {
+                const errorMsg = error.message || String(error);
+                window.rhinoSandbox.error = errorMsg;
+                log(`Initialization failed: ${errorMsg}`, 'error');
+                updateStatus(`Error: ${errorMsg}`);
+                
+                notifyArkTS('sandboxReady', { success: false, error: errorMsg });
+            }
+        }
+
+        // 处理等待中的任务
+        function processPendingTasks() {
+            while (window.rhinoSandbox.pendingTasks.length > 0) {
+                const task = window.rhinoSandbox.pendingTasks.shift();
+                executeScript(task.taskId, task.script, task.contextJson);
+            }
+        }
+
+        // 执行脚本（由ArkTS调用）
+        window.executeScript = async function(taskId, script, contextJson) {
+            if (!window.rhinoSandbox.ready) {
+                window.rhinoSandbox.pendingTasks.push({
+                    taskId,
+                    script,
+                    contextJson
+                });
+                return JSON.stringify({ pending: true, taskId });
+            }
+
+            try {
+                const context = contextJson ? JSON.parse(contextJson) : {};
+                const result = await executeOfflineScript(taskId, script, context);
+                return JSON.stringify({ success: true, taskId, result });
+            } catch (error) {
+                const errorMsg = error.message || String(error);
+                return JSON.stringify({ success: false, taskId, error: errorMsg });
+            }
+        };
+
+        // 获取任务结果（由ArkTS轮询）
+        window.getTaskResult = function(taskId) {
+            const result = window.rhinoSandbox.results[taskId];
+            if (result) {
+                delete window.rhinoSandbox.results[taskId];
+                return JSON.stringify(result);
+            }
+            return JSON.stringify({ pending: true });
+        };
+
+        // 检查沙箱状态（由ArkTS调用）
+        window.getSandboxStatus = function() {
+            return JSON.stringify({
+                ready: window.rhinoSandbox.ready,
+                cheerpjReady: window.rhinoSandbox.cheerpjReady,
+                rhinoReady: window.rhinoSandbox.rhinoReady,
+                error: window.rhinoSandbox.error,
+                pendingCount: window.rhinoSandbox.pendingTasks.length,
+                mode: window.rhinoSandbox.mode
+            });
+        };
+
+        // 页面加载完成后初始化
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeSandbox);
+        } else {
+            initializeSandbox();
+        }
+    </script>
+</body>
+</html>

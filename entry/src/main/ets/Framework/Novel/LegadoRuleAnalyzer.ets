@@ -411,6 +411,141 @@ export class LegadoRuleAnalyzer {
   }
 
   /**
+   * 获取字符串结果（异步版本）
+   * 支持JS规则的异步执行
+   */
+  async getStringAsync(ruleStr: string | undefined): Promise<string> {
+    if (!ruleStr || ruleStr.trim() === '') {
+      return '';
+    }
+
+    try {
+      // 先处理 @get:{xxx} 变量获取
+      let processedRule = ruleStr;
+      if (processedRule.includes('@get:')) {
+        processedRule = processedRule.replace(/@get:\{([^}]+)\}/gi, (match: string, key: string): string => {
+          return this.variables.get(key.trim()) || '';
+        });
+      }
+      
+      // 检查是否包含{{}}模板变量，如果有则先替换
+      if (processedRule.includes('{{') && processedRule.includes('}}')) {
+        return this.replaceTemplateVariables(processedRule);
+      }
+
+      // 处理规则分割符
+      const splitResult = this.splitRuleStr(processedRule);
+      if (splitResult.rules.length > 1) {
+        return await this.getStringWithSplitRulesAsync(splitResult.rules, splitResult.splitType);
+      }
+
+      return await this.getStringSingleAsync(processedRule);
+    } catch (error) {
+      logger.error(TAG, `解析规则失败(异步): ${ruleStr}, 错误: ${String(error)}`);
+      return '';
+    }
+  }
+
+  /**
+   * 使用分割规则获取字符串（异步版本）
+   */
+  private async getStringWithSplitRulesAsync(rules: string[], splitType: string): Promise<string> {
+    const results: string[] = [];
+    
+    for (const rule of rules) {
+      const result = await this.getStringSingleAsync(rule);
+      if (result) {
+        results.push(result);
+        // || 操作：第一个有结果就返回
+        if (splitType === '||') {
+          return result;
+        }
+      }
+    }
+    
+    // && 操作：合并所有结果
+    if (splitType === '&&') {
+      return results.join('\n');
+    }
+    
+    // %% 操作：交叉合并（对于单个字符串，直接返回第一个）
+    return results.length > 0 ? results[0] : '';
+  }
+
+  /**
+   * 获取单个规则的字符串结果（异步版本）
+   */
+  private async getStringSingleAsync(ruleStr: string): Promise<string> {
+    // 检查是否是组合规则：主规则@js:JS代码
+    const jsPostfixMatch = ruleStr.match(/^(.+?)@js:(.+)$/i);
+    if (jsPostfixMatch) {
+      const mainRule = jsPostfixMatch[1].trim();
+      const jsCode = jsPostfixMatch[2].trim();
+      
+      // 先执行主规则获取结果
+      const mainResult = await this.getStringSingleInternalAsync(mainRule);
+      
+      // 将主规则结果作为result传给JS执行
+      if (mainResult) {
+        const jsWithResult = `var result = ${JSON.stringify(mainResult)}; ${jsCode}`;
+        return await this.evalJSAsync(jsWithResult);
+      }
+      return '';
+    }
+    
+    return await this.getStringSingleInternalAsync(ruleStr);
+  }
+  
+  /**
+   * 内部方法：获取单个规则的字符串结果（异步版本）
+   */
+  private async getStringSingleInternalAsync(ruleStr: string): Promise<string> {
+    const parsedRule = this.parseRule(ruleStr);
+    
+    // 调试日志
+    logger.debug(TAG, `getStringSingleInternalAsync: mode=${parsedRule.mode}, rule=${ruleStr.substring(0, 50)}...`);
+    
+    // 处理put变量
+    if (parsedRule.putMap) {
+      for (const key of Object.keys(parsedRule.putMap)) {
+        const value = await this.getStringAsync(parsedRule.putMap[key]);
+        this.variables.set(key, value);
+      }
+    }
+
+    let result = '';
+    
+    switch (parsedRule.mode) {
+      case LegadoRuleMode.Json:
+        result = this.getStringByJsonPath(parsedRule.rule);
+        break;
+      case LegadoRuleMode.XPath:
+        result = this.getStringByXPath(parsedRule.rule);
+        break;
+      case LegadoRuleMode.Regex:
+        result = this.getStringByRegex(parsedRule.rule);
+        break;
+      case LegadoRuleMode.Js:
+        logger.debug(TAG, `执行JS规则(异步), content长度=${this.content.length}, content前100字符=${this.content.substring(0, 100)}`);
+        result = await this.evalJSAsync(parsedRule.rule);
+        logger.debug(TAG, `JS规则执行结果: ${result.substring(0, 100)}`);
+        break;
+      case LegadoRuleMode.Default:
+      default:
+        result = this.getStringByCSS(parsedRule.rule);
+        break;
+    }
+
+    // 应用替换规则
+    if (parsedRule.replaceRegex && result) {
+      result = this.applyReplace(result, parsedRule.replaceRegex, 
+        parsedRule.replacement || '', parsedRule.replaceFirst || false);
+    }
+
+    return result;
+  }
+
+  /**
    * 分割规则字符串
    * 支持 &&, ||, %% 分割符
    */
@@ -437,12 +572,31 @@ export class LegadoRuleAnalyzer {
   }
 
   /**
-   * 检查是否包含分割符（排除引号内的）
+   * 检查是否包含分割符（排除引号内和<js>标签内的）
    */
   private containsSplitter(str: string, splitter: string): boolean {
     let inQuote = false;
     let quoteChar = '';
+    let inJsTag = false;
+    
     for (let i = 0; i < str.length - splitter.length + 1; i++) {
+      // 检查是否进入或离开<js>标签
+      if (str.substring(i, i + 4).toLowerCase() === '<js>') {
+        inJsTag = true;
+        i += 3;
+        continue;
+      }
+      if (str.substring(i, i + 5).toLowerCase() === '</js>') {
+        inJsTag = false;
+        i += 4;
+        continue;
+      }
+      
+      // 在<js>标签内，跳过分割符检查
+      if (inJsTag) {
+        continue;
+      }
+      
       const char = str[i];
       if ((char === '"' || char === "'") && (i === 0 || str[i-1] !== '\\')) {
         if (!inQuote) {
@@ -460,16 +614,38 @@ export class LegadoRuleAnalyzer {
   }
 
   /**
-   * 安全分割字符串（排除引号内的分割符）
+   * 安全分割字符串（排除引号内和<js>标签内的分割符）
    */
   private safeSplit(str: string, splitter: string): string[] {
     const results: string[] = [];
     let current = '';
     let inQuote = false;
     let quoteChar = '';
+    let inJsTag = false;
     
     for (let i = 0; i < str.length; i++) {
+      // 检查是否进入或离开<js>标签
+      if (str.substring(i, i + 4).toLowerCase() === '<js>') {
+        inJsTag = true;
+        current += str.substring(i, i + 4);
+        i += 3;
+        continue;
+      }
+      if (str.substring(i, i + 5).toLowerCase() === '</js>') {
+        inJsTag = false;
+        current += str.substring(i, i + 5);
+        i += 4;
+        continue;
+      }
+      
       const char = str[i];
+      
+      // 在<js>标签内，直接添加字符，不检查分割符
+      if (inJsTag) {
+        current += char;
+        continue;
+      }
+      
       if ((char === '"' || char === "'") && (i === 0 || str[i-1] !== '\\')) {
         if (!inQuote) {
           inQuote = true;

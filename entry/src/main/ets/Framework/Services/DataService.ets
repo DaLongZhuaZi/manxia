@@ -493,6 +493,23 @@ export class DataService {
   }
 
   /**
+   * 获取指定漫画章节的阅读进度
+   * @param comicId 漫画ID
+   * @param chapterId 章节ID
+   * @returns 阅读进度信息，如果没有记录则返回null
+   */
+  public async getReadingProgress(comicId: string, chapterId: string): Promise<ReadHistory | null> {
+    try {
+      const history = await this.dataManager.getReadHistoryByComic(comicId, this.currentUserId, 100);
+      const progress = history.find(h => h.chapterId === chapterId);
+      return progress || null;
+    } catch (error) {
+      logger.error(TAG, `获取阅读进度失败: ${comicId}/${chapterId}`, String(error));
+      return null;
+    }
+  }
+
+  /**
    * 获取阅读历史
    */
   public async getReadingHistory(limit: number = 50): Promise<ReadHistory[]> {

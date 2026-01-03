@@ -10,6 +10,7 @@ import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { EBook, EBookReadingSettings, EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
@@ -193,7 +194,10 @@ export struct EBookSettingsPage {
     }
   }
 
+  private lifecycle = new PageLifecycleManager('EBookSettingsPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 移除设备方向监听器

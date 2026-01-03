@@ -286,8 +286,10 @@ export class ImageCacheManager {
       if (!options?.skipMemoryCache && !options?.forceRefresh) {
         const memoryResult = this.getFromMemoryCache(cacheKey);
         if (memoryResult) {
-          logger.debug(TAG, `内存缓存命中: ${url}`);
+          logger.info(TAG, `✅ 内存缓存命中: ${url.substring(0, 80)}`);
           return memoryResult;
+        } else {
+          logger.debug(TAG, `❌ 内存缓存未命中: ${url.substring(0, 80)}`);
         }
       }
       
@@ -295,12 +297,14 @@ export class ImageCacheManager {
       if (!options?.skipDiskCache && !options?.forceRefresh) {
         const diskResult = await this.getFromDiskCache(cacheKey, options);
         if (diskResult) {
-          logger.debug(TAG, `磁盘缓存命中: ${url}`);
+          logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
           // 存入内存缓存
           if (!options?.skipMemoryCache) {
             await this.putToMemoryCache(cacheKey, diskResult);
           }
           return diskResult;
+        } else {
+          logger.debug(TAG, `❌ 磁盘缓存未命中: ${url.substring(0, 80)}`);
         }
       }
       
@@ -308,17 +312,19 @@ export class ImageCacheManager {
       if (this.shouldUsePermanentCache(options) && !options?.forceRefresh) {
         const permanentResult = await this.getFromPermanentCache(url, options!);
         if (permanentResult) {
-          logger.debug(TAG, `永久缓存命中: ${url}`);
+          logger.info(TAG, `✅ 永久缓存命中: ${url.substring(0, 80)}`);
           // 存入内存缓存
           if (!options?.skipMemoryCache) {
             await this.putToMemoryCache(cacheKey, permanentResult);
           }
           return permanentResult;
+        } else {
+          logger.debug(TAG, `❌ 永久缓存未命中: ${url.substring(0, 80)}`);
         }
       }
       
       // 第四级：网络加载
-      logger.debug(TAG, `网络加载: ${url}`);
+      logger.info(TAG, `🌐 从网络加载: ${url.substring(0, 80)}`);
       const networkResult = await this.loadFromNetwork(url, options);
       
       if (networkResult) {
