@@ -318,7 +318,7 @@ export interface ScriptAction extends BaseAction {
  */
 export interface CloudflareBypassAction extends BaseAction {
   type: ActionType.CLOUDFLARE_BYPASS;
-  method: 'wait' | 'solve';
+  method: 'wait' | 'solve' | 'click' | 'refresh' | 'interactive';
   maxWaitTime?: number;
   indicators?: string[];
 }
@@ -901,7 +901,7 @@ export interface PageInfo {
 export interface CloudflareConfig {
   enabled?: boolean;
   indicators?: string[];
-  bypassMethod?: 'wait' | 'click' | 'refresh';
+  bypassMethod?: 'wait' | 'click' | 'refresh' | 'interactive';
   maxWaitTime?: number;
   maxRetries?: number;
   retryCount?: number;

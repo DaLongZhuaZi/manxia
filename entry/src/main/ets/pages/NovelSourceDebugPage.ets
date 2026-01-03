@@ -7,15 +7,19 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { NovelSourceExecutor } from '../Framework/Novel/NovelSourceExecutor';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
+import { getLegadoJsEngine } from '../Framework/Novel/LegadoJsEngine';
 
 const TAG = 'NovelSourceDebugPage';
+const TITLE_BAR_HEIGHT_MINI = 56;
 
 /**
  * 调试步骤枚举
@@ -49,6 +53,7 @@ export interface NovelSourceDebugPageParams {
 export struct NovelSourceDebugPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  private lifecycle = new PageLifecycleManager('NovelSourceDebugPage', { enableDebug: true });
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelSourceDebugPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -84,6 +89,9 @@ export struct NovelSourceDebugPage {
   @State showChapters: boolean = true;
   @State showContent: boolean = true;
   
+  // WebView控制器（用于网络请求）
+  private webViewController: webview.WebviewController = new webview.WebviewController();
+  
   private executor: NovelSourceExecutor | null = null;
   private logScroller: Scroller = new Scroller();
 
@@ -101,6 +109,8 @@ export struct NovelSourceDebugPage {
   }
 
   aboutToDisappear(): void {
+    logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -350,12 +360,22 @@ export struct NovelSourceDebugPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 隐藏的WebView组件，用于执行JS网络请求
-        LegadoWebViewComponent()
+        // 背景层
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          
           // 搜索输入区
           this.buildSearchInput()
+          
+          // 步骤指示器
+          this.buildStepIndicator()
           
           // 主内容区
           Scroll() {
@@ -384,16 +404,15 @@ export struct NovelSourceDebugPage {
               this.buildLogs()
             }
             .width('100%')
-            .padding({ left: 16, right: 16, bottom: 32 })
+            .padding({ left: 16, right: 16, top: 8, bottom: 32 })
           }
           .width('100%')
           .layoutWeight(1)
-          .scrollBar(BarState.Off)
+          .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
         
         // 加载遮罩
         if (this.isRunning) {
@@ -405,26 +424,30 @@ export struct NovelSourceDebugPage {
     }
     .titleBar({
       padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
         originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
           },
           contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
-            },
-            menuStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },
@@ -434,7 +457,7 @@ export struct NovelSourceDebugPage {
         }
       }
     })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+    .backgroundColor(Color.Transparent)
     .onReady(() => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
     })
@@ -448,15 +471,23 @@ export struct NovelSourceDebugPage {
           .layoutWeight(1)
           .height(40)
           .borderRadius(20)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .border({
+            width: 1,
+            color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+          })
           .onChange((value: string) => {
             this.searchKeyword = value;
           })
+          .onSubmit(() => this.testSearch())
         
         Button('搜索')
           .fontSize(14)
           .height(40)
           .margin({ left: 8 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .enabled(!this.isRunning)
           .onClick(() => this.testSearch())
         
@@ -473,6 +504,57 @@ export struct NovelSourceDebugPage {
     }
     .width('100%')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+  }
+
+  @Builder
+  buildStepIndicator() {
+    Row({ space: 8 }) {
+      // 搜索步骤
+      this.buildStepItem('搜索', DebugStep.SEARCH, this.searchResults.length > 0)
+      
+      // 详情步骤
+      this.buildStepItem('详情', DebugStep.BOOK_INFO, this.bookInfo !== null)
+      
+      // 目录步骤
+      this.buildStepItem('目录', DebugStep.TOC, this.chapters.length > 0)
+      
+      // 正文步骤
+      this.buildStepItem('正文', DebugStep.CONTENT, this.chapterContent !== '')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+  }
+
+  @Builder
+  buildStepItem(label: string, step: DebugStep, completed: boolean) {
+    Column({ space: 4 }) {
+      Row() {
+        if (completed) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+            .fontSize(20)
+            .fontColor(['#52C41A'])
+        } else if (this.currentStep === step) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        } else {
+          SymbolGlyph($r('sys.symbol.circle'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        }
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      
+      Text(label)
+        .fontSize(11)
+        .fontColor(completed ? '#52C41A' : 
+                   this.currentStep === step ? 
+                   ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                   ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
   }
 
   @Builder

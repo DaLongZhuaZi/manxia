@@ -5,6 +5,7 @@
  */
 
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType, CustomThemeData } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
@@ -512,8 +513,11 @@ struct WelcomeGuidePage {
     };
   }
 
+  private lifecycle = new PageLifecycleManager('WelcomeGuidePage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, '欢迎引导页面即将销毁');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 

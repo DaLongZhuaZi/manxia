@@ -1,0 +1,6 @@
+{
+  "name": "libquickjs_engine.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "QuickJS JavaScript Engine for HarmonyOS - Legado Compatible"
+}

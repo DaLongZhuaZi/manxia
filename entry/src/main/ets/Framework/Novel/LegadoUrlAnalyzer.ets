@@ -121,6 +121,21 @@ export class LegadoUrlAnalyzer {
     let useWebView = false;
     let webJs: string | undefined;
     let retry = 0;
+    
+    // 特殊处理: data:协议URL直接返回，不进行任何解析
+    // data:URL用于在书源间传递数据，格式如: data:;base64,{json},{extra}
+    if (urlTemplate.startsWith('data:')) {
+      return {
+        url: urlTemplate,
+        method,
+        headers,
+        body,
+        charset,
+        useWebView,
+        webJs,
+        retry
+      };
+    }
 
     // 步骤1: 分离URL和选项JSON（在JS执行之前）
     // 参考Legado原版: paramPattern = Pattern.compile("\\s*,\\s*(?=\\{)")
@@ -748,6 +763,11 @@ export class LegadoUrlAnalyzer {
 
     // 已经是绝对URL
     if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    
+    // data:协议URL，直接返回（用于传递数据）
+    if (url.startsWith('data:')) {
       return url;
     }
 

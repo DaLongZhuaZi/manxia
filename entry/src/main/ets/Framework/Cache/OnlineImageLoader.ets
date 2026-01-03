@@ -14,8 +14,21 @@ import { logger } from '../../Utils/Logger';
 import { http } from '@kit.NetworkKit';
 import CookieManager from '../Managers/CookieManager';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { DiskCacheManager } from './DiskCacheManager';
+import { DataManager } from '../Data/DataManager';
+import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
 
 const TAG = 'OnlineImageLoader';
+
+// 禁漫天堂解扰器实例（懒加载）
+let jinmantiantangDescrambler: JinmantiantangDescrambler | null = null;
+
+function getJinmantiantangDescrambler(): JinmantiantangDescrambler {
+  if (jinmantiantangDescrambler === null) {
+    jinmantiantangDescrambler = new JinmantiantangDescrambler();
+  }
+  return jinmantiantangDescrambler;
+}
 
 export interface OnlineLoadOptions {
   width?: number;
@@ -90,6 +103,9 @@ export class OnlineImageLoader {
   private activeRequests: number = 0;
   private readonly MAX_CONCURRENT = 10;  // 【修复】提升到10个并发，加快封面加载速度
   
+  // [修复] 正在加载的URL集合，用于去重
+  private loadingUrls = new Set<string>();
+  
   // 轻量级内存缓存
   private memoryCache = new Map<string, CacheEntry>();
   private memoryCacheSize = 0;
@@ -122,7 +138,7 @@ export class OnlineImageLoader {
   }
 
   /**
-   * 加载在线图片
+   * 加载在线图片（三级缓存：内存->磁盘->网络）
    */
   public async load(url: string, options?: OnlineLoadOptions): Promise<image.PixelMap | null> {
     const cacheKey = this.generateCacheKey(url);
@@ -131,18 +147,45 @@ export class OnlineImageLoader {
     // 1. 检查内存缓存
     const cached = this.getFromCache(cacheKey);
     if (cached) {
-      logger.debug(TAG, `命中内存缓存: ${url.substring(0, 80)}`);
+      logger.info(TAG, `✅ 内存缓存命中: ${url.substring(0, 80)}`);
       return cached;
     }
     
-    // 2. 加入请求队列
+    // 2. 检查磁盘缓存（仅在已初始化时）
+    try {
+      const diskCache = DiskCacheManager.getInstance();
+      // 检查是否已初始化，避免警告日志泛滥
+      if (diskCache.isInitialized()) {
+        const diskCached = await diskCache.get(url);
+        if (diskCached) {
+          logger.info(TAG, `✅ 磁盘缓存命中: ${url.substring(0, 80)}`);
+          // 存入内存缓存
+          this.putToCache(cacheKey, diskCached);
+          return diskCached;
+        }
+      }
+    } catch (error) {
+      logger.debug(TAG, `磁盘缓存读取失败: ${String(error)}`);
+    }
+    
+    // 3. [修复] 检查是否已在加载中
+    if (this.loadingUrls.has(url)) {
+      logger.debug(TAG, `URL已在加载队列中，等待现有加载完成: ${url.substring(0, 80)}`);
+      // 等待现有加载完成，然后从缓存返回
+      return this.waitForLoading(url);
+    }
+    
+    // 4. 标记为正在加载
+    this.loadingUrls.add(url);
+    
+    // 4. 加入请求队列
     return new Promise<image.PixelMap | null>((resolve, reject) => {
       const request: QueuedRequest = {
-        url,
-        options: options || {},
-        priority,
-        resolve,
-        reject,
+        url: url,
+        options: options || {} as OnlineLoadOptions,
+        priority: priority,
+        resolve: resolve,
+        reject: reject,
         retryCount: 0
       };
       
@@ -154,6 +197,34 @@ export class OnlineImageLoader {
       // 触发队列处理
       this.processQueue();
     });
+  }
+  
+  /**
+   * [新增] 等待URL加载完成
+   */
+  private async waitForLoading(url: string): Promise<image.PixelMap | null> {
+    const maxWaitTime = 30000; // 最多等待30秒
+    const checkInterval = 100; // 每100ms检查一次
+    const startTime = Date.now();
+    
+    while (this.loadingUrls.has(url)) {
+      if (Date.now() - startTime > maxWaitTime) {
+        logger.warn(TAG, `等待URL加载超时: ${url.substring(0, 80)}`);
+        return null;
+      }
+      
+      // 等待100ms后再检查
+      await new Promise<void>((resolve) => setTimeout(resolve, checkInterval));
+      
+      // 检查缓存是否已更新
+      const cached = this.getFromCache(this.generateCacheKey(url));
+      if (cached) {
+        return cached;
+      }
+    }
+    
+    // 加载完成，从缓存返回
+    return this.getFromCache(this.generateCacheKey(url));
   }
 
   /**
@@ -181,11 +252,43 @@ export class OnlineImageLoader {
       const pixelMap = await this.httpRequest(request.url, request.options);
       
       if (pixelMap) {
-        // 存入缓存
+        // 存入内存缓存
         this.putToCache(this.generateCacheKey(request.url), pixelMap);
+        
+        // [新增] 存入磁盘缓存（仅在已初始化时）
+        try {
+          const diskCache = DiskCacheManager.getInstance();
+          if (diskCache.isInitialized()) {
+            await diskCache.put(request.url, pixelMap);
+            logger.debug(TAG, `已保存到磁盘缓存: ${request.url.substring(0, 80)}`);
+          }
+          
+          // [新增] 同步缓存状态到数据库
+          try {
+            const filePath = await diskCache.getCacheFilePath(request.url);
+            const fileSize = await diskCache.getCacheFileSize(request.url);
+            
+            if (filePath && fileSize > 0) {
+              const dataManager = DataManager.getInstance();
+              await dataManager.updateOnlinePageCacheStatus(request.url, filePath, fileSize);
+              logger.debug(TAG, `已同步缓存状态到数据库: ${request.url.substring(0, 80)}`);
+            }
+          } catch (dbError) {
+            logger.warn(TAG, `同步缓存状态到数据库失败: ${String(dbError)}`);
+          }
+        } catch (error) {
+          logger.warn(TAG, `保存到磁盘缓存失败: ${String(error)}`);
+        }
+        
         request.resolve(pixelMap);
+        
+        // [修复] 加载成功，从loadingUrls中移除
+        this.loadingUrls.delete(request.url);
       } else {
         request.resolve(null);
+        
+        // [修复] 加载失败，从loadingUrls中移除
+        this.loadingUrls.delete(request.url);
       }
       
     } catch (error) {
@@ -204,6 +307,9 @@ export class OnlineImageLoader {
       } else {
         logger.error(TAG, `请求最终失败: ${request.url.substring(0, 80)}, error=${String(error)}`);
         request.reject(error as Error);
+        
+        // [修复] 最终失败，从loadingUrls中移除
+        this.loadingUrls.delete(request.url);
       }
     } finally {
       this.activeRequests--;
@@ -273,8 +379,36 @@ export class OnlineImageLoader {
         
         logger.info(TAG, `HTTP响应成功: code=200, bytes=${bytesLen}, duration=${duration}ms`);
         
-        // 检查是否需要解密（Manwa图片加密）
+        // 检查是否需要解扰/解密
         let finalBuffer = imageBuffer;
+        
+        // 禁漫天堂图片解扰（检查URL是否包含media/photos）
+        if (url.includes('media/photos')) {
+          const imageInfo = JinmantiantangDescrambler.extractImageInfo(url);
+          if (imageInfo !== null) {
+            const descrambler = getJinmantiantangDescrambler();
+            const params: JinmantiantangParameters = {
+              aid: imageInfo.aid,
+              imgIndex: imageInfo.imgIndex
+            };
+            
+            // 检查是否需要解扰（aid >= 220980）
+            if (descrambler.shouldDescramble(url, params)) {
+              logger.info(TAG, `检测到禁漫天堂加扰图片，开始解扰: aid=${imageInfo.aid}, imgIndex=${imageInfo.imgIndex}`);
+              try {
+                finalBuffer = await descrambler.descramble(imageBuffer, params);
+                logger.info(TAG, `禁漫天堂图片解扰完成，原始大小: ${imageBuffer.byteLength}, 解扰后: ${finalBuffer.byteLength}`);
+              } catch (descrambleError) {
+                const errMsg = descrambleError instanceof Error ? descrambleError.message : String(descrambleError);
+                logger.error(TAG, `禁漫天堂图片解扰失败: ${errMsg}`);
+                // 解扰失败时使用原始图片
+                finalBuffer = imageBuffer;
+              }
+            }
+          }
+        }
+        
+        // Manwa图片AES解密
         if (url.endsWith('?v=20220724')) {
           logger.debug(TAG, `检测到加密图片，开始AES解密: ${url.substring(0, 80)}`);
           try {

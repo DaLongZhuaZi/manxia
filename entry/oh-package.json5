@@ -7,7 +7,8 @@
   "license": "",
   "dependencies": {},
   "devDependencies": {
-    "libjsvm_engine.so": "file:./src/main/cpp/types/libjsvm_engine"
+    "libjsvm_engine.so": "file:./src/main/cpp/types/libjsvm_engine",
+    "libquickjs_engine.so": "file:./src/main/cpp/quickjs/types/libquickjs_engine"
   }
 }
 

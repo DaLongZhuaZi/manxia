@@ -40,6 +40,8 @@ export interface NovelBook {
   lastReadTime?: number;
   totalReadingTime: number;  // 总阅读时长（秒）
   isFavorite: boolean;
+  isPrivate?: boolean;       // 是否为隐私内容
+  isNSFW?: boolean;          // 是否为NSFW内容
   createTime: number;
   updateDbTime: number;
   groupName?: string;
@@ -89,6 +91,21 @@ export interface NovelReadProgress {
 }
 
 /**
+ * 小说信息
+ */
+export interface NovelInfo {
+  name: string;
+  author?: string;
+  kind?: string;
+  intro?: string;
+  coverUrl?: string;
+  latestChapterTitle?: string;
+  wordCount?: string;
+  /** 是否为成人内容（NSFW） */
+  isNSFW?: boolean;
+}
+
+/**
  * 小说搜索结果
  */
 export interface NovelSearchResult {
@@ -119,6 +136,8 @@ export interface NovelSourceInfo {
   searchable: boolean;
   hasExplore: boolean;
   isTop?: boolean;
+  /** 是否为成人内容源（NSFW） */
+  isNSFW?: boolean;
 }
 
 /**

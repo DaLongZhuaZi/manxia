@@ -60,6 +60,7 @@ export interface ComicSourceDatabaseRecord {
   preloadCurrentPages?: number;    // 当前章节预加载页数（0=不预加载，-1=全部）
   preloadNextChapter?: number;     // 是否预加载下一章节（0/1）
   preloadNextPages?: number;       // 下一章节预加载页数（0=不预加载，-1=全部）
+  isNSFW?: number;                 // 是否为NSFW内容（0=SFW, 1=NSFW）
 }
 
 /**
@@ -85,6 +86,8 @@ export interface ComicInfoDatabaseRecord {
   webUrl: string | null;  // 网页URL
   apiUrl: string | null;  // API请求地址
   contentType?: string;  // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF
+  isNSFW?: number;       // 是否为NSFW内容（0=SFW, 1=NSFW）
+  isPrivate?: number;    // 是否为隐私内容（0=普通, 1=隐私）
 }
 
 /**
@@ -216,6 +219,8 @@ export interface OnlineComicInfoDatabaseRecord {
   createTime: number;
   updateTime: number;
   sourceName: string;
+  isNSFW: number;
+  isPrivate: number;
 }
 
 // 在线章节独立数据结构
@@ -596,7 +601,9 @@ export function convertComicInfoToDbFormat(record: ComicInfoDatabaseRecord): Rec
     "updateTime": record.updateTime,
     "webUrl": record.webUrl,
     "apiUrl": record.apiUrl,
-    "contentType": record.contentType || 'manga'  // 内容类型
+    "contentType": record.contentType || 'manga',  // 内容类型
+    "isNSFW": record.isNSFW || 0,  // NSFW标记
+    "isPrivate": record.isPrivate || 0  // 隐私标记
   } as Record<string, DatabaseValue>;
 }
 
@@ -1062,6 +1069,9 @@ export interface GenericQueryRecord {
   backgroundType?: DatabaseValue;  // 背景类型 (COLOR/IMAGE)
   backgroundImagePath?: DatabaseValue;  // 背景图片路径
   backgroundImageOpacity?: DatabaseValue;  // 背景图片透明度
+  // 隐私和NSFW字段
+  isNSFW?: DatabaseValue;  // 是否为NSFW内容（0=SFW, 1=NSFW）
+  isPrivate?: DatabaseValue;  // 是否为隐私内容（0=普通, 1=隐私）
 }
 
 export type DatabaseRecord = 

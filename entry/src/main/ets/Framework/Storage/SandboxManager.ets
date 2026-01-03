@@ -120,7 +120,12 @@ export class SandboxManager {
    */
   public async initialize(context: Context, config?: Partial<StorageConfig>): Promise<void> {
     try {
+      logger.info(TAG, '沙箱管理器开始初始化...');
+      if (!context) {
+        throw new Error('初始化时传入的Context为null');
+      }
       this.context = context;
+      logger.info(TAG, '✅ Context已设置到SandboxManager');
       
       // 合并配置
       if (config) {
@@ -131,16 +136,18 @@ export class SandboxManager {
 
       // 初始化目录路径
       await this.initializeDirectories();
+      logger.info(TAG, '✅ 目录路径已初始化');
       
       // 创建必要的目录
       await this.createDirectories();
+      logger.info(TAG, '✅ 必要的目录已创建');
       
       // 启动定期清理
       this.startCleanupTimer();
       
-      logger.info(TAG, '沙箱管理器初始化完成');
+      logger.info(TAG, '✅ 沙箱管理器初始化完成');
     } catch (error) {
-      logger.error(TAG, '沙箱管理器初始化失败' + String(error));
+      logger.error(TAG, `❌ 沙箱管理器初始化失败: ${String(error)}`);
       throw error as Error;
     }
   }
@@ -208,6 +215,13 @@ export class SandboxManager {
    * 获取目录路径
    */
   public getDirectory(type: keyof DirectoryPaths): string {
+    // 检查Context是否已初始化
+    if (!this.context) {
+      const errorMsg = `SandboxManager未初始化，无法获取目录路径: ${type}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+    
     // 使用显式属性访问替代索引访问
     let path: string = '';
     
@@ -244,8 +258,12 @@ export class SandboxManager {
     }
     
     if (!path) {
-      throw new Error(`未知的目录类型: ${type}`);
+      const errorMsg = `目录路径为空: type=${type}, context已初始化但路径未设置`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
     }
+    
+    logger.debug(TAG, `获取目录路径: ${type} -> ${path}`);
     return path;
   }
 

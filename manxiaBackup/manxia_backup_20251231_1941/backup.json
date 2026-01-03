@@ -1,0 +1,275 @@
+{
+  "version": "2.0",
+  "appVersion": "0.0.5 (1005027)",
+  "timestamp": 1767181271747,
+  "deviceInfo": "HUAWEI nova 12 Ultra",
+  "manga": {
+    "library": [
+      {
+        "id": "id_1767118795776_bvz9k5tg",
+        "sourceId": "local_import",
+        "sourceName": "",
+        "url": "",
+        "title": "狐妖小红娘",
+        "author": "小新",
+        "artist": "",
+        "description": "迷糊萝莉小狐妖，正太道士没节操。自古人妖生死恋，千载孽缘一线牵！（注：现在起狐妖暂时改为周更，每周周三更新。）",
+        "genre": [],
+        "status": "UNKNOWN",
+        "coverUrl": "/data/storage/el2/base/haps/entry/files/comics/local_import/狐妖小红娘/cover.jpg",
+        "coverLocalPath": "",
+        "isFavorite": false,
+        "isPrivate": false,
+        "isNSFW": true,
+        "categories": [],
+        "lastUpdateTime": 1767118795776,
+        "dateAdded": 1767181271763,
+        "chapters": [
+          {
+            "id": "id_1767118795787_ga48ut72",
+            "title": "第1话",
+            "url": "",
+            "chapterNumber": "0",
+            "scanlator": "",
+            "uploadDate": 0,
+            "dateUploaded": 0,
+            "chapterIndex": 0,
+            "read": false,
+            "bookmark": false,
+            "lastPageRead": 0,
+            "dateFetch": 0,
+            "sourceOrder": 0
+          }
+        ],
+        "lastReadChapterId": "",
+        "lastReadChapterIndex": 0,
+        "lastReadPage": 0,
+        "lastReadTime": 0
+      }
+    ],
+    "readProgress": [],
+    "categories": []
+  },
+  "novel": {
+    "library": [
+      {
+        "id": "http://v1.gyks.cf/#小说/_%2Fdetail%3Fbook_id%3DNzE3MTM3OTQwOTQxNTMxMDM2Ng%26source%3D%E7%95%AA%E8%8C%84%26tab%3D%E5%B0%8F%E8%AF%B4",
+        "sourceId": "http://v1.gyks.cf/#小说/",
+        "sourceName": "🌞晴天小说4.0",
+        "bookUrl": "/detail?book_id=NzE3MTM3OTQwOTQxNTMxMDM2Ng&source=番茄&tab=小说",
+        "name": "哈利·波特与密室",
+        "author": "J.K. Rowling",
+        "kind": "影视小说,国外影视",
+        "intro": "「有一个阴谋，哈利·波特。今年霍格沃茨魔法学校会有最恐怖的事情发生。」这年暑假，哈利度过最糟糕的生日，还收到家养小精灵多比让人惊骇的警告，接着被好友罗恩·韦斯莱开着飞行轿车救离德思礼一家。回到霍格沃茨魔法学校就读第二学年后，哈利开始听到诡异的低语在空荡荡的走廊回响——接着就发生了攻击事件，多名学生被石化，多比的凶险的预言似乎开始成真......",
+        "coverUrl": "https://p3-reading-sign.fqnovelpic.com/novel-pic/13c3b03fafcd7db5725eb572bef5d493~tplv-snk2bdmkp8-superreso-double-rz:1200:0.image?lk3s=45961287&x-expires=1772306432&x-signature=x%2FElvgvu6k4W0KabkiMKoE7A9iU%3D",
+        "coverLocalPath": "",
+        "tocUrl": "/catalog?book_id=NzE3MTM3OTQwOTQxNTMxMDM2Ng&source=番茄&tab=小说",
+        "latestChapterTitle": "第18章 多比的报偿",
+        "wordCount": "16万",
+        "chapterCount": 22,
+        "readStatus": "reading",
+        "isFavorite": true,
+        "isPrivate": false,
+        "isNSFW": false,
+        "createTime": 1767125841585,
+        "updateDbTime": 1767178769346,
+        "lastReadChapterId": "http://v1.gyks.cf/#小说/_%2Fdetail%3Fbook_id%3DNzE3MTM3OTQwOTQxNTMxMDM2Ng%26source%3D%E7%95%AA%E8%8C%84%26tab%3D%E5%B0%8F%E8%AF%B4_4",
+        "lastReadChapterIndex": 4,
+        "lastReadPosition": 0,
+        "lastReadTime": 1767123778126,
+        "totalReadingTime": 0
+      }
+    ],
+    "readProgress": [
+      {
+        "bookId": "http://v1.gyks.cf/#小说/_%2Fdetail%3Fbook_id%3DNzE3MTM3OTQwOTQxNTMxMDM2Ng%26source%3D%E7%95%AA%E8%8C%84%26tab%3D%E5%B0%8F%E8%AF%B4",
+        "chapterId": "http://v1.gyks.cf/#小说/_%2Fdetail%3Fbook_id%3DNzE3MTM3OTQwOTQxNTMxMDM2Ng%26source%3D%E7%95%AA%E8%8C%84%26tab%3D%E5%B0%8F%E8%AF%B4_4",
+        "chapterIndex": 4,
+        "position": 0,
+        "progress": 18.181818181818183,
+        "readTime": 1767123778126
+      }
+    ],
+    "categories": []
+  },
+  "ebook": {
+    "library": []
+  },
+  "sources": {
+    "manga": [],
+    "novel": [
+      {
+        "id": "http://v1.gyks.cf/#小说/",
+        "name": "🌞晴天小说4.0",
+        "sourceUrl": "http://v1.gyks.cf/#小说/",
+        "bookSourceGroup": "修复后可用,✅工作正常",
+        "bookSourceType": 0,
+        "enabled": true,
+        "enabledExplore": true,
+        "weight": 0,
+        "lastUpdateTime": 1767121584613
+      },
+      {
+        "id": "http://api.lemiyigou.com",
+        "name": "猫眼看书",
+        "sourceUrl": "http://api.lemiyigou.com",
+        "bookSourceGroup": "修复后可用,目录失效",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": true,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      },
+      {
+        "id": "https://qbtr.me",
+        "name": "全本同人",
+        "sourceUrl": "https://qbtr.me",
+        "bookSourceGroup": "修复后可用,🔍搜索解析失败",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": true,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      },
+      {
+        "id": "http://www.frtxt.com",
+        "name": "芙蓉小说",
+        "sourceUrl": "http://www.frtxt.com",
+        "bookSourceGroup": "修复后可用,🔍搜索解析失败",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": true,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      },
+      {
+        "id": "https://www.changduzw.com",
+        "name": "唔唔小说",
+        "sourceUrl": "https://www.changduzw.com",
+        "bookSourceGroup": "修复后可用,⏱️网络超时",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": false,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      },
+      {
+        "id": "http://www.23hh.la",
+        "name": "爱尚小说",
+        "sourceUrl": "http://www.23hh.la",
+        "bookSourceGroup": "修复后可用,🔍搜索解析失败",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": false,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      },
+      {
+        "id": "https://bookshelf.html5.qq.com",
+        "name": "松鹤阅读",
+        "sourceUrl": "https://bookshelf.html5.qq.com",
+        "bookSourceGroup": "修复后可用,🔍搜索解析失败",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": true,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      },
+      {
+        "id": "http://www.biquge77.net",
+        "name": "🌐 笔趣阁77",
+        "sourceUrl": "http://www.biquge77.net",
+        "bookSourceGroup": "修复后可用,搜索失效",
+        "bookSourceType": 0,
+        "enabled": false,
+        "enabledExplore": false,
+        "weight": 0,
+        "lastUpdateTime": 1767121584614
+      }
+    ]
+  },
+  "settings": {
+    "reader": {
+      "manga": {},
+      "novel": {
+        "readingMode": "PAGE",
+        "readingDirection": "HORIZONTAL",
+        "pageTurnAnimation": "SLIDE",
+        "background": {
+          "type": "COLOR",
+          "color": "#F5F0E1",
+          "imageOpacity": 1
+        },
+        "savedBackgroundImages": [],
+        "textStyle": {
+          "fontSize": 18,
+          "lineHeight": 1.8,
+          "paragraphSpacing": 16,
+          "firstLineIndent": 2,
+          "letterSpacing": 0.5,
+          "textColor": "#333333",
+          "fontWeight": 400,
+          "fontFamily": "HarmonyOS Sans",
+          "textAlignment": "JUSTIFY"
+        },
+        "pageMargins": {
+          "top": 32,
+          "bottom": 32,
+          "left": 8,
+          "right": 8
+        },
+        "keepScreenOn": true,
+        "showPageNumber": true,
+        "showProgress": true,
+        "showTime": true,
+        "showBattery": false,
+        "tapToTurn": true,
+        "volumeKeyNavigation": true,
+        "autoScrollSpeed": 50,
+        "curlBackOpacity": 90
+      }
+    },
+    "general": {
+      "theme": "auto",
+      "language": "zh-CN"
+    },
+    "privacy": {
+      "sfwMode": false,
+      "privateLibraryEnabled": false
+    }
+  },
+  "history": {
+    "browse": [],
+    "search": []
+  },
+  "webview": {
+    "configs": []
+  },
+  "downloads": {
+    "tasks": []
+  },
+  "cache": {
+    "items": []
+  },
+  "plugins": {
+    "plugins": []
+  },
+  "favorites": {
+    "favorites": [
+      {
+        "id": 1,
+        "comicId": "id_1767118795776_bvz9k5tg",
+        "userId": "default_user",
+        "tags": [],
+        "note": "",
+        "rating": 0,
+        "addTime": 1767118795784,
+        "updateTime": 0
+      }
+    ]
+  },
+  "onlineData": {
+    "comics": [],
+    "readHistory": []
+  }
+}

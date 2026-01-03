@@ -193,31 +193,35 @@ export interface PageInfo {
 }
 
 /**
- * 类型守卫：判断是否为在线漫画
+ * 判断是否为在线漫画
+ * ArkTS不支持类型守卫函数，使用简单的布尔返回
  */
-export function isOnlineManga(manga: Manga): manga is OnlineManga {
-  return manga.sourceType === MangaSourceType.ONLINE;
+export function isOnlineManga(manga: Manga): boolean {
+  return (manga as OnlineManga).sourceType === MangaSourceType.ONLINE;
 }
 
 /**
- * 类型守卫：判断是否为本地漫画
+ * 判断是否为本地漫画
+ * ArkTS不支持类型守卫函数，使用简单的布尔返回
  */
-export function isLocalManga(manga: Manga): manga is LocalManga {
-  return manga.sourceType === MangaSourceType.LOCAL;
+export function isLocalManga(manga: Manga): boolean {
+  return (manga as LocalManga).sourceType === MangaSourceType.LOCAL;
 }
 
 /**
- * 类型守卫：判断是否为在线章节
+ * 判断是否为在线章节
+ * ArkTS不支持类型守卫函数，使用简单的布尔返回
  */
-export function isOnlineChapter(chapter: Chapter): chapter is OnlineChapter {
-  return 'externalId' in chapter && 'downloadStatus' in chapter;
+export function isOnlineChapter(chapter: Chapter): boolean {
+  return (chapter as OnlineChapter).externalId !== undefined && (chapter as OnlineChapter).downloadStatus !== undefined;
 }
 
 /**
- * 类型守卫：判断是否为本地章节
+ * 判断是否为本地章节
+ * ArkTS不支持类型守卫函数，使用简单的布尔返回
  */
-export function isLocalChapter(chapter: Chapter): chapter is LocalChapter {
-  return 'localPath' in chapter && !('externalId' in chapter);
+export function isLocalChapter(chapter: Chapter): boolean {
+  return (chapter as LocalChapter).localPath !== undefined && (chapter as OnlineChapter).externalId === undefined;
 }
 
 /**

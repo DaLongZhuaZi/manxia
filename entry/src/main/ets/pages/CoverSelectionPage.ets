@@ -5,6 +5,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { UIContext, LengthMetrics } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { eventBus, GameEvent, IEventPayload, CoverSelectionCompletedPayload } from '../Framework/EventBus';
@@ -78,8 +79,11 @@ export struct CoverSelectionPage {
 
   // onReady 生命周期在 HdsNavDestination 内部通过链式调用设置，组件级无需重复实现
 
+  private lifecycle = new PageLifecycleManager('CoverSelectionPage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.lifecycle.destroy();
     // 释放PixelMap资源，避免内存泄漏
     try {
       for (let i = 0; i < this.candidateThumbnails.length; i++) {

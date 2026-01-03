@@ -13,6 +13,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ReadingSettings, DEFAULT_READING_SETTINGS, ReadingDirection, ReadingMode, Manga, ImageSourceType, PageTurnAnimationType } from '../Models/MangaModels';
 import { DataManager, ComicInfo, ChapterInfo, PageInfo, ComicBasicInfoUpdate } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
@@ -214,7 +215,10 @@ struct MangaSettingsPage {
     eventBus.subscribe(GameEvent.COVER_SELECTION_COMPLETED, this.onCoverSelectedHandler);
   }
 
+  private lifecycle = new PageLifecycleManager('MangaSettingsPage', { enableDebug: true });
+
   aboutToDisappear() {
+    this.lifecycle.destroy();
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(TAG);
     

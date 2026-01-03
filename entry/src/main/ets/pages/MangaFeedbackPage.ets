@@ -10,6 +10,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 
 const TAG = 'MangaFeedbackPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -62,7 +63,10 @@ struct MangaFeedbackPage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('MangaFeedbackPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 

@@ -8,6 +8,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { preferences } from '@kit.ArkData';
@@ -24,6 +25,9 @@ interface NovelGlobalSettings {
   searchConcurrency: number;       // 搜索并发数
   defaultLoadChapters: number;     // 默认加载章节数
   enableReadWhileDownload: boolean; // 边看边下载
+  autoRefreshSource: boolean;      // 自动刷新书源
+  enableSearchHistory: boolean;    // 启用搜索历史
+  maxSearchHistory: number;        // 最大搜索历史条数
 }
 
 /**
@@ -59,7 +63,10 @@ export struct NovelSettingsPage {
   @State settings: NovelGlobalSettings = {
     searchConcurrency: 5,
     defaultLoadChapters: 50,
-    enableReadWhileDownload: true
+    enableReadWhileDownload: true,
+    autoRefreshSource: false,
+    enableSearchHistory: true,
+    maxSearchHistory: 20
   };
   
   @State isLoading: boolean = true;
@@ -118,7 +125,10 @@ export struct NovelSettingsPage {
     this.loadSettings();
   }
 
+  private lifecycle = new PageLifecycleManager('NovelSettingsPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -134,7 +144,10 @@ export struct NovelSettingsPage {
       this.settings = {
         searchConcurrency: await store.get('searchConcurrency', 5) as number,
         defaultLoadChapters: await store.get('defaultLoadChapters', 50) as number,
-        enableReadWhileDownload: await store.get('enableReadWhileDownload', true) as boolean
+        enableReadWhileDownload: await store.get('enableReadWhileDownload', true) as boolean,
+        autoRefreshSource: await store.get('autoRefreshSource', false) as boolean,
+        enableSearchHistory: await store.get('enableSearchHistory', true) as boolean,
+        maxSearchHistory: await store.get('maxSearchHistory', 20) as number
       };
       
       logger.info(TAG, `设置加载完成: ${JSON.stringify(this.settings)}`);
@@ -155,6 +168,9 @@ export struct NovelSettingsPage {
       await store.put('searchConcurrency', this.settings.searchConcurrency);
       await store.put('defaultLoadChapters', this.settings.defaultLoadChapters);
       await store.put('enableReadWhileDownload', this.settings.enableReadWhileDownload);
+      await store.put('autoRefreshSource', this.settings.autoRefreshSource);
+      await store.put('enableSearchHistory', this.settings.enableSearchHistory);
+      await store.put('maxSearchHistory', this.settings.maxSearchHistory);
       await store.flush();
       
       logger.info(TAG, `设置保存完成`);
@@ -177,6 +193,9 @@ export struct NovelSettingsPage {
         Column() {
           Scroll() {
             Column() {
+              // 标题栏占位
+              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              
               // 功能入口磁贴区域
               this.buildFeatureTilesSection()
               
@@ -193,33 +212,36 @@ export struct NovelSettingsPage {
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
       }
       .width('100%')
       .height('100%')
     }
     .titleBar({
       padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
         originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
           },
           contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
-            },
-            menuStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },
@@ -229,7 +251,7 @@ export struct NovelSettingsPage {
         }
       }
     })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+    .backgroundColor(Color.Transparent)
     .onReady(() => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
     })
@@ -343,6 +365,51 @@ export struct NovelSettingsPage {
             this.saveSettings();
           }
         )
+        
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16, right: 16 })
+        
+        // 自动刷新书源
+        this.buildToggleSettingItem(
+          '自动刷新书源',
+          '打开应用时自动检查书源更新',
+          this.settings.autoRefreshSource,
+          (value: boolean) => {
+            this.settings.autoRefreshSource = value;
+            this.saveSettings();
+            promptAction.showToast({ message: value ? '已开启自动刷新' : '已关闭自动刷新' });
+          }
+        )
+        
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16, right: 16 })
+        
+        // 启用搜索历史
+        this.buildToggleSettingItem(
+          '启用搜索历史',
+          '保存并显示搜索历史记录',
+          this.settings.enableSearchHistory,
+          (value: boolean) => {
+            this.settings.enableSearchHistory = value;
+            this.saveSettings();
+            promptAction.showToast({ message: value ? '已开启搜索历史' : '已关闭搜索历史' });
+          }
+        )
+        
+        Divider()
+          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+          .margin({ left: 16, right: 16 })
+        
+        // 最大搜索历史条数
+        this.buildSettingItem(
+          '最大搜索历史条数',
+          `最多保存 ${this.settings.maxSearchHistory} 条记录`,
+          () => {
+            this.showHistoryCountPicker();
+          }
+        )
       }
       .width('100%')
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
@@ -446,6 +513,32 @@ export struct NovelSettingsPage {
         this.settings.defaultLoadChapters = values[result.index];
         this.saveSettings();
         const msg = this.settings.defaultLoadChapters >= 9999 ? '已设置为加载全部章节' : `已设置为每次加载 ${this.settings.defaultLoadChapters} 章`;
+        promptAction.showToast({ message: msg });
+      }
+    }).catch(() => {
+      // 用户取消
+    });
+  }
+
+  /**
+   * 显示搜索历史条数选择器
+   */
+  showHistoryCountPicker(): void {
+    promptAction.showActionMenu({
+      title: '选择最大搜索历史条数',
+      buttons: [
+        { text: '10 条', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '20 条', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '50 条', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '100 条', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '不限制', color: $r('sys.color.ohos_id_color_text_primary') }
+      ]
+    }).then((result: promptAction.ActionMenuSuccessResponse) => {
+      const values: number[] = [10, 20, 50, 100, 9999];
+      if (result.index >= 0 && result.index < values.length) {
+        this.settings.maxSearchHistory = values[result.index];
+        this.saveSettings();
+        const msg = this.settings.maxSearchHistory >= 9999 ? '已设置为不限制搜索历史条数' : `已设置为最多保存 ${this.settings.maxSearchHistory} 条记录`;
         promptAction.showToast({ message: msg });
       }
     }).catch(() => {

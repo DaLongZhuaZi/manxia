@@ -264,7 +264,7 @@ export struct NovelReplaceRulePage {
   build() {
     HdsNavDestination() {
       Stack() {
-        // 背景层：扩展到系统栏区域，实现完全沉浸式背景
+        // 背景层
         Column()
           .width('100%')
           .height('100%')
@@ -272,8 +272,9 @@ export struct NovelReplaceRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
-        // 内容层：预留标题栏高度
         Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
           
           if (this.isLoading) {
             this.buildLoading()
@@ -285,7 +286,6 @@ export struct NovelReplaceRulePage {
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
 
         if (this.showAddDialog) {
           this.buildAddDialog()
@@ -296,26 +296,30 @@ export struct NovelReplaceRulePage {
     }
     .titleBar({
       padding: {
-        start: LengthMetrics.vp(2),
-        end: LengthMetrics.vp(2)
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
         originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
           },
           contentStyle: {
-            titleStyle: {
-              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme),
-            },
-            menuStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

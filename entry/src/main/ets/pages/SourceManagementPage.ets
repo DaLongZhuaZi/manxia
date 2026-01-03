@@ -4,11 +4,14 @@
  */
 
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { SourceRepositoryManager } from '../Framework/Source/SourceRepositoryManager';
+import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
+import { ProxyConfigDialog } from '../components/source/ProxyConfigDialog';
 
 const TAG = 'SourceManagementPage';
 
@@ -38,21 +41,32 @@ export struct SourceManagementPage {
   @State searchText: string = '';
   @State isLoading: boolean = false;
   @State showImportDialog: boolean = false;
+  @State showProxyDialog: boolean = false;
+  @State proxyConfig: ProxyConfig = DEFAULT_PROXY_CONFIG;
   
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private sourceManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
+  private proxyManager: ProxyManager = ProxyManager.getInstance();
   private scroller: Scroller = new Scroller();
 
   aboutToAppear() {
     // 初始化主题
     ThemeAwareHelper.initThemeAware(this.themeState, this.themeManager, 'SourceManagementPage');
     
+    // 初始化代理管理器并加载配置
+    this.proxyManager.initialize().then(() => {
+      this.proxyConfig = this.proxyManager.getConfig();
+    });
+    
     // 加载图源列表
     this.loadSourceList();
   }
 
+  private lifecycle = new PageLifecycleManager('SourceManagementPage', { enableDebug: true });
+
   aboutToDisappear() {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.themeState, this.themeManager, 'SourceManagementPage');
   }
 
@@ -184,22 +198,42 @@ export struct SourceManagementPage {
   }
 
   build() {
-    Column() {
-      // 搜索栏
-      this.buildSearchBar()
+    Stack() {
+      Column() {
+        // 搜索栏
+        this.buildSearchBar()
+        
+        // 图源列表
+        if (this.isLoading) {
+          this.buildLoadingView()
+        } else if (this.filteredSourceList.length === 0) {
+          this.buildEmptyView()
+        } else {
+          this.buildSourceList()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
       
-      // 图源列表
-      if (this.isLoading) {
-        this.buildLoadingView()
-      } else if (this.filteredSourceList.length === 0) {
-        this.buildEmptyView()
-      } else {
-        this.buildSourceList()
+      // 代理配置对话框
+      if (this.showProxyDialog) {
+        ProxyConfigDialog({
+          currentTheme: this.themeState.currentTheme,
+          initialConfig: this.proxyConfig,
+          onSave: (config: ProxyConfig) => {
+            this.proxyManager.saveConfig(config);
+            this.proxyConfig = config;
+            this.showProxyDialog = false;
+          },
+          onCancel: () => {
+            this.showProxyDialog = false;
+          }
+        })
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
   }
 
   /**
@@ -216,6 +250,22 @@ export struct SourceManagementPage {
           .onChange((value: string) => {
             this.searchSources(value);
           })
+        
+        // 代理按钮
+        Button() {
+          SymbolGlyph($r('sys.symbol.satellite'))
+            .fontSize(20)
+            .fontColor([this.proxyConfig.enabled ? 
+              ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .onClick(() => {
+          this.showProxyDialog = true;
+        })
         
         Button('导入')
           .fontSize(14)

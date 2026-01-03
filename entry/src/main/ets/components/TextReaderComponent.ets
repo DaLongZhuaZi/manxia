@@ -470,18 +470,27 @@ export struct TextReaderComponent {
   
   /**
    * 获取平均字符宽度（缓存）
+   * 注意：这里计算的是单个字符的宽度（不包含字间距）
    */
   private getAvgCharWidth(): number {
     const fontSize = this.settings.textStyle.fontSize;
+    const letterSpacing = this.settings.textStyle.letterSpacing;
+    const cacheKey = `${fontSize}_${letterSpacing}`;
+    
     if (this.cachedAvgCharWidth > 0 && this.cachedFontSize === fontSize) {
       return this.cachedAvgCharWidth;
     }
     
     // 使用常见中文字符测量平均宽度
     const sampleText = '测试文本字符';
-    const width = this.measureTextWidthFast(sampleText);
-    this.cachedAvgCharWidth = width / sampleText.length;
+    const totalWidth = this.measureTextWidthFast(sampleText);
+    // 总宽度 = n个字符宽度 + (n-1)个字间距
+    // 单个字符宽度 = (总宽度 - (n-1)*字间距) / n
+    const charCount = sampleText.length;
+    this.cachedAvgCharWidth = (totalWidth - (charCount - 1) * letterSpacing) / charCount;
     this.cachedFontSize = fontSize;
+    
+    logger.debug(TAG, `[字符宽度] 总宽度=${totalWidth.toFixed(2)}, 字符数=${charCount}, 字间距=${letterSpacing}, 单字符宽度=${this.cachedAvgCharWidth.toFixed(2)}`);
     return this.cachedAvgCharWidth;
   }
   
@@ -528,7 +537,19 @@ export struct TextReaderComponent {
     // LOCAL模式：使用0.92的保守系数，适合本地TXT文件
     // ONLINE模式：使用1.0的系数，让每行尽可能填满，适合在线小说
     const widthFactor = this.paginationMode === PaginationMode.ONLINE ? 1.0 : 0.92;
-    const charsPerLine = Math.max(1, Math.floor(maxWidth / avgCharWidth * widthFactor));
+    
+    // 计算每行字符数：考虑字间距
+    // 总宽度 = n个字符宽度 + (n-1)个字间距
+    // maxWidth = n * avgCharWidth + (n-1) * letterSpacing
+    // maxWidth = n * avgCharWidth + n * letterSpacing - letterSpacing
+    // maxWidth + letterSpacing = n * (avgCharWidth + letterSpacing)
+    // n = (maxWidth + letterSpacing) / (avgCharWidth + letterSpacing)
+    const letterSpacing = this.settings.textStyle.letterSpacing;
+    const charsPerLine = Math.max(1, Math.floor((maxWidth + letterSpacing) / (avgCharWidth + letterSpacing) * widthFactor));
+    
+    // 计算实际一行文字的宽度
+    const actualLineWidth = charsPerLine * avgCharWidth + (charsPerLine - 1) * letterSpacing;
+    logger.debug(TAG, `[分页调试] maxWidth=${maxWidth.toFixed(2)}, avgCharWidth=${avgCharWidth.toFixed(2)}, letterSpacing=${letterSpacing}, widthFactor=${widthFactor}, charsPerLine=${charsPerLine}, actualLineWidth=${actualLineWidth.toFixed(2)}, 利用率=${(actualLineWidth/maxWidth*100).toFixed(1)}%`);
     
     // 纯字符估算分割，不调用 measureTextSize
     while (currentText.length > 0) {
@@ -1871,6 +1892,7 @@ export struct TextReaderComponent {
       this.contentAreaHeight = this.componentHeight - this.settings.pageMargins.top - this.settings.pageMargins.bottom - bottomBarHeight;
       
       logger.debug(TAG, `内容区域: ${this.contentAreaWidth}x${this.contentAreaHeight}, 底部状态栏高度: ${bottomBarHeight}`);
+      logger.debug(TAG, `[分页调试] 组件宽度=${this.componentWidth.toFixed(2)}, 页边距left=${this.settings.pageMargins.left}, right=${this.settings.pageMargins.right}, 内容宽度=${this.contentAreaWidth.toFixed(2)}`);
       
       // 重新分页
       this.paginateContent();

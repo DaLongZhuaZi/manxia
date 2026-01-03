@@ -30,6 +30,7 @@ export interface ComicSourceTable {
   preloadNextPages: number;       // 下一章节预加载页数（0=不预加载，-1=全部）
   downloadWhileReading: boolean;  // 是否开启边看边下载
   maxCacheSize: number;           // 最大缓存大小（字节）
+  isNSFW: boolean;               // 是否为成人内容（NSFW）
 }
 
 // 漫画信息表
@@ -55,6 +56,7 @@ export interface ComicInfoTable {
   updateTime: number;           // 更新时间
   webUrl: string;               // 网页URL，用户可在浏览器中打开的漫画页面地址
   apiUrl: string;               // API请求地址，用于刷新时直接请求漫画详情
+  isNSFW: boolean;              // 是否为成人内容（NSFW）
 }
 
 // 章节信息表
@@ -287,7 +289,8 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       preloadNextPages INTEGER DEFAULT -1,
       downloadWhileReading INTEGER DEFAULT 1,
       maxCacheSize INTEGER DEFAULT 1073741824,
-      requireProxy INTEGER DEFAULT 0
+      requireProxy INTEGER DEFAULT 0,
+      isNSFW INTEGER DEFAULT 0
     )
   `,
 
@@ -333,7 +336,9 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       updateTime INTEGER NOT NULL,
       webUrl TEXT,
       apiUrl TEXT,
-      contentType TEXT DEFAULT 'manga'
+      contentType TEXT DEFAULT 'manga',
+      isNSFW INTEGER DEFAULT 0,
+      isPrivate INTEGER DEFAULT 0
     )
   `,
 
@@ -404,8 +409,10 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       addTime INTEGER NOT NULL,
       createTime INTEGER NOT NULL,
       updateTime INTEGER NOT NULL,
-      sourceName TEXT,
+      sourceName TEXT DEFAULT '',
       sourcePkg TEXT DEFAULT '',
+      isNSFW INTEGER DEFAULT 0,
+      isPrivate INTEGER DEFAULT 0,
       UNIQUE(sourceId, externalId)
     )
   `,
@@ -669,7 +676,8 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       isFavorite INTEGER DEFAULT 0,
       totalWordCount INTEGER DEFAULT 0,
       addTime INTEGER NOT NULL,
-      lastUpdateTime INTEGER NOT NULL
+      lastUpdateTime INTEGER NOT NULL,
+      isPrivate INTEGER DEFAULT 0
     )
   `,
 

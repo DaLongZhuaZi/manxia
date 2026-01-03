@@ -7,6 +7,7 @@ import { logger } from '../../Utils/Logger';
 import { DataManager } from '../Data/DataManager';
 import { JSONSourceParser, JSONSourceConfig } from './JSONSourceParser';
 import { http } from '@kit.NetworkKit';
+import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'SourceExecutor';
 
@@ -118,6 +119,14 @@ export class SourceExecutor {
         const headers: ESObject = requestOptions.header as ESObject || {};
         headers['Content-Type'] = 'application/json';
         requestOptions.header = headers as Object;
+      }
+
+      // 应用代理配置
+      const proxyManager = ProxyManager.getInstance();
+      const proxyUrl = proxyManager.getHttpRequestProxy();
+      if (proxyUrl) {
+        requestOptions.usingProxy = true;
+        logger.debug(TAG, `使用代理: ${proxyUrl}`);
       }
 
       const request = http.createHttp();

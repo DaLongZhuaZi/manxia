@@ -15,6 +15,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
@@ -121,7 +122,10 @@ export struct GlobalSearchPage {
     }
   }
 
+  private lifecycle = new PageLifecycleManager('GlobalSearchPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     // 清理主题监听器
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     // 移除设备变化监听器

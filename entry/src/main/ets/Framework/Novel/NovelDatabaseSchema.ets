@@ -215,6 +215,8 @@ export const NOVEL_CREATE_TABLE_SQL: NovelCreateTableSql = {
       lastReadTime INTEGER DEFAULT 0,
       totalReadingTime INTEGER DEFAULT 0,
       isFavorite INTEGER DEFAULT 0,
+      isPrivate INTEGER DEFAULT 0,
+      isNSFW INTEGER DEFAULT 0,
       groupName TEXT DEFAULT '',
       sortOrder INTEGER DEFAULT 0,
       createTime INTEGER NOT NULL,

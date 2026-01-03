@@ -4,6 +4,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { Popup } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
@@ -47,6 +48,8 @@ import webview from '@ohos.web.webview';
 import { DatabaseRecord, ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 import { OnlineImageLoader, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
+import { promptAction } from '@kit.ArkUI';
+import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 
 const TAG: string = 'MangaDetailPage';
 
@@ -252,6 +255,7 @@ class MangaChapterDataSource implements IDataSource {
 struct MangaDetailPage {
   // 主题管理导航相关
   @State pathStack: NavPathStack = new NavPathStack();
+  private lifecycle = new PageLifecycleManager('MangaDetailPage', { enableDebug: true });
   @State pageParams: MangaDetailPageParams | null = null;
 
   // 主题状态
@@ -279,6 +283,7 @@ struct MangaDetailPage {
   @State isLoading: boolean = true;
   @State loadError: string = '';
   @State isLocalManga: boolean = false;
+  @State mangaIsNSFW: boolean = false;  // NSFW状态
 
   // 章节管理
   @State filteredChapters: MangaChapter[] = [];
@@ -451,7 +456,8 @@ struct MangaDetailPage {
   }
 
   aboutToDisappear(): void {
-    logger.lifecycle(TAG, 'aboutToDisappear');
+    logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
+    this.lifecycle.destroy();
     this.isDisposed = true;
     this.isLoading = false;
     this.clearAllTimers();
@@ -1214,6 +1220,41 @@ struct MangaDetailPage {
   }
 
   /**
+   * 更新漫画NSFW状态
+   */
+  private async updateMangaNSFW(isNSFW: boolean): Promise<void> {
+    try {
+      if (!this.pageParams?.mangaId) {
+        logger.error(TAG, 'mangaId为空，无法更新NSFW状态');
+        return;
+      }
+      
+      // 使用通用方法更新NSFW状态，自动检测内容类型
+      const success = await DataManager.getInstance().updateContentNSFW(this.pageParams.mangaId, isNSFW);
+      
+      if (success) {
+        this.mangaIsNSFW = isNSFW;
+        promptAction.showToast({
+          message: isNSFW ? '已标记为NSFW内容' : '已标记为SFW内容',
+          duration: 2000
+        });
+      } else {
+        logger.error(TAG, `更新NSFW状态失败: 未找到内容`);
+        promptAction.showToast({
+          message: '更新失败：未找到内容',
+          duration: 2000
+        });
+      }
+    } catch (error) {
+      logger.error(TAG, `更新NSFW状态失败: ${String(error)}`);
+      promptAction.showToast({
+        message: '更新失败',
+        duration: 2000
+      });
+    }
+  }
+  
+  /**
    * 加载漫画数据（含收藏状态初始化）
    */
   private async loadMangaData(): Promise<void> {
@@ -1353,7 +1394,9 @@ struct MangaDetailPage {
               
               // [修复] 判断是在线漫画还是本地漫画，使用正确的转换方法
               const sourceIdStr = String(comicInfo.sourceId || '');
-              const isOnlineComic = comicInfo.sourceId && sourceIdStr !== '0' && sourceIdStr !== '';
+              // 排除本地导入的漫画（local_import, local_pdf）
+              const isLocalSource = sourceIdStr === 'local_import' || sourceIdStr === 'local_pdf' || sourceIdStr === '0' || sourceIdStr === '';
+              const isOnlineComic = comicInfo.sourceId && !isLocalSource;
               if (isOnlineComic) {
                 // 在线漫画：从 online_comic_info 表重新获取完整信息
                 logger.info(TAG, `检测到在线漫画，使用 convertOnlineComicInfoToMangaAsync`);
@@ -1372,6 +1415,10 @@ struct MangaDetailPage {
               
               logger.info(TAG, `漫画数据加载完成（包含阅读进度）: chapterId=${this.currentManga.readingProgress.currentChapterId}, pageIndex=${this.currentManga.readingProgress.currentPageIndex}`);
               logger.debug(TAG, `📋 章节列表前3个: ${this.currentManga.chapters.slice(0, 3).map(ch => `${ch.title}(id=${ch.id})`).join(', ')}`);
+              
+              // 加载NSFW状态
+              this.mangaIsNSFW = this.currentManga.isNSFW === true;
+              logger.debug(TAG, `NSFW状态: ${this.mangaIsNSFW}, currentManga.isNSFW=${this.currentManga.isNSFW}`);
 
               // 初始化收藏状态（持久化）
               try {
@@ -1464,6 +1511,24 @@ struct MangaDetailPage {
           }
 
           logger.info(TAG, `成功加载漫画: ${this.currentManga.title}`);
+          
+          // 检查SFW模式
+          const sfwEnabled = ContentFilterManager.getInstance().isSFWModeEnabled();
+          if (sfwEnabled && this.mangaIsNSFW) {
+            logger.warn(TAG, 'SFW模式已启用，阻止访问NSFW内容');
+            promptAction.showToast({
+              message: 'SFW模式已启用，无法查看NSFW内容',
+              duration: 2000
+            });
+            // 返回上一页
+            if (this.pathStack) {
+              this.pathStack.pop();
+            }
+            this.isLoading = false;
+            this.isLoadInProgress = false;
+            return;
+          }
+          
           logger.info(TAG, '确认更新章节过滤');
           this.updateFilteredChapters();
           logger.info(TAG, '数据加载完成，设置isLoading为false');
@@ -2323,11 +2388,36 @@ struct MangaDetailPage {
       const pageInfos = await dm.getOnlineChapterPages(ch.id);
       const isDownloaded: boolean = pageInfos.length > 0;
       
+      // [修复] 将数据库中的页面信息转换为MangaPage格式，保留页面数据
+      const pages: MangaPage[] = pageInfos.map((pageInfo, arrayIndex) => {
+        let sourceType: ImageSourceType;
+        if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
+          sourceType = ImageSourceType.NETWORK;
+        } else if (pageInfo.imageUrl.startsWith('/')) {
+          sourceType = ImageSourceType.LOCAL;
+        } else {
+          sourceType = ImageSourceType.RAWFILE;
+        }
+        
+        const page: MangaPage = {
+          id: pageInfo.id,
+          index: arrayIndex,
+          sourceType: sourceType,
+          imagePath: pageInfo.imageUrl,
+          imageUrl: pageInfo.imageUrl,
+          width: pageInfo.width,
+          height: pageInfo.height,
+          fileSize: pageInfo.fileSize,
+          isLoaded: false
+        };
+        return page;
+      });
+      
       const chapter: MangaChapter = {
         id: ch.id,
         title: displayTitle,
         chapterNumber: ch.chapterNumber || i + 1,
-        pages: [],
+        pages: pages, // [修复] 使用转换后的页面数据而不是空数组
         publishDate: ch.publishTime || Date.now(),
         language: 'zh-CN',
         scanlationGroup: '',
@@ -4102,6 +4192,21 @@ struct MangaDetailPage {
           }
 
           Blank()
+          
+          // NSFW开关（紧凑布局）
+          Row({ space: 4 }) {
+            Text('NSFW')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Toggle({ type: ToggleType.Switch, isOn: this.mangaIsNSFW })
+              .width(36)
+              .height(20)
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+              .onChange(async (isOn: boolean) => {
+                await this.updateMangaNSFW(isOn);
+              })
+          }
+          .padding({ left: 8, right: 8 })
 
           // 操作按钮
           Row({ space: 8 }) {
@@ -4149,10 +4254,9 @@ struct MangaDetailPage {
             // 设置按钮：仅对已添加到书库的漫画显示
             if (this.currentManga?.isFavorite) {
               Button() {
-                Image($r('app.media.ic_settings'))
-                  .width(20)
-                  .height(20)
-                  .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                SymbolGlyph($r('sys.symbol.gearshape'))
+                  .fontSize(20)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
               }
               .layoutWeight(1) // 占1份
               .height(40)
@@ -5054,10 +5158,9 @@ struct MangaDetailPage {
             })
 
             Button() {
-              Image($r('app.media.ic_settings'))
-                .width(16)
-                .height(16)
-                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
             }
             .width(32)
             .height(32)

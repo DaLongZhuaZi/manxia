@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Code Editor</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #1e1e1e;
+    }
+    #editor-container {
+      width: 100%;
+      height: 100%;
+    }
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #888;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">加载编辑器中...</div>
+  <div id="editor-container"></div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+  <script>
+    // 编辑器实例
+    let editor = null;
+    let currentLanguage = 'plaintext';
+    let isReadOnly = false;
+    
+    // 语言映射
+    const languageMap = {
+      'js': 'javascript',
+      'ts': 'typescript',
+      'jsx': 'javascript',
+      'tsx': 'typescript',
+      'json': 'json',
+      'xml': 'xml',
+      'html': 'html',
+      'htm': 'html',
+      'css': 'css',
+      'scss': 'scss',
+      'less': 'less',
+      'md': 'markdown',
+      'markdown': 'markdown',
+      'py': 'python',
+      'python': 'python',
+      'java': 'java',
+      'kt': 'kotlin',
+      'kotlin': 'kotlin',
+      'c': 'c',
+      'cpp': 'cpp',
+      'h': 'c',
+      'hpp': 'cpp',
+      'cs': 'csharp',
+      'go': 'go',
+      'rs': 'rust',
+      'swift': 'swift',
+      'rb': 'ruby',
+      'php': 'php',
+      'sql': 'sql',
+      'sh': 'shell',
+      'bash': 'shell',
+      'zsh': 'shell',
+      'yaml': 'yaml',
+      'yml': 'yaml',
+      'toml': 'ini',
+      'ini': 'ini',
+      'conf': 'ini',
+      'txt': 'plaintext',
+      'log': 'plaintext',
+      'ets': 'typescript',
+      'ark': 'typescript'
+    };
+    
+    // 主题配置
+    const themes = {
+      dark: 'vs-dark',
+      light: 'vs',
+      highContrast: 'hc-black'
+    };
+    
+    // 初始化Monaco Editor
+    require.config({ 
+      paths: { 
+        'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' 
+      }
+    });
+    
+    require(['vs/editor/editor.main'], function() {
+      document.getElementById('loading').style.display = 'none';
+      
+      editor = monaco.editor.create(document.getElementById('editor-container'), {
+        value: '',
+        language: 'plaintext',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        fontSize: 14,
+        lineNumbers: 'on',
+        minimap: { enabled: true },
+        scrollBeyondLastLine: false,
+        wordWrap: 'on',
+        tabSize: 2,
+        insertSpaces: true,
+        renderWhitespace: 'selection',
+        bracketPairColorization: { enabled: true },
+        folding: true,
+        foldingStrategy: 'indentation',
+        showFoldingControls: 'always',
+        smoothScrolling: true,
+        cursorBlinking: 'smooth',
+        cursorSmoothCaretAnimation: 'on',
+        formatOnPaste: true,
+        formatOnType: true,
+        suggestOnTriggerCharacters: true,
+        quickSuggestions: true,
+        acceptSuggestionOnEnter: 'on',
+        readOnly: false
+      });
+      
+      // 监听内容变化
+      editor.onDidChangeModelContent(function() {
+        notifyContentChanged();
+      });
+      
+      // 通知ArkTS编辑器已就绪
+      notifyEditorReady();
+    });
+    
+    // 通知ArkTS编辑器已就绪
+    function notifyEditorReady() {
+      try {
+        if (window.arkts && window.arkts.onEditorReady) {
+          window.arkts.onEditorReady();
+        }
+      } catch (e) {
+        console.error('notifyEditorReady error:', e);
+      }
+    }
+    
+    // 通知ArkTS内容已变化
+    function notifyContentChanged() {
+      try {
+        if (window.arkts && window.arkts.onContentChanged) {
+          window.arkts.onContentChanged(editor.getValue());
+        }
+      } catch (e) {
+        console.error('notifyContentChanged error:', e);
+      }
+    }
+    
+    // ========== ArkTS调用的API ==========
+    
+    // 设置编辑器内容
+    function setContent(content, language) {
+      if (!editor) return;
+      
+      const lang = languageMap[language] || language || 'plaintext';
+      currentLanguage = lang;
+      
+      monaco.editor.setModelLanguage(editor.getModel(), lang);
+      editor.setValue(content || '');
+    }
+    
+    // 获取编辑器内容
+    function getContent() {
+      if (!editor) return '';
+      return editor.getValue();
+    }
+    
+    // 设置语言
+    function setLanguage(language) {
+      if (!editor) return;
+      
+      const lang = languageMap[language] || language || 'plaintext';
+      currentLanguage = lang;
+      monaco.editor.setModelLanguage(editor.getModel(), lang);
+    }
+    
+    // 设置主题
+    function setTheme(theme) {
+      if (!editor) return;
+      
+      const themeName = themes[theme] || theme || 'vs-dark';
+      monaco.editor.setTheme(themeName);
+      
+      // 更新背景色
+      if (theme === 'light' || themeName === 'vs') {
+        document.body.style.backgroundColor = '#ffffff';
+      } else {
+        document.body.style.backgroundColor = '#1e1e1e';
+      }
+    }
+    
+    // 设置只读模式
+    function setReadOnly(readOnly) {
+      if (!editor) return;
+      
+      isReadOnly = readOnly;
+      editor.updateOptions({ readOnly: readOnly });
+    }
+    
+    // 设置字体大小
+    function setFontSize(size) {
+      if (!editor) return;
+      editor.updateOptions({ fontSize: size });
+    }
+    
+    // 设置是否显示行号
+    function setLineNumbers(show) {
+      if (!editor) return;
+      editor.updateOptions({ lineNumbers: show ? 'on' : 'off' });
+    }
+    
+    // 设置是否显示小地图
+    function setMinimap(show) {
+      if (!editor) return;
+      editor.updateOptions({ minimap: { enabled: show } });
+    }
+    
+    // 设置自动换行
+    function setWordWrap(wrap) {
+      if (!editor) return;
+      editor.updateOptions({ wordWrap: wrap ? 'on' : 'off' });
+    }
+    
+    // 跳转到指定行
+    function goToLine(lineNumber) {
+      if (!editor) return;
+      editor.revealLineInCenter(lineNumber);
+      editor.setPosition({ lineNumber: lineNumber, column: 1 });
+      editor.focus();
+    }
+    
+    // 查找文本
+    function findText(text) {
+      if (!editor) return;
+      editor.getAction('actions.find').run();
+      // 设置查找文本需要通过编辑器的find widget
+    }
+    
+    // 替换文本
+    function replaceText(oldText, newText, replaceAll) {
+      if (!editor || isReadOnly) return;
+      
+      const content = editor.getValue();
+      let newContent;
+      
+      if (replaceAll) {
+        newContent = content.split(oldText).join(newText);
+      } else {
+        newContent = content.replace(oldText, newText);
+      }
+      
+      editor.setValue(newContent);
+    }
+    
+    // 插入文本
+    function insertText(text, position) {
+      if (!editor || isReadOnly) return;
+      
+      const pos = position || editor.getPosition();
+      editor.executeEdits('', [{
+        range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+        text: text
+      }]);
+    }
+    
+    // 格式化代码
+    function formatCode() {
+      if (!editor || isReadOnly) return;
+      editor.getAction('editor.action.formatDocument').run();
+    }
+    
+    // 撤销
+    function undo() {
+      if (!editor || isReadOnly) return;
+      editor.trigger('keyboard', 'undo', null);
+    }
+    
+    // 重做
+    function redo() {
+      if (!editor || isReadOnly) return;
+      editor.trigger('keyboard', 'redo', null);
+    }
+    
+    // 获取选中的文本
+    function getSelectedText() {
+      if (!editor) return '';
+      return editor.getModel().getValueInRange(editor.getSelection());
+    }
+    
+    // 获取光标位置
+    function getCursorPosition() {
+      if (!editor) return { line: 1, column: 1 };
+      const pos = editor.getPosition();
+      return { line: pos.lineNumber, column: pos.column };
+    }
+    
+    // 获取总行数
+    function getLineCount() {
+      if (!editor) return 0;
+      return editor.getModel().getLineCount();
+    }
+  </script>
+</body>
+</html>

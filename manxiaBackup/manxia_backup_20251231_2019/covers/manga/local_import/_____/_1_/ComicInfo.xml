@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Title>001</Title>
+  <Series>狐妖小红娘</Series>
+  <Number>1</Number>
+  <Summary>迷糊萝莉小狐妖，正太道士没节操。自古人妖生死恋，千载孽缘一线牵！（注：现在起狐妖暂时改为周更，每周周三更新。）</Summary>
+  <Writer>小新</Writer>
+  <Web>https://b.amh1234.com/comic/12426/282865.html</Web>
+  <ty:PublishingStatusTachiyomi xmlns:ty="http://www.w3.org/2001/XMLSchema">Ongoing</ty:PublishingStatusTachiyomi>
+  <mh:SourceMihon xmlns:mh="http://www.w3.org/2001/XMLSchema">漫画1234</mh:SourceMihon>
+</ComicInfo>

@@ -169,15 +169,38 @@ export interface LegadoReviewRule {
 }
 
 /**
+ * 登录UI配置样式
+ */
+export interface LegadoLoginUiStyle {
+  /** Flex布局增长因子 */
+  layout_flexGrow?: number;
+  /** Flex布局基础百分比 */
+  layout_flexBasisPercent?: number;
+  /** 背景颜色 */
+  background?: string;
+  /** 文字颜色 */
+  textColor?: string;
+  /** 边框颜色 */
+  borderColor?: string;
+}
+
+/**
  * 登录UI配置
+ * 支持Legado阅读APP的完整loginUi格式
  */
 export interface LegadoLoginUiItem {
-  /** 类型：text, password, button */
+  /** 类型：text, password, button, checkbox, spinner等 */
   type: string;
-  /** 名称 */
+  /** 名称（显示文本/字段名） */
   name: string;
   /** 提示文本 */
   hint?: string;
+  /** 按钮点击时执行的JS函数名 */
+  action?: string;
+  /** 样式配置 */
+  style?: LegadoLoginUiStyle;
+  /** 默认值 */
+  value?: string;
 }
 
 /**
@@ -285,6 +308,10 @@ export interface LegadoBook {
   tocHtml?: string;
   /** 详情HTML（缓存） */
   infoHtml?: string;
+  /** 是否为隐私内容 */
+  isPrivate?: boolean;
+  /** 是否为NSFW内容 */
+  isNSFW?: boolean;
 }
 
 /**

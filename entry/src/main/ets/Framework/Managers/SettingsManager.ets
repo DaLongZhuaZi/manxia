@@ -16,6 +16,11 @@ export class SettingKeys {
   // 高级功能
   static readonly ADVANCED_MODE_ENABLED = 'advanced_mode_enabled';
   static readonly ENABLE_LOG_FLOATING_WINDOW = 'enable_log_floating_window';
+  static readonly PRELOAD_DEBUG_MODE = 'preload_debug_mode'; // 预加载调试模式：off/on/always
+  
+  // 生命周期监控
+  static readonly LIFECYCLE_MONITOR_ENABLED = 'lifecycle_monitor_enabled'; // 启用生命周期监控
+  static readonly LIFECYCLE_FLOATING_BALL_ENABLED = 'lifecycle_floating_ball_enabled'; // 启用生命周期悬浮球
   
   // 漫画全局阅读设置
   static readonly GLOBAL_READING_MODE = 'global_reading_mode';
@@ -73,6 +78,12 @@ export class SettingKeys {
   static readonly NOVEL_READER_SETTINGS = 'novel_reader_settings';
   // 小说搜索设置
   static readonly NOVEL_SEARCH_MAX_SOURCES = 'novel_search_max_sources';
+  
+  // 底部导航栏自定义设置
+  static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
+  
+  // 内容过滤设置
+  static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）
 }
 
 /**
@@ -215,6 +226,49 @@ export class SettingsManager {
    */
   async setJSON<T>(key: string, value: T): Promise<void> {
     await this.setValue(key, JSON.stringify(value), SettingType.JSON);
+  }
+
+  /**
+   * 获取底部导航栏可见标签
+   */
+  async getVisibleTabs(): Promise<number[]> {
+    const defaultTabs = [0, 1, 2, 3];
+    return this.getJSON<number[]>(SettingKeys.VISIBLE_TABS, defaultTabs);
+  }
+
+  /**
+   * 设置底部导航栏可见标签
+   */
+  async setVisibleTabs(tabs: number[]): Promise<void> {
+    await this.setJSON(SettingKeys.VISIBLE_TABS, tabs);
+  }
+
+  /**
+   * 获取生命周期监控是否启用
+   */
+  async getLifecycleMonitorEnabled(): Promise<boolean> {
+    return this.getBoolean(SettingKeys.LIFECYCLE_MONITOR_ENABLED, false);
+  }
+
+  /**
+   * 设置生命周期监控是否启用
+   */
+  async setLifecycleMonitorEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(SettingKeys.LIFECYCLE_MONITOR_ENABLED, enabled);
+  }
+
+  /**
+   * 获取生命周期悬浮球是否启用
+   */
+  async getLifecycleMonitorFloatingBallEnabled(): Promise<boolean> {
+    return this.getBoolean(SettingKeys.LIFECYCLE_FLOATING_BALL_ENABLED, false);
+  }
+
+  /**
+   * 设置生命周期悬浮球是否启用
+   */
+  async setLifecycleMonitorFloatingBallEnabled(enabled: boolean): Promise<void> {
+    await this.setBoolean(SettingKeys.LIFECYCLE_FLOATING_BALL_ENABLED, enabled);
   }
 
   /**

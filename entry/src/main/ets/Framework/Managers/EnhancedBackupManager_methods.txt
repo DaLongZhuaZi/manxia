@@ -1,0 +1,163 @@
+// 需要添加到 EnhancedBackupManager 的方法
+
+async getBackupMetadata(filePath: string): Promise<BackupMetadata> {
+  try {
+    const tempDir = await this.createTempRestoreDir();
+    
+    try {
+      await this.tarPackager.extractTarArchive(filePath, tempDir);
+      
+      const jsonPath = `${tempDir}/backup.json`;
+      const backupData: BackupData = await this.loadJSON(jsonPath);
+      
+      const stat = fs.statSync(filePath);
+      
+      const metadata: BackupMetadata = {
+        version: backupData.version,
+        appVersion: backupData.appVersion,
+        timestamp: backupData.timestamp,
+        deviceInfo: backupData.deviceInfo,
+        itemCounts: {
+          manga: backupData.manga?.library?.length || 0,
+          novel: backupData.novel?.library?.length || 0,
+          ebook: backupData.ebook?.library?.length || 0,
+          sources: (backupData.sources?.manga?.length || 0) + (backupData.sources?.novel?.length || 0)
+        },
+        options: DEFAULT_BACKUP_OPTIONS,
+        fileSize: stat.size
+      };
+      
+      await this.cleanupTempDir(tempDir);
+      
+      return metadata;
+      
+    } catch (error) {
+      await this.cleanupTempDir(tempDir);
+      throw new Error(`Metadata cleanup failed: ${error}`);
+    }
+    
+  } catch (error) {
+    logger.error(TAG, `Failed to read backup metadata: ${error}`);
+    throw new Error(`Failed to read backup metadata: ${error}`);
+  }
+}
+
+private async exportBackupData(options: BackupOptions): Promise<BackupData> {
+  const appInfoManager = AppInfoManager.getInstance();
+  const versionName = await appInfoManager.getVersionName();
+  const versionCode = await appInfoManager.getVersionCode();
+  const appVersion = `${versionName}(${versionCode})`;
+  
+  const data: BackupData = {
+    version: BACKUP_VERSION,
+    appVersion: appVersion,
+    timestamp: Date.now(),
+    deviceInfo: `${deviceInfo.brand} ${deviceInfo.model}`,
+    
+    manga: {
+      library: options.includeMangaLibrary ? await this.exportMangaLibrary() : [],
+      readProgress: options.includeReadProgress ? await this.exportMangaReadProgress() : [],
+      categories: options.includeMangaLibrary ? await this.exportMangaCategories() : []
+    },
+    
+    novel: {
+      library: options.includeNovelLibrary ? await this.exportNovelLibrary() : [],
+      readProgress: options.includeReadProgress ? await this.exportNovelReadProgress() : [],
+      categories: []
+    },
+    
+    ebook: {
+      library: options.includeEBookLibrary ? await this.exportEBookLibrary() : []
+    },
+    
+    sources: {
+      manga: options.includeSources ? await this.exportMangaSources() : [],
+      novel: options.includeSources ? await this.exportNovelSources() : []
+    },
+    
+    settings: options.includeSettings ? await this.exportSettings() : {
+      reader: { manga: {}, novel: {} },
+      general: {},
+      privacy: {}
+    },
+    
+    history: options.includeHistory ? await this.exportHistory() : {
+      browse: [],
+      search: []
+    },
+    
+    advanced: {
+      webViewConfigs: options.includeWebViewConfig ? await this.exportWebViewConfigs() : [],
+      downloadTasks: options.includeDownloadTasks ? await this.exportDownloadTasks() : [],
+      cacheInfo: options.includeCacheInfo ? await this.exportCacheInfo() : [],
+      plugins: options.includePlugins ? await this.exportPlugins() : [],
+      favorites: options.includeFavorites ? await this.exportFavorites() : [],
+      onlineData: options.includeOnlineData ? await this.exportOnlineData() : {
+        comics: [],
+        chapters: [],
+        pages: [],
+        readHistory: []
+      }
+    }
+  };
+  
+  return data;
+}
+
+private async restoreBackupData(backupData: BackupData): Promise<void> {
+  logger.info(TAG, 'Starting data restoration');
+  
+  if (backupData.manga?.library) {
+    await this.restoreMangaLibrary(backupData.manga.library);
+  }
+  
+  if (backupData.novel?.library) {
+    await this.restoreNovelLibrary(backupData.novel.library);
+  }
+  
+  if (backupData.ebook?.library) {
+    await this.restoreEBookLibrary(backupData.ebook.library);
+  }
+  
+  if (backupData.sources?.manga) {
+    await this.restoreMangaSources(backupData.sources.manga);
+  }
+  
+  if (backupData.sources?.novel) {
+    await this.restoreNovelSources(backupData.sources.novel);
+  }
+  
+  if (backupData.manga?.readProgress) {
+    await this.restoreMangaReadProgress(backupData.manga.readProgress);
+  }
+  
+  if (backupData.novel?.readProgress) {
+    await this.restoreNovelReadProgress(backupData.novel.readProgress);
+  }
+  
+  if (backupData.settings) {
+    await this.restoreSettings(backupData.settings);
+  }
+  
+  if (backupData.history) {
+    await this.restoreHistory(backupData.history);
+  }
+  
+  if (backupData.advanced?.webViewConfigs) {
+    await this.restoreWebViewConfigs(backupData.advanced.webViewConfigs);
+  }
+  
+  if (backupData.advanced?.downloadTasks) {
+    await this.restoreDownloadTasks(backupData.advanced.downloadTasks);
+  }
+  
+  if (backupData.advanced?.favorites) {
+    await this.restoreFavorites(backupData.advanced.favorites);
+  }
+  
+  if (backupData.advanced?.onlineData) {
+    await this.restoreOnlineData(backupData.advanced.onlineData);
+  }
+  
+  logger.info(TAG, 'Data restoration completed');
+}

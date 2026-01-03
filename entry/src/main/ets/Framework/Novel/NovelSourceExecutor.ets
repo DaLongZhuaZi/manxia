@@ -15,6 +15,8 @@ import { LegadoUrlAnalyzer, ParsedUrlRequest, RequestMethod } from './LegadoUrlA
 import { getNovelReplaceRuleManager, ReplaceScope } from './NovelReplaceRuleManager';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { HtmlFormatter } from './HtmlFormatter';
+import { getLegadoJsEngine } from './LegadoJsEngine';
+import { ProxyManager } from '../Network/ProxyManager';
 
 const TAG = 'NovelSourceExecutor';
 
@@ -68,8 +70,8 @@ export interface SearchResultWithError {
  */
 interface HttpRequestResult {
   response: string | null;
-  errorType: SearchErrorType;
-  errorMessage: string;
+  errorType?: SearchErrorType;
+  errorMessage?: string;
 }
 
 /**
@@ -86,6 +88,16 @@ export class NovelSourceExecutor {
       LegadoSourceParser.getBaseUrl(source),
       source.bookSourceUrl
     );
+  }
+  
+  /**
+   * 确保JS引擎使用当前书源的jsLib
+   * 由于JS引擎是单例，多个书源并发使用时需要在每次操作前设置
+   */
+  private ensureJsLib(): void {
+    if (this.source.jsLib) {
+      getLegadoJsEngine().setJsLib(this.source.jsLib);
+    }
   }
 
   /**
@@ -115,6 +127,8 @@ export class NovelSourceExecutor {
       
       let request: ParsedUrlRequest;
       if (hasJsRule) {
+        // 确保在执行JS前设置当前书源的jsLib
+        this.ensureJsLib();
         // 使用异步方法处理JS规则
         logger.debug(TAG, `[书源:${this.source.bookSourceName}] 使用异步JS解析搜索URL`);
         request = await this.urlAnalyzer.analyzeUrlAsync(searchUrl, keyword, page);
@@ -135,9 +149,9 @@ export class NovelSourceExecutor {
       
       const requestResult = await this.executeRequestWithError(request);
       
-      if (requestResult.errorType !== SearchErrorType.NONE) {
+      if (requestResult.errorType && requestResult.errorType !== SearchErrorType.NONE) {
         logger.warn(TAG, `[书源:${this.source.bookSourceName}] 搜索请求失败: ${requestResult.errorMessage}`);
-        return { books: [], errorType: requestResult.errorType, errorMessage: requestResult.errorMessage };
+        return { books: [], errorType: requestResult.errorType, errorMessage: requestResult.errorMessage || '' };
       }
       
       if (!requestResult.response) {
@@ -227,6 +241,8 @@ export class NovelSourceExecutor {
    * 获取书籍详情
    */
   async getBookInfo(bookUrl: string): Promise<LegadoBook | null> {
+    // 确保JS引擎使用当前书源的jsLib
+    this.ensureJsLib();
     try {
       const request = this.urlAnalyzer.analyzeUrl(bookUrl);
       const response = await this.executeRequest(request);
@@ -246,6 +262,8 @@ export class NovelSourceExecutor {
    * 获取章节列表（支持分页）
    */
   async getChapterList(book: LegadoBook): Promise<LegadoChapter[]> {
+    // 确保JS引擎使用当前书源的jsLib
+    this.ensureJsLib();
     const tocUrl = book.tocUrl || book.bookUrl;
     const allChapters: LegadoChapter[] = [];
     let currentUrl: string | null = tocUrl;
@@ -290,6 +308,8 @@ export class NovelSourceExecutor {
    * 获取章节正文（支持分页）
    */
   async getContent(chapter: LegadoChapter): Promise<string> {
+    // 确保JS引擎使用当前书源的jsLib
+    this.ensureJsLib();
     const allContent: string[] = [];
     let currentUrl: string | null = chapter.url;
     let pageCount = 0;
@@ -351,6 +371,8 @@ export class NovelSourceExecutor {
    * 获取发现页书籍列表
    */
   async explore(exploreUrl: string, page: number = 1): Promise<LegadoSearchBook[]> {
+    // 确保JS引擎使用当前书源的jsLib
+    this.ensureJsLib();
     if (!this.source.ruleExplore) {
       logger.warn(TAG, '书源没有配置发现规则');
       return [];
@@ -429,6 +451,11 @@ export class NovelSourceExecutor {
         return null;
       }
       
+      // 处理data:协议的URL（用于传递数据，不需要HTTP请求）
+      if (request.url.startsWith('data:')) {
+        return this.parseDataUrl(request.url);
+      }
+      
       // 检查URL是否有效
       if (!request.url.startsWith('http://') && !request.url.startsWith('https://')) {
         logger.error(TAG, `无效的URL: ${request.url}`);
@@ -454,6 +481,13 @@ export class NovelSourceExecutor {
         readTimeout: 10000,
         expectDataType: needCustomDecode ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
       };
+      
+      // 应用代理配置
+      const proxyManager = ProxyManager.getInstance();
+      if (proxyManager.isEnabled()) {
+        options.usingProxy = true;
+        logger.debug(TAG, `使用代理请求: ${request.url}`);
+      }
 
       if (request.method === RequestMethod.POST) {
         // POST请求需要设置Content-Type
@@ -511,6 +545,58 @@ export class NovelSourceExecutor {
   }
   
   /**
+   * 解析data:协议的URL
+   * 格式: data:;base64,{json_data},{extra_data}
+   * 这种URL用于传递书籍信息，不需要HTTP请求
+   * 
+   * 注意：这里的"base64"是书源的命名约定，实际数据可能是JSON而非真正的base64编码
+   */
+  private parseDataUrl(url: string): string {
+    try {
+      logger.debug(TAG, `解析data:URL: ${url.substring(0, Math.min(200, url.length))}...`);
+      
+      // 格式: data:;base64,{json1},{json2}
+      // 例如: data:;base64,{"book_id":"xxx","sources":"番茄","tab":"小说","url":""},{"type":"qingtian"}
+      // 这里的数据实际上是JSON格式，不是真正的base64编码
+      
+      // 提取逗号后面的内容（第一个逗号之后的所有内容）
+      const firstCommaIndex = url.indexOf(',');
+      if (firstCommaIndex > 0) {
+        const content = url.substring(firstCommaIndex + 1);
+        logger.debug(TAG, `data:URL内容: ${content.substring(0, Math.min(200, content.length))}...`);
+        
+        // 内容格式: {json1},{json2}
+        // 需要提取第一个JSON对象作为主要数据
+        if (content.startsWith('{')) {
+          // 找到第一个完整的JSON对象
+          let braceCount = 0;
+          let endIndex = 0;
+          for (let i = 0; i < content.length; i++) {
+            if (content[i] === '{') braceCount++;
+            else if (content[i] === '}') braceCount--;
+            if (braceCount === 0) {
+              endIndex = i + 1;
+              break;
+            }
+          }
+          if (endIndex > 0) {
+            const jsonContent = content.substring(0, endIndex);
+            logger.debug(TAG, `提取的JSON: ${jsonContent.substring(0, Math.min(200, jsonContent.length))}...`);
+            return jsonContent;
+          }
+        }
+        
+        return content;
+      }
+      
+      return url;
+    } catch (error) {
+      logger.error(TAG, `解析data:URL失败: ${String(error)}`);
+      return url;
+    }
+  }
+  
+  /**
    * 执行HTTP请求（带详细错误信息）
    */
   private async executeRequestWithError(request: ParsedUrlRequest): Promise<HttpRequestResult> {
@@ -520,6 +606,12 @@ export class NovelSourceExecutor {
         const errorType = this.analyzeJsError(request.url);
         const result: HttpRequestResult = { response: null, errorType: errorType, errorMessage: 'URL包含未解析的规则' };
         return result;
+      }
+      
+      // 处理data:协议的URL
+      if (request.url.startsWith('data:')) {
+        const response = this.parseDataUrl(request.url);
+        return { response: response } as HttpRequestResult;
       }
       
       // 检查URL是否有效
@@ -547,6 +639,12 @@ export class NovelSourceExecutor {
         readTimeout: 10000,
         expectDataType: needCustomDecode ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
       };
+      
+      // 应用代理配置
+      const proxyMgr = ProxyManager.getInstance();
+      if (proxyMgr.isEnabled()) {
+        options.usingProxy = true;
+      }
 
       if (request.method === RequestMethod.POST) {
         const header = options.header as Record<string, string>;
@@ -734,13 +832,14 @@ export class NovelSourceExecutor {
         continue;
       }
 
-      // 解析bookUrl
-      const bookUrlRaw = itemAnalyzer.getString(rule.bookUrl);
+      // 解析bookUrl（使用异步方法支持JS规则）
+      const bookUrlRaw = await itemAnalyzer.getStringAsync(rule.bookUrl);
       const bookUrl = bookUrlRaw || baseUrl;
       
-      // 性能优化：减少日志输出
-      if (i === 0 && html.length < 50000) {
+      // 始终输出第一个元素的bookUrl解析信息（用于调试）
+      if (i === 0) {
         logger.debug(TAG, `搜索结果解析: bookUrl规则=${rule.bookUrl}, 解析结果=${bookUrlRaw}, 最终URL=${bookUrl}`);
+        logger.debug(TAG, `元素内容: ${bookElements[i].substring(0, 300)}`);
       }
 
       const searchBook: LegadoSearchBook = {
@@ -806,6 +905,8 @@ export class NovelSourceExecutor {
     // 如果name和tocUrl都为空，说明解析完全失败
     if (!name && !tocUrl) {
       logger.warn(TAG, '无法解析书名和目录URL，详情页解析失败');
+      logger.warn(TAG, `详情页规则: name=${rule?.name}, tocUrl=${rule?.tocUrl}`);
+      logger.warn(TAG, `响应内容前500字符: ${contentToAnalyze.substring(0, 500)}`);
       return null;
     }
     

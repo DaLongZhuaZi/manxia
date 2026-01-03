@@ -40,10 +40,9 @@ export struct NovelEntryCard {
         .margin({ left: 12 })
         .layoutWeight(1)
         
-        Image($r('app.media.ic_arrow_right'))
-          .width(20)
-          .height(20)
-          .fillColor('#CCCCCC')
+        SymbolGlyph($r('sys.symbol.arrow_right'))
+          .fontSize(20)
+          .fontColor(['#CCCCCC'])
       }
       .width('100%')
       
@@ -117,10 +116,9 @@ export struct NovelQuickButton {
 export struct NovelSearchButton {
   build() {
     Row() {
-      Image($r('app.media.ic_search'))
-        .width(20)
-        .height(20)
-        .fillColor('#999999')
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(20)
+        .fontColor(['#999999'])
       
       Text('搜索小说...')
         .fontSize(14)

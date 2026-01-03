@@ -192,6 +192,56 @@ export class TransitionController {
   }
   
   /**
+   * 准备关闭过渡（显示全屏遮罩层，用于截图前冻结画面）
+   * @param coverPosition 封面目标位置
+   */
+  public prepareCloseTransition(coverPosition: CoverPosition): void {
+    logger.info(TAG, '准备关闭过渡（显示遮罩层）');
+    
+    // 计算最终封面位置
+    let finalCoverPosition: CoverPosition;
+    if (this.lastOpenCoverPosition && this.lastOpenCoverPosition.width > 0 && this.lastOpenCoverPosition.height > 0) {
+      finalCoverPosition = this.lastOpenCoverPosition;
+    } else if (coverPosition.width > 0 && coverPosition.height > 0) {
+      finalCoverPosition = coverPosition;
+    } else {
+      finalCoverPosition = { x: 16, y: 120, width: 140, height: 200 };
+    }
+    
+    // 设置准备状态（显示全屏遮罩但不开始动画）
+    this.currentState.isActive = true;
+    this.currentState.mode = TransitionMode.CLOSE;
+    this.currentState.coverPosition = finalCoverPosition;
+    this.currentState.readerContentPixelMap = null;
+    this.currentState.readerContentImagePath = '';
+    this.currentState.isReaderReady = false;  // 标记为未就绪，不开始动画
+    
+    this.notifyStateChange();
+  }
+  
+  /**
+   * 使用截图开始关闭过渡动画（在prepareCloseTransition之后调用）
+   * @param readerContentPixelMap 阅读器截图
+   * @param onComplete 完成回调
+   * @param readerContentImagePath 截图文件路径
+   */
+  public startCloseTransitionWithCapture(
+    readerContentPixelMap?: image.PixelMap,
+    onComplete?: () => void,
+    readerContentImagePath?: string
+  ): void {
+    logger.info(TAG, `开始关闭过渡动画（带截图）: imagePath=${readerContentImagePath ? '有' : '无'}`);
+    
+    // 更新截图数据
+    this.currentState.readerContentPixelMap = readerContentPixelMap || null;
+    this.currentState.readerContentImagePath = readerContentImagePath || '';
+    this.currentState.isReaderReady = true;  // 标记为就绪，开始动画
+    
+    this.onCloseComplete = onComplete || null;
+    this.notifyStateChange();
+  }
+  
+  /**
    * 标记阅读器已就绪（翻开模式时调用）
    * 阅读器加载完成后调用此方法，覆盖层会淡出消失
    */
@@ -229,15 +279,41 @@ export class TransitionController {
       }
       // 不重置状态，保持覆盖层可见
     } else if (mode === TransitionMode.CLOSE) {
-      // 关闭模式：直接完成
+      // 关闭模式：直接完成并确保状态重置
+      logger.info(TAG, '关闭动画完成，重置状态');
+      
+      // 先保存回调引用
+      const closeCallback = this.onCloseComplete;
+      this.onCloseComplete = null;
+      
+      // 重置状态（确保isActive=false，组件会被移除）
       this.currentState = new GlobalTransitionState();
       this.notifyStateChange();
       
-      if (this.onCloseComplete) {
-        this.onCloseComplete();
-        this.onCloseComplete = null;
+      // 延迟执行回调，确保UI状态已更新
+      if (closeCallback) {
+        setTimeout(() => {
+          closeCallback();
+        }, 50);
       }
     }
+  }
+  
+  /**
+   * 强制重置状态（用于异常情况恢复）
+   */
+  public forceReset(): void {
+    logger.warn(TAG, '强制重置过渡动画状态');
+    this.isCancelling = false;
+    this.onOpenComplete = null;
+    this.onCloseComplete = null;
+    this.onCancelCallback = null;
+    if (this.pendingNavigationTimer !== -1) {
+      clearTimeout(this.pendingNavigationTimer);
+      this.pendingNavigationTimer = -1;
+    }
+    this.currentState = new GlobalTransitionState();
+    this.notifyStateChange();
   }
   
   /**
@@ -370,21 +446,6 @@ export struct BookTransitionOverlay {
     this.updateState(initialState);
   }
   
-  /**
-   * 更新状态
-   */
-  private updateState(state: GlobalTransitionState): void {
-    this.isActive = state.isActive;
-    this.mode = state.mode;
-    this.coverImagePath = state.coverImagePath;
-    this.coverPosition = state.coverPosition;
-    this.readerContentPixelMap = state.readerContentPixelMap;
-    this.readerContentImagePath = state.readerContentImagePath;
-    this.isReaderReady = state.isReaderReady;
-    this.ebookBackground = state.ebookBackground;
-    
-    logger.debug(TAG, `状态更新: isActive=${this.isActive}, mode=${this.mode}, isReaderReady=${this.isReaderReady}, imagePath=${this.readerContentImagePath ? '有' : '无'}, ebookBg=${this.ebookBackground ? '有' : '无'}`);
-  }
   
   /**
    * 动画完成处理
@@ -400,6 +461,57 @@ export struct BookTransitionOverlay {
     logger.info(TAG, `阶段变化: ${phase}`);
   }
   
+  // 超时保护定时器
+  private safetyTimeoutTimer: number = -1;
+  private static readonly ANIMATION_TIMEOUT_MS = 5000;  // 5秒超时保护
+  
+  /**
+   * 启动超时保护
+   */
+  private startSafetyTimeout(): void {
+    this.clearSafetyTimeout();
+    this.safetyTimeoutTimer = setTimeout(() => {
+      if (this.isActive) {
+        logger.warn(TAG, '动画超时，强制重置状态');
+        this.controller.forceReset();
+      }
+    }, BookTransitionOverlay.ANIMATION_TIMEOUT_MS);
+  }
+  
+  /**
+   * 清除超时保护
+   */
+  private clearSafetyTimeout(): void {
+    if (this.safetyTimeoutTimer !== -1) {
+      clearTimeout(this.safetyTimeoutTimer);
+      this.safetyTimeoutTimer = -1;
+    }
+  }
+  
+  /**
+   * 更新状态（增加超时保护）
+   */
+  private updateState(state: GlobalTransitionState): void {
+    const wasActive = this.isActive;
+    this.isActive = state.isActive;
+    this.mode = state.mode;
+    this.coverImagePath = state.coverImagePath;
+    this.coverPosition = state.coverPosition;
+    this.readerContentPixelMap = state.readerContentPixelMap;
+    this.readerContentImagePath = state.readerContentImagePath;
+    this.isReaderReady = state.isReaderReady;
+    this.ebookBackground = state.ebookBackground;
+    
+    // 启动或清除超时保护
+    if (this.isActive && !wasActive) {
+      this.startSafetyTimeout();
+    } else if (!this.isActive && wasActive) {
+      this.clearSafetyTimeout();
+    }
+    
+    logger.debug(TAG, `状态更新: isActive=${this.isActive}, mode=${this.mode}, isReaderReady=${this.isReaderReady}, imagePath=${this.readerContentImagePath ? '有' : '无'}, ebookBg=${this.ebookBackground ? '有' : '无'}`);
+  }
+  
   build() {
     if (this.isActive) {
       Stack() {
@@ -412,7 +524,10 @@ export struct BookTransitionOverlay {
           config: this.config,
           isReaderReady: this.isReaderReady,
           ebookBackground: this.ebookBackground,
-          onAnimationComplete: () => this.handleAnimationComplete(),
+          onAnimationComplete: () => {
+            this.clearSafetyTimeout();
+            this.handleAnimationComplete();
+          },
           onPhaseChange: (phase: TransitionPhase) => this.handlePhaseChange(phase)
         })
       }
@@ -586,14 +701,12 @@ export async function captureComponent(componentId: string): Promise<CaptureResu
       const imageInfo = await pixelMap.getImageInfo();
       logger.info(TAG, `📷 [组件截图] ✅ 成功! 尺寸=${imageInfo.size.width}x${imageInfo.size.height}`);
       
-      // 保存为压缩的临时文件（用于Image组件显示）
-      logger.info(TAG, `📷 [组件截图] 开始保存压缩文件...`);
-      const imagePath = await saveCompressedScreenshot(pixelMap, componentId, imageInfo.size.width, imageInfo.size.height);
-      logger.info(TAG, `📷 [组件截图] 保存完成: ${imagePath}`);
-      
+      // 直接返回原始PixelMap，不进行压缩
+      // 这样可以避免压缩导致的质量损失和延迟（约77ms）
+      // Image组件可以直接使用PixelMap，无需文件路径
       return {
         pixelMap: pixelMap,
-        imagePath: imagePath
+        imagePath: ''  // 不再保存压缩文件
       };
     } else {
       logger.warn(TAG, `📷 [组件截图] ⚠️ 返回空: ${componentId}`);
@@ -722,6 +835,7 @@ export async function startBookCloseTransitionWithCapture(
 
 /**
  * 便捷函数：使用组件ID获取位置并带截图的关闭过渡
+ * 优化：先截图，然后直接显示截图并开始动画（无缝过渡）
  * @param readerComponentId 阅读器根组件ID（用于截图）
  * @param coverComponentId 封面组件ID（用于获取位置）
  * @param onComplete 完成回调
@@ -737,10 +851,13 @@ export async function startBookCloseTransitionWithComponentId(
     const coverPosition = getCoverPositionById(coverComponentId);
     logger.info(TAG, `🔴 获取封面位置完成: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
     
+    // 直接截图（不显示任何遮罩层）
     logger.info(TAG, `🔴 开始调用 captureComponent...`);
     const captureResult = await captureComponent(readerComponentId);
     logger.info(TAG, `🔴 captureComponent 返回: pixelMap=${captureResult?.pixelMap ? '有效' : '空'}, imagePath=${captureResult?.imagePath ? '有' : '无'}`);
     
+    // 截图完成后，直接启动关闭动画（带截图数据）
+    // 动画组件会立即显示全屏截图，覆盖住底层阅读器
     TransitionController.getInstance().startCloseTransition(
       coverPosition,
       captureResult?.pixelMap,
@@ -750,6 +867,11 @@ export async function startBookCloseTransitionWithComponentId(
     logger.info(TAG, `🔴 startCloseTransition 调用完成`);
   } catch (error) {
     logger.error(TAG, `🔴 startBookCloseTransitionWithComponentId 错误: ${String(error)}`);
+    // 即使截图失败也要确保能返回
+    TransitionController.getInstance().forceReset();
+    if (onComplete) {
+      onComplete();
+    }
   }
 }
 

@@ -1,0 +1,843 @@
+/**
+ * WebDAV客户端
+ * 基于perry-mitchell/webdav-client设计，适配HarmonyOS ArkTS
+ * 
+ * 支持的WebDAV方法：
+ * - OPTIONS: 检查服务器支持的方法
+ * - GET: 下载文件
+ * - PUT: 上传文件
+ * - DELETE: 删除文件/目录
+ * - MKCOL: 创建目录
+ * - COPY: 复制文件
+ * - MOVE: 移动文件
+ * - HEAD: 检查资源是否存在
+ * - PROPFIND: 获取资源属性（需要服务器支持）
+ * 
+ * 文件路径: entry/src/main/ets/Framework/WebDAV/WebDAVClient.ets
+ */
+
+import { http } from '@kit.NetworkKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { logger } from '../../Utils/Logger';
+import { util } from '@kit.ArkTS';
+
+const TAG = 'WebDAVClient';
+
+// HTTP请求选项
+interface RequestOptions {
+  headers?: Record<string, string>;
+  body?: string | ArrayBuffer;
+  responseType?: 'string' | 'arraybuffer';
+}
+
+// HTTP响应结果
+interface RequestResult {
+  statusCode: number;
+  headers: Record<string, string>;
+  data: string | ArrayBuffer;
+}
+
+// WebDAV配置
+export interface WebDAVConfig {
+  serverUrl: string;
+  username: string;
+  password: string;
+  basePath: string;
+}
+
+// 连接测试结果
+export interface WebDAVTestResult {
+  success: boolean;
+  needCreateDir: boolean;
+  message: string;
+}
+
+// 文件/目录信息
+export interface WebDAVFile {
+  path: string;
+  name: string;
+  size: number;
+  lastModified: number;
+  isDirectory: boolean;
+  etag?: string;
+  contentType?: string;
+}
+
+// 磁盘配额信息
+export interface DiskQuota {
+  used: number;
+  available: number | 'unlimited';
+}
+
+// 路径检查结果
+interface PathCheckResult {
+  exists: boolean;
+  statusCode: number;
+}
+
+// 错误信息
+interface ErrorInfo {
+  code: number;
+  message: string;
+}
+
+// 进度回调类型
+type ProgressCallback = (progress: number) => void;
+
+export class WebDAVClient {
+  private config: WebDAVConfig;
+  private timeout: number = 30000;
+
+  constructor(config: WebDAVConfig) {
+    this.config = config;
+  }
+
+  // ==================== 公共方法 ====================
+
+  /**
+   * 测试WebDAV连接
+   * 策略：直接尝试在目标目录上传测试文件，根据响应判断：
+   * - 201/200/204: 目录存在且可写
+   * - 404/409: 目录不存在
+   * - 401: 认证失败
+   * - 405: 服务器不支持PUT（可能是只读或配置问题）
+   */
+  async testConnection(): Promise<WebDAVTestResult> {
+    const baseUrl = this.config.serverUrl.replace(/\/$/, '');
+    const basePath = this.config.basePath.replace(/^\//, '').replace(/\/$/, '');
+    const fullUrl = basePath ? `${baseUrl}/${basePath}/` : `${baseUrl}/`;
+    
+    logger.info(TAG, '开始测试WebDAV连接');
+    logger.info(TAG, `服务器地址: ${baseUrl}`);
+    logger.info(TAG, `目标路径: ${fullUrl}`);
+    
+    try {
+      // 直接尝试在目标目录上传测试文件
+      const testFileName = `manxia_test_${Date.now()}.txt`;
+      const testFileUrl = `${fullUrl}${testFileName}`;
+      const testContent = 'T';  // 单字符内容
+      
+      logger.info(TAG, `尝试上传测试文件: ${testFileUrl}`);
+      
+      const putResult = await this.sendRequest('PUT', testFileUrl, {
+        body: testContent,
+        headers: { 'Content-Type': 'text/plain' }
+      });
+      
+      logger.info(TAG, `上传测试文件响应码: ${putResult.statusCode}`);
+      
+      if (putResult.statusCode === 201 || putResult.statusCode === 200 || putResult.statusCode === 204) {
+        logger.info(TAG, '测试文件上传成功，目录存在且可写');
+        
+        // 删除测试文件
+        try {
+          const deleteResult = await this.sendRequest('DELETE', testFileUrl);
+          logger.info(TAG, `删除测试文件响应码: ${deleteResult.statusCode}`);
+        } catch (deleteError) {
+          logger.warn(TAG, '删除测试文件失败，但不影响使用');
+        }
+        
+        return { success: true, needCreateDir: false, message: '连接成功' };
+      } else if (putResult.statusCode === 401) {
+        logger.error(TAG, '认证失败');
+        return { success: false, needCreateDir: false, message: '认证失败，请检查用户名和密码' };
+      } else if (putResult.statusCode === 404 || putResult.statusCode === 409) {
+        // 404: 目录不存在; 409: 父目录不存在(Conflict)
+        logger.info(TAG, `目标目录不存在 (${putResult.statusCode})`);
+        return { 
+          success: false, 
+          needCreateDir: true, 
+          message: `服务器连接成功，请在服务器端手动创建目录: ${this.config.basePath}` 
+        };
+      } else if (putResult.statusCode === 405) {
+        // 405: 方法不允许，可能是只读目录或服务器配置问题
+        // 尝试用OPTIONS检查服务器是否可达
+        logger.warn(TAG, 'PUT方法返回405，尝试OPTIONS检查服务器');
+        
+        try {
+          const optionsResult = await this.sendRequest('OPTIONS', baseUrl + '/');
+          if (optionsResult.statusCode === 200 || optionsResult.statusCode === 204) {
+            // 服务器可达，但目录可能不存在或不可写
+            return { 
+              success: false, 
+              needCreateDir: true, 
+              message: `服务器连接成功，请在服务器端创建目录: ${this.config.basePath}` 
+            };
+          }
+        } catch (optError) {
+          // 忽略OPTIONS错误
+        }
+        
+        return { 
+          success: false, 
+          needCreateDir: false, 
+          message: '服务器不支持文件上传，请检查WebDAV配置' 
+        };
+      } else {
+        logger.warn(TAG, `未知响应码: ${putResult.statusCode}`);
+        return { 
+          success: false, 
+          needCreateDir: false, 
+          message: `服务器响应异常 (${putResult.statusCode})` 
+        };
+      }
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.error(TAG, `连接测试失败: ${errorInfo.message}`);
+      return { 
+        success: false, 
+        needCreateDir: false, 
+        message: `连接失败: ${errorInfo.message}` 
+      };
+    }
+  }
+
+  /**
+   * 检查文件或目录是否存在
+   */
+  async exists(remotePath: string): Promise<boolean> {
+    try {
+      const url = this.getFullUrl(remotePath);
+      logger.info(TAG, `检查是否存在: ${url}`);
+      
+      const result = await this.sendRequest('HEAD', url);
+      return result.statusCode === 200 || result.statusCode === 207;
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.debug(TAG, `exists检查失败: ${errorInfo.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 获取文件/目录信息
+   */
+  async stat(remotePath: string): Promise<WebDAVFile | null> {
+    try {
+      const url = this.getFullUrl(remotePath);
+      logger.info(TAG, `获取文件信息: ${url}`);
+      
+      const result = await this.sendRequest('HEAD', url);
+      
+      if (result.statusCode !== 200 && result.statusCode !== 207) {
+        return null;
+      }
+      
+      const headers = result.headers;
+      const contentLength = headers['content-length'] || headers['Content-Length'] || '0';
+      const lastModified = headers['last-modified'] || headers['Last-Modified'] || '';
+      const etag = headers['etag'] || headers['ETag'] || '';
+      const contentType = headers['content-type'] || headers['Content-Type'] || '';
+      
+      const pathParts = remotePath.split('/').filter(p => p);
+      const name = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
+      
+      const file: WebDAVFile = {
+        path: remotePath,
+        name: name,
+        size: parseInt(contentLength) || 0,
+        lastModified: lastModified ? new Date(lastModified).getTime() : Date.now(),
+        isDirectory: contentType.includes('directory') || remotePath.endsWith('/'),
+        etag: etag,
+        contentType: contentType
+      };
+      
+      return file;
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.error(TAG, `获取文件信息失败: ${errorInfo.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * 获取目录内容
+   * 使用GET方法获取目录列表（依赖服务器返回HTML或JSON格式）
+   */
+  async getDirectoryContents(remotePath: string): Promise<WebDAVFile[]> {
+    try {
+      const url = this.getFullUrl(remotePath);
+      logger.info(TAG, `获取目录内容: ${url}`);
+      
+      const result = await this.sendRequest('GET', url);
+      
+      if (result.statusCode !== 200) {
+        logger.warn(TAG, `获取目录内容失败: ${result.statusCode}`);
+        return [];
+      }
+      
+      // 尝试解析响应
+      const data = result.data as string;
+      return this.parseDirectoryListing(data, remotePath);
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.error(TAG, `获取目录内容失败: ${errorInfo.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * 创建目录
+   * 注意：HarmonyOS不支持MKCOL方法，使用PUT上传空文件的方式触发目录创建
+   * 或者依赖服务器在PUT时自动创建父目录
+   */
+  async createDirectory(remotePath: string): Promise<void> {
+    const url = this.getFullUrl(remotePath);
+    logger.info(TAG, `创建目录: ${url}`);
+    
+    // 方法1：尝试使用PUT上传一个占位文件来创建目录
+    // 某些WebDAV服务器会在PUT时自动创建父目录
+    const placeholderUrl = url.endsWith('/') ? `${url}.manxia_placeholder` : `${url}/.manxia_placeholder`;
+    
+    try {
+      logger.info(TAG, `使用PUT方法创建目录占位文件: ${placeholderUrl}`);
+      const result = await this.sendRequest('PUT', placeholderUrl, { 
+        body: '',
+        headers: { 'Content-Type': 'text/plain' }
+      });
+      
+      if (result.statusCode === 201 || result.statusCode === 200 || result.statusCode === 204) {
+        logger.info(TAG, `目录创建成功（通过占位文件）: ${remotePath}`);
+        
+        // 尝试删除占位文件（可选，失败也不影响）
+        try {
+          await this.sendRequest('DELETE', placeholderUrl);
+          logger.info(TAG, '占位文件已删除');
+        } catch (deleteError) {
+          logger.warn(TAG, '删除占位文件失败，但目录已创建');
+        }
+        return;
+      } else if (result.statusCode === 409) {
+        // 409 Conflict 通常表示父目录不存在
+        logger.warn(TAG, `父目录不存在，需要递归创建: ${result.statusCode}`);
+        throw new Error(`父目录不存在，请先创建父目录`);
+      } else {
+        logger.warn(TAG, `创建目录失败: HTTP ${result.statusCode}`);
+        throw new Error(`创建目录失败: HTTP ${result.statusCode}`);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      const errorInfo = this.parseError(error);
+      throw new Error(errorInfo.message);
+    }
+  }
+
+  /**
+   * 递归创建目录
+   */
+  async createDirectoryRecursive(remotePath: string): Promise<void> {
+    const parts = remotePath.split('/').filter(p => p);
+    let currentPath = '';
+    
+    for (const part of parts) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      
+      const exists = await this.exists(currentPath);
+      if (!exists) {
+        await this.createDirectory(currentPath);
+      }
+    }
+  }
+
+  /**
+   * 删除文件或目录
+   */
+  async deleteFile(remotePath: string): Promise<void> {
+    const url = this.getFullUrl(remotePath);
+    logger.info(TAG, `删除: ${url}`);
+    
+    const result = await this.sendRequest('DELETE', url);
+    
+    if (result.statusCode !== 200 && result.statusCode !== 204 && result.statusCode !== 404) {
+      const errorMsg = `删除失败: HTTP ${result.statusCode}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+    
+    logger.info(TAG, `删除成功: ${remotePath}`);
+  }
+
+  /**
+   * 上传文件内容
+   */
+  async putFileContents(remotePath: string, data: string | ArrayBuffer): Promise<void> {
+    const url = this.getFullUrl(remotePath);
+    logger.info(TAG, `上传文件: ${url}`);
+    
+    const headers: Record<string, string> = {};
+    if (typeof data === 'string') {
+      headers['Content-Type'] = 'text/plain; charset=utf-8';
+    } else {
+      headers['Content-Type'] = 'application/octet-stream';
+    }
+    
+    const result = await this.sendRequest('PUT', url, { headers, body: data });
+    
+    if (result.statusCode !== 200 && result.statusCode !== 201 && result.statusCode !== 204) {
+      const errorMsg = `上传失败: HTTP ${result.statusCode}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+    
+    logger.info(TAG, `上传成功: ${remotePath}`);
+  }
+
+  /**
+   * 从本地文件上传
+   */
+  async uploadFile(localPath: string, remotePath: string, onProgress?: ProgressCallback): Promise<void> {
+    logger.info(TAG, `上传本地文件: ${localPath} -> ${remotePath}`);
+    
+    try {
+      // 读取本地文件
+      const file = fileIo.openSync(localPath, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(localPath);
+      const buffer = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+      
+      // 上传
+      await this.putFileContents(remotePath, buffer);
+      
+      if (onProgress) {
+        onProgress(100);
+      }
+      
+      logger.info(TAG, `本地文件上传成功: ${remotePath}`);
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.error(TAG, `本地文件上传失败: ${errorInfo.message}`);
+      const err = new Error(errorInfo.message);
+      throw err;
+    }
+  }
+
+  /**
+   * 获取文件内容
+   */
+  async getFileContents(remotePath: string, format: 'string' | 'arraybuffer' = 'arraybuffer'): Promise<string | ArrayBuffer> {
+    const url = this.getFullUrl(remotePath);
+    logger.info(TAG, `下载文件: ${url}`);
+    
+    const result = await this.sendRequest('GET', url, { responseType: format });
+    
+    if (result.statusCode !== 200) {
+      const errorMsg = `下载失败: HTTP ${result.statusCode}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+    
+    logger.info(TAG, `下载成功: ${remotePath}`);
+    return result.data;
+  }
+
+  /**
+   * 下载文件到本地
+   */
+  async downloadFile(remotePath: string, localPath: string, onProgress?: ProgressCallback): Promise<void> {
+    logger.info(TAG, `下载文件到本地: ${remotePath} -> ${localPath}`);
+    
+    try {
+      const data = await this.getFileContents(remotePath, 'arraybuffer');
+      
+      // 写入本地文件
+      const file = fileIo.openSync(localPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(file.fd, data as ArrayBuffer);
+      fileIo.closeSync(file);
+      
+      if (onProgress) {
+        onProgress(100);
+      }
+      
+      logger.info(TAG, `文件下载成功: ${localPath}`);
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.error(TAG, `文件下载失败: ${errorInfo.message}`);
+      const err = new Error(errorInfo.message);
+      throw err;
+    }
+  }
+
+  /**
+   * 复制文件
+   */
+  async copyFile(sourcePath: string, destinationPath: string): Promise<void> {
+    const sourceUrl = this.getFullUrl(sourcePath);
+    const destUrl = this.getFullUrl(destinationPath);
+    
+    logger.info(TAG, `复制文件: ${sourcePath} -> ${destinationPath}`);
+    
+    const headers: Record<string, string> = {
+      'Destination': destUrl,
+      'Overwrite': 'T'
+    };
+    
+    const result = await this.sendRequest('COPY', sourceUrl, { headers });
+    
+    if (result.statusCode !== 201 && result.statusCode !== 204) {
+      const errorMsg = `复制失败: HTTP ${result.statusCode}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+    
+    logger.info(TAG, `复制成功: ${destinationPath}`);
+  }
+
+  /**
+   * 移动文件
+   */
+  async moveFile(sourcePath: string, destinationPath: string): Promise<void> {
+    const sourceUrl = this.getFullUrl(sourcePath);
+    const destUrl = this.getFullUrl(destinationPath);
+    
+    logger.info(TAG, `移动文件: ${sourcePath} -> ${destinationPath}`);
+    
+    const headers: Record<string, string> = {
+      'Destination': destUrl,
+      'Overwrite': 'T'
+    };
+    
+    const result = await this.sendRequest('MOVE', sourceUrl, { headers });
+    
+    if (result.statusCode !== 201 && result.statusCode !== 204) {
+      const errorMsg = `移动失败: HTTP ${result.statusCode}`;
+      logger.error(TAG, errorMsg);
+      throw new Error(errorMsg);
+    }
+    
+    logger.info(TAG, `移动成功: ${destinationPath}`);
+  }
+
+  // ==================== 兼容旧API ====================
+
+  async list(remotePath: string): Promise<WebDAVFile[]> {
+    return this.getDirectoryContents(remotePath);
+  }
+
+  async upload(localPath: string, remotePath: string, onProgress?: ProgressCallback): Promise<void> {
+    return this.uploadFile(localPath, remotePath, onProgress);
+  }
+
+  async download(remotePath: string, localPath: string, onProgress?: ProgressCallback): Promise<void> {
+    return this.downloadFile(remotePath, localPath, onProgress);
+  }
+
+  async delete(remotePath: string): Promise<void> {
+    return this.deleteFile(remotePath);
+  }
+
+  // ==================== 私有方法 ====================
+
+  /**
+   * 发送HTTP请求
+   */
+  private async sendRequest(method: string, url: string, options?: RequestOptions): Promise<RequestResult> {
+    logger.info(TAG, `发送请求: ${method} ${url}`);
+    
+    const httpRequest = http.createHttp();
+    
+    try {
+      const headers = this.buildHeaders(options?.headers);
+      
+      let httpMethod: http.RequestMethod;
+      switch (method.toUpperCase()) {
+        case 'GET': httpMethod = http.RequestMethod.GET; break;
+        case 'POST': httpMethod = http.RequestMethod.POST; break;
+        case 'PUT': httpMethod = http.RequestMethod.PUT; break;
+        case 'DELETE': httpMethod = http.RequestMethod.DELETE; break;
+        case 'HEAD': httpMethod = http.RequestMethod.HEAD; break;
+        case 'OPTIONS': httpMethod = http.RequestMethod.OPTIONS; break;
+        case 'TRACE': httpMethod = http.RequestMethod.TRACE; break;
+        case 'CONNECT': httpMethod = http.RequestMethod.CONNECT; break;
+        default:
+          // 对于MKCOL, COPY, MOVE等WebDAV方法，尝试作为字符串传递
+          httpMethod = method as http.RequestMethod;
+      }
+      
+      const expectDataType = options?.responseType === 'arraybuffer' 
+        ? http.HttpDataType.ARRAY_BUFFER 
+        : http.HttpDataType.STRING;
+      
+      const response = await httpRequest.request(url, {
+        method: httpMethod,
+        header: headers,
+        extraData: options?.body,
+        expectDataType: expectDataType,
+        connectTimeout: this.timeout,
+        readTimeout: this.timeout
+      });
+      
+      logger.info(TAG, `响应: ${response.responseCode}`);
+      
+      const result: RequestResult = {
+        statusCode: response.responseCode,
+        headers: response.header as Record<string, string>,
+        data: response.result as string | ArrayBuffer
+      };
+      
+      return result;
+    } catch (error) {
+      const errorInfo = this.parseError(error);
+      logger.error(TAG, `HTTP请求失败: ${errorInfo.message} (代码: ${errorInfo.code})`);
+      throw new Error(errorInfo.message);
+    } finally {
+      httpRequest.destroy();
+    }
+  }
+
+  /**
+   * 构建请求头
+   */
+  private buildHeaders(customHeaders?: Record<string, string>): Record<string, string> {
+    const credentials = `${this.config.username}:${this.config.password}`;
+    const encoder = new util.TextEncoder();
+    const data = encoder.encodeInto(credentials);
+    const base64Helper = new util.Base64Helper();
+    const base64Credentials = base64Helper.encodeToStringSync(data);
+    
+    const headers: Record<string, string> = {
+      'Authorization': `Basic ${base64Credentials}`,
+      'User-Agent': 'ManXia-WebDAV/1.0'
+    };
+    
+    if (customHeaders) {
+      Object.keys(customHeaders).forEach((key: string) => {
+        headers[key] = customHeaders[key];
+      });
+    }
+    
+    return headers;
+  }
+
+  /**
+   * 获取完整URL
+   */
+  private getFullUrl(relativePath: string): string {
+    const baseUrl = this.config.serverUrl.replace(/\/$/, '');
+    const basePath = this.config.basePath.replace(/^\//, '').replace(/\/$/, '');
+    const relPath = relativePath.replace(/^\//, '');
+    
+    if (basePath && relPath) {
+      return `${baseUrl}/${basePath}/${relPath}`;
+    } else if (basePath) {
+      return `${baseUrl}/${basePath}/`;
+    } else if (relPath) {
+      return `${baseUrl}/${relPath}`;
+    } else {
+      return `${baseUrl}/`;
+    }
+  }
+
+  // 兼容旧方法
+  private getFullPath(relativePath: string): string {
+    return this.getFullUrl(relativePath);
+  }
+
+  // 兼容旧方法
+  private getAuthHeaders(): Record<string, string> {
+    return this.buildHeaders();
+  }
+
+  /**
+   * 解析错误信息
+   */
+  private parseError(error: Object): ErrorInfo {
+    let code = 0;
+    let message = '未知错误';
+    
+    if (error && typeof error === 'object') {
+      const errObj = error as Record<string, Object>;
+      
+      if (errObj.code !== undefined) {
+        code = Number(errObj.code);
+        if (code >= 2300000) {
+          const curlCode = code - 2300000;
+          message = this.getCurlErrorMessage(curlCode);
+        }
+      }
+      
+      if (errObj.message !== undefined) {
+        const errMessage = String(errObj.message);
+        if (errMessage && errMessage !== 'Unknown Other Error') {
+          message = errMessage;
+        }
+      }
+    }
+    
+    const result: ErrorInfo = { code, message };
+    return result;
+  }
+
+  /**
+   * 获取curl错误码对应的消息
+   */
+  private getCurlErrorMessage(curlCode: number): string {
+    const curlErrors: Record<number, string> = {
+      1: '不支持的协议',
+      3: 'URL格式错误',
+      6: '无法解析主机名',
+      7: '无法连接到服务器',
+      28: '连接超时',
+      35: 'SSL连接错误',
+      51: 'SSL证书验证失败',
+      52: '服务器无响应',
+      56: '网络数据接收失败',
+      60: 'SSL证书问题',
+      999: '不支持的HTTP方法'
+    };
+    
+    return curlErrors[curlCode] || `网络错误(curl: ${curlCode})`;
+  }
+
+  /**
+   * 尝试解析JSON
+   */
+  private tryParseJson(data: string): Object[] | null {
+    if (!data.startsWith('[') && !data.startsWith('{')) {
+      return null;
+    }
+    
+    try {
+      const result: Object = JSON.parse(data);
+      if (Array.isArray(result)) {
+        return result as Object[];
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 解析目录列表
+   */
+  private parseDirectoryListing(data: string, basePath: string): WebDAVFile[] {
+    const files: WebDAVFile[] = [];
+    
+    // 尝试解析WebDAV XML响应
+    if (data.includes('<D:response>') || data.includes('<d:response>')) {
+      return this.parseWebDAVXml(data);
+    }
+    
+    // 尝试解析HTML目录列表
+    if (data.includes('<a href=')) {
+      return this.parseHtmlListing(data, basePath);
+    }
+    
+    // 尝试解析JSON
+    const jsonResult = this.tryParseJson(data);
+    if (jsonResult !== null && Array.isArray(jsonResult)) {
+      return this.parseJsonListing(jsonResult, basePath);
+    }
+    
+    logger.warn(TAG, '无法解析目录列表格式');
+    return files;
+  }
+
+  /**
+   * 解析WebDAV XML响应
+   */
+  private parseWebDAVXml(xmlData: string): WebDAVFile[] {
+    const files: WebDAVFile[] = [];
+    
+    const responseRegex = /<[dD]:response>([\s\S]*?)<\/[dD]:response>/g;
+    let match: RegExpExecArray | null;
+    
+    while ((match = responseRegex.exec(xmlData)) !== null) {
+      const responseData = match[1];
+      
+      const hrefMatch = responseData.match(/<[dD]:href>(.*?)<\/[dD]:href>/);
+      if (!hrefMatch) continue;
+      
+      const href = hrefMatch[1];
+      const path = decodeURIComponent(href);
+      const pathParts = path.split('/').filter(p => p);
+      const name = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
+      
+      const isDirectory = responseData.includes('<D:collection') || responseData.includes('<d:collection');
+      
+      const sizeMatch = responseData.match(/<[dD]:getcontentlength>(\d+)<\/[dD]:getcontentlength>/);
+      const size = sizeMatch ? parseInt(sizeMatch[1]) : 0;
+      
+      const modifiedMatch = responseData.match(/<[dD]:getlastmodified>(.*?)<\/[dD]:getlastmodified>/);
+      const lastModified = modifiedMatch ? new Date(modifiedMatch[1]).getTime() : Date.now();
+      
+      const etagMatch = responseData.match(/<[dD]:getetag>"?(.*?)"?<\/[dD]:getetag>/);
+      const etag = etagMatch ? etagMatch[1] : undefined;
+      
+      const contentTypeMatch = responseData.match(/<[dD]:getcontenttype>(.*?)<\/[dD]:getcontenttype>/);
+      const contentType = contentTypeMatch ? contentTypeMatch[1] : undefined;
+      
+      files.push({
+        path,
+        name,
+        size,
+        lastModified,
+        isDirectory,
+        etag,
+        contentType
+      });
+    }
+    
+    return files;
+  }
+
+  /**
+   * 解析HTML目录列表
+   */
+  private parseHtmlListing(html: string, basePath: string): WebDAVFile[] {
+    const files: WebDAVFile[] = [];
+    
+    const linkRegex = /<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
+    let match: RegExpExecArray | null;
+    
+    while ((match = linkRegex.exec(html)) !== null) {
+      const href = match[1];
+      const name = match[2] || href;
+      
+      // 跳过父目录链接
+      if (href === '../' || href === '..') continue;
+      
+      const isDirectory = href.endsWith('/');
+      const path = basePath.endsWith('/') ? basePath + href : basePath + '/' + href;
+      
+      files.push({
+        path,
+        name: name.replace(/\/$/, ''),
+        size: 0,
+        lastModified: Date.now(),
+        isDirectory
+      });
+    }
+    
+    return files;
+  }
+
+  /**
+   * 解析JSON目录列表
+   */
+  private parseJsonListing(json: Object[], basePath: string): WebDAVFile[] {
+    const files: WebDAVFile[] = [];
+    
+    for (const item of json) {
+      const obj = item as Record<string, Object>;
+      const name = String(obj.name || obj.filename || '');
+      if (!name) continue;
+      
+      const isDirectory = Boolean(obj.isDirectory || obj.type === 'directory');
+      const path = basePath.endsWith('/') ? basePath + name : basePath + '/' + name;
+      
+      files.push({
+        path,
+        name,
+        size: Number(obj.size) || 0,
+        lastModified: Number(obj.lastModified || obj.mtime) || Date.now(),
+        isDirectory
+      });
+    }
+    
+    return files;
+  }
+}

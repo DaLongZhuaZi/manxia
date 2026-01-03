@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { uiContextManager } from '../Framework/Managers/UIContextManager';
 import { LengthMetrics, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
@@ -107,7 +108,10 @@ struct SystemAnimationDemoPage {
     });
   }
 
+  private lifecycle = new PageLifecycleManager('SystemAnimationDemoPage', { enableDebug: true });
+
   aboutToDisappear() {
+    this.lifecycle.destroy();
     // 清理主题状态
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }

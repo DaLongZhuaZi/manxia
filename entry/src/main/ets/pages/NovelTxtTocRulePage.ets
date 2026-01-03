@@ -316,7 +316,16 @@ export struct NovelTxtTocRulePage {
   build() {
     HdsNavDestination() {
       Stack() {
+        // 背景层
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        
         Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
           // 规则列表
           if (this.isLoading) {
             this.buildLoading()
@@ -328,7 +337,6 @@ export struct NovelTxtTocRulePage {
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
 
         // 添加/编辑对话框
         if (this.showAddDialog) {

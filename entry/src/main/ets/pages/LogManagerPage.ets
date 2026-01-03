@@ -12,6 +12,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger, LogLevel } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 import { LogCollector, LogEntry, LogFilter, LogStats } from '../Framework/Debug/LogCollector';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -148,7 +149,10 @@ struct LogManagerPage {
     }
   }
 
+  private lifecycle = new PageLifecycleManager('LogManagerPage', { enableDebug: true });
+
   aboutToDisappear(): void {
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 

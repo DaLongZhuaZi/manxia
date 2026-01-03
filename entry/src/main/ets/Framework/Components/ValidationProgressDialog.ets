@@ -18,6 +18,7 @@ export interface ValidationProgressInfo {
   currentSourceName: string;
   isComplete: boolean;
   isCancelled: boolean;
+  invalidSourceIds?: string[];  // 失效的书源ID列表
 }
 
 /**
@@ -46,6 +47,8 @@ export struct ValidationProgressDialog {
   onCancel?: () => void;
   // 进度控制器回调
   onControllerReady?: (ctrl: ValidationProgressController) => void;
+  // 关闭失效书源回调
+  onCloseInvalidSources?: () => void;
   
   aboutToAppear(): void {
     // 提供控制器给外部使用
@@ -150,6 +153,26 @@ export struct ValidationProgressDialog {
           .margin({ bottom: 16 })
       }
       
+      // 关闭失效书源按钮（仅在校验完成且有失效书源时显示）
+      if (this.progressInfo.isComplete && 
+          this.progressInfo.invalidCount > 0 && 
+          this.progressInfo.invalidSourceIds && 
+          this.progressInfo.invalidSourceIds.length > 0) {
+        Button('关闭失效书源')
+          .width('100%')
+          .height(44)
+          .fontSize(16)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#FF4D4F')
+          .borderRadius(8)
+          .margin({ bottom: 8 })
+          .onClick(() => {
+            if (this.onCloseInvalidSources) {
+              this.onCloseInvalidSources();
+            }
+          })
+      }
+      
       // 取消按钮（仅在校验进行中显示）
       if (!this.progressInfo.isComplete && !this.progressInfo.isCancelled) {
         Button('取消校验')
@@ -166,7 +189,7 @@ export struct ValidationProgressDialog {
           })
       } else {
         // 关闭按钮
-        Button('关闭')
+        Button(this.progressInfo.isComplete && this.progressInfo.invalidCount > 0 ? '稍后处理' : '关闭')
           .width('100%')
           .height(44)
           .fontSize(16)

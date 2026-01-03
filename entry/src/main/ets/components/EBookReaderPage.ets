@@ -2109,10 +2109,9 @@ struct EBookReaderPage {
             .fontColor($r('app.color.text_primary'))
             .fontSize(16)
           Blank().layoutWeight(1)
-          Image($r('app.media.ic_arrow_right'))
-            .width(16)
-            .height(16)
-            .fillColor($r('app.color.text_secondary'))
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(16)
+            .fontColor([$r('app.color.text_secondary')])
         }
         .height(44)
         .padding({ left: 16, right: 16 })

@@ -3,7 +3,7 @@
  * 图源登录页面
  * 提供独立的 WebView 环境用于登录操作
  */
-import { HdsNavDestination, HdsNavDestinationAttribute } from '@kit.UIDesignKit';
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import webview from '@ohos.web.webview';
 import { logger } from '../Utils/Logger';
@@ -14,6 +14,7 @@ import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import CookieManager from '../Framework/Managers/CookieManager';
 
 const TAG: string = 'SourceLoginPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /**
  * 页面导航参数
@@ -304,14 +305,26 @@ export struct SourceLoginPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
         originalStyle: {
           backgroundStyle: { backgroundColor: Color.Transparent },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: {
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
-            }
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+          },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

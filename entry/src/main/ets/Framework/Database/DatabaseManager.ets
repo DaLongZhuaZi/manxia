@@ -114,14 +114,14 @@ export class DatabaseManager {
 
       this.store = await relationalStore.getRdbStore(context, config);
       
-      // 创建表
+      // 创建表（列添加和迁移已内嵌在createTables中）
       await this.createTables();
       
       // 创建索引
       await this.createIndexes();
       
-      // 执行数据库迁移
-      await this.runMigrations();
+      // 更新数据库版本
+      await this.updateDatabaseVersion(DATABASE_CONFIG.DATABASE_VERSION);
       
       this.isInitialized = true;
       logger.info(TAG, '数据库初始化完成');
@@ -130,6 +130,7 @@ export class DatabaseManager {
       throw new Error('数据库初始化失败: ' + String(error));
     }
   }
+  
 
   /**
    * 获取数据库存储实例
@@ -153,7 +154,9 @@ export class DatabaseManager {
       'TEMP_MANGA_INFO',
       'COMIC_INFO', 
       'CHAPTER',
+      'CHAPTER_INDEX',
       'PAGE',
+      'PAGE_INDEX',
       'FAVORITE',
       'READ_HISTORY',
       'DOWNLOAD_TASK',
@@ -168,9 +171,11 @@ export class DatabaseManager {
       'EBOOK_READING_PROGRESS',
       'EBOOK_READING_SETTINGS',
       'ONLINE_COMIC_INFO',
+      'ONLINE_COMIC_INDEX',
       'ONLINE_CHAPTER',
-      'ONLINE_PAGE'
-      , 'ONLINE_READ_HISTORY'
+      'ONLINE_CHAPTER_INDEX',
+      'ONLINE_PAGE',
+      'ONLINE_READ_HISTORY'
     ];
     
     const tableCreationOrder = [
@@ -210,6 +215,53 @@ export class DatabaseManager {
         logger.debug(TAG, `SQL语句: ${sql}`);
         await store.executeSql(sql);
         logger.debug(TAG, `创建表/索引成功: ${tableName}`);
+        
+        // 🔧 在表创建后立即添加可能缺失的列
+        if (tableName === 'COMIC_INFO') {
+          logger.info(TAG, '🔧 [COMIC_INFO] 添加隐私列');
+          try { await store.executeSql('ALTER TABLE comic_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('UPDATE comic_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
+          try { await store.executeSql('UPDATE comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          logger.info(TAG, '✅ [COMIC_INFO] 列添加完成');
+        } else if (tableName === 'ONLINE_COMIC_INFO') {
+          logger.info(TAG, '🔧 [ONLINE_COMIC_INFO] 添加隐私列');
+          try { await store.executeSql('ALTER TABLE online_comic_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE online_comic_info ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('UPDATE online_comic_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
+          try { await store.executeSql('UPDATE online_comic_info SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          logger.info(TAG, '✅ [ONLINE_COMIC_INFO] 列添加完成');
+        } else if (tableName === 'EBOOK_INFO') {
+          logger.info(TAG, '🔧 [EBOOK_INFO] 添加隐私列');
+          try { await store.executeSql('ALTER TABLE ebook_info ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('UPDATE ebook_info SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
+          logger.info(TAG, '✅ [EBOOK_INFO] 列添加完成');
+        } else if (tableName === 'COMIC_SOURCE') {
+          logger.info(TAG, '🔧 [COMIC_SOURCE] 添加扩展列');
+          try { await store.executeSql("ALTER TABLE comic_source ADD COLUMN cookies TEXT DEFAULT ''"); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN pkg TEXT'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN tabs_config TEXT'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN iconPath TEXT'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN requireProxy INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadCurrentChapter INTEGER DEFAULT 1'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadCurrentPages INTEGER DEFAULT 10'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadNextChapter INTEGER DEFAULT 1'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE comic_source ADD COLUMN preloadNextPages INTEGER DEFAULT -1'); } catch (e) {}
+          logger.info(TAG, '✅ [COMIC_SOURCE] 列添加完成');
+        } else if (tableName === 'EBOOK_READING_PROGRESS') {
+          logger.info(TAG, '🔧 [EBOOK_READING_PROGRESS] 添加扩展列');
+          try { await store.executeSql('ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT ''"); } catch (e) {}
+          logger.info(TAG, '✅ [EBOOK_READING_PROGRESS] 列添加完成');
+        } else if (tableName === 'NOVEL_BOOK') {
+          logger.info(TAG, '🔧 [NOVEL_BOOK] 添加隐私列');
+          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('UPDATE novel_book SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
+          try { await store.executeSql('UPDATE novel_book SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          logger.info(TAG, '✅ [NOVEL_BOOK] 列添加完成');
+        }
       } catch (error) {
         logger.error(TAG, `创建表/索引失败: ${tableName}`);
         logger.error(TAG, `失败的SQL语句: ${sql}`);
@@ -222,15 +274,8 @@ export class DatabaseManager {
         throw error as Error;
       }
     }
-    await this.ensureComicSourceCookiesColumn();
-    await this.ensureComicSourcePkgColumn();
-    await this.ensureComicSourcePreloadColumns();
-    await this.ensureComicSourceTabsConfigColumn();
-    await this.ensureComicSourceIconPathColumn();
-    await this.ensureComicSourceRequireProxyColumn();
-    await this.ensureEBookProgressColumns();
   }
-
+  
   /**
    * 创建索引
    */
@@ -246,271 +291,6 @@ export class DatabaseManager {
         logger.error(TAG, `创建索引失败: ${String(error)}`);
         // 索引创建失败不应该阻止数据库初始化
       }
-    }
-  }
-
-  /**
-   * 执行数据库迁移
-   */
-  private async runMigrations(): Promise<void> {
-    // 获取当前数据库版本
-    const currentVersion = await this.getDatabaseVersion();
-    
-    if (currentVersion < DATABASE_CONFIG.DATABASE_VERSION) {
-      logger.info(TAG, `开始数据库迁移，从版本 ${currentVersion} 到 ${DATABASE_CONFIG.DATABASE_VERSION}`);
-      
-      for (let version = currentVersion + 1; version <= DATABASE_CONFIG.DATABASE_VERSION; version++) {
-        await this.runMigrationForVersion(version);
-      }
-      
-      await this.updateDatabaseVersion(DATABASE_CONFIG.DATABASE_VERSION);
-      logger.info(TAG, '数据库迁移完成');
-    }
-  }
-
-  private async ensureComicSourceCookiesColumn(): Promise<void> {
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info('comic_source')");
-      let hasCookies: boolean = false;
-      if (rs.goToFirstRow()) {
-        do {
-          const colName = rs.getString(1);
-          if (colName === 'cookies') { hasCookies = true; break; }
-        } while (rs.goToNextRow());
-      }
-      rs.close();
-      if (!hasCookies) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN cookies TEXT DEFAULT ''");
-        logger.info(TAG, '已为comic_source添加cookies列');
-      }
-    } catch (error) {
-      logger.error(TAG, `确保comic_source.cookies列失败: ${String(error)}`);
-    }
-  }
-
-  private async ensureComicSourcePkgColumn(): Promise<void> {
-    logger.info(TAG, '开始检查并确保comic_source表的pkg列存在');
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info('comic_source')");
-      let hasPkg: boolean = false;
-      if (rs.goToFirstRow()) {
-        do {
-          const colName = rs.getString(1);
-          if (colName === 'pkg') { hasPkg = true; break; }
-        } while (rs.goToNextRow());
-      }
-      rs.close();
-      
-      if (!hasPkg) {
-        // 添加 pkg 列
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN pkg TEXT");
-        logger.info(TAG, '已为comic_source添加pkg列');
-        
-        // 为已存在的记录填充 pkg 值
-        const sources = await store.querySql("SELECT id, configJson FROM comic_source WHERE pkg IS NULL OR pkg = ''");
-        let updateCount = 0;
-        
-        if (sources.goToFirstRow()) {
-          do {
-            const id = sources.getLong(0);
-            const configJson = sources.getString(1);
-            
-            try {
-              const config: ESObject = JSON.parse(configJson) as ESObject;
-              const metadata: ESObject = config.metadata as ESObject;
-              if (metadata && metadata.id) {
-                const pkg = metadata.id as string;
-                await store.executeSql("UPDATE comic_source SET pkg = ? WHERE id = ?", [pkg, id]);
-                updateCount++;
-                logger.info(TAG, `已为图源 ID=${id} 填充 pkg=${pkg}`);
-              }
-            } catch (parseError) {
-              logger.warn(TAG, `解析图源 ID=${id} 的 configJson 失败: ${String(parseError)}`);
-            }
-          } while (sources.goToNextRow());
-        }
-        sources.close();
-        
-        logger.info(TAG, `已为 ${updateCount} 个图源填充 pkg 值`);
-        
-        // 为 pkg 列添加唯一约束（如果可能）
-        // 注意：SQLite 不支持直接添加唯一约束，需要重建表
-      }
-    } catch (error) {
-      logger.error(TAG, `确保comic_source.pkg列失败: ${String(error)}`);
-    }
-  }
-
-  /**
-   * 确保comic_source表有预加载设置列
-   */
-  private async ensureComicSourcePreloadColumns(): Promise<void> {
-    logger.info(TAG, '开始检查并确保comic_source表的预加载设置列存在');
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info('comic_source')");
-      let hasPreloadCurrentChapter: boolean = false;
-      let hasPreloadCurrentPages: boolean = false;
-      let hasPreloadNextChapter: boolean = false;
-      let hasPreloadNextPages: boolean = false;
-      
-      if (rs.goToFirstRow()) {
-        do {
-          const colName = rs.getString(1);
-          if (colName === 'preloadCurrentChapter') { hasPreloadCurrentChapter = true; }
-          if (colName === 'preloadCurrentPages') { hasPreloadCurrentPages = true; }
-          if (colName === 'preloadNextChapter') { hasPreloadNextChapter = true; }
-          if (colName === 'preloadNextPages') { hasPreloadNextPages = true; }
-        } while (rs.goToNextRow());
-      }
-      rs.close();
-      
-      // 添加缺失的列
-      if (!hasPreloadCurrentChapter) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN preloadCurrentChapter INTEGER DEFAULT 1");
-        logger.info(TAG, '已为comic_source添加preloadCurrentChapter列');
-      }
-      if (!hasPreloadCurrentPages) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN preloadCurrentPages INTEGER DEFAULT 3");
-        logger.info(TAG, '已为comic_source添加preloadCurrentPages列');
-      }
-      if (!hasPreloadNextChapter) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN preloadNextChapter INTEGER DEFAULT 1");
-        logger.info(TAG, '已为comic_source添加preloadNextChapter列');
-      }
-      if (!hasPreloadNextPages) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN preloadNextPages INTEGER DEFAULT -1");
-        logger.info(TAG, '已为comic_source添加preloadNextPages列');
-      }
-    } catch (error) {
-      logger.error(TAG, `确保comic_source预加载设置列失败: ${String(error)}`);
-    }
-  }
-
-  /**
-   * 确保comic_source表有tabs_config列
-   */
-  private async ensureComicSourceTabsConfigColumn(): Promise<void> {
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info(comic_source)");
-      
-      let hasTabsConfig = false;
-      
-      while (rs.goToNextRow()) {
-        const columnName = rs.getString(1);
-        if (columnName === 'tabs_config') {
-          hasTabsConfig = true;
-        }
-      }
-      rs.close();
-      
-      if (!hasTabsConfig) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN tabs_config TEXT");
-        logger.info(TAG, '已为comic_source添加tabs_config列');
-      }
-    } catch (error) {
-      logger.error(TAG, `确保comic_source tabs_config列失败: ${String(error)}`);
-    }
-  }
-
-  /**
-   * 确保comic_source表有iconPath列（图源图标路径）
-   */
-  private async ensureComicSourceIconPathColumn(): Promise<void> {
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info(comic_source)");
-      
-      let hasIconPath = false;
-      
-      while (rs.goToNextRow()) {
-        const columnName = rs.getString(1);
-        if (columnName === 'iconPath') {
-          hasIconPath = true;
-        }
-      }
-      rs.close();
-      
-      if (!hasIconPath) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN iconPath TEXT");
-        logger.info(TAG, '已为comic_source添加iconPath列');
-      }
-    } catch (error) {
-      logger.error(TAG, `确保comic_source iconPath列失败: ${String(error)}`);
-    }
-  }
-
-  /**
-   * 确保comic_source表有requireProxy列（是否需要代理访问）
-   */
-  private async ensureComicSourceRequireProxyColumn(): Promise<void> {
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info(comic_source)");
-      
-      let hasRequireProxy = false;
-      
-      while (rs.goToNextRow()) {
-        const columnName = rs.getString(1);
-        if (columnName === 'requireProxy') {
-          hasRequireProxy = true;
-        }
-      }
-      rs.close();
-      
-      if (!hasRequireProxy) {
-        await store.executeSql("ALTER TABLE comic_source ADD COLUMN requireProxy INTEGER DEFAULT 0");
-        logger.info(TAG, '已为comic_source添加requireProxy列');
-      }
-    } catch (error) {
-      logger.error(TAG, `确保comic_source requireProxy列失败: ${String(error)}`);
-    }
-  }
-
-  /**
-   * 确保ebook_reading_progress表有domPos和currentChapterIndex列
-   */
-  private async ensureEBookProgressColumns(): Promise<void> {
-    logger.info(TAG, '开始检查并确保ebook_reading_progress表的domPos和currentChapterIndex列存在');
-    try {
-      const store = this.getStore();
-      const rs = await store.querySql("PRAGMA table_info('ebook_reading_progress')");
-      let hasDomPos: boolean = false;
-      let hasCurrentChapterIndex: boolean = false;
-      
-      if (rs.goToFirstRow()) {
-        do {
-          const colName = rs.getString(1);
-          if (colName === 'domPos') { hasDomPos = true; }
-          if (colName === 'currentChapterIndex') { hasCurrentChapterIndex = true; }
-        } while (rs.goToNextRow());
-      }
-      rs.close();
-      
-      logger.info(TAG, `ebook_reading_progress表列检查结果: hasDomPos=${hasDomPos}, hasCurrentChapterIndex=${hasCurrentChapterIndex}`);
-      
-      if (!hasCurrentChapterIndex) {
-        try {
-          await store.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN currentChapterIndex INTEGER DEFAULT 0");
-          logger.info(TAG, '已为ebook_reading_progress添加currentChapterIndex列');
-        } catch (alterError) {
-          logger.warn(TAG, `添加currentChapterIndex列失败（可能已存在）: ${String(alterError)}`);
-        }
-      }
-      
-      if (!hasDomPos) {
-        try {
-          await store.executeSql("ALTER TABLE ebook_reading_progress ADD COLUMN domPos TEXT DEFAULT ''");
-          logger.info(TAG, '已为ebook_reading_progress添加domPos列');
-        } catch (alterError) {
-          logger.warn(TAG, `添加domPos列失败（可能已存在）: ${String(alterError)}`);
-        }
-      }
-    } catch (error) {
-      logger.error(TAG, `确保ebook_reading_progress列失败: ${String(error)}`);
     }
   }
 
@@ -549,28 +329,6 @@ export class DatabaseManager {
     }
   }
 
-  /**
-   * 执行特定版本的迁移脚本
-   */
-  private async runMigrationForVersion(version: number): Promise<void> {
-    const scripts = MIGRATION_SCRIPTS[version];
-    if (!scripts || scripts.length === 0) {
-      return;
-    }
-
-    const store = this.getStore();
-    
-    for (let i = 0; i < scripts.length; i++) {
-      const script = scripts[i];
-      try {
-        await store.executeSql(script);
-        logger.debug(TAG, `执行迁移脚本成功: ${script}`);
-      } catch (error) {
-        // 记录错误但不中断迁移，允许重复执行 ADD COLUMN 等操作
-        logger.warn(TAG, `执行迁移脚本失败 (可能是列已存在，将继续执行): ${String(error)}`);
-      }
-    }
-  }
 
   // ==================== CRUD 操作方法 ====================
 
@@ -578,24 +336,32 @@ export class DatabaseManager {
    * 插入记录（自动处理重复）
    */
   public async insert<T extends DatabaseRecord>(tableName: string, record: T): Promise<number> {
+    const store = this.getStore();
+    const dbRecord = this.convertRecordToDbFormat(tableName, record);
+    
+    logger.debug(TAG, `准备插入记录到表: ${tableName}`);
+    
+    // 使用 INSERT OR REPLACE 来自动处理重复记录
+    const columns = Object.keys(dbRecord);
+    const placeholders = columns.map(() => '?').join(', ');
+    const sql = `INSERT OR REPLACE INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
+    const values = Object.values(dbRecord);
+    
+    // 详细日志：输出SQL和参数
+    logger.debug(TAG, `SQL: ${sql}`);
+    logger.debug(TAG, `列: ${columns.join(', ')}`);
+    logger.debug(TAG, `值数量: ${values.length}, 列数量: ${columns.length}`);
+    logger.debug(TAG, `前5个值: ${JSON.stringify(values.slice(0, 5))}`);
+    
     try {
-      const store = this.getStore();
-      const dbRecord = this.convertRecordToDbFormat(tableName, record);
-      
-      logger.debug(TAG, `准备插入记录到表: ${tableName}`);
-      
-      // 使用 INSERT OR REPLACE 来自动处理重复记录
-      const columns = Object.keys(dbRecord);
-      const placeholders = columns.map(() => '?').join(', ');
-      const sql = `INSERT OR REPLACE INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
-      const values = Object.values(dbRecord);
-      
       await store.executeSql(sql, values);
       logger.debug(TAG, `插入/更新记录成功，表: ${tableName}`);
       return 0; // executeSql不返回rowId
     } catch (error) {
       logger.error(TAG, `插入记录失败，表: ${tableName}`);
       logger.error(TAG, `错误详情: ${String(error)}`);
+      logger.error(TAG, `SQL: ${sql}`);
+      logger.error(TAG, `列: ${columns.join(', ')}`);
       throw error as Error;
     }
   }
@@ -824,13 +590,15 @@ export class DatabaseManager {
   /**
    * 执行SQL语句
    */
-  public async executeSql(sql: string, args?: DatabaseValue[]): Promise<void> {
+  public async executeSql(sql: string, args?: DatabaseValue[]): Promise<number> {
     try {
       const store = this.getStore();
       await store.executeSql(sql, args);
       logger.debug(TAG, `SQL执行成功: ${sql}`);
+      // HarmonyOS的executeSql不返回影响行数，返回1表示执行成功
+      return 1;
     } catch (error) {
-      logger.error(TAG, `SQL执行失败: ${String(error)}`);
+      logger.error(TAG, `SQL执行失败: ${sql}, 错误: ${String(error)}`);
       throw error as Error;
     }
   }
@@ -1312,6 +1080,10 @@ export class DatabaseManager {
         record.requireProxy = value;
       } else if (columnName === 'sourcePkg') {
         record.sourcePkg = value;
+      } else if (columnName === 'isNSFW') {
+        record.isNSFW = value;
+      } else if (columnName === 'isPrivate') {
+        record.isPrivate = value;
       }
       // 其他字段可以根据需要继续添加
     }
@@ -1475,6 +1247,31 @@ export class DatabaseManager {
             case 'addTime':
               if (typeof value === 'number') {
                 comicInfoRecord.addTime = value;
+              }
+              break;
+            case 'isNSFW':
+              if (typeof value === 'number') {
+                comicInfoRecord.isNSFW = value;
+              }
+              break;
+            case 'isPrivate':
+              if (typeof value === 'number') {
+                comicInfoRecord.isPrivate = value;
+              }
+              break;
+            case 'externalId':
+              if (typeof value === 'string') {
+                comicInfoRecord.externalId = value;
+              }
+              break;
+            case 'coverLocalPath':
+              if (typeof value === 'string') {
+                comicInfoRecord.coverLocalPath = value;
+              }
+              break;
+            case 'contentType':
+              if (typeof value === 'string') {
+                comicInfoRecord.contentType = value;
               }
               break;
           }

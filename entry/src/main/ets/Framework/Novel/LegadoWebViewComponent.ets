@@ -32,8 +32,9 @@ export struct LegadoWebViewComponent {
 
   build() {
     Stack() {
+      // 使用本地HTML页面而不是about:blank，避免跨域限制
       Web({
-        src: 'about:blank',
+        src: $rawfile('js_executor.html'),
         controller: this.webviewController
       })
         .width(1)

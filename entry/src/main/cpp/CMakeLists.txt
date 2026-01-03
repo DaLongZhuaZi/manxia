@@ -12,9 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # set命令，格式为set(key value)，表示设置key的值为value
 set(NATIVERENDER_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 
-# 日志打印配置
-add_definitions("-DLOG_DOMAIN=0x3200")
-add_definitions("-DLOG_TAG=\"JSVMEngine\"")
+# 日志打印配置（仅用于jsvm_engine，不传递到子目录）
+# 注意：使用target_compile_definitions而不是add_definitions，避免影响子目录
 
 # 设置头文件的搜索目录
 include_directories(
@@ -33,3 +32,12 @@ target_link_libraries(jsvm_engine PUBLIC
     libjsvm.so 
     libhilog_ndk.z.so
 )
+
+# jsvm_engine专用日志配置
+target_compile_definitions(jsvm_engine PRIVATE
+    LOG_DOMAIN=0x3200
+    LOG_TAG="JSVMEngine"
+)
+
+# QuickJS引擎模块（可选，用于替代JSVM）
+add_subdirectory(quickjs)

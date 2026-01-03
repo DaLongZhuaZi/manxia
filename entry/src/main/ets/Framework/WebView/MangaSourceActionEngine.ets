@@ -110,6 +110,13 @@ export class MangaSourceActionEngine {
   }
 
   /**
+   * 设置CF验证需要用户交互时的回调
+   */
+  setOnNeedCfVerify(callback: () => void): void {
+    this.antiCrawler.setOnNeedUserInteraction(callback);
+  }
+
+  /**
    * 执行单个操作
    */
   async executeAction(action: Action, context: ActionContext): Promise<ActionResult> {
@@ -712,9 +719,9 @@ export class MangaSourceActionEngine {
    * 执行Cloudflare绕过操作
    */
   private async executeCloudflareBypass(action: CloudflareBypassAction, context: ActionContext): Promise<boolean> {
-    logger.info(TAG, `绕过Cloudflare: ${action.method}`);
+    logger.info(TAG, `绕过Cloudflare: ${action.method}, maxWaitTime: ${action.maxWaitTime}`);
 
-    const result = await this.antiCrawler.bypassCloudflare();
+    const result = await this.antiCrawler.bypassCloudflare(action.method, action.maxWaitTime);
     return result.success;
   }
 

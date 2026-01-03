@@ -112,6 +112,16 @@ export class NovelDataManager {
       try {
         await store.executeSql(table.sql);
         logger.debug(TAG, `创建表成功: ${table.name}`);
+        
+        // 为 novel_book 表添加可能缺失的列
+        if (table.name === 'novel_book') {
+          logger.info(TAG, '🔧 [NOVEL_BOOK] 添加隐私列');
+          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isPrivate INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('ALTER TABLE novel_book ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('UPDATE novel_book SET isPrivate = 0 WHERE isPrivate IS NULL'); } catch (e) {}
+          try { await store.executeSql('UPDATE novel_book SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          logger.info(TAG, '✅ [NOVEL_BOOK] 列添加完成');
+        }
       } catch (error) {
         logger.error(TAG, `创建表失败: ${table.name}, ${String(error)}`);
       }
@@ -209,8 +219,8 @@ export class NovelDataManager {
       (id, sourceId, sourceName, bookUrl, name, author, kind, intro, coverUrl, 
        coverLocalPath, tocUrl, latestChapterTitle, wordCount, chapterCount,
        readStatus, lastReadChapterId, lastReadChapterIndex, lastReadPosition,
-       lastReadTime, isFavorite, createTime, updateTime)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+       lastReadTime, isFavorite, isPrivate, isNSFW, createTime, updateTime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await store.executeSql(sql, [
       id, book.sourceId, book.sourceName, book.bookUrl, book.name,
@@ -219,7 +229,10 @@ export class NovelDataManager {
       book.wordCount || '', book.chapterCount || 0, book.readStatus || 'unread',
       book.lastReadChapterId || '', book.lastReadChapterIndex || 0,
       book.lastReadPosition || 0, book.lastReadTime || 0,
-      book.isFavorite ? 1 : 0, book.createTime || now, now
+      book.isFavorite ? 1 : 0,
+      book.isPrivate ? 1 : 0,  // isPrivate默认为0（普通内容）
+      book.isNSFW ? 1 : 0,     // isNSFW默认为0（非NSFW内容）
+      book.createTime || now, now
     ]);
 
     return id;
@@ -262,6 +275,54 @@ export class NovelDataManager {
   }
 
   /**
+   * [新增] 获取隐私小说列表
+   * @returns Promise<NovelBook[]> 隐私小说列表
+   */
+  async getPrivateBooks(): Promise<NovelBook[]> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      'SELECT * FROM novel_book WHERE isPrivate = 1 ORDER BY lastReadTime DESC'
+    );
+    return this.parseBookResults(rs);
+  }
+
+  /**
+   * [新增] 获取非隐私小说列表
+   * @returns Promise<NovelBook[]> 非隐私小说列表
+   */
+  async getNonPrivateBooks(): Promise<NovelBook[]> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      'SELECT * FROM novel_book WHERE (isPrivate = 0 OR isPrivate IS NULL) ORDER BY lastReadTime DESC'
+    );
+    return this.parseBookResults(rs);
+  }
+
+  /**
+   * [新增] 获取SFW（非NSFW）小说列表
+   * @returns Promise<NovelBook[]> SFW小说列表
+   */
+  async getSFWBooks(): Promise<NovelBook[]> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      'SELECT * FROM novel_book WHERE (isNSFW = 0 OR isNSFW IS NULL) ORDER BY lastReadTime DESC'
+    );
+    return this.parseBookResults(rs);
+  }
+
+  /**
+   * [新增] 获取NSFW小说列表
+   * @returns Promise<NovelBook[]> NSFW小说列表
+   */
+  async getNSFWBooks(): Promise<NovelBook[]> {
+    const store = this.getStore();
+    const rs = await store.querySql(
+      'SELECT * FROM novel_book WHERE isNSFW = 1 ORDER BY lastReadTime DESC'
+    );
+    return this.parseBookResults(rs);
+  }
+
+  /**
    * 解析书籍查询结果
    */
   private parseBookResults(rs: relationalStore.ResultSet): NovelBook[] {
@@ -290,6 +351,8 @@ export class NovelDataManager {
           lastReadTime: rs.getLong(rs.getColumnIndex('lastReadTime')),
           totalReadingTime: rs.getLong(rs.getColumnIndex('totalReadingTime')),
           isFavorite: rs.getLong(rs.getColumnIndex('isFavorite')) === 1,
+          isPrivate: rs.getLong(rs.getColumnIndex('isPrivate')) === 1,  // 读取隐私状态
+          isNSFW: rs.getLong(rs.getColumnIndex('isNSFW')) === 1,        // 读取NSFW状态
           createTime: rs.getLong(rs.getColumnIndex('createTime')),
           updateDbTime: rs.getLong(rs.getColumnIndex('updateTime'))
         });

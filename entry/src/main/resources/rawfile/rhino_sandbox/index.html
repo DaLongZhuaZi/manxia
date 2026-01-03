@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rhino WASM Sandbox</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: monospace; }
+        #status { padding: 10px; background: #f0f0f0; }
+        #console { padding: 10px; white-space: pre-wrap; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .error { color: red; }
+        .success { color: green; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <div id="status">Rhino Sandbox: Initializing...</div>
+    <div id="console"></div>
+    
+    <!-- Jsoup纯JS实现（DOM解析） -->
+    <script src="jsoup_impl.js"></script>
+    
+    <!-- 离线模式实现（始终加载作为降级方案） -->
+    <script src="rhino_offline.js"></script>
+    
+    <!-- 配置：本地JAR文件路径 -->
+    <script>
+        window.rhinoConfig = {
+            // 本地JAR文件路径（相对于rawfile目录）
+            rhinoJarPath: 'lib/rhino-1.7.14.jar',
+            jsoupJarPath: 'lib/jsoup-1.17.2.jar',
+            // CheerpJ配置
+            useCheerpJ: true,           // 是否尝试使用CheerpJ
+            cheerpjTimeout: 10000,      // CheerpJ加载超时（毫秒）
+            preferOffline: false,       // 是否优先使用离线模式
+            // CheerpJ CDN地址（可配置为本地地址）
+            cheerpjCdn: 'https://cjrtnc.leaningtech.com/3.0/cj3loader.js'
+        };
+    </script>
+    
+    <!-- CheerpJ Runtime - 尝试从CDN加载，失败则使用离线模式 -->
+    <script>
+        window.cheerpjLoadFailed = false;
+        window.cheerpjLoadTimeout = null;
+        
+        // 检查是否优先使用离线模式
+        if (window.rhinoConfig && window.rhinoConfig.preferOffline) {
+            window.cheerpjLoadFailed = true;
+            console.log('[RhinoSandbox] Configured to prefer offline mode');
+        } else if (window.rhinoConfig && window.rhinoConfig.useCheerpJ) {
+            // 设置CheerpJ加载超时
+            const timeout = (window.rhinoConfig && window.rhinoConfig.cheerpjTimeout) || 10000;
+            window.cheerpjLoadTimeout = setTimeout(function() {
+                if (typeof cheerpjInit === 'undefined') {
+                    console.log('[RhinoSandbox] CheerpJ load timeout, switching to offline mode');
+                    window.cheerpjLoadFailed = true;
+                }
+            }, timeout);
+        } else {
+            window.cheerpjLoadFailed = true;
+        }
+    </script>
+    <script src="https://cjrtnc.leaningtech.com/3.0/cj3loader.js" onerror="window.cheerpjLoadFailed = true; console.log('[RhinoSandbox] CheerpJ load failed, using offline mode');"></script>
+    
+    <script>
+        // 初始化状态
+        window.rhinoSandbox = {
+            ready: false,
+            cheerpjReady: false,
+            rhinoReady: false,
+            error: null,
+            pendingTasks: [],
+            results: {}
+        };
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const consoleDiv = document.getElementById('console');
+            const line = document.createElement('div');
+            line.className = type;
+            line.textContent = `[${new Date().toISOString()}] ${message}`;
+            consoleDiv.appendChild(line);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            console.log(`[RhinoSandbox] ${message}`);
+        }
+
+        function updateStatus(text) {
+            document.getElementById('status').textContent = `Rhino Sandbox: ${text}`;
+        }
+
+        // 初始化CheerpJ和Rhino（带降级支持）
+        async function initializeSandbox() {
+            // 清除超时定时器
+            if (window.cheerpjLoadTimeout) {
+                clearTimeout(window.cheerpjLoadTimeout);
+            }
+            
+            // 检查是否需要使用离线模式
+            const useCheerpJ = !window.cheerpjLoadFailed && typeof cheerpjInit !== 'undefined';
+            
+            if (useCheerpJ) {
+                // 尝试使用CheerpJ模式
+                try {
+                    await initializeCheerpJMode();
+                    return;
+                } catch (error) {
+                    log(`CheerpJ mode failed: ${error.message}, falling back to offline mode`, 'error');
+                }
+            }
+            
+            // 使用离线模式
+            await initializeOfflineMode();
+        }
+        
+        // CheerpJ模式初始化
+        async function initializeCheerpJMode() {
+            updateStatus('Loading CheerpJ...');
+            log('Starting CheerpJ initialization...');
+
+            // 获取本地JAR路径
+            const rhinoJarPath = window.rhinoConfig?.rhinoJarPath || 'lib/rhino-1.7.14.jar';
+            const jsoupJarPath = window.rhinoConfig?.jsoupJarPath || 'lib/jsoup-1.17.2.jar';
+
+            // 初始化CheerpJ，配置本地文件系统
+            await cheerpjInit({
+                status: 'none',
+                // 配置虚拟文件系统，映射本地JAR文件
+                javaProperties: ['java.library.path=/app/lib'],
+                natives: {
+                    'Java_io_legado_app_help_JsExtensions_nativeLog': (lib, message) => {
+                        log(`[Rhino] ${message}`, 'info');
+                    }
+                }
+            });
+            
+            window.rhinoSandbox.cheerpjReady = true;
+            window.rhinoSandbox.mode = 'cheerpj';
+            log('CheerpJ initialized successfully', 'success');
+            updateStatus('Loading Rhino Engine...');
+
+            // 加载本地Rhino JAR
+            // CheerpJ 3.0使用cheerpjRunLibrary加载JAR
+            try {
+                // 尝试加载本地JAR（需要通过HTTP服务或rawfile协议访问）
+                const rhinoLib = await cheerpjRunLibrary('/app/' + rhinoJarPath);
+                log('Rhino JAR loaded from local', 'success');
+            } catch (e) {
+                log('Failed to load local Rhino JAR, trying default path', 'info');
+                const rhinoLib = await cheerpjRunLibrary('/app/rhino.jar');
+            }
+            
+            window.rhinoSandbox.rhinoReady = true;
+            log('Rhino engine loaded successfully', 'success');
+            
+            // 加载Jsoup JAR
+            updateStatus('Loading Jsoup...');
+            try {
+                const jsoupLib = await cheerpjRunLibrary('/app/' + jsoupJarPath);
+                window.rhinoSandbox.jsoupReady = true;
+                log('Jsoup library loaded successfully', 'success');
+            } catch (e) {
+                log('Jsoup JAR not available, using JS implementation', 'info');
+                window.rhinoSandbox.jsoupReady = false;
+            }
+
+            // 初始化Rhino Bridge
+            if (typeof initRhinoBridge === 'function') {
+                await initRhinoBridge();
+            }
+
+            window.rhinoSandbox.ready = true;
+            updateStatus('Ready (CheerpJ Mode)');
+            log('Sandbox fully initialized in CheerpJ mode', 'success');
+
+            processPendingTasks();
+            notifyArkTS('sandboxReady', { success: true, mode: 'cheerpj', jsoupReady: window.rhinoSandbox.jsoupReady });
+        }
+        
+        // 离线模式初始化
+        async function initializeOfflineMode() {
+            try {
+                updateStatus('Initializing offline mode...');
+                log('Starting offline Rhino sandbox initialization...');
+                window.rhinoSandbox.mode = 'offline';
+
+                // 初始化离线Rhino环境
+                if (typeof initOfflineRhino === 'function') {
+                    await initOfflineRhino();
+                    window.rhinoSandbox.rhinoReady = true;
+                    log('Offline Rhino environment initialized', 'success');
+                } else {
+                    throw new Error('Offline Rhino module not loaded');
+                }
+
+                window.rhinoSandbox.ready = true;
+                updateStatus('Ready (Offline Mode)');
+                log('Sandbox fully initialized in offline mode', 'success');
+
+                processPendingTasks();
+                notifyArkTS('sandboxReady', { success: true, mode: 'offline' });
+
+            } catch (error) {
+                const errorMsg = error.message || String(error);
+                window.rhinoSandbox.error = errorMsg;
+                log(`Offline initialization failed: ${errorMsg}`, 'error');
+                updateStatus(`Error: ${errorMsg}`);
+                notifyArkTS('sandboxReady', { success: false, error: errorMsg });
+            }
+        }
+
+        // 处理等待中的任务
+        function processPendingTasks() {
+            while (window.rhinoSandbox.pendingTasks.length > 0) {
+                const task = window.rhinoSandbox.pendingTasks.shift();
+                // 根据模式选择执行函数
+                if (window.rhinoSandbox.mode === 'offline') {
+                    executeOfflineScript(task.taskId, task.script, task.context);
+                } else if (typeof executeRhinoScript === 'function') {
+                    executeRhinoScript(task.taskId, task.script, task.context);
+                } else {
+                    executeOfflineScript(task.taskId, task.script, task.context);
+                }
+            }
+        }
+
+        // 通知ArkTS
+        function notifyArkTS(event, data) {
+            // 使用自定义协议通知ArkTS
+            const message = JSON.stringify({ event, data, timestamp: Date.now() });
+            
+            // 方法1: 通过URL scheme
+            // window.location.href = `rhinosandbox://${event}?data=${encodeURIComponent(message)}`;
+            
+            // 方法2: 通过console.log（ArkTS可以监听）
+            console.log(`__RHINO_SANDBOX_EVENT__:${message}`);
+            
+            // 方法3: 存储到全局变量供ArkTS轮询
+            window.rhinoSandbox.lastEvent = { event, data, timestamp: Date.now() };
+        }
+
+        // 执行脚本（由ArkTS调用）
+        window.executeScript = async function(taskId, script, contextJson) {
+            if (!window.rhinoSandbox.ready) {
+                // 沙箱未就绪，加入等待队列
+                window.rhinoSandbox.pendingTasks.push({
+                    taskId,
+                    script,
+                    context: contextJson ? JSON.parse(contextJson) : {}
+                });
+                return JSON.stringify({ pending: true, taskId });
+            }
+
+            try {
+                const context = contextJson ? JSON.parse(contextJson) : {};
+                let result;
+                
+                // 根据模式选择执行函数
+                if (window.rhinoSandbox.mode === 'offline') {
+                    result = await executeOfflineScript(taskId, script, context);
+                } else if (typeof executeRhinoScript === 'function') {
+                    result = await executeRhinoScript(taskId, script, context);
+                } else {
+                    result = await executeOfflineScript(taskId, script, context);
+                }
+                
+                return JSON.stringify({ success: true, taskId, result });
+            } catch (error) {
+                const errorMsg = error.message || String(error);
+                return JSON.stringify({ success: false, taskId, error: errorMsg });
+            }
+        };
+
+        // 获取任务结果（由ArkTS轮询）
+        window.getTaskResult = function(taskId) {
+            const result = window.rhinoSandbox.results[taskId];
+            if (result) {
+                delete window.rhinoSandbox.results[taskId];
+                return JSON.stringify(result);
+            }
+            return JSON.stringify({ pending: true });
+        };
+
+        // 检查沙箱状态（由ArkTS调用）
+        window.getSandboxStatus = function() {
+            return JSON.stringify({
+                ready: window.rhinoSandbox.ready,
+                cheerpjReady: window.rhinoSandbox.cheerpjReady,
+                rhinoReady: window.rhinoSandbox.rhinoReady,
+                error: window.rhinoSandbox.error,
+                pendingCount: window.rhinoSandbox.pendingTasks.length
+            });
+        };
+
+        // 页面加载完成后初始化
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeSandbox);
+        } else {
+            initializeSandbox();
+        }
+    </script>
+</body>
+</html>

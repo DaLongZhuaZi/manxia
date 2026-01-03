@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Markdown Preview</title>
+  <link rel="stylesheet" href="libs/github-markdown.css">
+  <link rel="stylesheet" href="libs/highlight.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+    body {
+      padding: 16px;
+      background-color: #0d1117;
+      color: #c9d1d9;
+    }
+    body.light-theme {
+      background-color: #ffffff;
+      color: #24292f;
+    }
+    .markdown-body {
+      max-width: 100%;
+      background-color: transparent;
+      color: inherit;
+    }
+    /* 深色模式文字颜色 */
+    .markdown-body h1, .markdown-body h2, .markdown-body h3,
+    .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+      color: #c9d1d9;
+      border-bottom-color: #30363d;
+    }
+    .markdown-body p, .markdown-body li, .markdown-body td {
+      color: #c9d1d9;
+    }
+    body.light-theme .markdown-body h1, body.light-theme .markdown-body h2,
+    body.light-theme .markdown-body h3, body.light-theme .markdown-body h4,
+    body.light-theme .markdown-body h5, body.light-theme .markdown-body h6 {
+      color: #24292f;
+      border-bottom-color: #d0d7de;
+    }
+    body.light-theme .markdown-body p, body.light-theme .markdown-body li,
+    body.light-theme .markdown-body td {
+      color: #24292f;
+    }
+    .markdown-body pre {
+      background-color: #161b22;
+      border-radius: 6px;
+      padding: 16px;
+      overflow-x: auto;
+    }
+    body.light-theme .markdown-body pre {
+      background-color: #f6f8fa;
+    }
+    .markdown-body code {
+      background-color: rgba(110, 118, 129, 0.4);
+      border-radius: 6px;
+      padding: 0.2em 0.4em;
+      font-size: 85%;
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+    }
+    .markdown-body img {
+      max-width: 100%;
+      height: auto;
+    }
+    .markdown-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+    }
+    .markdown-body th, .markdown-body td {
+      border: 1px solid #30363d;
+      padding: 8px 12px;
+    }
+    body.light-theme .markdown-body th,
+    body.light-theme .markdown-body td {
+      border-color: #d0d7de;
+    }
+    .markdown-body th {
+      background-color: #161b22;
+    }
+    body.light-theme .markdown-body th {
+      background-color: #f6f8fa;
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid #30363d;
+      padding-left: 16px;
+      color: #8b949e;
+      margin: 16px 0;
+    }
+    body.light-theme .markdown-body blockquote {
+      border-left-color: #d0d7de;
+      color: #57606a;
+    }
+    .markdown-body hr {
+      border: none;
+      border-top: 1px solid #30363d;
+      margin: 24px 0;
+    }
+    body.light-theme .markdown-body hr {
+      border-top-color: #d0d7de;
+    }
+    .markdown-body a {
+      color: #58a6ff;
+      text-decoration: none;
+    }
+    .markdown-body a:hover {
+      text-decoration: underline;
+    }
+    body.light-theme .markdown-body a {
+      color: #0969da;
+    }
+    .markdown-body h1, .markdown-body h2 {
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 0.3em;
+    }
+    body.light-theme .markdown-body h1,
+    body.light-theme .markdown-body h2 {
+      border-bottom-color: #d0d7de;
+    }
+    /* 任务列表样式 */
+    .markdown-body .task-list-item {
+      list-style-type: none;
+    }
+    .markdown-body .task-list-item input {
+      margin-right: 8px;
+    }
+    /* 数学公式样式 */
+    .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+    /* 脚注样式 */
+    .footnotes {
+      border-top: 1px solid #30363d;
+      margin-top: 32px;
+      padding-top: 16px;
+      font-size: 14px;
+    }
+    body.light-theme .footnotes {
+      border-top-color: #d0d7de;
+    }
+    #loading {
+      text-align: center;
+      padding: 40px;
+      color: #8b949e;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">加载中...</div>
+  <article id="content" class="markdown-body" style="display: none;"></article>
+  
+  <!-- 优先使用本地库，回退到CDN -->
+  <script src="libs/marked.min.js" onerror="loadFromCDN('marked')"></script>
+  <script src="libs/highlight.min.js" onerror="loadFromCDN('hljs')"></script>
+  <script src="libs/purify.min.js" onerror="loadFromCDN('purify')"></script>
+  <script>
+    // CDN回退加载
+    function loadFromCDN(lib) {
+      var script = document.createElement('script');
+      switch(lib) {
+        case 'marked':
+          script.src = 'https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js';
+          break;
+        case 'hljs':
+          script.src = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js';
+          break;
+        case 'purify':
+          script.src = 'https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js';
+          break;
+      }
+      document.head.appendChild(script);
+    }
+  </script>
+  <script>
+    // 配置marked
+    marked.setOptions({
+      highlight: function(code, lang) {
+        if (typeof hljs === 'undefined') {
+          return code;
+        }
+        if (lang && hljs.getLanguage(lang)) {
+          try {
+            return hljs.highlight(code, { language: lang }).value;
+          } catch (e) {
+            return code;
+          }
+        }
+        try {
+          return hljs.highlightAuto(code).value;
+        } catch (e) {
+          return code;
+        }
+      },
+      breaks: true,
+      gfm: true,
+      headerIds: true,
+      mangle: false,
+      pedantic: false,
+      sanitize: false,
+      smartLists: true,
+      smartypants: true,
+      xhtml: false
+    });
+    
+    // 自定义渲染器
+    const renderer = new marked.Renderer();
+    
+    // 任务列表支持
+    renderer.listitem = function(text, task, checked) {
+      if (task) {
+        return `<li class="task-list-item"><input type="checkbox" ${checked ? 'checked' : ''} disabled> ${text}</li>`;
+      }
+      return `<li>${text}</li>`;
+    };
+    
+    // 链接在新窗口打开
+    renderer.link = function(href, title, text) {
+      const titleAttr = title ? ` title="${title}"` : '';
+      return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    };
+    
+    // 图片懒加载
+    renderer.image = function(href, title, text) {
+      const titleAttr = title ? ` title="${title}"` : '';
+      const altAttr = text ? ` alt="${text}"` : '';
+      return `<img src="${href}"${altAttr}${titleAttr} loading="lazy">`;
+    };
+    
+    marked.use({ renderer });
+    
+    // 渲染Markdown
+    function renderMarkdown(markdown) {
+      document.getElementById('loading').style.display = 'none';
+      const content = document.getElementById('content');
+      content.style.display = 'block';
+      
+      try {
+        // 解析Markdown
+        const html = marked.parse(markdown || '');
+        // 使用DOMPurify清理HTML，防止XSS攻击
+        const cleanHtml = DOMPurify.sanitize(html, {
+          ADD_TAGS: ['iframe'],
+          ADD_ATTR: ['target', 'rel', 'loading']
+        });
+        content.innerHTML = cleanHtml;
+        
+        // 高亮代码块（检查hljs是否可用）
+        if (typeof hljs !== 'undefined') {
+          content.querySelectorAll('pre code').forEach((block) => {
+            hljs.highlightElement(block);
+          });
+        }
+        
+        // 通知ArkTS渲染完成
+        notifyRenderComplete();
+      } catch (e) {
+        content.innerHTML = `<p style="color: #f85149;">渲染错误: ${e.message}</p>`;
+        console.error('Markdown render error:', e);
+      }
+    }
+    
+    // 设置主题
+    function setTheme(theme) {
+      if (theme === 'light') {
+        document.body.classList.add('light-theme');
+      } else {
+        document.body.classList.remove('light-theme');
+      }
+    }
+    
+    // 设置字体大小
+    function setFontSize(size) {
+      document.body.style.fontSize = size + 'px';
+    }
+    
+    // 滚动到指定位置
+    function scrollTo(position) {
+      window.scrollTo({ top: position, behavior: 'smooth' });
+    }
+    
+    // 滚动到指定标题
+    function scrollToHeading(id) {
+      const element = document.getElementById(id);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+    
+    // 获取目录
+    function getTableOfContents() {
+      const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      const toc = [];
+      headings.forEach((heading, index) => {
+        const level = parseInt(heading.tagName.charAt(1));
+        const text = heading.textContent;
+        const id = heading.id || `heading-${index}`;
+        if (!heading.id) {
+          heading.id = id;
+        }
+        toc.push({ level, text, id });
+      });
+      return JSON.stringify(toc);
+    }
+    
+    // 通知ArkTS渲染完成
+    function notifyRenderComplete() {
+      try {
+        if (window.arkts && window.arkts.onRenderComplete) {
+          window.arkts.onRenderComplete();
+        }
+      } catch (e) {
+        console.error('notifyRenderComplete error:', e);
+      }
+    }
+    
+    // 通知ArkTS链接被点击
+    document.addEventListener('click', function(e) {
+      if (e.target.tagName === 'A') {
+        const href = e.target.getAttribute('href');
+        if (href && !href.startsWith('#')) {
+          e.preventDefault();
+          try {
+            if (window.arkts && window.arkts.onLinkClick) {
+              window.arkts.onLinkClick(href);
+            }
+          } catch (err) {
+            console.error('onLinkClick error:', err);
+          }
+        }
+      }
+    });
+    
+    // 页面加载完成
+    document.addEventListener('DOMContentLoaded', function() {
+      try {
+        if (window.arkts && window.arkts.onPageReady) {
+          window.arkts.onPageReady();
+        }
+      } catch (e) {
+        console.error('onPageReady error:', e);
+      }
+    });
+  </script>
+</body>
+</html>
