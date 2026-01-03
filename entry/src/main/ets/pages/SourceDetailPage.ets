@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
@@ -30,6 +31,7 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
 import { SourceCredentials } from '../Framework/Data/DataManager';
+import { ProxyManager } from '../Framework/Network/ProxyManager';
 
 const TAG = 'SourceDetailPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -39,6 +41,8 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
  */
 interface SourceDetailParams {
   sourceId: number;
+  initialTab?: string;  // 初始标签ID（如 'popular', 'latest', 'search'）
+  searchKeyword?: string;  // 搜索关键词（当initialTab为'search'时使用）
 }
 
 interface MangaDetailParams {
@@ -120,6 +124,7 @@ export struct SourceDetailPage {
   @State showSearchDialog: boolean = false; // 显示搜索对话框
   @State showLoginDialog: boolean = false; // 显示登录对话框（WebView登录）
   @State showCredentialDialog: boolean = false; // 显示凭据登录对话框
+  @State showCfVerifyDialog: boolean = false; // 显示Cloudflare验证对话框
   @State isLoggedIn: boolean = false; // 登录状态
   @State requiresCredentialLogin: boolean = false; // 是否需要凭据登录
   @State userAvatarUrl: string = ''; // 用户头像URL
@@ -180,8 +185,12 @@ export struct SourceDetailPage {
         this.sourceId = param.sourceId as number;
         logger.info(TAG, `加载图源详情，ID: ${this.sourceId}`);
         
+        // 保存初始标签和搜索关键词参数
+        const initialTab = param.initialTab as string | undefined;
+        const searchKeyword = param.searchKeyword as string | undefined;
+        
         // 异步初始化
-        this.initializeAsync();
+        this.initializeAsyncWithParams(initialTab, searchKeyword);
       }
     }
     
@@ -195,15 +204,33 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 异步初始化
+   * 异步初始化（无参数版本，向后兼容）
    */
   private async initializeAsync(): Promise<void> {
+    await this.initializeAsyncWithParams(undefined, undefined);
+  }
+
+  /**
+   * 异步初始化（带参数版本）
+   */
+  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string): Promise<void> {
     try {
       // 首先加载 sourceName（用于页面跳转参数传递）
       await this.loadSourceName();
       
       // 加载图源信息
       await this.loadSourceInfo();
+      
+      // 检查图源是否需要代理，如果需要则确保代理已应用
+      if (this.sourceInfo?.requireProxy) {
+        const proxyManager = ProxyManager.getInstance();
+        await proxyManager.initialize();
+        if (proxyManager.isEnabled()) {
+          logger.info(TAG, `图源 ${this.sourceInfo.name} 需要代理，代理已启用`);
+        } else {
+          logger.warn(TAG, `图源 ${this.sourceInfo.name} 需要代理，但代理未启用`);
+        }
+      }
       
       // 检测图源类型并初始化相应系统
       await this.detectAndInitializeSourceType();
@@ -228,18 +255,43 @@ export struct SourceDetailPage {
       // 加载标签页配置
       await this.loadTabsConfig();
       
+      // 处理初始标签参数
+      if (initialTab) {
+        // 如果是搜索标签且有关键词，先设置关键词再执行搜索
+        if (initialTab === 'search' && searchKeyword) {
+          this.searchKeyword = searchKeyword;
+          this.addOrUpdateSearchTab();
+          this.currentTabId = 'search';
+          logger.info(TAG, `初始化搜索标签，关键词: ${searchKeyword}`);
+        } else {
+          // 切换到指定标签
+          const targetTab = this.tabsConfig.find(t => t.id === initialTab);
+          if (targetTab) {
+            this.currentTabId = initialTab;
+            logger.info(TAG, `初始化切换到标签: ${initialTab}`);
+          }
+        }
+      }
+      
       // 加载筛选设置
       await this.loadFilterSettings();
       
-      // 加载漫画列表
-      await this.loadComics();
+      // 加载漫画列表（如果是搜索标签，执行搜索）
+      if (this.currentTabId === 'search' && searchKeyword) {
+        await this.performSearch();
+      } else {
+        await this.loadComics();
+      }
     } catch (error) {
       logger.error(TAG, '初始化失败', String(error));
     }
   }
 
+  private lifecycle = new PageLifecycleManager('SourceDetailPage', { enableDebug: true });
+
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     
     // 清理设备方向监听器
@@ -676,6 +728,12 @@ export struct SourceDetailPage {
       };
       
       this.mangaSourceEngine = new MangaSourceEngine(engineConfig);
+      
+      // 设置CF验证回调，当需要用户交互时显示验证对话框
+      this.mangaSourceEngine.setOnNeedCfVerify(() => {
+        logger.info(TAG, '收到CF验证回调，显示验证对话框');
+        this.showCfVerifyDialog = true;
+      });
       
       const configJson = JSON.stringify(config);
       await this.mangaSourceEngine.loadConfig(configJson);
@@ -1478,6 +1536,7 @@ export struct SourceDetailPage {
             .fileAccess(true)
             .mixedMode(MixedMode.All)
             .cacheMode(CacheMode.Default)
+            .userAgent('Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36')
             .onControllerAttached(() => {
               logger.info(TAG, 'WebView控制器已附加');
               this.webViewControllerAttached = true;
@@ -1508,6 +1567,11 @@ export struct SourceDetailPage {
         // 凭据登录对话框
         if (this.showCredentialDialog) {
           this.buildCredentialLoginDialog()
+        }
+        
+        // Cloudflare验证对话框
+        if (this.showCfVerifyDialog) {
+          this.buildCfVerifyDialog()
         }
       }
       .width('100%')
@@ -1831,11 +1895,17 @@ export struct SourceDetailPage {
    * 重试加载内容
    */
   private retryLoadContent(): void {
-    logger.info(TAG, '用户点击重试按钮');
+    logger.info(TAG, `用户点击重试按钮，当前标签: ${this.currentTabId}`);
     this.currentPage = 1;
     this.comicList = [];
     this.comicDataSource.updateItems([]);
-    this.loadComics();
+    
+    // 根据当前标签类型决定调用哪个方法
+    if (this.currentTabId === 'search') {
+      this.performSearch();
+    } else {
+      this.loadComics();
+    }
   }
 
   /**
@@ -1977,6 +2047,65 @@ export struct SourceDetailPage {
   }
 
   /**
+   * 构建Cloudflare验证对话框
+   */
+  @Builder
+  buildCfVerifyDialog() {
+    Column() {
+      Column() {
+        // 标题栏
+        Row() {
+          Text('网站验证')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          
+          Blank()
+          
+          Button('完成验证')
+            .fontSize(14)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onClick(() => {
+              logger.info(TAG, '用户确认完成CF验证');
+              this.showCfVerifyDialog = false;
+              // 刷新数据
+              this.currentPage = 1;
+              this.comicList = [];
+              this.loadComics();
+            })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        
+        // 提示文字
+        Text('请在下方完成网站验证（点击复选框），完成后点击"完成验证"按钮')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .padding({ left: 16, right: 16, bottom: 8 })
+        
+        // WebView - 使用主WebView控制器
+        Web({ src: 'about:blank', controller: this.webViewController })
+          .width('100%')
+          .height(400)
+          .onPageEnd(() => {
+            logger.info(TAG, 'CF验证页面加载完成');
+          })
+      }
+      .width('95%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+      .onClick(() => {
+        // 阻止事件冒泡
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#80000000')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  /**
    * 构建凭据登录对话框
    */
   @Builder
@@ -2019,68 +2148,101 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 构建标签栏
+   * 获取标签图标
+   */
+  private getTabIcon(tabId: string): Resource {
+    switch (tabId) {
+      case 'popular':
+        return $r('sys.symbol.flame');
+      case 'latest':
+        return $r('sys.symbol.clock');
+      case 'search':
+        return $r('sys.symbol.magnifyingglass');
+      case 'filter':
+        return $r('sys.symbol.line_3_horizontal');
+      case 'favorites':
+        return $r('sys.symbol.heart');
+      case 'history':
+        return $r('sys.symbol.clock_arrow_2_circlepath');
+      default:
+        return $r('sys.symbol.list_bullet');
+    }
+  }
+
+  /**
+   * 构建标签栏 - VSCode风格
    */
   @Builder
   buildTabBar() {
     Scroll() {
-      Row({ space: 16 }) {
+      Row({ space: 0 }) {
         ForEach(this.tabsConfig, (tab: TabConfig) => {
           this.buildTabItem(tab)
         })
       }
-      .padding({ left: 16, right: 16 })
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
     .width('100%')
-    .height(48)
-    .backgroundColor(Color.Transparent)
+    .height(38)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
   }
 
   /**
-   * 构建标签项
+   * 构建标签项 - VSCode风格
    */
   @Builder
   buildTabItem(tab: TabConfig) {
-    Column() {
-      Row({ space: 4 }) {
-        Text(tab.name)
-          .fontSize(15)
-          .fontWeight(this.currentTabId === tab.id ? FontWeight.Medium : FontWeight.Normal)
-          .fontColor(this.currentTabId === tab.id ?
-            ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 120 })
+    Row() {
+      // 标签图标
+      SymbolGlyph(this.getTabIcon(tab.id))
+        .fontSize(14)
+        .fontColor([this.currentTabId === tab.id
+          ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+        .margin({ right: 6 })
 
-        // 搜索标签显示关闭按钮
-        if (tab.type === TabType.SEARCH) {
-          Text('×')
-            .fontSize(16)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .onClick(() => {
-              this.closeSearchTab();
-            })
+      // 标签名称
+      Text(tab.name)
+        .fontSize(13)
+        .fontColor(this.currentTabId === tab.id
+          ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: 100 })
+
+      // 搜索标签显示关闭按钮
+      if (tab.type === TabType.SEARCH) {
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(12)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
         }
-      }
-
-      // 指示器
-      if (this.currentTabId === tab.id) {
-        Divider()
-          .width(24)
-          .height(3)
-          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-          .margin({ top: 4 })
+        .width(18)
+        .height(18)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(4)
+        .margin({ left: 6 })
+        .onClick(() => {
+          this.closeSearchTab();
+        })
       }
     }
-    .padding({ left: 8, right: 8 })
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
+    .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+    .height(38)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(this.currentTabId === tab.id
+      ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+      : Color.Transparent)
+    .border({
+      width: { top: this.currentTabId === tab.id ? 2 : 0, bottom: 0, left: 0, right: 0 },
+      color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+    })
     .onClick(() => {
       this.switchToTab(tab.id);
     })
+    .animation({ duration: 150 })
   }
 
   /**

@@ -97,6 +97,15 @@ export interface UpdateDataRecord {
 }
 
 /**
+ * 页面缓存更新接口
+ */
+export interface PageCacheUpdate {
+  imageUrl: string;
+  localPath: string;
+  fileSize: number;
+}
+
+/**
  * 批量删除漫画结果接口
  */
 export interface DeleteComicsResult {
@@ -151,6 +160,8 @@ export interface ComicInfo {
   addTime: number;
   externalId?: string; // 外部图源ID
   contentType?: string; // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF
+  isNSFW?: number | boolean; // 是否为NSFW内容（数据库中为0/1，代码中可为boolean）
+  isPrivate?: number | boolean; // 是否为隐私内容（数据库中为0/1，代码中可为boolean）
 }
 
 export interface ChapterInfo {
@@ -355,6 +366,8 @@ export interface ComicInfoInput {
   webUrl?: string;             // 网页URL（可选）
   apiUrl?: string;             // API请求地址（可选）
   contentType?: string;        // 内容类型：'manga' = 漫画, 'ebook' = 电子书类PDF（可选，默认'manga'）
+  isNSFW?: boolean;            // 是否为NSFW内容
+  isPrivate?: boolean;         // 是否为隐私内容
 }
 
 export interface ChapterInfoInput {
@@ -444,6 +457,8 @@ export interface OnlineComicInfo {
   updateTime: number;
   sourceName: string;
   sourcePkg: string;  // 图源唯一包名标识符，用于在图源删除后重新导入时正确识别图源
+  isNSFW?: number;
+  isPrivate?: number;
 }
 
 export interface OnlineChapterInfo {
@@ -523,6 +538,7 @@ export interface ComicBasicInfoUpdate {
   description?: string;
   authors?: string[];
   genres?: string[];
+  isPrivate?: boolean;
 }
 
 export class DataManager {
@@ -663,6 +679,7 @@ export class DataManager {
   }
 
   private convertRecordToComicInfo(record: ComicInfoDatabaseRecord): ComicInfo {
+    logger.debug(TAG, `[NSFW调试] 数据库记录 record.isNSFW=${record.isNSFW}, 类型=${typeof record.isNSFW}`);
     return {
       id: record.id,
       title: record.title,
@@ -677,7 +694,9 @@ export class DataManager {
       chapterCount: record.chapterCount,
       lastUpdateTime: record.lastUpdateTime,
       addTime: record.addTime,
-      externalId: record.externalId || undefined // [修复] 读取外部ID
+      externalId: record.externalId || undefined,
+      isPrivate: (record.isPrivate !== undefined && record.isPrivate !== null) ? (record.isPrivate === 1) : false,
+      isNSFW: (record.isNSFW !== undefined && record.isNSFW !== null) ? (record.isNSFW === 1) : false
     };
   }
 
@@ -686,6 +705,9 @@ export class DataManager {
    * [修复] 用于支持从 online_comic_info 表查询漫画
    */
   private convertOnlineComicRecordToComicInfo(record: ESObject): ComicInfo {
+    const isPrivateValue = record.isPrivate as number | undefined | null;
+    const isNSFWValue = record.isNSFW as number | undefined | null;
+    
     return {
       id: record.id as string,
       title: record.title as string,
@@ -693,13 +715,15 @@ export class DataManager {
       description: (record.description as string) || '',
       coverUrl: (record.coverUrl as string) || '',
       sourceId: record.sourceId as string,
-      status: 'unknown' as MangaStatus, // online_comic_info 表没有 status 字段
+      status: 'unknown' as MangaStatus,
       tags: safeJsonParse(record.tags as string, []),
       rating: (record.rating as number) || 0,
-      chapterCount: 0, // online_comic_info 表没有 chapterCount 字段
+      chapterCount: 0,
       lastUpdateTime: (record.lastUpdateTime as number) || 0,
       addTime: (record.addTime as number) || 0,
-      externalId: (record.externalId as string) || undefined
+      externalId: (record.externalId as string) || undefined,
+      isPrivate: (isPrivateValue !== undefined && isPrivateValue !== null) ? (isPrivateValue === 1) : false,
+      isNSFW: (isNSFWValue !== undefined && isNSFWValue !== null) ? (isNSFWValue === 1) : false
     };
   }
 
@@ -780,7 +804,7 @@ export class DataManager {
         }
         tags = values;
       } else {
-        const arr: string[] = parsed  as string[];
+        const arr: string[] = parsed as string[];
         if (arr && arr.length > 0) {
           const result: string[] = [];
           for (let i = 0; i < arr.length; i++) {
@@ -792,6 +816,11 @@ export class DataManager {
     } catch (e) {
       logger.warn(TAG, `在线漫画标签解析失败: ${String(e)}`);
     }
+    
+    const isNSFWValue = Number(obj.isNSFW) || 0;
+    const isPrivateValue = Number(obj.isPrivate) || 0;
+    logger.debug(TAG, `[NSFW调试] convertRecordToOnlineComicInfo: title="${(obj.title as string)}", 原始isNSFW=${obj.isNSFW}, 转换后=${isNSFWValue}, isPrivate=${isPrivateValue}`);
+    
     const info: OnlineComicInfo = {
       id: (obj.id as string) || '',
       sourceId: String(obj.sourceId),
@@ -807,7 +836,9 @@ export class DataManager {
       createTime: Number(obj.createTime) || 0,
       updateTime: Number(obj.updateTime) || 0,
       sourceName: (obj.sourceName as string) || '',
-      sourcePkg: (obj.sourcePkg as string) || ''
+      sourcePkg: (obj.sourcePkg as string) || '',
+      isNSFW: isNSFWValue,
+      isPrivate: isPrivateValue
     };
     return info;
   }
@@ -1045,6 +1076,38 @@ export class DataManager {
       // 确保externalId不为undefined，如果未提供则使用内部ID
       const finalExternalId = comicData.externalId || generatedId;
 
+      // 【NSFW自动继承】从图源和标签自动判断
+      let isNSFW = false;
+      
+      // 1. 从图源继承
+      try {
+        const sourceId = Number(comicData.sourceId);
+        const source = await this.getComicSourceById(sourceId);
+        if (source && source.isNSFW === 1) {
+          isNSFW = true;
+          logger.debug(TAG, `漫画从图源继承NSFW标记: ${comicData.title}`);
+        }
+      } catch (error) {
+        logger.warn(TAG, `获取图源NSFW状态失败: ${error}`);
+      }
+      
+      // 2. 从标签判断
+      if (!isNSFW && comicData.tags && comicData.tags.length > 0) {
+        const nsfwKeywords = ['nsfw', '18+', 'adult', '成人', 'r18', 'h', '里番', '肉番', '色情', '成人向'];
+        const tagsLower = comicData.tags.map(t => t.toLowerCase()).join(',');
+        const hasNSFWTag = nsfwKeywords.some(keyword => tagsLower.includes(keyword));
+        if (hasNSFWTag) {
+          isNSFW = true;
+          logger.debug(TAG, `漫画从标签判断NSFW: ${comicData.title}`);
+        }
+      }
+      
+      // 3. 手动设置优先
+      if (comic.isNSFW !== undefined) {
+        isNSFW = comic.isNSFW;
+        logger.debug(TAG, `漫画使用手动设置NSFW: ${comicData.title} = ${isNSFW}`);
+      }
+      
       const record: ComicInfoDatabaseRecord = {
         id: comicData.id,
         title: comicData.title,
@@ -1064,7 +1127,9 @@ export class DataManager {
         updateTime: now,   // 更新时间
         webUrl: comic.webUrl || null,  // 网页URL
         apiUrl: comic.apiUrl || null,   // API请求地址
-        contentType: comic.contentType || 'manga'  // 内容类型，默认为漫画
+        contentType: comic.contentType || 'manga',  // 内容类型，默认为漫画
+        isNSFW: isNSFW ? 1 : 0,  // NSFW标记
+        isPrivate: 0  // 隐私标记，默认为普通内容
       };
       
       await this.databaseManager.insert('comic_info', record);
@@ -1161,6 +1226,174 @@ export class DataManager {
       return records.map(record => this.convertRecordToOnlineComicInfo(record as DatabaseRecord));
     } catch (error) {
       logger.error(TAG, `获取所有在线漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取隐私漫画列表（本地漫画）
+   * @returns Promise<ComicInfo[]> 隐私漫画列表
+   */
+  public async getPrivateComics(): Promise<ComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'comic_info',
+        undefined,
+        'isPrivate = ?',
+        [1],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条隐私本地漫画`);
+      return records.map(record => this.convertRecordToComicInfo(record as ComicInfoDatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取隐私漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取非隐私漫画列表（本地漫画）
+   * @returns Promise<ComicInfo[]> 非隐私漫画列表
+   */
+  public async getNonPrivateComics(): Promise<ComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'comic_info',
+        undefined,
+        '(isPrivate = ? OR isPrivate IS NULL)',
+        [0],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条非隐私本地漫画`);
+      return records.map(record => this.convertRecordToComicInfo(record as ComicInfoDatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取非隐私漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取隐私在线漫画列表
+   * @returns Promise<OnlineComicInfo[]> 隐私在线漫画列表
+   */
+  public async getPrivateOnlineComics(): Promise<OnlineComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'online_comic_info',
+        undefined,
+        'isPrivate = ?',
+        [1],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条隐私在线漫画`);
+      return records.map(record => this.convertRecordToOnlineComicInfo(record as DatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取隐私在线漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取非隐私在线漫画列表
+   * @returns Promise<OnlineComicInfo[]> 非隐私在线漫画列表
+   */
+  public async getNonPrivateOnlineComics(): Promise<OnlineComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'online_comic_info',
+        undefined,
+        '(isPrivate = ? OR isPrivate IS NULL)',
+        [0],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条非隐私在线漫画`);
+      return records.map(record => this.convertRecordToOnlineComicInfo(record as DatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取非隐私在线漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取SFW（非NSFW）漫画列表（本地漫画）
+   * @returns Promise<ComicInfo[]> SFW漫画列表
+   */
+  public async getSFWComics(): Promise<ComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'comic_info',
+        undefined,
+        '(isNSFW = ? OR isNSFW IS NULL)',
+        [0],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条SFW本地漫画`);
+      return records.map(record => this.convertRecordToComicInfo(record as ComicInfoDatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取SFW漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取NSFW漫画列表（本地漫画）
+   * @returns Promise<ComicInfo[]> NSFW漫画列表
+   */
+  public async getNSFWComics(): Promise<ComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'comic_info',
+        undefined,
+        'isNSFW = ?',
+        [1],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条NSFW本地漫画`);
+      return records.map(record => this.convertRecordToComicInfo(record as ComicInfoDatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取NSFW漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取SFW（非NSFW）在线漫画列表
+   * @returns Promise<OnlineComicInfo[]> SFW在线漫画列表
+   */
+  public async getSFWOnlineComics(): Promise<OnlineComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'online_comic_info',
+        undefined,
+        '(isNSFW = ? OR isNSFW IS NULL)',
+        [0],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条SFW在线漫画`);
+      return records.map(record => this.convertRecordToOnlineComicInfo(record as DatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取SFW在线漫画失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * [新增] 获取NSFW在线漫画列表
+   * @returns Promise<OnlineComicInfo[]> NSFW在线漫画列表
+   */
+  public async getNSFWOnlineComics(): Promise<OnlineComicInfo[]> {
+    try {
+      const records = await this.databaseManager.query(
+        'online_comic_info',
+        undefined,
+        'isNSFW = ?',
+        [1],
+        'lastUpdateTime DESC'
+      );
+      logger.info(TAG, `查询到 ${records.length} 条NSFW在线漫画`);
+      return records.map(record => this.convertRecordToOnlineComicInfo(record as DatabaseRecord));
+    } catch (error) {
+      logger.error(TAG, `获取NSFW在线漫画失败: ${error}`);
       throw error as Error;
     }
   }
@@ -1268,6 +1501,10 @@ export class DataManager {
         setClauses.push('tags = ?');
         values.push(JSON.stringify(basicInfo.genres));
       }
+      if (basicInfo.isPrivate !== undefined) {
+        setClauses.push('isPrivate = ?');
+        values.push(basicInfo.isPrivate ? 1 : 0);
+      }
       
       if (setClauses.length === 1) {
         // 只有updateTime，没有其他字段需要更新
@@ -1282,14 +1519,214 @@ export class DataManager {
       logger.debug(TAG, `执行更新SQL: ${sql}, 参数: ${JSON.stringify(values)}`);
       
       await this.databaseManager.executeSql(sql, values);
-      logger.info(TAG, `成功更新 comic_info 表中的漫画基础信息: ${comicId}`);
+      logger.info(TAG, `漫画基础信息更新成功: ${comicId}`);
+      
+      // 验证更新是否成功
+      const verifySql = 'SELECT * FROM comic_info WHERE id = ?';
+      const verifyResult = await this.databaseManager.querySql(verifySql, [comicId]);
+      if (verifyResult.length > 0) {
+        const record = verifyResult[0] as Record<string, ESObject>;
+        logger.info(TAG, `验证更新结果: comicId=${comicId}, isPrivate=${record.isPrivate}, 记录字段: ${Object.keys(record).join(', ')}`);
+      }
     } catch (error) {
-      logger.error(TAG, `更新漫画基础信息失败: ${error}`);
+      logger.error(TAG, `更新漫画基础信息失败: ${comicId}`);
+      logger.error(TAG, `错误详情: ${String(error)}`);
       throw error as Error;
     }
   }
 
-  // ==================== 章节管理 ====================
+  /**
+   * 通用方法：根据ID更新任意内容的隐私状态
+   * 自动检测内容类型（本地漫画、在线漫画、电子书、小说）并更新对应表
+   */
+  public async updateContentPrivacy(contentId: string, isPrivate: boolean): Promise<boolean> {
+    try {
+      logger.info(TAG, `更新内容隐私状态: ${contentId}, isPrivate=${isPrivate}`);
+      
+      // 1. 尝试在 comic_info 表中查找（本地漫画）
+      const comicResult = await this.databaseManager.querySql(
+        'SELECT id FROM comic_info WHERE id = ?',
+        [contentId]
+      );
+      if (comicResult.length > 0) {
+        await this.updateComicBasicInfo(contentId, { isPrivate });
+        logger.info(TAG, `已更新本地漫画隐私状态: ${contentId}`);
+        return true;
+      }
+      
+      // 2. 尝试在 online_comic_info 表中查找（在线漫画）
+      const onlineComicResult = await this.databaseManager.querySql(
+        'SELECT * FROM online_comic_info WHERE id = ?',
+        [contentId]
+      );
+      if (onlineComicResult.length > 0) {
+        const record = onlineComicResult[0] as Record<string, ESObject>;
+        
+        // 使用 DELETE + INSERT 策略确保数据持久化
+        await this.databaseManager.executeSql('DELETE FROM online_comic_info WHERE id = ?', [contentId]);
+        
+        const insertSql = `INSERT INTO online_comic_info (
+          id, sourceId, externalId, title, author, description, coverUrl, tags,
+          rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isNSFW, isPrivate
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        
+        await this.databaseManager.executeSql(insertSql, [
+          record.id || '',
+          record.sourceId || '',
+          record.externalId || '',
+          record.title || '',
+          record.author || '',
+          record.description || '',
+          record.coverUrl || '',
+          record.tags || '',
+          Number(record.rating) || 0,
+          Number(record.lastUpdateTime) || 0,
+          Number(record.addTime) || 0,
+          Number(record.createTime) || 0,
+          Date.now(),
+          record.sourceName || '',
+          record.sourcePkg || '',
+          Number(record.isNSFW) || 0,
+          isPrivate ? 1 : 0
+        ]);
+        
+        logger.info(TAG, `已更新在线漫画隐私状态: ${contentId}`);
+        return true;
+      }
+      
+      // 3. 尝试在 ebook_info 表中查找（电子书）
+      const ebookResult = await this.databaseManager.querySql(
+        'SELECT id FROM ebook_info WHERE id = ?',
+        [contentId]
+      );
+      if (ebookResult.length > 0) {
+        const sql = 'UPDATE ebook_info SET isPrivate = ?, updateTime = ? WHERE id = ?';
+        await this.databaseManager.executeSql(sql, [isPrivate ? 1 : 0, Date.now(), contentId]);
+        logger.info(TAG, `已更新电子书隐私状态: ${contentId}`);
+        return true;
+      }
+      
+      // 4. 尝试在 novel_book 表中查找（小说）
+      const novelResult = await this.databaseManager.querySql(
+        'SELECT id FROM novel_book WHERE id = ?',
+        [contentId]
+      );
+      if (novelResult.length > 0) {
+        const sql = 'UPDATE novel_book SET isPrivate = ?, updateTime = ? WHERE id = ?';
+        await this.databaseManager.executeSql(sql, [isPrivate ? 1 : 0, Date.now(), contentId]);
+        logger.info(TAG, `已更新小说隐私状态: ${contentId}`);
+        return true;
+      }
+      
+      logger.error(TAG, `未找到内容: ${contentId}`);
+      return false;
+    } catch (error) {
+      logger.error(TAG, `更新内容隐私状态失败: ${contentId}, ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 通用方法：根据ID更新任意内容的NSFW状态
+   * 自动检测内容类型（本地漫画、在线漫画、电子书、小说）并更新对应表
+   */
+  public async updateContentNSFW(contentId: string, isNSFW: boolean): Promise<boolean> {
+    try {
+      logger.info(TAG, `更新内容NSFW状态: ${contentId}, isNSFW=${isNSFW}`);
+      
+      // 1. 尝试在 comic_info 表中查找（本地漫画）
+      const comicResult = await this.databaseManager.querySql(
+        'SELECT id FROM comic_info WHERE id = ?',
+        [contentId]
+      );
+      if (comicResult.length > 0) {
+        const sql = 'UPDATE comic_info SET isNSFW = ?, updateTime = ? WHERE id = ?';
+        await this.databaseManager.executeSql(sql, [isNSFW ? 1 : 0, Date.now(), contentId]);
+        logger.info(TAG, `已更新本地漫画NSFW状态: ${contentId}`);
+        
+        // 验证更新
+        const verifyResult = await this.databaseManager.querySql(
+          'SELECT isNSFW FROM comic_info WHERE id = ?',
+          [contentId]
+        );
+        if (verifyResult.length > 0) {
+          const record = verifyResult[0] as Record<string, ESObject>;
+          logger.info(TAG, `验证NSFW更新: ${contentId}, isNSFW=${record.isNSFW}`);
+        }
+        return true;
+      }
+      
+      // 2. 尝试在 online_comic_info 表中查找（在线漫画）
+      const onlineComicResult = await this.databaseManager.querySql(
+        'SELECT * FROM online_comic_info WHERE id = ?',
+        [contentId]
+      );
+      if (onlineComicResult.length > 0) {
+        const record = onlineComicResult[0] as Record<string, ESObject>;
+        
+        // 使用 DELETE + INSERT 策略确保数据持久化
+        await this.databaseManager.executeSql('DELETE FROM online_comic_info WHERE id = ?', [contentId]);
+        
+        const insertSql = `INSERT INTO online_comic_info (
+          id, sourceId, externalId, title, author, description, coverUrl, tags,
+          rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isNSFW, isPrivate
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        
+        await this.databaseManager.executeSql(insertSql, [
+          record.id || '',
+          record.sourceId || '',
+          record.externalId || '',
+          record.title || '',
+          record.author || '',
+          record.description || '',
+          record.coverUrl || '',
+          record.tags || '',
+          Number(record.rating) || 0,
+          Number(record.lastUpdateTime) || 0,
+          Number(record.addTime) || 0,
+          Number(record.createTime) || 0,
+          Date.now(),
+          record.sourceName || '',
+          record.sourcePkg || '',
+          isNSFW ? 1 : 0,
+          Number(record.isPrivate) || 0
+        ]);
+        
+        logger.info(TAG, `已更新在线漫画NSFW状态: ${contentId}`);
+        return true;
+      }
+      
+      // 3. 尝试在 ebook_info 表中查找（电子书）
+      const ebookResult = await this.databaseManager.querySql(
+        'SELECT id FROM ebook_info WHERE id = ?',
+        [contentId]
+      );
+      if (ebookResult.length > 0) {
+        const sql = 'UPDATE ebook_info SET isNSFW = ?, updateTime = ? WHERE id = ?';
+        await this.databaseManager.executeSql(sql, [isNSFW ? 1 : 0, Date.now(), contentId]);
+        logger.info(TAG, `已更新电子书NSFW状态: ${contentId}`);
+        return true;
+      }
+      
+      // 4. 尝试在 novel_book 表中查找（小说）
+      const novelResult = await this.databaseManager.querySql(
+        'SELECT id FROM novel_book WHERE id = ?',
+        [contentId]
+      );
+      if (novelResult.length > 0) {
+        const sql = 'UPDATE novel_book SET isNSFW = ?, updateTime = ? WHERE id = ?';
+        await this.databaseManager.executeSql(sql, [isNSFW ? 1 : 0, Date.now(), contentId]);
+        logger.info(TAG, `已更新小说NSFW状态: ${contentId}`);
+        return true;
+      }
+      
+      logger.error(TAG, `未找到内容: ${contentId}`);
+      return false;
+    } catch (error) {
+      logger.error(TAG, `更新内容NSFW状态失败: ${contentId}, ${String(error)}`);
+      return false;
+    }
+  }
 
   /**
    * 根据ID获取单个章节
@@ -3194,13 +3631,44 @@ export class DataManager {
         fields.push('configJson = ?');
         values.push(updates.configJson as string);
       }
+      if (updates.name !== undefined) {
+        fields.push('name = ?');
+        values.push(updates.name as string);
+      }
+      if (updates.baseUrl !== undefined) {
+        fields.push('baseUrl = ?');
+        values.push(updates.baseUrl as string);
+      }
+      if (updates.version !== undefined) {
+        fields.push('version = ?');
+        values.push(updates.version as string);
+      }
+      if (updates.description !== undefined) {
+        fields.push('description = ?');
+        values.push(updates.description as string);
+      }
+      if (updates.language !== undefined) {
+        fields.push('language = ?');
+        values.push(updates.language as string);
+      }
+      if (updates.type !== undefined) {
+        fields.push('type = ?');
+        values.push(updates.type as string);
+      }
+      if (updates.lastUpdateTime !== undefined) {
+        fields.push('lastUpdateTime = ?');
+        values.push(updates.lastUpdateTime as number);
+      }
 
       if (fields.length === 0) {
         return;
       }
 
-      fields.push('lastUpdateTime = ?');
-      values.push(Date.now());
+      // 如果没有显式设置lastUpdateTime，自动添加
+      if (updates.lastUpdateTime === undefined) {
+        fields.push('lastUpdateTime = ?');
+        values.push(Date.now());
+      }
       values.push(id);
 
       const sql = `UPDATE comic_source SET ${fields.join(', ')} WHERE id = ?`;
@@ -3275,8 +3743,8 @@ export class DataManager {
       }
       
       const sql = `INSERT INTO comic_source 
-                   (pkg, name, baseUrl, version, description, language, type, isEnabled, priority, lastUpdateTime, configJson, cookies, createTime, requireProxy) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (pkg, name, baseUrl, version, description, language, type, isEnabled, priority, lastUpdateTime, configJson, cookies, createTime, requireProxy, isNSFW) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       
       await this.databaseManager.executeSql(sql, [
         pkg,
@@ -3292,7 +3760,8 @@ export class DataManager {
         source.configJson as string || '{}',
         '',
         now,
-        source.requireProxy ? 1 : 0
+        source.requireProxy ? 1 : 0,
+        source.isNSFW ? 1 : 0
       ]);
       
       logger.info(TAG, `图源已添加: ${source.name} (pkg: ${pkg}, type: ${source.type || 'manga'})`);
@@ -3363,7 +3832,8 @@ export class DataManager {
           isEnabled: true,
           priority: 0,
           configJson: jsonContent,
-          requireProxy: requireProxy === 1
+          requireProxy: requireProxy === 1,
+          isNSFW: metadata.nsfw === true || metadata.nsfw === 1
         };
 
         // 保存到数据库
@@ -3499,6 +3969,20 @@ export class DataManager {
   }
 
   /**
+   * 更新图源的baseUrl（用于换源功能）
+   */
+  async updateSourceBaseUrl(sourceId: number, newBaseUrl: string): Promise<void> {
+    try {
+      const sql = 'UPDATE comic_source SET baseUrl = ?, updateTime = ? WHERE id = ?';
+      await this.databaseManager.executeSql(sql, [newBaseUrl, Date.now(), sourceId]);
+      logger.info(TAG, `图源baseUrl已更新: id=${sourceId}, newBaseUrl=${newBaseUrl}`);
+    } catch (error) {
+      logger.error(TAG, `更新图源baseUrl失败: id=${sourceId}`, String(error));
+      throw new Error(`更新图源baseUrl失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 从图源保存漫画信息
    */
   async saveComicFromSource(sourceId: number, comicData: ESObject, externalId?: string): Promise<string> {
@@ -3563,8 +4047,8 @@ export class DataManager {
       
       // 使用INSERT OR REPLACE，基于主键id
       const sql = `INSERT OR REPLACE INTO online_comic_info 
-                   (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isPrivate) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       
       const params = [
         comicId,
@@ -3581,7 +4065,8 @@ export class DataManager {
         now,
         now,
         sourceNameVal,
-        sourcePkgVal
+        sourcePkgVal,
+        0  // isPrivate默认为0（普通内容）
       ];
       
       logger.debug(TAG, `📝 [SQL] 执行SQL: ${sql}`);
@@ -3750,6 +4235,58 @@ export class DataManager {
       return pageId;
     } catch (error) {
       logger.error(TAG, `保存在线页面失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 删除指定章节的所有页面数据
+   */
+  public async deleteOnlineChapterPages(chapterId: string): Promise<void> {
+    try {
+      const sql = 'DELETE FROM online_page WHERE chapterId = ?';
+      await this.databaseManager.executeSql(sql, [chapterId]);
+      logger.debug(TAG, `已删除章节 ${chapterId} 的所有页面数据`);
+    } catch (error) {
+      logger.error(TAG, `删除章节页面数据失败: chapterId=${chapterId}`, String(error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 更新在线页面的缓存状态
+   * 用于同步磁盘缓存到数据库
+   */
+  public async updateOnlinePageCacheStatus(
+    imageUrl: string,
+    localPath: string,
+    fileSize: number
+  ): Promise<void> {
+    try {
+      const sql = `UPDATE online_page 
+                   SET localPath = ?, fileSize = ? 
+                   WHERE imageUrl = ?`;
+      await this.databaseManager.executeSql(sql, [localPath, fileSize, imageUrl]);
+      logger.debug(TAG, `更新页面缓存状态: ${imageUrl.substring(0, 80)}`);
+    } catch (error) {
+      logger.error(TAG, `更新页面缓存状态失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 批量更新在线页面的缓存状态
+   */
+  public async batchUpdateOnlinePageCacheStatus(
+    updates: Array<PageCacheUpdate>
+  ): Promise<void> {
+    try {
+      for (const update of updates) {
+        await this.updateOnlinePageCacheStatus(update.imageUrl, update.localPath, update.fileSize);
+      }
+      logger.info(TAG, `批量更新页面缓存状态: ${updates.length}条`);
+    } catch (error) {
+      logger.error(TAG, `批量更新页面缓存状态失败: ${String(error)}`);
       throw error as Error;
     }
   }
