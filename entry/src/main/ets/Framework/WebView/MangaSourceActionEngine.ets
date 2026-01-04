@@ -23,6 +23,7 @@ import {
   IPBlockAction,
   APIRequestAction,
   HTTPRequestAction,
+  LoopAction,
   WaitCondition,
   MangaSourceError,
   MangaSourceErrorCode,
@@ -34,6 +35,7 @@ import { MangaSourceAPIEngine, JSONExtractConfig } from './MangaSourceAPIEngine'
 import { DataManager } from '../Data/DataManager';
 import CookieManager from '../Managers/CookieManager';
 import { generatePicaSignature } from '../Source/SignatureHandler';
+import { UserAgentManager } from '../Managers/UserAgentManager';
 
 /**
  * 字段选择器解析结果
@@ -164,6 +166,9 @@ export class MangaSourceActionEngine {
         case ActionType.HTTP_REQUEST:
           result = await this.executeHTTPRequest(action as HTTPRequestAction, context);
           break;
+        case ActionType.LOOP:
+          result = await this.executeLoop(action as LoopAction, context);
+          break;
         default:
           throw new MangaSourceError(
             MangaSourceErrorCode.INVALID_CONFIG,
@@ -174,15 +179,42 @@ export class MangaSourceActionEngine {
       const duration = Date.now() - startTime;
       logger.debug(TAG, `操作完成: ${action.type}, 耗时: ${duration}ms`);
       
-      // 如果是script操作，将结果保存到scriptResult变量
+      // 如果是script操作，将结果保存到变量
       if (action.type === ActionType.SCRIPT && typeof result === 'string') {
         // 移除JSON.stringify添加的引号（如果有）
         let cleanResult = result;
         if (cleanResult.startsWith('"') && cleanResult.endsWith('"')) {
           cleanResult = cleanResult.substring(1, cleanResult.length - 1);
         }
+        
+        // 检查是否有saveAs字段指定变量名
+        const actionObj: ESObject = action as ESObject;
+        const saveAsField: string | undefined = actionObj['saveAs'] as string | undefined;
+        if (saveAsField) {
+          // 尝试解析JSON并保存各个字段
+          try {
+            const parsed: ESObject = JSON.parse(cleanResult) as ESObject;
+            if (typeof parsed === 'object' && parsed !== null) {
+              // 保存整个对象到指定变量
+              context.variables[saveAsField] = cleanResult;
+              // 同时保存各个字段到 saveAs.fieldName 格式
+              const keys: string[] = Object.keys(parsed);
+              for (const key of keys) {
+                const value: ESObject = parsed[key] as ESObject;
+                context.variables[`${saveAsField}.${key}`] = typeof value === 'string' ? value : JSON.stringify(value);
+              }
+              logger.debug(TAG, `脚本结果已保存到${saveAsField}及其子字段`);
+            } else {
+              context.variables[saveAsField] = cleanResult;
+            }
+          } catch {
+            context.variables[saveAsField] = cleanResult;
+          }
+        }
+        
+        // 始终保存到scriptResult作为默认变量
         context.variables['scriptResult'] = cleanResult;
-        logger.debug(TAG, `脚本结果已保存到scriptResult: ${cleanResult.substring(0, 100)}${cleanResult.length > 100 ? '...' : ''}`);
+        logger.debug(TAG, `脚本结果已保存: ${cleanResult.substring(0, 100)}${cleanResult.length > 100 ? '...' : ''}`);
       }
 
       return {
@@ -769,6 +801,72 @@ export class MangaSourceActionEngine {
   }
 
   /**
+   * 执行循环操作（用于分页递归获取等场景）
+   */
+  private async executeLoop(action: LoopAction, context: ActionContext): Promise<ActionResult[]> {
+    const maxIterations = action.maxIterations || 100;
+    const results: ActionResult[] = [];
+    
+    logger.info(TAG, `开始循环操作, 最大迭代次数: ${maxIterations}`);
+    
+    for (let i = 0; i < maxIterations; i++) {
+      // 检查跳出条件
+      if (action.breakCondition) {
+        const conditionVar: string = action.breakCondition.variable || '';
+        const conditionValue: string = action.breakCondition.value || '';
+        const currentValue: string = conditionVar ? (context.variables[conditionVar] || '') : '';
+        const operator: string = action.breakCondition.operator || 'equals';
+        
+        if (operator === 'equals' && currentValue === conditionValue) {
+          logger.info(TAG, `循环跳出条件满足: ${conditionVar} === ${conditionValue}`);
+          break;
+        }
+        if (operator === 'notEquals' && currentValue !== conditionValue) {
+          logger.info(TAG, `循环跳出条件满足: ${conditionVar} !== ${conditionValue}`);
+          break;
+        }
+        if (operator === 'empty' && (!currentValue || currentValue === 'null' || currentValue === 'undefined')) {
+          logger.info(TAG, `循环跳出条件满足: ${conditionVar} 为空`);
+          break;
+        }
+        if (operator === 'notEmpty' && currentValue && currentValue !== 'null' && currentValue !== 'undefined') {
+          // 继续循环
+        }
+      }
+      
+      // 检查基于condition字段的简化跳出条件（用于JSON配置中的{{variable}}格式）
+      const actionObj: ESObject = action as ESObject;
+      const conditionField: string | undefined = actionObj['condition'] as string | undefined;
+      if (conditionField) {
+        const resolvedCondition = this.replaceVariables(conditionField, context.variables);
+        // 如果条件为空、null、undefined或false，则跳出循环
+        if (!resolvedCondition || resolvedCondition === 'null' || resolvedCondition === 'undefined' || 
+            resolvedCondition === 'false' || resolvedCondition === '') {
+          logger.info(TAG, `循环条件不满足，跳出循环: ${conditionField} = ${resolvedCondition}`);
+          break;
+        }
+      }
+      
+      logger.debug(TAG, `循环迭代 ${i + 1}/${maxIterations}`);
+      
+      // 执行循环内的所有操作
+      for (const subAction of action.actions) {
+        const result = await this.executeAction(subAction, context);
+        results.push(result);
+        
+        // 如果操作失败且不是可选操作，则中断循环
+        if (!result.success && !subAction.optional) {
+          logger.warn(TAG, `循环中操作失败，中断循环: ${subAction.type}`);
+          return results;
+        }
+      }
+    }
+    
+    logger.info(TAG, `循环操作完成，共执行 ${results.length} 个操作`);
+    return results;
+  }
+
+  /**
    * 执行JavaScript代码
    */
   private async executeJavaScript<T>(code: string): Promise<T> {
@@ -1094,19 +1192,44 @@ export class MangaSourceActionEngine {
       }
       
       if (!configHasUserAgent) {
-        logger.info(TAG, '配置中未指定 User-Agent，使用 WebView User-Agent');
-        try {
-          const uaCode: string = 'navigator.userAgent';
-          const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
-          headers['User-Agent'] = ua;
-          let cleanedUA: string = String(headers['User-Agent']).trim();
-          const lenUA: number = cleanedUA.length;
-          if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
-            cleanedUA = cleanedUA.substring(1, lenUA - 1);
+        // 优先使用UserAgentManager获取自定义UA（支持图源级别和全局设置）
+        const sidStr: string | undefined = context.variables['sourceId'];
+        if (sidStr && sidStr.length > 0) {
+          try {
+            const customUA = await UserAgentManager.getInstance().getUserAgent(Number(sidStr));
+            headers['User-Agent'] = customUA;
+            logger.info(TAG, `使用UserAgentManager获取的UA: sourceId=${sidStr}`);
+          } catch (_e) {
+            // 回退到WebView UA
+            try {
+              const uaCode: string = 'navigator.userAgent';
+              const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
+              headers['User-Agent'] = ua;
+              let cleanedUA: string = String(headers['User-Agent']).trim();
+              const lenUA: number = cleanedUA.length;
+              if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
+                cleanedUA = cleanedUA.substring(1, lenUA - 1);
+              }
+              headers['User-Agent'] = cleanedUA;
+            } catch (_e2) {
+              headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+            }
           }
-          headers['User-Agent'] = cleanedUA;
-        } catch (_e) {
-          headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+        } else {
+          // 无sourceId时使用WebView UA
+          try {
+            const uaCode: string = 'navigator.userAgent';
+            const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
+            headers['User-Agent'] = ua;
+            let cleanedUA: string = String(headers['User-Agent']).trim();
+            const lenUA: number = cleanedUA.length;
+            if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
+              cleanedUA = cleanedUA.substring(1, lenUA - 1);
+            }
+            headers['User-Agent'] = cleanedUA;
+          } catch (_e) {
+            headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+          }
         }
       } else {
         logger.info(TAG, `使用配置中指定的 User-Agent: ${headers['User-Agent']}`);

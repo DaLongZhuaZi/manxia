@@ -456,7 +456,7 @@ struct SearchPage {
         Blank().layoutWeight(1)
         Button() {
           Row({ space: 4 }) {
-            Image($r('app.media.ic_delete')).width(16).height(16)
+            Image($r('sys.symbol.trash')).width(16).height(16)
             Text('清除历史')
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))

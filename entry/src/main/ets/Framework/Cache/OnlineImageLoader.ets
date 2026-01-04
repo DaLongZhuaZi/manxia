@@ -17,6 +17,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { DiskCacheManager } from './DiskCacheManager';
 import { DataManager } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
+import { UserAgentManager } from '../Managers/UserAgentManager';
 
 const TAG = 'OnlineImageLoader';
 
@@ -498,7 +499,16 @@ export class OnlineImageLoader {
     const defaultAccept = 'image/avif,image/webp,image/png,image/jpeg;q=0.9,*/*;q=0.5';
     const defaultLang = 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7';
     
-    const ua = options.headers?.userAgent || defaultUa;
+    // 优先使用传入的UA，否则通过UserAgentManager获取（支持图源级别和全局设置）
+    let ua = options.headers?.userAgent || '';
+    if (!ua && options.sourceId) {
+      ua = await UserAgentManager.getInstance().getUserAgent(options.sourceId);
+      logger.info(TAG, `通过UserAgentManager获取UA: sourceId=${options.sourceId}, ua=${ua.substring(0, 50)}...`);
+    }
+    if (!ua) {
+      ua = defaultUa;
+      logger.debug(TAG, `使用默认UA`);
+    }
     const accept = options.headers?.accept || defaultAccept;
     let referer = options.headers?.referer || '';
     let origin = options.headers?.origin || '';

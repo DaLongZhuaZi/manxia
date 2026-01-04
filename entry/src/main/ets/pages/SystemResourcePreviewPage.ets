@@ -1859,7 +1859,8 @@ export struct SystemResourcePreviewPage {
   
   aboutToAppear(): void {
     logger.info(TAG, '系统资源预览页面初始化');
-    this.themeManager.getCurrentTheme().then((theme: ThemeType) => {
+    // 使用getActualTheme获取实际显示的主题
+    this.themeManager.getActualTheme().then((theme: ThemeType) => {
       this.themeState = { currentTheme: theme };
     });
     this.themeChangeCallback = (newTheme: ThemeType) => {
@@ -2370,6 +2371,7 @@ export struct SystemResourcePreviewPage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
     }
     .title('系统资源预览')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
     })

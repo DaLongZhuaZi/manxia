@@ -132,6 +132,11 @@ struct GlobalSettingsPage {
   // 内容过滤设置
   @State sfwModeEnabled: boolean = false;
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
+  
+  // 全局UserAgent设置
+  @State globalUserAgent: string = '';
+  @State globalUserAgentEnabled: boolean = false;
+  private readonly DEFAULT_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
   onPageShow(): void {
     try {
@@ -413,6 +418,16 @@ struct GlobalSettingsPage {
       this.textShowProgress = this.settingsManager.getBoolean(
         SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS,
         false
+      );
+
+      // 加载全局UserAgent设置
+      this.globalUserAgentEnabled = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_USER_AGENT_ENABLED,
+        false
+      );
+      this.globalUserAgent = this.settingsManager.getString(
+        SettingKeys.GLOBAL_USER_AGENT,
+        this.DEFAULT_USER_AGENT
       );
 
       logger.info(TAG, '全局设置加载完成');
@@ -2081,6 +2096,12 @@ struct GlobalSettingsPage {
                 .width('48%')
                 .margin({ bottom: 16 })
                 
+                Column({ space: 16 }) {
+                  this.buildUserAgentSettings()
+                }
+                .width('48%')
+                .margin({ bottom: 16 })
+                
               }
               .width('100%')
               
@@ -2092,6 +2113,7 @@ struct GlobalSettingsPage {
               this.buildTextReaderSettings()
               this.buildDownloadSettings()
               this.buildNotificationSettings()
+              this.buildUserAgentSettings()
               this.buildDebugSettings()
               this.buildActionButtons()
             }
@@ -2169,6 +2191,99 @@ struct GlobalSettingsPage {
       this.onReady();
     })
     .backgroundColor(Color.Transparent)
+  }
+
+  /**
+   * 构建UserAgent设置区域
+   */
+  @Builder
+  buildUserAgentSettings() {
+    Column({ space: 16 }) {
+      Text('网络请求设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Row() {
+        Column({ space: 4 }) {
+          Text('启用自定义User-Agent')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('为所有图源请求使用自定义UA')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.globalUserAgentEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            this.globalUserAgentEnabled = isOn;
+            await this.settingsManager.setBoolean(SettingKeys.GLOBAL_USER_AGENT_ENABLED, isOn);
+            this.settingsManager.syncToAppStorage();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      if (this.globalUserAgentEnabled) {
+        Column({ space: 8 }) {
+          Text('自定义User-Agent')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .alignSelf(ItemAlign.Start)
+
+          TextArea({ text: this.globalUserAgent, placeholder: '输入自定义User-Agent...' })
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('input_background', this.themeState.currentTheme))
+            .borderRadius(8)
+            .padding(12)
+            .height(100)
+            .width('100%')
+            .onChange(async (value: string) => {
+              this.globalUserAgent = value;
+              await this.settingsManager.setString(SettingKeys.GLOBAL_USER_AGENT, value);
+              this.settingsManager.syncToAppStorage();
+            })
+
+          Row({ space: 8 }) {
+            Button('重置为默认')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+              .height(32)
+              .onClick(async () => {
+                this.globalUserAgent = this.DEFAULT_USER_AGENT;
+                await this.settingsManager.setString(SettingKeys.GLOBAL_USER_AGENT, this.DEFAULT_USER_AGENT);
+                this.settingsManager.syncToAppStorage();
+              })
+
+            Button('使用Chrome UA')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+              .height(32)
+              .onClick(async () => {
+                const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+                this.globalUserAgent = chromeUA;
+                await this.settingsManager.setString(SettingKeys.GLOBAL_USER_AGENT, chromeUA);
+                this.settingsManager.syncToAppStorage();
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Start)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
   /**

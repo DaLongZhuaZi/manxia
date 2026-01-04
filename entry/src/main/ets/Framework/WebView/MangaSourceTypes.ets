@@ -347,8 +347,16 @@ export interface IPBlockAction extends BaseAction {
  * 循环跳出条件
  */
 export interface LoopBreakCondition {
-  selector: string;
-  exists: boolean;
+  /** 选择器（用于检查元素是否存在） */
+  selector?: string;
+  /** 元素是否存在 */
+  exists?: boolean;
+  /** 变量名（用于检查变量值） */
+  variable?: string;
+  /** 期望的值 */
+  value?: string;
+  /** 比较操作符 */
+  operator?: 'equals' | 'notEquals' | 'empty' | 'notEmpty';
 }
 
 /**

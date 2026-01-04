@@ -47,8 +47,12 @@ export struct CacheManagementPanel {
 
   aboutToAppear(): void {
     // 初始化主题
-    this.themeManager.getCurrentTheme().then((theme: ThemeType) => {
+    this.themeManager.getActualTheme().then((theme: ThemeType) => {
       this.themeState.currentTheme = theme;
+    });
+    // 监听主题变化
+    this.themeManager.onThemeChange((theme: ThemeType) => {
+      this.themeState = { currentTheme: theme };
     });
     this.loadAllData();
   }
@@ -220,8 +224,9 @@ export struct CacheManagementPanel {
         
         Button({ type: ButtonType.Normal }) {
           Row({ space: 4 }) {
-            Text('🔄')
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
               .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text('刷新')
               .fontSize(13)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -234,9 +239,9 @@ export struct CacheManagementPanel {
         .onClick(() => this.refreshData())
         
         Button({ type: ButtonType.Normal }) {
-          Text('✕')
+          SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(16)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
         }
         .width(32)
         .height(32)
@@ -258,9 +263,9 @@ export struct CacheManagementPanel {
       
       // 标签页导航
       Row({ space: 0 }) {
-        this.buildTabButton('📊', '统计', CacheTab.STATISTICS)
-        this.buildTabButton('⚙️', '配置', CacheTab.CONFIG)
-        this.buildTabButton('🚀', '预加载', CacheTab.PRELOAD)
+        this.buildTabButtonWithSymbol($r('sys.symbol.doc_plaintext'), '统计', CacheTab.STATISTICS)
+        this.buildTabButtonWithSymbol($r('sys.symbol.gearshape'), '配置', CacheTab.CONFIG)
+        this.buildTabButtonWithSymbol($r('sys.symbol.bolt'), '预加载', CacheTab.PRELOAD)
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -307,10 +312,13 @@ export struct CacheManagementPanel {
   }
   
   @Builder
-  buildTabButton(icon: string, label: string, tab: CacheTab) {
+  buildTabButtonWithSymbol(iconRes: Resource, label: string, tab: CacheTab) {
     Column({ space: 4 }) {
-      Text(icon)
+      SymbolGlyph(iconRes)
         .fontSize(20)
+        .fontColor([this.currentTab === tab ? 
+          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
+          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
       Text(label)
         .fontSize(12)
         .fontColor(this.currentTab === tab ? 

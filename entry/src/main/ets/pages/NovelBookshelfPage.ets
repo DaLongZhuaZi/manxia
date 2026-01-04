@@ -485,35 +485,74 @@ export struct NovelBookshelfPage {
     })
   }
 
+  /**
+   * 构建标签栏 - VSCode风格
+   */
   @Builder
   buildTabs() {
     Column() {
-      Row() {
-        ForEach(['收藏', '历史浏览'], (tab: string, index: number) => {
-          Column() {
-            Text(tab)
-              .fontSize(15)
-              .fontColor(this.currentTab === index ? 
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-                ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .fontWeight(this.currentTab === index ? FontWeight.Medium : FontWeight.Normal)
-            
-            if (this.currentTab === index) {
-              Divider()
-                .width(40)
-                .height(2)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .margin({ top: 8 })
-            }
+      Scroll() {
+        Row({ space: 0 }) {
+          // 收藏Tab
+          Row() {
+            SymbolGlyph($r('sys.symbol.heart'))
+              .fontSize(14)
+              .fontColor([this.currentTab === 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+              .margin({ right: 6 })
+            Text('收藏')
+              .fontSize(13)
+              .fontColor(this.currentTab === 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
-          .padding({ top: 12, bottom: 8 })
-          .layoutWeight(1)
-          .onClick(() => {
-            this.currentTab = index;
+          .padding({ left: 12, right: 12 })
+          .height(35)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor(this.currentTab === 0
+            ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+            : Color.Transparent)
+          .border({
+            width: { top: this.currentTab === 0 ? 2 : 0 },
+            color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
           })
-        })
+          .onClick(() => { this.currentTab = 0; })
+          .animation({ duration: 150 })
+
+          // 历史浏览Tab
+          Row() {
+            SymbolGlyph($r('sys.symbol.clock'))
+              .fontSize(14)
+              .fontColor([this.currentTab === 1
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+              .margin({ right: 6 })
+            Text('历史浏览')
+              .fontSize(13)
+              .fontColor(this.currentTab === 1
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .padding({ left: 12, right: 12 })
+          .height(35)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor(this.currentTab === 1
+            ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+            : Color.Transparent)
+          .border({
+            width: { top: this.currentTab === 1 ? 2 : 0 },
+            color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          })
+          .onClick(() => { this.currentTab = 1; })
+          .animation({ duration: 150 })
+        }
       }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .height(35)
       .width('100%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
       
       // 分组和排序工具栏（仅在收藏页显示）
       if (this.currentTab === 0 && !this.isEditMode) {

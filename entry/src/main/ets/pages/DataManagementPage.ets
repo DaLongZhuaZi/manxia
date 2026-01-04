@@ -11,8 +11,8 @@ import { logger } from '../Utils/Logger';
 import { ThemeToggle } from '../Framework/Components/ThemeToggle';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 
-import { picker } from '@kit.CoreFileKit';
-import { common } from '@kit.AbilityKit';
+import { picker, Environment } from '@kit.CoreFileKit';
+import { common, abilityAccessCtrl, bundleManager, Permissions } from '@kit.AbilityKit';
 
 import { DataManager, ComicInfoInput, ChapterInfoInput, PageInfoInput, ComicInfo as ComicRecord, ChapterInfo as ChapterRecord, PageInfo as PageRecord, FavoriteInfoInput } from '../Framework/Data/DataManager';
 import { DataService } from '../Framework/Services/DataService';
@@ -682,7 +682,934 @@ struct DataManagementPage {
   @State private currentParsedStructure: ParsedArchiveStructure | null = null;
   @State private currentFileUri: string = '';
   @State private existingMangaCandidates: ExistingMangaCandidate[] = [];
+  
+  // 公共目录权限状态
+  @State private hasDownloadPermission: boolean = false;
+  @State private hasDocumentsPermission: boolean = false;
+  @State private appDownloadFolderPath: string = '';
+  @State private appDocumentsFolderPath: string = '';
+  
+  // Download目录直接访问相关状态
+  @State private downloadDirPath: string = '';
+  @State private downloadDirUri: string = '';  // 保存URI用于后续访问
+  @State private downloadDirFiles: string[] = [];
+  @State private downloadDirFileCount: number = 0;
 
+  // 扫描到的待导入文件分类
+  @State private pendingMangaFiles: string[] = [];  // 漫画压缩包
+  @State private pendingEbookFiles: string[] = [];  // 电子书
+  @State private pendingPdfFiles: string[] = [];    // PDF文件
+  @State private pendingNovelFiles: string[] = [];  // 小说文件
+  @State private isScanning: boolean = false;
+
+  // 一级-二级标签模式状态
+  @State private primaryTab: 'file_select' | 'download_sync' = 'file_select';  // 一级标签
+  @State private secondaryTab: 'manga' | 'ebook' | 'pdf' = 'manga';  // 二级标签（选择文件导入）
+  @State private syncSecondaryTab: 'folder_status' | 'imported_content' = 'folder_status';  // 二级标签（Download同步）
+
+  // 应用专属文件夹名称
+  private static readonly APP_FOLDER_NAME: string = '漫匣';
+
+  // 支持的文件扩展名
+  private static readonly MANGA_EXTENSIONS: string[] = ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz'];
+  private static readonly EBOOK_EXTENSIONS: string[] = ['epub', 'mobi', 'azw', 'azw3'];
+  private static readonly PDF_EXTENSIONS: string[] = ['pdf'];
+  private static readonly NOVEL_EXTENSIONS: string[] = ['txt'];
+
+  /**
+   * 使用DOWNLOAD模式创建应用专属目录并访问
+   * 通过DocumentViewPicker的DOWNLOAD模式，自动在Download/包名/目录下创建
+   */
+  private async accessAppDownloadDir(): Promise<void> {
+    try {
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        promptAction.showToast({ message: '无法获取上下文' });
+        return;
+      }
+      
+      const documentViewPicker = new picker.DocumentViewPicker(context);
+      const documentSaveOptions = new picker.DocumentSaveOptions();
+      documentSaveOptions.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+      
+      logger.info(TAG, '开始使用DOWNLOAD模式创建应用目录...');
+      
+      documentViewPicker.save(documentSaveOptions).then((documentSaveResult: Array<string>) => {
+        if (documentSaveResult.length > 0) {
+          const uri = documentSaveResult[0];
+          logger.info(TAG, `DOWNLOAD模式返回URI: ${uri}`);
+          
+          // 保存目录路径和URI
+          const uriObj = new fileUri.FileUri(uri);
+          this.downloadDirPath = uriObj.path;
+          this.downloadDirUri = uri;
+          
+          // 在目录下创建一个测试文件来验证权限
+          try {
+            const testFilePath = new fileUri.FileUri(uri + '/.manxia_init').path;
+            const file = fs.openSync(testFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
+            fs.writeSync(file.fd, '漫侠应用目录初始化文件');
+            fs.closeSync(file.fd);
+            logger.info(TAG, `成功创建初始化文件: ${testFilePath}`);
+          } catch (writeError) {
+            logger.warn(TAG, `创建初始化文件失败: ${String(writeError)}`);
+          }
+          
+          // 列出目录下的文件
+          try {
+            const filenames = fs.listFileSync(this.downloadDirPath);
+            this.downloadDirFiles = filenames;
+            this.downloadDirFileCount = filenames.length;
+            logger.info(TAG, `Download目录下共有 ${filenames.length} 个文件`);
+            promptAction.showToast({ message: `目录创建成功，共 ${filenames.length} 个文件` });
+          } catch (listError) {
+            logger.warn(TAG, `列出文件失败: ${String(listError)}`);
+            this.downloadDirFiles = [];
+            this.downloadDirFileCount = 0;
+            promptAction.showToast({ message: '目录创建成功' });
+          }
+        }
+      }).catch((err: Error) => {
+        logger.error(TAG, `DOWNLOAD模式失败: ${err.message}`);
+        promptAction.showToast({ message: `创建失败: ${err.message}` });
+      });
+    } catch (error) {
+      logger.error(TAG, `访问Download目录失败: ${String(error)}`);
+      promptAction.showToast({ message: `访问失败: ${String(error)}` });
+    }
+  }
+
+  /**
+   * 获取文件扩展名（用于Download目录扫描）
+   */
+  private getDownloadFileExtension(filename: string): string {
+    const lastDot = filename.lastIndexOf('.');
+    if (lastDot === -1) return '';
+    return filename.substring(lastDot + 1).toLowerCase();
+  }
+
+  /**
+   * 扫描Download目录并分类文件
+   */
+  private async scanDownloadDir(): Promise<void> {
+    if (!this.downloadDirPath) {
+      promptAction.showToast({ message: '请先访问Download目录' });
+      return;
+    }
+    
+    this.isScanning = true;
+    this.pendingMangaFiles = [];
+    this.pendingEbookFiles = [];
+    this.pendingPdfFiles = [];
+    this.pendingNovelFiles = [];
+    
+    try {
+      const filenames = fs.listFileSync(this.downloadDirPath);
+      this.downloadDirFiles = filenames;
+      this.downloadDirFileCount = filenames.length;
+      
+      for (let i = 0; i < filenames.length; i++) {
+        const filename = filenames[i];
+        const ext = this.getDownloadFileExtension(filename);
+        
+        if (filename.startsWith('.')) continue;
+        
+        if (DataManagementPage.MANGA_EXTENSIONS.includes(ext)) {
+          this.pendingMangaFiles.push(filename);
+        } else if (DataManagementPage.EBOOK_EXTENSIONS.includes(ext)) {
+          this.pendingEbookFiles.push(filename);
+        } else if (DataManagementPage.PDF_EXTENSIONS.includes(ext)) {
+          this.pendingPdfFiles.push(filename);
+        } else if (DataManagementPage.NOVEL_EXTENSIONS.includes(ext)) {
+          this.pendingNovelFiles.push(filename);
+        }
+      }
+      
+      const totalPending = this.pendingMangaFiles.length + this.pendingEbookFiles.length + 
+                          this.pendingPdfFiles.length + this.pendingNovelFiles.length;
+      
+      logger.info(TAG, `扫描完成: 漫画=${this.pendingMangaFiles.length}, 电子书=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, 小说=${this.pendingNovelFiles.length}`);
+      promptAction.showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
+    } catch (error) {
+      logger.error(TAG, `扫描目录失败: ${String(error)}`);
+      promptAction.showToast({ message: `扫描失败: ${String(error)}` });
+    } finally {
+      this.isScanning = false;
+    }
+  }
+
+  /**
+   * 从Download目录导入漫画文件（原地模式）
+   * 解压到Download目录下，不复制到沙箱
+   */
+  private async importMangaFromDownloadDir(): Promise<void> {
+    if (this.pendingMangaFiles.length === 0) {
+      promptAction.showToast({ message: '没有待导入的漫画文件' });
+      return;
+    }
+    
+    // 如果有多个文件，显示批量导入对话框
+    if (this.pendingMangaFiles.length >= 2) {
+      await this.showDownloadBatchImportDialog();
+      return;
+    }
+    
+    // 单个文件，显示单文件导入对话框
+    const filename = this.pendingMangaFiles[0];
+    const uri = `${this.downloadDirUri}/${filename}`;
+    await this.showDownloadSingleImportDialog(uri, filename);
+  }
+  
+  /**
+   * 显示Download目录批量导入对话框
+   */
+  private async showDownloadBatchImportDialog(): Promise<void> {
+    // 构建文件URI列表
+    const fileUris: string[] = [];
+    for (let i = 0; i < this.pendingMangaFiles.length; i++) {
+      const filename = this.pendingMangaFiles[i];
+      const uri = `${this.downloadDirUri}/${filename}`;
+      fileUris.push(uri);
+    }
+    
+    // 查找可能的重复漫画
+    await this.findExistingMangaCandidatesForBatch();
+    
+    this.batchMangaImportDialogController = new CustomDialogController({
+      builder: BatchMangaImportDialog({
+        themeState: this.themeState,
+        fileUris: fileUris,
+        existingMangaCandidates: this.existingMangaCandidates,
+        parseFileStructure: async (fileUri: string): Promise<ParsedArchiveStructure | null> => {
+          const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+          return this.convertToDialogStructure(parsed);
+        },
+        parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
+          return this.parseComicInfoXml(xmlContent);
+        },
+        onConfirm: (result: BatchMangaImportDialogResult) => {
+          this.handleDownloadBatchImportResult(result);
+        },
+        onCancel: () => {
+          this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
+          this.pendingMangaFiles = [];
+        }
+      }),
+      autoCancel: false,
+      alignment: DialogAlignment.Center
+    });
+
+    this.batchMangaImportDialogController.open();
+    this.updateProgress(ImportStatus.IDLE, '请配置批量导入选项', 10);
+  }
+  
+  /**
+   * 处理Download目录批量导入结果
+   */
+  private async handleDownloadBatchImportResult(result: BatchMangaImportDialogResult): Promise<void> {
+    this.updateProgress(ImportStatus.IMPORTING, `开始导入...`, 10);
+    let successCount = 0;
+    const total = result.groups.length;
+    
+    for (let i = 0; i < result.groups.length; i++) {
+      const group: MangaGroupResult = result.groups[i];
+      this.updateProgress(ImportStatus.IMPORTING, `导入 (${i + 1}/${total}): ${group.title}`, 10 + (i / total) * 80);
+      
+      try {
+        await this.importDownloadMangaGroup(group);
+        successCount++;
+      } catch (error) {
+        logger.error(TAG, `导入失败 ${group.title}: ${String(error)}`);
+      }
+    }
+    
+    this.updateProgress(ImportStatus.COMPLETED, `完成: 成功 ${successCount}/${total}`, 100);
+    promptAction.showToast({ message: `导入完成: 成功 ${successCount}` });
+    this.pendingMangaFiles = [];
+    
+    if (successCount > 0) {
+      eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successCount, total));
+    }
+  }
+  
+  /**
+   * 导入Download目录的漫画组
+   */
+  private async importDownloadMangaGroup(group: MangaGroupResult): Promise<void> {
+    // 创建漫画记录
+    const mangaId = await this.dataManager.addComicInfo({
+      title: group.title,
+      author: group.author || '',
+      description: group.description || '',
+      coverUrl: '',
+      sourceId: 'download_import',
+      externalId: `download_${generateUUID()}`,
+      status: MangaStatus.UNKNOWN,
+      tags: group.tags || [],
+      rating: 0,
+      chapterCount: group.chapters.length,
+      lastUpdateTime: Date.now()
+    } as ComicInfoInput);
+    
+    // 添加收藏
+    await DataService.getInstance().addToFavorites(mangaId, group.tags || []);
+    
+    // 在Download目录创建漫画文件夹
+    const folderName = this.sanitizeFolderName(group.title);
+    const mangaPath = `${this.downloadDirPath}/${folderName}`;
+    try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+    
+    let firstCoverPath = '';
+    
+    // 处理每个章节
+    for (let i = 0; i < group.chapters.length; i++) {
+      const chapter = group.chapters[i];
+      const chapterPath = `${mangaPath}/${this.sanitizeFolderName(chapter.title)}`;
+      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      
+      // 解析并复制文件
+      const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
+      const imageFiles: string[] = [];
+      
+      if (parsed.extractedPath) {
+        const files = fs.listFileSync(parsed.extractedPath);
+        for (const file of files) {
+          if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
+            const srcPath = `${parsed.extractedPath}/${file}`;
+            const destPath = `${chapterPath}/${file}`;
+            try {
+              fs.copyFileSync(srcPath, destPath);
+              imageFiles.push(file);
+            } catch (e) {
+              logger.warn(TAG, `复制文件失败: ${file}`);
+            }
+          }
+        }
+      }
+      
+      // 创建章节记录
+      const chapterId = await this.dataManager.addChapterInfo({
+        comicId: mangaId,
+        title: chapter.title,
+        index: i,
+        pageCount: imageFiles.length,
+        isDownloaded: true,
+        downloadPath: chapterPath,
+        publishTime: Date.now(),
+        externalId: `local_chapter_${generateUUID()}`
+      } as ChapterInfoInput);
+      
+      // 添加页面信息
+      await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+      
+      // 记录第一个章节的第一张图片作为封面
+      if (i === 0 && imageFiles.length > 0) {
+        imageFiles.sort();
+        firstCoverPath = `${chapterPath}/${imageFiles[0]}`;
+      }
+    }
+    
+    // 处理封面
+    if (firstCoverPath) {
+      const ext = firstCoverPath.substring(firstCoverPath.lastIndexOf('.'));
+      const coverPath = `${mangaPath}/cover${ext}`;
+      try {
+        fs.copyFileSync(firstCoverPath, coverPath);
+        await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
+        logger.info(TAG, `封面已保存: ${coverPath}`);
+      } catch (e) {
+        logger.warn(TAG, `保存封面失败: ${String(e)}`);
+      }
+    }
+    
+    logger.info(TAG, `Download导入成功: ${group.title}`);
+  }
+  
+  /**
+   * 显示Download目录单文件导入对话框
+   */
+  private async showDownloadSingleImportDialog(fileUri: string, filename: string): Promise<void> {
+    try {
+      this.updateProgress(ImportStatus.PARSING, `正在解析: ${filename}`, 10);
+      
+      // 解析压缩包结构
+      const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+      
+      // 转换为对话框需要的格式
+      const dialogStructure: ParsedArchiveStructure = this.convertToDialogStructure(parsed);
+      
+      // 查找可能的重复漫画
+      const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z)$/i);
+      const title = titleMatch ? titleMatch[1] : filename.replace(/\.[^.]+$/, '');
+      await this.findExistingMangaCandidates(title);
+      
+      // 保存当前文件信息
+      this.currentFileUri = fileUri;
+      this.currentParsedStructure = dialogStructure;
+      
+      // 显示导入对话框
+      this.mangaImportDialogController = new CustomDialogController({
+        builder: MangaImportDialog({
+          themeState: this.themeState,
+          fileName: filename,
+          parsedStructure: dialogStructure,
+          existingMangaCandidates: this.existingMangaCandidates,
+          sourceFileUri: fileUri,
+          onConfirm: (result: MangaImportDialogResult) => {
+            this.handleDownloadSingleImportResult(result);
+          },
+          onCancel: () => {
+            this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+            this.pendingMangaFiles = [];
+          }
+        }),
+        autoCancel: false,
+        customStyle: true,
+        alignment: DialogAlignment.Center
+      });
+
+      this.mangaImportDialogController.open();
+      this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
+    } catch (error) {
+      logger.error(TAG, `解析失败: ${filename}`, String(error));
+      promptAction.showToast({ message: `解析失败: ${String(error)}` });
+      this.pendingMangaFiles = [];
+    }
+  }
+  
+  /**
+   * 处理Download目录单文件导入结果
+   */
+  private async handleDownloadSingleImportResult(result: MangaImportDialogResult): Promise<void> {
+    try {
+      this.updateProgress(ImportStatus.IMPORTING, '正在导入漫画...', 30);
+      
+      const parsed = result.parsedStructure;
+      
+      // 在Download目录创建漫画文件夹
+      const folderName = this.sanitizeFolderName(result.title);
+      const mangaPath = `${this.downloadDirPath}/${folderName}`;
+      try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+      
+      // 创建漫画记录
+      const mangaId = await this.dataManager.addComicInfo({
+        title: result.title,
+        author: result.author,
+        description: result.description,
+        coverUrl: '',
+        sourceId: 'download_import',
+        externalId: `download_${generateUUID()}`,
+        status: MangaStatus.UNKNOWN,
+        tags: result.tags,
+        rating: 0,
+        chapterCount: 1,
+        lastUpdateTime: Date.now()
+      } as ComicInfoInput);
+      
+      // 添加收藏
+      await DataService.getInstance().addToFavorites(mangaId, result.tags);
+      
+      // 处理章节
+      const chapterPath = `${mangaPath}/第1话`;
+      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      
+      // 复制图片文件和ComicInfo.xml
+      const imageFiles: string[] = [];
+      if (parsed.extractedPath) {
+        const files = fs.listFileSync(parsed.extractedPath);
+        for (const file of files) {
+          if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
+            const srcPath = `${parsed.extractedPath}/${file}`;
+            const destPath = `${chapterPath}/${file}`;
+            try {
+              fs.copyFileSync(srcPath, destPath);
+              imageFiles.push(file);
+            } catch (e) {
+              logger.warn(TAG, `复制文件失败: ${file}`);
+            }
+          }
+        }
+        
+        // 复制ComicInfo.xml到漫画根目录
+        if (parsed.hasComicInfo) {
+          const comicInfoSrc = `${parsed.extractedPath}/ComicInfo.xml`;
+          const comicInfoDest = `${mangaPath}/ComicInfo.xml`;
+          try {
+            fs.copyFileSync(comicInfoSrc, comicInfoDest);
+            logger.info(TAG, `ComicInfo.xml已复制: ${comicInfoDest}`);
+          } catch (e) {
+            logger.warn(TAG, `复制ComicInfo.xml失败: ${String(e)}`);
+          }
+        }
+      }
+      
+      // 创建章节记录
+      const chapterId = await this.dataManager.addChapterInfo({
+        comicId: mangaId,
+        title: '第1话',
+        index: 0,
+        pageCount: imageFiles.length,
+        isDownloaded: true,
+        downloadPath: chapterPath,
+        publishTime: Date.now(),
+        externalId: `local_chapter_${generateUUID()}`
+      } as ChapterInfoInput);
+      
+      // 添加页面信息
+      await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+      
+      // 处理封面
+      if (imageFiles.length > 0) {
+        imageFiles.sort();
+        const firstImagePath = `${chapterPath}/${imageFiles[0]}`;
+        const ext = imageFiles[0].substring(imageFiles[0].lastIndexOf('.'));
+        const coverPath = `${mangaPath}/cover${ext}`;
+        
+        try {
+          fs.copyFileSync(firstImagePath, coverPath);
+          await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
+          logger.info(TAG, `封面已保存: ${coverPath}`);
+        } catch (e) {
+          logger.warn(TAG, `保存封面失败: ${String(e)}`);
+        }
+      }
+      
+      this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
+      promptAction.showToast({ message: '导入成功' });
+      this.pendingMangaFiles = [];
+      
+      eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
+      
+      // 询问是否删除原文件
+      if (result.sourceFileUri) {
+        this.askDeleteSourceFile(result.sourceFileUri, result.title);
+      }
+    } catch (error) {
+      logger.error(TAG, `导入失败: ${String(error)}`);
+      this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
+      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+    }
+  }
+  
+  /**
+   * 询问用户是否删除原文件
+   */
+  private askDeleteSourceFile(fileUri: string, title: string): void {
+    AlertDialog.show({
+      title: '删除原文件',
+      message: `漫画"${title}"已成功导入。\n是否删除原压缩包文件以节省空间？`,
+      primaryButton: {
+        value: '保留',
+        action: () => {
+          logger.info(TAG, `用户选择保留原文件: ${fileUri}`);
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: Color.Red,
+        action: () => {
+          this.deleteSourceFile(fileUri);
+        }
+      }
+    });
+  }
+  
+  /**
+   * 删除原文件
+   */
+  private deleteSourceFile(fileUri: string): void {
+    try {
+      // 将URI转换为路径
+      let filePath = fileUri;
+      if (fileUri.startsWith('file://docs/')) {
+        filePath = fileUri.replace('file://docs', '');
+      } else if (fileUri.startsWith('file://')) {
+        filePath = fileUri.replace('file://', '');
+      }
+      
+      fs.unlinkSync(filePath);
+      logger.info(TAG, `原文件已删除: ${filePath}`);
+      promptAction.showToast({ message: '原文件已删除' });
+    } catch (error) {
+      logger.error(TAG, `删除原文件失败: ${String(error)}`);
+      promptAction.showToast({ message: `删除失败: ${String(error)}` });
+    }
+  }
+  
+  /**
+   * 原地导入单个漫画（解压到Download目录）
+   */
+  private async importMangaInPlaceFromDownload(fileUri: string, filename: string): Promise<void> {
+    // 解析压缩包（会解压到临时目录）
+    const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+    
+    // 提取标题
+    const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z)$/i);
+    const title = titleMatch ? titleMatch[1] : filename.replace(/\.[^.]+$/, '');
+    
+    // 解析ComicInfo
+    let comicInfo: PrefilledComicInfo | null = null;
+    if (parsed.hasComicInfo && parsed.comicInfoContent) {
+      comicInfo = this.parseComicInfoXml(parsed.comicInfoContent);
+    }
+    
+    // 在Download目录创建漫画文件夹
+    const folderName = this.sanitizeFolderName(comicInfo?.title || title);
+    const mangaPath = `${this.downloadDirPath}/${folderName}`;
+    const chapterPath = `${mangaPath}/第1话`;
+    
+    try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
+    try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+    
+    // 从临时目录复制文件到Download目录
+    const tempExtractedPath = parsed.extractedPath;
+    const imageFiles: string[] = [];
+    
+    if (tempExtractedPath) {
+      const files = fs.listFileSync(tempExtractedPath);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
+          const srcPath = `${tempExtractedPath}/${file}`;
+          const destPath = `${chapterPath}/${file}`;
+          try {
+            fs.copyFileSync(srcPath, destPath);
+            imageFiles.push(file);
+          } catch (e) {
+            logger.warn(TAG, `复制文件失败: ${file}`);
+          }
+        }
+      }
+      
+      // 复制ComicInfo.xml到漫画根目录
+      if (parsed.hasComicInfo) {
+        const comicInfoSrc = `${tempExtractedPath}/ComicInfo.xml`;
+        const comicInfoDest = `${mangaPath}/ComicInfo.xml`;
+        try {
+          fs.copyFileSync(comicInfoSrc, comicInfoDest);
+          logger.info(TAG, `ComicInfo.xml已复制: ${comicInfoDest}`);
+        } catch (e) {
+          logger.warn(TAG, `复制ComicInfo.xml失败: ${String(e)}`);
+        }
+      }
+    }
+    
+    // 创建漫画记录
+    const mangaId = await this.dataManager.addComicInfo({
+      title: comicInfo?.title || title,
+      author: comicInfo?.author || '',
+      description: comicInfo?.description || '',
+      coverUrl: '',
+      sourceId: 'download_import',
+      externalId: `download_${generateUUID()}`,
+      status: MangaStatus.UNKNOWN,
+      tags: comicInfo?.tags || [],
+      rating: 0,
+      chapterCount: 1,
+      lastUpdateTime: Date.now()
+    } as ComicInfoInput);
+    
+    // 添加收藏
+    await DataService.getInstance().addToFavorites(mangaId, comicInfo?.tags || []);
+    
+    // 创建章节记录
+    const chapterId = await this.dataManager.addChapterInfo({
+      comicId: mangaId,
+      title: '第1话',
+      index: 0,
+      pageCount: imageFiles.length,
+      isDownloaded: true,
+      downloadPath: chapterPath,
+      publishTime: Date.now(),
+      externalId: `local_chapter_${generateUUID()}`
+    } as ChapterInfoInput);
+    
+    // 添加页面信息
+    await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
+    
+    // 处理封面 - 复制第一张图片到漫画目录作为封面
+    if (imageFiles.length > 0) {
+      imageFiles.sort();
+      const firstImagePath = `${chapterPath}/${imageFiles[0]}`;
+      const ext = imageFiles[0].substring(imageFiles[0].lastIndexOf('.'));
+      const coverPath = `${mangaPath}/cover${ext}`;
+      
+      try {
+        fs.copyFileSync(firstImagePath, coverPath);
+        // 更新数据库中的封面路径
+        await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
+        logger.info(TAG, `封面已保存: ${coverPath}`);
+      } catch (e) {
+        logger.warn(TAG, `保存封面失败: ${String(e)}`);
+      }
+    }
+    
+    logger.info(TAG, `原地导入成功: ${title}, 路径: ${chapterPath}, 图片数: ${imageFiles.length}`);
+  }
+  
+  /**
+   * 清理文件夹名称
+   */
+  private sanitizeFolderName(name: string): string {
+    return name.replace(/[\\/:*?"<>|]/g, '_').substring(0, 50);
+  }
+  
+  /**
+   * 将CompressionUtils的ParsedArchiveStructure转换为对话框需要的格式
+   */
+  private convertToDialogStructure(parsed: CompressionParsedStructure): ParsedArchiveStructure {
+    // 解析ComicInfo.xml获取预填充信息
+    let prefilledInfo: PrefilledComicInfo | undefined = undefined;
+    if (parsed.hasComicInfo && parsed.comicInfoContent) {
+      const parsedInfo = this.parseComicInfoXml(parsed.comicInfoContent);
+      if (parsedInfo) {
+        prefilledInfo = parsedInfo;
+      }
+    }
+    
+    return {
+      hasComicInfo: parsed.hasComicInfo,
+      comicInfoContent: parsed.comicInfoContent,
+      isMultiLayer: parsed.isMultiLayer,
+      detectedChapters: parsed.detectedChapters.map(ch => {
+        const chapterInfo: ChapterInfo = {
+          index: ch.index,
+          number: ch.number,
+          title: ch.title,
+          originalName: ch.originalName,
+          path: ch.path,
+          pageCount: ch.pageCount
+        };
+        return chapterInfo;
+      }),
+      rootImageCount: parsed.rootImageCount,
+      totalImageCount: parsed.totalImageCount,
+      extractedPath: parsed.extractedPath,
+      tempDirectories: parsed.tempDirectories,
+      warnings: parsed.warnings,
+      prefilledInfo: prefilledInfo
+    };
+  }
+
+  /**
+   * 从Download目录导入电子书文件
+   * 将电子书复制到Download目录的ebooks子文件夹
+   */
+  private async importEbooksFromDownloadDir(): Promise<void> {
+    if (this.pendingEbookFiles.length === 0) {
+      promptAction.showToast({ message: '没有待导入的电子书文件' });
+      return;
+    }
+    
+    // 创建电子书专属文件夹
+    const ebooksPath = `${this.downloadDirPath}/ebooks`;
+    try { fs.mkdirSync(ebooksPath); } catch (e) { /* 已存在 */ }
+    
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      promptAction.showToast({ message: '无法获取上下文' });
+      return;
+    }
+    
+    const totalFiles = this.pendingEbookFiles.length;
+    let successCount = 0;
+    const sourceFiles: string[] = [...this.pendingEbookFiles];
+    this.pendingEbookFiles = [];
+    
+    for (let i = 0; i < sourceFiles.length; i++) {
+      const filename = sourceFiles[i];
+      const sourceUri = `${this.downloadDirUri}/${filename}`;
+      const sourcePath = `${this.downloadDirPath}/${filename}`;
+      
+      try {
+        this.updateProgress(ImportStatus.PROCESSING, `正在处理第 ${i + 1}/${totalFiles} 个电子书...`, ((i + 1) / totalFiles) * 100);
+        
+        // 复制到ebooks文件夹
+        const timestamp = Date.now();
+        const safeFilename = filename.replace(/[<>:"/\\|?*]/g, '_');
+        const targetPath = `${ebooksPath}/${timestamp}_${safeFilename}`;
+        
+        fs.copyFileSync(sourcePath, targetPath);
+        logger.info(TAG, `电子书复制成功: ${targetPath}`);
+        
+        // 继续导入流程
+        const importSuccess = await this.continueImportEBook(targetPath);
+        if (importSuccess) {
+          successCount++;
+          // 询问是否删除原文件
+          this.askDeleteSourceFile(sourceUri, filename);
+        }
+      } catch (error) {
+        logger.error(TAG, `导入电子书失败 ${filename}: ${String(error)}`);
+      }
+    }
+    
+    this.updateProgress(ImportStatus.COMPLETED, `电子书导入完成: 成功 ${successCount}/${totalFiles}`, 100);
+    promptAction.showToast({ message: `电子书导入完成: 成功 ${successCount}` });
+  }
+
+  /**
+   * 从Download目录导入PDF文件
+   */
+  private async importPdfsFromDownloadDir(): Promise<void> {
+    if (this.pendingPdfFiles.length === 0) {
+      promptAction.showToast({ message: '没有待导入的PDF文件' });
+      return;
+    }
+    
+    const fileUris: string[] = [];
+    for (let i = 0; i < this.pendingPdfFiles.length; i++) {
+      const filename = this.pendingPdfFiles[i];
+      const uri = `${this.downloadDirUri}/${filename}`;
+      fileUris.push(uri);
+    }
+    
+    // PDF文件需要逐个处理，使用现有的showPdfImportDialog方法
+    for (let i = 0; i < fileUris.length; i++) {
+      this.showPdfImportDialog(fileUris[i]);
+    }
+    promptAction.showToast({ message: `开始导入 ${fileUris.length} 个PDF文件` });
+    this.pendingPdfFiles = [];
+  }
+
+  /**
+   * 检查公共目录权限
+   */
+  private async checkPublicDirectoryPermissions(): Promise<void> {
+    try {
+      const bundleInfo = await bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+      const tokenId = bundleInfo.appInfo.accessTokenId;
+      const atManager = abilityAccessCtrl.createAtManager();
+      
+      // 检查下载目录权限
+      const downloadPermission: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY';
+      const downloadState = atManager.checkAccessTokenSync(tokenId, downloadPermission);
+      this.hasDownloadPermission = downloadState === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      
+      // 检查文档目录权限
+      const documentsPermission: Permissions = 'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY';
+      const documentsState = atManager.checkAccessTokenSync(tokenId, documentsPermission);
+      this.hasDocumentsPermission = documentsState === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED;
+      
+      logger.info(TAG, `公共目录权限状态: 下载=${this.hasDownloadPermission}, 文档=${this.hasDocumentsPermission}`);
+    } catch (error) {
+      logger.error(TAG, `检查公共目录权限失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 申请公共目录权限
+   */
+  private async requestPublicDirectoryPermissions(): Promise<boolean> {
+    try {
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        logger.error(TAG, '无法获取UIAbilityContext');
+        return false;
+      }
+      
+      const atManager = abilityAccessCtrl.createAtManager();
+      const permissions: Permissions[] = [
+        'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
+        'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY'
+      ];
+      
+      const result = await atManager.requestPermissionsFromUser(context, permissions);
+      
+      // 检查授权结果
+      this.hasDownloadPermission = result.authResults[0] === 0;
+      this.hasDocumentsPermission = result.authResults[1] === 0;
+      
+      logger.info(TAG, `权限申请结果: 下载=${this.hasDownloadPermission}, 文档=${this.hasDocumentsPermission}`);
+      
+      return this.hasDownloadPermission || this.hasDocumentsPermission;
+    } catch (error) {
+      logger.error(TAG, `申请公共目录权限失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 检查设备是否支持公共目录访问（保留方法但不再阻止功能）
+   */
+  private isPublicDirectorySupported(): boolean {
+    return canIUse('SystemCapability.FileManagement.File.Environment.FolderObtain');
+  }
+
+  /**
+   * 创建应用专属文件夹
+   */
+  private async createAppFolders(): Promise<void> {
+    try {
+      // 检查并申请权限
+      await this.checkPublicDirectoryPermissions();
+      
+      if (!this.hasDownloadPermission && !this.hasDocumentsPermission) {
+        logger.info(TAG, '未授权公共目录权限，开始申请...');
+        const granted = await this.requestPublicDirectoryPermissions();
+        if (!granted) {
+          promptAction.showToast({ message: '需要授权公共目录权限才能创建应用文件夹' });
+          return;
+        }
+      }
+      
+      // 创建下载目录中的应用文件夹
+      if (this.hasDownloadPermission) {
+        try {
+          const downloadPath = Environment.getUserDownloadDir();
+          this.appDownloadFolderPath = `${downloadPath}/${DataManagementPage.APP_FOLDER_NAME}`;
+          
+          // 尝试创建文件夹
+          try {
+            fs.accessSync(this.appDownloadFolderPath);
+            logger.info(TAG, `下载目录应用文件夹已存在: ${this.appDownloadFolderPath}`);
+          } catch (accessError) {
+            // 文件夹不存在，创建它
+            fs.mkdirSync(this.appDownloadFolderPath);
+            logger.info(TAG, `已创建下载目录应用文件夹: ${this.appDownloadFolderPath}`);
+          }
+        } catch (error) {
+          logger.error(TAG, `创建下载目录应用文件夹失败: ${String(error)}`);
+        }
+      }
+      
+      // 创建文档目录中的应用文件夹
+      if (this.hasDocumentsPermission) {
+        try {
+          const documentsPath = Environment.getUserDocumentDir();
+          this.appDocumentsFolderPath = `${documentsPath}/${DataManagementPage.APP_FOLDER_NAME}`;
+          
+          try {
+            fs.accessSync(this.appDocumentsFolderPath);
+            logger.info(TAG, `文档目录应用文件夹已存在: ${this.appDocumentsFolderPath}`);
+          } catch (accessError) {
+            fs.mkdirSync(this.appDocumentsFolderPath);
+            logger.info(TAG, `已创建文档目录应用文件夹: ${this.appDocumentsFolderPath}`);
+          }
+        } catch (error) {
+          logger.error(TAG, `创建文档目录应用文件夹失败: ${String(error)}`);
+        }
+      }
+      
+      // 显示结果
+      if (this.appDownloadFolderPath || this.appDocumentsFolderPath) {
+        promptAction.showToast({ message: '应用文件夹创建成功' });
+      }
+    } catch (error) {
+      logger.error(TAG, `创建应用文件夹失败: ${String(error)}`);
+      promptAction.showToast({ message: `创建失败: ${String(error)}` });
+    }
+  }
+
+  /**
+   * 获取应用在公共目录的路径
+   */
+  public getAppPublicFolderPath(type: 'download' | 'documents'): string {
+    if (type === 'download') {
+      return this.appDownloadFolderPath;
+    }
+    return this.appDocumentsFolderPath;
+  }
 
   /**
    * 展示漫画级合并弹窗并返回用户决策（UniversalDialog 重构版）
@@ -5879,6 +6806,655 @@ struct DataManagementPage {
     return labels.join('、');
   }
 
+  /**
+   * 获取文件图标资源
+   */
+  private getFileIconResource(filename: string): Resource {
+    const ext = this.getDownloadFileExtension(filename);
+    if (DataManagementPage.MANGA_EXTENSIONS.includes(ext)) return $r('sys.symbol.rectangle_stack');
+    if (DataManagementPage.EBOOK_EXTENSIONS.includes(ext)) return $r('sys.symbol.book');
+    if (DataManagementPage.PDF_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_plaintext');
+    if (DataManagementPage.NOVEL_EXTENSIONS.includes(ext)) return $r('sys.symbol.doc_text');
+    return $r('sys.symbol.folder');
+  }
+
+  /**
+   * 构建一级标签栏 - VSCode风格
+   */
+  @Builder
+  buildPrimaryTabBar() {
+    Scroll() {
+      Row({ space: 0 }) {
+        // 选择文件导入Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.doc_plaintext_2'))
+            .fontSize(14)
+            .fontColor([this.primaryTab === 'file_select'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 6 })
+          Text('选择文件导入')
+            .fontSize(13)
+            .fontColor(this.primaryTab === 'file_select'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.primaryTab === 'file_select'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.primaryTab === 'file_select' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => { this.primaryTab = 'file_select'; })
+        .animation({ duration: 150 })
+
+        // Download同步Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+            .fontSize(14)
+            .fontColor([this.primaryTab === 'download_sync'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 6 })
+          Text('Download同步')
+            .fontSize(13)
+            .fontColor(this.primaryTab === 'download_sync'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.primaryTab === 'download_sync'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.primaryTab === 'download_sync' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => { this.primaryTab = 'download_sync'; })
+        .animation({ duration: 150 })
+      }
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .height(35)
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+  }
+
+  /**
+   * 构建选择文件导入的二级标签 - VSCode风格
+   */
+  @Builder
+  buildFileSelectSecondaryTabs() {
+    Scroll() {
+      Row({ space: 0 }) {
+        // 漫画Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.rectangle_stack'))
+            .fontSize(12)
+            .fontColor([this.secondaryTab === 'manga'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('漫画')
+            .fontSize(12)
+            .fontColor(this.secondaryTab === 'manga'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.secondaryTab === 'manga'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.secondaryTab === 'manga' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => { this.secondaryTab = 'manga'; })
+        .animation({ duration: 150 })
+
+        // 电子书Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.book'))
+            .fontSize(12)
+            .fontColor([this.secondaryTab === 'ebook'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('电子书')
+            .fontSize(12)
+            .fontColor(this.secondaryTab === 'ebook'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.secondaryTab === 'ebook'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.secondaryTab === 'ebook' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => { this.secondaryTab = 'ebook'; })
+        .animation({ duration: 150 })
+
+        // PDF Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.doc_plaintext'))
+            .fontSize(12)
+            .fontColor([this.secondaryTab === 'pdf'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 4 })
+          Text('PDF')
+            .fontSize(12)
+            .fontColor(this.secondaryTab === 'pdf'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 10 })
+        .height(30)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.secondaryTab === 'pdf'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.secondaryTab === 'pdf' ? 2 : 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => { this.secondaryTab = 'pdf'; })
+        .animation({ duration: 150 })
+      }
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    .height(32)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .margin({ top: 4 })
+  }
+
+  /**
+   * 构建漫画导入区域
+   */
+  @Builder
+  buildMangaImportSection() {
+    Column({ space: 16 }) {
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.rectangle_stack')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('漫画导入')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        Text('支持导入ZIP、CBZ、TAR、GZ等压缩包格式。\n支持单行本、单章节、多章节导入模式，可自动识别章节结构或手动配置。')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .lineHeight(18)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Button({ stateEffect: true }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.folder')).fontSize(18).fontColor([Color.White])
+          Text('选择漫画文件').fontSize(16).fontColor(Color.White)
+        }
+      }
+      .width('100%')
+      .height(52)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      .borderRadius(12)
+      .onClick(() => { this.selectFiles(); })
+
+      if (this.selectedFiles.length > 0) {
+        Column({ space: 8 }) {
+          Row() {
+            Text(`已选择 ${this.selectedFiles.length} 个文件`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Blank()
+            Text('清空')
+              .fontSize(13)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.selectedFiles = [];
+                this.importProgress = { status: ImportStatus.IDLE, message: '准备就绪', progress: 0 };
+                this.showResults = false;
+                this.importResults = [];
+              })
+          }
+          .width('100%')
+
+          ForEach(this.selectedFiles.slice(0, 5), (file: string) => {
+            Row({ space: 8 }) {
+              SymbolGlyph(this.getFileIconResource(file)).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+              Text(this.getFileNameFromUri(file))
+                .fontSize(13)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .width('100%')
+            .padding({ top: 6, bottom: 6 })
+          })
+
+          if (this.selectedFiles.length > 5) {
+            Text(`... 还有 ${this.selectedFiles.length - 5} 个文件`)
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+
+          Button({ stateEffect: true }) {
+            Text('开始导入').fontSize(16).fontColor(Color.White)
+          }
+          .width('100%')
+          .height(48)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .borderRadius(10)
+          .enabled(!this.isProcessing())
+          .onClick(() => { this.startImport(); })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+      }
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建电子书导入区域
+   */
+  @Builder
+  buildEbookImportSection() {
+    Column({ space: 16 }) {
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.book')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('电子书导入')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        Text('支持导入TXT、EPUB、MOBI、AZW/AZW3格式的电子书，自动识别章节。')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .lineHeight(18)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Button({ stateEffect: true }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.book')).fontSize(18).fontColor([Color.White])
+          Text('选择电子书').fontSize(16).fontColor(Color.White)
+        }
+      }
+      .width('100%')
+      .height(52)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      .borderRadius(12)
+      .onClick(() => { this.selectEBooks(); })
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建PDF导入区域
+   */
+  @Builder
+  buildPdfImportSection() {
+    Column({ space: 16 }) {
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('PDF导入')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        Text('将PDF文件的每一页转换为图片导入。\n⚠️ 注意：大文件转换较慢，请耐心等待。')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .lineHeight(18)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Button({ stateEffect: true }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(18).fontColor([Color.White])
+          Text('选择PDF文件').fontSize(16).fontColor(Color.White)
+        }
+      }
+      .width('100%')
+      .height(52)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      .borderRadius(12)
+      .onClick(() => { this.selectPdfFiles(); })
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建文件夹状态区域
+   */
+  @Builder
+  buildFolderStatusSection() {
+    Column({ space: 16 }) {
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.folder')).fontSize(24).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('Download文件夹同步')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        Text('访问Download目录下应用专属文件夹，无需申请受限权限。\n将文件放入该文件夹后，可直接扫描并导入。')
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .lineHeight(18)
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 12 }) {
+        Row() {
+          Text('文件夹状态')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          if (this.downloadDirPath) {
+            Text('✓ 已连接').fontSize(13).fontColor('#4CAF50')
+          } else {
+            Text('未连接').fontSize(13).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+
+        if (this.downloadDirPath) {
+          Column({ space: 4 }) {
+            Text('路径').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            Text(this.downloadDirPath)
+              .fontSize(13)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+          Row() {
+            Column({ space: 4 }) {
+              Text(`${this.downloadDirFileCount}`)
+                .fontSize(24)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              Text('总文件数').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+
+            Column({ space: 4 }) {
+              Text(`${this.pendingMangaFiles.length}`).fontSize(24).fontWeight(FontWeight.Bold).fontColor('#4CAF50')
+              Text('漫画').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+
+            Column({ space: 4 }) {
+              Text(`${this.pendingEbookFiles.length}`).fontSize(24).fontWeight(FontWeight.Bold).fontColor('#2196F3')
+              Text('电子书').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+
+            Column({ space: 4 }) {
+              Text(`${this.pendingPdfFiles.length}`).fontSize(24).fontWeight(FontWeight.Bold).fontColor('#FF9800')
+              Text('PDF').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .layoutWeight(1)
+          }
+          .width('100%')
+        }
+
+        Row({ space: 12 }) {
+          Button({ stateEffect: true }) {
+            Text(this.downloadDirPath ? '重新连接' : '连接文件夹').fontSize(14)
+          }
+          .layoutWeight(1)
+          .height(44)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(10)
+          .onClick(() => { this.accessAppDownloadDir(); })
+
+          if (this.downloadDirPath) {
+            Button({ stateEffect: true }) {
+              Text(this.isScanning ? '扫描中...' : '扫描文件').fontSize(14)
+            }
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .borderRadius(10)
+            .enabled(!this.isScanning)
+            .onClick(() => { this.scanDownloadDir(); })
+          }
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      if (this.downloadDirFiles.length > 0) {
+        Column({ space: 8 }) {
+          Text('文件列表')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          ForEach(this.downloadDirFiles.slice(0, 10), (file: string) => {
+            Row({ space: 8 }) {
+              SymbolGlyph(this.getFileIconResource(file)).fontSize(16).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+              Text(file)
+                .fontSize(13)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .width('100%')
+            .padding({ top: 8, bottom: 8 })
+            .borderRadius(6)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          })
+
+          if (this.downloadDirFiles.length > 10) {
+            Text(`... 还有 ${this.downloadDirFiles.length - 10} 个文件`)
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+      }
+
+      if (this.pendingMangaFiles.length > 0 || this.pendingEbookFiles.length > 0 || this.pendingPdfFiles.length > 0) {
+        Column({ space: 12 }) {
+          Text('快速导入')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .width('100%')
+
+          // 漫画导入
+          if (this.pendingMangaFiles.length > 0) {
+            Column({ space: 6 }) {
+              Row({ space: 8 }) {
+                SymbolGlyph($r('sys.symbol.rectangle_stack'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                Text(`漫画文件 (${this.pendingMangaFiles.length})`)
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Blank()
+                Button({ stateEffect: true }) {
+                  Text('导入').fontSize(13).fontColor(Color.White)
+                }
+                .height(32)
+                .backgroundColor('#4CAF50')
+                .borderRadius(6)
+                .onClick(() => { this.importMangaFromDownloadDir(); })
+              }
+              .width('100%')
+              
+              ForEach(this.pendingMangaFiles.slice(0, 3), (file: string) => {
+                Text(file)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .padding({ left: 24 })
+              })
+              if (this.pendingMangaFiles.length > 3) {
+                Text(`... 还有 ${this.pendingMangaFiles.length - 3} 个文件`)
+                  .fontSize(11)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .padding({ left: 24 })
+              }
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(8)
+          }
+
+          // 电子书导入
+          if (this.pendingEbookFiles.length > 0) {
+            Column({ space: 6 }) {
+              Row({ space: 8 }) {
+                SymbolGlyph($r('sys.symbol.book'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                Text(`电子书文件 (${this.pendingEbookFiles.length})`)
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Blank()
+                Button({ stateEffect: true }) {
+                  Text('导入').fontSize(13).fontColor(Color.White)
+                }
+                .height(32)
+                .backgroundColor('#2196F3')
+                .borderRadius(6)
+                .onClick(() => { this.importEbooksFromDownloadDir(); })
+              }
+              .width('100%')
+              
+              ForEach(this.pendingEbookFiles.slice(0, 3), (file: string) => {
+                Text(file)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .padding({ left: 24 })
+              })
+              if (this.pendingEbookFiles.length > 3) {
+                Text(`... 还有 ${this.pendingEbookFiles.length - 3} 个文件`)
+                  .fontSize(11)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .padding({ left: 24 })
+              }
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(8)
+          }
+
+          // PDF导入
+          if (this.pendingPdfFiles.length > 0) {
+            Column({ space: 6 }) {
+              Row({ space: 8 }) {
+                SymbolGlyph($r('sys.symbol.doc_plaintext'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                Text(`PDF文件 (${this.pendingPdfFiles.length})`)
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Blank()
+                Button({ stateEffect: true }) {
+                  Text('导入').fontSize(13).fontColor(Color.White)
+                }
+                .height(32)
+                .backgroundColor('#FF9800')
+                .borderRadius(6)
+                .onClick(() => { this.importPdfsFromDownloadDir(); })
+              }
+              .width('100%')
+              
+              ForEach(this.pendingPdfFiles.slice(0, 3), (file: string) => {
+                Text(file)
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .padding({ left: 24 })
+              })
+              if (this.pendingPdfFiles.length > 3) {
+                Text(`... 还有 ${this.pendingPdfFiles.length - 3} 个文件`)
+                  .fontSize(11)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .padding({ left: 24 })
+              }
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(8)
+          }
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+      }
+    }
+    .width('100%')
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -5890,201 +7466,55 @@ struct DataManagementPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
 
-        // 内容层（响应式：大屏居中显示）
-        Scroll(this.scroller) {
-          Column({ space: 24 }) {
-            // [修复] 添加Blank占位符，防止内容与标题栏重叠
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+        // 内容层 - 一级-二级标签模式
+        Column() {
+          // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
 
+          // 一级标签栏
+          this.buildPrimaryTabBar()
 
-            // 功能说明
-            Column({ space: 12 }) {
-              Text('文件导入')
-                .fontSize(18)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-              Text('支持导入多种格式的内容，包括漫画压缩包和电子书。请在下方选择对应的导入类型。')
-                .fontSize(14)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .lineHeight(20)
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-
-            // 漫画导入区域
+          // 内容区域
+          Scroll(this.scroller) {
             Column({ space: 16 }) {
-              Row() {
-                Text('📚 漫画导入')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  .layoutWeight(1)
-
-                Text(`已选择: ${this.selectedFiles.length} 个`)
-                  .fontSize(12)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              }
-              .width('100%')
-
-              Text('支持导入ZIP、CBZ、TAR、GZ等压缩包格式。\n支持单行本、单章节、多章节导入模式，可自动识别章节结构或手动配置。')
-                .fontSize(13)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .lineHeight(18)
-
-              Button({ stateEffect: true }) {
-                Text('选择漫画文件')
-              }
-                .width('100%')
-                .height(48)
-                .onClick(() => {
-                  this.selectFiles();
-                })
-
-              Column({ space: 4 }) {
-                ForEach(this.selectedFiles.slice(0, 3), (file: string, index: number) => {
-                  Text(`📁 ${this.getFileNameFromUri(file)}`)
-                    .fontSize(12)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    .width('100%')
-                })
-
-                Text(`... 还有 ${this.selectedFiles.length - 3} 个文件`)
-                  .fontSize(12)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                  .visibility(this.selectedFiles.length > 3 ? Visibility.Visible : Visibility.None)
-              }
-              .width('100%')
-              .padding(12)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(6)
-              .visibility(this.selectedFiles.length > 0 ? Visibility.Visible : Visibility.None)
-
-              // 漫画导入操作按钮
-              Row({ space: 12 }) {
-                Button({ stateEffect: true }) {
-                  Text('清空选择')
+              if (this.primaryTab === 'file_select') {
+                // 二级标签 - 选择文件导入
+                this.buildFileSelectSecondaryTabs()
+                // 对应内容
+                if (this.secondaryTab === 'manga') {
+                  this.buildMangaImportSection()
+                } else if (this.secondaryTab === 'ebook') {
+                  this.buildEbookImportSection()
+                } else {
+                  this.buildPdfImportSection()
                 }
-                  .backgroundColor(Color.Gray)
-                  .layoutWeight(1)
-                  .height(44)
-                  .onClick(() => {
-                    this.selectedFiles = [];
-                    this.importProgress = {
-                      status: ImportStatus.IDLE,
-                      message: '准备就绪',
-                      progress: 0
-                    } as ImportProgress;
-                    this.showResults = false;
-                    this.importResults = [];
-                  })
-
-                Button({ stateEffect: true }) {
-                  Text('开始导入')
-                }
-                  .layoutWeight(1)
-                  .height(44)
-                  .enabled(!(this.selectedFiles.length === 0 ||
-                    (this.importProgress.status !== ImportStatus.IDLE &&
-                     this.importProgress.status !== ImportStatus.COMPLETED &&
-                     this.importProgress.status !== ImportStatus.ERROR)))
-                  .onClick(() => {
-                    this.startImport();
-                  })
+              } else {
+                // Download同步 - 直接显示文件夹状态
+                this.buildFolderStatusSection()
               }
-              .width('100%')
-              .visibility(this.selectedFiles.length > 0 ? Visibility.Visible : Visibility.None)
+
+              // 进度指示器
+              this.buildProgressIndicator()
+              // 底部间距
+              Blank().height(20)
             }
             .width('100%')
-            .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-
-            // 电子书导入区域
-            Column({ space: 16 }) {
-              Row() {
-                Text('📖 电子书导入')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  .layoutWeight(1)
-              }
-              .width('100%')
-
-              Text('支持导入TXT、EPUB、MOBI、AZW/AZW3格式的电子书，自动识别章节。')
-                .fontSize(13)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .lineHeight(18)
-
-              Button({ stateEffect: true }) {
-                Text('选择电子书')
-              }
-                .width('100%')
-                .height(48)
-                .onClick(() => {
-                  this.selectEBooks();
-                })
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-
-            // PDF导入区域（转换为图片序列）
-            Column({ space: 16 }) {
-              Row() {
-                Text('📄 PDF导入')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  .layoutWeight(1)
-              }
-              .width('100%')
-
-              Text('将PDF文件的每一页转换为图片导入。\n⚠️ 注意：大文件转换较慢，请耐心等待，您可以在开始转换进程后离开当前页面。')
-                .fontSize(13)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .lineHeight(18)
-
-              Button({ stateEffect: true }) {
-                Text('选择PDF文件')
-              }
-                .width('100%')
-                .height(48)
-                .onClick(() => {
-                  this.selectPdfFiles();
-                })
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-            .borderRadius(8)
-
-            // 进度指示器
-            this.buildProgressIndicator()
-
-            // 导入结果
-            this.buildImportResults()
-
-            // 底部间距
-            Blank().height(20)
+            .padding({ left: 16, right: 16, top: 8 })
           }
-          .width('100%')
-          .constraintSize({ maxWidth: this.responsive_maxContentWidth }) // 响应式最大宽度
-          .padding({ bottom: 20 })
+          .layoutWeight(1)
+          .scrollBar(BarState.Auto)
+          .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')
-        .align(Alignment.TopStart) // 响应式：大屏居中对齐
-        .padding({ 
-          top: this.statusBarHeight, 
+        .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+        .padding({
+          top: this.statusBarHeight,
           bottom: this.navigationBarHeight,
           left: this.responsive_contentPadding,
           right: this.responsive_contentPadding
         })
-        
+
         // 批量导入策略选择对话框
         if (this.showBatchStrategyDialog) {
           this.buildBatchStrategyDialog()

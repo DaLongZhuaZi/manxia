@@ -8,6 +8,7 @@ import { DataManager } from '../Data/DataManager';
 import { JSONSourceParser, JSONSourceConfig } from './JSONSourceParser';
 import { http } from '@kit.NetworkKit';
 import { ProxyManager } from '../Network/ProxyManager';
+import { UserAgentManager } from '../Managers/UserAgentManager';
 
 const TAG = 'SourceExecutor';
 
@@ -68,9 +69,11 @@ export interface HttpRequestOptions {
 export class SourceExecutor {
   private dataManager: DataManager;
   private parsers: Map<number, JSONSourceParser> = new Map();
+  private userAgentManager: UserAgentManager;
 
   constructor() {
     this.dataManager = DataManager.getInstance();
+    this.userAgentManager = UserAgentManager.getInstance();
   }
 
   /**
@@ -102,9 +105,16 @@ export class SourceExecutor {
   /**
    * 执行HTTP请求
    */
-  private async executeRequest(url: string, options: HttpRequestOptions): Promise<ESObject> {
+  private async executeRequest(url: string, options: HttpRequestOptions, sourceId?: number): Promise<ESObject> {
     try {
       logger.debug(TAG, `HTTP请求: ${options.method} ${url}`);
+
+      // 获取自定义User-Agent
+      let userAgent: string | undefined = undefined;
+      if (sourceId !== undefined) {
+        const configUA = options.headers?.['User-Agent'] as string;
+        userAgent = await this.userAgentManager.getUserAgent(sourceId, configUA);
+      }
 
       const requestOptions: http.HttpRequestOptions = {
         method: options.method as http.RequestMethod,
@@ -112,6 +122,13 @@ export class SourceExecutor {
         connectTimeout: options.timeout,
         readTimeout: options.timeout,
       };
+
+      // 应用自定义User-Agent
+      if (userAgent) {
+        const headers: ESObject = requestOptions.header as ESObject || {};
+        headers['User-Agent'] = userAgent;
+        requestOptions.header = headers as Object;
+      }
 
       // 添加请求体
       if (options.body && (options.method === 'POST' || options.method === 'PUT')) {
@@ -167,7 +184,7 @@ export class SourceExecutor {
         body: requestInfo.body,
         timeout: requestInfo.timeout
       };
-      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions);
+      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions, sourceId);
 
       // 解析响应
       const items: ESObject[] = parser.parseResponse('popular', response);
@@ -199,7 +216,7 @@ export class SourceExecutor {
         body: requestInfo.body,
         timeout: requestInfo.timeout
       };
-      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions);
+      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions, sourceId);
 
       const items: ESObject[] = parser.parseResponse('latest', response);
       return items.map((item: ESObject): ComicInfo => this.mapToComicInfo(item));
@@ -230,7 +247,7 @@ export class SourceExecutor {
         body: requestInfo.body,
         timeout: requestInfo.timeout
       };
-      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions);
+      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions, sourceId);
 
       const items: ESObject[] = parser.parseResponse('search', response);
       return items.map((item: ESObject): ComicInfo => this.mapToComicInfo(item));
@@ -258,7 +275,7 @@ export class SourceExecutor {
         body: requestInfo.body,
         timeout: requestInfo.timeout
       };
-      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions);
+      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions, sourceId);
 
       const items: ESObject[] = parser.parseResponse('detail', response);
       if (items.length === 0) {
@@ -307,7 +324,7 @@ export class SourceExecutor {
         body: requestInfo.body,
         timeout: requestInfo.timeout
       };
-      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions);
+      const response: ESObject = await this.executeRequest(requestInfo.url, httpOptions, sourceId);
 
       const items: ESObject[] = parser.parseResponse('pages', response);
       

@@ -2273,7 +2273,7 @@ export struct ThemeSettingsPage {
             {
               content: {
                 label: '删除所选',
-                icon: $r('app.media.ic_delete'),
+                icon: $r('sys.symbol.trash'),
                 isEnabled: this.selectedThemeIds.length > 0,
                 action: () => { this.showDeleteConfirmDialogSystem(); }
               }

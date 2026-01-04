@@ -94,26 +94,20 @@ export class PermanentImageCacheManager {
 
   /**
    * 获取图源缓存配置
+   * [修复] 从user_settings表读取设置（与SourceSettingsPage保存位置一致）
    */
   async getSourceCacheConfig(sourceId: number): Promise<SourceCacheConfig> {
     try {
-      const sql = `SELECT downloadWhileReading, maxCacheSize FROM comic_source WHERE id = ?`;
-      const records = await this.dbManager.querySql(sql, [sourceId]);
+      const dataManager = DataManager.getInstance();
       
-      if (records && records.length > 0) {
-        const record = records[0] as Record<string, number>;
-        return {
-          sourceId: sourceId,
-          downloadWhileReading: (record['downloadWhileReading'] || 1) === 1,
-          maxCacheSize: record['maxCacheSize'] || 1024 * 1024 * 1024 // 默认1GB
-        };
-      }
+      // 从user_settings表读取设置
+      const downloadWhileReadingRecord = await dataManager.getSourceUserSetting(sourceId, 'downloadWhileReading');
+      const maxCacheSizeRecord = await dataManager.getSourceUserSetting(sourceId, 'maxCacheSize');
       
-      // 默认配置：开启边看边下载
       return {
         sourceId: sourceId,
-        downloadWhileReading: true,
-        maxCacheSize: 1024 * 1024 * 1024
+        downloadWhileReading: downloadWhileReadingRecord?.settingValue === '1' || downloadWhileReadingRecord?.settingValue === undefined,
+        maxCacheSize: maxCacheSizeRecord?.settingValue ? Number(maxCacheSizeRecord.settingValue) * 1024 * 1024 : 1024 * 1024 * 1024 // 转换MB为字节，默认1GB
       };
     } catch (error) {
       logger.error(TAG, `获取图源缓存配置失败: ${error}`);

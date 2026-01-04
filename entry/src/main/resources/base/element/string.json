@@ -39,6 +39,14 @@
     {
       "name": "biometric_permission_reason",
       "value": "应用需要使用生物识别（指纹/面部识别）来保护隐私书库内容"
+    },
+    {
+      "name": "get_download_reason",
+      "value": "应用需要访问下载目录"
+    },
+    {
+      "name": "get_documents_reason",
+      "value": "应用需要访问Documents目录"
     }
   ]
 }

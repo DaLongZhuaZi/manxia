@@ -260,14 +260,27 @@ export class CookieManager {
   async refreshCookiesIfNeeded(sourceId: number, controller: webview.WebviewController | null, baseUrl: string): Promise<boolean> {
     const valid: boolean = await this.hasCookie(sourceId);
     if (valid) { return true; }
+    return await this.forceCaptureWebViewCookies(sourceId, controller, baseUrl);
+  }
+
+  /**
+   * 强制从WebView捕获Cookie（用于CF验证后强制刷新）
+   * 不检查现有Cookie，直接从WebView提取并保存
+   */
+  async forceCaptureWebViewCookies(sourceId: number, controller: webview.WebviewController | null, baseUrl: string): Promise<boolean> {
     let captured: boolean = false;
     try {
       if (controller) {
         const js: string = 'document.cookie';
         const resultStr: string = await controller.runJavaScript(js) as string;
+        logger.info(TAG, `从WebView捕获Cookie: sourceId=${sourceId}, rawLength=${resultStr?.length || 0}`);
+        
         const entries: CookieEntry[] = [];
-        const cookieStr: string = resultStr;
-        const parts: string[] = cookieStr.split(';');
+        const cookieStr: string = resultStr || '';
+        
+        // 清理可能的引号包裹
+        const cleanedStr: string = cookieStr.replace(/^"|"$/g, '');
+        const parts: string[] = cleanedStr.split(';');
         let p: number = 0;
         while (p < parts.length) {
           const item: string = parts[p].trim();
@@ -275,16 +288,25 @@ export class CookieManager {
           if (eqIndex > 0) {
             const name: string = item.substring(0, eqIndex);
             const value: string = item.substring(eqIndex + 1);
+            // 特别记录CF相关Cookie
+            if (name.includes('cf_') || name.includes('__cf')) {
+              logger.info(TAG, `捕获到CF Cookie: ${name}`);
+            }
             entries.push({ name: name, value: value, expires: Date.now() + this.defaultTtlMs } as CookieEntry);
           }
           p = p + 1;
         }
         if (entries.length > 0) {
           await this.dataManager.updateComicSourceCookies(sourceId, this.serializeCookies(entries));
+          logger.info(TAG, `成功保存${entries.length}个Cookie到数据库: sourceId=${sourceId}`);
           captured = true;
+        } else {
+          logger.warn(TAG, `WebView中未找到Cookie: sourceId=${sourceId}`);
         }
       }
-    } catch (_e) {}
+    } catch (e) {
+      logger.error(TAG, `从WebView捕获Cookie失败: ${String(e)}`);
+    }
     if (captured) { return true; }
     if (baseUrl && baseUrl.length > 0) {
       const ok: boolean = await this.fetchCookiesByDefaultRequest(sourceId, baseUrl);
