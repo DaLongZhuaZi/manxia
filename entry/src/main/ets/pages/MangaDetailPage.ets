@@ -320,6 +320,8 @@ struct MangaDetailPage {
   private retryTimerId: number = 0;
   private silentRefreshTimerId: number = 0;
   private entranceAnimTimerId: number = 0;
+  private downloadProgressListenerId: string = '';  // 下载进度监听器ID
+  @State chapterDownloadProgress: Map<string, number> = new Map();  // 章节下载进度
 
   
 
@@ -449,6 +451,9 @@ struct MangaDetailPage {
     };
     this.deviceAdaptationManager.addListener(this.deviceOrientationListener);
 
+    // 注册下载进度监听器
+    this.registerDownloadProgressListener();
+
     // 启动入场动画序列
     this.entranceAnimTimerId = setTimeout((): void => {
       this.startEntranceAnimations();
@@ -479,6 +484,9 @@ struct MangaDetailPage {
       this.deviceOrientationListener = null;
       logger.debug(TAG, '设备方向监听器已清理');
     }
+
+    // 取消下载进度监听器
+    this.unregisterDownloadProgressListener();
   }
 
   onPageShow(): void {
@@ -1435,9 +1443,9 @@ struct MangaDetailPage {
               logger.info(TAG, `开始加载章节信息，漫画ID: ${this.pageParams.mangaId}`);
               try {
                 // [修复] 根据漫画来源选择正确的表
-                // 本地漫画 (sourceId='local_import' 或 'local_pdf') 使用 chapter 表
+                // 本地漫画 (sourceId='local_import', 'local_pdf', 'download_import') 使用 chapter 表
                 // 在线漫画使用 online_chapter 表
-                const isLocalManga = comicInfo.sourceId === 'local_import' || comicInfo.sourceId === 'local_pdf';
+                const isLocalManga = comicInfo.sourceId === 'local_import' || comicInfo.sourceId === 'local_pdf' || comicInfo.sourceId === 'download_import';
                 const chapterInfos = isLocalManga 
                   ? await DataManager.getInstance().getComicChapters(this.pageParams.mangaId)
                   : await DataManager.getInstance().getOnlineComicChapters(this.pageParams.mangaId);
@@ -5587,9 +5595,16 @@ struct MangaDetailPage {
           // 如果是WebView图源，需要先获取图片列表
           let imageUrls: string[] = [];
           
+          // [关键] 对于在线漫画，使用externalId（外部ID）而不是内部数据库ID
+          // PicaComic等API需要真实的漫画ID和章节顺序号
+          const chapterIdForApi: string = chapter.externalId || chapter.id;
+          const mangaIdForApi: string = this.pageParams?.mangaId || manga.id;
+          
+          logger.info(TAG, `下载章节: ${chapter.title}, chapterIdForApi=${chapterIdForApi}, mangaIdForApi=${mangaIdForApi}`);
+          
           if (this.useWebView && this.mangaEngine) {
-            // 从WebView图源获取图片列表
-            const pageListResult = await this.mangaEngine.getPageList(chapter.id, manga.id);
+            // 从WebView图源获取图片列表（使用外部ID）
+            const pageListResult = await this.mangaEngine.getPageList(chapterIdForApi, mangaIdForApi);
             if (pageListResult.success && pageListResult.data) {
               const pages = pageListResult.data as Array<SourcePageInfo>;
               imageUrls = pages.map((page: SourcePageInfo) => page.imageUrl);
@@ -5599,20 +5614,61 @@ struct MangaDetailPage {
             imageUrls = chapter.pages.map((page: MangaPage) => page.imageUrl);
           }
 
-          if (imageUrls.length === 0) {
-            logger.warn(TAG, `章节 ${chapter.title} 没有可下载的图片`);
-            failCount++;
-            continue;
-          }
-
           // 创建下载任务
-          await downloadManager.createDownloadTask(
-            manga.id,
-            manga.title,
-            chapter.id,
-            chapter.title,
-            imageUrls
-          );
+          // 根据是否为在线漫画选择不同的下载方法
+          if (this.pageParams?.sourceId) {
+            // 在线漫画：使用公共Download目录
+            if (imageUrls.length > 0) {
+              // 已有图片列表，直接下载
+              await downloadManager.createOnlineMangaDownloadTask(
+                manga.id,
+                manga.title,
+                chapter.id,
+                chapter.title,
+                imageUrls,
+                this.pageParams.sourceId
+              );
+            } else if (this.useWebView && this.mangaEngine) {
+              // 没有图片列表，使用延迟获取方式（下载时再获取）
+              const engine = this.mangaEngine;
+              const externalMangaId: string = mangaIdForApi;
+              const externalChapterId: string = chapterIdForApi;
+              await downloadManager.createOnlineMangaDownloadTaskWithFetcher(
+                manga.id,
+                manga.title,
+                chapter.id,
+                chapter.title,
+                this.pageParams.sourceId,
+                async (_chapterId: string, _mangaId: string): Promise<string[]> => {
+                  // 使用外部ID调用API
+                  const result = await engine.getPageList(externalChapterId, externalMangaId);
+                  if (result.success && result.data) {
+                    const pages = result.data as Array<SourcePageInfo>;
+                    return pages.map((page: SourcePageInfo) => page.imageUrl);
+                  }
+                  return [];
+                }
+              );
+            } else {
+              logger.warn(TAG, `章节 ${chapter.title} 没有可下载的图片且无法获取`);
+              failCount++;
+              continue;
+            }
+          } else {
+            // 本地漫画：使用应用私有目录
+            if (imageUrls.length === 0) {
+              logger.warn(TAG, `章节 ${chapter.title} 没有可下载的图片`);
+              failCount++;
+              continue;
+            }
+            await downloadManager.createDownloadTask(
+              manga.id,
+              manga.title,
+              chapter.id,
+              chapter.title,
+              imageUrls
+            );
+          }
           
           successCount++;
           logger.info(TAG, `章节下载任务已创建: ${chapter.title}`);
@@ -5647,6 +5703,67 @@ struct MangaDetailPage {
         message: '下载失败，请稍后重试',
         duration: 2000
       });
+    }
+  }
+
+  /**
+   * 注册下载进度监听器
+   */
+  private async registerDownloadProgressListener(): Promise<void> {
+    try {
+      const DownloadModule = await import('../Framework/Download/DownloadManager');
+      const downloadManager = DownloadModule.MangaDownloadManager.getInstance();
+      
+      // 生成唯一的监听器ID
+      this.downloadProgressListenerId = `manga_detail_${Date.now()}`;
+      
+      // 注册进度回调
+      downloadManager.registerProgressCallback(
+        this.downloadProgressListenerId,
+        (taskId: string, chapterId: string, progress: number, downloadedCount: number, totalCount: number) => {
+          logger.debug(TAG, `下载进度更新: chapterId=${chapterId}, progress=${progress}%, ${downloadedCount}/${totalCount}`);
+          
+          // 更新章节下载进度
+          this.chapterDownloadProgress.set(chapterId, progress);
+          
+          // 更新章节列表中的进度
+          if (this.currentManga && this.currentManga.chapters) {
+            const chapter = this.currentManga.chapters.find(ch => ch.id === chapterId);
+            if (chapter) {
+              chapter.downloadProgress = progress;
+              if (progress >= 100) {
+                chapter.isDownloaded = true;
+                chapter.downloadStatus = DownloadStatus.COMPLETED;
+              } else {
+                chapter.downloadStatus = DownloadStatus.DOWNLOADING;
+              }
+              // 触发UI刷新 - 直接修改chapters数组引用
+              this.currentManga.chapters = [...this.currentManga.chapters];
+            }
+          }
+        }
+      );
+      
+      logger.info(TAG, `下载进度监听器已注册: ${this.downloadProgressListenerId}`);
+    } catch (error) {
+      logger.warn(TAG, `注册下载进度监听器失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 取消下载进度监听器
+   */
+  private async unregisterDownloadProgressListener(): Promise<void> {
+    if (this.downloadProgressListenerId) {
+      try {
+        const DownloadModule = await import('../Framework/Download/DownloadManager');
+        const downloadManager = DownloadModule.MangaDownloadManager.getInstance();
+        downloadManager.unregisterProgressCallback(this.downloadProgressListenerId);
+        logger.info(TAG, `下载进度监听器已取消: ${this.downloadProgressListenerId}`);
+      } catch (error) {
+        logger.warn(TAG, `取消下载进度监听器失败: ${String(error)}`);
+      }
+      this.downloadProgressListenerId = '';
     }
   }
 
