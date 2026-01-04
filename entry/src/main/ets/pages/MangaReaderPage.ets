@@ -344,6 +344,8 @@ export struct MangaReaderPage {
   @State showInteractionOverlay: boolean = false; // 初次进入不显示，等待读取真实阅读设置后再显示
   @State overlayDismissTimer: number = -1;
   @State isReadingSettingsReady: boolean = false; // 阅读设置是否已加载
+  private lastShownReadingMode: ReadingMode | null = null; // 上次显示提示时的阅读模式
+  private static hasShownInteractionHint: boolean = false; // 是否已经显示过交互提示（应用级别）
   
   // 调试：显示点击位置
   @State showDebugClickIndicator: boolean = false;
@@ -1080,7 +1082,7 @@ export struct MangaReaderPage {
    * 自动翻页按钮图标（启用/禁用）
    */
   private getAutoPageTurnIconResource(): Resource {
-    return this.autoPageTurnEnabled ? $r('app.media.ic_auto_selected') : $r('app.media.ic_auto');
+    return this.autoPageTurnEnabled ? $r('sys.symbol.airplane_departure') : $r('sys.symbol.airplane_arrival');
   }
   
   /**
@@ -2780,6 +2782,31 @@ export struct MangaReaderPage {
   }
 
   /**
+   * 检查是否应该显示交互提示
+   * 只在以下情况显示：
+   * 1. 第一次进入阅读器（应用级别）
+   * 2. 阅读模式发生变化
+   */
+  private shouldShowInteractionHint(): boolean {
+    const currentMode = this.readingSettings.readingMode;
+    
+    // 情况1：第一次进入阅读器
+    if (!MangaReaderPage.hasShownInteractionHint) {
+      logger.info(TAG, '首次进入阅读器，显示交互提示');
+      return true;
+    }
+    
+    // 情况2：阅读模式发生变化
+    if (this.lastShownReadingMode !== null && this.lastShownReadingMode !== currentMode) {
+      logger.info(TAG, `阅读模式从 ${this.lastShownReadingMode} 切换到 ${currentMode}，显示交互提示`);
+      return true;
+    }
+    
+    logger.debug(TAG, '已显示过交互提示且阅读模式未变化，跳过显示');
+    return false;
+  }
+
+  /**
    * 显示交互区域提示overlay
    */
   private showInteractionOverlayWithAnimation(): void {
@@ -2787,12 +2814,22 @@ export struct MangaReaderPage {
       return;
     }
     
+    // 检查是否应该显示提示
+    if (!this.shouldShowInteractionHint()) {
+      this.showInteractionOverlay = false;
+      return;
+    }
+    
+    // 记录当前阅读模式和已显示状态
+    this.lastShownReadingMode = this.readingSettings.readingMode;
+    MangaReaderPage.hasShownInteractionHint = true;
+    
     // 5秒后自动隐藏
     this.overlayDismissTimer = setTimeout(() => {
       this.hideInteractionOverlay();
     }, 5000);
     
-    logger.info(TAG, '显示交互提示Overlay，5秒后自动隐藏');
+    logger.info(TAG, `显示交互提示Overlay（模式: ${this.readingSettings.readingMode}），5秒后自动隐藏`);
   }
 
   /**
@@ -2905,12 +2942,19 @@ export struct MangaReaderPage {
   private handleSettingsChange(settings: ReadingSettings): void {
     logger.info(TAG, `阅读设置已更新: pageTurnAnimation=${settings.pageTurnAnimation}, brightness=${settings.brightness}`);
     
+    // 检查阅读模式是否变更
+    const readingModeChanged = this.readingSettings.readingMode !== settings.readingMode;
     // 检查屏幕常亮设置是否变更
     const keepScreenOnChanged = this.readingSettings.keepScreenOn !== settings.keepScreenOn;
     // 检查亮度设置是否变更（在更新前检测，使用容差比较浮点数）
     const brightnessChanged = Math.abs(this.readingSettings.brightness - settings.brightness) > 0.01;
     // 检查音量键翻页设置是否变更
     const volumeKeyChanged = this.readingSettings.volumeKeyNavigation !== settings.volumeKeyNavigation;
+    
+    // 如果阅读模式变更，显示交互提示
+    if (readingModeChanged) {
+      logger.info(TAG, `阅读模式变更: ${this.readingSettings.readingMode} -> ${settings.readingMode}，将显示交互提示`);
+    }
     
     // 保存设置到数据库和AppStorage（针对当前漫画）
     if (this.readerState.currentManga) {
@@ -2950,6 +2994,12 @@ export struct MangaReaderPage {
     
     // 更新自动翻页配置
     this.updateAutoPageTurnConfig();
+    
+    // 如果阅读模式变更，显示交互提示
+    if (readingModeChanged) {
+      this.showInteractionOverlay = true;
+      this.showInteractionOverlayWithAnimation();
+    }
 
     // 注意：不要在设置变更时自动启动/停止自动翻页
     // 自动翻页的启用/停止应该由用户通过自动翻页设置面板明确控制
@@ -3584,26 +3634,27 @@ export struct MangaReaderPage {
 
   /**
    * 加载图源的预加载设置
+   * [修复] 从user_settings表读取设置（与SourceSettingsPage保存位置一致）
    */
   private async loadSourcePreloadSettings(sourceId: number): Promise<void> {
     try {
-      const dbManager = DatabaseManager.getInstance();
-      const sql = 'SELECT preloadCurrentChapter, preloadCurrentPages, preloadNextChapter, preloadNextPages FROM comic_source WHERE id = ?';
-      const records = await dbManager.querySql(sql, [sourceId]);
+      const dataManager = DataManager.getInstance();
       
-      if (records && records.length > 0) {
-        const record = records[0] as Record<string, number>;
-        const settings: SourcePreloadSettings = {
-          preloadCurrentChapter: (record['preloadCurrentChapter'] || 1) === 1,
-          preloadCurrentPages: record['preloadCurrentPages'] || 10,
-          preloadNextChapter: (record['preloadNextChapter'] || 1) === 1,
-          preloadNextPages: record['preloadNextPages'] || -1
-        };
-        this.sourcePreloadSettings = settings;
-        logger.info(TAG, `✅ 已加载图源预加载设置: 当前章节=${this.sourcePreloadSettings.preloadCurrentChapter}(${this.sourcePreloadSettings.preloadCurrentPages}页), 下一章节=${this.sourcePreloadSettings.preloadNextChapter}(${this.sourcePreloadSettings.preloadNextPages}页)`);
-      } else {
-        logger.warn(TAG, `⚠️ 未找到图源ID=${sourceId}的预加载设置，使用默认值`);
-      }
+      // 从user_settings表读取设置
+      const preloadCountRecord = await dataManager.getSourceUserSetting(sourceId, 'readerPreloadCount');
+      const preloadCurrentRecord = await dataManager.getSourceUserSetting(sourceId, 'preloadCurrentChapter');
+      const preloadNextRecord = await dataManager.getSourceUserSetting(sourceId, 'preloadNextChapter');
+      const downloadWhileReadingRecord = await dataManager.getSourceUserSetting(sourceId, 'downloadWhileReading');
+      
+      const settings: SourcePreloadSettings = {
+        preloadCurrentChapter: preloadCurrentRecord?.settingValue === '1' || preloadCurrentRecord?.settingValue === undefined,
+        preloadCurrentPages: preloadCountRecord?.settingValue ? Number(preloadCountRecord.settingValue) : 10,
+        preloadNextChapter: preloadNextRecord?.settingValue === '1' || preloadNextRecord?.settingValue === undefined,
+        preloadNextPages: -1
+      };
+      
+      this.sourcePreloadSettings = settings;
+      logger.info(TAG, `✅ 已加载图源预加载设置: 当前章节=${this.sourcePreloadSettings.preloadCurrentChapter}(${this.sourcePreloadSettings.preloadCurrentPages}页), 下一章节=${this.sourcePreloadSettings.preloadNextChapter}(${this.sourcePreloadSettings.preloadNextPages}页)`);
     } catch (error) {
       logger.error(TAG, `加载图源预加载设置失败: ${String(error)}`);
     }
@@ -4821,10 +4872,8 @@ export struct MangaReaderPage {
     Row() {
       // 返回按钮
       Button() {
-        Image($r('app.media.ic_arrow_back'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
+        SymbolGlyph($r('sys.symbol.arrow_left'))
+
       }
       .width(48)
       .height(48)
@@ -4854,10 +4903,8 @@ export struct MangaReaderPage {
 
       // 菜单按钮（更多选项）
       Button() {
-        Image($r('app.media.ic_more_vert'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
+        SymbolGlyph($r('sys.symbol.more'))
+
       }
       .width(48)
       .height(48)
@@ -4926,12 +4973,10 @@ export struct MangaReaderPage {
       Row() {
         // 目录按钮
         Button() {
-          Image($r('app.media.ic_reading_settings'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.list_bullet'))
+
         }
-        .width(64)
+        .width(48)
         .height(48)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
@@ -4942,10 +4987,8 @@ export struct MangaReaderPage {
 
         // 阅读模式快捷设置按钮
         Button() {
-          Image($r('app.media.ic_book'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.gearshape'))
+
         }
         .width(48)
         .height(48)
@@ -4958,10 +5001,8 @@ export struct MangaReaderPage {
 
         // 翻页动画设置按钮
         Button() {
-          Image($r('app.media.ic_page_turn_animation'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.circle_on_circle'))
+
         }
         .width(48)
         .height(48)
@@ -4974,10 +5015,8 @@ export struct MangaReaderPage {
 
         // 显示效果设置按钮
         Button() {
-          Image($r('app.media.ic_brightness_high'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.eye'))
+
         }
         .width(48)
         .height(48)
@@ -4990,10 +5029,8 @@ export struct MangaReaderPage {
 
         // 自动翻页设置按钮（最右侧）
         Button() {
-          Image(this.getAutoPageTurnIconResource())
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph(this.getAutoPageTurnIconResource())
+
         }
         .width(48)
         .height(48)

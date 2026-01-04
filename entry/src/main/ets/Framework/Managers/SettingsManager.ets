@@ -84,6 +84,16 @@ export class SettingKeys {
   
   // 内容过滤设置
   static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）
+  
+  // 全局UserAgent设置
+  static readonly GLOBAL_USER_AGENT = 'global_user_agent'; // 全局自定义User-Agent
+  static readonly GLOBAL_USER_AGENT_ENABLED = 'global_user_agent_enabled'; // 是否启用全局自定义UA
+  
+  // 隐私保护设置
+  static readonly BACKGROUND_BLUR_ENABLED = 'background_blur_enabled'; // 后台任务界面模糊遮罩
+  static readonly BACKGROUND_BLUR_BG_TYPE = 'background_blur_bg_type'; // 后台遮罩背景类型: 'solid' | 'custom'
+  static readonly BACKGROUND_BLUR_BG_IMAGE = 'background_blur_bg_image'; // 自定义背景图片路径
+  static readonly BACKGROUND_BLUR_ICON_TYPE = 'background_blur_icon_type'; // 图标类型: 'shield' | 'logo'
 }
 
 /**

@@ -8,7 +8,7 @@ import { CommonModifier, LengthMetrics, router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { picker } from '@kit.CoreFileKit';
-import { vibrator } from '@kit.SensorServiceKit';
+import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
 
 // 主题相关导入
 import { ComicConverter } from '../Framework/Utils/ComicConverter';
@@ -32,7 +32,12 @@ import { SystemStatusPage } from './SystemStatusPage';
 import { SearchPage } from './SearchPage';
 import { GlobalSearchPage } from './GlobalSearchPage';
 import { MangaSettingsPage } from './MangaSettingsPage';
-import { GlobalSettingsPage } from './GlobalSettingsPage';
+import { GlobalSettingsPage } from './settings/GlobalSettingsPage';
+import { ReadingSettingsSubPage } from './settings/ReadingSettingsSubPage';
+import { NetworkSettingsSubPage } from './settings/NetworkSettingsSubPage';
+import { NotificationSettingsSubPage } from './settings/NotificationSettingsSubPage';
+import { AdvancedSettingsSubPage } from './settings/AdvancedSettingsSubPage';
+import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
 import { ReadingAnalyticsPage } from './ReadingAnalyticsPage';
@@ -52,7 +57,7 @@ import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
 import { WindowManager } from '../Utils/WindowManager';
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
-import { SourceSettingsPage } from './SourceSettingsPage';
+import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
 import { BookSourceManagementPage } from './BookSourceManagementPage';
 import { BackupPage } from './BackupPage';
@@ -73,6 +78,7 @@ import { NovelDictRulePage } from './NovelDictRulePage';
 import { JsvmPlaygroundPage } from './JsvmPlaygroundPage';
 import { LifecycleMonitorPage } from './LifecycleMonitorPage';
 import { FileEditorPage } from './FileEditorPage';
+import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOverlay';
 import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 
 // 测试页面导入已移除
@@ -412,6 +418,13 @@ struct MainMenuPage {
   @State recentNovelList: NovelBook[] = []; // 最近阅读的小说
   @State isLoadingRecentReading: boolean = false;
   private readonly RECENT_HISTORY_LIMIT: number = 100;
+  
+  // 后台模糊遮罩相关状态
+  @StorageProp('isInBackground') isInBackground: boolean = false;
+  @StorageProp('backgroundBlurEnabled') backgroundBlurEnabled: boolean = false;
+  @StorageProp('backgroundBlurBgType') backgroundBlurBgType: string = 'solid';
+  @StorageProp('backgroundBlurBgImage') backgroundBlurBgImage: string = '';
+  @StorageProp('backgroundBlurIconType') backgroundBlurIconType: string = 'shield';
 
   // 发现页面相关状态
   @State allTags: string[] = []; // 所有标签（按出现次数倒序）
@@ -643,6 +656,9 @@ struct MainMenuPage {
 
     // 请求通知权限（首次进入主页面时）
     this.requestNotificationPermission();
+
+    // 初始化交互管理器
+    InteractionManager.getInstance().initialize();
 
     // 初始化主题感知
     ThemeAwareHelper.initializeThemeAware(
@@ -1232,6 +1248,44 @@ struct MainMenuPage {
   }
 
   /**
+   * 解析并修复仓库URL
+   * 自动处理空格、换行等情况，拼接完整的URL
+   */
+  private parseAndFixRepoUrl(input: string): string {
+    if (!input) return '';
+    
+    // 移除所有空格、换行、制表符
+    let cleaned = input.replace(/[\s\r\n\t]+/g, '');
+    
+    // 如果不是http或https开头，直接返回清理后的内容
+    if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+      return cleaned;
+    }
+    
+    // 检查是否以index.min.json或index.main.json结尾
+    if (cleaned.endsWith('index.min.json') || cleaned.endsWith('index.main.json')) {
+      return cleaned;
+    }
+    
+    // 尝试在清理后的字符串中查找index.min.json或index.main.json
+    const minJsonIndex = cleaned.indexOf('index.min.json');
+    const mainJsonIndex = cleaned.indexOf('index.main.json');
+    
+    if (minJsonIndex !== -1) {
+      // 截取到index.min.json结束
+      return cleaned.substring(0, minJsonIndex + 'index.min.json'.length);
+    }
+    
+    if (mainJsonIndex !== -1) {
+      // 截取到index.main.json结束
+      return cleaned.substring(0, mainJsonIndex + 'index.main.json'.length);
+    }
+    
+    // 如果没有找到特定结尾，返回清理后的URL
+    return cleaned;
+  }
+
+  /**
    * 导入图源
    */
   private async importSource(): Promise<void> {
@@ -1508,6 +1562,20 @@ struct MainMenuPage {
     this.searchTargetSource = source;
     this.sourceSearchInput = '';
     this.showSourceSearchDialog = true;
+  }
+
+  /**
+   * 打开图源设置页面
+   */
+  private openSourceSettings(source: SourceInfo): void {
+    try {
+      logger.info(TAG, `打开图源设置页: ${source.name} (ID: ${source.id})`);
+      const params: SourceSettingsPageParams = { sourceName: source.name };
+      this.pathStack.pushPathByName('SourceSettingsPage', params);
+    } catch (err) {
+      logger.error(TAG, '打开图源设置页失败', String(err));
+      this.showToast('打开图源设置页失败');
+    }
   }
 
   /**
@@ -8755,10 +8823,12 @@ struct MainMenuPage {
       
       // 自定义URL输入（同步时隐藏）
       if (!this.isSyncingRepo) {
-        TextInput({ placeholder: '请输入仓库地址 (如: https://example.com/sources.json)', text: this.sourceRepoUrl })
+        TextInput({ placeholder: '请输入仓库地址 (如: https://example.com/index.min.json)', text: this.sourceRepoUrl })
           .width('100%')
           .onChange((value: string) => {
-            this.sourceRepoUrl = value;
+            // 自动解析和拼接URL
+            const parsedUrl = this.parseAndFixRepoUrl(value);
+            this.sourceRepoUrl = parsedUrl;
             this.selectedRepositoryId = ''; // 清除选中的仓库
           })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
@@ -9026,7 +9096,7 @@ struct MainMenuPage {
           
           // 视图切换按钮
           Button() {
-            SymbolGlyph(this.libraryViewMode === LibraryViewMode.LIST
+            SymbolGlyph(this.sourceViewMode === LibraryViewMode.LIST
               ? $r('sys.symbol.list_bullet')
               : $r('sys.symbol.square_grid_2x2'))
               .fontSize(20)
@@ -9230,17 +9300,13 @@ struct MainMenuPage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(16)
       .shadow({ radius: 20, color: '#40000000', offsetY: 8 })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.scale({ x: 0.9, y: 0.9 })))
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0, 0, 0, 0.5)')
-    .justifyContent(FlexAlign.Center)
-    .onClick(() => {
-      // 点击背景关闭
-      this.showSourceSearchDialog = false;
-      this.searchTargetSource = null;
-      this.sourceSearchInput = '';
-    })
+    .justifyContent(FlexAlign.Start)
+    .padding({ top: 120 })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 150 }))
   }
   
   /**
@@ -9597,9 +9663,14 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           
           if (source.requireProxy) {
-            Text('🌐需要代理')
-              .fontSize(11)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+            Row({ space: 2 }) {
+              SymbolGlyph($r('sys.symbol.wifi'))
+                .fontSize(11)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
+              Text('需要代理')
+                .fontSize(11)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+            }
           }
         }
       }
@@ -9670,10 +9741,11 @@ struct MainMenuPage {
           .justifyContent(FlexAlign.Center)
         }
 
-        // 需要代理标识
+        // 需要代理标识（使用系统图标）
         if (source.requireProxy) {
-          Text('🌐')
+          SymbolGlyph($r('sys.symbol.wifi'))
             .fontSize(14)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
             .position({ x: 4, y: 4 })
         }
       }
@@ -9699,52 +9771,96 @@ struct MainMenuPage {
         .width('100%')
         .textAlign(TextAlign.Center)
 
-      // 快捷操作按钮（仅图标）
-      Row({ space: 12 }) {
-        // 热门按钮
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph($r('sys.symbol.flame'))
-            .fontSize(14)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      // 网络标识（如果需要代理）
+      if (source.requireProxy) {
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.wifi'))
+            .fontSize(12)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+          Text('需要代理')
+            .fontSize(10)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
-        .width(28)
-        .height(28)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-        .shadow({ radius: 4, color: '#1F000000', offsetY: 2 })
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 2 })
+      }
+
+      // 快捷操作按钮（三行显示）
+      Column({ space: 4 }) {
+        // 热门按钮
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.star'))
+            .fontSize(12)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('热门')
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height(24)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(6)
         .onClick(() => {
           this.openSourceDetailWithTab(source, 'popular');
         })
 
         // 最新按钮
-        Button({ type: ButtonType.Circle }) {
+        Row({ space: 4 }) {
           SymbolGlyph($r('sys.symbol.clock'))
-            .fontSize(14)
+            .fontSize(12)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('最新')
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
-        .width(28)
-        .height(28)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-        .shadow({ radius: 4, color: '#1F000000', offsetY: 2 })
+        .width('100%')
+        .height(24)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(6)
         .onClick(() => {
           this.openSourceDetailWithTab(source, 'latest');
         })
 
         // 搜索按钮
-        Button({ type: ButtonType.Circle }) {
+        Row({ space: 4 }) {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
-            .fontSize(14)
+            .fontSize(12)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('搜索')
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
-        .width(28)
-        .height(28)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-        .shadow({ radius: 4, color: '#1F000000', offsetY: 2 })
+        .width('100%')
+        .height(24)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(6)
         .onClick(() => {
           this.openSourceDetailWithSearch(source);
         })
+
+        // 设置按钮
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(12)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('设置')
+            .fontSize(11)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height(24)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(6)
+        .onClick(() => {
+          this.openSourceSettings(source);
+        })
       }
       .width('100%')
-      .justifyContent(FlexAlign.Center)
       .margin({ top: 4 })
     }
     .width('100%')
@@ -10154,6 +10270,16 @@ struct MainMenuPage {
       SystemStatusPage()
     } else if (name === 'GlobalSettingsPage') {
       GlobalSettingsPage()
+    } else if (name === 'ReadingSettingsSubPage') {
+      ReadingSettingsSubPage()
+    } else if (name === 'NetworkSettingsSubPage') {
+      NetworkSettingsSubPage()
+    } else if (name === 'NotificationSettingsSubPage') {
+      NotificationSettingsSubPage()
+    } else if (name === 'AdvancedSettingsSubPage') {
+      AdvancedSettingsSubPage()
+    } else if (name === 'InteractionSettingsSubPage') {
+      InteractionSettingsSubPage()
     } else if (name === 'DownloadManagerPage') {
       DownloadManagerPage()
     } else if (name === 'AboutPage') {
@@ -10276,21 +10402,7 @@ struct MainMenuPage {
    * 触发轻微震动反馈
    */
   private triggerHapticFeedback(): void {
-    try {
-      vibrator.startVibration({
-        type: 'time',
-        duration: 50
-      }, {
-        id: 0,
-        usage: 'touch'
-      }).then(() => {
-        logger.debug(TAG, '震动反馈执行成功');
-      }).catch((error: BusinessError) => {
-        logger.warn(TAG, `震动反馈失败: ${error.message}`);
-      });
-    } catch (error) {
-      logger.warn(TAG, `震动反馈异常: ${error}`);
-    }
+    InteractionManager.getInstance().vibrate(VibrationScene.BUTTON_CLICK);
   }
 
   /**
@@ -10640,6 +10752,15 @@ struct MainMenuPage {
       
     // 书籍翻开/关闭过渡动画覆盖层（放在Navigation外部的最顶层）
     BookTransitionOverlay()
+    
+    // 后台模糊遮罩层（当应用进入后台且启用了模糊遮罩时显示）
+    BackgroundBlurOverlay({
+      isVisible: this.isInBackground && this.backgroundBlurEnabled,
+      bgType: this.backgroundBlurBgType,
+      customBgImage: this.backgroundBlurBgImage,
+      iconType: this.backgroundBlurIconType,
+      currentTheme: this.themeState.currentTheme
+    })
     }
     .width('100%')
     .height('100%')

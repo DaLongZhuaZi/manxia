@@ -74,8 +74,8 @@ export struct StorageManagementPage {
   aboutToAppear(): void {
     logger.info(TAG, '存储管理页面初始化');
 
-    // 初始化主题并监听变化
-    this.themeManager.getCurrentTheme().then((theme: ThemeType) => {
+    // 初始化主题并监听变化（使用getActualTheme获取实际显示的主题）
+    this.themeManager.getActualTheme().then((theme: ThemeType) => {
       this.themeState = { currentTheme: theme };
     });
     this.themeChangeCallback = (newTheme: ThemeType) => {
@@ -611,34 +611,21 @@ export struct StorageManagementPage {
 
         // 缓存管理面板弹窗
         if (this.showCacheConfig) {
-          Stack() {
-            // 半透明背景
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor('rgba(0, 0, 0, 0.5)')
-              .onClick(() => {
+          Column() {
+            CacheManagementPanel({
+              onClose: () => {
                 this.showCacheConfig = false;
-              })
-
-            // 缓存管理面板
-            Column() {
-              CacheManagementPanel({
-                onClose: () => {
-                  this.showCacheConfig = false;
-                  this.refreshStatistics();
-                }
-              })
-            }
-            .width('90%')
-            .height('80%')
-            .backgroundColor(Color.White)
-            .borderRadius(16)
-            .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)' })
+                this.refreshStatistics();
+              }
+            })
           }
-          .width('100%')
-          .height('100%')
-          .position({ x: 0, y: 0 })
+          .width('90%')
+          .height('80%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderRadius(16)
+          .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)' })
+          .position({ x: '5%', y: '10%' })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.scale({ x: 0.9, y: 0.9 })))
         }
       }
     }

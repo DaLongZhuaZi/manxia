@@ -2044,10 +2044,7 @@ struct EBookReaderPage {
     Row() {
       // 返回按钮
       Button() {
-        Image($r('app.media.ic_arrow_back'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
+        SymbolGlyph($r('sys.symbol.arrow_left'))
       }
       .width(48)
       .height(48)
@@ -2066,10 +2063,8 @@ struct EBookReaderPage {
 
       // 菜单按钮
       Button() {
-        Image($r('app.media.ic_more_vert'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
+        SymbolGlyph($r('sys.symbol.more'))
+
       }
       .width(48)
       .height(48)
@@ -2137,10 +2132,7 @@ struct EBookReaderPage {
       Row() {
         // 目录按钮
         Button() {
-          Image($r('app.media.ic_reading_settings'))
-            .width(24)
-            .height(24)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph($r('sys.symbol.list_bullet'))
         }
         .width(64)
         .height(48)
@@ -2155,10 +2147,7 @@ struct EBookReaderPage {
         if (this.isUsingTextReader()) {
           // 纯文本阅读器：显示综合设置按钮
           Button() {
-            Image($r('app.media.ic_brightness_high'))
-              .width(24)
-              .height(24)
-              .fillColor($r('app.color.text_primary'))
+            SymbolGlyph($r('sys.symbol.eye'))
           }
           .width(64)
           .height(48)

@@ -98,8 +98,8 @@ struct BackupPage {
   aboutToAppear(): void {
     logger.info(TAG, '备份页面初始化');
     
-    // 初始化主题并监听变化
-    this.themeManager.getCurrentTheme().then((theme: ThemeType) => {
+    // 初始化主题并监听变化（使用getActualTheme获取实际显示的主题）
+    this.themeManager.getActualTheme().then((theme: ThemeType) => {
       this.themeState = { currentTheme: theme };
     });
     this.themeChangeCallback = (newTheme: ThemeType) => {
@@ -974,93 +974,110 @@ struct BackupPage {
     })
   }
   
+  /**
+   * 构建标签栏 - VSCode风格
+   */
   @Builder
   buildTabBar() {
-    Row() {
-      // 本地Tab
-      Column() {
-        Text('本地备份')
-          .fontSize(16)
-          .fontWeight(this.currentTab === 'local' ? FontWeight.Bold : FontWeight.Normal)
-          .fontColor(
-            this.currentTab === 'local'
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
-          )
-        
-        if (this.currentTab === 'local') {
-          Divider()
-            .width(40)
-            .height(3)
-            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .margin({ top: 4 })
-            .borderRadius(2)
-        }
-      }
-      .layoutWeight(1)
-      .padding({ top: 12, bottom: 12 })
-      .onClick(() => {
-        this.currentTab = 'local';
-      })
-      
-      // 云端Tab
-      Column() {
+    Scroll() {
+      Row({ space: 0 }) {
+        // 本地备份Tab
         Row() {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(14)
+            .fontColor([this.currentTab === 'local'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 6 })
+          
+          Text('本地备份')
+            .fontSize(13)
+            .fontColor(this.currentTab === 'local'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.currentTab === 'local'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.currentTab === 'local' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.currentTab = 'local';
+        })
+        .animation({ duration: 150 })
+        
+        // 云端备份Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.cloud'))
+            .fontSize(14)
+            .fontColor([this.currentTab === 'cloud'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 6 })
+          
           Text('云端备份')
-            .fontSize(16)
-            .fontWeight(this.currentTab === 'cloud' ? FontWeight.Bold : FontWeight.Normal)
-            .fontColor(
-              this.currentTab === 'cloud'
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)
-            )
+            .fontSize(13)
+            .fontColor(this.currentTab === 'cloud'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           
           if (this.webdavSettings.enabled) {
-            Text('●')
-              .fontSize(8)
-              .fontColor('#00C853')
-              .margin({ left: 4 })
+            Circle()
+              .width(6)
+              .height(6)
+              .fill('#00C853')
+              .margin({ left: 6 })
           }
         }
-        
-        if (this.currentTab === 'cloud') {
-          Divider()
-            .width(40)
-            .height(3)
-            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .margin({ top: 4 })
-            .borderRadius(2)
-        }
+        .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.currentTab === 'cloud'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.currentTab === 'cloud' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        })
+        .onClick(() => {
+          this.currentTab = 'cloud';
+          if (this.webdavSettings.enabled && this.cloudBackups.length === 0) {
+            this.loadCloudBackups();
+          }
+        })
+        .animation({ duration: 150 })
       }
-      .layoutWeight(1)
-      .padding({ top: 12, bottom: 12 })
-      .onClick(() => {
-        this.currentTab = 'cloud';
-        if (this.webdavSettings.enabled && this.cloudBackups.length === 0) {
-          this.loadCloudBackups();
-        }
-      })
     }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .height(35)
     .width('100%')
-    .padding({ left: 16, right: 16 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
   }
 
   @Builder
   buildStorageOverview() {
     Column() {
       Row() {
-        Text('☁️ 云端存储')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.cloud')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('云端存储')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
         
         Blank()
         
         // 设置按钮
-        Text('⚙️')
+        SymbolGlyph($r('sys.symbol.gearshape'))
           .fontSize(20)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
           .onClick(() => {
             this.showWebDAVConfigDialog = true;
           })
@@ -1451,8 +1468,9 @@ struct BackupPage {
     Column() {
       if (!this.webdavSettings.enabled) {
         Column() {
-          Text('☁️')
+          SymbolGlyph($r('sys.symbol.cloud'))
             .fontSize(48)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
             .margin({ bottom: 16 })
           
           Text('云端备份未启用')
@@ -1484,8 +1502,9 @@ struct BackupPage {
         .justifyContent(FlexAlign.Center)
       } else if (this.cloudBackups.length === 0) {
         Column() {
-          Text('☁️')
+          SymbolGlyph($r('sys.symbol.cloud'))
             .fontSize(48)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
             .margin({ bottom: 16 })
           
           Text('暂无云端备份')
@@ -1618,10 +1637,13 @@ struct BackupPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
           
-          Row() {
-            Text('☁️ 云端备份')
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.cloud'))
               .fontSize(12)
-              .fontColor('#667EEA')
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('云端备份')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
           .margin({ top: 8 })
         }
@@ -1650,15 +1672,16 @@ struct BackupPage {
       .width('100%')
       .padding(16)
       .borderRadius(12)
-      .linearGradient({
-        angle: 135,
-        colors: [[0xE8EAF6, 0.0], [0xF3E5F5, 1.0]]
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .border({
+        width: 1,
+        color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
       })
       .shadow({
-        radius: 12,
-        color: 'rgba(102, 126, 234, 0.2)',
+        radius: 8,
+        color: 'rgba(0, 0, 0, 0.1)',
         offsetX: 0,
-        offsetY: 4
+        offsetY: 2
       })
       .margin({ top: 12 })
     }

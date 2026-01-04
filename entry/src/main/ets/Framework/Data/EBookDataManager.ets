@@ -1105,6 +1105,9 @@ export class EBookDataManager {
    */
   public async deleteEBook(bookId: string): Promise<void> {
     try {
+      // 先获取电子书信息，用于删除文件
+      const ebook = await this.getEBookById(bookId);
+      
       // 删除章节
       await this.dbManager.executeSql(`DELETE FROM ebook_chapter WHERE bookId = ?`, [bookId]);
       
@@ -1117,10 +1120,51 @@ export class EBookDataManager {
       // 删除电子书信息
       await this.dbManager.executeSql(`DELETE FROM ebook_info WHERE id = ?`, [bookId]);
       
+      // 删除电子书文件和封面
+      if (ebook) {
+        await this.deleteEBookFiles(ebook);
+      }
+      
       logger.info(TAG, `成功删除电子书: ${bookId}`);
     } catch (error) {
       logger.error(TAG, `删除电子书失败: ${String(error instanceof Error ? error.message : error)}`);
       throw error as Error;
+    }
+  }
+  
+  /**
+   * 删除电子书相关文件
+   */
+  private async deleteEBookFiles(ebook: EBook): Promise<void> {
+    try {
+      // 静态导入fs模块
+      const fs = await import('@ohos.file.fs');
+      
+      // 删除电子书文件
+      if (ebook.filePath) {
+        try {
+          // 检查文件是否存在
+          const exists = fs.default.accessSync(ebook.filePath);
+          logger.info(TAG, `电子书文件存在检查: ${ebook.filePath}, exists=${exists}`);
+          fs.default.unlinkSync(ebook.filePath);
+          logger.info(TAG, `成功删除电子书文件: ${ebook.filePath}`);
+        } catch (e) {
+          logger.warn(TAG, `电子书文件不存在或删除失败: ${ebook.filePath}, 错误: ${String(e)}`);
+        }
+      }
+      
+      // 删除封面图片
+      if (ebook.metadata.coverImagePath) {
+        try {
+          fs.default.accessSync(ebook.metadata.coverImagePath);
+          fs.default.unlinkSync(ebook.metadata.coverImagePath);
+          logger.info(TAG, `成功删除封面图片: ${ebook.metadata.coverImagePath}`);
+        } catch (e) {
+          logger.warn(TAG, `封面图片不存在或删除失败: ${ebook.metadata.coverImagePath}, 错误: ${String(e)}`);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `删除电子书文件失败: ${String(error)}`);
     }
   }
 }

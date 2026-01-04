@@ -1,0 +1,713 @@
+// 文件路径: entry/src/main/ets/pages/settings/AdvancedSettingsSubPage.ets
+/**
+ * 高级设置子页面
+ * 包含调试设置、开发者选项、SFW模式等
+ */
+
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import { ContentFilterManager } from '../../Framework/Managers/ContentFilterManager';
+import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
+import { common, Want } from '@kit.AbilityKit';
+import { logger } from '../../Utils/Logger';
+import { PageLifecycleManager } from '../../Framework/Lifecycle';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+
+const TAG = 'AdvancedSettingsSubPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+
+// 导航参数接口
+interface AdvancedSettingsSubPageParams {
+  fromPage?: string;
+}
+
+@Component
+export struct AdvancedSettingsSubPage {
+  @State pathStack: NavPathStack = new NavPathStack();
+  private scroller: Scroller = new Scroller();
+
+  // 主题相关状态
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'AdvancedSettingsSubPage';
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
+
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+  @State responsive_isLandscape: boolean = false;
+
+  // 调试设置
+  @State autoCheckUpdates: boolean = true;
+  @State enableLogFloatingWindow: boolean = true;
+  @State advancedModeEnabled: boolean = true;
+  @State forceTabletMode: boolean = false;
+  @State forceLandscapeMode: boolean = false;
+  @State preloadDebugMode: string = 'off';
+  @State showRestartDialog: boolean = false;
+  
+  // 内容过滤设置
+  @State sfwModeEnabled: boolean = false;
+  private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
+  
+  // 隐私保护设置
+  @State backgroundBlurEnabled: boolean = false;
+  @State backgroundBlurBgType: string = 'solid'; // 'solid' | 'custom'
+  @State backgroundBlurBgImage: string = '';
+  @State backgroundBlurIconType: string = 'shield'; // 'shield' | 'logo'
+
+  onPageShow(): void {
+    try {
+      const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (stack) {
+        this.pathStack = stack;
+        logger.debug(TAG, '✅ 成功获取GlobalNavStack');
+      }
+    } catch (err) {
+      logger.error(TAG, 'AppStorage.get 异常', String(err));
+    }
+  }
+
+  onReady(): void {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
+      logger.info(TAG, `主题切换到: ${newTheme}`);
+    });
+
+    // 初始化响应式布局
+    this.initializeResponsiveLayout();
+
+    // 加载保存的设置
+    this.loadSettings();
+  }
+
+  private lifecycle = new PageLifecycleManager('AdvancedSettingsSubPage', { enableDebug: true });
+
+  aboutToDisappear(): void {
+    this.lifecycle.destroy();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+  }
+
+  private initializeResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        break;
+    }
+  }
+
+  private loadSettings(): void {
+    try {
+      this.autoCheckUpdates = this.settingsManager.getBoolean(
+        SettingKeys.AUTO_CHECK_UPDATES,
+        true
+      );
+
+      this.enableLogFloatingWindow = this.settingsManager.getBoolean(
+        SettingKeys.ENABLE_LOG_FLOATING_WINDOW,
+        false
+      );
+
+      this.advancedModeEnabled = this.settingsManager.getBoolean(
+        SettingKeys.ADVANCED_MODE_ENABLED,
+        true
+      );
+
+      this.forceTabletMode = this.settingsManager.getBoolean(
+        SettingKeys.FORCE_TABLET_MODE,
+        false
+      );
+
+      this.forceLandscapeMode = this.settingsManager.getBoolean(
+        SettingKeys.FORCE_LANDSCAPE_MODE,
+        false
+      );
+
+      this.preloadDebugMode = this.settingsManager.getString(
+        SettingKeys.PRELOAD_DEBUG_MODE,
+        'off'
+      );
+      
+      // 加载SFW模式设置
+      this.sfwModeEnabled = this.contentFilterManager.isSFWModeEnabled();
+      
+      // 加载后台模糊设置
+      this.backgroundBlurEnabled = this.settingsManager.getBoolean(
+        SettingKeys.BACKGROUND_BLUR_ENABLED,
+        false
+      );
+      this.backgroundBlurBgType = this.settingsManager.getString(
+        SettingKeys.BACKGROUND_BLUR_BG_TYPE,
+        'solid'
+      );
+      this.backgroundBlurBgImage = this.settingsManager.getString(
+        SettingKeys.BACKGROUND_BLUR_BG_IMAGE,
+        ''
+      );
+      this.backgroundBlurIconType = this.settingsManager.getString(
+        SettingKeys.BACKGROUND_BLUR_ICON_TYPE,
+        'shield'
+      );
+
+      logger.info(TAG, '高级设置加载完成');
+    } catch (error) {
+      logger.error(TAG, '加载设置失败', String(error));
+    }
+  }
+
+  private goBack(): void {
+    try {
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, '返回失败', String(error));
+    }
+  }
+
+  /**
+   * 构建调试设置区域
+   */
+  @Builder
+  buildDebugSettings() {
+    Column({ space: 16 }) {
+      Text('调试设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Row() {
+        Column({ space: 4 }) {
+          Text('高级模式')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('启用后显示更多开发者选项')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.advancedModeEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            this.advancedModeEnabled = isOn;
+            await this.settingsManager.setBoolean(SettingKeys.ADVANCED_MODE_ENABLED, isOn);
+            this.settingsManager.syncToAppStorage();
+            this.showRestartDialog = true;
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      if (this.advancedModeEnabled) {
+        Row() {
+          Column({ space: 4 }) {
+            Text('日志悬浮窗')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('显示实时日志输出')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.enableLogFloatingWindow })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.enableLogFloatingWindow = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.ENABLE_LOG_FLOATING_WINDOW, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('强制平板模式')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('在手机上使用平板布局')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.forceTabletMode })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.forceTabletMode = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.FORCE_TABLET_MODE, isOn);
+              this.settingsManager.syncToAppStorage();
+              this.showRestartDialog = true;
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('强制横屏模式')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('锁定应用为横屏显示')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.forceLandscapeMode })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.forceLandscapeMode = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.FORCE_LANDSCAPE_MODE, isOn);
+              this.settingsManager.syncToAppStorage();
+              this.showRestartDialog = true;
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('预加载调试信息')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('显示漫画阅读器的预加载队列详情')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Select([
+            { value: '关闭' },
+            { value: '开启' },
+            { value: '常驻' }
+          ])
+            .selected(this.preloadDebugMode === 'off' ? 0 : (this.preloadDebugMode === 'on' ? 1 : 2))
+            .value(this.preloadDebugMode === 'off' ? '关闭' : (this.preloadDebugMode === 'on' ? '开启' : '常驻'))
+            .font({ size: 14 })
+            .selectedOptionFont({ size: 14 })
+            .optionFont({ size: 14 })
+            .onSelect(async (index: number) => {
+              const modes = ['off', 'on', 'always'];
+              this.preloadDebugMode = modes[index];
+              await this.settingsManager.setString(SettingKeys.PRELOAD_DEBUG_MODE, modes[index]);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('SFW模式')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('隐藏所有NSFW(成人)内容')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.sfwModeEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.sfwModeEnabled = isOn;
+              await this.contentFilterManager.setSFWMode(isOn);
+              promptAction.showToast({
+                message: isOn ? 'SFW模式已启用，已隐藏NSFW内容' : 'SFW模式已关闭',
+                duration: 2000
+              });
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('自动检查更新')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('启动时检查应用更新')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.autoCheckUpdates })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.autoCheckUpdates = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.AUTO_CHECK_UPDATES, isOn);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('后台模糊遮罩')
+              .fontSize(14)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('在多任务界面显示模糊效果保护隐私')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.backgroundBlurEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.backgroundBlurEnabled = isOn;
+              await this.settingsManager.setBoolean(SettingKeys.BACKGROUND_BLUR_ENABLED, isOn);
+              this.settingsManager.syncToAppStorage();
+              // 同步到AppStorage供全局使用
+              AppStorage.setOrCreate('backgroundBlurEnabled', isOn);
+              promptAction.showToast({
+                message: isOn ? '后台模糊遮罩已启用' : '后台模糊遮罩已关闭',
+                duration: 2000
+              });
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        // 后台遮罩自定义选项（仅在启用时显示）
+        if (this.backgroundBlurEnabled) {
+          // 图标类型选择
+          Row() {
+            Column({ space: 4 }) {
+              Text('遮罩图标')
+                .fontSize(14)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text('选择遮罩中央显示的图标')
+                .fontSize(12)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            Select([
+              { value: '锁定图标' },
+              { value: '应用Logo' }
+            ])
+              .selected(this.backgroundBlurIconType === 'shield' ? 0 : 1)
+              .value(this.backgroundBlurIconType === 'shield' ? '锁定图标' : '应用Logo')
+              .font({ size: 14 })
+              .selectedOptionFont({ size: 14 })
+              .optionFont({ size: 14 })
+              .onSelect(async (index: number) => {
+                const iconType = index === 0 ? 'shield' : 'logo';
+                this.backgroundBlurIconType = iconType;
+                await this.settingsManager.setString(SettingKeys.BACKGROUND_BLUR_ICON_TYPE, iconType);
+                this.settingsManager.syncToAppStorage();
+                AppStorage.setOrCreate('backgroundBlurIconType', iconType);
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+        }
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建其他操作区域
+   */
+  @Builder
+  buildOtherActions() {
+    Column({ space: 16 }) {
+      Text('其他操作')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 重播引导页面按钮
+      Button({ stateEffect: true }) {
+        Text('重播引导页面')
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+        .width('100%')
+        .height(44)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .borderRadius(12)
+        .onClick(() => {
+          this.resetGuideAndRestart();
+        })
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建重启提示对话框
+   */
+  @Builder
+  buildRestartDialog() {
+    Stack({ alignContent: Alignment.Center }) {
+      // 半透明遮罩
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .onClick(() => {
+          this.showRestartDialog = false;
+        })
+
+      // 对话框内容
+      Column({ space: 20 }) {
+        Text('需要重启应用')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text('设置已更改，需要重启应用才能生效。')
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .textAlign(TextAlign.Center)
+
+        Row({ space: 12 }) {
+          Button('稍后重启')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.showRestartDialog = false;
+            })
+
+          Button('立即重启')
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .onClick(async () => {
+              await this.restartApp();
+            })
+        }
+        .width('100%')
+      }
+      .width('80%')
+      .padding(24)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(16)
+      .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.2)' })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /**
+   * 重启应用
+   */
+  private async restartApp(): Promise<void> {
+    try {
+      const uiCtx = this.getUIContext();
+      if (!uiCtx) {
+        logger.error(TAG, '获取UIContext失败，无法重启应用');
+        return;
+      }
+      const context = uiCtx.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        logger.error(TAG, '无法获取UIAbilityContext，无法重启应用');
+        return;
+      }
+
+      const want: Want = {
+        bundleName: 'com.dlzz.manxia',
+        abilityName: 'EntryAbility'
+      };
+
+      await context.startAbility(want);
+      context.terminateSelf();
+    } catch (error) {
+      logger.error(TAG, '重启应用失败', String(error));
+    }
+  }
+
+  /**
+   * 重置引导标记并重启应用
+   */
+  private async resetGuideAndRestart(): Promise<void> {
+    try {
+      await this.welcomeGuideManager.resetGuide();
+      const uiCtx = this.getUIContext();
+      if (!uiCtx) {
+        logger.error(TAG, '获取UIContext失败，无法重启应用');
+        return;
+      }
+      const context = uiCtx.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        logger.error(TAG, '无法获取UIAbilityContext，无法重启应用');
+        return;
+      }
+
+      const want: Want = {
+        bundleName: 'com.dlzz.manxia',
+        abilityName: 'EntryAbility',
+        parameters: {
+          'fromSettings': true,
+          'forceGuide': true
+        }
+      };
+
+      await context.startAbility(want);
+      await context.terminateSelf();
+      logger.info(TAG, '已重置引导并请求重启应用');
+    } catch (error) {
+      const msg: string = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, '重播引导并重启应用失败', msg);
+    }
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          
+        Scroll(this.scroller) {
+          Column({ space: 16 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
+
+            if (this.responsive_isLandscape) {
+              Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+                Column({ space: 16 }) {
+                  this.buildDebugSettings()
+                }
+                .width('48%')
+                .margin({ bottom: 16 })
+                
+                Column({ space: 16 }) {
+                  this.buildOtherActions()
+                }
+                .width('48%')
+                .margin({ bottom: 16 })
+              }
+              .width('100%')
+            } else {
+              this.buildDebugSettings()
+              this.buildOtherActions()
+            }
+
+            Blank().height(40)
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+        }
+        .width('100%')
+        .height('100%')
+        .align(Alignment.TopStart)
+        .edgeEffect(EdgeEffect.Spring)
+        .scrollBar(BarState.Auto)
+
+        // 重启提示对话框
+        if (this.showRestartDialog) {
+          this.buildRestartDialog()
+        }
+      }
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
+        originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+          },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '高级设置' }
+      }
+    })
+    .onReady((context: NavDestinationContext) => {
+      this.pathStack = context.pathStack;
+      this.onPageShow();
+      this.onReady();
+    })
+    .backgroundColor(Color.Transparent)
+  }
+}

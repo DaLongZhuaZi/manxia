@@ -136,6 +136,22 @@ export struct SourceSettingsPage {
   
   // 图源类型（用于控制显示哪些设置）
   @State sourceType: string = 'manga'; // 'manga' | 'ebook' | 'novel'
+  
+  // 图源级别UserAgent设置
+  @State sourceUserAgent: string = '';
+  @State sourceUserAgentEnabled: boolean = false;
+  private readonly DEFAULT_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+
+  // Popup显示状态
+  @State showPopupHomeItems: boolean = false;
+  @State showPopupPreload: boolean = false;
+  @State showPopupPreloadCurrent: boolean = false;
+  @State showPopupPreloadNext: boolean = false;
+  @State showPopupDownloadWhileReading: boolean = false;
+  @State showPopupCacheSize: boolean = false;
+  @State showPopupUserAgent: boolean = false;
+  // 自定义设置项的Popup状态
+  @State customSettingPopupStates: Map<string, boolean> = new Map();
 
   aboutToAppear(): void {
     logger.info(TAG, '=== aboutToAppear 开始 ===');
@@ -223,8 +239,13 @@ export struct SourceSettingsPage {
         for (const key of settingKeys) {
           const setting: ESObject = settings[key] as ESObject;
           if (setting && typeof setting === 'object') {
-            const settingType = (setting.type as string) || 'text';
-            const settingName = (setting.name as string) || key;
+            let settingType = (setting.type as string) || 'text';
+            // 兼容string类型（映射为text）
+            if (settingType === 'string') {
+              settingType = 'text';
+            }
+            // 支持name或title字段作为显示名称
+            const settingName = (setting.name as string) || (setting.title as string) || key;
             const settingDesc = setting.description as string;
             const settingDefault = setting.default !== undefined ? String(setting.default) : '';
             
@@ -422,6 +443,12 @@ export struct SourceSettingsPage {
       if (ebookPageMargin && ebookPageMargin.settingValue) { this.sourceEbookPageMargin = Number(ebookPageMargin.settingValue); }
       if (ebookTheme && ebookTheme.settingValue) { this.sourceEbookThemeIndex = Number(ebookTheme.settingValue); }
       if (ebookPageMode && ebookPageMode.settingValue) { this.sourceEbookPageMode = ebookPageMode.settingValue as EBookPageMode; }
+
+      // 加载图源级别UserAgent设置
+      const uaEnabled: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'network.userAgentEnabled');
+      const uaValue: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'network.userAgent');
+      if (uaEnabled && uaEnabled.settingValue) { this.sourceUserAgentEnabled = uaEnabled.settingValue === '1'; }
+      if (uaValue && uaValue.settingValue) { this.sourceUserAgent = uaValue.settingValue; } else { this.sourceUserAgent = this.DEFAULT_USER_AGENT; }
     } catch (error) {
       logger.error(TAG, '加载图源设置失败', String(error));
     }
@@ -491,6 +518,12 @@ export struct SourceSettingsPage {
         await this.dataManager.saveSourceUserSetting(sid, 'ebook.pageMode', this.sourceEbookPageMode, 'string');
       }
 
+      // 保存图源级别UserAgent设置
+      await this.dataManager.saveSourceUserSetting(sid, 'network.userAgentEnabled', this.sourceUserAgentEnabled ? '1' : '0', 'boolean');
+      if (this.sourceUserAgentEnabled) {
+        await this.dataManager.saveSourceUserSetting(sid, 'network.userAgent', this.sourceUserAgent, 'string');
+      }
+
       this.showToast('设置已保存');
     } catch (error) {
       logger.error(TAG, '保存图源设置失败', String(error));
@@ -518,6 +551,27 @@ export struct SourceSettingsPage {
       logger.info(TAG, '漫画默认阅读设置已保存');
     } catch (error) {
       logger.error(TAG, '保存漫画默认阅读设置失败', String(error));
+    }
+  }
+
+  /**
+   * 实时保存UserAgent设置
+   */
+  private async saveUserAgentSettings(): Promise<void> {
+    if (!this.pageParams || !this.pageParams.sourceName) {
+      return;
+    }
+    try {
+      const sourceRecord = await this.dataManager.getComicSourceByName(this.pageParams.sourceName);
+      if (!sourceRecord) { return; }
+      const sid: number = Number(sourceRecord.id);
+      
+      await this.dataManager.saveSourceUserSetting(sid, 'network.userAgentEnabled', this.sourceUserAgentEnabled ? '1' : '0', 'boolean');
+      await this.dataManager.saveSourceUserSetting(sid, 'network.userAgent', this.sourceUserAgent, 'string');
+      logger.info(TAG, 'UserAgent设置已保存');
+      this.showToast('UserAgent设置已保存');
+    } catch (error) {
+      logger.error(TAG, '保存UserAgent设置失败', String(error));
     }
   }
 
@@ -782,6 +836,25 @@ export struct SourceSettingsPage {
                           .borderRadius(8)
                           .border({ width: 1, color: Color.Gray })
                           .margin({ left: 4 })
+                          .onClick(() => {
+                            const currentState = this.customSettingPopupStates.get(setting.key) || false;
+                            this.customSettingPopupStates.set(setting.key, !currentState);
+                            this.customSettingPopupStates = new Map(this.customSettingPopupStates);
+                          })
+                          .bindPopup(this.customSettingPopupStates.get(setting.key) || false, {
+                            message: setting.description,
+                            placement: Placement.Top,
+                            enableArrow: true,
+                            showInSubWindow: false,
+                            mask: true,
+                            autoCancel: true,
+                            onStateChange: (e) => {
+                              if (!e.isVisible) {
+                                this.customSettingPopupStates.set(setting.key, false);
+                                this.customSettingPopupStates = new Map(this.customSettingPopupStates);
+                              }
+                            }
+                          })
                       }
                     }
                     .width('100%')
@@ -804,12 +877,14 @@ export struct SourceSettingsPage {
                       .width('100%')
                     } else if (setting.type === 'select' && setting.options) {
                       Column({ space: 4 }) {
-                        ForEach(setting.options, (option: SourceSettingOption) => {
+                        ForEach(setting.options, (option: SourceSettingOption, index: number) => {
                           Row() {
                             Radio({ value: option.value, group: `setting_${setting.key}` })
                               .checked((this.sourceCustomSettingValues.get(setting.key) || setting.default) === option.value)
                               .onChange((isChecked: boolean) => {
                                 if (isChecked) {
+                                  this.sourceCustomSettingValues.set(setting.key, option.value);
+                                  this.sourceCustomSettingValues = new Map(this.sourceCustomSettingValues);
                                   this.saveCustomSetting(setting.key, option.value);
                                 }
                               })
@@ -819,7 +894,7 @@ export struct SourceSettingsPage {
                               .margin({ left: 8 })
                           }
                           .width('100%')
-                        })
+                        }, (option: SourceSettingOption) => `${setting.key}_${option.value}`)
                       }
                       .width('100%')
                     } else if (setting.type === 'number') {
@@ -887,13 +962,21 @@ export struct SourceSettingsPage {
                     .borderRadius(8)
                     .border({ width: 1, color: Color.Gray })
                     .margin({ left: 4 })
-                    .bindPopup(this.homeItemsPerPage >= 0, {
+                    .onClick(() => {
+                      this.showPopupHomeItems = !this.showPopupHomeItems;
+                    })
+                    .bindPopup(this.showPopupHomeItems, {
                       message: '控制图源首页每次加载的漫画数量，范围10-100。数值越大加载越慢，但减少翻页次数',
                       placement: Placement.Top,
                       enableArrow: true,
                       showInSubWindow: false,
                       mask: true,
-                      autoCancel: true
+                      autoCancel: true,
+                      onStateChange: (e) => {
+                        if (!e.isVisible) {
+                          this.showPopupHomeItems = false;
+                        }
+                      }
                     })
                   Blank()
                   Text(`${this.homeItemsPerPage} 条`)
@@ -933,13 +1016,21 @@ export struct SourceSettingsPage {
                     .borderRadius(8)
                     .border({ width: 1, color: Color.Gray })
                     .margin({ left: 4 })
-                    .bindPopup(this.readerPreloadCount >= 0, {
+                    .onClick(() => {
+                      this.showPopupPreload = !this.showPopupPreload;
+                    })
+                    .bindPopup(this.showPopupPreload, {
                       message: '阅读时提前加载的图片页数，范围1-10。数值越大翻页越流畅，但占用更多内存',
                       placement: Placement.Top,
                       enableArrow: true,
                       showInSubWindow: false,
                       mask: true,
-                      autoCancel: true
+                      autoCancel: true,
+                      onStateChange: (e) => {
+                        if (!e.isVisible) {
+                          this.showPopupPreload = false;
+                        }
+                      }
                     })
                   Blank()
                   Text(`${this.readerPreloadCount} 页`)
@@ -979,13 +1070,21 @@ export struct SourceSettingsPage {
                     .borderRadius(8)
                     .border({ width: 1, color: Color.Gray })
                     .margin({ left: 4 })
-                    .bindPopup(this.preloadCurrentChapter || !this.preloadCurrentChapter, {
+                    .onClick(() => {
+                      this.showPopupPreloadCurrent = !this.showPopupPreloadCurrent;
+                    })
+                    .bindPopup(this.showPopupPreloadCurrent, {
                       message: '打开章节时自动预加载所有图片，提升阅读体验但消耗流量',
                       placement: Placement.Top,
                       enableArrow: true,
                       showInSubWindow: false,
                       mask: true,
-                      autoCancel: true
+                      autoCancel: true,
+                      onStateChange: (e) => {
+                        if (!e.isVisible) {
+                          this.showPopupPreloadCurrent = false;
+                        }
+                      }
                     })
                 }
                 .layoutWeight(1)
@@ -1011,13 +1110,21 @@ export struct SourceSettingsPage {
                     .borderRadius(8)
                     .border({ width: 1, color: Color.Gray })
                     .margin({ left: 4 })
-                    .bindPopup(this.preloadNextChapter || !this.preloadNextChapter, {
+                    .onClick(() => {
+                      this.showPopupPreloadNext = !this.showPopupPreloadNext;
+                    })
+                    .bindPopup(this.showPopupPreloadNext, {
                       message: '阅读到最后几页时自动预加载下一章节，无缝连续阅读',
                       placement: Placement.Top,
                       enableArrow: true,
                       showInSubWindow: false,
                       mask: true,
-                      autoCancel: true  
+                      autoCancel: true,
+                      onStateChange: (e) => {
+                        if (!e.isVisible) {
+                          this.showPopupPreloadNext = false;
+                        }
+                      }
                     })
                 }
                 .layoutWeight(1)
@@ -1043,13 +1150,21 @@ export struct SourceSettingsPage {
                     .borderRadius(8)
                     .border({ width: 1, color: Color.Gray })
                     .margin({ left: 4 })
-                    .bindPopup(this.downloadWhileReading || !this.downloadWhileReading, {
+                    .onClick(() => {
+                      this.showPopupDownloadWhileReading = !this.showPopupDownloadWhileReading;
+                    })
+                    .bindPopup(this.showPopupDownloadWhileReading, {
                       message: '开启后，阅读时自动下载图片到永久存储，不会被清理。关闭后使用临时缓存，受最大缓存限制',
                       placement: Placement.Top,
                       enableArrow: true,
                       showInSubWindow: false,
                       mask: true,
-                      autoCancel: true
+                      autoCancel: true,
+                      onStateChange: (e) => {
+                        if (!e.isVisible) {
+                          this.showPopupDownloadWhileReading = false;
+                        }
+                      }
                     })
                 }
                 .layoutWeight(1)
@@ -1076,13 +1191,21 @@ export struct SourceSettingsPage {
                       .borderRadius(8)
                       .border({ width: 1, color: Color.Gray })
                       .margin({ left: 4 })
-                      .bindPopup(true, {
+                      .onClick(() => {
+                        this.showPopupCacheSize = !this.showPopupCacheSize;
+                      })
+                      .bindPopup(this.showPopupCacheSize, {
                         message: '临时缓存的最大大小，超出后自动清理最旧的缓存',
                         placement: Placement.Top,
                         enableArrow: true,
                         showInSubWindow: false,
                         mask: true,
-                        autoCancel: true
+                        autoCancel: true,
+                        onStateChange: (e) => {
+                          if (!e.isVisible) {
+                            this.showPopupCacheSize = false;
+                          }
+                        }
                       })
                     Blank()
                     Text(`${this.maxCacheSizeMB} MB`)
@@ -1106,6 +1229,108 @@ export struct SourceSettingsPage {
                 }
                 .width('100%')
                 .padding({ top: 8, bottom: 8 })
+              }
+            }
+            .width(this.isLandscape ? '48%' : '100%')
+            .padding(16)
+            .margin({ bottom: 16 })
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+
+            // UserAgent设置分组
+            Column() {
+              Text('网络请求')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .margin({ bottom: 12 })
+
+              // 启用自定义UA开关
+              Row() {
+                Row() {
+                  Text('自定义User-Agent')
+                    .fontSize(14)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  Text('?')
+                    .fontSize(12)
+                    .fontColor(Color.Gray)
+                    .width(16)
+                    .height(16)
+                    .textAlign(TextAlign.Center)
+                    .borderRadius(8)
+                    .border({ width: 1, color: Color.Gray })
+                    .margin({ left: 4 })
+                    .onClick(() => {
+                      this.showPopupUserAgent = !this.showPopupUserAgent;
+                    })
+                    .bindPopup(this.showPopupUserAgent, {
+                      message: '为此图源设置自定义User-Agent，覆盖全局设置。可用于解决某些网站的访问限制',
+                      placement: Placement.Top,
+                      enableArrow: true,
+                      showInSubWindow: false,
+                      mask: true,
+                      autoCancel: true,
+                      onStateChange: (e) => {
+                        if (!e.isVisible) {
+                          this.showPopupUserAgent = false;
+                        }
+                      }
+                    })
+                }
+                .layoutWeight(1)
+                
+                Toggle({ type: ToggleType.Switch, isOn: this.sourceUserAgentEnabled })
+                  .onChange((isOn: boolean) => { 
+                    this.sourceUserAgentEnabled = isOn;
+                    this.saveUserAgentSettings();
+                  })
+              }
+              .width('100%')
+              .padding({ top: 8, bottom: 8 })
+
+              if (this.sourceUserAgentEnabled) {
+                Column({ space: 8 }) {
+                  TextArea({ text: this.sourceUserAgent, placeholder: '输入自定义User-Agent...' })
+                    .fontSize(13)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .borderRadius(8)
+                    .padding(12)
+                    .height(80)
+                    .width('100%')
+                    .onChange((value: string) => {
+                      this.sourceUserAgent = value;
+                    })
+
+                  Row({ space: 8 }) {
+                    Button('重置默认')
+                      .fontSize(12)
+                      .height(28)
+                      .onClick(() => {
+                        this.sourceUserAgent = this.DEFAULT_USER_AGENT;
+                        this.saveUserAgentSettings();
+                      })
+
+                    Button('Chrome UA')
+                      .fontSize(12)
+                      .height(28)
+                      .onClick(() => {
+                        this.sourceUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+                        this.saveUserAgentSettings();
+                      })
+
+                    Button('保存')
+                      .fontSize(12)
+                      .height(28)
+                      .onClick(() => {
+                        this.saveUserAgentSettings();
+                      })
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.Start)
+                }
+                .width('100%')
+                .margin({ top: 8 })
               }
             }
             .width(this.isLandscape ? '48%' : '100%')

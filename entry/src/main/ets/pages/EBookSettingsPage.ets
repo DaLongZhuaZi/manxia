@@ -1478,10 +1478,9 @@ export struct EBookSettingsPage {
     // 格式提示
     Column({ space: 12 }) {
       Row({ space: 8 }) {
-        Image($r('app.media.ic_ebook'))
+        SymbolGlyph($r('sys.symbol.text_book_closed'))
           .width(24)
           .height(24)
-          .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         Text('纯文本阅读器设置')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)

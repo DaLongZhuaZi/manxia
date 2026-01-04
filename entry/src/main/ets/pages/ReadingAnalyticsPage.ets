@@ -1937,8 +1937,9 @@ struct ReadingAnalyticsPage {
           Row({ space: 16 }) {
             // 阅读时长
             Column({ space: 4 }) {
-              Text('⏱️')
+              SymbolGlyph($r('sys.symbol.clock'))
                 .fontSize(24)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
               Text(this.formatDuration(this.dailyViewData.readingTime))
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
@@ -1952,8 +1953,9 @@ struct ReadingAnalyticsPage {
             
             // 阅读章节
             Column({ space: 4 }) {
-              Text('📖')
+              SymbolGlyph($r('sys.symbol.book'))
                 .fontSize(24)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
               Text(`${this.dailyViewData.chaptersRead}`)
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
@@ -1985,8 +1987,9 @@ struct ReadingAnalyticsPage {
         } else {
           // 无阅读数据
           Column({ space: 8 }) {
-            Text('📚')
+            SymbolGlyph($r('sys.symbol.book'))
               .fontSize(48)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
             Text('当天没有阅读记录')
               .fontSize(14)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2079,17 +2082,18 @@ struct ReadingAnalyticsPage {
           .width('100%')
         
         Row({ space: 8 }) {
-          Text(`⏱️ ${this.formatDuration(item.readingTime)}`)
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text(`📖 ${item.chaptersRead}章`)
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text(`📄 ${item.pagesRead}页`)
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(this.formatDuration(item.readingTime)).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.book')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(`${item.chaptersRead}章`).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.doc')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(`${item.pagesRead}页`).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
         }
       }
       .layoutWeight(1)
@@ -2131,11 +2135,11 @@ struct ReadingAnalyticsPage {
           .width('100%')
         
         Row({ space: 8 }) {
-          Text(`⏱️ ${this.formatDuration(item.readingTime)}`)
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          
-          Text(`📊 ${item.progress.toFixed(1)}%`)
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(this.formatDuration(item.readingTime)).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          Text(`${item.progress.toFixed(1)}%`)
             .fontSize(12)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
@@ -2180,14 +2184,33 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 获取统计卡片图标资源
+   */
+  private getStatCardIconResource(icon: string): Resource {
+    const iconMap: Record<string, Resource> = {
+      '⏱️': $r('sys.symbol.clock'),
+      '📅': $r('sys.symbol.calendar'),
+      '📚': $r('sys.symbol.rectangle_stack'),
+      '📖': $r('sys.symbol.book'),
+      '📕': $r('sys.symbol.book'),
+      '📗': $r('sys.symbol.doc_text'),
+      '📄': $r('sys.symbol.doc'),
+      '🔥': $r('sys.symbol.star'),
+      '⏰': $r('sys.symbol.clock'),
+    };
+    return iconMap[icon] || $r('sys.symbol.circle');
+  }
+
+  /**
    * 构建统计卡片（带模糊效果磁贴设计）
    */
   @Builder
   buildStatCard(title: string, value: string, icon: string, unit?: string) {
     Column({ space: 6 }) {
       // 图标
-      Text(icon)
+      SymbolGlyph(this.getStatCardIconResource(icon))
         .fontSize(32)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
         .alignSelf(ItemAlign.Start)
       
       Blank().layoutWeight(1)
@@ -2247,11 +2270,14 @@ struct ReadingAnalyticsPage {
   @Builder
   buildStatisticsOverview() {
     Column({ space: 16 }) {
-      Text('📊 阅读统计')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('阅读统计')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+      .alignSelf(ItemAlign.Start)
 
       // 使用Grid布局实现2列磁贴效果
       Grid() {
@@ -2366,17 +2392,21 @@ struct ReadingAnalyticsPage {
   @Builder
   buildReadingHabits() {
     Column({ space: 12 }) {
-      Text('📈 阅读习惯')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.arrow_up_right')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('阅读习惯')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+      .alignSelf(ItemAlign.Start)
 
       // 最喜欢的阅读时段
       Column({ space: 8 }) {
         Row({ space: 8 }) {
-          Text('⏰')
+          SymbolGlyph($r('sys.symbol.clock'))
             .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           
           Text('最喜欢的阅读时段')
             .fontSize(14)
@@ -2405,8 +2435,9 @@ struct ReadingAnalyticsPage {
       if (this.statistics.lastReadTime > 0) {
         Column({ space: 8 }) {
           Row({ space: 8 }) {
-            Text('🕐')
+            SymbolGlyph($r('sys.symbol.clock'))
               .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
             
             Text('最后阅读时间')
               .fontSize(14)
@@ -2434,8 +2465,9 @@ struct ReadingAnalyticsPage {
       if (this.statistics.mostReadComicId.length > 0) {
         Column({ space: 8 }) {
           Row({ space: 8 }) {
-            Text('⭐')
+            SymbolGlyph($r('sys.symbol.star'))
               .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
             
             Text('阅读最多的漫画')
               .fontSize(14)
@@ -2466,8 +2498,9 @@ struct ReadingAnalyticsPage {
       if (this.statistics.mostReadEBookId.length > 0) {
         Column({ space: 8 }) {
           Row({ space: 8 }) {
-            Text('📚')
+            SymbolGlyph($r('sys.symbol.book'))
               .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
             
             Text('阅读最多的电子书')
               .fontSize(14)
@@ -2505,11 +2538,14 @@ struct ReadingAnalyticsPage {
   buildDailyTrend() {
     if (this.dailyData.length > 0) {
       Column({ space: 12 }) {
-        Text('📆 每日阅读趋势')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .alignSelf(ItemAlign.Start)
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.calendar')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('每日阅读趋势')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .alignSelf(ItemAlign.Start)
 
         Column({ space: 8 }) {
           ForEach(this.dailyData.slice(0, 7), (data: DailyReadingData, index: number) => {
@@ -2521,16 +2557,14 @@ struct ReadingAnalyticsPage {
               
               Column({ space: 4 }) {
                 Row({ space: 4 }) {
-                  Text('⏱️')
-                    .fontSize(12)
+                  SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
                   Text(this.formatDuration(data.readingTime))
                     .fontSize(12)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 }
                 
                 Row({ space: 4 }) {
-                  Text('📖')
-                    .fontSize(12)
+                  SymbolGlyph($r('sys.symbol.book')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
                   Text(`${data.chaptersRead}章 / ${data.pagesRead}页`)
                     .fontSize(12)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2562,19 +2596,21 @@ struct ReadingAnalyticsPage {
   buildInterestAnalysis() {
     if (this.interestItems.length > 0) {
       Column({ space: 12 }) {
-        Text('💡 您可能感兴趣的')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .alignSelf(ItemAlign.Start)
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.lightbulb')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('您可能感兴趣的')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .alignSelf(ItemAlign.Start)
 
         // 兴趣标签云 - 带模糊效果容器
         Column() {
           Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
             ForEach(this.interestItems, (item: InterestItem, index: number) => {
               Row({ space: 4 }) {
-                Text(item.type === 'tag' ? '🏷️' : (item.type === 'author' ? '✍️' : '📝'))
-                  .fontSize(12)
+                SymbolGlyph($r(item.type === 'tag' ? 'sys.symbol.bookmark' : (item.type === 'author' ? 'sys.symbol.person' : 'sys.symbol.doc_text'))).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
                 Text(item.keyword)
                   .fontSize(13)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -2612,11 +2648,14 @@ struct ReadingAnalyticsPage {
   buildReadingRank() {
     if (this.readingRankList.length > 0) {
       Column({ space: 12 }) {
-        Text('🏆 阅读时长排行')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .alignSelf(ItemAlign.Start)
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.histogram')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('阅读时长排行')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .alignSelf(ItemAlign.Start)
 
         // 排行列表 - 网格展示
         Grid() {
@@ -2640,8 +2679,9 @@ struct ReadingAnalyticsPage {
                       .borderRadius(8)
                   } else {
                     Column() {
-                      Text('📚')
+                      SymbolGlyph($r('sys.symbol.book'))
                         .fontSize(32)
+                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
                     }
                     .width('100%')
                     .aspectRatio(0.7)
@@ -2698,11 +2738,14 @@ struct ReadingAnalyticsPage {
   @Builder
   buildSettingsSection() {
     Column({ space: 12 }) {
-      Text('⚙️ 设置')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .alignSelf(ItemAlign.Start)
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.gearshape')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('设置')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+      .alignSelf(ItemAlign.Start)
 
       // 数据保留天数设置
       Row() {
@@ -2800,8 +2843,9 @@ struct ReadingAnalyticsPage {
   @Builder
   buildEmptyState() {
     Column({ space: 16 }) {
-      Text('📚')
+      SymbolGlyph($r('sys.symbol.book'))
         .fontSize(64)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
       
       Text('暂未收集到有效的阅读数据')
         .fontSize(18)
@@ -2826,8 +2870,9 @@ struct ReadingAnalyticsPage {
   buildPermissionRequest() {
     Column({ space: 24 }) {
       // 图标
-      Text('📊')
+      SymbolGlyph($r('sys.symbol.doc_plaintext'))
         .fontSize(80)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
       
       // 标题
       Text('阅读报告')
@@ -2848,10 +2893,10 @@ struct ReadingAnalyticsPage {
           .width('100%')
         
         Column({ space: 8 }) {
-          this.buildPermissionItem('⏱️', '阅读时长', '记录您每次阅读的时长')
-          this.buildPermissionItem('📖', '阅读进度', '记录您阅读的章节和页数')
-          this.buildPermissionItem('📅', '阅读习惯', '分析您的阅读时段偏好')
-          this.buildPermissionItem('🏷️', '兴趣分析', '根据阅读内容分析您的兴趣')
+          this.buildPermissionItemWithSymbol($r('sys.symbol.clock'), '阅读时长', '记录您每次阅读的时长')
+          this.buildPermissionItemWithSymbol($r('sys.symbol.book'), '阅读进度', '记录您阅读的章节和页数')
+          this.buildPermissionItemWithSymbol($r('sys.symbol.calendar'), '阅读习惯', '分析您的阅读时段偏好')
+          this.buildPermissionItemWithSymbol($r('sys.symbol.bookmark'), '兴趣分析', '根据阅读内容分析您的兴趣')
         }
         .width('100%')
         .padding(16)
@@ -2903,6 +2948,32 @@ struct ReadingAnalyticsPage {
   }
   
   /**
+   * 构建权限项（使用Symbol图标）
+   */
+  @Builder
+  buildPermissionItemWithSymbol(iconRes: Resource, title: string, description: string) {
+    Row({ space: 12 }) {
+      SymbolGlyph(iconRes)
+        .fontSize(20)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text(description)
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+    }
+    .width('100%')
+  }
+
+  /**
    * 构建权限项
    */
   @Builder
@@ -2949,8 +3020,9 @@ struct ReadingAnalyticsPage {
     // 对话框内容
     Column({ space: 20 }) {
       // 图标
-      Text('⚠️')
+      SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
         .fontSize(48)
+        .fontColor(['#FF9800'])
       
       // 标题
       Text('清除阅读分析数据')
@@ -3061,11 +3133,14 @@ struct ReadingAnalyticsPage {
         Column({ space: 16 }) {
           // 第一行：统计概览（使用网格布局）
           Column({ space: 12 }) {
-            Text('📊 阅读统计')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .alignSelf(ItemAlign.Start)
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              Text('阅读统计')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
+            .alignSelf(ItemAlign.Start)
 
             Grid() {
               GridItem() {
@@ -3331,7 +3406,7 @@ struct ReadingAnalyticsPage {
           value: [{
             content: {
               label: this.isLongTermView ? '日视图' : '长期视图',
-              icon: this.isLongTermView ? $r('app.media.ic_calendar_day') : $r('app.media.ic_calendar_range'),
+              icon: this.isLongTermView ? $r('sys.symbol.calendar_01_a') : $r('sys.symbol.calendar_badge_clock'),
               isEnabled: this.hasAskedPermission && !this.isLoading,
               action: () => {
                 this.toggleViewMode();
@@ -3340,7 +3415,7 @@ struct ReadingAnalyticsPage {
           }, {
             content: {
               label: '清除数据',
-              icon: $r('app.media.ic_delete'),
+              icon: $r('sys.symbol.trash'),
               isEnabled: this.hasAskedPermission && !this.isLoading,
               action: () => {
                 this.showClearDataConfirmDialog();

@@ -6,6 +6,7 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType, CUSTOM_THEME_KEYS } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
+import { WindowManager } from '../Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
 import { colorMap } from '../Data/ResourceMap';
 import { deviceInfo } from '@kit.BasicServicesKit';
@@ -30,6 +31,7 @@ struct SplashPage {
   @State private logoOpacity: number = 0;
   @State private loadingProgress: string = '正在启动...';
   @State private themeState: ThemeAwareState = new ThemeAwareState();
+  @State private isWindowPortrait: boolean = true; // 窗口是否为竖屏（根据窗口尺寸判断）
 
   // 自定义主题全局状态（用于背景选择）
   @StorageProp(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE) customSplashBackgroundImage: string = '';
@@ -53,8 +55,36 @@ struct SplashPage {
       return;
     }
 
+    // 检测窗口实际方向（根据窗口尺寸判断，而非物理方向）
+    this.detectWindowOrientation();
+
     // 开始完整的初始化流程
     this.startCompleteInitialization();
+  }
+
+  /**
+   * 检测窗口实际方向
+   * 在SplashPage期间强制使用竖屏布局，避免系统锁定竖屏但设备横握时的显示问题
+   * 跳转到MainMenuPage后会恢复自动旋转
+   */
+  private detectWindowOrientation(): void {
+    try {
+      const mainWindow = WindowManager.getMainWindowFromUIContext(this.uiContext);
+      if (mainWindow) {
+        const props = mainWindow.getWindowProperties();
+        const rect = props.windowRect;
+        logger.info(TAG, `窗口尺寸: width=${rect.width}, height=${rect.height}`);
+        
+        // SplashPage期间强制使用竖屏布局
+        // 这样可以避免系统锁定竖屏但设备横握时的显示问题
+        // 跳转到MainMenuPage后会根据用户设置恢复自动旋转
+        this.isWindowPortrait = true;
+        logger.info(TAG, `SplashPage强制使用竖屏布局`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `窗口方向检测失败: ${String(error)}`);
+      this.isWindowPortrait = true; // 默认竖屏
+    }
   }
 
   /**

@@ -25,7 +25,8 @@ export class ThemeAwareState {
 
   constructor() {
     const themeManager = ThemeManager.getInstance();
-    this.currentTheme = themeManager.getCurrentThemeSync();
+    // 使用getActualThemeSync获取实际显示的主题（考虑AUTO模式）
+    this.currentTheme = themeManager.getActualThemeSync();
   }
 
   /**

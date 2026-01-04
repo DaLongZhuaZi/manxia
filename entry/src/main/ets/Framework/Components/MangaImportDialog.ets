@@ -111,6 +111,8 @@ export interface MangaImportDialogResult {
   parsedStructure: ParsedArchiveStructure;
   /** 选择的封面图片路径 */
   selectedCoverPath: string;
+  /** 原文件URI（用于导入后删除） */
+  sourceFileUri?: string;
 }
 
 /**
@@ -134,6 +136,7 @@ export struct MangaImportDialog {
   @Prop fileName: string = '';
   @Prop parsedStructure: ParsedArchiveStructure;
   @Prop existingMangaCandidates: ExistingMangaCandidate[] = [];
+  @Prop sourceFileUri: string = '';
 
   // 回调函数
   onConfirm: (result: MangaImportDialogResult) => void = () => {};
@@ -570,7 +573,8 @@ export struct MangaImportDialog {
                 mergeToExisting: this.mergeToExisting,
                 targetMangaId: this.selectedMangaId || undefined,
                 parsedStructure: this.parsedStructure,
-                selectedCoverPath: selectedCoverPath
+                selectedCoverPath: selectedCoverPath,
+                sourceFileUri: this.sourceFileUri || undefined
               };
               this.onConfirm(result);
               this.controller.close();

@@ -23,6 +23,7 @@ import { MangaSourceEngine, EngineConfig } from './MangaSourceEngine';
 import { AntiCrawlerConfig } from './MangaSourceTypes';
 import { DataManager } from '../Data/DataManager';
 import { WebViewAuthManager } from './WebViewAuthManager';
+import { UserAgentManager } from '../Managers/UserAgentManager';
 
 const TAG = 'WebViewSourceManager';
 
@@ -91,9 +92,12 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   /**
    * 私有构造函数
    */
+  private userAgentManager: UserAgentManager;
+
   private constructor() {
     this.databaseManager = DatabaseManager.getInstance();
     this.dataManager = DataManager.getInstance();
+    this.userAgentManager = UserAgentManager.getInstance();
   }
 
   /**
@@ -271,6 +275,16 @@ export class WebViewSourceManager implements IWebViewSourceManager {
   getSourceConfig(sourceId: string): WebViewSourceConfig | null {
     const cfg = this.sourceConfigs.get(sourceId);
     return cfg ? cfg : null;
+  }
+
+  /**
+   * 获取指定图源应使用的User-Agent
+   * @param sourceId 图源ID
+   * @param configUA 图源配置中的UA（可选）
+   * @returns User-Agent字符串
+   */
+  async getUserAgentForSource(sourceId: number, configUA?: string): Promise<string> {
+    return this.userAgentManager.getUserAgent(sourceId, configUA);
   }
 
   /**

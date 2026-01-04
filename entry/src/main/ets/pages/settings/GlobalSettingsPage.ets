@@ -1,0 +1,335 @@
+// 文件路径: entry/src/main/ets/pages/settings/GlobalSettingsPage.ets
+/**
+ * 全局设置页面（一级页面）
+ * 显示设置分组入口，点击后跳转到对应的二级设置页面
+ * 支持后续添加更多一级和二级内容
+ */
+
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { logger } from '../../Utils/Logger';
+import { PageLifecycleManager } from '../../Framework/Lifecycle';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+
+const TAG = 'GlobalSettingsPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+
+// 导航参数接口
+interface GlobalSettingsPageParams {
+  fromPage?: string;
+}
+
+// 设置分组项接口
+interface SettingsGroupItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  icon: ResourceStr;
+  targetPage: string;
+}
+
+@Component
+export struct GlobalSettingsPage {
+  @State pathStack: NavPathStack = new NavPathStack();
+  private scroller: Scroller = new Scroller();
+
+  // 主题相关状态
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'GlobalSettingsPage';
+
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+  @State responsive_isLandscape: boolean = false;
+
+  // 设置分组列表 - 可扩展添加更多分组
+  private settingsGroups: SettingsGroupItem[] = [
+    {
+      id: 'reading',
+      title: '阅读设置',
+      subtitle: '漫画、电子书、纯文本阅读器的默认设置',
+      icon: $r('sys.symbol.book'),
+      targetPage: 'ReadingSettingsSubPage'
+    },
+    {
+      id: 'interaction',
+      title: '交互设置',
+      subtitle: '震动反馈、触觉体验',
+      icon: $r('sys.symbol.hand_tap'),
+      targetPage: 'InteractionSettingsSubPage'
+    },
+    {
+      id: 'network',
+      title: '下载与网络',
+      subtitle: '下载设置、网络请求配置',
+      icon: $r('sys.symbol.arrow_down_circle'),
+      targetPage: 'NetworkSettingsSubPage'
+    },
+    {
+      id: 'notification',
+      title: '通知设置',
+      subtitle: '下载完成通知、更新提醒',
+      icon: $r('sys.symbol.bell'),
+      targetPage: 'NotificationSettingsSubPage'
+    },
+    {
+      id: 'advanced',
+      title: '高级设置',
+      subtitle: '调试选项、开发者模式、SFW模式',
+      icon: $r('sys.symbol.engineer_fill'),
+      targetPage: 'AdvancedSettingsSubPage'
+    },
+    {
+      id: 'backup',
+      title: '数据管理',
+      subtitle: '备份与恢复、数据导入导出',
+      icon: $r('sys.symbol.folder'),
+      targetPage: 'BackupPage'
+    }
+  ];
+
+  onPageShow(): void {
+    try {
+      const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (stack) {
+        this.pathStack = stack;
+        logger.debug(TAG, '✅ 成功获取GlobalNavStack');
+      }
+    } catch (err) {
+      logger.error(TAG, 'AppStorage.get 异常', String(err));
+    }
+  }
+
+  onReady(): void {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
+      logger.info(TAG, `主题切换到: ${newTheme}`);
+    });
+
+    // 初始化响应式布局
+    this.initializeResponsiveLayout();
+  }
+
+  private lifecycle = new PageLifecycleManager('GlobalSettingsPage', { enableDebug: true });
+
+  aboutToDisappear(): void {
+    this.lifecycle.destroy();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    // 移除设备变化监听器
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+  }
+
+  /**
+   * 初始化响应式布局
+   */
+  private initializeResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  /**
+   * 更新响应式布局参数
+   */
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        break;
+    }
+    
+    logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
+  }
+
+  private goBack(): void {
+    try {
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, '返回失败', String(error));
+    }
+  }
+
+  /**
+   * 导航到二级设置页面
+   */
+  private navigateToSubPage(targetPage: string): void {
+    try {
+      logger.info(TAG, `导航到: ${targetPage}`);
+      this.pathStack.pushPathByName(targetPage, null);
+    } catch (error) {
+      logger.error(TAG, `导航失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 构建设置分组项
+   */
+  @Builder
+  buildSettingsGroupItem(item: SettingsGroupItem) {
+    Row() {
+      // 图标
+      SymbolGlyph(item.icon as Resource)
+        .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+        .margin({ right: 16 })
+
+      // 标题和副标题
+      Column({ space: 4 }) {
+        Text(item.title)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(item.subtitle)
+          .fontSize(13)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      // 箭头
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(18)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .onClick(() => {
+      this.navigateToSubPage(item.targetPage);
+    })
+  }
+
+  /**
+   * 构建设置分组列表
+   */
+  @Builder
+  buildSettingsGroupList() {
+    Column({ space: 12 }) {
+      ForEach(this.settingsGroups, (item: SettingsGroupItem) => {
+        this.buildSettingsGroupItem(item)
+      })
+    }
+    .width('100%')
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          
+        Scroll(this.scroller) {
+          Column({ space: 16 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
+
+            if (this.responsive_isLandscape) {
+              // 横屏：使用Grid布局，每行2个
+              Grid() {
+                ForEach(this.settingsGroups, (item: SettingsGroupItem) => {
+                  GridItem() {
+                    this.buildSettingsGroupItem(item)
+                  }
+                })
+              }
+              .columnsTemplate('1fr 1fr')
+              .columnsGap(12)
+              .rowsGap(12)
+              .width('100%')
+            } else {
+              // 竖屏：列表布局
+              this.buildSettingsGroupList()
+            }
+
+            Blank().height(40)
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+        }
+        .width('100%')
+        .height('100%')
+        .align(Alignment.TopStart)
+        .edgeEffect(EdgeEffect.Spring)
+        .scrollBar(BarState.Auto)
+      }
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
+        originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+          },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '全局设置' }
+      }
+    })
+    .onReady((context: NavDestinationContext) => {
+      this.pathStack = context.pathStack;
+      this.onPageShow();
+      this.onReady();
+    })
+    .backgroundColor(Color.Transparent)
+  }
+}

@@ -36,6 +36,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { TimeUtils } from '../Utils/TimeUtils';
+import fs from '@ohos.file.fs';
 
 const TAG = 'DataManager';
 
@@ -3066,27 +3067,85 @@ export class DataManager {
       try {
         const actualComicInfo = comicInfo || onlineComicInfo;
         if (actualComicInfo) {
-          // 构建漫画存储路径：comics/图源/漫画名称/
-          const comicsDir = this.sandboxManager.getDirectory('comics');
-          const sourceName = this.sanitizeFileName(actualComicInfo.sourceId || 'local');
-          const comicName = this.sanitizeFileName(actualComicInfo.title);
-          const comicPath = `${comicsDir}/${sourceName}/${comicName}`;
+          // 检查是否是Download目录导入的漫画（sourceId为download_import）
+          const isDownloadImport = actualComicInfo.sourceId === 'download_import';
+          logger.info(TAG, `删除漫画文件: sourceId=${actualComicInfo.sourceId}, isDownloadImport=${isDownloadImport}, 章节数=${chapters.length}`);
           
-          // 检查目录是否存在，如果存在则删除
-          if (await this.sandboxManager.exists(comicPath)) {
-            // 删除所有章节目录及其内容
+          if (isDownloadImport) {
+            // Download目录导入的漫画：直接删除章节目录
             for (const chapter of chapters) {
-              if (chapter.downloadPath && await this.sandboxManager.exists(chapter.downloadPath)) {
-                await this.sandboxManager.deleteDirectory(chapter.downloadPath, true);
-                logger.debug(TAG, `删除章节目录: ${chapter.downloadPath}`);
+              logger.info(TAG, `章节信息: title=${chapter.title}, downloadPath=${chapter.downloadPath}`);
+              if (chapter.downloadPath) {
+                try {
+                  fs.accessSync(chapter.downloadPath);
+                  logger.info(TAG, `开始删除章节目录: ${chapter.downloadPath}`);
+                  // 递归删除目录
+                  const files = fs.listFileSync(chapter.downloadPath);
+                  for (const file of files) {
+                    fs.unlinkSync(`${chapter.downloadPath}/${file}`);
+                  }
+                  fs.rmdirSync(chapter.downloadPath);
+                  logger.debug(TAG, `删除Download章节目录: ${chapter.downloadPath}`);
+                } catch (e) {
+                  logger.warn(TAG, `删除Download章节目录失败: ${chapter.downloadPath}`);
+                }
               }
             }
             
-            // 删除漫画主目录
-            await this.sandboxManager.deleteDirectory(comicPath, true);
-            logger.info(TAG, `删除漫画文件目录: ${comicPath}`);
+            // 删除漫画主目录（章节目录的父目录）
+            if (chapters.length > 0 && chapters[0].downloadPath) {
+              const mangaPath = chapters[0].downloadPath.substring(0, chapters[0].downloadPath.lastIndexOf('/'));
+              try {
+                // 删除目录中的所有文件（封面、ComicInfo.xml等）
+                const remainingFiles = fs.listFileSync(mangaPath);
+                for (const file of remainingFiles) {
+                  const filePath = `${mangaPath}/${file}`;
+                  try {
+                    const stat = fs.statSync(filePath);
+                    if (stat.isDirectory()) {
+                      // 如果是子目录，递归删除
+                      const subFiles = fs.listFileSync(filePath);
+                      for (const subFile of subFiles) {
+                        fs.unlinkSync(`${filePath}/${subFile}`);
+                      }
+                      fs.rmdirSync(filePath);
+                    } else {
+                      fs.unlinkSync(filePath);
+                    }
+                    logger.debug(TAG, `删除文件: ${filePath}`);
+                  } catch (e) {
+                    logger.warn(TAG, `删除文件失败: ${filePath}`);
+                  }
+                }
+                fs.rmdirSync(mangaPath);
+                logger.info(TAG, `删除Download漫画目录: ${mangaPath}`);
+              } catch (e) {
+                logger.warn(TAG, `删除Download漫画目录失败: ${mangaPath}, 错误: ${String(e)}`);
+              }
+            }
           } else {
-            logger.debug(TAG, `漫画文件目录不存在: ${comicPath}`);
+            // 沙箱目录的漫画：使用原有逻辑
+            const comicsDir = this.sandboxManager.getDirectory('comics');
+            const sourceName = this.sanitizeFileName(actualComicInfo.sourceId || 'local');
+            const comicName = this.sanitizeFileName(actualComicInfo.title);
+            const comicPath = `${comicsDir}/${sourceName}/${comicName}`;
+            
+            // 检查目录是否存在，如果存在则删除
+            if (await this.sandboxManager.exists(comicPath)) {
+              // 删除所有章节目录及其内容
+              for (const chapter of chapters) {
+                if (chapter.downloadPath && await this.sandboxManager.exists(chapter.downloadPath)) {
+                  await this.sandboxManager.deleteDirectory(chapter.downloadPath, true);
+                  logger.debug(TAG, `删除章节目录: ${chapter.downloadPath}`);
+                }
+              }
+              
+              // 删除漫画主目录
+              await this.sandboxManager.deleteDirectory(comicPath, true);
+              logger.info(TAG, `删除漫画文件目录: ${comicPath}`);
+            } else {
+              logger.debug(TAG, `漫画文件目录不存在: ${comicPath}`);
+            }
           }
 
           // 删除封面缓存

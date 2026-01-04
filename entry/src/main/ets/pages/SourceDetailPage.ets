@@ -125,12 +125,14 @@ export struct SourceDetailPage {
   @State showLoginDialog: boolean = false; // 显示登录对话框（WebView登录）
   @State showCredentialDialog: boolean = false; // 显示凭据登录对话框
   @State showCfVerifyDialog: boolean = false; // 显示Cloudflare验证对话框
+  @State showWebViewDebugDialog: boolean = false; // 显示WebView调试对话框
   @State isLoggedIn: boolean = false; // 登录状态
   @State requiresCredentialLogin: boolean = false; // 是否需要凭据登录
   @State userAvatarUrl: string = ''; // 用户头像URL
   @State filterOrdering: string = '-datetime_updated'; // 筛选排序
   @State filterRegion: string = 'all'; // 筛选地区
   @State filterTheme: string = 'all'; // 筛选题材
+  @State sourceFilterConfig: FilterConfig | null = null; // 图源筛选配置
   @State searchResults: ComicInfo[] = []; // 搜索结果（独立存储）
   @State lastSearchKeyword: string = ''; // 上次搜索的关键词
   @State searchTabVisible: boolean = false; // 搜索标签是否可见
@@ -1117,6 +1119,10 @@ export struct SourceDetailPage {
         if (sourceConfig['filters']) {
           this.enrichFilterTabsWithConfig(config.tabs, sourceConfig['filters'] as Record<string, Object>);
         }
+        // 同时从 settings 中加载筛选配置（兼容旧格式）
+        if (sourceConfig['settings']) {
+          this.loadFilterConfigFromSettings(sourceConfig['settings'] as Record<string, Object>);
+        }
       } else {
         // 尝试加载用户自定义的标签配置
         const configJson = await this.dataManager.getSourceTabsConfig(this.sourceId);
@@ -1210,6 +1216,57 @@ export struct SourceDetailPage {
         description: '选择筛选条件'
       };
       logger.info(TAG, `为筛选标签添加了 ${groups.length} 个筛选组`);
+    }
+  }
+
+  /**
+   * 从settings配置中加载筛选选项
+   */
+  private loadFilterConfigFromSettings(settings: Record<string, Object>): void {
+    const groups: FilterGroup[] = [];
+    let order = 0;
+
+    // 检查筛选相关的设置项
+    const filterKeys = ['filterOrdering', 'filterRegion', 'filterTheme', 'sort', 'category'];
+    
+    for (const key of filterKeys) {
+      const setting = settings[key] as Record<string, Object> | undefined;
+      if (!setting || setting['type'] !== 'select') {
+        continue;
+      }
+
+      const options = setting['options'] as Record<string, Object>[] | undefined;
+      if (!options || !Array.isArray(options)) {
+        continue;
+      }
+
+      const filterOptions: FilterOption[] = [];
+      for (const opt of options) {
+        const item: FilterOption = {
+          value: String(opt['value'] || ''),
+          label: String(opt['label'] || opt['value'] || '')
+        };
+        filterOptions.push(item);
+      }
+
+      groups.push({
+        id: key,
+        title: String(setting['name'] || key),
+        placeholder: setting['description'] as string | undefined,
+        options: filterOptions,
+        defaultValue: setting['default'] as string | undefined,
+        required: false,
+        order: order++
+      });
+    }
+
+    if (groups.length > 0) {
+      this.sourceFilterConfig = {
+        groups: groups,
+        title: '筛选',
+        description: '选择筛选条件'
+      };
+      logger.info(TAG, `从settings加载了 ${groups.length} 个筛选组`);
     }
   }
 
@@ -1521,16 +1578,17 @@ export struct SourceDetailPage {
         .width('100%')
         .height('100%')
 
-        // 隐藏的WebView组件（仅在使用WebView系统时渲染）
+        // 隐藏的WebView组件（仅在使用WebView系统时渲染，调试模式下显示）
+        // 注意：src使用about:blank，所有导航由controller控制，避免状态变化时重新加载
         if (this.useWebView) {
           Web({
-            src: (this.sourceInfo && this.sourceInfo.baseUrl) ? this.sourceInfo.baseUrl : 'about:blank',
+            src: 'about:blank',
             controller: this.webViewController
           })
-            .width(1)
-            .height(1)
-            .opacity(0)
-            .visibility(Visibility.None)
+            .width(this.showWebViewDebugDialog ? '100%' : 1)
+            .height(this.showWebViewDebugDialog ? '100%' : 1)
+            .opacity(this.showWebViewDebugDialog ? 1 : 0)
+            .visibility(this.showWebViewDebugDialog ? Visibility.Visible : Visibility.None)
             .javaScriptAccess(true)
             .domStorageAccess(true)
             .fileAccess(true)
@@ -1572,6 +1630,11 @@ export struct SourceDetailPage {
         // Cloudflare验证对话框
         if (this.showCfVerifyDialog) {
           this.buildCfVerifyDialog()
+        }
+        
+        // WebView调试对话框
+        if (this.showWebViewDebugDialog) {
+          this.buildWebViewDebugDialog()
         }
       }
       .width('100%')
@@ -1622,7 +1685,7 @@ export struct SourceDetailPage {
             {
               content: {
                 label: '搜索',
-                icon: $r('app.media.ic_search_selected'),
+                icon: $r('sys.symbol.magnifyingglass'),
                 isEnabled: true,
                 action: () => {
                   this.showSearchDialog = true;
@@ -1632,7 +1695,7 @@ export struct SourceDetailPage {
             {
               content: {
                 label: this.isLoggedIn ? '重新登录' : '登录',
-                icon: this.isLoggedIn && this.userAvatarUrl ? this.userAvatarUrl : $r('app.media.ic_user_avatar'),
+                icon: this.isLoggedIn && this.userAvatarUrl ? this.userAvatarUrl : $r('sys.symbol.person_crop_circle_fill'),
                 isEnabled: true,
                 action: async () => {
                   logger.info(TAG, `点击登录按钮, isLoggedIn=${this.isLoggedIn}, hasAvatar=${!!this.userAvatarUrl}`);
@@ -1646,8 +1709,19 @@ export struct SourceDetailPage {
             },
             {
               content: {
+                label: '调试',
+                icon: $r('sys.symbol.worldclock_fill_1'),
+                isEnabled: this.useWebView,
+                action: () => {
+                  logger.info(TAG, '点击调试按钮，显示WebView调试窗口');
+                  this.showWebViewDebugDialog = true;
+                }
+              }
+            },
+            {
+              content: {
                 label: '设置',
-                icon: $r('app.media.ic_settings'),
+                icon: $r('sys.symbol.gearshape_fill'),
                 isEnabled: true,
                 action: () => {
                   logger.info(TAG, `准备跳转到设置页, sourceName=${this.sourceName}`);
@@ -1716,6 +1790,13 @@ export struct SourceDetailPage {
    * 获取排序标签
    */
   private getOrderingLabel(): string {
+    // 优先从图源配置获取标签
+    const orderingGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterOrdering' || g.id === 'sort');
+    if (orderingGroup) {
+      const option = orderingGroup.options.find(o => o.value === this.filterOrdering);
+      if (option) return option.label;
+    }
+    // 回退到默认标签
     const labels: Record<string, string> = {
       '-datetime_updated': '时间↓',
       'datetime_updated': '时间↑',
@@ -1729,6 +1810,13 @@ export struct SourceDetailPage {
    * 获取地区标签
    */
   private getRegionLabel(): string {
+    // 优先从图源配置获取标签
+    const regionGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterRegion');
+    if (regionGroup) {
+      const option = regionGroup.options.find(o => o.value === this.filterRegion);
+      if (option) return option.label;
+    }
+    // 回退到默认标签
     const labels: Record<string, string> = {
       'all': '全部地区',
       '0': '日漫',
@@ -1742,6 +1830,13 @@ export struct SourceDetailPage {
    * 获取题材标签
    */
   private getThemeLabel(): string {
+    // 优先从图源配置获取标签
+    const themeGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterTheme' || g.id === 'category');
+    if (themeGroup) {
+      const option = themeGroup.options.find(o => o.value === this.filterTheme);
+      if (option) return option.label;
+    }
+    // 回退到默认标签
     const labels: Record<string, string> = {
       'all': '全部题材',
       'aiqing': '愛情',
@@ -1758,45 +1853,112 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 显示排序选择器
+   * 显示排序选择器（动态从图源配置加载）
    */
   private showOrderingPicker(): void {
-    this.getUIContext().showTextPickerDialog({
-      range: ['按时间-从新到旧', '按时间-从旧到新', '按热度-从高到低', '按热度-从低到高'],
-      selected: ['-datetime_updated', 'datetime_updated', '-popular', 'popular'].indexOf(this.filterOrdering),
-      defaultPickerItemHeight: 36,
-      canLoop: false,
-      onAccept: (value: TextPickerResult) => {
-        const values = ['-datetime_updated', 'datetime_updated', '-popular', 'popular'];
-        this.filterOrdering = values[value.index as number];
-        this.saveFilterSettings();
-        this.refreshFilter();
-      }
-    });
+    // 从图源配置获取排序选项
+    const orderingGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterOrdering' || g.id === 'sort');
+    
+    if (orderingGroup && orderingGroup.options.length > 0) {
+      const labels = orderingGroup.options.map(o => o.label);
+      const values = orderingGroup.options.map(o => o.value);
+      const currentIndex = values.indexOf(this.filterOrdering);
+      
+      this.getUIContext().showTextPickerDialog({
+        range: labels,
+        selected: currentIndex >= 0 ? currentIndex : 0,
+        defaultPickerItemHeight: 36,
+        canLoop: false,
+        onAccept: (value: TextPickerResult) => {
+          this.filterOrdering = values[value.index as number];
+          this.saveFilterSettings();
+          this.refreshFilter();
+        }
+      });
+    } else {
+      // 回退到默认选项
+      this.getUIContext().showTextPickerDialog({
+        range: ['按时间-从新到旧', '按时间-从旧到新', '按热度-从高到低', '按热度-从低到高'],
+        selected: ['-datetime_updated', 'datetime_updated', '-popular', 'popular'].indexOf(this.filterOrdering),
+        defaultPickerItemHeight: 36,
+        canLoop: false,
+        onAccept: (value: TextPickerResult) => {
+          const values = ['-datetime_updated', 'datetime_updated', '-popular', 'popular'];
+          this.filterOrdering = values[value.index as number];
+          this.saveFilterSettings();
+          this.refreshFilter();
+        }
+      });
+    }
   }
 
   /**
-   * 显示地区选择器
+   * 显示地区选择器（动态从图源配置加载）
    */
   private showRegionPicker(): void {
-    this.getUIContext().showTextPickerDialog({
-      range: ['全部', '日漫', '韩漫', '美漫'],
-      selected: ['all', '0', '1', '2'].indexOf(this.filterRegion),
-      defaultPickerItemHeight: 36,
-      canLoop: false,
-      onAccept: (value: TextPickerResult) => {
-        const values = ['all', '0', '1', '2'];
-        this.filterRegion = values[value.index as number];
-        this.saveFilterSettings();
-        this.refreshFilter();
-      }
-    });
+    // 从图源配置获取地区选项
+    const regionGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterRegion');
+    
+    if (regionGroup && regionGroup.options.length > 0) {
+      const labels = regionGroup.options.map(o => o.label);
+      const values = regionGroup.options.map(o => o.value);
+      const currentIndex = values.indexOf(this.filterRegion);
+      
+      this.getUIContext().showTextPickerDialog({
+        range: labels,
+        selected: currentIndex >= 0 ? currentIndex : 0,
+        defaultPickerItemHeight: 36,
+        canLoop: false,
+        onAccept: (value: TextPickerResult) => {
+          this.filterRegion = values[value.index as number];
+          this.saveFilterSettings();
+          this.refreshFilter();
+        }
+      });
+    } else {
+      // 回退到默认选项
+      this.getUIContext().showTextPickerDialog({
+        range: ['全部', '日漫', '韩漫', '美漫'],
+        selected: ['all', '0', '1', '2'].indexOf(this.filterRegion),
+        defaultPickerItemHeight: 36,
+        canLoop: false,
+        onAccept: (value: TextPickerResult) => {
+          const values = ['all', '0', '1', '2'];
+          this.filterRegion = values[value.index as number];
+          this.saveFilterSettings();
+          this.refreshFilter();
+        }
+      });
+    }
   }
 
   /**
-   * 显示题材选择器
+   * 显示题材选择器（动态从图源配置加载）
    */
   private showThemePicker(): void {
+    // 从图源配置获取题材选项
+    const themeGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterTheme' || g.id === 'category');
+    
+    if (themeGroup && themeGroup.options.length > 0) {
+      const labels = themeGroup.options.map(o => o.label);
+      const values = themeGroup.options.map(o => o.value);
+      const currentIndex = values.indexOf(this.filterTheme);
+      
+      this.getUIContext().showTextPickerDialog({
+        range: labels,
+        selected: currentIndex >= 0 ? currentIndex : 0,
+        defaultPickerItemHeight: 36,
+        canLoop: false,
+        onAccept: (value: TextPickerResult) => {
+          this.filterTheme = values[value.index as number];
+          this.saveFilterSettings();
+          this.refreshFilter();
+        }
+      });
+      return;
+    }
+    
+    // 回退到默认选项
     const themes: ThemeOption[] = [
       { label: '全部', value: 'all' },
       { label: '愛情', value: 'aiqing' },
@@ -2065,8 +2227,25 @@ export struct SourceDetailPage {
           Button('完成验证')
             .fontSize(14)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-            .onClick(() => {
+            .onClick(async () => {
               logger.info(TAG, '用户确认完成CF验证');
+              
+              // 【关键】从WebView强制提取并保存Cookie（包括cf_clearance等CF验证Cookie）
+              try {
+                const baseUrl: string = this.sourceInfo?.baseUrl || '';
+                if (baseUrl && this.webViewControllerAttached) {
+                  // 使用forceCaptureWebViewCookies强制刷新，不检查现有Cookie
+                  const refreshOk = await CookieManager.getInstance().forceCaptureWebViewCookies(
+                    this.sourceId, 
+                    this.webViewController, 
+                    baseUrl
+                  );
+                  logger.info(TAG, `CF验证后Cookie保存结果: ${refreshOk}`);
+                }
+              } catch (cookieError) {
+                logger.warn(TAG, `CF验证后保存Cookie失败: ${String(cookieError)}`);
+              }
+              
               this.showCfVerifyDialog = false;
               // 刷新数据
               this.currentPage = 1;
@@ -2103,6 +2282,44 @@ export struct SourceDetailPage {
     .height('100%')
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
+  }
+
+  /**
+   * 构建WebView调试对话框（仅显示标题栏和关闭按钮，WebView内容由主WebView组件显示）
+   */
+  @Builder
+  buildWebViewDebugDialog() {
+    Column() {
+      // 顶部标题栏
+      Row() {
+        Text('WebView调试')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        Button('关闭')
+          .fontSize(14)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onClick(() => {
+            this.showWebViewDebugDialog = false;
+          })
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+      
+      // 提示文字
+      Text('当前WebView显示的页面内容，可用于调试图源解析问题')
+        .fontSize(12)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .padding({ left: 16, right: 16, bottom: 8 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .position({ x: 0, y: 0 })
+    .zIndex(100)
   }
 
   /**
