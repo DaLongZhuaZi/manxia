@@ -11,6 +11,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 
@@ -54,6 +55,8 @@ enum RuleType {
 export struct NovelSettingsPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelSettingsPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -74,6 +77,13 @@ export struct NovelSettingsPage {
   
   // 功能入口配置
   private featureTiles: FeatureTile[] = [
+    {
+      title: '阅读设置',
+      subtitle: '字体、背景、翻页等',
+      icon: $r('sys.symbol.textformat'),
+      iconColor: '#E91E63',
+      route: 'FontSettingsSubPage'
+    },
     {
       title: '书源管理',
       subtitle: '管理小说书源',
@@ -122,6 +132,13 @@ export struct NovelSettingsPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     this.loadSettings();
   }
 
@@ -130,6 +147,7 @@ export struct NovelSettingsPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   /**
@@ -263,6 +281,7 @@ export struct NovelSettingsPage {
       Text('功能入口')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
         .margin({ top: 16, bottom: 12 })
@@ -296,12 +315,14 @@ export struct NovelSettingsPage {
       Text(tile.title)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       
       Text(tile.subtitle)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -324,6 +345,7 @@ export struct NovelSettingsPage {
       Text('全局设置')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
         .margin({ top: 24, bottom: 12 })
@@ -424,10 +446,12 @@ export struct NovelSettingsPage {
       Column() {
         Text(title)
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text(subtitle)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 4 })
       }
@@ -449,10 +473,12 @@ export struct NovelSettingsPage {
       Column() {
         Text(title)
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text(subtitle)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 4 })
       }

@@ -15,6 +15,7 @@ import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { getNovelReplaceRuleManager, ReplaceRule, ReplaceScope, AddRuleParams } from '../Framework/Novel/NovelReplaceRuleManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 
 const TAG = 'NovelReplaceRulePage';
@@ -25,6 +26,8 @@ const TITLE_BAR_HEIGHT_MINI = 56;
 export struct NovelReplaceRulePage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelReplaceRulePage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -48,10 +51,14 @@ export struct NovelReplaceRulePage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   async loadRules(): Promise<void> {
@@ -376,6 +383,7 @@ export struct NovelReplaceRulePage {
       
       Text('替换净化规则')
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .margin({ left: 16 })
@@ -384,6 +392,7 @@ export struct NovelReplaceRulePage {
       
       Text('添加')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .margin({ right: 16 })
         .onClick(() => {
@@ -414,10 +423,12 @@ export struct NovelReplaceRulePage {
     Column() {
       Text('暂无替换规则')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       
       Text('点击右上角"添加"创建规则')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .margin({ top: 8 })
     }
@@ -450,6 +461,7 @@ export struct NovelReplaceRulePage {
         Row() {
           Text(rule.name)
             .fontSize(15)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(1)
@@ -458,6 +470,7 @@ export struct NovelReplaceRulePage {
           
           Text(rule.isRegex ? '正则' : '普通')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(rule.isRegex ? '#1890FF' : '#52C41A')
             .backgroundColor(rule.isRegex ? '#E6F7FF' : '#F6FFED')
             .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -466,6 +479,7 @@ export struct NovelReplaceRulePage {
           
           Text(this.getScopeText(rule.scope))
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FA8C16')
             .backgroundColor('#FFF7E6')
             .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -476,6 +490,7 @@ export struct NovelReplaceRulePage {
         
         Text(`匹配: ${rule.pattern}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 4 })
           .maxLines(1)
@@ -483,6 +498,7 @@ export struct NovelReplaceRulePage {
         
         Text(`替换: ${rule.replacement || '(删除)'}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .margin({ top: 2 })
           .maxLines(1)
@@ -508,6 +524,7 @@ export struct NovelReplaceRulePage {
     Row() {
       Button('删除')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
         .backgroundColor('#FF4D4F')
         .width(80)
@@ -531,6 +548,7 @@ export struct NovelReplaceRulePage {
       Column() {
         Text(this.editingRule ? '编辑规则' : '添加规则')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .margin({ top: 20 })
         
@@ -559,6 +577,7 @@ export struct NovelReplaceRulePage {
         Row() {
           Text('正则表达式')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           
           Toggle({ type: ToggleType.Switch, isOn: this.formIsRegex })
@@ -573,6 +592,7 @@ export struct NovelReplaceRulePage {
         Row() {
           Text('作用范围')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           
           Row() {
@@ -589,6 +609,7 @@ export struct NovelReplaceRulePage {
         Row() {
           Button('取消')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
             .layoutWeight(1)
@@ -601,6 +622,7 @@ export struct NovelReplaceRulePage {
           
           Button('保存')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .layoutWeight(1)
@@ -623,6 +645,7 @@ export struct NovelReplaceRulePage {
   buildScopeOption(label: string, scope: ReplaceScope) {
     Text(label)
       .fontSize(12)
+      .fontFamily(this.appFontFamily)
       .fontColor(this.formScope === scope ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       .backgroundColor(this.formScope === scope ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })

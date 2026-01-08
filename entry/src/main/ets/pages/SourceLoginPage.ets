@@ -9,6 +9,7 @@ import webview from '@ohos.web.webview';
 import { logger } from '../Utils/Logger';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DataManager } from '../Framework/Data/DataManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import CookieManager from '../Framework/Managers/CookieManager';
@@ -40,6 +41,8 @@ export struct SourceLoginPage {
   // 主题管理
   private themeManager: ThemeManager = ThemeManager.getInstance();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = `SourceLoginPage_${Date.now()}`;
   
   // 页面参数
@@ -61,6 +64,13 @@ export struct SourceLoginPage {
 
   aboutToAppear(): void {
     logger.info(TAG, '页面初始化');
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     
     // 设置自定义 UserAgent
     try {
@@ -227,6 +237,7 @@ export struct SourceLoginPage {
           Button({ type: ButtonType.Normal }) {
             Text('←')
               .fontSize(20)
+              .fontFamily(this.appFontFamily)
               .fontColor(this.canGoBack ? 
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) :
                 ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -246,6 +257,7 @@ export struct SourceLoginPage {
           Button({ type: ButtonType.Normal }) {
             Text('→')
               .fontSize(20)
+              .fontFamily(this.appFontFamily)
               .fontColor(this.canGoForward ? 
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) :
                 ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -267,6 +279,7 @@ export struct SourceLoginPage {
           Button({ type: ButtonType.Normal }) {
             Text('⟳')
               .fontSize(20)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
           .width(50)
@@ -279,6 +292,7 @@ export struct SourceLoginPage {
           // 完成按钮
           Button('完成')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(Color.White)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .borderRadius(4)

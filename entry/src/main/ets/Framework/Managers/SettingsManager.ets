@@ -39,6 +39,8 @@ export class SettingKeys {
   
   // 纯文本阅读器全局设置
   static readonly GLOBAL_TEXT_FONT_SIZE = 'global_text_font_size';
+  static readonly GLOBAL_TEXT_FONT_FAMILY = 'global_text_font_family';  // 字体
+  static readonly GLOBAL_TEXT_FONT_WEIGHT = 'global_text_font_weight';  // 字体粗细
   static readonly GLOBAL_TEXT_LINE_HEIGHT = 'global_text_line_height';
   static readonly GLOBAL_TEXT_PARAGRAPH_SPACING = 'global_text_paragraph_spacing';
   static readonly GLOBAL_TEXT_FIRST_LINE_INDENT = 'global_text_first_line_indent';
@@ -73,6 +75,10 @@ export class SettingKeys {
   static readonly CLEAR_CACHE_ON_EXIT = 'clear_cache_on_exit';
   static readonly FORCE_TABLET_MODE = 'force_tablet_mode';
   static readonly FORCE_LANDSCAPE_MODE = 'force_landscape_mode';
+  
+  // Download同步设置
+  static readonly DOWNLOAD_SYNC_DIR_PATH = 'download_sync_dir_path';
+  static readonly DOWNLOAD_SYNC_DIR_URI = 'download_sync_dir_uri';
   
   // 小说阅读器设置（使用TextReaderSettings）
   static readonly NOVEL_READER_SETTINGS = 'novel_reader_settings';
@@ -349,6 +355,18 @@ export class SettingsManager {
       this.settingsCache.forEach((value: string, key: string) => {
         AppStorage.setOrCreate(key, value === 'true' ? true : value === 'false' ? false : value);
       });
+      
+      // 特别处理Download同步目录设置，使用特定的AppStorage键名
+      const downloadSyncDirPath = this.settingsCache.get(SettingKeys.DOWNLOAD_SYNC_DIR_PATH);
+      const downloadSyncDirUri = this.settingsCache.get(SettingKeys.DOWNLOAD_SYNC_DIR_URI);
+      if (downloadSyncDirPath) {
+        AppStorage.setOrCreate('downloadSyncDirPath', downloadSyncDirPath);
+        logger.info(TAG, `✅ Download同步目录已加载: ${downloadSyncDirPath}`);
+      }
+      if (downloadSyncDirUri) {
+        AppStorage.setOrCreate('downloadSyncDirUri', downloadSyncDirUri);
+      }
+      
       logger.info(TAG, '✅ 设置已同步到AppStorage');
     } catch (error) {
       logger.error(TAG, '同步设置到AppStorage失败', String(error));

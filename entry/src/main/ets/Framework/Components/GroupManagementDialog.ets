@@ -6,6 +6,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
 
@@ -56,6 +57,7 @@ export struct GroupManagementDialog {
   controller?: CustomDialogController;
   @Prop themeState: ThemeAwareState;
   @Prop groups: GroupInfo[] = [];
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   callbacks?: GroupOperationCallback;
   
   @State selectedGroups: Set<string> = new Set();
@@ -209,6 +211,7 @@ export struct GroupManagementDialog {
              this.currentView === 'rename' ? '重命名分组' :
              this.currentView === 'merge' ? '合并分组' : '拆分分组')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
@@ -216,6 +219,7 @@ export struct GroupManagementDialog {
         if (this.currentView !== 'list') {
           Button('返回')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .backgroundColor('transparent')
             .onClick(() => {
@@ -273,10 +277,12 @@ export struct GroupManagementDialog {
       Row() {
         Text(`共 ${this.groups.length} 个分组`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text(`已选 ${this.selectedGroups.size} 个`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .margin({ left: 16 })
       }
@@ -315,12 +321,14 @@ export struct GroupManagementDialog {
         Row() {
           Text(group.name)
             .fontSize(15)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
           
           Text(`${group.count}`)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         }
@@ -329,14 +337,17 @@ export struct GroupManagementDialog {
         Row({ space: 12 }) {
           Text(`启用: ${group.enabledCount}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor('#52C41A')
           
           Text(`禁用: ${group.disabledCount}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FF4D4F')
           
           Text(`置顶: ${group.pinnedCount}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor('#1890FF')
         }
       }
@@ -413,6 +424,7 @@ export struct GroupManagementDialog {
     Column({ space: 16 }) {
       Text(`原分组名: ${this.selectedGroupForOperation}`)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
       TextInput({ placeholder: '请输入新的分组名称', text: this.newGroupName })
@@ -429,6 +441,7 @@ export struct GroupManagementDialog {
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.renameGroup();
         })
@@ -442,6 +455,7 @@ export struct GroupManagementDialog {
     Column({ space: 16 }) {
       Text(`已选择 ${this.selectedGroups.size} 个分组进行合并`)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
       // 显示选中的分组
@@ -450,6 +464,7 @@ export struct GroupManagementDialog {
           ListItem() {
             Text(`• ${groupName}`)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
         })
@@ -467,6 +482,7 @@ export struct GroupManagementDialog {
 
       Text('提示: 所有选中分组的书源将被合并到新分组中')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
       Button('确认合并')
@@ -476,6 +492,7 @@ export struct GroupManagementDialog {
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.mergeGroups();
         })
@@ -489,12 +506,14 @@ export struct GroupManagementDialog {
     Column({ space: 16 }) {
       Text(`拆分分组: ${this.selectedGroupForOperation}`)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
       // 拆分条件选择
       Column({ space: 8 }) {
         Text('拆分条件:')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Radio({ value: 'enabled', group: 'splitCondition' })
@@ -504,6 +523,7 @@ export struct GroupManagementDialog {
           })
         Text('按启用状态拆分 (启用/禁用)')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ left: 8 })
 
@@ -514,6 +534,7 @@ export struct GroupManagementDialog {
           })
         Text('按置顶状态拆分 (置顶/未置顶)')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ left: 8 })
 
@@ -524,6 +545,7 @@ export struct GroupManagementDialog {
           })
         Text('按书源名称关键词拆分')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ left: 8 })
 
@@ -551,6 +573,7 @@ export struct GroupManagementDialog {
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.splitGroup();
         })
@@ -573,6 +596,7 @@ export struct GroupManagementDialog {
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
+        .fontFamily(this.appFontFamily)
         .enabled(this.selectedGroups.size >= 2)
         .onClick(() => {
           this.currentView = 'merge';

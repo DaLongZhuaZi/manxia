@@ -7,6 +7,7 @@
 
 import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
@@ -33,6 +34,7 @@ export struct EBookMetadataDialog {
   @Prop themeState: ThemeAwareState;
   @Prop initialMetadata: EBookMetadata;
   @Prop chapters: EBookChapter[] = [];  // 章节列表
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   // 回调函数不能使用@Prop装饰器，应使用普通属性
   onConfirm: (result: EBookMetadataDialogResult) => void = (result: EBookMetadataDialogResult) => {};
   onCancel: () => void = () => {};
@@ -82,28 +84,29 @@ export struct EBookMetadataDialog {
       Row() {
         Text('确认电子书信息')
           .fontSize(20)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Blank()
 
-        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
-        // Row({ space: 4 }) {
-        //   Image($r('app.media.ic_scraper'))
-        //     .width(18)
-        //     .height(18)
-        //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        //
-        //   Text('刮削')
-        //     .fontSize(13)
-        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        // }
-        // .padding({ left: 10, right: 12, top: 6, bottom: 6 })
-        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        // .borderRadius(16)
-        // .onClick(() => {
-        //   this.openScraperDialog();
-        // })
+        // 刮削按钮
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+          Text('刮削')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 12, top: 6, bottom: 6 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        .borderRadius(16)
+        .onClick(() => {
+          this.openScraperDialog();
+        })
       }
       .width('100%')
 
@@ -133,6 +136,7 @@ export struct EBookMetadataDialog {
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .onClick(() => {
             this.onCancel();
             this.controller.close();
@@ -145,6 +149,7 @@ export struct EBookMetadataDialog {
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .onClick(() => {
             if (this.validateForm()) {
               const metadata: EBookMetadata = {
@@ -185,6 +190,7 @@ export struct EBookMetadataDialog {
     Column({ space: 4 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -210,6 +216,7 @@ export struct EBookMetadataDialog {
     Column({ space: 4 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -237,6 +244,7 @@ export struct EBookMetadataDialog {
   buildTabButton(label: string, tabId: string) {
     Text(label)
       .fontSize(14)
+      .fontFamily(this.appFontFamily)
       .fontWeight(this.currentTab === tabId ? FontWeight.Medium : FontWeight.Normal)
       .fontColor(this.currentTab === tabId 
         ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -289,6 +297,7 @@ export struct EBookMetadataDialog {
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
                 .borderRadius(6)
+                .fontFamily(this.appFontFamily)
                 .onClick(() => {
                   this.selectCustomCover();
                 })
@@ -299,6 +308,7 @@ export struct EBookMetadataDialog {
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_secondary', this.themeState.currentTheme))
                 .fontColor(Color.White)
                 .borderRadius(6)
+                .fontFamily(this.appFontFamily)
                 .enabled(!this.isRegeneratingCover)
                 .onClick(async () => {
                   await this.regenerateCover();
@@ -312,6 +322,7 @@ export struct EBookMetadataDialog {
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .borderRadius(6)
+                .fontFamily(this.appFontFamily)
                 .onClick(() => {
                   this.customCoverPath = '';
                 })
@@ -326,6 +337,7 @@ export struct EBookMetadataDialog {
         Column({ space: 4 }) {
           Text('书名 *')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
@@ -349,6 +361,7 @@ export struct EBookMetadataDialog {
         Column({ space: 4 }) {
           Text('作者 *')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
@@ -372,6 +385,7 @@ export struct EBookMetadataDialog {
         Column({ space: 4 }) {
           Text('简介')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
@@ -395,6 +409,7 @@ export struct EBookMetadataDialog {
         Column({ space: 4 }) {
           Text('标签（逗号分隔）')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
@@ -430,6 +445,7 @@ export struct EBookMetadataDialog {
       Row() {
         Text(`共 ${this.chapters.length} 个章节`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Blank()
@@ -437,6 +453,7 @@ export struct EBookMetadataDialog {
         if (this.chapters.length > 10) {
           Text(this.showAllChapters ? '收起' : '展开全部')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .onClick(() => {
               this.showAllChapters = !this.showAllChapters;
@@ -450,9 +467,11 @@ export struct EBookMetadataDialog {
         Column() {
           Text('未检测到章节')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           Text('该电子书可能没有明确的章节划分')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .margin({ top: 4 })
         }
@@ -466,11 +485,13 @@ export struct EBookMetadataDialog {
               Row() {
                 Text(`${index + 1}.`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .width(30)
                 
                 Text(chapter.title)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -478,6 +499,7 @@ export struct EBookMetadataDialog {
                 
                 Text(`${chapter.wordCount}字`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }
               .width('100%')

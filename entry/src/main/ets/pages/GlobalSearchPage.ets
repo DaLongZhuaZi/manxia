@@ -12,6 +12,7 @@ import { Manga, ImageSourceType, MangaStatus, DEFAULT_READING_SETTINGS } from '.
 import { ReadingStatus } from '../Framework/Types/StatusEnums';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
@@ -74,6 +75,8 @@ export interface GlobalSearchPageParams {
 export struct GlobalSearchPage {
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSearchPage';
   
@@ -107,6 +110,7 @@ export struct GlobalSearchPage {
 
   aboutToAppear(): void {
     this.initThemeAware();
+    this.initFontAware();
     this.loadSearchHistory();
     this.initResponsiveLayout();
   }
@@ -128,6 +132,7 @@ export struct GlobalSearchPage {
     this.lifecycle.destroy();
     // 清理主题监听器
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -147,6 +152,19 @@ export struct GlobalSearchPage {
       },
       (newState: ThemeAwareState) => {
         this.themeState = newState;
+      }
+    );
+  }
+  
+  /**
+   * 初始化字体感知
+   */
+  private initFontAware(): void {
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
       }
     );
   }
@@ -567,6 +585,7 @@ export struct GlobalSearchPage {
               })
 
             Button('搜索')
+              .fontFamily(this.appFontFamily)
               .onClick(() => {
                 this.performSearch();
               })
@@ -580,6 +599,7 @@ export struct GlobalSearchPage {
             Button(this.filterType === FilterType.PURCHASED ? '✓ 已浏览' : '已浏览')
               .borderRadius(8)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .type(ButtonType.Normal)
               .backgroundColor(this.filterType === FilterType.PURCHASED ? 
                 ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
@@ -593,6 +613,7 @@ export struct GlobalSearchPage {
             Button(this.filterType === FilterType.ALL ? '✓ 全部' : '全部')
               .borderRadius(8)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .type(ButtonType.Normal)
               .backgroundColor(this.filterType === FilterType.ALL ? 
                 ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
@@ -606,6 +627,7 @@ export struct GlobalSearchPage {
             Button(this.filterType === FilterType.HAS_RESULT ? '✓ 有结果' : '有结果')
               .borderRadius(8)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .type(ButtonType.Normal)
               .backgroundColor(this.filterType === FilterType.HAS_RESULT ? 
                 ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
@@ -647,13 +669,16 @@ export struct GlobalSearchPage {
             Column() {
               Text('😔')
                 .fontSize(48)
+                .fontFamily(this.appFontFamily)
                 .margin({ bottom: 12 })
               Text('未找到相关内容')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text('换个关键词试试吧')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 4 })
             }
@@ -668,6 +693,7 @@ export struct GlobalSearchPage {
                 .height(48)
               Text('搜索中...')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 12 })
             }
@@ -681,6 +707,7 @@ export struct GlobalSearchPage {
                 Text('搜索历史')
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
                   .padding(this.responsive_contentPadding)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -689,8 +716,10 @@ export struct GlobalSearchPage {
                     Row({ space: 8 }) {
                       Text('🕐')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                       Text(keyword)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                         .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -784,10 +813,12 @@ export struct GlobalSearchPage {
               Text(group.sourceName)
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               
               Text(`(${group.items.length}${group.itemType === 'manga' ? '本漫画' : '本电子书'})`)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ left: 8 })
             }
@@ -837,19 +868,23 @@ export struct GlobalSearchPage {
           Text(group.sourceName)
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           if (group.isSearching) {
             Text('搜索中...')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           } else if (group.hasError) {
             Text('搜索失败')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
           } else {
             Text(`${group.items.length}${group.itemType === 'manga' ? '本漫画' : group.itemType === 'ebook' ? '本电子书' : '本小说'}`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
         }
@@ -866,6 +901,7 @@ export struct GlobalSearchPage {
             .height(24)
           Text('搜索中...')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -885,6 +921,7 @@ export struct GlobalSearchPage {
       } else if (group.hasError) {
         Text('搜索失败，请重试')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .width('100%')
           .height(180)
@@ -892,6 +929,7 @@ export struct GlobalSearchPage {
       } else {
         Text('暂无结果')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .width('100%')
           .height(180)
@@ -1034,6 +1072,7 @@ export struct GlobalSearchPage {
           Column() {
             Text(item.novel.name.substring(0, 1))
               .fontSize(32)
+              .fontFamily(this.appFontFamily)
               .fontColor('#FFFFFF')
               .fontWeight(FontWeight.Bold)
           }
@@ -1048,6 +1087,7 @@ export struct GlobalSearchPage {
       // 标题
       Text(this.getItemTitle(item))
         .fontSize(13)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })

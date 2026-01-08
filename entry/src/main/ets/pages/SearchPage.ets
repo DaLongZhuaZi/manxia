@@ -5,6 +5,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, UIContext, NavDestinationModifier } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SearchHistoryManager } from '../Framework/Managers/SearchHistoryManager';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -113,6 +114,8 @@ struct SearchPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'SearchPage';
 
@@ -157,6 +160,15 @@ struct SearchPage {
         this.themeState = newState;
       }
     );
+    
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initResponsiveLayout();
@@ -171,6 +183,7 @@ struct SearchPage {
     logger.lifecycle(TAG, '搜索页面销毁');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 清理设备变化监听
     if (this.deviceChangeListener) {
@@ -379,6 +392,7 @@ struct SearchPage {
         if (this.isLandscape) {
           Button(this.getScopeLabel())
             .height(36)
+            .fontFamily(this.appFontFamily)
             .padding({ left: 12, right: 12 })
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -390,6 +404,7 @@ struct SearchPage {
         }
 
         Button('搜索')
+          .fontFamily(this.appFontFamily)
           .width(this.isLandscape ? 60 : 80)
           .height(this.isLandscape ? 36 : 40)
           .fontSize(this.isLandscape ? 13 : 14)
@@ -412,6 +427,7 @@ struct SearchPage {
               }
             })
           Text('仅元数据')
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
           // 包含章节名
@@ -423,6 +439,7 @@ struct SearchPage {
               }
             })
           Text('包含章节名')
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
           // 全部
@@ -434,6 +451,7 @@ struct SearchPage {
               }
             })
           Text('全部')
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
       }
@@ -452,6 +470,7 @@ struct SearchPage {
       Row({ space: 8 }) {
         Text('搜索历史')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         Blank().layoutWeight(1)
         Button() {
@@ -459,6 +478,7 @@ struct SearchPage {
             Image($r('sys.symbol.trash')).width(16).height(16)
             Text('清除历史')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
         }
@@ -505,6 +525,7 @@ struct SearchPage {
         ForEach(this.getHistoryRow(rowIndex), (h: string) => {
           Button(h)
             .height(28)
+            .fontFamily(this.appFontFamily)
             .padding({ left: 10, right: 10 })
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -538,6 +559,7 @@ struct SearchPage {
       // 排序切换
       Button(this.getSortLabel())
         .height(28)
+        .fontFamily(this.appFontFamily)
         .padding({ left: 10, right: 10 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(14)
@@ -558,6 +580,7 @@ struct SearchPage {
       // 分页控件
       Button('上一页')
         .height(28)
+        .fontFamily(this.appFontFamily)
         .padding({ left: 10, right: 10 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(14)
@@ -570,6 +593,7 @@ struct SearchPage {
 
       Button('下一页')
         .height(28)
+        .fontFamily(this.appFontFamily)
         .padding({ left: 10, right: 10 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(14)
@@ -592,9 +616,11 @@ struct SearchPage {
       Image($r('app.media.ic_image_placeholder')).width(64).height(64)
       Text('没有找到匹配的结果')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       Text('试试热门关键字或更换搜索范围')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .width('100%')
@@ -619,6 +645,7 @@ struct SearchPage {
         Text(comic.title)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -626,6 +653,7 @@ struct SearchPage {
         if (comic.author && comic.author.length > 0) {
           Text(`作者：${comic.author}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -634,6 +662,7 @@ struct SearchPage {
         if (comic.tags && comic.tags.length > 0) {
           Text(`标签：${comic.tags}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -645,6 +674,7 @@ struct SearchPage {
       // 进入详情
       Button('详情')
         .height(36)
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         .onClick(() => {
@@ -663,12 +693,15 @@ struct SearchPage {
     Row({ space: 12 }) {
       Text(`结果：${this.searchStats.totalCount}`)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       Text(`元数据匹配：${this.searchStats.metaMatches}`)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       Text(`章节匹配：${this.searchStats.chapterMatches}`)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .width('100%')

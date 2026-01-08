@@ -3080,11 +3080,7 @@ export class DataManager {
                   fs.accessSync(chapter.downloadPath);
                   logger.info(TAG, `开始删除章节目录: ${chapter.downloadPath}`);
                   // 递归删除目录
-                  const files = fs.listFileSync(chapter.downloadPath);
-                  for (const file of files) {
-                    fs.unlinkSync(`${chapter.downloadPath}/${file}`);
-                  }
-                  fs.rmdirSync(chapter.downloadPath);
+                  this.deleteDirectoryRecursive(chapter.downloadPath);
                   logger.debug(TAG, `删除Download章节目录: ${chapter.downloadPath}`);
                 } catch (e) {
                   logger.warn(TAG, `删除Download章节目录失败: ${chapter.downloadPath}`);
@@ -3092,36 +3088,61 @@ export class DataManager {
               }
             }
             
-            // 删除漫画主目录（章节目录的父目录）
+            // [修复] 尝试多种方式找到漫画目录并删除
+            let mangaPath = '';
+            
+            // 方式1：从章节的downloadPath推断
             if (chapters.length > 0 && chapters[0].downloadPath) {
-              const mangaPath = chapters[0].downloadPath.substring(0, chapters[0].downloadPath.lastIndexOf('/'));
-              try {
-                // 删除目录中的所有文件（封面、ComicInfo.xml等）
-                const remainingFiles = fs.listFileSync(mangaPath);
-                for (const file of remainingFiles) {
-                  const filePath = `${mangaPath}/${file}`;
-                  try {
-                    const stat = fs.statSync(filePath);
-                    if (stat.isDirectory()) {
-                      // 如果是子目录，递归删除
-                      const subFiles = fs.listFileSync(filePath);
-                      for (const subFile of subFiles) {
-                        fs.unlinkSync(`${filePath}/${subFile}`);
-                      }
-                      fs.rmdirSync(filePath);
-                    } else {
-                      fs.unlinkSync(filePath);
-                    }
-                    logger.debug(TAG, `删除文件: ${filePath}`);
-                  } catch (e) {
-                    logger.warn(TAG, `删除文件失败: ${filePath}`);
+              mangaPath = chapters[0].downloadPath.substring(0, chapters[0].downloadPath.lastIndexOf('/'));
+            }
+            
+            // 方式2：从coverLocalPath推断（仅本地漫画有此字段）
+            const localComicInfo = actualComicInfo as ComicInfo;
+            if (!mangaPath && localComicInfo.coverLocalPath) {
+              const coverPath: string = localComicInfo.coverLocalPath;
+              // 封面路径格式可能是: /Download/漫匣/漫画名/cover.jpg 或 /Download/漫匣/manga/漫画名/cover.jpg
+              const pathParts: string[] = coverPath.split('/');
+              // 找到漫画名所在的目录
+              for (let i = pathParts.length - 2; i >= 0; i--) {
+                if (pathParts[i] === actualComicInfo.title || 
+                    pathParts[i] === this.sanitizeFileName(actualComicInfo.title)) {
+                  mangaPath = pathParts.slice(0, i + 1).join('/');
+                  break;
+                }
+              }
+            }
+            
+            // 方式3：从Download同步目录直接构建路径
+            if (!mangaPath) {
+              const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
+              if (downloadDirPath) {
+                const sanitizedTitle = this.sanitizeFileName(actualComicInfo.title);
+                // 检查manga子目录
+                const mangaSubPath = `${downloadDirPath}/manga/${sanitizedTitle}`;
+                if (fs.accessSync(mangaSubPath)) {
+                  mangaPath = mangaSubPath;
+                } else {
+                  // 检查根目录
+                  const rootPath = `${downloadDirPath}/${sanitizedTitle}`;
+                  if (fs.accessSync(rootPath)) {
+                    mangaPath = rootPath;
                   }
                 }
-                fs.rmdirSync(mangaPath);
-                logger.info(TAG, `删除Download漫画目录: ${mangaPath}`);
+              }
+            }
+            
+            // 删除漫画主目录
+            if (mangaPath) {
+              try {
+                if (fs.accessSync(mangaPath)) {
+                  this.deleteDirectoryRecursive(mangaPath);
+                  logger.info(TAG, `删除Download漫画目录: ${mangaPath}`);
+                }
               } catch (e) {
                 logger.warn(TAG, `删除Download漫画目录失败: ${mangaPath}, 错误: ${String(e)}`);
               }
+            } else {
+              logger.warn(TAG, `无法确定Download漫画目录路径: ${actualComicInfo.title}`);
             }
           } else {
             // 沙箱目录的漫画：使用原有逻辑
@@ -4802,6 +4823,33 @@ export class DataManager {
     } catch (error) {
       logger.error(TAG, `检查登录状态失败: sourceId=${sourceId}`, String(error));
       return false;
+    }
+  }
+
+  /**
+   * 递归删除目录及其所有内容
+   */
+  private deleteDirectoryRecursive(dirPath: string): void {
+    try {
+      if (!fs.accessSync(dirPath)) {
+        return;
+      }
+      
+      const entries = fs.listFileSync(dirPath);
+      for (const entry of entries) {
+        const fullPath = `${dirPath}/${entry}`;
+        const stat = fs.statSync(fullPath);
+        
+        if (stat.isDirectory()) {
+          this.deleteDirectoryRecursive(fullPath);
+        } else {
+          fs.unlinkSync(fullPath);
+        }
+      }
+      
+      fs.rmdirSync(dirPath);
+    } catch (error) {
+      logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
     }
   }
 }

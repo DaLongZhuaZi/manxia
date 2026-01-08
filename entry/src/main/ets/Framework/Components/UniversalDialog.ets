@@ -1,5 +1,6 @@
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 import { UIContext, curves } from '@kit.ArkUI';
 
 const TAG = 'UniversalDialog';
@@ -66,6 +67,7 @@ struct CustomContentRenderer {
 struct UniversalDialog {
   controller: CustomDialogController;
   @Prop options: UniversalDialogOptions;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private uiContext: UIContext | undefined = undefined;
   @State private animOpacity: number = 0.0;
   @State private animScale: number = 0.96;
@@ -106,6 +108,7 @@ struct UniversalDialog {
       // 1. 标题
       Text(this.options.title)
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.options.themeState.currentTheme))
         .width('100%')
@@ -119,6 +122,7 @@ struct UniversalDialog {
       if (!this.options.customBuilder && this.options.message) {
         Text(this.options.message)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.options.themeState.currentTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
@@ -129,6 +133,7 @@ struct UniversalDialog {
         ForEach(this.options.buttons, (button: DialogButton) => {
           Button(button.text)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.options.themeState.currentTheme))
             .backgroundColor(this.getButtonBackgroundColor(button.style))

@@ -13,6 +13,7 @@ import { getEnhancedBackupManager, RestoreOptions } from '../Framework/Managers/
 import { BackupData, BackupMetadata, BackupOptions, DEFAULT_BACKUP_OPTIONS } from '../Models/BackupModels';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
 import { picker } from '@kit.CoreFileKit';
@@ -26,6 +27,7 @@ import { Want } from '@kit.AbilityKit';
 import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from '../Framework/WebDAV/WebDAVBackupManager';
 import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from '../Models/WebDAVModels';
 import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from '../Framework/WebDAV/WebDAVClient';
+import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
 
 const TAG = 'BackupPage';
@@ -38,6 +40,8 @@ interface ThemeState {
 @ComponentV2
 struct BackupPage {
   @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
+  @Local fontState: FontAwareState = new FontAwareState();
+  @Local appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private lifecycle = new PageLifecycleManager('BackupPage', { enableDebug: true });
   private backupManager = getBackupManager();
@@ -98,6 +102,16 @@ struct BackupPage {
   aboutToAppear(): void {
     logger.info(TAG, '备份页面初始化');
     
+    // 初始化字体管理
+    try {
+      const storedFont = AppStorage.get<string>('appFontFamily');
+      if (storedFont) {
+        this.appFontFamily = storedFont;
+      }
+    } catch (e) {
+      logger.warn(TAG, '获取存储字体失败');
+    }
+    
     // 初始化主题并监听变化（使用getActualTheme获取实际显示的主题）
     this.themeManager.getActualTheme().then((theme: ThemeType) => {
       this.themeState = { currentTheme: theme };
@@ -120,6 +134,66 @@ struct BackupPage {
       this.themeManager.offThemeChange(this.themeChangeCallback);
     }
     this.lifecycle.destroy();
+  }
+
+  private showBackupHelp(): void {
+    const helpContent = `# 备份与恢复帮助
+
+## 功能介绍
+
+备份与恢复功能允许您导出和导入所有应用数据，包括漫画、电子书、小说的阅读进度、收藏、设置等。
+
+## 本地备份
+
+### 创建备份
+1. 切换到"本地备份"标签
+2. 点击"创建备份"按钮
+3. 选择要备份的内容（漫画、电子书、小说、设置等）
+4. 等待备份完成
+
+### 恢复备份
+1. 在备份列表中找到要恢复的备份
+2. 点击"恢复"按钮
+3. 选择要恢复的内容
+4. 确认恢复操作
+
+### 导出/导入备份文件
+- **导出**: 将备份文件保存到设备存储，方便传输到其他设备
+- **导入**: 从设备存储导入备份文件
+
+## 云端备份 (WebDAV)
+
+### 配置WebDAV
+1. 切换到"云端备份"标签
+2. 点击"配置WebDAV"
+3. 输入服务器地址、用户名、密码
+4. 测试连接后保存
+
+### 支持的WebDAV服务
+- 坚果云
+- Nextcloud
+- 群晖NAS
+- 其他标准WebDAV服务
+
+### 自动同步
+配置完成后，可以设置自动同步间隔，应用会定期将数据备份到云端。
+
+## 备份内容说明
+
+| 类型 | 包含内容 |
+|------|----------|
+| 漫画 | 收藏、阅读进度、章节信息 |
+| 电子书 | 书架、阅读进度、书签 |
+| 小说 | 收藏、阅读进度 |
+| 设置 | 主题、阅读设置、图源配置 |
+
+## 注意事项
+
+- 备份不包含实际的图片和文件内容
+- 恢复时会覆盖现有数据，请谨慎操作
+- 建议定期备份重要数据`;
+
+    getHelpPanelManagerV2().showInlineHelp('备份与恢复帮助', helpContent);
   }
   
   async loadWebDAVSettings(): Promise<void> {
@@ -434,13 +508,13 @@ struct BackupPage {
       const backupInfos: BackupFileInfo[] = [];
       
       for (const fileName of files) {
-        if (fileName.endsWith('.json') || fileName.endsWith('.mxbackup')) {
+        if (fileName.endsWith('.json') || fileName.endsWith('.mxbackup') || fileName.endsWith('.mxbak')) {
           const filePath = `${backupDir}/${fileName}`;
           try {
             const stat = await fileIo.stat(filePath);
             let metadata: BackupMetadata;
             
-            if (fileName.endsWith('.mxbackup')) {
+            if (fileName.endsWith('.mxbackup') || fileName.endsWith('.mxbak')) {
               metadata = await this.enhancedBackupManager.getBackupMetadata(filePath);
             } else {
               metadata = await this.backupManager.getBackupMetadata(filePath);
@@ -479,10 +553,19 @@ struct BackupPage {
       
       const filePath = await this.enhancedBackupManager.createBackup(options);
       
-      this.getUIContext().getPromptAction().showToast({
-        message: '备份创建成功',
-        duration: 2000
-      });
+      // 检查是否已导出到Download/漫匹/backup文件夹
+      const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
+      if (downloadDirPath) {
+        this.getUIContext().getPromptAction().showToast({
+          message: '备份创建成功，已导出到 Download/漫匹/backup',
+          duration: 3000
+        });
+      } else {
+        this.getUIContext().getPromptAction().showToast({
+          message: '备份创建成功',
+          duration: 2000
+        });
+      }
       
       await this.loadBackupFiles();
       
@@ -585,7 +668,7 @@ struct BackupPage {
       this.isRestoringBackup = true;
       this.showRestoreOptionsDialog = false;
       
-      if (this.currentRestoreBackup && this.currentRestoreBackup.fileName.endsWith('.mxbackup')) {
+      if (this.currentRestoreBackup && (this.currentRestoreBackup.fileName.endsWith('.mxbackup') || this.currentRestoreBackup.fileName.endsWith('.mxbak'))) {
         await this.enhancedBackupManager.restoreBackupWithOptions(this.currentRestoreBackup.filePath, options);
       } else if (this.currentRestoreBackup) {
         await this.backupManager.restoreBackup(this.currentRestoreBackup.filePath);
@@ -792,6 +875,7 @@ struct BackupPage {
           Text(this.restoreSuccess ? '恢复成功' : '恢复失败')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .padding({ top: 20, bottom: 16 })
           
@@ -801,20 +885,24 @@ struct BackupPage {
               if (this.restoreSuccess) {
                 Text('✅ 备份数据已成功恢复')
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .margin({ bottom: 12 })
                 
                 Text('请重启APP以应用所有更改')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               } else {
                 Text('❌ 恢复过程中出现错误')
                   .fontSize(16)
                   .fontColor('#FF0000')
+                  .fontFamily(this.appFontFamily)
                   .margin({ bottom: 12 })
                 
                 Text(this.restoreErrorMessage)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .maxLines(5)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -831,6 +919,7 @@ struct BackupPage {
             if (this.restoreSuccess) {
               Button('稍后重启')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .borderRadius(8)
@@ -845,6 +934,7 @@ struct BackupPage {
               
               Button('重启APP')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor('#FFFFFF')
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .borderRadius(8)
@@ -856,6 +946,7 @@ struct BackupPage {
               Button('关闭')
                 .fontSize(16)
                 .fontColor('#FFFFFF')
+                .fontFamily(this.appFontFamily)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .borderRadius(8)
                 .width('100%')
@@ -969,7 +1060,19 @@ struct BackupPage {
         }
       },
       content: {
-        title: { mainTitle: '备份与恢复' }
+        title: { mainTitle: '备份与恢复' },
+        menu: {
+          value: [{
+            content: {
+              label: '帮助',
+              icon: $r('sys.symbol.questionmark_circle'),
+              isEnabled: true,
+              action: () => {
+                this.showBackupHelp();
+              }
+            }
+          }]
+        }
       }
     })
   }
@@ -992,6 +1095,7 @@ struct BackupPage {
           
           Text('本地备份')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.currentTab === 'local'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1022,6 +1126,7 @@ struct BackupPage {
           
           Text('云端备份')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.currentTab === 'cloud'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1069,6 +1174,7 @@ struct BackupPage {
           Text('云端存储')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         
@@ -1094,12 +1200,14 @@ struct BackupPage {
               Text('✅ 已连接')
                 .fontSize(14)
                 .fontColor('#FFFFFF')
+                .fontFamily(this.appFontFamily)
               
               Blank()
               
               Text(`${this.cloudBackups.length} 个备份`)
                 .fontSize(14)
                 .fontColor('#FFFFFF')
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
             .margin({ bottom: 12 })
@@ -1110,6 +1218,7 @@ struct BackupPage {
               .fontColor('#FFFFFF')
               .opacity(0.8)
               .maxLines(1)
+              .fontFamily(this.appFontFamily)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
               .margin({ bottom: 8 })
@@ -1129,6 +1238,7 @@ struct BackupPage {
                   Text('编辑')
                     .fontSize(12)
                     .fontColor('#FFFFFF')
+                    .fontFamily(this.appFontFamily)
                     .margin({ left: 4 })
                 }
               }
@@ -1151,6 +1261,7 @@ struct BackupPage {
                   Text('断开')
                     .fontSize(12)
                     .fontColor('#FFFFFF')
+                    .fontFamily(this.appFontFamily)
                     .margin({ left: 4 })
                 }
               }
@@ -1228,6 +1339,7 @@ struct BackupPage {
                    this.webdavSettings.connectionStatus === 'untested' ? '❓ 未测试' : '⏳ 待启用')
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               
               Blank()
@@ -1247,6 +1359,7 @@ struct BackupPage {
             // 服务器地址
             Text(this.webdavSettings.serverUrl)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1257,6 +1370,7 @@ struct BackupPage {
             if (this.webdavSettings.lastTestMessage) {
               Text(this.webdavSettings.lastTestMessage)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(this.webdavSettings.connectionStatus === 'failed' ? '#FF5252' : 
                            ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
                 .maxLines(2)
@@ -1268,6 +1382,7 @@ struct BackupPage {
             Row() {
               Button('测试连接')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .backgroundColor('transparent')
                 .borderRadius(6)
@@ -1289,6 +1404,7 @@ struct BackupPage {
               Button('编辑配置')
                 .fontSize(12)
                 .fontColor('#FFFFFF')
+                .fontFamily(this.appFontFamily)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .borderRadius(6)
                 .onClick(() => {
@@ -1311,17 +1427,20 @@ struct BackupPage {
             Text('🔒 未配置云端备份')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .margin({ bottom: 8 })
             
             Text('点击右上角设置按钮配置WebDAV')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ bottom: 16 })
             
             Button('立即配置')
               .fontSize(14)
               .fontColor('#FFFFFF')
+              .fontFamily(this.appFontFamily)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .borderRadius(8)
               .onClick(() => {
@@ -1358,17 +1477,20 @@ struct BackupPage {
           .fontSize(12)
           .fontColor('#FFFFFF')
           .margin({ left: 8 })
+          .fontFamily(this.appFontFamily)
         
         Text(`${Math.round((this.syncStatus.isUploading ? this.syncStatus.uploadProgress : this.syncStatus.downloadProgress) * 100)}%`)
           .fontSize(12)
           .fontColor('#FFFFFF')
           .margin({ left: 8 })
+          .fontFamily(this.appFontFamily)
       }
     } else if (this.syncStatus.lastSyncTime > 0) {
       Text(`最后同步: ${this.formatDate(this.syncStatus.lastSyncTime)}`)
         .fontSize(12)
         .fontColor('#FFFFFF')
         .opacity(0.8)
+        .fontFamily(this.appFontFamily)
     }
   }
 
@@ -1380,6 +1502,7 @@ struct BackupPage {
         Button('创建备份')
           .fontSize(16)
           .fontColor('#FFFFFF')
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(8)
           .layoutWeight(1)
@@ -1390,6 +1513,7 @@ struct BackupPage {
         
         Button('导入备份')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .borderRadius(8)
@@ -1412,6 +1536,7 @@ struct BackupPage {
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ left: 8 })
+            .fontFamily(this.appFontFamily)
         }
         .padding({ left: 16, right: 16, bottom: 16 })
       }
@@ -1428,6 +1553,7 @@ struct BackupPage {
             .fontSize(14)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 16 })
+            .fontFamily(this.appFontFamily)
         }
         .width('100%')
         .height(300)
@@ -1437,13 +1563,16 @@ struct BackupPage {
           Text('📦')
             .fontSize(48)
             .margin({ bottom: 16 })
+            .fontFamily(this.appFontFamily)
           
           Text('暂无本地备份')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           
           Text('点击"创建备份"开始备份数据')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 8 })
         }
@@ -1475,10 +1604,12 @@ struct BackupPage {
           
           Text('云端备份未启用')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           
           Text('请先配置WebDAV')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 8 })
         }
@@ -1494,6 +1625,7 @@ struct BackupPage {
           
           Text('加载云端备份...')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 16 })
         }
@@ -1509,10 +1641,12 @@ struct BackupPage {
           
           Text('暂无云端备份')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           
           Text('上传本地备份到云端')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 8 })
         }
@@ -1540,25 +1674,30 @@ struct BackupPage {
           Text(this.formatDate(backup.metadata.timestamp))
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Text(`${this.formatFileSize(backup.fileSize)} · ${backup.metadata.appVersion}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
           
           Row() {
             Text(`📚 ${backup.metadata.itemCounts.manga}`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             
             Text(`📖 ${backup.metadata.itemCounts.novel}`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ left: 12 })
             
             Text(`📄 ${backup.metadata.itemCounts.ebook}`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ left: 12 })
           }
@@ -1571,6 +1710,7 @@ struct BackupPage {
           Button('恢复')
             .fontSize(14)
             .fontColor('#FFFFFF')
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .borderRadius(6)
             .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -1580,6 +1720,7 @@ struct BackupPage {
           if (this.webdavSettings.enabled) {
             Button('上传')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
               .borderRadius(6)
@@ -1590,6 +1731,7 @@ struct BackupPage {
           
           Button('导出')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .borderRadius(6)
@@ -1600,6 +1742,7 @@ struct BackupPage {
           Button('删除')
             .fontSize(14)
             .fontColor('#FF0000')
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .borderRadius(6)
             .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -1630,10 +1773,12 @@ struct BackupPage {
           Text(this.formatDate(backup.lastModified))
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Text(`${this.formatFileSize(backup.size)} · ${backup.fileName}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
           
@@ -1643,6 +1788,7 @@ struct BackupPage {
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
             Text('云端备份')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
           .margin({ top: 8 })
@@ -1654,6 +1800,7 @@ struct BackupPage {
           Button('下载')
             .fontSize(14)
             .fontColor('#FFFFFF')
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .borderRadius(6)
             .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -1662,6 +1809,7 @@ struct BackupPage {
           Button('删除')
             .fontSize(14)
             .fontColor('#FF0000')
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .borderRadius(6)
             .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -1715,11 +1863,13 @@ struct BackupPage {
           Text('初始化云端备份')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .margin({ bottom: 16 })
           
           Text('检测到云端尚未初始化备份索引。\n\n是否立即初始化？初始化后将自动上传最新的本地备份到云端。')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .lineHeight(22)
             .margin({ bottom: 24 })
@@ -1727,6 +1877,7 @@ struct BackupPage {
           Row() {
             Button('取消')
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
               .borderRadius(8)
@@ -1740,6 +1891,7 @@ struct BackupPage {
             Button('初始化')
               .fontSize(16)
               .fontColor('#FFFFFF')
+              .fontFamily(this.appFontFamily)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .borderRadius(8)
               .layoutWeight(1)

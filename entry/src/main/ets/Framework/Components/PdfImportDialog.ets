@@ -5,6 +5,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
 import { PdfContentType } from '../Parsers/PdfToMangaImporter';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
@@ -52,6 +53,7 @@ export struct PdfImportDialog {
   @Prop themeState: ThemeAwareState;
   @Prop defaultTitle: string = '';
   @Prop defaultAuthor: string = '';
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   // 回调函数
   onConfirm: (result: PdfImportDialogResult) => void = () => {};
   onCancel: () => void = () => {};
@@ -123,34 +125,36 @@ export struct PdfImportDialog {
       Row() {
         Text('PDF导入设置')
           .fontSize(20)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Blank()
 
-        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
-        // Row({ space: 4 }) {
-        //   Image($r('app.media.ic_scraper'))
-        //     .width(18)
-        //     .height(18)
-        //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        //
-        //   Text('刮削')
-        //     .fontSize(13)
-        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        // }
-        // .padding({ left: 10, right: 12, top: 6, bottom: 6 })
-        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        // .borderRadius(16)
-        // .onClick(() => {
-        //   this.openScraperDialog();
-        // })
+        // 刮削按钮
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+          Text('刮削')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 12, top: 6, bottom: 6 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        .borderRadius(16)
+        .onClick(() => {
+          this.openScraperDialog();
+        })
       }
       .width('100%')
 
       // 提示文本
       Text('⚠️ PDF转换为图片是耗时操作，大文件可能需要几分钟')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FF9800')
         .width('100%')
         .textAlign(TextAlign.Center)
@@ -174,6 +178,7 @@ export struct PdfImportDialog {
           Column({ space: 4 }) {
             Text(this.importMode === PdfImportMode.SINGLE_CHAPTER ? '漫画标题 *' : '标题 *')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
@@ -197,6 +202,7 @@ export struct PdfImportDialog {
           Column({ space: 4 }) {
             Text('作者')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
@@ -220,6 +226,7 @@ export struct PdfImportDialog {
           Column({ space: 4 }) {
             Text('简介')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
@@ -243,6 +250,7 @@ export struct PdfImportDialog {
           Column({ space: 4 }) {
             Text('标签（逗号分隔）')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
@@ -267,6 +275,7 @@ export struct PdfImportDialog {
             Column({ space: 4 }) {
               Text('出版社')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .width('100%')
@@ -289,6 +298,7 @@ export struct PdfImportDialog {
             Column({ space: 4 }) {
               Text('ISBN')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .width('100%')
@@ -323,6 +333,7 @@ export struct PdfImportDialog {
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .onClick(() => {
             this.onCancel();
             this.controller.close();
@@ -335,6 +346,7 @@ export struct PdfImportDialog {
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .onClick(() => {
             if (this.validateForm()) {
               const result: PdfImportDialogResult = {
@@ -372,6 +384,7 @@ export struct PdfImportDialog {
     Column({ space: 8 }) {
       Text('选择分类')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -402,12 +415,14 @@ export struct PdfImportDialog {
     Column({ space: 4 }) {
       Text(title)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.selectedType === type ? '#2196F3' : 
           ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
       Text(subtitle)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -433,6 +448,7 @@ export struct PdfImportDialog {
     Column({ space: 8 }) {
       Text('导入模式')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -442,12 +458,14 @@ export struct PdfImportDialog {
         Column({ space: 4 }) {
           Text('📖 单行本')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.importMode === PdfImportMode.TANKOUBON ? '#2196F3' :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           Text('整个PDF作为一部漫画')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -467,12 +485,14 @@ export struct PdfImportDialog {
         Column({ space: 4 }) {
           Text('📄 单章节')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.importMode === PdfImportMode.SINGLE_CHAPTER ? '#2196F3' :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           Text('作为漫画的一个章节')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -500,6 +520,7 @@ export struct PdfImportDialog {
       // 提示信息
       Text('💡 单章节模式：此PDF将作为漫画的一个章节导入。如果已存在同名漫画，将自动合并。')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FF9800')
         .width('100%')
         .padding({ left: 8, right: 8, top: 8, bottom: 8 })
@@ -512,6 +533,7 @@ export struct PdfImportDialog {
         Column({ space: 4 }) {
           Text('章节编号 *')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
@@ -541,6 +563,7 @@ export struct PdfImportDialog {
         Column({ space: 4 }) {
           Text('章节标题')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
@@ -570,6 +593,7 @@ export struct PdfImportDialog {
     Column({ space: 4 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -595,6 +619,7 @@ export struct PdfImportDialog {
     Column({ space: 4 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')

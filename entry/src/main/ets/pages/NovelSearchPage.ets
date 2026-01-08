@@ -15,6 +15,7 @@ import { getNovelSettingsManager, NovelSettingsManager } from '../Framework/Nove
 import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 
@@ -37,6 +38,8 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 export struct NovelSearchPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelSearchPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -79,6 +82,13 @@ export struct NovelSearchPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     this.loadSettings();
     this.initResponsiveLayout();
   }
@@ -118,6 +128,7 @@ export struct NovelSearchPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     if (this.boundDeviceChangeHandler) {
       this.deviceManager.removeListener(this.boundDeviceChangeHandler);
       this.boundDeviceChangeHandler = null;
@@ -406,6 +417,7 @@ export struct NovelSearchPage {
               })
 
             Button('搜索')
+              .fontFamily(this.appFontFamily)
               .onClick(() => {
                 this.doSearch();
               })
@@ -420,6 +432,7 @@ export struct NovelSearchPage {
               Button(`并发: ${this.maxConcurrentSources}`)
                 .borderRadius(8)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .type(ButtonType.Normal)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -435,6 +448,7 @@ export struct NovelSearchPage {
               Button(this.selectedSourceIds.size > 0 ? `已选: ${this.selectedSourceIds.size}` : '选择书源')
                 .borderRadius(8)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .type(ButtonType.Normal)
                 .backgroundColor(this.selectedSourceIds.size > 0 
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -457,6 +471,7 @@ export struct NovelSearchPage {
                 Button('清空')
                   .borderRadius(8)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .type(ButtonType.Normal)
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -499,13 +514,16 @@ export struct NovelSearchPage {
             Column() {
               Text('😔')
                 .fontSize(48)
+                .fontFamily(this.appFontFamily)
                 .margin({ bottom: 12 })
               Text('未找到相关小说')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text('换个关键词试试吧')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 4 })
             }
@@ -520,6 +538,7 @@ export struct NovelSearchPage {
                 .height(48)
               Text(`搜索中... (${this.completedSourceCount}/${this.totalSourceCount})`)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 12 })
             }
@@ -534,12 +553,14 @@ export struct NovelSearchPage {
                   Text('搜索历史')
                     .fontSize(16)
                     .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   
                   Blank()
                   
                   Text('清空')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     .onClick(() => this.clearHistory())
                 }
@@ -551,8 +572,10 @@ export struct NovelSearchPage {
                     Row({ space: 8 }) {
                       Text('🕐')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                       Text(historyKeyword)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                         .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -584,9 +607,11 @@ export struct NovelSearchPage {
                 Column() {
                   Text('📚')
                     .fontSize(48)
+                    .fontFamily(this.appFontFamily)
                     .margin({ bottom: 12 })
                   Text('输入关键词搜索小说')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 }
                 .width('100%')
@@ -680,6 +705,7 @@ export struct NovelSearchPage {
             .height(16)
           Text(`搜索中... (${this.completedSourceCount}/${this.totalSourceCount})`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ left: 8 })
         }
@@ -724,6 +750,7 @@ export struct NovelSearchPage {
       Row({ space: 4 }) {
         Text(title)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(this.currentTabIndex === index + 1 || (index === -1 && this.currentTabIndex === 0) ? FontWeight.Medium : FontWeight.Normal)
           .fontColor(this.currentTabIndex === index + 1 || (index === -1 && this.currentTabIndex === 0) 
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -734,6 +761,7 @@ export struct NovelSearchPage {
         
         Text(`${count}`)
           .fontSize(11)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor(this.currentTabIndex === index + 1 || (index === -1 && this.currentTabIndex === 0)
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -779,6 +807,7 @@ export struct NovelSearchPage {
       Column() {
         Text('该书源暂无结果')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       }
       .width('100%')
@@ -816,6 +845,7 @@ export struct NovelSearchPage {
         Column() {
           Text(book.name.substring(0, 1))
             .fontSize(20)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .fontWeight(FontWeight.Bold)
         }
@@ -831,18 +861,21 @@ export struct NovelSearchPage {
         Text(book.name)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         
         Text(book.author || '未知作者')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 4 })
         
         if (book.latestChapterTitle) {
           Text(book.latestChapterTitle)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
             .maxLines(1)
@@ -878,6 +911,7 @@ export struct NovelSearchPage {
         Column() {
           Text(book.name.substring(0, 1))
             .fontSize(24)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .fontWeight(FontWeight.Bold)
         }
@@ -893,18 +927,21 @@ export struct NovelSearchPage {
         Text(book.name)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         
         Text(book.author || '未知作者')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 4 })
         
         if (book.intro) {
           Text(book.intro)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 6 })
             .maxLines(2)
@@ -914,6 +951,7 @@ export struct NovelSearchPage {
         Row({ space: 8 }) {
           Text(book.sourceName)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -922,6 +960,7 @@ export struct NovelSearchPage {
           if (book.latestChapterTitle) {
             Text(book.latestChapterTitle)
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -957,12 +996,14 @@ export struct NovelSearchPage {
           Text('选择搜索书源')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
           Text(`${this.selectedSourceIds.size}/${this.maxConcurrentSources}`)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -971,6 +1012,7 @@ export struct NovelSearchPage {
         // 提示文字
         Text(`最多可选择${this.maxConcurrentSources}个书源，置顶书源排在前面`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .width('100%')
           .padding({ left: 20, right: 20, bottom: 12 })
@@ -993,6 +1035,7 @@ export struct NovelSearchPage {
                   Row({ space: 6 }) {
                     Text(source.name)
                       .fontSize(15)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1002,6 +1045,7 @@ export struct NovelSearchPage {
                     if (source.isTop) {
                       Text('置顶')
                         .fontSize(10)
+                        .fontFamily(this.appFontFamily)
                         .fontColor('#FFFFFF')
                         .backgroundColor('#FF9800')
                         .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -1013,6 +1057,7 @@ export struct NovelSearchPage {
                   if (source.group) {
                     Text(source.group)
                       .fontSize(12)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
                       .margin({ top: 2 })
                   }
@@ -1043,6 +1088,7 @@ export struct NovelSearchPage {
           Button('清空选择')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .borderRadius(22)
             .type(ButtonType.Normal)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
@@ -1058,6 +1104,7 @@ export struct NovelSearchPage {
           Button('确定')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .borderRadius(22)
             .type(ButtonType.Normal)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))

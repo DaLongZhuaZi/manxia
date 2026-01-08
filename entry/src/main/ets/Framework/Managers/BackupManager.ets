@@ -243,37 +243,44 @@ export class BackupManager {
 
   private async exportNovelLibrary(): Promise<NovelBackupItem[]> {
     try {
-      const novels = await this.novelDataManager.getFavoriteBooks();
-      const backupItems: NovelBackupItem[] = novels.map((novel: NovelBook): NovelBackupItem => ({
-        id: novel.id,
-        sourceId: novel.sourceId,
-        sourceName: novel.sourceName,
-        bookUrl: novel.bookUrl,
-        name: novel.name,
-        author: novel.author || '',
-        kind: novel.kind || '',
-        intro: novel.intro || '',
-        coverUrl: novel.coverUrl || '',
-        coverLocalPath: novel.coverLocalPath,
-        tocUrl: novel.tocUrl || '',
-        latestChapterTitle: novel.latestChapterTitle || '',
-        wordCount: novel.wordCount || '',
-        chapterCount: novel.chapterCount || 0,
-        readStatus: novel.readStatus || 'unread',
-        isFavorite: novel.isFavorite,
-        isPrivate: novel.isPrivate,
-        isNSFW: novel.isNSFW,
-        groupName: novel.groupName,
-        createTime: novel.createTime,
-        updateDbTime: novel.updateDbTime,
-        lastReadChapterId: novel.lastReadChapterId,
-        lastReadChapterIndex: novel.lastReadChapterIndex,
-        lastReadPosition: novel.lastReadPosition,
-        lastReadTime: novel.lastReadTime,
-        totalReadingTime: novel.totalReadingTime
-      }));
+      // [修复] 直接从数据库导出所有书籍，而不仅仅是收藏的
+      const sql = 'SELECT * FROM novel_book ORDER BY lastReadTime DESC';
+      const results = await this.dbManager.querySql(sql);
+      const backupItems: NovelBackupItem[] = [];
       
-      logger.info(TAG, `Exported novel library: ${backupItems.length} items`);
+      for (const record of results) {
+        const novel = record as Record<string, string | number | boolean | null>;
+        backupItems.push({
+          id: String(novel['id'] || ''),
+          sourceId: String(novel['sourceId'] || ''),
+          sourceName: String(novel['sourceName'] || ''),
+          bookUrl: String(novel['bookUrl'] || ''),
+          name: String(novel['name'] || ''),
+          author: String(novel['author'] || ''),
+          kind: String(novel['kind'] || ''),
+          intro: String(novel['intro'] || ''),
+          coverUrl: String(novel['coverUrl'] || ''),
+          coverLocalPath: String(novel['coverLocalPath'] || ''),
+          tocUrl: String(novel['tocUrl'] || ''),
+          latestChapterTitle: String(novel['latestChapterTitle'] || ''),
+          wordCount: String(novel['wordCount'] || ''),
+          chapterCount: Number(novel['chapterCount'] || 0),
+          readStatus: String(novel['readStatus'] || 'unread'),
+          isFavorite: Boolean(novel['isFavorite']),
+          isPrivate: Boolean(novel['isPrivate']),
+          isNSFW: Boolean(novel['isNSFW']),
+          groupName: String(novel['groupName'] || ''),
+          createTime: Number(novel['createTime'] || 0),
+          updateDbTime: Number(novel['updateTime'] || 0),
+          lastReadChapterId: String(novel['lastReadChapterId'] || ''),
+          lastReadChapterIndex: Number(novel['lastReadChapterIndex'] || 0),
+          lastReadPosition: Number(novel['lastReadPosition'] || 0),
+          lastReadTime: Number(novel['lastReadTime'] || 0),
+          totalReadingTime: Number(novel['totalReadingTime'] || 0)
+        });
+      }
+      
+      logger.info(TAG, `Exported novel library: ${backupItems.length} items (all books)`);
       return backupItems;
     } catch (error) {
       logger.error(TAG, `Failed to export novel library: ${error}`);
@@ -351,21 +358,33 @@ export class BackupManager {
 
   private async exportNovelSources(): Promise<NovelSourceBackup[]> {
     try {
-      const sources = await this.novelSourceManager.getAllSources();
-      const backupItems: NovelSourceBackup[] = sources.map((source: NovelSourceInfo): NovelSourceBackup => ({
-        id: source.url,
-        name: source.name,
-        sourceUrl: source.url,
-        bookSourceGroup: source.group || '',
-        bookSourceType: 0,
-        enabled: source.enabled,
-        enabledExplore: source.hasExplore,
-        isNSFW: source.isNSFW,
-        weight: source.weight,
-        lastUpdateTime: source.lastUpdateTime
-      }));
+      // [修复] 直接从数据库导出完整的书源配置
+      const sql = 'SELECT * FROM novel_source';
+      const results = await this.dbManager.querySql(sql);
+      const backupItems: NovelSourceBackup[] = [];
       
-      logger.info(TAG, `Exported novel sources: ${backupItems.length} items`);
+      for (const record of results) {
+        const source = record as Record<string, string | number | boolean | null>;
+        backupItems.push({
+          id: String(source['id'] || ''),
+          bookSourceUrl: String(source['bookSourceUrl'] || ''),
+          bookSourceName: String(source['bookSourceName'] || ''),
+          bookSourceGroup: String(source['bookSourceGroup'] || ''),
+          bookSourceType: Number(source['bookSourceType'] || 0),
+          enabled: Boolean(source['enabled']),
+          weight: Number(source['weight'] || 0),
+          respondTime: Number(source['respondTime'] || 180000),
+          configJson: String(source['configJson'] || ''),
+          createTime: Number(source['createTime'] || 0),
+          updateTime: Number(source['updateTime'] || 0),
+          // 兼容字段
+          name: String(source['bookSourceName'] || ''),
+          sourceUrl: String(source['bookSourceUrl'] || ''),
+          lastUpdateTime: Number(source['lastUpdateTime'] || 0)
+        });
+      }
+      
+      logger.info(TAG, `Exported novel sources: ${backupItems.length} items (with configJson)`);
       return backupItems;
     } catch (error) {
       logger.error(TAG, `Failed to export novel sources: ${error}`);

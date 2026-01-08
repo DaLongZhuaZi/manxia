@@ -11,6 +11,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { DataManager } from '../Framework/Data/DataManager';
@@ -109,6 +110,8 @@ export struct SourceDetailPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State sourceInfo: SourceInfo | null = null;
   @State currentTabId: string = ''; // 当前标签ID
   @State tabsConfig: TabConfig[] = []; // 标签配置列表
@@ -173,6 +176,13 @@ export struct SourceDetailPage {
       },
       (newState: ThemeAwareState) => {
         this.themeState = newState;
+      }
+    );
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
       }
     );
 
@@ -295,6 +305,7 @@ export struct SourceDetailPage {
     logger.lifecycle(TAG, 'aboutToDisappear');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 清理设备方向监听器
     if (this.deviceOrientationListener) {
@@ -2110,6 +2121,7 @@ export struct SourceDetailPage {
       Column({ space: 16 }) {
         Text('搜索漫画')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width('100%')
@@ -2127,6 +2139,7 @@ export struct SourceDetailPage {
           Button('取消')
             .fontSize(15)
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .onClick(() => {
@@ -2136,6 +2149,7 @@ export struct SourceDetailPage {
           Button('搜索')
             .fontSize(15)
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .onClick(() => {
               this.performSearch();
@@ -2167,6 +2181,7 @@ export struct SourceDetailPage {
         Row() {
           Text('登录')
             .fontSize(18)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
@@ -2174,6 +2189,7 @@ export struct SourceDetailPage {
           
           Button('完成登录')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .onClick(() => {
               this.completeLogin();
@@ -2219,6 +2235,7 @@ export struct SourceDetailPage {
         Row() {
           Text('网站验证')
             .fontSize(18)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
@@ -2226,6 +2243,7 @@ export struct SourceDetailPage {
           
           Button('完成验证')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .onClick(async () => {
               logger.info(TAG, '用户确认完成CF验证');
@@ -2260,6 +2278,7 @@ export struct SourceDetailPage {
         // 提示文字
         Text('请在下方完成网站验证（点击复选框），完成后点击"完成验证"按钮')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .padding({ left: 16, right: 16, bottom: 8 })
         
@@ -2294,6 +2313,7 @@ export struct SourceDetailPage {
       Row() {
         Text('WebView调试')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -2301,6 +2321,7 @@ export struct SourceDetailPage {
         
         Button('关闭')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onClick(() => {
             this.showWebViewDebugDialog = false;
@@ -2313,6 +2334,7 @@ export struct SourceDetailPage {
       // 提示文字
       Text('当前WebView显示的页面内容，可用于调试图源解析问题')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .padding({ left: 16, right: 16, bottom: 8 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
@@ -2422,6 +2444,7 @@ export struct SourceDetailPage {
       // 标签名称
       Text(tab.name)
         .fontSize(13)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.currentTabId === tab.id
           ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2495,6 +2518,7 @@ export struct SourceDetailPage {
 
       Button('搜索')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         .onClick(() => {
           this.performSearch();
@@ -2518,6 +2542,7 @@ export struct SourceDetailPage {
 
       Text('加载中...')
         .fontSize(15)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .width('100%')
@@ -2538,12 +2563,14 @@ export struct SourceDetailPage {
 
       Text('暂无内容')
         .fontSize(15)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       
       // 重试按钮
       Button('重试')
         .fontSize(14)
         .padding({ left: 24, right: 24, top: 8, bottom: 8 })
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
         .onClick(() => {
           this.retryLoadContent();
@@ -2585,6 +2612,7 @@ export struct SourceDetailPage {
 
               Text('加载更多...')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ left: 8 })
             }
@@ -2596,6 +2624,7 @@ export struct SourceDetailPage {
           if (!this.hasMore && this.comicList.length > 0) {
             Text('已加载全部内容')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .width('100%')
               .height(60)
@@ -2634,6 +2663,7 @@ export struct SourceDetailPage {
       
       Text('正在刷新...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .margin({ left: 8 })
     }
@@ -2676,6 +2706,7 @@ export struct SourceDetailPage {
       Text(comic.title)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2686,6 +2717,7 @@ export struct SourceDetailPage {
       // 作者 - 固定高度确保卡片一致
       Text(comic.author || ' ')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })

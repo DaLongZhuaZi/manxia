@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { logger } from '../Utils/Logger';
@@ -179,6 +180,8 @@ struct ReadingAnalyticsPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'ReadingAnalyticsPage';
 
@@ -265,6 +268,13 @@ struct ReadingAnalyticsPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initResponsiveLayout();
@@ -280,6 +290,7 @@ struct ReadingAnalyticsPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -1646,6 +1657,7 @@ struct ReadingAnalyticsPage {
       Button({ stateEffect: true }) {
         Text('7天')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width('33%')
@@ -1661,6 +1673,7 @@ struct ReadingAnalyticsPage {
       Button({ stateEffect: true }) {
         Text('30天')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width('33%')
@@ -1676,6 +1689,7 @@ struct ReadingAnalyticsPage {
       Button({ stateEffect: true }) {
         Text('全部')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width('33%')
@@ -1703,6 +1717,7 @@ struct ReadingAnalyticsPage {
         Button({ stateEffect: true }) {
           Text('◀')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width(40)
@@ -1713,6 +1728,7 @@ struct ReadingAnalyticsPage {
         Text(`${this.currentMonth.getFullYear()}年${this.currentMonth.getMonth() + 1}月`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
@@ -1720,6 +1736,7 @@ struct ReadingAnalyticsPage {
         Button({ stateEffect: true }) {
           Text('▶')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width(40)
@@ -1735,6 +1752,7 @@ struct ReadingAnalyticsPage {
         ForEach(['日', '一', '二', '三', '四', '五', '六'], (day: string) => {
           Text(day)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .width('14.28%')
             .textAlign(TextAlign.Center)
@@ -1828,6 +1846,7 @@ struct ReadingAnalyticsPage {
         // 日期数字
         Text(`${dayNumber}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(this.getDayTextColor(dayNumber))
           .fontWeight(this.isTodayDay(dayNumber) ? FontWeight.Bold : FontWeight.Normal)
       }
@@ -1915,6 +1934,7 @@ struct ReadingAnalyticsPage {
         Text(`${this.selectedDate.getMonth() + 1}月${this.selectedDate.getDate()}日 阅读情况`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .alignSelf(ItemAlign.Start)
         
@@ -1927,6 +1947,7 @@ struct ReadingAnalyticsPage {
               .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             Text('加载中...')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .width('100%')
@@ -1943,9 +1964,11 @@ struct ReadingAnalyticsPage {
               Text(this.formatDuration(this.dailyViewData.readingTime))
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text('阅读时长')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             }
             .layoutWeight(1)
@@ -1959,9 +1982,11 @@ struct ReadingAnalyticsPage {
               Text(`${this.dailyViewData.chaptersRead}`)
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text('阅读章节')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             }
             .layoutWeight(1)
@@ -1992,6 +2017,7 @@ struct ReadingAnalyticsPage {
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
             Text('当天没有阅读记录')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .width('100%')
@@ -2014,6 +2040,7 @@ struct ReadingAnalyticsPage {
           Text('阅读的漫画')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .alignSelf(ItemAlign.Start)
           
@@ -2037,6 +2064,7 @@ struct ReadingAnalyticsPage {
           Text('阅读的电子书')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .alignSelf(ItemAlign.Start)
           
@@ -2076,6 +2104,7 @@ struct ReadingAnalyticsPage {
         Text(item.title)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2084,15 +2113,15 @@ struct ReadingAnalyticsPage {
         Row({ space: 8 }) {
           Row({ space: 2 }) {
             SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-            Text(this.formatDuration(item.readingTime)).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text(this.formatDuration(item.readingTime)).fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           Row({ space: 2 }) {
             SymbolGlyph($r('sys.symbol.book')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-            Text(`${item.chaptersRead}章`).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text(`${item.chaptersRead}章`).fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           Row({ space: 2 }) {
             SymbolGlyph($r('sys.symbol.doc')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-            Text(`${item.pagesRead}页`).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text(`${item.pagesRead}页`).fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
         }
       }
@@ -2129,6 +2158,7 @@ struct ReadingAnalyticsPage {
         Text(item.title)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2137,10 +2167,11 @@ struct ReadingAnalyticsPage {
         Row({ space: 8 }) {
           Row({ space: 2 }) {
             SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-            Text(this.formatDuration(item.readingTime)).fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text(this.formatDuration(item.readingTime)).fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           Text(`${item.progress.toFixed(1)}%`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
       }
@@ -2220,11 +2251,13 @@ struct ReadingAnalyticsPage {
         Text(value)
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         if (unit) {
           Text(unit)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .alignSelf(ItemAlign.End)
             .margin({ bottom: 2 })
@@ -2235,6 +2268,7 @@ struct ReadingAnalyticsPage {
       // 标题
       Text(title)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
     }
@@ -2275,6 +2309,7 @@ struct ReadingAnalyticsPage {
         Text('阅读统计')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
       .alignSelf(ItemAlign.Start)
@@ -2397,6 +2432,7 @@ struct ReadingAnalyticsPage {
         Text('阅读习惯')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
       .alignSelf(ItemAlign.Start)
@@ -2411,6 +2447,7 @@ struct ReadingAnalyticsPage {
           Text('最喜欢的阅读时段')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
           
@@ -2419,6 +2456,7 @@ struct ReadingAnalyticsPage {
             : '暂无数据')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -2442,12 +2480,14 @@ struct ReadingAnalyticsPage {
             Text('最后阅读时间')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
             
             Text(this.formatDate(this.statistics.lastReadTime))
               .fontSize(16)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           }
           .width('100%')
@@ -2472,6 +2512,7 @@ struct ReadingAnalyticsPage {
             Text('阅读最多的漫画')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
           }
@@ -2479,6 +2520,7 @@ struct ReadingAnalyticsPage {
           
           Text(this.statistics.mostReadComicTitle)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2505,6 +2547,7 @@ struct ReadingAnalyticsPage {
             Text('阅读最多的电子书')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
           }
@@ -2512,6 +2555,7 @@ struct ReadingAnalyticsPage {
           
           Text(this.statistics.mostReadEBookTitle)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2543,6 +2587,7 @@ struct ReadingAnalyticsPage {
           Text('每日阅读趋势')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .alignSelf(ItemAlign.Start)
@@ -2552,6 +2597,7 @@ struct ReadingAnalyticsPage {
             Row({ space: 12 }) {
               Text(data.date)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .width(90)
               
@@ -2560,6 +2606,7 @@ struct ReadingAnalyticsPage {
                   SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
                   Text(this.formatDuration(data.readingTime))
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 }
                 
@@ -2567,6 +2614,7 @@ struct ReadingAnalyticsPage {
                   SymbolGlyph($r('sys.symbol.book')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
                   Text(`${data.chaptersRead}章 / ${data.pagesRead}页`)
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 }
               }
@@ -2601,6 +2649,7 @@ struct ReadingAnalyticsPage {
           Text('您可能感兴趣的')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .alignSelf(ItemAlign.Start)
@@ -2613,9 +2662,11 @@ struct ReadingAnalyticsPage {
                 SymbolGlyph($r(item.type === 'tag' ? 'sys.symbol.bookmark' : (item.type === 'author' ? 'sys.symbol.person' : 'sys.symbol.doc_text'))).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
                 Text(item.keyword)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 Text(`(${item.count})`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }
               .padding({ left: 10, right: 10, top: 6, bottom: 6 })
@@ -2653,6 +2704,7 @@ struct ReadingAnalyticsPage {
           Text('阅读时长排行')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .alignSelf(ItemAlign.Start)
@@ -2693,6 +2745,7 @@ struct ReadingAnalyticsPage {
                   // 排名标签
                   Text(`${index + 1}`)
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor('#FFFFFF')
                     .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -2705,6 +2758,7 @@ struct ReadingAnalyticsPage {
                 // 标题
                 Text(item.title)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2713,6 +2767,7 @@ struct ReadingAnalyticsPage {
                 // 阅读时长
                 Text(this.formatDuration(item.readingTime))
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               }
               .width('100%')
@@ -2743,6 +2798,7 @@ struct ReadingAnalyticsPage {
         Text('设置')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
       .alignSelf(ItemAlign.Start)
@@ -2751,11 +2807,13 @@ struct ReadingAnalyticsPage {
       Row() {
         Text('数据保留天数')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
         Text(`${RETENTION_DAYS_OPTIONS[this.retentionDaysIndex]}天`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         
         SymbolGlyph($r('sys.symbol.arrow_right'))
@@ -2778,6 +2836,7 @@ struct ReadingAnalyticsPage {
       Row() {
         Text('启用阅读数据收集')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
@@ -2810,6 +2869,7 @@ struct ReadingAnalyticsPage {
 
       Text('关闭后将停止收集阅读数据，但不会删除已有数据')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .width('100%')
     }
@@ -2830,6 +2890,7 @@ struct ReadingAnalyticsPage {
       
       Text('正在加载阅读数据...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .width('100%')
@@ -2850,10 +2911,12 @@ struct ReadingAnalyticsPage {
       Text('暂未收集到有效的阅读数据')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       
       Text('开始阅读漫画/电子书后，这里将显示您的阅读统计和分析数据\n请在阅读更长时间后查看')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .textAlign(TextAlign.Center)
         .width('80%')
@@ -2878,17 +2941,20 @@ struct ReadingAnalyticsPage {
       Text('阅读报告')
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       
       // 副标题
       Text('了解您的阅读习惯')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       
       // 说明文字
       Column({ space: 12 }) {
         Text('开启阅读报告功能后，应用将收集以下数据：')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width('100%')
         
@@ -2905,6 +2971,7 @@ struct ReadingAnalyticsPage {
         
         Text('这些数据仅存储在本地，不会上传到任何服务器。您可以随时在设置中关闭此功能或清除数据。')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
@@ -2917,6 +2984,7 @@ struct ReadingAnalyticsPage {
         // 拒绝按钮
         Button('拒绝')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .borderRadius(24)
@@ -2929,6 +2997,7 @@ struct ReadingAnalyticsPage {
         // 同意按钮
         Button('同意并开启')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .borderRadius(24)
@@ -2961,10 +3030,12 @@ struct ReadingAnalyticsPage {
         Text(title)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text(description)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .alignItems(HorizontalAlign.Start)
@@ -2981,15 +3052,18 @@ struct ReadingAnalyticsPage {
     Row({ space: 12 }) {
       Text(icon)
         .fontSize(20)
+        .fontFamily(this.appFontFamily)
       
       Column({ space: 2 }) {
         Text(title)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text(description)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .alignItems(HorizontalAlign.Start)
@@ -3028,11 +3102,13 @@ struct ReadingAnalyticsPage {
       Text('清除阅读分析数据')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       
       // 说明
       Text('此操作将清除所有统计和分析数据，不影响您书库当中的阅读记录，包括：')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
@@ -3040,15 +3116,19 @@ struct ReadingAnalyticsPage {
       Column({ space: 6 }) {
         Text('• 阅读时长排行数据')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         Text('• 阅读进度分析数据')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         Text('• 阅读习惯分析数据')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         Text('• 兴趣分析数据')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
@@ -3058,6 +3138,7 @@ struct ReadingAnalyticsPage {
       Text('此操作不可撤销！')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor('#F44336')
         .margin({ top: 8 })
       
@@ -3067,6 +3148,7 @@ struct ReadingAnalyticsPage {
           // 取消按钮
           Button('取消')
             .fontSize(15)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
             .borderRadius(20)
@@ -3079,6 +3161,7 @@ struct ReadingAnalyticsPage {
           // 确认清除按钮
           Button('确认清除')
             .fontSize(15)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .backgroundColor('#F44336')
             .borderRadius(20)
@@ -3093,6 +3176,7 @@ struct ReadingAnalyticsPage {
         // 清除数据并关闭功能按钮
         Button('清除数据并关闭阅读报告')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .backgroundColor('transparent')
           .border({
@@ -3138,6 +3222,7 @@ struct ReadingAnalyticsPage {
               Text('阅读统计')
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             }
             .alignSelf(ItemAlign.Start)
@@ -3320,6 +3405,7 @@ struct ReadingAnalyticsPage {
             Row() {
               Text('取消')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .onClick(() => {
                   this.showRetentionPicker = false;
@@ -3328,12 +3414,14 @@ struct ReadingAnalyticsPage {
               Text('选择数据保留天数')
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .layoutWeight(1)
                 .textAlign(TextAlign.Center)
               
               Text('确定')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                 .onClick(() => {
                   this.handleRetentionDaysChange(this.retentionDaysIndex);

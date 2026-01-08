@@ -109,7 +109,7 @@ export class WebDAVBackupManager {
       this.syncStatus.uploadProgress = 0;
       this.syncStatus.error = undefined;
 
-      const fileName = localBackupPath.split('/').pop() || 'backup.mxbackup';
+      const fileName = localBackupPath.split('/').pop() || 'backup.mxbak';
       const remotePath = `backups/${fileName}`;
 
       logger.info(TAG, `开始上传备份: ${fileName}`);
@@ -365,7 +365,7 @@ export class WebDAVBackupManager {
       }
 
       const files = await fileIo.listFile(backupsDir);
-      const backupFiles = files.filter(f => f.endsWith('.mxbackup'));
+      const backupFiles = files.filter(f => f.endsWith('.mxbackup') || f.endsWith('.mxbak'));
       
       if (backupFiles.length === 0) {
         logger.warn(TAG, '没有本地备份可以上传');

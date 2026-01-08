@@ -7,6 +7,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, UIContext, promptAction, componentSnapshot } from '@kit.ArkUI';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { ThemeToggle } from '../Framework/Components/ThemeToggle';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -45,6 +46,7 @@ import { PdfImportDialog, PdfImportDialogResult, PdfImportMode as DialogImportMo
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
+import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 
 const TAG = 'DataManagementPage';
 // 定义标题栏最小高度，用于内容占位
@@ -243,19 +245,22 @@ interface ChapterMergeDialogData {
  * 构建漫画合并弹窗的自定义内容
  */
 @Builder
-function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareState, selectedTargetId: string, onRadioChange: (id: string) => void): void {
+function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareState, selectedTargetId: string, onRadioChange: (id: string) => void, appFontFamily: string): void {
   Column({ space: 12 }) {
     Text('检测到可能的重复漫画')
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
+      .fontFamily(appFontFamily)
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
 
     Column({ space: 4 }) {
       Text(`待导入：${data.sourceTitle}`)
         .fontSize(14)
+        .fontFamily(appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
       Text(`作者：${data.sourceAuthor}`)
         .fontSize(12)
+        .fontFamily(appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
     }
     .width('100%')
@@ -264,6 +269,7 @@ function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareSt
       Column({ space: 8 }) {
         Text('请选择要合并到的已有漫画：')
           .fontSize(13)
+          .fontFamily(appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
 
         Scroll() {
@@ -280,9 +286,11 @@ function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareSt
                   Text(`${c.title}`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
+                    .fontFamily(appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
                   Text(`作者：${c.author}｜匹配：${getMatchStrengthLabel(c.strength)}｜原因：${getDuplicateReasonsLabel(c.reasons)}`)
                     .fontSize(12)
+                    .fontFamily(appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
                 }
                 .layoutWeight(1)
@@ -304,6 +312,7 @@ function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareSt
     } else {
       Text('未找到可用的合并候选项，将作为新漫画导入。')
         .fontSize(13)
+        .fontFamily(appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
     }
   }
@@ -317,22 +326,26 @@ function buildMergeDialogContent(data: MergeDialogData, themeState: ThemeAwareSt
  * 构建章节合并弹窗的自定义内容
  */
 @Builder
-function buildChapterMergeDialogContent(data: ChapterMergeDialogData, themeState: ThemeAwareState): void {
+function buildChapterMergeDialogContent(data: ChapterMergeDialogData, themeState: ThemeAwareState, appFontFamily: string): void {
   Column({ space: 12 }) {
     Text('检测到重复章节')
       .fontSize(18)
       .fontWeight(FontWeight.Bold)
+      .fontFamily(appFontFamily)
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
 
     Column({ space: 4 }) {
       Text(`漫画：${data.mangaTitle}`)
         .fontSize(14)
+        .fontFamily(appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', themeState.currentTheme))
       Text(`已有章节：${data.existingChapterTitle}`)
         .fontSize(12)
+        .fontFamily(appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
       Text(`新导入：${data.newChapterTitle}`)
         .fontSize(12)
+        .fontFamily(appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', themeState.currentTheme))
     }
     .width('100%')
@@ -394,6 +407,7 @@ export struct MergeDecisionDialog {
   controller: CustomDialogController;
   @Prop data: MergeDialogData;
   @Prop themeState: ThemeAwareState;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State private selectedTargetId: string = '';
   // 回调函数不能使用@Prop装饰器
   onMerge: (targetId: string) => void = (t: string) => {};
@@ -406,15 +420,18 @@ export struct MergeDecisionDialog {
       Text('检测到可能的重复漫画')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
 
       // 源信息
       Column({ space: 4 }) {
         Text(`待导入：${this.data.sourceTitle}`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         Text(`作者：${this.data.sourceAuthor}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
@@ -424,6 +441,7 @@ export struct MergeDecisionDialog {
         Column({ space: 8 }) {
           Text('请选择要合并到的已有漫画：')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
 
           // 限制高度，避免对话框过高
@@ -442,9 +460,11 @@ export struct MergeDecisionDialog {
                     Text(`${c.title}`)
                       .fontSize(14)
                       .fontWeight(FontWeight.Medium)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                     Text(`作者：${c.author}｜匹配：${this.getMatchStrengthLabel(c.strength)}｜原因：${this.getDuplicateReasonsLabel(c.reasons)}`)
                       .fontSize(12)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   }
                   .layoutWeight(1)
@@ -466,6 +486,7 @@ export struct MergeDecisionDialog {
       } else {
         Text('未找到可用的合并候选项，将作为新漫画导入。')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
 
@@ -473,6 +494,7 @@ export struct MergeDecisionDialog {
       Row({ space: 12 }) {
         Button('合并到所选')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
           .borderRadius(8)
@@ -489,6 +511,7 @@ export struct MergeDecisionDialog {
 
         Button('创建新漫画')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
           .borderRadius(8)
@@ -500,6 +523,7 @@ export struct MergeDecisionDialog {
 
         Button('跳过')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
           .borderRadius(8)
@@ -554,6 +578,7 @@ export struct ChapterMergeDialog {
   controller: CustomDialogController;
   @Prop data: ChapterMergeDialogData;
   @Prop themeState: ThemeAwareState;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   // 回调函数不能使用@Prop装饰器
   onMerge: () => void = () => {};
   onCreateNew: () => void = () => {};
@@ -564,17 +589,21 @@ export struct ChapterMergeDialog {
       Text('检测到重复章节')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
 
       Column({ space: 4 }) {
         Text(`漫画：${this.data.mangaTitle}`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         Text(`已有章节：${this.data.existingChapterTitle}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         Text(`新导入：${this.data.newChapterTitle}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
@@ -582,6 +611,7 @@ export struct ChapterMergeDialog {
       Row({ space: 12 }) {
         Button('合并到已有章节')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
           .borderRadius(8)
@@ -590,6 +620,7 @@ export struct ChapterMergeDialog {
 
         Button('创建新章节')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
           .borderRadius(8)
@@ -598,6 +629,7 @@ export struct ChapterMergeDialog {
 
         Button('跳过')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
           .borderRadius(8)
@@ -626,6 +658,8 @@ struct DataManagementPage {
   
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'DataManagementPage';
   
@@ -716,6 +750,60 @@ struct DataManagementPage {
   private static readonly PDF_EXTENSIONS: string[] = ['pdf'];
   private static readonly NOVEL_EXTENSIONS: string[] = ['txt'];
 
+  private showFileImportHelp(): void {
+    const helpContent = `# 文件导入帮助
+
+## 功能介绍
+
+文件导入页面允许您从设备存储导入漫画、电子书和PDF文件到应用中。
+
+## 支持的文件格式
+
+### 漫画文件
+- **ZIP/CBZ**: 标准漫画压缩包格式
+- **RAR/CBR**: RAR压缩的漫画文件
+- **7Z**: 7-Zip压缩格式
+
+### 电子书文件
+- **EPUB**: 最常用的电子书格式
+- **MOBI/AZW/AZW3**: Kindle电子书格式
+
+### PDF文件
+- 可选择导入为漫画或电子书
+
+## 导入方式
+
+### 选择文件导入
+1. 点击"选择文件"按钮
+2. 在文件选择器中选择要导入的文件
+3. 配置导入选项
+4. 确认导入
+
+### 批量导入
+支持同时选择多个文件进行批量导入。
+
+## 漫画导入选项
+
+- **作为新漫画导入**: 创建新的漫画条目
+- **合并到已有漫画**: 作为章节添加到现有漫画
+- **智能检测**: 自动检测可能的重复项
+
+## ComicInfo.xml支持
+
+如果压缩包中包含ComicInfo.xml文件，将自动读取：
+- 标题、作者信息
+- 标签和分类
+- 简介描述
+
+## 注意事项
+
+- 导入过程中请勿关闭应用
+- 大文件导入可能需要较长时间
+- 导入后原文件不会被删除（可选择删除）`;
+
+    getHelpPanelManagerV2().showInlineHelp('文件导入帮助', helpContent);
+  }
+
   /**
    * 使用DOWNLOAD模式创建应用专属目录并访问
    * 通过DocumentViewPicker的DOWNLOAD模式，自动在Download/包名/目录下创建
@@ -748,7 +836,7 @@ struct DataManagementPage {
           try {
             const testFilePath = new fileUri.FileUri(uri + '/.manxia_init').path;
             const file = fs.openSync(testFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
-            fs.writeSync(file.fd, '漫侠应用目录初始化文件');
+            fs.writeSync(file.fd, '漫匣应用目录初始化文件');
             fs.closeSync(file.fd);
             logger.info(TAG, `成功创建初始化文件: ${testFilePath}`);
           } catch (writeError) {
@@ -1013,6 +1101,7 @@ struct DataManagementPage {
     if (firstCoverPath) {
       const ext = firstCoverPath.substring(firstCoverPath.lastIndexOf('.'));
       const coverPath = `${mangaPath}/cover${ext}`;
+      
       try {
         fs.copyFileSync(firstCoverPath, coverPath);
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
@@ -1089,29 +1178,22 @@ struct DataManagementPage {
       // 在Download目录创建漫画文件夹
       const folderName = this.sanitizeFolderName(result.title);
       const mangaPath = `${this.downloadDirPath}/${folderName}`;
+      const chapterPath = `${mangaPath}/第1话`;
+      
       try { fs.mkdirSync(mangaPath); } catch (e) { /* 已存在 */ }
-      
-      // 创建漫画记录
-      const mangaId = await this.dataManager.addComicInfo({
-        title: result.title,
-        author: result.author,
-        description: result.description,
-        coverUrl: '',
-        sourceId: 'download_import',
-        externalId: `download_${generateUUID()}`,
-        status: MangaStatus.UNKNOWN,
-        tags: result.tags,
-        rating: 0,
-        chapterCount: 1,
-        lastUpdateTime: Date.now()
-      } as ComicInfoInput);
-      
-      // 添加收藏
-      await DataService.getInstance().addToFavorites(mangaId, result.tags);
+      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
       // 处理章节
-      const chapterPath = `${mangaPath}/第1话`;
-      try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
+      const chapterInput: ChapterInfoInput = {
+        comicId: '',
+        title: '第1话',
+        index: 0,
+        pageCount: 0,
+        isDownloaded: true,
+        downloadPath: chapterPath,
+        publishTime: Date.now(),
+        externalId: `local_chapter_${generateUUID()}`
+      };
       
       // 复制图片文件和ComicInfo.xml
       const imageFiles: string[] = [];
@@ -1143,22 +1225,33 @@ struct DataManagementPage {
         }
       }
       
-      // 创建章节记录
-      const chapterId = await this.dataManager.addChapterInfo({
-        comicId: mangaId,
-        title: '第1话',
-        index: 0,
-        pageCount: imageFiles.length,
-        isDownloaded: true,
-        downloadPath: chapterPath,
-        publishTime: Date.now(),
-        externalId: `local_chapter_${generateUUID()}`
-      } as ChapterInfoInput);
+      // 创建漫画记录
+      const mangaId = await this.dataManager.addComicInfo({
+        title: result.title,
+        author: result.author,
+        description: result.description,
+        coverUrl: '',
+        sourceId: 'download_import',
+        externalId: `download_${generateUUID()}`,
+        status: MangaStatus.UNKNOWN,
+        tags: result.tags,
+        rating: 0,
+        chapterCount: 1,
+        lastUpdateTime: Date.now()
+      } as ComicInfoInput);
+      
+      // 添加收藏
+      await DataService.getInstance().addToFavorites(mangaId, result.tags);
+      
+      // 更新章节信息
+      chapterInput.comicId = mangaId;
+      chapterInput.pageCount = imageFiles.length;
+      const chapterId = await this.dataManager.addChapterInfo(chapterInput);
       
       // 添加页面信息
       await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
       
-      // 处理封面
+      // 处理封面 - 复制第一张图片到漫画目录作为封面
       if (imageFiles.length > 0) {
         imageFiles.sort();
         const firstImagePath = `${chapterPath}/${imageFiles[0]}`;
@@ -1167,6 +1260,7 @@ struct DataManagementPage {
         
         try {
           fs.copyFileSync(firstImagePath, coverPath);
+          // 更新数据库中的封面路径
           await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
           logger.info(TAG, `封面已保存: ${coverPath}`);
         } catch (e) {
@@ -1670,7 +1764,7 @@ struct DataManagementPage {
         customBuilder: () => {
           buildMergeDialogContent(data, this.themeState, selectedTargetId, (id: string) => {
             selectedTargetId = id;
-          });
+          }, this.appFontFamily);
         },
         buttons: [
           {
@@ -1742,7 +1836,7 @@ struct DataManagementPage {
       const dialogOptions: UniversalDialogOptions = {
         title: `章节合并：${chapterInput.title}（所属：${mangaTitle}）`,
         customBuilder: () => {
-          buildChapterMergeDialogContent(data, this.themeState);
+          buildChapterMergeDialogContent(data, this.themeState, this.appFontFamily);
         },
         buttons: [
           {
@@ -1871,6 +1965,13 @@ struct DataManagementPage {
     ThemeAwareHelper.initializeThemeAware(TAG, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题已切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      TAG,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -2510,6 +2611,7 @@ struct DataManagementPage {
     logger.lifecycle(TAG, 'aboutToDisappear');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(TAG);
+    FontAwareHelper.cleanupFontAware(TAG);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -6219,6 +6321,7 @@ struct DataManagementPage {
         Text(`批量导入 ${this.selectedFiles.length} 个文件`)
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
@@ -6228,18 +6331,22 @@ struct DataManagementPage {
             Column({ space: 8 }) {
               Text('检测到多个文件，请选择处理策略：')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .width('100%')
               Text('• 逐个询问：每个文件遇到重复时都会询问')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .width('100%')
               Text('• 全部合并：自动合并到最匹配的已有漫画')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .width('100%')
               Text('• 全部新建：所有文件都作为新漫画导入')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .width('100%')
             }
@@ -6279,7 +6386,7 @@ struct DataManagementPage {
         // 操作按钮
         Row({ space: 12 }) {
           Button({ stateEffect: true }) {
-            Text('取消')
+            Text('取消').fontFamily(this.appFontFamily)
           }
             .width('48%')
             .height(44)
@@ -6289,7 +6396,7 @@ struct DataManagementPage {
             })
 
           Button({ stateEffect: true }) {
-            Text('开始导入')
+            Text('开始导入').fontFamily(this.appFontFamily)
           }
             .width('48%')
             .height(44)
@@ -6337,15 +6444,18 @@ struct DataManagementPage {
     Row({ space: 12 }) {
       Text(icon)
         .fontSize(24)
+        .fontFamily(this.appFontFamily)
       
       Column({ space: 4 }) {
         Text(title)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text(description)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       }
       .layoutWeight(1)
@@ -6389,6 +6499,7 @@ struct DataManagementPage {
       // 状态文本
       Text(this.importProgress.message)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .textAlign(TextAlign.Center)
 
@@ -6409,12 +6520,14 @@ struct DataManagementPage {
       // 完成状态图标
       Text('✅ 导入完成')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
         .visibility(this.importProgress.status === ImportStatus.COMPLETED ? Visibility.Visible : Visibility.None)
 
       // 错误状态图标
       Text('❌ 导入失败')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
         .visibility(this.importProgress.status === ImportStatus.ERROR ? Visibility.Visible : Visibility.None)
     }
@@ -6435,6 +6548,7 @@ struct DataManagementPage {
       Text('导入结果')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .margin({ bottom: 8 })
 
@@ -6442,6 +6556,7 @@ struct DataManagementPage {
       ForEach(this.importResults, (result: string, index: number) => {
         Text(result)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .width('100%')
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -6452,6 +6567,7 @@ struct DataManagementPage {
         Text('导入处理详情')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .margin({ top: 16, bottom: 8 })
 
@@ -6478,6 +6594,7 @@ struct DataManagementPage {
         Text(`📁 ${detail.fileName}`)
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
 
@@ -6486,14 +6603,18 @@ struct DataManagementPage {
           if (detail.success) {
             Text('✅')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
             Text('成功')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('success_text', this.themeState.currentTheme))
           } else {
             Text('❌')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
             Text('失败')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
           }
         }
@@ -6505,6 +6626,7 @@ struct DataManagementPage {
         Text('处理步骤:')
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Row({ space: 12 }) {
@@ -6522,8 +6644,10 @@ struct DataManagementPage {
         Row({ space: 8 }) {
           Text('📦')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
           Text(`提取了 ${detail.extractedFileCount} 个文件`)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
       }
@@ -6534,8 +6658,10 @@ struct DataManagementPage {
           Row({ space: 8 }) {
             Text('📄')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
             Text(`ComicInfo.xml: ${detail.xmlFound ? '已找到' : '未找到'}`)
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(detail.xmlFound ? 
                 ThemeAwareHelper.getTestManagementThemedColor('success_text', this.themeState.currentTheme) :
                 ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
@@ -6547,6 +6673,7 @@ struct DataManagementPage {
               Text('📖 从XML中解析到的漫画信息:')
                 .fontSize(11)
                 .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
               // 漫画详细信息网格
@@ -6584,11 +6711,13 @@ struct DataManagementPage {
           } else if (detail.xmlFound && !detail.xmlParsed) {
             Text('⚠️ XML文件解析失败，使用默认信息')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_warning', this.themeState.currentTheme))
               .padding({ left: 8 })
           } else if (!detail.xmlFound) {
             Text('ℹ️ 未找到XML文件，使用文件名生成默认信息')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .padding({ left: 8 })
           }
@@ -6601,6 +6730,7 @@ struct DataManagementPage {
           Text('💾 数据库存储信息:')
             .fontSize(11)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           if (detail.mangaId) {
@@ -6621,6 +6751,7 @@ struct DataManagementPage {
           Text('🔗 合并与重复检测:')
             .fontSize(11)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           if (detail.mergeMode) {
@@ -6650,10 +6781,12 @@ struct DataManagementPage {
           Text('❌ 错误信息:')
             .fontSize(11)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
 
           Text(detail.errorMessage)
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
             .width('100%')
             .maxLines(3)
@@ -6688,8 +6821,10 @@ struct DataManagementPage {
     Column({ space: 2 }) {
       Text(completed ? '✅' : '⏳')
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
       Text(stepName)
         .fontSize(9)
+        .fontFamily(this.appFontFamily)
         .fontColor(completed ? 
           ThemeAwareHelper.getTestManagementThemedColor('success_text', this.themeState.currentTheme) :
           ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -6705,12 +6840,15 @@ struct DataManagementPage {
     Row({ space: 6 }) {
       Text(icon)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
       Text(`${label}:`)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .width(50)
       Text(value)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
         .maxLines(multiline ? 3 : 1)
@@ -6835,6 +6973,7 @@ struct DataManagementPage {
             .margin({ right: 6 })
           Text('选择文件导入')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.primaryTab === 'file_select'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6862,6 +7001,7 @@ struct DataManagementPage {
             .margin({ right: 6 })
           Text('Download同步')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.primaryTab === 'download_sync'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6904,6 +7044,7 @@ struct DataManagementPage {
             .margin({ right: 4 })
           Text('漫画')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.secondaryTab === 'manga'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6931,6 +7072,7 @@ struct DataManagementPage {
             .margin({ right: 4 })
           Text('电子书')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.secondaryTab === 'ebook'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6958,6 +7100,7 @@ struct DataManagementPage {
             .margin({ right: 4 })
           Text('PDF')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.secondaryTab === 'pdf'
               ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6996,10 +7139,12 @@ struct DataManagementPage {
           Text('漫画导入')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         Text('支持导入ZIP、CBZ、TAR、GZ等压缩包格式。\n支持单行本、单章节、多章节导入模式，可自动识别章节结构或手动配置。')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .lineHeight(18)
       }
@@ -7011,7 +7156,7 @@ struct DataManagementPage {
       Button({ stateEffect: true }) {
         Row({ space: 8 }) {
           SymbolGlyph($r('sys.symbol.folder')).fontSize(18).fontColor([Color.White])
-          Text('选择漫画文件').fontSize(16).fontColor(Color.White)
+          Text('选择漫画文件').fontSize(16).fontColor(Color.White).fontFamily(this.appFontFamily)
         }
       }
       .width('100%')
@@ -7026,10 +7171,12 @@ struct DataManagementPage {
             Text(`已选择 ${this.selectedFiles.length} 个文件`)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Blank()
             Text('清空')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .onClick(() => {
                 this.selectedFiles = [];
@@ -7045,6 +7192,7 @@ struct DataManagementPage {
               SymbolGlyph(this.getFileIconResource(file)).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
               Text(this.getFileNameFromUri(file))
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .layoutWeight(1)
                 .maxLines(1)
@@ -7057,11 +7205,12 @@ struct DataManagementPage {
           if (this.selectedFiles.length > 5) {
             Text(`... 还有 ${this.selectedFiles.length - 5} 个文件`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
 
           Button({ stateEffect: true }) {
-            Text('开始导入').fontSize(16).fontColor(Color.White)
+            Text('开始导入').fontSize(16).fontColor(Color.White).fontFamily(this.appFontFamily)
           }
           .width('100%')
           .height(48)
@@ -7091,10 +7240,12 @@ struct DataManagementPage {
           Text('电子书导入')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         Text('支持导入TXT、EPUB、MOBI、AZW/AZW3格式的电子书，自动识别章节。')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .lineHeight(18)
       }
@@ -7106,7 +7257,7 @@ struct DataManagementPage {
       Button({ stateEffect: true }) {
         Row({ space: 8 }) {
           SymbolGlyph($r('sys.symbol.book')).fontSize(18).fontColor([Color.White])
-          Text('选择电子书').fontSize(16).fontColor(Color.White)
+          Text('选择电子书').fontSize(16).fontColor(Color.White).fontFamily(this.appFontFamily)
         }
       }
       .width('100%')
@@ -7130,10 +7281,12 @@ struct DataManagementPage {
           Text('PDF导入')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         Text('将PDF文件的每一页转换为图片导入。\n⚠️ 注意：大文件转换较慢，请耐心等待。')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .lineHeight(18)
       }
@@ -7145,7 +7298,7 @@ struct DataManagementPage {
       Button({ stateEffect: true }) {
         Row({ space: 8 }) {
           SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(18).fontColor([Color.White])
-          Text('选择PDF文件').fontSize(16).fontColor(Color.White)
+          Text('选择PDF文件').fontSize(16).fontColor(Color.White).fontFamily(this.appFontFamily)
         }
       }
       .width('100%')
@@ -7169,10 +7322,12 @@ struct DataManagementPage {
           Text('Download文件夹同步')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         Text('访问Download目录下应用专属文件夹，无需申请受限权限。\n将文件放入该文件夹后，可直接扫描并导入。')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .lineHeight(18)
       }
@@ -7186,21 +7341,23 @@ struct DataManagementPage {
           Text('文件夹状态')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Blank()
           if (this.downloadDirPath) {
-            Text('✓ 已连接').fontSize(13).fontColor('#4CAF50')
+            Text('✓ 已连接').fontSize(13).fontFamily(this.appFontFamily).fontColor('#4CAF50')
           } else {
-            Text('未连接').fontSize(13).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            Text('未连接').fontSize(13).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
         }
         .width('100%')
 
         if (this.downloadDirPath) {
           Column({ space: 4 }) {
-            Text('路径').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            Text('路径').fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             Text(this.downloadDirPath)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7215,26 +7372,27 @@ struct DataManagementPage {
               Text(`${this.downloadDirFileCount}`)
                 .fontSize(24)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              Text('总文件数').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              Text('总文件数').fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .layoutWeight(1)
 
             Column({ space: 4 }) {
-              Text(`${this.pendingMangaFiles.length}`).fontSize(24).fontWeight(FontWeight.Bold).fontColor('#4CAF50')
-              Text('漫画').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              Text(`${this.pendingMangaFiles.length}`).fontSize(24).fontFamily(this.appFontFamily).fontWeight(FontWeight.Bold).fontColor('#4CAF50')
+              Text('漫画').fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .layoutWeight(1)
 
             Column({ space: 4 }) {
-              Text(`${this.pendingEbookFiles.length}`).fontSize(24).fontWeight(FontWeight.Bold).fontColor('#2196F3')
-              Text('电子书').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              Text(`${this.pendingEbookFiles.length}`).fontSize(24).fontFamily(this.appFontFamily).fontWeight(FontWeight.Bold).fontColor('#2196F3')
+              Text('电子书').fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .layoutWeight(1)
 
             Column({ space: 4 }) {
-              Text(`${this.pendingPdfFiles.length}`).fontSize(24).fontWeight(FontWeight.Bold).fontColor('#FF9800')
-              Text('PDF').fontSize(12).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              Text(`${this.pendingPdfFiles.length}`).fontSize(24).fontFamily(this.appFontFamily).fontWeight(FontWeight.Bold).fontColor('#FF9800')
+              Text('PDF').fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .layoutWeight(1)
           }
@@ -7243,7 +7401,7 @@ struct DataManagementPage {
 
         Row({ space: 12 }) {
           Button({ stateEffect: true }) {
-            Text(this.downloadDirPath ? '重新连接' : '连接文件夹').fontSize(14)
+            Text(this.downloadDirPath ? '重新连接' : '连接文件夹').fontSize(14).fontFamily(this.appFontFamily)
           }
           .layoutWeight(1)
           .height(44)
@@ -7253,7 +7411,7 @@ struct DataManagementPage {
 
           if (this.downloadDirPath) {
             Button({ stateEffect: true }) {
-              Text(this.isScanning ? '扫描中...' : '扫描文件').fontSize(14)
+              Text(this.isScanning ? '扫描中...' : '扫描文件').fontSize(14).fontFamily(this.appFontFamily)
             }
             .layoutWeight(1)
             .height(44)
@@ -7275,6 +7433,7 @@ struct DataManagementPage {
           Text('文件列表')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
 
@@ -7283,6 +7442,7 @@ struct DataManagementPage {
               SymbolGlyph(this.getFileIconResource(file)).fontSize(16).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
               Text(file)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .layoutWeight(1)
                 .maxLines(1)
@@ -7297,6 +7457,7 @@ struct DataManagementPage {
           if (this.downloadDirFiles.length > 10) {
             Text(`... 还有 ${this.downloadDirFiles.length - 10} 个文件`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
         }
@@ -7311,6 +7472,7 @@ struct DataManagementPage {
           Text('快速导入')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
 
@@ -7324,10 +7486,11 @@ struct DataManagementPage {
                 Text(`漫画文件 (${this.pendingMangaFiles.length})`)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 Blank()
                 Button({ stateEffect: true }) {
-                  Text('导入').fontSize(13).fontColor(Color.White)
+                  Text('导入').fontSize(13).fontColor(Color.White).fontFamily(this.appFontFamily)
                 }
                 .height(32)
                 .backgroundColor('#4CAF50')
@@ -7339,6 +7502,7 @@ struct DataManagementPage {
               ForEach(this.pendingMangaFiles.slice(0, 3), (file: string) => {
                 Text(file)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7348,6 +7512,7 @@ struct DataManagementPage {
               if (this.pendingMangaFiles.length > 3) {
                 Text(`... 还有 ${this.pendingMangaFiles.length - 3} 个文件`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .padding({ left: 24 })
               }
@@ -7368,10 +7533,11 @@ struct DataManagementPage {
                 Text(`电子书文件 (${this.pendingEbookFiles.length})`)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 Blank()
                 Button({ stateEffect: true }) {
-                  Text('导入').fontSize(13).fontColor(Color.White)
+                  Text('导入').fontSize(13).fontColor(Color.White).fontFamily(this.appFontFamily)
                 }
                 .height(32)
                 .backgroundColor('#2196F3')
@@ -7383,6 +7549,7 @@ struct DataManagementPage {
               ForEach(this.pendingEbookFiles.slice(0, 3), (file: string) => {
                 Text(file)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7392,6 +7559,7 @@ struct DataManagementPage {
               if (this.pendingEbookFiles.length > 3) {
                 Text(`... 还有 ${this.pendingEbookFiles.length - 3} 个文件`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .padding({ left: 24 })
               }
@@ -7412,10 +7580,11 @@ struct DataManagementPage {
                 Text(`PDF文件 (${this.pendingPdfFiles.length})`)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 Blank()
                 Button({ stateEffect: true }) {
-                  Text('导入').fontSize(13).fontColor(Color.White)
+                  Text('导入').fontSize(13).fontColor(Color.White).fontFamily(this.appFontFamily)
                 }
                 .height(32)
                 .backgroundColor('#FF9800')
@@ -7427,6 +7596,7 @@ struct DataManagementPage {
               ForEach(this.pendingPdfFiles.slice(0, 3), (file: string) => {
                 Text(file)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7436,6 +7606,7 @@ struct DataManagementPage {
               if (this.pendingPdfFiles.length > 3) {
                 Text(`... 还有 ${this.pendingPdfFiles.length - 3} 个文件`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .padding({ left: 24 })
               }
@@ -7466,31 +7637,23 @@ struct DataManagementPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
 
-        // 内容层 - 一级-二级标签模式
+        // 内容层 - 选择文件导入
         Column() {
           // 标题栏占位
           Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-          // 一级标签栏
-          this.buildPrimaryTabBar()
-
           // 内容区域
           Scroll(this.scroller) {
             Column({ space: 16 }) {
-              if (this.primaryTab === 'file_select') {
-                // 二级标签 - 选择文件导入
-                this.buildFileSelectSecondaryTabs()
-                // 对应内容
-                if (this.secondaryTab === 'manga') {
-                  this.buildMangaImportSection()
-                } else if (this.secondaryTab === 'ebook') {
-                  this.buildEbookImportSection()
-                } else {
-                  this.buildPdfImportSection()
-                }
+              // 二级标签 - 选择文件导入
+              this.buildFileSelectSecondaryTabs()
+              // 对应内容
+              if (this.secondaryTab === 'manga') {
+                this.buildMangaImportSection()
+              } else if (this.secondaryTab === 'ebook') {
+                this.buildEbookImportSection()
               } else {
-                // Download同步 - 直接显示文件夹状态
-                this.buildFolderStatusSection()
+                this.buildPdfImportSection()
               }
 
               // 进度指示器
@@ -7553,6 +7716,18 @@ struct DataManagementPage {
       content: {
         title: {
           mainTitle: "文件导入",
+        },
+        menu: {
+          value: [{
+            content: {
+              label: '帮助',
+              icon: $r('sys.symbol.questionmark_circle'),
+              isEnabled: true,
+              action: () => {
+                this.showFileImportHelp();
+              }
+            }
+          }]
         }
       }
     })

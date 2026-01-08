@@ -5,6 +5,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
 import { ScraperManager } from '../Scraper/ScraperManager';
 import { ScraperSource, ScraperContentType, ScrapedMetadata } from '../Scraper/ScraperTypes';
@@ -52,6 +53,7 @@ export struct ScraperDialog {
   controller: CustomDialogController;
   @Prop themeState: ThemeAwareState;
   @Prop config: ScraperDialogConfig;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   onConfirm: (result: ScraperDialogResult) => void = () => {};
   onCancel: () => void = () => {};
 
@@ -157,6 +159,7 @@ export struct ScraperDialog {
     Row() {
       Text(this.config.title || '刮削元数据')
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -224,6 +227,7 @@ export struct ScraperDialog {
     Column({ space: 8 }) {
       Text('搜索源')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .width('100%')
 
@@ -243,6 +247,7 @@ export struct ScraperDialog {
     Row({ space: 4 }) {
       Text(this.getSourceDisplayName(source))
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.isSourceSelected(source)
           ? ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -267,6 +272,7 @@ export struct ScraperDialog {
       
       Text(this.isSearching ? '当前刮削源需要海外网络环境' : '请检查当前网络环境')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FF9800')
         .layoutWeight(1)
     }
@@ -290,6 +296,7 @@ export struct ScraperDialog {
 
           Text(this.searchError)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .textAlign(TextAlign.Center)
         }
@@ -306,6 +313,7 @@ export struct ScraperDialog {
 
           Text(this.searchKeyword.length > 0 ? '未找到相关结果' : '输入关键词开始搜索')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .textAlign(TextAlign.Center)
         }
@@ -359,6 +367,7 @@ export struct ScraperDialog {
       Column({ space: 4 }) {
         Text(item.title)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
@@ -368,6 +377,7 @@ export struct ScraperDialog {
         if (item.author) {
           Text(item.author)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -378,6 +388,7 @@ export struct ScraperDialog {
           // 来源标签
           Text(this.getSourceDisplayName(item.source))
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .backgroundColor(this.getSourceColor(item.source))
@@ -387,6 +398,7 @@ export struct ScraperDialog {
           if (item.score) {
             Text(`★ ${item.score.toFixed(1)}`)
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
         }
@@ -440,6 +452,7 @@ export struct ScraperDialog {
 
         Text('返回列表')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ left: 4 })
       }
@@ -463,6 +476,7 @@ export struct ScraperDialog {
             Column({ space: 6 }) {
               Text(this.selectedMetadata!.title)
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .maxLines(2)
@@ -471,18 +485,21 @@ export struct ScraperDialog {
               if (this.selectedMetadata!.author) {
                 Text(`作者: ${this.selectedMetadata!.author}`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
 
               if (this.selectedMetadata!.publisher) {
                 Text(`出版社: ${this.selectedMetadata!.publisher}`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
 
               if (this.selectedMetadata!.score) {
                 Text(`评分: ${this.selectedMetadata!.score.toFixed(1)}/${this.selectedMetadata!.scoreMax || 10}`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
             }
@@ -496,12 +513,14 @@ export struct ScraperDialog {
             Column({ space: 4 }) {
               Text('简介')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .width('100%')
 
               Text(this.selectedMetadata!.description)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .maxLines(6)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -515,6 +534,7 @@ export struct ScraperDialog {
             Column({ space: 4 }) {
               Text('标签')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .width('100%')
@@ -523,6 +543,7 @@ export struct ScraperDialog {
                 ForEach(this.selectedMetadata!.tags!.slice(0, 10), (tag: string) => {
                   Text(tag)
                     .fontSize(11)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
@@ -539,6 +560,7 @@ export struct ScraperDialog {
           Column({ space: 8 }) {
             Text('选择要应用的信息')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
@@ -581,6 +603,7 @@ export struct ScraperDialog {
     Row() {
       Text(label)
         .fontSize(13)
+        .fontFamily(this.appFontFamily)
         .fontColor(available
           ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -596,6 +619,7 @@ export struct ScraperDialog {
       } else {
         Text('无数据')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
     }
@@ -613,6 +637,7 @@ export struct ScraperDialog {
         .borderRadius(8)
         .height(44)
         .layoutWeight(1)
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.onCancel();
           this.controller.close();
@@ -625,6 +650,7 @@ export struct ScraperDialog {
         .borderRadius(8)
         .height(44)
         .layoutWeight(1)
+        .fontFamily(this.appFontFamily)
         .enabled(this.selectedMetadata !== null)
         .opacity(this.selectedMetadata !== null ? 1 : 0.5)
         .onClick(() => {
@@ -800,6 +826,7 @@ export struct ScraperButton {
   @Prop themeState: ThemeAwareState;
   @Prop iconSize: number = 24;
   @Prop showLabel: boolean = false;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   onButtonClick: () => void = () => {};
 
   build() {
@@ -812,6 +839,7 @@ export struct ScraperButton {
       if (this.showLabel) {
         Text('刮削')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       }
     }

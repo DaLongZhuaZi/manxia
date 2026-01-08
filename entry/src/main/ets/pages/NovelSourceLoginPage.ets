@@ -19,6 +19,7 @@ import { getLegadoRhinoEngine } from '../Framework/Novel/LegadoRhinoEngine';
 import { LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 const TAG = 'NovelSourceLoginPage';
 
@@ -32,6 +33,8 @@ const TITLE_BAR_HEIGHT_MINI = 56;
 export struct NovelSourceLoginPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelSourceLoginPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -57,10 +60,18 @@ export struct NovelSourceLoginPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   async loadSource(): Promise<void> {
@@ -339,6 +350,7 @@ export struct NovelSourceLoginPage {
       
       Text(this.useWebView ? (this.webViewTitle || '登录') : '书源登录')
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .margin({ left: 16 })
@@ -360,6 +372,7 @@ export struct NovelSourceLoginPage {
         // 完成按钮
         Text('完成')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .margin({ right: 16 })
           .onClick(() => this.onWebViewLoginComplete())
@@ -473,6 +486,7 @@ export struct NovelSourceLoginPage {
     Column() {
       Text('书源不存在')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
     }
     .width('100%')
@@ -489,10 +503,12 @@ export struct NovelSourceLoginPage {
           Text(this.source?.bookSourceName || '')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Text(this.source?.bookSourceUrl || '')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
         }
@@ -534,6 +550,7 @@ export struct NovelSourceLoginPage {
     Column() {
       Text(item.hint || item.name)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .margin({ bottom: 8 })
       
@@ -557,6 +574,7 @@ export struct NovelSourceLoginPage {
     Column() {
       Text(item.hint || item.name)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .margin({ bottom: 8 })
       
@@ -583,6 +601,7 @@ export struct NovelSourceLoginPage {
       .height(44)
       .fontSize(14)
       .fontColor('#FFFFFF')
+      .fontFamily(this.appFontFamily)
       .backgroundColor(this.isLoading ? 
         ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme) :
         ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))

@@ -48,6 +48,14 @@ export interface StorageItem {
 }
 
 /**
+ * 递归删除结果
+ */
+interface DeleteRecursiveResult {
+  size: number;
+  count: number;
+}
+
+/**
  * 存储统计信息
  */
 export interface StorageStatistics {
@@ -736,6 +744,7 @@ export class StorageAnalyzer {
 
   /**
    * 清理目录
+   * [修复] 支持递归删除子目录
    */
   private async clearDirectory(dirPath: string, options: ClearOptions): Promise<ClearResult> {
     const result: ClearResult = {
@@ -756,12 +765,19 @@ export class StorageAnalyzer {
           const shouldDelete = options.olderThan ? (now - stat.mtime) > options.olderThan : true;
 
           if (shouldDelete) {
-            result.clearedSize += stat.size;
-            await fileIo.unlink(filePath);
-            result.clearedCount++;
+            if (stat.isDirectory()) {
+              // 递归删除子目录
+              const subResult = await this.deleteDirectoryRecursive(filePath);
+              result.clearedSize += subResult.size;
+              result.clearedCount += subResult.count;
+            } else {
+              result.clearedSize += stat.size;
+              await fileIo.unlink(filePath);
+              result.clearedCount++;
+            }
           }
         } catch (error) {
-          result.errors.push(`删除文件失败: ${file}`);
+          result.errors.push(`删除失败: ${file}, ${error}`);
         }
       }
     } catch (error) {
@@ -769,6 +785,43 @@ export class StorageAnalyzer {
       result.errors.push(`清理目录失败: ${dirPath}`);
     }
 
+    return result;
+  }
+
+  /**
+   * 递归删除目录及其所有内容
+   */
+  private async deleteDirectoryRecursive(dirPath: string): Promise<DeleteRecursiveResult> {
+    let totalSize = 0;
+    let totalCount = 0;
+
+    try {
+      const entries = await this.sandboxManager.listDirectory(dirPath);
+      
+      for (const entry of entries) {
+        const fullPath = `${dirPath}/${entry}`;
+        const stat = await fileIo.stat(fullPath);
+        
+        if (stat.isDirectory()) {
+          const subResult = await this.deleteDirectoryRecursive(fullPath);
+          totalSize += subResult.size;
+          totalCount += subResult.count;
+        } else {
+          totalSize += stat.size;
+          await fileIo.unlink(fullPath);
+          totalCount++;
+        }
+      }
+      
+      // 删除空目录
+      await fileIo.rmdir(dirPath);
+      totalCount++;
+      
+    } catch (error) {
+      logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
+    }
+
+    const result: DeleteRecursiveResult = { size: totalSize, count: totalCount };
     return result;
   }
 

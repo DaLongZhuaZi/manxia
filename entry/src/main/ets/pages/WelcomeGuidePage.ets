@@ -8,6 +8,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType, CustomThemeData } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
 import { common } from '@kit.AbilityKit';
 
@@ -34,6 +35,8 @@ struct WelcomeGuidePage {
 
   // 主题相关状态
   @State private themeState: ThemeAwareState = new ThemeAwareState();
+  @State private fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'WelcomeGuidePage';
 
@@ -134,6 +137,11 @@ struct WelcomeGuidePage {
 
     // 初始化主题
     this.initializeTheme();
+
+    // 初始化字体管理
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
 
     // 加载当前步骤（从WelcomeGuideManager获取最新状态）
     this.currentStep = this.welcomeGuideManager.getCurrentStep();

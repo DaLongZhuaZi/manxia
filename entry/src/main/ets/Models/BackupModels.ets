@@ -107,10 +107,15 @@ export interface MangaBackupItem {
   lastReadChapterIndex?: number;
   lastReadPage?: number;
   lastReadTime?: number;
+  
+  // 内容类型（用于区分Download同步导入的内容）
+  contentType?: string;  // 'manga' | 'ebook' | 'online'
+  webUrl?: string;
+  apiUrl?: string;
 }
 
 /**
- * 漫画章节备份
+ * 漫画章节备份（包含下载相关字段）
  */
 export interface MangaChapterBackup {
   id: string;
@@ -126,6 +131,30 @@ export interface MangaChapterBackup {
   lastPageRead: number;
   dateFetch: number;
   sourceOrder: number;
+  // 下载相关字段
+  pageCount?: number;
+  isDownloaded?: boolean;
+  downloadPath?: string;
+  fileSize?: number;
+  externalId?: string;
+  // [修复] 添加页面数据，用于本地漫画恢复
+  pages?: MangaPageBackup[];
+}
+
+/**
+ * 漫画页面备份
+ */
+export interface MangaPageBackup {
+  id: string;
+  chapterId: string;
+  pageNumber: number;
+  imageUrl: string;
+  localPath: string;
+  width?: number;
+  height?: number;
+  fileSize?: number;
+  isDownloaded?: number;
+  createTime?: number;
 }
 
 /**
@@ -190,32 +219,55 @@ export interface EBookBackupItem {
 }
 
 /**
- * 漫画书源备份
+ * 漫画书源备份（完整字段）
  */
 export interface MangaSourceBackup {
   id: string;
+  pkg?: string;
   name: string;
   baseUrl: string;
+  version?: string;
+  description?: string;
   lang: string;
+  type?: string;
   isEnabled: boolean;
+  priority?: number;
+  configJson?: string;
+  cookies?: string;
+  tabsConfig?: string;
+  createTime?: number;
+  preloadCurrentChapter?: number;
+  preloadCurrentPages?: number;
+  preloadNextChapter?: number;
+  preloadNextPages?: number;
+  downloadWhileReading?: number;
+  maxCacheSize?: number;
+  requireProxy?: number;
   isNSFW?: boolean;
   lastUsedTime?: number;
 }
 
 /**
- * 小说书源备份
+ * 小说书源备份（完整字段，包含configJson）
  */
 export interface NovelSourceBackup {
   id: string;
-  name: string;
-  sourceUrl: string;
-  bookSourceGroup: string;
-  bookSourceType: number;
+  bookSourceUrl: string;
+  bookSourceName: string;
+  bookSourceGroup?: string;
+  bookSourceType?: number;
   enabled: boolean;
-  enabledExplore: boolean;
+  enabledExplore?: boolean;
+  weight?: number;
+  respondTime?: number;
+  configJson: string;  // 完整的Legado书源配置JSON
+  createTime?: number;
+  updateTime?: number;
   isNSFW?: boolean;
-  weight: number;
-  lastUpdateTime: number;
+  // 兼容旧版本的字段
+  name?: string;
+  sourceUrl?: string;
+  lastUpdateTime?: number;
 }
 
 /**
@@ -308,6 +360,40 @@ export interface GeneralSettingsBackup {
   language: string;
   // 网络代理设置
   proxyConfig?: ProxyConfigBackup;
+  // 字体设置
+  fontSettings?: FontSettingsBackup;
+}
+
+/**
+ * 字体设置备份
+ */
+export interface FontSettingsBackup {
+  appFontType: string;
+  appSystemFontId: string;
+  appCustomFontId: string;
+  appFontSize: number;
+  novelFontType: string;
+  novelSystemFontId: string;
+  novelCustomFontId: string;
+  novelFontSize: number;
+  novelLineHeight: number;
+  ebookFontType: string;
+  ebookSystemFontId: string;
+  ebookCustomFontId: string;
+  ebookFontSize: number;
+  ebookLineHeight: number;
+  // 自定义字体列表
+  customFonts?: CustomFontBackup[];
+}
+
+/**
+ * 自定义字体备份
+ */
+export interface CustomFontBackup {
+  id: string;
+  familyName: string;
+  displayName: string;
+  fileName: string;  // 字体文件名（不含路径）
 }
 
 /**

@@ -4,7 +4,7 @@
  */
 
 import { logger } from '../Utils/Logger';
-import { curves, componentSnapshot } from '@kit.ArkUI';
+import { curves, componentSnapshot, font } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import measure from '@ohos.measure';
 import { display } from '@kit.ArkUI';
@@ -160,6 +160,8 @@ export struct TextReaderComponent {
   // ========== 生命周期 ==========
   aboutToAppear(): void {
     logger.info(TAG, '文本阅读器组件初始化');
+    // 注册自定义字体（如果有）
+    this.registerCustomFontIfNeeded();
     // 启动时间更新定时器
     this.startTimeUpdate();
     // 获取电量
@@ -167,6 +169,25 @@ export struct TextReaderComponent {
     // 记录初始内容和章节索引
     this.lastContent = this.content;
     this.lastChapterIndex = this.currentChapterIndex;
+  }
+  
+  /**
+   * 注册自定义字体（如果设置了fontPath）
+   */
+  private registerCustomFontIfNeeded(): void {
+    const fontPath = this.settings.textStyle.fontPath;
+    if (fontPath && fontPath.length > 0) {
+      try {
+        const fontUri = fontPath.startsWith('file://') ? fontPath : `file://${fontPath}`;
+        font.registerFont({
+          familyName: this.settings.textStyle.fontFamily,
+          familySrc: fontUri
+        });
+        logger.info(TAG, `自定义字体已注册: ${this.settings.textStyle.fontFamily}, 路径: ${fontUri}`);
+      } catch (error) {
+        logger.warn(TAG, `注册自定义字体失败: ${String(error)}`);
+      }
+    }
   }
   
   /**
@@ -1287,6 +1308,7 @@ export struct TextReaderComponent {
         .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
         .letterSpacing(this.settings.textStyle.letterSpacing)
         .fontWeight(this.settings.textStyle.fontWeight)
+        .fontFamily(this.settings.textStyle.fontFamily)
         .textAlign(this.getTextAlign())
         .padding({
           top: this.settings.pageMargins.top,
@@ -1689,14 +1711,14 @@ export struct TextReaderComponent {
   
   /**
    * 获取渲染设置签名（用于检测影响 PixelMap 渲染的设置变化）
-   * 包含：背景设置、文字样式（颜色、字号、行高、字间距、字重、对齐方式）、页边距
+   * 包含：背景设置、文字样式（颜色、字号、行高、字间距、字重、字体、字体路径、对齐方式）、页边距
    */
   private getRenderSignature(): string {
     const bg = this.settings.background;
     const ts = this.settings.textStyle;
     const pm = this.settings.pageMargins;
     return `${bg.type}|${bg.color}|${bg.imagePath}|${bg.imageOpacity}|` +
-           `${ts.textColor}|${ts.fontSize}|${ts.lineHeight}|${ts.letterSpacing}|${ts.fontWeight}|${ts.textAlignment}|` +
+           `${ts.textColor}|${ts.fontSize}|${ts.lineHeight}|${ts.letterSpacing}|${ts.fontWeight}|${ts.fontFamily}|${ts.fontPath || ''}|${ts.textAlignment}|` +
            `${pm.top}|${pm.bottom}|${pm.left}|${pm.right}`;
   }
   
@@ -1716,6 +1738,8 @@ export struct TextReaderComponent {
       if (this.lastRenderSignature !== '') {
         logger.info(TAG, `渲染设置变化，清除 PixelMap 缓存`);
         this.releaseAllPixelMapCache();
+        // 设置变化时重新注册自定义字体
+        this.registerCustomFontIfNeeded();
       }
       this.lastRenderSignature = currentSignature;
       // 重新预加载
@@ -1940,6 +1964,7 @@ export struct TextReaderComponent {
             .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
             .letterSpacing(this.settings.textStyle.letterSpacing)
             .fontWeight(this.settings.textStyle.fontWeight)
+            .fontFamily(this.settings.textStyle.fontFamily)
             .textAlign(this.getTextAlign())
             .width('100%')
         })
@@ -2017,6 +2042,7 @@ export struct TextReaderComponent {
           .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
           .letterSpacing(this.settings.textStyle.letterSpacing)
           .fontWeight(this.settings.textStyle.fontWeight)
+          .fontFamily(this.settings.textStyle.fontFamily)
           .textAlign(this.getTextAlign())
           .padding({
             top: this.settings.pageMargins.top,
@@ -2038,6 +2064,7 @@ export struct TextReaderComponent {
           .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
           .letterSpacing(this.settings.textStyle.letterSpacing)
           .fontWeight(this.settings.textStyle.fontWeight)
+          .fontFamily(this.settings.textStyle.fontFamily)
           .textAlign(this.getTextAlign())
           .padding({
             top: this.settings.pageMargins.top,

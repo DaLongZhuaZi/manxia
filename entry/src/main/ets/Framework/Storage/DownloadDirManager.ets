@@ -169,7 +169,7 @@ export class DownloadDirManager {
     try {
       const initFilePath = `${this.downloadDirPath}/.manxia_init`;
       const file = fs.openSync(initFilePath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
-      fs.writeSync(file.fd, `漫侠应用目录初始化文件\n创建时间: ${new Date().toISOString()}`);
+      fs.writeSync(file.fd, `漫匣应用目录初始化文件\n创建时间: ${new Date().toISOString()}`);
       fs.closeSync(file.fd);
       logger.info(TAG, `初始化文件已创建: ${initFilePath}`);
     } catch (error) {

@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DownloadStatus } from '../Framework/Types/StatusEnums';
@@ -39,6 +40,8 @@ struct DownloadManagerPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'DownloadManagerPage';
 
@@ -71,6 +74,13 @@ struct DownloadManagerPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 加载下载任务
     this.loadDownloadTasks();
@@ -81,6 +91,7 @@ struct DownloadManagerPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 清除定时器
     if (this.updateTimer !== -1) {
@@ -366,6 +377,7 @@ struct DownloadManagerPage {
       Button({ stateEffect: true }) {
         Text('全部')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width(60)
@@ -381,6 +393,7 @@ struct DownloadManagerPage {
       Button({ stateEffect: true }) {
         Text('下载中')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width(70)
@@ -396,6 +409,7 @@ struct DownloadManagerPage {
       Button({ stateEffect: true }) {
         Text('已完成')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width(70)
@@ -423,10 +437,12 @@ struct DownloadManagerPage {
           Text(task.mangaTitle)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Text(task.chapterTitle)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .alignItems(HorizontalAlign.Start)
@@ -435,6 +451,7 @@ struct DownloadManagerPage {
         // 状态标签
         Text(this.getStatusText(task.status))
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .backgroundColor(this.getStatusColor(task.status))
@@ -448,6 +465,7 @@ struct DownloadManagerPage {
           Row() {
             Text(`${task.downloadedPages}/${task.totalPages} 页`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             
             Blank()
@@ -455,6 +473,7 @@ struct DownloadManagerPage {
             Text(`${task.progress}%`)
               .fontSize(12)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           }
           .width('100%')
@@ -469,12 +488,14 @@ struct DownloadManagerPage {
             Row() {
               Text(`速度: ${task.speed}`)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               
               Blank()
               
               Text(`剩余: ${task.remainingTime}`)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .width('100%')
@@ -488,6 +509,7 @@ struct DownloadManagerPage {
           Button({ stateEffect: true }) {
             Text('暂停')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
           .width(60)
@@ -499,6 +521,7 @@ struct DownloadManagerPage {
           Button({ stateEffect: true }) {
             Text('继续')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
           .width(60)
@@ -511,6 +534,7 @@ struct DownloadManagerPage {
         Button({ stateEffect: true }) {
           Text('删除')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
         .width(60)
@@ -538,6 +562,7 @@ struct DownloadManagerPage {
       Button({ stateEffect: true }) {
         Text('全部暂停')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width('48%')
@@ -549,6 +574,7 @@ struct DownloadManagerPage {
       Button({ stateEffect: true }) {
         Text('全部继续')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
       }
       .width('48%')
@@ -583,6 +609,7 @@ struct DownloadManagerPage {
               
               Text('加载中...')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .width('100%')
@@ -596,6 +623,7 @@ struct DownloadManagerPage {
               Column({ space: 20 }) {
                 Text('暂无下载任务')
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }
               .width('100%')

@@ -8,6 +8,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { eventBus, GameEvent, IEventPayload, CoverSelectionCompletedPayload } from '../Framework/EventBus';
 
 const TAG: string = 'CoverSelectionPage';
@@ -38,6 +39,8 @@ export struct CoverSelectionPage {
 
   // 主题相关
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `CoverSelectionPage_${Date.now()}`;
 
@@ -73,6 +76,13 @@ export struct CoverSelectionPage {
         this.themeState = newState;
       }
     );
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 此处不再主动预加载，改为在 onReady 解析 NavPathStack 参数后再触发
   }
@@ -84,6 +94,8 @@ export struct CoverSelectionPage {
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
     this.lifecycle.destroy();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     // 释放PixelMap资源，避免内存泄漏
     try {
       for (let i = 0; i < this.candidateThumbnails.length; i++) {
@@ -248,6 +260,7 @@ export struct CoverSelectionPage {
     Row() {
       Text('选择封面')
         .fontSize(20)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
     }
@@ -263,12 +276,15 @@ export struct CoverSelectionPage {
     Column() {
       if (this.isLoading) {
         Text('加载中...')
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       } else if (this.loadError !== '') {
         Text(this.loadError)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('error_text', this.themeState.currentTheme))
       } else if (!this.candidateThumbnails || this.candidateThumbnails.length === 0) {
         Text('没有可显示的缩略图')
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       } else {
         // 修复：避免 Scroll + List 双重滚动导致内容不可见，改用 Column 渲染
@@ -314,6 +330,7 @@ export struct CoverSelectionPage {
       Button({ stateEffect: true }) {
         Text('不设定封面')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
           .textAlign(TextAlign.Center)
           .width('100%')
@@ -329,6 +346,7 @@ export struct CoverSelectionPage {
       Button({ stateEffect: true }) {
         Text('设定封面')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_primary', this.themeState.currentTheme))
           .textAlign(TextAlign.Center)
           .width('100%')

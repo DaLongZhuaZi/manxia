@@ -117,6 +117,8 @@ export interface TextStyleSettings {
   fontWeight: number;
   /** 字体族名称 */
   fontFamily: string;
+  /** 自定义字体文件路径（可选） */
+  fontPath?: string;
   /** 文字对齐方式 */
   textAlignment: TextAlignment;
 }

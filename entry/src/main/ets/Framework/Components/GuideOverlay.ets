@@ -6,6 +6,7 @@
 
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 // 已弃用自定义 AnimatedButton，改用原生 ArkUI Button
 
 const TAG = 'GuideOverlay';
@@ -71,6 +72,7 @@ export struct GuideOverlay {
   onSkip?: () => void;
   onDismiss?: () => void;
   @Prop themeState?: ThemeAwareState;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   @State private overlayOpacity: number = 0;
   @State private tipOpacity: number = 0;
@@ -268,12 +270,14 @@ export struct GuideOverlay {
       // 标题
       Text(this.tip.title)
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.getCurrentThemeState().currentTheme))
 
       // 消息
       Text(this.tip.message)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.getCurrentThemeState().currentTheme))
         .lineHeight(22)
 
@@ -281,6 +285,7 @@ export struct GuideOverlay {
         Row() {
           Text('启用日志悬浮窗口')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.getCurrentThemeState().currentTheme))
           Toggle({ type: ToggleType.Switch, isOn: this.enableLogFloatingWindow })
             .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.getCurrentThemeState().currentTheme))
@@ -299,6 +304,7 @@ export struct GuideOverlay {
           Button({ stateEffect: true }) {
             Text(this.skipButtonText)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.getCurrentThemeState().currentTheme))
           }
             .height(36)
@@ -314,6 +320,7 @@ export struct GuideOverlay {
           Button({ stateEffect: true }) {
             Text(this.nextButtonText)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.getCurrentThemeState().currentTheme))
           }
             .height(36)

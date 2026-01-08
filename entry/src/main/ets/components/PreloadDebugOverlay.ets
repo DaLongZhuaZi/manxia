@@ -2,6 +2,7 @@
 // 职责: 显示漫画阅读器的预加载调试信息
 
 import { logger } from '../Utils/Logger';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 const TAG = 'PreloadDebugOverlay';
 
@@ -52,6 +53,7 @@ export interface PreloadDebugInfo {
 export struct PreloadDebugOverlay {
   @Link debugInfo: PreloadDebugInfo;
   @Prop visible: boolean;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   
   // 自动刷新定时器
   private refreshTimer: number = -1;
@@ -158,6 +160,7 @@ export struct PreloadDebugOverlay {
         Row() {
           Text('预加载调试信息')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(Color.White)
             .fontWeight(FontWeight.Bold)
           
@@ -165,6 +168,7 @@ export struct PreloadDebugOverlay {
           
           Text(`${this.debugInfo.currentPage + 1}/${this.debugInfo.totalPages}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor('#AAAAAA')
         }
         .width('100%')
@@ -227,9 +231,11 @@ export struct PreloadDebugOverlay {
     Column() {
       Text(label)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor('#AAAAAA')
       Text(value)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(color)
         .fontWeight(FontWeight.Medium)
         .margin({ top: 2 })
@@ -243,6 +249,7 @@ export struct PreloadDebugOverlay {
         .fill(color)
       Text(`${label}: ${count}`)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor('#CCCCCC')
     }
   }
@@ -258,12 +265,14 @@ export struct PreloadDebugOverlay {
       // 页码
       Text(`P${item.pageIndex + 1}`)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
         .width(35)
 
       // 状态文本
       Text(this.getStatusText(item.status))
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.getStatusColor(item.status))
         .width(50)
 
@@ -271,6 +280,7 @@ export struct PreloadDebugOverlay {
       if (item.status === PreloadItemStatus.COMPLETED && item.startTime && item.endTime) {
         Text(`${item.endTime - item.startTime}ms`)
           .fontSize(9)
+          .fontFamily(this.appFontFamily)
           .fontColor('#888888')
           .margin({ left: 4 })
       }
@@ -279,6 +289,7 @@ export struct PreloadDebugOverlay {
       if (item.status === PreloadItemStatus.FAILED && item.error) {
         Text(item.error.substring(0, 20))
           .fontSize(9)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FF5252')
           .margin({ left: 4 })
           .maxLines(1)
@@ -291,6 +302,7 @@ export struct PreloadDebugOverlay {
       if (item.url) {
         Text(item.url.substring(Math.max(0, item.url.length - 20)))
           .fontSize(9)
+          .fontFamily(this.appFontFamily)
           .fontColor('#666666')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })

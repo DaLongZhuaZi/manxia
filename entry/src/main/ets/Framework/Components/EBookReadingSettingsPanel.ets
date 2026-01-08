@@ -8,6 +8,7 @@ import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 import { EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
+import { getFontManager, SystemFont, CustomFont } from '../Managers/FontManager';
 
 const TAG = 'EBookReadingSettingsPanel';
 
@@ -30,6 +31,11 @@ export struct EBookReadingSettingsPanel {
   
   // 主题提示 Popup 显示状态
   @State showThemeHintPopup: boolean = false;
+  
+  // 字体选择相关
+  @State showFontPicker: boolean = false;
+  @State systemFonts: SystemFont[] = [];
+  @State customFonts: CustomFont[] = [];
 
   // 预设主题（自动模式会跟随系统主题，其他主题不会）
   private themes: ReadingTheme[] = [
@@ -98,6 +104,53 @@ export struct EBookReadingSettingsPanel {
     const newSettings = this.copySettings();
     newSettings.pageMargin = margin;
     this.onSettingsChange(newSettings);
+  }
+
+  /**
+   * 更新字体
+   */
+  private updateFont(fontFamily: string, fontPath: string): void {
+    const newSettings = this.copySettings();
+    newSettings.fontFamily = fontFamily;
+    newSettings.fontPath = fontPath;
+    this.onSettingsChange(newSettings);
+    logger.info(TAG, `字体已更新: ${fontFamily}, path=${fontPath}`);
+  }
+
+  /**
+   * 更新字体粗细
+   */
+  private updateFontWeight(weight: number): void {
+    const newSettings = this.copySettings();
+    newSettings.fontWeight = weight;
+    this.onSettingsChange(newSettings);
+  }
+
+  /**
+   * 获取当前字体显示名称
+   */
+  private getCurrentFontDisplayName(): string {
+    const currentFamily = this.settings.fontFamily;
+    
+    const systemFont = this.systemFonts.find(f => f.name === currentFamily);
+    if (systemFont) {
+      return systemFont.displayName;
+    }
+    
+    const customFont = this.customFonts.find(f => f.familyName === currentFamily);
+    if (customFont) {
+      return customFont.displayName;
+    }
+    
+    return '系统默认';
+  }
+
+  aboutToAppear(): void {
+    // 加载字体列表
+    const fontManager = getFontManager();
+    this.systemFonts = fontManager.getSystemFonts();
+    this.customFonts = fontManager.getCustomFonts();
+    logger.info(TAG, `字体列表已加载: 系统字体=${this.systemFonts.length}个, 自定义字体=${this.customFonts.length}个, 当前字体=${this.settings.fontFamily}`);
   }
 
   /**
@@ -196,6 +249,12 @@ export struct EBookReadingSettingsPanel {
 
           // 页边距
           this.buildPageMarginSetting()
+
+          Divider()
+            .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+
+          // 字体选择
+          this.buildFontSetting()
 
           Divider()
             .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
@@ -381,6 +440,120 @@ export struct EBookReadingSettingsPanel {
         .onChange((value: number) => {
           this.updateLineHeight(Math.round(value * 10) / 10);
         })
+    }
+  }
+
+  /**
+   * 构建字体选择设置
+   */
+  @Builder
+  buildFontSetting() {
+    Column({ space: 12 }) {
+      // 字体粗细
+      Row() {
+        Text('字体粗细')
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+
+        Blank()
+
+        Text(`${this.settings.fontWeight || 400}`)
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+          .fontWeight(FontWeight.Bold)
+      }
+      .width('100%')
+
+      Slider({
+        value: this.settings.fontWeight || 400,
+        min: 300,
+        max: 700,
+        step: 100,
+        style: SliderStyle.InSet
+      })
+        .width('100%')
+        .trackColor(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
+        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+        .showTips(false)
+        .onChange((value: number) => {
+          this.updateFontWeight(Math.round(value));
+        })
+
+      // 字体选择
+      Row() {
+        Text('字体')
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+
+        Blank()
+
+        Text(this.getCurrentFontDisplayName())
+          .fontSize(14)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme))
+      }
+      .width('100%')
+      .onClick(() => {
+        this.showFontPicker = !this.showFontPicker;
+      })
+
+      if (this.showFontPicker) {
+        Column({ space: 8 }) {
+          Text('系统字体')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+            .width('100%')
+
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(this.systemFonts, (font: SystemFont) => {
+              Button(font.displayName)
+                .fontSize(12)
+                .height(32)
+                .margin({ right: 8, bottom: 8 })
+                .backgroundColor(this.settings.fontFamily === font.name ?
+                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme) :
+                  ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.currentTheme))
+                .fontColor(this.settings.fontFamily === font.name ?
+                  Color.White :
+                  ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                .onClick(() => {
+                  this.updateFont(font.name, '');
+                })
+            }, (font: SystemFont) => font.id)
+          }
+          .width('100%')
+
+          if (this.customFonts.length > 0) {
+            Text('自定义字体')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
+              .width('100%')
+              .margin({ top: 8 })
+
+            Flex({ wrap: FlexWrap.Wrap }) {
+              ForEach(this.customFonts, (font: CustomFont) => {
+                Button(font.displayName)
+                  .fontSize(12)
+                  .height(32)
+                  .margin({ right: 8, bottom: 8 })
+                  .backgroundColor(this.settings.fontFamily === font.familyName ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.currentTheme))
+                  .fontColor(this.settings.fontFamily === font.familyName ?
+                    Color.White :
+                    ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
+                  .onClick(() => {
+                    this.updateFont(font.familyName, font.filePath);
+                  })
+              }, (font: CustomFont) => font.id)
+            }
+            .width('100%')
+          }
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.currentTheme))
+        .borderRadius(8)
+      }
     }
   }
 

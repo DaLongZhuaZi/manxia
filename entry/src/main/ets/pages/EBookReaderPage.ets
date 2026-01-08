@@ -8,6 +8,7 @@
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from '../Models/EBookModels';
@@ -37,7 +38,7 @@ import {
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition } from '../components/BookTransitionOverlay';
+import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 
 const TAG = 'EBookReaderPage';
 
@@ -52,6 +53,8 @@ export interface EBookReaderParams {
 struct EBookReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'EBookReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private lifecycle = new PageLifecycleManager('EBookReaderPage', { enableDebug: true });
@@ -203,6 +206,8 @@ struct EBookReaderPage {
     this.restoreNormalMode();
     // [修复] 发布阅读进度更新事件，通知书库页面刷新
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
+    // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
+    cancelTransition();
   }
 
   /**
@@ -586,6 +591,8 @@ struct EBookReaderPage {
     
     // 获取全局纯文本阅读器设置
     const globalFontSize = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_SIZE, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize);
+    const globalFontFamily = settingsManager.getString(SettingKeys.GLOBAL_TEXT_FONT_FAMILY, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontFamily);
+    const globalFontWeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FONT_WEIGHT, DEFAULT_TEXT_READER_SETTINGS.textStyle.fontWeight);
     const globalLineHeight = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_LINE_HEIGHT, DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight);
     const globalParagraphSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_PARAGRAPH_SPACING, DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing);
     const globalFirstLineIndent = settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_FIRST_LINE_INDENT, DEFAULT_TEXT_READER_SETTINGS.textStyle.firstLineIndent);
@@ -610,8 +617,8 @@ struct EBookReaderPage {
       
       if (isDefaultSettings) {
         // 使用全局设置
-        logger.info(TAG, `纯文本阅读器检测到默认设置，应用全局设置: 字体大小=${globalFontSize}, 背景色=${globalBgPreset.backgroundColor}`);
-        this.loadTextReaderSettingsFromGlobal(globalFontSize, globalLineHeight, globalParagraphSpacing, 
+        logger.info(TAG, `纯文本阅读器检测到默认设置，应用全局设置: 字体大小=${globalFontSize}, 字体=${globalFontFamily}, 背景色=${globalBgPreset.backgroundColor}`);
+        this.loadTextReaderSettingsFromGlobal(globalFontSize, globalFontFamily, globalFontWeight, globalLineHeight, globalParagraphSpacing, 
           globalFirstLineIndent, globalPageMargin, globalBgPreset, globalUseBgImage, globalBgImagePath, 
           globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalVolumeKeyNav, globalTapToTurn);
         // [修复] 应用全局设置后，设置 followSystemTheme=false，表示已初始化，下次使用保存的设置
@@ -625,8 +632,8 @@ struct EBookReaderPage {
       }
     } else {
       // 没有保存的设置，使用全局设置
-      logger.info(TAG, `纯文本阅读器无保存设置，应用全局设置: 字体大小=${globalFontSize}, 背景色=${globalBgPreset.backgroundColor}`);
-      this.loadTextReaderSettingsFromGlobal(globalFontSize, globalLineHeight, globalParagraphSpacing, 
+      logger.info(TAG, `纯文本阅读器无保存设置，应用全局设置: 字体大小=${globalFontSize}, 字体=${globalFontFamily}, 背景色=${globalBgPreset.backgroundColor}`);
+      this.loadTextReaderSettingsFromGlobal(globalFontSize, globalFontFamily, globalFontWeight, globalLineHeight, globalParagraphSpacing, 
         globalFirstLineIndent, globalPageMargin, globalBgPreset, globalUseBgImage, globalBgImagePath, 
         globalBgImageOpacity, globalPageTurnAnimation, globalKeepScreenOn, globalVolumeKeyNav, globalTapToTurn);
     }
@@ -636,7 +643,7 @@ struct EBookReaderPage {
    * 从全局设置加载纯文本阅读器设置
    */
   private loadTextReaderSettingsFromGlobal(
-    fontSize: number, lineHeight: number, paragraphSpacing: number, firstLineIndent: number,
+    fontSize: number, fontFamily: string, fontWeight: number, lineHeight: number, paragraphSpacing: number, firstLineIndent: number,
     pageMargin: number, bgPreset: PresetBackground, useBgImage: boolean, bgImagePath: string,
     bgImageOpacity: number, pageTurnAnimation: TextPageTurnAnimation, keepScreenOn: boolean,
     volumeKeyNav: boolean, tapToTurn: boolean
@@ -664,8 +671,9 @@ struct EBookReaderPage {
         firstLineIndent: firstLineIndent,
         letterSpacing: DEFAULT_TEXT_READER_SETTINGS.textStyle.letterSpacing,
         textColor: bgPreset.textColor,
-        fontWeight: DEFAULT_TEXT_READER_SETTINGS.textStyle.fontWeight,
-        fontFamily: DEFAULT_TEXT_READER_SETTINGS.textStyle.fontFamily,
+        fontWeight: fontWeight,
+        fontFamily: fontFamily,
+        fontPath: '',  // 全局设置暂不支持自定义字体路径
         textAlignment: DEFAULT_TEXT_READER_SETTINGS.textStyle.textAlignment
       },
       pageMargins: {
@@ -731,6 +739,7 @@ struct EBookReaderPage {
         textColor: settings.textColor,
         fontWeight: settings.fontWeight || 400,
         fontFamily: settings.fontFamily || 'HarmonyOS Sans',
+        fontPath: settings.fontPath || '',
         textAlignment: this.convertTextAlignment(settings.textAlignment)
       },
       pageMargins: {
@@ -1397,6 +1406,8 @@ struct EBookReaderPage {
       }, 50);
     } catch (error) {
       logger.error(TAG, `goBack error: ${error instanceof Error ? error.message : String(error)}`);
+      // [修复] 确保在异常情况下也能返回，重置过渡动画状态
+      cancelTransition();
       this.saveReadingProgress();
       this.pathStack.pop();
     }
@@ -1538,6 +1549,7 @@ struct EBookReaderPage {
         .fontSize(16)
         .fontColor('rgba(255, 255, 255, 0.8)')  // 白色半透明文字
         .margin({ top: 16 })
+        .fontFamily(this.appFontFamily)
     }
     .width('100%')
     .height('100%')
@@ -1555,14 +1567,17 @@ struct EBookReaderPage {
     Column({ space: 16 }) {
       Text('❌')
         .fontSize(48)
+        .fontFamily(this.appFontFamily)
 
       Text(this.errorMessage)
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.textColor)
         .textAlign(TextAlign.Center)
 
       Button('返回')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.pathStack.pop();
         })
@@ -2060,6 +2075,7 @@ struct EBookReaderPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
         .margin({ left: 12 })
+        .fontFamily(this.appFontFamily)
 
       // 菜单按钮
       Button() {
@@ -2096,10 +2112,12 @@ struct EBookReaderPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
         
         Text(`${this.currentChapterIndex + 1} / ${this.ebook?.chapters.length || 0}`)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 4 })
@@ -2220,6 +2238,7 @@ struct EBookReaderPage {
           Text('书籍信息')
             .fontColor($r('app.color.text_primary'))
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
           Blank().layoutWeight(1)
           SymbolGlyph($r('sys.symbol.arrow_right'))
             .fontSize(16)
@@ -2240,10 +2259,12 @@ struct EBookReaderPage {
           Text('字体大小')
             .fontColor($r('app.color.text_primary'))
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
           Blank().layoutWeight(1)
           Text(`${this.fontSize}`)
             .fontColor($r('app.color.text_secondary'))
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
         }
         .height(44)
         .padding({ left: 16, right: 16 })
@@ -2254,6 +2275,7 @@ struct EBookReaderPage {
             .fontSize(14)
             .width(60)
             .height(36)
+            .fontFamily(this.appFontFamily)
             .backgroundColor($r('app.color.background_secondary'))
             .fontColor($r('app.color.text_primary'))
             .onClick(() => {
@@ -2264,6 +2286,7 @@ struct EBookReaderPage {
             .fontSize(14)
             .width(60)
             .height(36)
+            .fontFamily(this.appFontFamily)
             .backgroundColor($r('app.color.background_secondary'))
             .fontColor($r('app.color.text_primary'))
             .onClick(() => {
@@ -2316,6 +2339,7 @@ struct EBookReaderPage {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
 
           Button() {
             Image($r('app.media.ic_close'))
@@ -2346,12 +2370,14 @@ struct EBookReaderPage {
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .layoutWeight(1)
+                  .fontFamily(this.appFontFamily)
 
                 if (index === this.currentChapterIndex) {
                   Text('当前')
                     .fontSize(12)
                     .fontColor($r('app.color.accent_primary'))
                     .margin({ left: 8 })
+                    .fontFamily(this.appFontFamily)
                 }
               }
               .width('100%')
@@ -2455,6 +2481,7 @@ struct EBookReaderPage {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
 
           Button() {
             Image($r('app.media.ic_close'))
@@ -2483,6 +2510,7 @@ struct EBookReaderPage {
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
                 .margin({ bottom: 8 })
+                .fontFamily(this.appFontFamily)
               
               Text('这是一段预览文字，用于展示当前的字体设置效果。调整下方的设置项可以实时看到效果变化。')
                 .fontSize(this.fontSize)
@@ -2492,6 +2520,7 @@ struct EBookReaderPage {
                 .padding(12)
                 .backgroundColor($r('app.color.background_secondary'))
                 .borderRadius(8)
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
@@ -2500,10 +2529,12 @@ struct EBookReaderPage {
               Text('字体大小')
                 .fontSize(14)
                 .fontColor($r('app.color.text_primary'))
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.fontSize}`)
                 .fontSize(14)
                 .fontColor($r('app.color.accent_primary'))
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
@@ -2512,6 +2543,7 @@ struct EBookReaderPage {
                 .fontSize(14)
                 .width(48)
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .backgroundColor($r('app.color.background_secondary'))
                 .fontColor($r('app.color.text_primary'))
                 .onClick(() => {
@@ -2534,6 +2566,7 @@ struct EBookReaderPage {
                 .fontSize(14)
                 .width(48)
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .backgroundColor($r('app.color.background_secondary'))
                 .fontColor($r('app.color.text_primary'))
                 .onClick(() => {
@@ -2547,10 +2580,12 @@ struct EBookReaderPage {
               Text('行高')
                 .fontSize(14)
                 .fontColor($r('app.color.text_primary'))
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.lineHeight.toFixed(1)}`)
                 .fontSize(14)
                 .fontColor($r('app.color.accent_primary'))
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
@@ -2571,10 +2606,12 @@ struct EBookReaderPage {
               Text('页边距')
                 .fontSize(14)
                 .fontColor($r('app.color.text_primary'))
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.pageMargin}`)
                 .fontSize(14)
                 .fontColor($r('app.color.accent_primary'))
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
@@ -2637,6 +2674,7 @@ struct EBookReaderPage {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
 
           Button() {
             Image($r('app.media.ic_close'))
@@ -2664,6 +2702,7 @@ struct EBookReaderPage {
                 .fontSize(14)
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
+                .fontFamily(this.appFontFamily)
 
               Row({ space: 12 }) {
                 // 浅色主题
@@ -2671,6 +2710,7 @@ struct EBookReaderPage {
                   Text('Aa')
                     .fontSize(16)
                     .fontColor('#333333')
+                    .fontFamily(this.appFontFamily)
                 }
                 .width(56)
                 .height(40)
@@ -2689,6 +2729,7 @@ struct EBookReaderPage {
                   Text('Aa')
                     .fontSize(16)
                     .fontColor('#5D4037')
+                    .fontFamily(this.appFontFamily)
                 }
                 .width(56)
                 .height(40)
@@ -2707,6 +2748,7 @@ struct EBookReaderPage {
                   Text('Aa')
                     .fontSize(16)
                     .fontColor('#D4D4D4')
+                    .fontFamily(this.appFontFamily)
                 }
                 .width(56)
                 .height(40)
@@ -2725,6 +2767,7 @@ struct EBookReaderPage {
                   Text('Aa')
                     .fontSize(16)
                     .fontColor('#C8E6C9')
+                    .fontFamily(this.appFontFamily)
                 }
                 .width(56)
                 .height(40)
@@ -2747,6 +2790,7 @@ struct EBookReaderPage {
               Text('跟随系统主题')
                 .fontSize(14)
                 .fontColor($r('app.color.text_primary'))
+                .fontFamily(this.appFontFamily)
               Blank()
               Toggle({ type: ToggleType.Switch, isOn: this.ebook?.readingSettings?.followSystemTheme !== false })
                 .onChange((isOn: boolean) => {
@@ -2769,6 +2813,7 @@ struct EBookReaderPage {
               .fontColor($r('app.color.text_muted'))
               .width('100%')
               .textAlign(TextAlign.Center)
+              .fontFamily(this.appFontFamily)
           }
           .width('100%')
           .padding({ left: 20, right: 20, top: 16, bottom: 20 })
@@ -2817,6 +2862,7 @@ struct EBookReaderPage {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
 
           Button() {
             Image($r('app.media.ic_close'))
@@ -2870,10 +2916,12 @@ struct EBookReaderPage {
                   .fontColor($r('app.color.text_primary'))
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .fontFamily(this.appFontFamily)
 
                 Text(this.ebook?.metadata.author || '未知作者')
                   .fontSize(14)
                   .fontColor($r('app.color.text_secondary'))
+                  .fontFamily(this.appFontFamily)
 
                 Text(this.ebook?.format || '')
                   .fontSize(12)
@@ -2881,6 +2929,7 @@ struct EBookReaderPage {
                   .padding({ left: 8, right: 8, top: 2, bottom: 2 })
                   .backgroundColor($r('app.color.accent_primary'))
                   .borderRadius(4)
+                  .fontFamily(this.appFontFamily)
               }
               .layoutWeight(1)
               .alignItems(HorizontalAlign.Start)
@@ -2904,12 +2953,14 @@ struct EBookReaderPage {
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
                   .width('100%')
+                  .fontFamily(this.appFontFamily)
 
                 Text(this.ebook.metadata.description)
                   .fontSize(13)
                   .fontColor($r('app.color.text_secondary'))
                   .lineHeight(20)
                   .width('100%')
+                  .fontFamily(this.appFontFamily)
               }
               .width('100%')
             }
@@ -2946,12 +2997,14 @@ struct EBookReaderPage {
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
         .width(80)
+        .fontFamily(this.appFontFamily)
 
       Text(value)
         .fontSize(14)
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
         .textAlign(TextAlign.End)
+        .fontFamily(this.appFontFamily)
     }
     .width('100%')
     .padding({ top: 4, bottom: 4 })

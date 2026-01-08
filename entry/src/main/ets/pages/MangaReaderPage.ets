@@ -10,6 +10,7 @@ import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UIContext, curves } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -41,7 +42,7 @@ import fs from '@ohos.file.fs';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
 import { MangaReaderChapterList } from '../components/MangaReaderChapterList';
 import { MangaInteractionOverlay, MangaInteractionOverlayParams } from '../components/MangaInteractionOverlay';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition } from '../components/BookTransitionOverlay';
+import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { DownloadStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
 import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from '../Framework/Utils/AutoPageTurnController';
@@ -239,6 +240,8 @@ export struct MangaReaderPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'MangaReaderPage';
   
@@ -779,9 +782,13 @@ export struct MangaReaderPage {
 
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // [修复] 发布阅读进度更新事件，通知书库页面刷新
     eventBus.publish(GameEvent.MANGA_READING_PROGRESS_UPDATED, new BasePayload());
+    
+    // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
+    cancelTransition();
     
     logger.lifecycle(TAG, '漫画阅读器页面即将消失');
   }
@@ -2404,6 +2411,10 @@ export struct MangaReaderPage {
       const mangaInfo = params?.manga?.title || (params?.mangaId ? `ID: ${params.mangaId}` : '未知');
       this.readerState.errorMessage = `初始化失败: ${errorMessage}\n\n漫画: ${mangaInfo}\n章节ID: ${params?.chapterId || '未指定'}\n页面索引: ${params?.pageIndex || 0}\n\n请检查网络连接或重试`;
       this.readerState.isLoading = false;
+      
+      // [修复] 初始化失败时也要通知过渡动画，防止覆盖层阻止交互
+      setReaderReady();
+      logger.info(TAG, '📤 初始化失败，仍通知过渡动画阅读器就绪（允许用户返回）');
       
       logger.error(TAG, '❌ 漫画阅读器初始化失败', errorMessage);
       logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
@@ -4399,6 +4410,9 @@ export struct MangaReaderPage {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '返回上一页失败', errorMessage);
+      // [修复] 确保在异常情况下也能返回，重置过渡动画状态
+      cancelTransition();
+      this.pathStack.pop();
     }
   }
 
@@ -4849,6 +4863,7 @@ export struct MangaReaderPage {
     Column() {
       Text(label)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.readingSettings.pageTurnAnimation === type ? 
           $r('app.color.accent') : $r('app.color.text_secondary'))
     }
@@ -4885,6 +4900,7 @@ export struct MangaReaderPage {
         Text(this.readerState.currentManga?.title || '漫画阅读器')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4894,6 +4910,7 @@ export struct MangaReaderPage {
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
+            .fontFamily(this.appFontFamily)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
       }
@@ -4934,6 +4951,7 @@ export struct MangaReaderPage {
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .width(40)
+          .fontFamily(this.appFontFamily)
           .textAlign(TextAlign.Center)
 
         Slider({
@@ -4964,6 +4982,7 @@ export struct MangaReaderPage {
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .width(40)
+          .fontFamily(this.appFontFamily)
           .textAlign(TextAlign.Center)
       }
       .width('100%')
@@ -5068,6 +5087,7 @@ export struct MangaReaderPage {
           .fontSize(16)
           .fontColor($r('app.color.text_secondary'))
           .margin({ top: 16 })
+          .fontFamily(this.appFontFamily)
         
         // 显示章节名称
         if (this.readerState.currentChapter?.title) {
@@ -5077,6 +5097,7 @@ export struct MangaReaderPage {
             .opacity(0.7)
             .margin({ top: 8 })
             .maxLines(2)
+            .fontFamily(this.appFontFamily)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
       }
@@ -5098,6 +5119,7 @@ export struct MangaReaderPage {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .margin({ top: 16 })
+          .fontFamily(this.appFontFamily)
 
         // 显示详细错误信息，支持多行显示
         Text(this.readerState.errorMessage)
@@ -5107,12 +5129,14 @@ export struct MangaReaderPage {
           .margin({ top: 8 })
           .padding({ left: 32, right: 32 })
           .maxLines(10)
+          .fontFamily(this.appFontFamily)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         // 操作按钮组
         Row() {
           Button('重试')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_white'))
             .backgroundColor($r('app.color.accent_primary'))
             .onClick(() => {
@@ -5129,6 +5153,7 @@ export struct MangaReaderPage {
 
           Button('返回')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_primary'))
             .backgroundColor(Color.Transparent)
             .border({ width: 1, color: $r('app.color.border_light') })
@@ -5158,6 +5183,7 @@ export struct MangaReaderPage {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .margin({ top: 16 })
+          .fontFamily(this.appFontFamily)
 
         Text('无法获取章节信息，请检查网络连接或返回重试')
           .fontSize(14)
@@ -5166,12 +5192,14 @@ export struct MangaReaderPage {
           .margin({ top: 8 })
           .padding({ left: 32, right: 32 })
           .maxLines(5)
+          .fontFamily(this.appFontFamily)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         // 操作按钮组
         Row() {
           Button('重新加载')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_white'))
             .backgroundColor($r('app.color.accent_primary'))
             .onClick(() => {
@@ -5188,6 +5216,7 @@ export struct MangaReaderPage {
 
           Button('返回')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_primary'))
             .backgroundColor(Color.Transparent)
             .border({ width: 1, color: $r('app.color.border_light') })
@@ -5388,11 +5417,13 @@ export struct MangaReaderPage {
           Row({ space: 12 }) {
             Text(this.dailyLimitMessage)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
             Blank().layoutWeight(1)
             Button('知道了')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
               .backgroundColor(Color.Transparent)
               .border({ width: 1, color: $r('app.color.border_light') })
@@ -5507,6 +5538,7 @@ export struct MangaReaderPage {
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
+                  .fontFamily(this.appFontFamily)
 
                 Button() {
                   Image($r('app.media.ic_close'))
@@ -5530,6 +5562,7 @@ export struct MangaReaderPage {
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
                 .margin({ bottom: 8 })
+                .fontFamily(this.appFontFamily)
 
               Row() {
                 Text(`${this.autoPageTurnIntervalSeconds}秒`)
@@ -5537,6 +5570,7 @@ export struct MangaReaderPage {
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.accent'))
                   .width(50)
+                  .fontFamily(this.appFontFamily)
 
                 Slider({
                   value: this.autoPageTurnIntervalSeconds,
@@ -5560,6 +5594,7 @@ export struct MangaReaderPage {
                   .fontSize(14)
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
+                  .fontFamily(this.appFontFamily)
 
                 Toggle({ type: ToggleType.Switch, isOn: this.autoPageTurnEnabled })
                   .selectedColor($r('app.color.accent'))
@@ -5621,10 +5656,12 @@ export struct MangaReaderPage {
                 Text('跳转到页面')
                   .fontColor($r('app.color.text_primary'))
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                 Blank().layoutWeight(1)
                 Text(`${this.readerState.currentPageIndex + 1}/${this.readerState.currentChapter?.pages.length || 0}`)
                   .fontColor($r('app.color.text_secondary'))
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
               }
               .height(44)
               .padding({ left: 16, right: 16 })
@@ -5643,6 +5680,7 @@ export struct MangaReaderPage {
                 Text('保存本页到图库')
                   .fontColor($r('app.color.text_primary'))
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                 Blank().layoutWeight(1)
               }
               .height(44)
@@ -5687,12 +5725,14 @@ export struct MangaReaderPage {
             Column({ space: 16 }) {
               Text('跳转到页面')
                 .fontSize(18)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.text_primary'))
 
               Text(`当前: ${this.readerState.currentPageIndex + 1} / ${this.readerState.currentChapter?.pages.length || 0}`)
                 .fontSize(14)
                 .fontColor($r('app.color.text_secondary'))
+                .fontFamily(this.appFontFamily)
 
               TextInput({ placeholder: '输入页码', text: this.jumpToPageInput })
                 .type(InputType.Number)
@@ -5708,6 +5748,7 @@ export struct MangaReaderPage {
                   .layoutWeight(1)
                   .height(40)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor($r('app.color.text_secondary'))
                   .backgroundColor($r('app.color.background_secondary'))
                   .onClick(() => {
@@ -5718,6 +5759,7 @@ export struct MangaReaderPage {
                   .layoutWeight(1)
                   .height(40)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor($r('app.color.text_on_accent'))
                   .backgroundColor($r('app.color.accent'))
                   .onClick(() => {
@@ -5765,6 +5807,7 @@ export struct MangaReaderPage {
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
+                  .fontFamily(this.appFontFamily)
 
                 Button() {
                   Image($r('app.media.ic_close'))
@@ -5788,6 +5831,7 @@ export struct MangaReaderPage {
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
                 .margin({ bottom: 8 })
+                .fontFamily(this.appFontFamily)
 
               // 第一行：基础动画
               Row() {
@@ -5815,6 +5859,7 @@ export struct MangaReaderPage {
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
                 .margin({ bottom: 8 })
+                .fontFamily(this.appFontFamily)
 
               // 拟真动画：卷页效果（只有单页LTR/RTL模式可用）
               Row() {
@@ -5826,10 +5871,12 @@ export struct MangaReaderPage {
                     Text('卷页')
                       .fontSize(13)
                       .fontColor($r('app.color.text_secondary'))
+                      .fontFamily(this.appFontFamily)
                     Text('(仅单页左右翻页)')
                       .fontSize(10)
                       .fontColor($r('app.color.text_secondary'))
                       .margin({ top: 2 })
+                      .fontFamily(this.appFontFamily)
                   }
                   .width(100)
                   .height(50)
@@ -5849,9 +5896,11 @@ export struct MangaReaderPage {
                     Text('卷页背面透明度')
                       .fontSize(14)
                       .fontColor($r('app.color.text_secondary'))
+                      .fontFamily(this.appFontFamily)
                     Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
                       .fontSize(14)
                       .fontColor($r('app.color.accent'))
+                      .fontFamily(this.appFontFamily)
                   }
                   .width('100%')
                   .justifyContent(FlexAlign.SpaceBetween)

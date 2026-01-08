@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { picker } from '@kit.CoreFileKit';
 import fs from '@ohos.file.fs';
@@ -49,6 +50,8 @@ export struct ReadingSettingsSubPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'ReadingSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -119,6 +122,13 @@ export struct ReadingSettingsSubPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -132,6 +142,7 @@ export struct ReadingSettingsSubPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -353,6 +364,7 @@ export struct ReadingSettingsSubPage {
       Text('漫画默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -360,12 +372,14 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认阅读模式')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Row({ space: 8 }) {
           Button({ stateEffect: true }) {
             Text('单页')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width(70)
@@ -385,6 +399,7 @@ export struct ReadingSettingsSubPage {
           Button({ stateEffect: true }) {
             Text('双页')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width(70)
@@ -404,6 +419,7 @@ export struct ReadingSettingsSubPage {
           Button({ stateEffect: true }) {
             Text('连续滚动')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width(80)
@@ -423,6 +439,7 @@ export struct ReadingSettingsSubPage {
           Button({ stateEffect: true }) {
             Text('条漫')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width(70)
@@ -448,12 +465,14 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认阅读方向')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Row({ space: 8 }) {
           Button({ stateEffect: true }) {
             Text('从左到右')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .layoutWeight(1)
@@ -473,6 +492,7 @@ export struct ReadingSettingsSubPage {
           Button({ stateEffect: true }) {
             Text('从右到左')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .layoutWeight(1)
@@ -492,6 +512,7 @@ export struct ReadingSettingsSubPage {
           Button({ stateEffect: true }) {
             Text('从上到下')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .layoutWeight(1)
@@ -515,6 +536,7 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认翻页动画')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
@@ -530,6 +552,7 @@ export struct ReadingSettingsSubPage {
             Button({ stateEffect: true }) {
               Text(item.label)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
             }
               .width(70)
@@ -555,6 +578,7 @@ export struct ReadingSettingsSubPage {
       Row() {
         Text('保持屏幕常亮')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.keepScreenOn })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -570,6 +594,7 @@ export struct ReadingSettingsSubPage {
       Row() {
         Text('音量键翻页')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.volumeKeyNavigation })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -598,6 +623,7 @@ export struct ReadingSettingsSubPage {
       Text('电子书默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -606,11 +632,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('默认字体大小')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.ebookFontSize}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -637,11 +665,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('默认行高')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.ebookLineHeight.toFixed(1)}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -668,11 +698,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('默认页边距')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.ebookPageMargin}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -698,6 +730,7 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认阅读主题')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Row({ space: 8 }) {
@@ -726,6 +759,7 @@ export struct ReadingSettingsSubPage {
               
               Text(theme.name)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 4 })
             }
@@ -744,6 +778,7 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认翻页模式')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Row({ space: 16 }) {
@@ -759,6 +794,7 @@ export struct ReadingSettingsSubPage {
               })
             Text('仿真翻页')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
 
@@ -774,6 +810,7 @@ export struct ReadingSettingsSubPage {
               })
             Text('横向滑动')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
         }
@@ -796,6 +833,7 @@ export struct ReadingSettingsSubPage {
       Text('纯文本阅读器默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -804,11 +842,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('默认字体大小')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.textFontSize}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -835,11 +875,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('默认行高')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.textLineHeight.toFixed(1)}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -866,11 +908,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('段间距')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.textParagraphSpacing}px`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -897,11 +941,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('首行缩进')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.textFirstLineIndent}字符`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -928,11 +974,13 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('默认页边距')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.textPageMargin}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -958,6 +1006,7 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认背景色')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .width('100%')
 
@@ -987,6 +1036,7 @@ export struct ReadingSettingsSubPage {
 
               Text(preset.name)
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .margin({ top: 4 })
                 .maxLines(1)
@@ -1009,6 +1059,7 @@ export struct ReadingSettingsSubPage {
       Column({ space: 8 }) {
         Text('默认翻页动画')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .width('100%')
 
@@ -1022,6 +1073,7 @@ export struct ReadingSettingsSubPage {
             Button({ stateEffect: true }) {
               Text(item.text)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(this.textPageTurnAnimation === item.anim
                   ? Color.White
                   : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -1050,6 +1102,7 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('保持屏幕常亮')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.textKeepScreenOn })
@@ -1064,6 +1117,7 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('音量键翻页')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.textVolumeKeyNav })
@@ -1078,6 +1132,7 @@ export struct ReadingSettingsSubPage {
         Row() {
           Text('点击翻页')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.textTapToTurn })

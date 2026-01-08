@@ -30,6 +30,7 @@ import { NovelSourceInfo } from '../Models/NovelModels';
 import { LegadoSourceImportResult, LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelSourceManagementPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { NovelSourceLoginPageParams } from './NovelSourceLoginPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
@@ -57,6 +58,8 @@ const TITLE_BAR_HEIGHT_MINI = 56;
 export struct NovelSourceManagementPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelSourceManagementPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -109,6 +112,13 @@ export struct NovelSourceManagementPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
   }
 
   private lifecycle = new PageLifecycleManager('NovelSourceManagementPage', { enableDebug: true });
@@ -116,6 +126,7 @@ export struct NovelSourceManagementPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   loadSources(): void {
@@ -463,6 +474,7 @@ export struct NovelSourceManagementPage {
       Text('书源管理')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .margin({ left: 16 })
       
@@ -523,6 +535,7 @@ export struct NovelSourceManagementPage {
       if (this.searchKeyword) {
         Text('取消')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .margin({ left: 12 })
           .onClick(() => {
@@ -544,6 +557,7 @@ export struct NovelSourceManagementPage {
         Text(`已选择 ${this.selectedSourceIds.size} 个`)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Blank()
@@ -551,6 +565,7 @@ export struct NovelSourceManagementPage {
         // 全选按钮
         Text('全选')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
@@ -561,6 +576,7 @@ export struct NovelSourceManagementPage {
         // 反选按钮
         Text('反选')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
@@ -576,6 +592,7 @@ export struct NovelSourceManagementPage {
         Button('置顶')
           .fontSize(12)
           .fontColor('#FFFFFF')
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(16)
           .height(32)
@@ -587,6 +604,7 @@ export struct NovelSourceManagementPage {
         // 批量取消置顶
         Button('取消置顶')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .borderRadius(16)
@@ -599,6 +617,7 @@ export struct NovelSourceManagementPage {
         // 批量启用
         Button('启用')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor('#52C41A')
           .borderRadius(16)
@@ -615,6 +634,7 @@ export struct NovelSourceManagementPage {
         // 批量禁用
         Button('禁用')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .borderRadius(16)
@@ -627,6 +647,7 @@ export struct NovelSourceManagementPage {
         // 批量校验
         Button('校验')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor('#FF9800')
           .borderRadius(16)
@@ -639,6 +660,7 @@ export struct NovelSourceManagementPage {
         // 批量删除
         Button('删除')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
           .borderRadius(16)
@@ -655,6 +677,7 @@ export struct NovelSourceManagementPage {
         // 添加到分组
         Button('添加分组')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor('#9C27B0')
           .borderRadius(16)
@@ -667,6 +690,7 @@ export struct NovelSourceManagementPage {
         // 从分组移除
         Button('移除分组')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .borderRadius(16)
@@ -679,6 +703,7 @@ export struct NovelSourceManagementPage {
         // 分组管理
         Button('管理分组')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
           .borderRadius(16)
@@ -762,13 +787,16 @@ export struct NovelSourceManagementPage {
           Text(String(this.totalSourceCount))
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           Row() {
             Text('总书源')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Text(` (${this.enabledSourceCount}已启用)`)
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           }
           .margin({ top: 4 })
@@ -779,9 +807,11 @@ export struct NovelSourceManagementPage {
           Text(`${this.workingSourceCount}/${this.validatedSourceCount}`)
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_success', this.themeState.currentTheme))
           Text('正常工作/已验证')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 4 })
         }
@@ -797,6 +827,7 @@ export struct NovelSourceManagementPage {
             // 全部按钮
             Text('全部')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(this.selectedGroup === '' ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .backgroundColor(this.selectedGroup === '' ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -808,6 +839,7 @@ export struct NovelSourceManagementPage {
             ForEach(this.sourceGroups, (group: string) => {
               Text(`${group}(${this.groupCounts.get(group) || 0})`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(this.selectedGroup === group ? '#FFFFFF' : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .backgroundColor(this.selectedGroup === group ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -852,6 +884,7 @@ export struct NovelSourceManagementPage {
         
         Text(this.operatingMessage || '处理中...')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .margin({ top: 16 })
       }
@@ -872,15 +905,18 @@ export struct NovelSourceManagementPage {
     Column() {
       Text('暂无书源')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       
       Text('点击右上角"导入"添加书源')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .margin({ top: 8 })
       
       Button('从剪贴板导入')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(20)
@@ -914,6 +950,7 @@ export struct NovelSourceManagementPage {
               .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             Text(`加载中... (${this.displayedSources.length}/${this.filteredSources.length})`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
               .margin({ left: 8 })
           }
@@ -950,6 +987,7 @@ export struct NovelSourceManagementPage {
       if (source.weight > 0) {
         Text('⭐')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .margin({ right: 4 })
       }
       
@@ -966,6 +1004,7 @@ export struct NovelSourceManagementPage {
           Text(source.name)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -974,6 +1013,7 @@ export struct NovelSourceManagementPage {
           if (source.searchable) {
             Text('搜索')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
               .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -984,6 +1024,7 @@ export struct NovelSourceManagementPage {
           if (source.hasExplore) {
             Text('发现')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor('#52C41A')
               .backgroundColor('#F6FFED')
               .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -995,11 +1036,13 @@ export struct NovelSourceManagementPage {
         
         Text(source.group || '未分组')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 4 })
         
         Text(source.url)
           .fontSize(11)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .margin({ top: 2 })
           .maxLines(1)
@@ -1067,6 +1110,7 @@ export struct NovelSourceManagementPage {
     Row() {
       Button('删除')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
         .width(80)
@@ -1094,11 +1138,13 @@ export struct NovelSourceManagementPage {
         Text('导入书源')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .margin({ top: 20 })
         
         Text('粘贴Legado书源JSON')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 8 })
         
@@ -1117,6 +1163,7 @@ export struct NovelSourceManagementPage {
         Row() {
           Button('从剪贴板粘贴')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
             .borderRadius(20)
@@ -1126,6 +1173,7 @@ export struct NovelSourceManagementPage {
           
           Button(this.isImporting ? '导入中...' : '导入')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .backgroundColor(this.isImporting ? 
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) : 
@@ -1141,6 +1189,7 @@ export struct NovelSourceManagementPage {
         
         Button('取消')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .borderRadius(20)

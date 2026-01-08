@@ -26,12 +26,14 @@ import {
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
-import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { curves } from '@kit.ArkUI';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition } from '../components/BookTransitionOverlay';
+import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 
 const TAG = 'NovelReaderPage';
 
@@ -39,6 +41,8 @@ const TAG = 'NovelReaderPage';
 export struct NovelReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private lifecycle = new PageLifecycleManager('NovelReaderPage', { enableDebug: true });
   private componentId: string = 'NovelReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -94,6 +98,13 @@ export struct NovelReaderPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     this.readStartTime = Date.now();
   }
 
@@ -101,10 +112,13 @@ export struct NovelReaderPage {
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     // 页面退出时保存阅读进度
     this.saveReadProgress();
     // 恢复正常显示模式
     this.restoreNormalMode();
+    // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
+    cancelTransition();
   }
 
   /**
@@ -170,7 +184,8 @@ export struct NovelReaderPage {
       );
     } catch (error) {
       logger.error(TAG, `关闭动画失败: ${String(error)}`);
-      // 动画失败时直接返回
+      // [修复] 动画失败时重置过渡状态并返回
+      cancelTransition();
       this.pathStack.pop();
     }
   }
@@ -578,6 +593,28 @@ export struct NovelReaderPage {
   }
 
   /**
+   * [修复] 记录浏览历史
+   * 确保阅读过的小说出现在历史浏览中，即使没有加入书架
+   */
+  private async recordBrowseHistory(param: NovelReaderPageParams): Promise<void> {
+    try {
+      const settingsManager = getNovelSettingsManager();
+      const historyInput: BrowseHistoryInput = {
+        sourceId: param.sourceId,
+        bookUrl: param.bookUrl,
+        bookName: param.bookName,
+        author: param.author || '',
+        coverUrl: param.coverUrl || '',
+        sourceName: param.sourceName || ''
+      };
+      await settingsManager.addBrowseHistory(historyInput);
+      logger.debug(TAG, `已记录浏览历史: ${param.bookName}`);
+    } catch (error) {
+      logger.warn(TAG, `记录浏览历史失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 点击中间区域回调 - 显示/隐藏工具栏
    * TextReaderComponent 内部已经处理了点击区域判断，这里只需要切换工具栏状态
    */
@@ -668,6 +705,9 @@ export struct NovelReaderPage {
         this.chapterId = `${this.bookId}_${param.chapterIndex}`;
         this.loadSettings();
         this.loadContent();
+        
+        // [修复] 记录浏览历史，确保阅读过的小说出现在历史浏览中
+        this.recordBrowseHistory(param);
       }
     })
     .hideTitleBar(true)
@@ -692,6 +732,7 @@ export struct NovelReaderPage {
         .fontSize(14)
         .fontColor($r('app.color.text_secondary'))
         .margin({ top: 12 })
+        .fontFamily(this.appFontFamily)
     }
     .width('100%')
     .height('100%')
@@ -744,6 +785,7 @@ export struct NovelReaderPage {
       // 书名
       Text(this.bookName)
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .maxLines(1)
@@ -774,10 +816,12 @@ export struct NovelReaderPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
         
         Text(`${this.currentChapterIndex + 1} / ${this.totalChapters}`)
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
+          .fontFamily(this.appFontFamily)
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 4 })
@@ -870,11 +914,13 @@ export struct NovelReaderPage {
           Text('目录')
             .fontSize(18)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor($r('app.color.text_primary'))
           Blank()
           Text(`共${this.totalChapters}章`)
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
+            .fontFamily(this.appFontFamily)
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 16, bottom: 12 })
@@ -886,6 +932,7 @@ export struct NovelReaderPage {
               Row() {
                 Text(chapter.title)
                   .fontSize(15)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(index === this.currentChapterIndex ? $r('app.color.accent_primary') : $r('app.color.text_primary'))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })

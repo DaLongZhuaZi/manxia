@@ -10,6 +10,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { logger } from '../Utils/Logger';
 import { LifecycleMonitorPanel } from '../components/LifecycleMonitorPanel';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { LengthMetrics } from '@kit.ArkUI';
@@ -20,6 +21,8 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 @ComponentV2
 struct LifecycleMonitorPage {
   @Local themeState: ThemeAwareState = new ThemeAwareState();
+  @Local fontState: FontAwareState = new FontAwareState();
+  @Local appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private lifecycle = new PageLifecycleManager('LifecycleMonitorPage', { enableDebug: true });
   private componentId: string = 'LifecycleMonitorPage';
@@ -38,12 +41,17 @@ struct LifecycleMonitorPage {
       logger.info(TAG, `主题切换: ${theme}`);
       this.themeState.currentTheme = theme;
     });
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+      this.appFontFamily = newState.appFontFamily;
+    });
   }
   
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
   
   build() {
