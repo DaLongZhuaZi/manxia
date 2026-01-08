@@ -26,6 +26,7 @@ import { logger } from '../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { getFontManager, SystemFont, CustomFont, FontType } from '../Framework/Managers/FontManager';
 
 const TAG = 'TextReaderSettingsPanel';
 
@@ -85,10 +86,27 @@ export struct TextReaderSettingsPanel {
   @State private showOtherBgImagePicker: boolean = false;
   /** 电子书数据管理器 */
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  /** 系统字体列表 */
+  @State private systemFonts: SystemFont[] = [];
+  /** 自定义字体列表 */
+  @State private customFonts: CustomFont[] = [];
+  /** 是否显示字体选择器 */
+  @State private showFontPicker: boolean = false;
   
   aboutToAppear(): void {
     // 加载所有可用的背景图片
     this.loadAllAvailableBackgroundImages();
+    // 加载字体列表
+    this.loadFontLists();
+  }
+  
+  /**
+   * 加载字体列表
+   */
+  private loadFontLists(): void {
+    const fontManager = getFontManager();
+    this.systemFonts = fontManager.getSystemFonts();
+    this.customFonts = fontManager.getCustomFonts();
   }
   
   /**
@@ -280,6 +298,7 @@ export struct TextReaderSettingsPanel {
           .fontColor(this.settings.textStyle.textColor)
           .letterSpacing(this.settings.textStyle.letterSpacing)
           .fontWeight(this.settings.textStyle.fontWeight)
+          .fontFamily(this.settings.textStyle.fontFamily)
           .width('100%')
           .padding(12)
           .backgroundColor(this.settings.background.type === BackgroundType.COLOR ? 
@@ -480,8 +499,108 @@ export struct TextReaderSettingsPanel {
         .width('100%')
       }
       .width('100%')
+      
+      // 字体选择
+      Column({ space: 8 }) {
+        Row() {
+          Text('字体')
+            .fontSize(14)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          Text(this.getCurrentFontDisplayName())
+            .fontSize(14)
+            .fontColor($r('app.color.accent_primary'))
+        }
+        .width('100%')
+        .onClick(() => {
+          this.showFontPicker = !this.showFontPicker;
+        })
+        
+        if (this.showFontPicker) {
+          Column({ space: 8 }) {
+            // 系统字体
+            Text('系统字体')
+              .fontSize(12)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            
+            Flex({ wrap: FlexWrap.Wrap }) {
+              ForEach(this.systemFonts, (font: SystemFont) => {
+                Button(font.displayName)
+                  .fontSize(12)
+                  .height(32)
+                  .margin({ right: 8, bottom: 8 })
+                  .backgroundColor(this.settings.textStyle.fontFamily === font.name ? 
+                    $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                  .fontColor(this.settings.textStyle.fontFamily === font.name ? 
+                    Color.White : $r('app.color.text_primary'))
+                  .onClick(() => {
+                    this.settings.textStyle.fontFamily = font.name;
+                    this.settings.textStyle.fontPath = ''; // 系统字体不需要路径
+                    this.updateAndNotify();
+                  })
+              }, (font: SystemFont) => font.id)
+            }
+            .width('100%')
+            
+            // 自定义字体
+            if (this.customFonts.length > 0) {
+              Text('自定义字体')
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+                .width('100%')
+                .margin({ top: 8 })
+              
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(this.customFonts, (font: CustomFont) => {
+                  Button(font.displayName)
+                    .fontSize(12)
+                    .height(32)
+                    .margin({ right: 8, bottom: 8 })
+                    .backgroundColor(this.settings.textStyle.fontFamily === font.familyName ? 
+                      $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                    .fontColor(this.settings.textStyle.fontFamily === font.familyName ? 
+                      Color.White : $r('app.color.text_primary'))
+                    .onClick(() => {
+                      this.settings.textStyle.fontFamily = font.familyName;
+                      this.settings.textStyle.fontPath = font.filePath;
+                      this.updateAndNotify();
+                    })
+                }, (font: CustomFont) => font.id)
+              }
+              .width('100%')
+            }
+          }
+          .width('100%')
+          .padding(12)
+          .backgroundColor($r('app.color.background_secondary'))
+          .borderRadius(8)
+        }
+      }
+      .width('100%')
     }
     .width('100%')
+  }
+  
+  /**
+   * 获取当前字体显示名称
+   */
+  private getCurrentFontDisplayName(): string {
+    const currentFamily = this.settings.textStyle.fontFamily;
+    
+    // 检查系统字体
+    const systemFont = this.systemFonts.find(f => f.name === currentFamily);
+    if (systemFont) {
+      return systemFont.displayName;
+    }
+    
+    // 检查自定义字体
+    const customFont = this.customFonts.find(f => f.familyName === currentFamily);
+    if (customFont) {
+      return customFont.displayName;
+    }
+    
+    return '系统默认';
   }
   
   /**

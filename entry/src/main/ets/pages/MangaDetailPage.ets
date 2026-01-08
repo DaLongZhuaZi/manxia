@@ -4,6 +4,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { Popup } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
@@ -263,6 +264,10 @@ struct MangaDetailPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `MangaDetailPage_${Date.now()}`;
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
+  
+  // 字体相关状态
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   // 数据服务
   private dataService: DataService = DataService.getInstance();
@@ -427,6 +432,15 @@ struct MangaDetailPage {
     };
     this.themeManager.onThemeChange(this.themeChangeCallback);
     
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+    
     // 初始化WebView控制器（用于网络漫画）
     try {
       this.webViewManager.setGlobalWebViewController(this.webViewController);
@@ -477,6 +491,9 @@ struct MangaDetailPage {
       this.themeChangeCallback = null;
       logger.debug(TAG, '主题变化监听器已清理');
     }
+    
+    // 清理字体感知
+    FontAwareHelper.cleanupFontAware(this.componentId);
 
     // 清理设备方向监听器
     if (this.deviceOrientationListener) {
@@ -4122,6 +4139,7 @@ struct MangaDetailPage {
           Text(this.currentManga?.title || '加载中...')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4140,6 +4158,7 @@ struct MangaDetailPage {
           if (this.currentManga?.metadata.authors) {
             Text(`作者: ${this.currentManga.metadata.authors}`)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .opacity(0.8)
               .width('100%')
@@ -4162,6 +4181,7 @@ struct MangaDetailPage {
           if (this.sourceName) {
             Text(`图源: ${this.sourceName}`)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .opacity(0.8)
               .width('100%')
@@ -4172,6 +4192,7 @@ struct MangaDetailPage {
           Row({ space: 8 }) {
             Text(this.getStatusText())
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 3, bottom: 3 })
               .backgroundColor(this.getStatusColor())
@@ -4180,6 +4201,7 @@ struct MangaDetailPage {
             if (this.currentManga?.metadata.publicationYear) {
               Text(`${this.currentManga.metadata.publicationYear}`)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .padding({ left: 6, right: 6, top: 3, bottom: 3 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -4193,6 +4215,7 @@ struct MangaDetailPage {
           if (this.hasReadingProgress()) {
             Text(`阅读进度: ${this.calculateReadingPercentage()}%`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .opacity(0.8)
               .width('100%')
@@ -4205,6 +4228,7 @@ struct MangaDetailPage {
           Row({ space: 4 }) {
             Text('NSFW')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Toggle({ type: ToggleType.Switch, isOn: this.mangaIsNSFW })
               .width(36)
@@ -4222,6 +4246,7 @@ struct MangaDetailPage {
             Button({ stateEffect: true }) {
               Text(this.hasReadingProgress() ? '继续阅读' : '开始阅读')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .textAlign(TextAlign.Center)
                 .width('100%')
@@ -4311,10 +4336,12 @@ struct MangaDetailPage {
       Text('简介')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
 
       Text(this.currentManga?.description || '')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .lineHeight(20)
         .maxLines(this.expandDescription ? 1000 : 3)
@@ -4330,6 +4357,7 @@ struct MangaDetailPage {
           ForEach(this.currentManga.metadata.genres, (genre: string) => {
             Text(genre)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
@@ -4365,10 +4393,12 @@ struct MangaDetailPage {
       Text('选择下载方式')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
       
       Button('下载所有')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.downloadAllChapters();
@@ -4377,6 +4407,7 @@ struct MangaDetailPage {
       
       Button('下载未读')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.downloadUnreadChapters();
           this.showDownloadOptions = false;
@@ -4394,10 +4425,12 @@ struct MangaDetailPage {
       Text('选择删除方式')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
       
       Button('删除已下载')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.deleteAllDownloadedChapters();
@@ -4406,6 +4439,7 @@ struct MangaDetailPage {
       
       Button('删除选中')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.deleteSelectedChapters();
           this.showDeleteOptions = false;
@@ -4423,10 +4457,12 @@ struct MangaDetailPage {
       Text('排序方式')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
       
       Button('按章节号正序')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.chapterSortKey = ChapterSortKey.CHAPTER_NUMBER;
@@ -4437,6 +4473,7 @@ struct MangaDetailPage {
       
       Button('按章节号倒序')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.chapterSortKey = ChapterSortKey.CHAPTER_NUMBER;
@@ -4447,6 +4484,7 @@ struct MangaDetailPage {
 
       Button('按发布时间正序')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.chapterSortKey = ChapterSortKey.PUBLISH_TIME;
@@ -4457,6 +4495,7 @@ struct MangaDetailPage {
 
       Button('按发布时间倒序')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.chapterSortKey = ChapterSortKey.PUBLISH_TIME;
           this.chapterSortOrder = ChapterSortOrder.DESCENDING;
@@ -4476,10 +4515,12 @@ struct MangaDetailPage {
       Text('筛选章节')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
       
       Button('所有章节')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.chapterFilter = ChapterFilterType.ALL;
@@ -4489,6 +4530,7 @@ struct MangaDetailPage {
       
       Button('未读章节')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.chapterFilter = ChapterFilterType.UNREAD;
@@ -4498,6 +4540,7 @@ struct MangaDetailPage {
       
       Button('已下载')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.chapterFilter = ChapterFilterType.DOWNLOADED;
           this.applyChapterFilters();
@@ -4506,6 +4549,7 @@ struct MangaDetailPage {
       
       Button('已添加书签')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .onClick(() => {
           this.chapterFilter = ChapterFilterType.BOOKMARKED;
           this.applyChapterFilters();
@@ -4525,6 +4569,7 @@ struct MangaDetailPage {
       Text(this.isSelectionMode ? `已选 (${this.selectedChapters.size})` : `章节 (${this.filteredChapters.length})`)
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -4551,6 +4596,7 @@ struct MangaDetailPage {
             // 下载按钮（在线漫画）
             Button('下载')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(Color.White)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -4574,6 +4620,7 @@ struct MangaDetailPage {
           // 删除按钮
           Button('删除')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(Color.White)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -4596,6 +4643,7 @@ struct MangaDetailPage {
           // 取消按钮
           Button('取消')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .backgroundColor(Color.Transparent)
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -4704,6 +4752,7 @@ struct MangaDetailPage {
       Text(this.getDisplayChapterTitle(chapter, index))
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.getChapterTitleColor(chapter))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4713,6 +4762,7 @@ struct MangaDetailPage {
       // 阅读进度
       Text(this.getChapterProgressText(chapter))
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .textAlign(TextAlign.Center)
 
@@ -4772,6 +4822,7 @@ struct MangaDetailPage {
         Text(this.getDisplayChapterTitle(chapter, index))
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(this.getChapterTitleColor(chapter))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -4779,6 +4830,7 @@ struct MangaDetailPage {
         // 阅读进度（总页数/当前页）
         Text(this.getChapterProgressText(chapter))
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
 
         // 发布日期和扫描组
@@ -4786,12 +4838,14 @@ struct MangaDetailPage {
           if (chapter.publishDate !== undefined) {
             Text(this.formatDetailedDate(this.getTimestampFromPublishDate(chapter.publishDate as number | Date)))
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
 
           if (chapter.scanlationGroup) {
             Text(`• ${chapter.scanlationGroup}`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
         }
@@ -4802,6 +4856,7 @@ struct MangaDetailPage {
           if (chapter.id === this.currentManga?.readingProgress.currentChapterId) {
             Text('正在阅读')
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -4809,6 +4864,7 @@ struct MangaDetailPage {
           } else if (this.isChapterRead(chapter)) {
             Text('已读')
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -4818,6 +4874,7 @@ struct MangaDetailPage {
           if (chapter.isDownloaded) {
             Text('已下载')
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -4825,6 +4882,7 @@ struct MangaDetailPage {
           } else if (chapter.downloadProgress > 0 && chapter.downloadProgress < 100) {
             Text(`下载中 ${chapter.downloadProgress}%`)
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -4985,11 +5043,13 @@ struct MangaDetailPage {
         Text('筛选章节')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
         Button('✕')
           .fontSize(20)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .backgroundColor(Color.Transparent)
           .width(32)
@@ -5042,6 +5102,7 @@ struct MangaDetailPage {
     Row() {
       Text(label)
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
       
@@ -5093,6 +5154,7 @@ struct MangaDetailPage {
           Text(this.currentManga?.title || '加载中...')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -5103,6 +5165,7 @@ struct MangaDetailPage {
           if (this.currentManga?.metadata.authors) {
             Text(`作者: ${this.currentManga.metadata.authors}`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .width('100%')
               .textAlign(TextAlign.Center)
@@ -5112,6 +5175,7 @@ struct MangaDetailPage {
           Row({ space: 8 }) {
             Text(this.getStatusText())
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 3, bottom: 3 })
               .backgroundColor(this.getStatusColor())
@@ -5120,6 +5184,7 @@ struct MangaDetailPage {
             if (this.currentManga?.metadata.publicationYear) {
               Text(`${this.currentManga.metadata.publicationYear}`)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .padding({ left: 6, right: 6, top: 3, bottom: 3 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -5135,6 +5200,7 @@ struct MangaDetailPage {
             Button({ stateEffect: true }) {
               Text(this.hasReadingProgress() ? '继续' : '开始')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
             }
             .height(32)
@@ -5191,11 +5257,13 @@ struct MangaDetailPage {
             Text('简介')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .width('100%')
 
             Text(this.currentManga?.description || '')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .lineHeight(18)
               .maxLines(this.expandDescription ? 1000 : 5)
@@ -5211,6 +5279,7 @@ struct MangaDetailPage {
                 ForEach(this.currentManga.metadata.genres, (genre: string) => {
                   Text(genre)
                     .fontSize(11)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                     .padding({ left: 6, right: 6, top: 3, bottom: 3 })
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
@@ -5252,6 +5321,7 @@ struct MangaDetailPage {
               LoadingProgress().width(32).height(32)
               Text('章节加载中...')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .padding(20)
@@ -5260,17 +5330,20 @@ struct MangaDetailPage {
             if (this.filteredChapters.length === 0) {
               Text('暂无章节')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .padding(20)
                 .textAlign(TextAlign.Center)
             } else {
               Text(`共 ${this.filteredChapters.length} 个章节`)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .padding({ left: 16, right: 16, top: 8, bottom: 8 })
               if (this.accessDenied) {
                 Text('未登录账号或权限不足，无法查看此漫画')
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
                   .padding({ left: 16, right: 16, bottom: 8 })
               }
@@ -5360,6 +5433,7 @@ struct MangaDetailPage {
 
               Text('加载中...')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .width('100%')
@@ -5375,11 +5449,13 @@ struct MangaDetailPage {
 
               Text(this.loadError)
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .textAlign(TextAlign.Center)
 
               Button('重试')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                 .borderRadius(8)
@@ -5424,6 +5500,7 @@ struct MangaDetailPage {
                       LoadingProgress().width(32).height(32)
                       Text('章节加载中...')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     }
                     .padding(20)
@@ -5432,17 +5509,20 @@ struct MangaDetailPage {
                     if (this.filteredChapters.length === 0) {
                       Text('暂无章节')
                         .fontSize(16)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                         .padding(20)
                         .textAlign(TextAlign.Center)
                     } else {
                       Text(`共 ${this.filteredChapters.length} 个章节`)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
                       if (this.accessDenied) {
                         Text('未登录账号或权限不足，无法查看此漫画')
                           .fontSize(13)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
                           .padding({ left: 16, right: 16, bottom: 8 })
                       }

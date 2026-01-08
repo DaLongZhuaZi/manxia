@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
@@ -16,6 +17,7 @@ import { AppInfoManager } from '../Framework/Managers/AppInfoManager';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 
 const TAG = 'AboutPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -32,6 +34,10 @@ struct AboutPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'AboutPage';
+  
+  // 字体相关状态
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private appInfoManager: AppInfoManager = AppInfoManager.getInstance();
 
   // 响应式布局相关状态
@@ -64,6 +70,15 @@ struct AboutPage {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
     
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+    
     // 初始化响应式布局
     this.initializeResponsiveLayout();
     await this.loadAppInfo();
@@ -74,6 +89,7 @@ struct AboutPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -172,14 +188,17 @@ struct AboutPage {
       Text(this.appName)
         .fontSize(28)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
       Text(`版本 ${this.appVersion} (${this.buildNumber})`)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
       Text(this.description)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .textAlign(TextAlign.Center)
         .maxLines(2)
@@ -200,11 +219,13 @@ struct AboutPage {
       Row() {
         Text(label)
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .layoutWeight(1)
 
         Text(value)
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .textAlign(TextAlign.End)
       }
@@ -245,6 +266,7 @@ struct AboutPage {
     Row() {
       Text(title)
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -313,6 +335,11 @@ struct AboutPage {
   @Builder
   buildActionButtons() {
     Column({ space: 0 }) {
+      this.buildButtonItem('更新日志', () => {
+        logger.info(TAG, '查看更新日志');
+        getChangelogManager().forceShowChangelog();
+      })
+
       this.buildButtonItem('检查更新', () => {
         logger.info(TAG, '检查更新');
         // TODO: 实现检查更新功能
@@ -361,16 +388,19 @@ struct AboutPage {
     Column({ space: 8 }) {
       Text('© 2025 DaLongZhuaZi')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .opacity(0.6)
 
       Text('基于 HarmonyOS Next API 18 构建')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .opacity(0.6)
 
       Text('Made with ❤️ in China')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .opacity(0.6)
     }

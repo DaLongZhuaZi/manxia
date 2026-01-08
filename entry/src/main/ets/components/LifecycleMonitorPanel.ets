@@ -13,6 +13,7 @@
 import { logger } from '../Utils/Logger';
 import { GlobalTaskCoordinator, PageStats, GlobalStats } from '../Framework/Lifecycle';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { promptAction } from '@kit.ArkUI';
 
@@ -22,6 +23,8 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 @Component
 export struct LifecycleMonitorPanel {
   @Prop currentTheme: ThemeType = ThemeType.DARK;
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State globalStats: GlobalStats = {
     totalPages: 0,
     totalTimers: 0,
@@ -39,6 +42,9 @@ export struct LifecycleMonitorPanel {
   private coordinator = GlobalTaskCoordinator.getInstance();
   
   aboutToAppear() {
+    FontAwareHelper.initializeFontAware('LifecycleMonitorPanel', this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
     this.refreshData();
     if (this.autoRefresh) {
       this.startAutoRefresh();
@@ -47,6 +53,7 @@ export struct LifecycleMonitorPanel {
   
   aboutToDisappear() {
     this.stopAutoRefresh();
+    FontAwareHelper.cleanupFontAware('LifecycleMonitorPanel');
   }
   
   /**
@@ -147,6 +154,7 @@ export struct LifecycleMonitorPanel {
       Row() {
         Text('生命周期监控面板')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
           .layoutWeight(1)
@@ -155,6 +163,7 @@ export struct LifecycleMonitorPanel {
         Row() {
           Text(this.autoRefresh ? '自动' : '手动')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
             .margin({ right: 4 })
           
@@ -172,6 +181,7 @@ export struct LifecycleMonitorPanel {
         Button('刷新')
           .fontSize(12)
           .height(28)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
           .onClick(() => {
@@ -187,12 +197,14 @@ export struct LifecycleMonitorPanel {
         Row() {
           Text('全局统计')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
             .layoutWeight(1)
           
           Text(`更新: ${this.lastUpdateTime}`)
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.currentTheme))
         }
         .width('100%')
@@ -245,6 +257,7 @@ export struct LifecycleMonitorPanel {
           Row() {
             Text(`页面详情 (${this.pageStatsList.length})`)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
               .layoutWeight(1)
@@ -252,6 +265,7 @@ export struct LifecycleMonitorPanel {
             Button(this.isExpanded ? '收起' : '展开')
               .fontSize(12)
               .height(24)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.currentTheme))
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
               .onClick(() => {
@@ -283,6 +297,7 @@ export struct LifecycleMonitorPanel {
         Column() {
           Text('暂无活跃页面')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.currentTheme))
             .margin({ top: 20, bottom: 20 })
         }
@@ -297,6 +312,7 @@ export struct LifecycleMonitorPanel {
         Button('导出日志')
           .fontSize(14)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
           .onClick(() => {
@@ -306,6 +322,7 @@ export struct LifecycleMonitorPanel {
         Button('紧急清理')
           .fontSize(14)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .backgroundColor('#F44336')
           .fontColor('#FFFFFF')
           .margin({ left: 8 })
@@ -330,11 +347,13 @@ export struct LifecycleMonitorPanel {
     Column() {
       Text(value.toString())
         .fontSize(20)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(color)
       
       Text(label)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
         .margin({ top: 2 })
     }
@@ -355,12 +374,14 @@ export struct LifecycleMonitorPanel {
       Row() {
         Text(`${index + 1}. ${page.pageId}`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
           .layoutWeight(1)
         
         Text(this.formatUptime(page.uptime))
           .fontSize(10)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.currentTheme))
       }
       .width('100%')
@@ -389,11 +410,13 @@ export struct LifecycleMonitorPanel {
     Row() {
       Text(label)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.currentTheme))
         .margin({ right: 2 })
       
       Text(count.toString())
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(color)
         .fontWeight(FontWeight.Bold)
     }

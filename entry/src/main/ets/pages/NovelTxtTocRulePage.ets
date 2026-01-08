@@ -15,6 +15,7 @@ import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { getNovelTxtTocRuleManager, TxtTocRule, AddTxtTocRuleParams } from '../Framework/Novel/NovelTxtTocRuleManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 
 const TAG = 'NovelTxtTocRulePage';
@@ -24,6 +25,8 @@ const TITLE_BAR_HEIGHT_MINI = 56;
 export struct NovelTxtTocRulePage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelTxtTocRulePage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -49,10 +52,14 @@ export struct NovelTxtTocRulePage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
   }
 
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   async loadRules(): Promise<void> {
@@ -459,10 +466,12 @@ export struct NovelTxtTocRulePage {
     Column() {
       Text('暂无TXT目录规则')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       
       Button('添加规则')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(20)
@@ -508,6 +517,7 @@ export struct NovelTxtTocRulePage {
       Column() {
         Text(rule.name)
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
@@ -515,6 +525,7 @@ export struct NovelTxtTocRulePage {
         
         Text(rule.rule)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 4 })
           .maxLines(1)
@@ -523,6 +534,7 @@ export struct NovelTxtTocRulePage {
         if (rule.example) {
           Text(`示例: ${rule.example}`)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .margin({ top: 2 })
             .maxLines(1)
@@ -555,6 +567,7 @@ export struct NovelTxtTocRulePage {
     Row() {
       Button('删除')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
         .width(80)
@@ -580,6 +593,7 @@ export struct NovelTxtTocRulePage {
       Column() {
         Text(this.editingRule ? '编辑规则' : '添加规则')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .margin({ top: 20 })
@@ -620,6 +634,7 @@ export struct NovelTxtTocRulePage {
         // 测试区域
         Text('测试正则表达式')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 16 })
           .alignSelf(ItemAlign.Start)
@@ -636,6 +651,7 @@ export struct NovelTxtTocRulePage {
         
         Button('测试')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
           .borderRadius(16)
@@ -645,6 +661,7 @@ export struct NovelTxtTocRulePage {
         if (this.testResult) {
           Text(this.testResult)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.testResult.startsWith('✓') ? '#52C41A' : '#FF4D4F')
             .margin({ top: 8 })
             .maxLines(5)
@@ -655,6 +672,7 @@ export struct NovelTxtTocRulePage {
         Row() {
           Button('取消')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
             .borderRadius(20)
@@ -667,6 +685,7 @@ export struct NovelTxtTocRulePage {
           
           Button('保存')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .borderRadius(20)

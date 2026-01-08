@@ -6,6 +6,7 @@
 
 import { logger } from '../Utils/Logger';
 import { ReadingMode, ReadingDirection } from '../Models/MangaModels';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 const TAG = 'MangaInteractionOverlay';
 
@@ -50,6 +51,7 @@ interface ColorScheme {
 @Component
 export struct MangaInteractionOverlay {
   @Prop params: MangaInteractionOverlayParams;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State private zones: InteractionZone[] = [];
   @State private overlayOpacity: number = 0;
   @State private modeDescription: string = '';
@@ -440,10 +442,12 @@ export struct MangaInteractionOverlay {
           Text(zone.icon)
             .fontSize(48)
             .margin({ bottom: 12 })
+            .fontFamily(this.appFontFamily)
         }
         
         Text(zone.label)
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.getColorScheme(zone.type).text)
           .textAlign(TextAlign.Center)
@@ -470,12 +474,14 @@ export struct MangaInteractionOverlay {
       // 标题
       Text('交互说明')
         .fontSize(24)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(Color.White)
       
       // 模式描述
       Text(this.modeDescription)
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor('rgba(255, 255, 255, 0.9)')
         .margin({ bottom: 8 })
       
@@ -485,9 +491,11 @@ export struct MangaInteractionOverlay {
           Row({ space: 8 }) {
             Text('●')
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontColor('rgba(33, 150, 243, 1)')
             Text('蓝色区域：上一页')
               .fontSize(15)
+              .fontFamily(this.appFontFamily)
               .fontColor('rgba(33, 150, 243, 1)')
           }
         }
@@ -496,9 +504,11 @@ export struct MangaInteractionOverlay {
           Row({ space: 8 }) {
             Text('●')
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontColor('rgba(76, 175, 80, 1)')
             Text('绿色区域：下一页')
               .fontSize(15)
+              .fontFamily(this.appFontFamily)
               .fontColor('rgba(76, 175, 80, 1)')
           }
         }
@@ -507,9 +517,11 @@ export struct MangaInteractionOverlay {
           Row({ space: 8 }) {
             Text('●')
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontColor('rgba(255, 152, 0, 1)')
             Text('橙色区域：显示/隐藏工具栏')
               .fontSize(15)
+              .fontFamily(this.appFontFamily)
               .fontColor('rgba(255, 152, 0, 1)')
           }
         }
@@ -519,6 +531,7 @@ export struct MangaInteractionOverlay {
       // 关闭提示
       Text('点击任意位置关闭提示')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('rgba(255, 255, 255, 0.7)')
         .margin({ top: 12 })
     }

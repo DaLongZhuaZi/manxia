@@ -18,6 +18,9 @@ import { AppNotificationManager } from './Framework/Managers/NotificationManager
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { uiContextManager } from './Framework/Managers/UIContextManager';
 import { ProxyManager } from './Framework/Network/ProxyManager';
+import { getFontManager } from './Framework/Managers/FontManager';
+import { getDownloadSyncManager } from './Framework/Managers/DownloadSyncManager';
+import { getChangelogManager } from './Framework/Managers/ChangelogManager';
 
 export default class EntryAbility extends UIAbility {
 
@@ -79,6 +82,47 @@ export default class EntryAbility extends UIAbility {
     
     // 初始化代理管理器
     this.initializeProxyManager();
+    
+    // 初始化字体管理器
+    this.initializeFontManager();
+    
+    // 初始化更新日志管理器
+    this.initializeChangelogManager();
+  }
+  
+  /**
+   * 初始化字体管理器
+   */
+  private async initializeFontManager(): Promise<void> {
+    try {
+      const fontManager = getFontManager();
+      await fontManager.initialize(this.context);
+      logger.info('EntryAbility', '✅ 字体管理器初始化成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 字体管理器初始化失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 初始化更新日志管理器
+   */
+  private async initializeChangelogManager(): Promise<void> {
+    try {
+      const changelogManager = getChangelogManager();
+      await changelogManager.initialize(this.context);
+      logger.info('EntryAbility', `✅ 更新日志管理器初始化成功，当前版本: ${changelogManager.getCurrentVersion()}`);
+      
+      // 检查是否需要显示更新日志（新版本首次启动）
+      // 注意：实际显示会在主页面加载后触发，这里只是初始化
+      if (changelogManager.shouldShowChangelog()) {
+        logger.info('EntryAbility', '📋 检测到新版本，将在主页面显示更新日志');
+        AppStorage.setOrCreate('shouldShowChangelog', true);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 更新日志管理器初始化失败: ${errorMessage}`);
+    }
   }
   
   /**
@@ -134,6 +178,21 @@ export default class EntryAbility extends UIAbility {
   }
 
   /**
+   * 初始化Download同步管理器
+   * 检查并创建保留文件夹（ebooks, manga, storage, covers, temp, backup）
+   */
+  private async initializeDownloadSyncManager(): Promise<void> {
+    try {
+      const downloadSyncManager = getDownloadSyncManager();
+      await downloadSyncManager.initialize();
+      logger.info('EntryAbility', '✅ Download同步管理器初始化成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ Download同步管理器初始化失败: ${errorMessage}`);
+    }
+  }
+
+  /**
    * 初始化下载管理器
    */
   private async initializeDownloadManager(): Promise<void> {
@@ -181,6 +240,9 @@ export default class EntryAbility extends UIAbility {
         
         // 数据库初始化成功后，初始化设置管理器
         await this.initializeAppStorage();
+        
+        // 初始化Download同步管理器（检查并创建保留文件夹）
+        await this.initializeDownloadSyncManager();
         
         // 初始化下载管理器（不请求通知权限，在MainMenuPage首次显示时请求）
         await this.initializeDownloadManager();

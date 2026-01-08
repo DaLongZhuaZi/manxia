@@ -7,6 +7,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { DataManager } from '../Framework/Data/DataManager';
 import { SourceRepositoryManager } from '../Framework/Source/SourceRepositoryManager';
@@ -36,6 +37,8 @@ interface SourceInfo {
 @Component
 export struct SourceManagementPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State sourceList: SourceInfo[] = [];
   @State filteredSourceList: SourceInfo[] = [];
   @State searchText: string = '';
@@ -54,6 +57,15 @@ export struct SourceManagementPage {
     // 初始化主题
     ThemeAwareHelper.initThemeAware(this.themeState, this.themeManager, 'SourceManagementPage');
     
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      'SourceManagementPage',
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+    
     // 初始化代理管理器并加载配置
     this.proxyManager.initialize().then(() => {
       this.proxyConfig = this.proxyManager.getConfig();
@@ -68,6 +80,7 @@ export struct SourceManagementPage {
   aboutToDisappear() {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.themeState, this.themeManager, 'SourceManagementPage');
+    FontAwareHelper.cleanupFontAware('SourceManagementPage');
   }
 
   /**
@@ -269,6 +282,7 @@ export struct SourceManagementPage {
         
         Button('导入')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onClick(() => {
             this.showImportDialog = true;
@@ -280,10 +294,12 @@ export struct SourceManagementPage {
       Row() {
         Text(`共${this.sourceList.length}个图源`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text(`已启用${this.sourceList.filter((s: SourceInfo) => s.isEnabled).length}个`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
           .margin({ left: 16 })
       }
@@ -306,6 +322,7 @@ export struct SourceManagementPage {
       
       Text('加载中...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .width('100%')
@@ -326,11 +343,13 @@ export struct SourceManagementPage {
       
       Text(this.searchText ? '未找到匹配的图源' : '暂无图源')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       
       if (!this.searchText) {
         Button('导入图源')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onClick(() => {
             this.showImportDialog = true;
@@ -384,6 +403,7 @@ export struct SourceManagementPage {
             Text(source.name.charAt(0).toUpperCase())
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           }
           .width(48)
@@ -398,10 +418,12 @@ export struct SourceManagementPage {
           Text(source.name)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Text(source.baseUrl)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -421,6 +443,7 @@ export struct SourceManagementPage {
       if (source.description) {
         Text(source.description)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -430,14 +453,17 @@ export struct SourceManagementPage {
       Row({ space: 16 }) {
         Text(`版本: ${source.version}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         
         Text(`语言: ${source.language}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         
         Text(`优先级: ${source.priority}`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
@@ -447,6 +473,7 @@ export struct SourceManagementPage {
         Button('测试')
           .fontSize(12)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .onClick(() => {
             logger.info(TAG, `测试图源: ${source.name}`);
@@ -455,6 +482,7 @@ export struct SourceManagementPage {
         Button('编辑')
           .fontSize(12)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .onClick(() => {
             logger.info(TAG, `编辑图源: ${source.name}`);
@@ -463,6 +491,7 @@ export struct SourceManagementPage {
         Button('删除')
           .fontSize(12)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_red', this.themeState.currentTheme))
           .onClick(async () => {
             await this.deleteSource(source);

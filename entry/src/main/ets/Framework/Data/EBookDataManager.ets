@@ -10,6 +10,7 @@ import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookF
 import { logger } from '../../Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
+import { fileIo as fs } from '@kit.CoreFileKit';
 
 const TAG = 'EBookDataManager';
 
@@ -1134,37 +1135,82 @@ export class EBookDataManager {
   
   /**
    * 删除电子书相关文件
+   * [修复] 删除整个电子书文件夹
    */
   private async deleteEBookFiles(ebook: EBook): Promise<void> {
     try {
-      // 静态导入fs模块
-      const fs = await import('@ohos.file.fs');
-      
-      // 删除电子书文件
+      // [修复] 尝试删除整个电子书文件夹
       if (ebook.filePath) {
-        try {
-          // 检查文件是否存在
-          const exists = fs.default.accessSync(ebook.filePath);
-          logger.info(TAG, `电子书文件存在检查: ${ebook.filePath}, exists=${exists}`);
-          fs.default.unlinkSync(ebook.filePath);
-          logger.info(TAG, `成功删除电子书文件: ${ebook.filePath}`);
-        } catch (e) {
-          logger.warn(TAG, `电子书文件不存在或删除失败: ${ebook.filePath}, 错误: ${String(e)}`);
-        }
-      }
-      
-      // 删除封面图片
-      if (ebook.metadata.coverImagePath) {
-        try {
-          fs.default.accessSync(ebook.metadata.coverImagePath);
-          fs.default.unlinkSync(ebook.metadata.coverImagePath);
-          logger.info(TAG, `成功删除封面图片: ${ebook.metadata.coverImagePath}`);
-        } catch (e) {
-          logger.warn(TAG, `封面图片不存在或删除失败: ${ebook.metadata.coverImagePath}, 错误: ${String(e)}`);
+        // 获取电子书所在的文件夹路径
+        const folderPath = ebook.filePath.substring(0, ebook.filePath.lastIndexOf('/'));
+        
+        // 检查是否是ebooks子目录下的文件夹（避免误删其他目录）
+        if (folderPath.includes('/ebooks/') || folderPath.includes('/novel/')) {
+          try {
+            if (fs.accessSync(folderPath)) {
+              // 递归删除文件夹
+              this.deleteDirectoryRecursive(folderPath);
+              logger.info(TAG, `成功删除电子书文件夹: ${folderPath}`);
+            }
+          } catch (e) {
+            logger.warn(TAG, `删除电子书文件夹失败: ${folderPath}, 错误: ${String(e)}`);
+            // 回退：尝试只删除文件
+            this.deleteFileIfExists(ebook.filePath);
+            if (ebook.metadata.coverImagePath) {
+              this.deleteFileIfExists(ebook.metadata.coverImagePath);
+            }
+          }
+        } else {
+          // 不是标准目录结构，只删除文件
+          this.deleteFileIfExists(ebook.filePath);
+          if (ebook.metadata.coverImagePath) {
+            this.deleteFileIfExists(ebook.metadata.coverImagePath);
+          }
         }
       }
     } catch (error) {
       logger.error(TAG, `删除电子书文件失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 递归删除目录
+   */
+  private deleteDirectoryRecursive(dirPath: string): void {
+    try {
+      if (!fs.accessSync(dirPath)) {
+        return;
+      }
+      
+      const entries: string[] = fs.listFileSync(dirPath);
+      for (const entry of entries) {
+        const fullPath = `${dirPath}/${entry}`;
+        const stat: fs.Stat = fs.statSync(fullPath);
+        
+        if (stat.isDirectory()) {
+          this.deleteDirectoryRecursive(fullPath);
+        } else {
+          fs.unlinkSync(fullPath);
+        }
+      }
+      
+      fs.rmdirSync(dirPath);
+    } catch (error) {
+      logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
+    }
+  }
+
+  /**
+   * 删除文件（如果存在）
+   */
+  private deleteFileIfExists(filePath: string): void {
+    try {
+      if (fs.accessSync(filePath)) {
+        fs.unlinkSync(filePath);
+        logger.info(TAG, `成功删除文件: ${filePath}`);
+      }
+    } catch (e) {
+      logger.warn(TAG, `文件不存在或删除失败: ${filePath}`);
     }
   }
 }

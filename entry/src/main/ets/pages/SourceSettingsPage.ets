@@ -7,6 +7,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, UIContext } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
@@ -19,6 +20,7 @@ import CookieManager from '../Framework/Managers/CookieManager';
 import { SourceLoginPageParams } from './SourceLoginPage';
 import { ReadingMode, ReadingDirection, PageTurnAnimationType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../Models/EBookModels';
+import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 
 const TAG: string = 'SourceSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -77,7 +79,10 @@ export struct SourceSettingsPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = `SourceSettingsPage_${Date.now()}`;
 
   private dataManager: DataManager = DataManager.getInstance();
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
@@ -174,6 +179,13 @@ export struct SourceSettingsPage {
     };
     this.deviceAdaptationManager.addListener(this.deviceOrientationListener);
 
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     logger.info(TAG, '=== aboutToAppear 结束 ===');
   }
 
@@ -182,6 +194,62 @@ export struct SourceSettingsPage {
     logger.info(TAG, '=== onPageShow 结束 ===');
   }
 
+  private showSourceSettingsHelp(): void {
+    const helpContent = `# 图源设置帮助
+
+## 功能介绍
+
+图源设置页面允许您配置特定图源的个性化设置，包括阅读偏好、网络设置等。
+
+## 阅读设置
+
+### 阅读方向
+- **从左到右**: 适合国漫、欧美漫画
+- **从右到左**: 适合日漫
+- **垂直滚动**: 条漫模式
+
+### 阅读模式
+- **单页**: 每次显示一页
+- **双页**: 同时显示两页
+
+### 翻页动画
+选择您喜欢的翻页效果。
+
+## 网络设置
+
+### 镜像站点
+如果原站点访问较慢，可以选择镜像站点加速访问。
+
+### User-Agent
+自定义请求的User-Agent，用于解决某些网站的访问限制。
+
+### 缓存设置
+- **缓存大小**: 设置图片缓存的最大容量
+- **预加载**: 设置预加载的页数
+
+## 登录管理
+
+### 登录状态
+显示当前图源的登录状态。
+
+### 重新登录
+如果登录失效，点击重新登录。
+
+### 清除登录
+清除当前图源的登录信息和Cookie。
+
+## 自定义设置
+
+部分图源支持额外的自定义设置项，这些设置由图源作者定义。
+
+## 注意事项
+
+- 设置仅对当前图源生效
+- 部分设置需要重新加载内容才能生效
+- 清除登录后需要重新登录才能访问需要登录的内容`;
+
+    getHelpPanelManagerV2().showInlineHelp('图源设置帮助', helpContent);
+  }
 
   /**
    * 加载图源配置中的镜像站点和自定义设置
@@ -773,12 +841,14 @@ export struct SourceSettingsPage {
               Column() {
                 Text('换源')
                   .fontSize(18)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .margin({ bottom: 12 })
 
                 Text(`当前站点: ${this.currentBaseUrl}`)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .margin({ bottom: 8 })
 
@@ -794,6 +864,7 @@ export struct SourceSettingsPage {
                         })
                       Text(mirror)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                         .margin({ left: 8 })
                         .layoutWeight(1)
@@ -816,6 +887,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('图源设置')
                   .fontSize(18)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .margin({ bottom: 12 })
@@ -825,10 +897,12 @@ export struct SourceSettingsPage {
                     Row() {
                       Text(setting.name)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                       if (setting.description) {
                         Text('?')
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(Color.Gray)
                           .width(16)
                           .height(16)
@@ -890,6 +964,7 @@ export struct SourceSettingsPage {
                               })
                             Text(option.label)
                               .fontSize(14)
+                              .fontFamily(this.appFontFamily)
                               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                               .margin({ left: 8 })
                           }
@@ -902,6 +977,7 @@ export struct SourceSettingsPage {
                         Blank()
                         Text(this.sourceCustomSettingValues.get(setting.key) || setting.default || '0')
                           .fontSize(14)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       }
                       .width('100%')
@@ -924,6 +1000,7 @@ export struct SourceSettingsPage {
                     if (setting.description) {
                       Text(setting.description)
                         .fontSize(11)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                         .margin({ top: 4 })
                     }
@@ -943,6 +1020,7 @@ export struct SourceSettingsPage {
             Column() {
               Text('基础')
                 .fontSize(18)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .margin({ bottom: 12 })
@@ -952,9 +1030,11 @@ export struct SourceSettingsPage {
                 Row() {
                   Text('首页每页条目数')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('?')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(Color.Gray)
                     .width(16)
                     .height(16)
@@ -981,6 +1061,7 @@ export struct SourceSettingsPage {
                   Blank()
                   Text(`${this.homeItemsPerPage} 条`)
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 }
                 .width('100%')
@@ -1006,9 +1087,11 @@ export struct SourceSettingsPage {
                 Row() {
                   Text('阅读器预加载数量')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('?')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(Color.Gray)
                     .width(16)
                     .height(16)
@@ -1035,6 +1118,7 @@ export struct SourceSettingsPage {
                   Blank()
                   Text(`${this.readerPreloadCount} 页`)
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 }
                 .width('100%')
@@ -1060,9 +1144,11 @@ export struct SourceSettingsPage {
                 Row() {
                   Text('预加载当前章节')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('?')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(Color.Gray)
                     .width(16)
                     .height(16)
@@ -1100,9 +1186,11 @@ export struct SourceSettingsPage {
                 Row() {
                   Text('预加载下一章节')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('?')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(Color.Gray)
                     .width(16)
                     .height(16)
@@ -1140,9 +1228,11 @@ export struct SourceSettingsPage {
                 Row() {
                   Text('边看边下载')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('?')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(Color.Gray)
                     .width(16)
                     .height(16)
@@ -1181,9 +1271,11 @@ export struct SourceSettingsPage {
                   Row() {
                     Text('最大缓存大小')
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     Text('?')
                       .fontSize(12)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(Color.Gray)
                       .width(16)
                       .height(16)
@@ -1210,6 +1302,7 @@ export struct SourceSettingsPage {
                     Blank()
                     Text(`${this.maxCacheSizeMB} MB`)
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   }
                   .width('100%')
@@ -1241,6 +1334,7 @@ export struct SourceSettingsPage {
             Column() {
               Text('网络请求')
                 .fontSize(18)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .margin({ bottom: 12 })
@@ -1250,9 +1344,11 @@ export struct SourceSettingsPage {
                 Row() {
                   Text('自定义User-Agent')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('?')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(Color.Gray)
                     .width(16)
                     .height(16)
@@ -1306,6 +1402,7 @@ export struct SourceSettingsPage {
                     Button('重置默认')
                       .fontSize(12)
                       .height(28)
+                      .fontFamily(this.appFontFamily)
                       .onClick(() => {
                         this.sourceUserAgent = this.DEFAULT_USER_AGENT;
                         this.saveUserAgentSettings();
@@ -1314,6 +1411,7 @@ export struct SourceSettingsPage {
                     Button('Chrome UA')
                       .fontSize(12)
                       .height(28)
+                      .fontFamily(this.appFontFamily)
                       .onClick(() => {
                         this.sourceUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
                         this.saveUserAgentSettings();
@@ -1322,6 +1420,7 @@ export struct SourceSettingsPage {
                     Button('保存')
                       .fontSize(12)
                       .height(28)
+                      .fontFamily(this.appFontFamily)
                       .onClick(() => {
                         this.saveUserAgentSettings();
                       })
@@ -1343,6 +1442,7 @@ export struct SourceSettingsPage {
             Column() {
               Text('登录')
                 .fontSize(18)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .margin({ bottom: 12 })
@@ -1351,6 +1451,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('账号')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 TextInput({ text: this.username })
@@ -1364,6 +1465,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('密码')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 TextInput({ text: this.password })
@@ -1378,6 +1480,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('登录页地址')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 TextInput({ text: this.loginUrl })
@@ -1391,6 +1494,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('账号选择器')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 TextInput({ text: this.usernameSelector })
@@ -1404,6 +1508,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('密码选择器')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 TextInput({ text: this.passwordSelector })
@@ -1417,6 +1522,7 @@ export struct SourceSettingsPage {
               Column() {
                 Text('提交按钮选择器')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 TextInput({ text: this.submitSelector })
@@ -1430,15 +1536,18 @@ export struct SourceSettingsPage {
               Column() {
                 Text('Cookie（name=value; ...）')
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .margin({ bottom: 4 })
                 Row() {
                   Text(this.cookieStatusText)
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   Button('获取Cookie（无Cookie请求）')
                     .layoutWeight(1)
                     .margin({ left: 8 })
+                    .fontFamily(this.appFontFamily)
                     .onClick(() => { this.fetchCookieWithoutLogin(); })
                 }
                 .width('100%')
@@ -1455,10 +1564,12 @@ export struct SourceSettingsPage {
                 Button('保存设置')
                   .layoutWeight(1)
                   .margin({ right: 8 })
+                  .fontFamily(this.appFontFamily)
                   .onClick(() => { this.saveSettings(); })
                 Button('应用Cookie')
                   .layoutWeight(1)
                   .margin({ left: 4, right: 4 })
+                  .fontFamily(this.appFontFamily)
                   .onClick(() => { this.applyCookieInput(); })
               }
               .width('100%')
@@ -1468,10 +1579,12 @@ export struct SourceSettingsPage {
                 Button('打开登录页')
                   .layoutWeight(1)
                   .margin({ right: 8 })
+                  .fontFamily(this.appFontFamily)
                   .onClick(() => { this.openLoginPage(); })
                 Button('表单登录')
                   .layoutWeight(1)
                   .margin({ left: 4 })
+                  .fontFamily(this.appFontFamily)
                   .onClick(() => { this.performFormLogin(); })
               }
               .width('100%')
@@ -1487,6 +1600,7 @@ export struct SourceSettingsPage {
               Row() {
                 Text('漫画默认阅读设置')
                   .fontSize(18)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 Blank()
@@ -1504,6 +1618,7 @@ export struct SourceSettingsPage {
                 Column({ space: 8 }) {
                   Text('默认阅读模式')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   
                   Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
@@ -1516,6 +1631,7 @@ export struct SourceSettingsPage {
                       Button({ stateEffect: true }) {
                         Text(item.label)
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
                       }
                         .height(32)
@@ -1542,6 +1658,7 @@ export struct SourceSettingsPage {
                 Column({ space: 8 }) {
                   Text('默认阅读方向')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   
                   Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
@@ -1553,6 +1670,7 @@ export struct SourceSettingsPage {
                       Button({ stateEffect: true }) {
                         Text(item.label)
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
                       }
                         .height(32)
@@ -1579,6 +1697,7 @@ export struct SourceSettingsPage {
                 Column({ space: 8 }) {
                   Text('默认翻页动画')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   
                   Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
@@ -1594,6 +1713,7 @@ export struct SourceSettingsPage {
                       Button({ stateEffect: true }) {
                         Text(item.label)
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
                       }
                         .width(60)
@@ -1617,6 +1737,7 @@ export struct SourceSettingsPage {
               } else {
                 Text('启用后可为此图源的漫画设置默认阅读参数')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }
             }
@@ -1633,6 +1754,7 @@ export struct SourceSettingsPage {
               Row() {
                 Text('电子书默认阅读设置')
                   .fontSize(18)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 Blank()
@@ -1651,10 +1773,12 @@ export struct SourceSettingsPage {
                   Row() {
                     Text('默认字体大小')
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     Blank()
                     Text(`${this.sourceEbookFontSize}`)
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontWeight(FontWeight.Bold)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                   }
@@ -1682,10 +1806,12 @@ export struct SourceSettingsPage {
                   Row() {
                     Text('默认行高')
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     Blank()
                     Text(`${this.sourceEbookLineHeight.toFixed(1)}`)
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontWeight(FontWeight.Bold)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                   }
@@ -1713,10 +1839,12 @@ export struct SourceSettingsPage {
                   Row() {
                     Text('默认页边距')
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     Blank()
                     Text(`${this.sourceEbookPageMargin}`)
                       .fontSize(14)
+                      .fontFamily(this.appFontFamily)
                       .fontWeight(FontWeight.Bold)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                   }
@@ -1743,6 +1871,7 @@ export struct SourceSettingsPage {
                 Column({ space: 8 }) {
                   Text('默认阅读主题')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
                   Row({ space: 8 }) {
@@ -1771,6 +1900,7 @@ export struct SourceSettingsPage {
                         
                         Text(theme.name)
                           .fontSize(10)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                           .margin({ top: 4 })
                       }
@@ -1790,6 +1920,7 @@ export struct SourceSettingsPage {
                 Column({ space: 8 }) {
                   Text('默认翻页模式')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
                   Row({ space: 16 }) {
@@ -1804,6 +1935,7 @@ export struct SourceSettingsPage {
                         })
                       Text('仿真翻页')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     }
 
@@ -1818,6 +1950,7 @@ export struct SourceSettingsPage {
                         })
                       Text('横向滑动')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     }
                   }
@@ -1827,6 +1960,7 @@ export struct SourceSettingsPage {
               } else {
                 Text('启用后可为此图源的电子书设置默认阅读参数')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }
             }
@@ -1878,7 +2012,19 @@ export struct SourceSettingsPage {
         }
       },
       content: {
-        title: { mainTitle: '图源设置' }
+        title: { mainTitle: '图源设置' },
+        menu: {
+          value: [{
+            content: {
+              label: '帮助',
+              icon: $r('sys.symbol.questionmark_circle'),
+              isEnabled: true,
+              action: () => {
+                this.showSourceSettingsHelp();
+              }
+            }
+          }]
+        }
       }
     })
     .onReady((context: NavDestinationContext) => {

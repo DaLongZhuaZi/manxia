@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
@@ -29,6 +30,8 @@ export struct NetworkSettingsSubPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'NetworkSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -65,6 +68,13 @@ export struct NetworkSettingsSubPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -78,6 +88,7 @@ export struct NetworkSettingsSubPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -166,6 +177,7 @@ export struct NetworkSettingsSubPage {
       Text('下载设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -173,9 +185,11 @@ export struct NetworkSettingsSubPage {
         Column({ space: 4 }) {
           Text('仅WiFi下载')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text('仅在WiFi网络下进行下载')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .alignItems(HorizontalAlign.Start)
@@ -197,11 +211,13 @@ export struct NetworkSettingsSubPage {
         Row() {
           Text('最大并发下载数')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           Blank()
           Text(`${this.maxConcurrentDownloads}`)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         }
         .width('100%')
@@ -239,6 +255,7 @@ export struct NetworkSettingsSubPage {
       Text('网络请求设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -246,9 +263,11 @@ export struct NetworkSettingsSubPage {
         Column({ space: 4 }) {
           Text('启用自定义User-Agent')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text('为所有图源请求使用自定义UA')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .alignItems(HorizontalAlign.Start)
@@ -269,6 +288,7 @@ export struct NetworkSettingsSubPage {
         Column({ space: 8 }) {
           Text('自定义User-Agent')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .alignSelf(ItemAlign.Start)
 
@@ -289,6 +309,7 @@ export struct NetworkSettingsSubPage {
           Row({ space: 8 }) {
             Button('重置为默认')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
               .height(32)
@@ -300,6 +321,7 @@ export struct NetworkSettingsSubPage {
 
             Button('使用Chrome UA')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
               .height(32)

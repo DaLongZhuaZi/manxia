@@ -10,6 +10,7 @@ import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger, LogLevel } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -31,6 +32,8 @@ struct LogManagerPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'LogManagerPage';
 
@@ -82,6 +85,9 @@ struct LogManagerPage {
 
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
+    });
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
     });
 
     // 初始化设备方向
@@ -358,6 +364,7 @@ struct LogManagerPage {
       Row({ space: 8 }) {
         Text('📱 设备信息')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
@@ -365,6 +372,7 @@ struct LogManagerPage {
         // 折叠/展开按钮
         Text(this.showDeviceInfo ? '收起' : '展开')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onClick(() => {
             this.showDeviceInfo = !this.showDeviceInfo;
@@ -380,10 +388,12 @@ struct LogManagerPage {
               Row({ space: 4 }) {
                 Text('•')
                   .fontSize(10)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
                 
                 Text(line)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .layoutWeight(1)
                   .maxLines(1)
@@ -418,10 +428,12 @@ struct LogManagerPage {
       Column() {
         Text(`${this.logStats.total}`)
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Text('全部')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .layoutWeight(1)
@@ -432,10 +444,12 @@ struct LogManagerPage {
       Column() {
         Text(`${this.logStats.debug}`)
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Text('调试')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .layoutWeight(1)
@@ -446,10 +460,12 @@ struct LogManagerPage {
       Column() {
         Text(`${this.logStats.info}`)
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         Text('信息')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .layoutWeight(1)
@@ -460,10 +476,12 @@ struct LogManagerPage {
       Column() {
         Text(`${this.logStats.warn}`)
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
         Text('警告')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .layoutWeight(1)
@@ -474,10 +492,12 @@ struct LogManagerPage {
       Column() {
         Text(`${this.logStats.error}`)
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
         Text('错误')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .layoutWeight(1)
@@ -509,11 +529,13 @@ struct LogManagerPage {
       Row({ space: 8 }) {
         Text('级别:')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Button({ stateEffect: true }) {
           Text('DEBUG')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
         .width(60)
@@ -529,6 +551,7 @@ struct LogManagerPage {
         Button({ stateEffect: true }) {
           Text('INFO')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
         .width(55)
@@ -544,6 +567,7 @@ struct LogManagerPage {
         Button({ stateEffect: true }) {
           Text('WARN')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
         .width(55)
@@ -559,6 +583,7 @@ struct LogManagerPage {
         Button({ stateEffect: true }) {
           Text('ERROR')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
         .width(60)
@@ -587,6 +612,7 @@ struct LogManagerPage {
         Button({ stateEffect: true }) {
           Text('刷新')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
           .width('100%')
@@ -600,6 +626,7 @@ struct LogManagerPage {
         Button({ stateEffect: true }) {
           Text(this.isExporting ? '导出中...' : '导出')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
           .width('100%')
@@ -619,6 +646,7 @@ struct LogManagerPage {
         Button({ stateEffect: true }) {
           Text('清空')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
         }
           .width('100%')
@@ -641,6 +669,7 @@ struct LogManagerPage {
       Row({ space: 8 }) {
         Text(this.getLevelText(log.level))
           .fontSize(10)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .backgroundColor(this.getLevelColor(log.level))
@@ -648,6 +677,7 @@ struct LogManagerPage {
 
         Text(log.tag)
           .fontSize(11)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .fontWeight(FontWeight.Medium)
 
@@ -655,12 +685,14 @@ struct LogManagerPage {
 
         Text(new Date(log.timestamp).toLocaleTimeString())
           .fontSize(10)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
 
       Text(log.message)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -668,6 +700,7 @@ struct LogManagerPage {
       if (log.args && log.args.length > 0) {
         Text(log.args.join(' '))
           .fontSize(11)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -715,6 +748,7 @@ struct LogManagerPage {
                 Column({ space: 20 }) {
                   Text('暂无日志')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 }
                 .width('100%')
@@ -756,6 +790,7 @@ struct LogManagerPage {
             Column({ space: 20 }) {
               Text('暂无日志')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .width('100%')

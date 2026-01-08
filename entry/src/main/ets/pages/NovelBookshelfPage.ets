@@ -14,6 +14,7 @@ import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelD
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { getNovelSettingsManager, BookshelfSettings, BookshelfSortType, BrowseHistoryItem } from '../Framework/Novel/NovelSettingsManager';
 
 const TAG = 'NovelBookshelfPage';
@@ -74,6 +75,10 @@ export interface NovelReaderPageParams {
   chapterIndex: number;
   totalChapters: number;
   tocUrl?: string; // 目录URL，用于加载章节列表
+  // [修复] 添加用于记录浏览历史的字段
+  author?: string;
+  coverUrl?: string;
+  sourceName?: string;
 }
 
 /**
@@ -94,6 +99,8 @@ export interface NovelExplorePageParams {
 export struct NovelBookshelfPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelBookshelfPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -126,6 +133,13 @@ export struct NovelBookshelfPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     
     // 注册历史浏览变化监听器，实现实时刷新
     this.browseHistoryListener = () => {
@@ -139,6 +153,7 @@ export struct NovelBookshelfPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除历史浏览监听器
     if (this.browseHistoryListener) {
@@ -503,6 +518,7 @@ export struct NovelBookshelfPage {
               .margin({ right: 6 })
             Text('收藏')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(this.currentTab === 0
                 ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -530,6 +546,7 @@ export struct NovelBookshelfPage {
               .margin({ right: 6 })
             Text('历史浏览')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(this.currentTab === 1
                 ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -561,9 +578,11 @@ export struct NovelBookshelfPage {
           Row() {
             Text(this.selectedGroup || '全部')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Text('▼')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
               .margin({ left: 4 })
           }
@@ -576,9 +595,11 @@ export struct NovelBookshelfPage {
           Row() {
             Text(this.getSortTypeName())
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Text('▼')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
               .margin({ left: 4 })
           }
@@ -593,6 +614,7 @@ export struct NovelBookshelfPage {
           // 编辑按钮
           Text('编辑')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .onClick(() => this.toggleEditMode())
         }
@@ -605,24 +627,28 @@ export struct NovelBookshelfPage {
         Row() {
           Text(`已选择 ${this.selectedBookIds.length} 项`)
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           
           Blank()
           
           Text('取消')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ right: 16 })
             .onClick(() => this.toggleEditMode())
           
           Text('移动')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.selectedBookIds.length > 0 ? '#1890FF' : '#CCCCCC')
             .margin({ right: 16 })
             .onClick(() => this.moveSelectedToGroup())
           
           Text('删除')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.selectedBookIds.length > 0 ? '#FF4D4F' : '#CCCCCC')
             .onClick(() => this.deleteSelectedBooks())
         }
@@ -692,6 +718,7 @@ export struct NovelBookshelfPage {
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       Text('加载中...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         .margin({ top: 16 })
     }
@@ -716,15 +743,18 @@ export struct NovelBookshelfPage {
         Column() {
           Text('暂无浏览记录')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           
           Text('进入小说详情页即可记录')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 8 })
           
           Button('去搜索小说')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .borderRadius(20)
@@ -742,6 +772,7 @@ export struct NovelBookshelfPage {
             Blank()
             Text('清空历史')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .onClick(() => this.clearBrowseHistory())
           }
@@ -787,6 +818,7 @@ export struct NovelBookshelfPage {
         Column() {
           Text(item.bookName.substring(0, 1))
             .fontSize(18)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .fontWeight(FontWeight.Bold)
         }
@@ -801,6 +833,7 @@ export struct NovelBookshelfPage {
       Column() {
         Text(item.bookName)
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
@@ -808,12 +841,14 @@ export struct NovelBookshelfPage {
         
         Text(item.author || '未知作者')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 4 })
         
         Row({ space: 8 }) {
           Text(item.sourceName)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -821,6 +856,7 @@ export struct NovelBookshelfPage {
           
           Text(this.formatBrowseTime(item.browseTime))
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         }
         .margin({ top: 8 })
@@ -842,6 +878,7 @@ export struct NovelBookshelfPage {
     Row() {
       Text('删除')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor('#FFFFFF')
     }
     .width(80)
@@ -882,10 +919,12 @@ export struct NovelBookshelfPage {
         Column() {
           Text(emptyText)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           
           Button('去搜索小说')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .borderRadius(20)
@@ -933,6 +972,7 @@ export struct NovelBookshelfPage {
           if (this.isBookSelected(book.id)) {
             Text('✓')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor('#FFFFFF')
               .fontWeight(FontWeight.Bold)
           }
@@ -953,6 +993,7 @@ export struct NovelBookshelfPage {
         Column() {
           Text(book.name.substring(0, 1))
             .fontSize(24)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
         }
         .width(80)
@@ -967,17 +1008,20 @@ export struct NovelBookshelfPage {
         Text(book.name)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         
         Text(book.author || '未知作者')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 4 })
         
         Text(book.latestChapterTitle || '暂无章节')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 4 })
           .maxLines(1)
@@ -986,6 +1030,7 @@ export struct NovelBookshelfPage {
         Row() {
           Text(book.sourceName)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -994,6 +1039,7 @@ export struct NovelBookshelfPage {
           if (book.readStatus === NovelReadStatus.READING) {
             Text(`读到第${(book.lastReadChapterIndex ?? 0) + 1}章`)
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor('#52C41A')
               .margin({ left: 8 })
           }

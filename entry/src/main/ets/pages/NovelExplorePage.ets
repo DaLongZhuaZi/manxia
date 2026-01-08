@@ -14,6 +14,7 @@ import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/No
 import { NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 
@@ -40,6 +41,8 @@ const TITLE_BAR_HEIGHT_MINI = 56;
 export struct NovelExplorePage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelExplorePage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -65,6 +68,13 @@ export struct NovelExplorePage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
   }
 
   private lifecycle = new PageLifecycleManager('NovelExplorePage', { enableDebug: true });
@@ -72,6 +82,7 @@ export struct NovelExplorePage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   loadExploreSources(): void {
@@ -321,10 +332,12 @@ export struct NovelExplorePage {
     Column() {
       Text('暂无支持发现功能的书源')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       
       Text('请导入包含发现规则的书源')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .margin({ top: 8 })
     }
@@ -377,6 +390,7 @@ export struct NovelExplorePage {
       Text(this.selectedSourceName || '选择书源')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
       
@@ -416,12 +430,14 @@ export struct NovelExplorePage {
           Text('选择书源')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
           Text(`共 ${this.filteredSources.length} 个`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -473,6 +489,7 @@ export struct NovelExplorePage {
               Row() {
                 Text(source.name)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.selectedSourceId === source.id ?
                     ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                     ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -524,6 +541,7 @@ export struct NovelExplorePage {
           Column() {
             Text(kind.title)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(this.selectedKindIndex === index ? 
                 ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
                 ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -557,6 +575,7 @@ export struct NovelExplorePage {
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       Text('加载中...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         .margin({ top: 16 })
     }
@@ -571,6 +590,7 @@ export struct NovelExplorePage {
       Column() {
         Text('暂无书籍')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       }
       .width('100%')
@@ -595,11 +615,13 @@ export struct NovelExplorePage {
                   .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 Text('加载中...')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
                   .margin({ left: 8 })
               } else {
                 Text('上拉加载更多')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
               }
             }
@@ -630,6 +652,7 @@ export struct NovelExplorePage {
         Column() {
           Text(book.name.substring(0, 1))
             .fontSize(20)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
         }
         .width(70)
@@ -644,18 +667,21 @@ export struct NovelExplorePage {
         Text(book.name)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         
         Text(book.author || '未知作者')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 4 })
         
         if (book.intro) {
           Text(book.intro)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
             .maxLines(2)
@@ -665,6 +691,7 @@ export struct NovelExplorePage {
         if (book.latestChapterTitle) {
           Text(book.latestChapterTitle)
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .margin({ top: 4 })
             .maxLines(1)

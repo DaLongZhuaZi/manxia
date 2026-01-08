@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareHelper, ThemeAwareState } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { InteractionManager, VibrationScene, VibrationIntensity, InteractionSettings } from '../../Framework/Managers/InteractionManager';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
@@ -32,6 +33,8 @@ export struct InteractionSettingsSubPage {
   private scroller: Scroller = new Scroller();
 
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'InteractionSettingsSubPage';
   private interactionManager: InteractionManager = InteractionManager.getInstance();
@@ -75,6 +78,13 @@ export struct InteractionSettingsSubPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
     this.initializeResponsiveLayout();
     this.loadSettings();
   }
@@ -84,6 +94,7 @@ export struct InteractionSettingsSubPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
@@ -230,10 +241,12 @@ export struct InteractionSettingsSubPage {
       Column({ space: 4 }) {
         Text(title)
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         if (description) {
           Text(description)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
       }
@@ -255,6 +268,7 @@ export struct InteractionSettingsSubPage {
     Column({ space: 8 }) {
       Text('震动强度')
         .fontSize(15)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
 
@@ -264,6 +278,7 @@ export struct InteractionSettingsSubPage {
             .fontSize(13)
             .height(36)
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(this.vibrationIntensity === intensity
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
@@ -291,6 +306,7 @@ export struct InteractionSettingsSubPage {
     Column({ space: 0 }) {
       Text(group.title)
         .fontSize(13)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .width('100%')
         .padding({ left: 16, bottom: 8 })
@@ -370,6 +386,7 @@ export struct InteractionSettingsSubPage {
                   .width('100%')
                   .height(44)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                   .borderRadius(12)

@@ -5,6 +5,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 
@@ -20,6 +21,8 @@ export struct SourceGuidePage {
   
   // 主题状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `SourceGuidePage_${Date.now()}`;
 
@@ -40,6 +43,13 @@ export struct SourceGuidePage {
         this.themeState = newState;
       }
     );
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
   }
 
   private lifecycle = new PageLifecycleManager('SourceGuidePage', { enableDebug: true });
@@ -48,6 +58,7 @@ export struct SourceGuidePage {
     logger.lifecycle(TAG, 'aboutToDisappear');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   /**
@@ -70,9 +81,11 @@ export struct SourceGuidePage {
     Row({ space: 8 }) {
       Text(emoji)
         .fontSize(24)
+        .fontFamily(this.appFontFamily)
       
       Text(title)
         .fontSize(20)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
     }
@@ -87,6 +100,7 @@ export struct SourceGuidePage {
   buildSubTitle(title: string) {
     Text(title)
       .fontSize(18)
+      .fontFamily(this.appFontFamily)
       .fontWeight(FontWeight.Medium)
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       .width('100%')
@@ -100,6 +114,7 @@ export struct SourceGuidePage {
   buildParagraph(text: string) {
     Text(text)
       .fontSize(15)
+      .fontFamily(this.appFontFamily)
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       .lineHeight(24)
       .width('100%')
@@ -116,6 +131,7 @@ export struct SourceGuidePage {
       Row() {
         Text(language.toUpperCase())
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -127,6 +143,7 @@ export struct SourceGuidePage {
       // 代码内容
       Text(code)
         .fontSize(13)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .fontFamily('monospace')
         .lineHeight(20)
@@ -147,11 +164,13 @@ export struct SourceGuidePage {
     Row({ space: 8 }) {
       Text('•')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         .width(20)
       
       Text(text)
         .fontSize(15)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .lineHeight(22)
         .layoutWeight(1)
@@ -170,9 +189,11 @@ export struct SourceGuidePage {
       Row({ space: 8 }) {
         Text(type === 'info' ? '💡' : type === 'warning' ? '⚠️' : '✅')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
         
         Text(title)
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
@@ -180,6 +201,7 @@ export struct SourceGuidePage {
 
       Text(content)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .lineHeight(20)
         .width('100%')
@@ -223,6 +245,7 @@ export struct SourceGuidePage {
 
             Text('图源开发指南')
               .fontSize(20)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Bold)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)

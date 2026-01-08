@@ -11,6 +11,7 @@ import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPrel
 import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 const TAG = 'CacheManagementPanel';
 
@@ -39,6 +40,8 @@ export struct CacheManagementPanel {
   @Local isLoading: boolean = true;
   @Local currentTab: CacheTab = CacheTab.STATISTICS;
   @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
+  @Local fontState: FontAwareState = new FontAwareState();
+  @Local appFontFamily: string = 'HarmonyOS Sans';
   
   private cacheConfigManager: CacheConfigManager = CacheConfigManager.getInstance();
   private smartPreloadStrategy: SmartPreloadStrategy = SmartPreloadStrategy.getInstance();
@@ -53,6 +56,10 @@ export struct CacheManagementPanel {
     // 监听主题变化
     this.themeManager.onThemeChange((theme: ThemeType) => {
       this.themeState = { currentTheme: theme };
+    });
+    FontAwareHelper.initializeFontAware('CacheManagementPanel', this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+      this.appFontFamily = newState.appFontFamily;
     });
     this.loadAllData();
   }
@@ -217,6 +224,7 @@ export struct CacheManagementPanel {
       Row() {
         Text('缓存管理')
           .fontSize(18)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -229,6 +237,7 @@ export struct CacheManagementPanel {
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text('刷新')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
         }
@@ -282,6 +291,7 @@ export struct CacheManagementPanel {
             .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           Text('加载中...')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -321,7 +331,8 @@ export struct CacheManagementPanel {
           ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
       Text(label)
         .fontSize(12)
-        .fontColor(this.currentTab === tab ? 
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.currentTab === tab ?
           ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
           ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .fontWeight(this.currentTab === tab ? FontWeight.Medium : FontWeight.Normal)
@@ -370,6 +381,7 @@ export struct CacheManagementPanel {
       Row() {
         Text('磁盘缓存统计')
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -379,8 +391,10 @@ export struct CacheManagementPanel {
           Row({ space: 4 }) {
             Text('🗑️')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
             Text('清空')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(Color.White)
           }
         }
@@ -410,10 +424,12 @@ export struct CacheManagementPanel {
           Row() {
             Text('缓存数量')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Blank()
             Text(`${this.diskCacheStats.count} 张`)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
@@ -422,10 +438,12 @@ export struct CacheManagementPanel {
           Row() {
             Text('总大小')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Blank()
             Text(`${(this.diskCacheStats.totalSize / 1024 / 1024).toFixed(2)} MB`)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
@@ -434,10 +452,12 @@ export struct CacheManagementPanel {
           Row() {
             Text('使用率')
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Blank()
             Text(`${this.diskCacheStats.usagePercent.toFixed(1)}%`)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(this.diskCacheStats.usagePercent > 80 ? '#FF5252' : 
                 ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -465,6 +485,7 @@ export struct CacheManagementPanel {
     Column({ space: 16 }) {
       Text('缓存配置')
         .fontSize(15)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -475,10 +496,12 @@ export struct CacheManagementPanel {
             Row() {
               Text('💾 内存缓存大小')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Blank()
               Text(`${(this.cacheConfig.memoryCache.maxSize / 1024 / 1024).toFixed(0)} MB`)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
@@ -504,10 +527,12 @@ export struct CacheManagementPanel {
             Row() {
               Text('💿 磁盘缓存大小')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Blank()
               Text(`${(this.cacheConfig.diskCache.maxSize / 1024 / 1024).toFixed(0)} MB`)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
@@ -532,6 +557,7 @@ export struct CacheManagementPanel {
           Row() {
             Text('🚀 启用预加载')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Blank()
             Toggle({ type: ToggleType.Switch, isOn: this.cacheConfig.preload.enabled })
@@ -548,10 +574,12 @@ export struct CacheManagementPanel {
               Row() {
                 Text('📖 普通模式预加载')
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 Blank()
                 Text(`${this.cacheConfig.preload.rangeNormal} 页`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               }
@@ -571,10 +599,12 @@ export struct CacheManagementPanel {
               Row() {
                 Text('📜 条漫模式预加载')
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 Blank()
                 Text(`${this.cacheConfig.preload.rangeWebtoon} 页`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               }
@@ -601,8 +631,10 @@ export struct CacheManagementPanel {
             Row({ space: 6 }) {
               Text('🔄')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
               Text('重置为默认配置')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             }
           }
@@ -640,6 +672,7 @@ export struct CacheManagementPanel {
       Row() {
         Text('智能预加载策略')
           .fontSize(15)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -649,8 +682,10 @@ export struct CacheManagementPanel {
           Row({ space: 4 }) {
             Text('🔄')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
             Text('重置')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
         }
@@ -668,16 +703,19 @@ export struct CacheManagementPanel {
           Column({ space: 10 }) {
             Text('📊 阅读统计')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
             Row() {
               Text('总页数')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               Blank()
               Text(`${this.preloadStats.totalPages}`)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             }
             .width('100%')
@@ -685,37 +723,45 @@ export struct CacheManagementPanel {
             Row() {
               Text('向前翻页')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.preloadStats.forwardPages} (${(this.preloadStats.forwardRatio * 100).toFixed(1)}%)`)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
             Row() {
               Text('向后翻页')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.preloadStats.backwardPages}`)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
             Row() {
               Text('平均停留时间')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${(this.preloadStats.avgPageDuration / 1000).toFixed(1)}秒`)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
             Row() {
               Text('阅读速度')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(this.preloadStats.readingSpeed === 'fast' ? '快速' : 
                    this.preloadStats.readingSpeed === 'slow' ? '慢速' : '正常')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
             }
             .width('100%')
@@ -723,9 +769,11 @@ export struct CacheManagementPanel {
             Row() {
               Text('网络类型')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(this.preloadStats.networkType)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
           }
@@ -737,16 +785,19 @@ export struct CacheManagementPanel {
           Column({ space: 10 }) {
             Text('🎯 当前策略')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
             Row() {
               Text('向前预加载')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               Blank()
               Text(`${this.preloadStats.currentStrategy.forwardRange} 页`)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
@@ -755,9 +806,11 @@ export struct CacheManagementPanel {
             Row() {
               Text('向后预加载')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.preloadStats.currentStrategy.backwardRange} 页`)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(Color.Blue)
             }
@@ -766,19 +819,23 @@ export struct CacheManagementPanel {
             Row() {
               Text('优先级')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
               Blank()
               Text(`${this.preloadStats.currentStrategy.priority}/10`)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
             }
             .width('100%')
 
             Row() {
               Text('策略原因')
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               Blank()
               Text(this.preloadStats.currentStrategy.reason)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .maxLines(2)
                 .textAlign(TextAlign.End)

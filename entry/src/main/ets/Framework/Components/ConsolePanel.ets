@@ -17,6 +17,7 @@ import { common } from '@kit.AbilityKit';
 import { ThemeManager } from '../Managers/ThemeManager';
 import { ThemeType } from '../Managers/ThemeManager';
 import { ThemeAwareHelper, ThemeAwareState } from '../Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Components/FontAware';
 import { TimeUtils } from '../Utils/TimeUtils';
 
 
@@ -53,6 +54,7 @@ interface GeneratedTypeLiteralInterface_2 {
 @Component
 export struct ConsolePanelComponent {
   @Link showConsolePanel: boolean;
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   @State private isMinimized: boolean = true; // 默认为最小化状态（悬浮按钮）
   @State private currentTab: ConsolePanelTab = ConsolePanelTab.LOGS;
   @State private logs: LogEntry[] = [];

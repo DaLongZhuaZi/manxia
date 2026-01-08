@@ -9,6 +9,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
@@ -38,6 +39,8 @@ export struct GlobalSettingsPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSettingsPage';
 
@@ -56,6 +59,13 @@ export struct GlobalSettingsPage {
       subtitle: '漫画、电子书、纯文本阅读器的默认设置',
       icon: $r('sys.symbol.book'),
       targetPage: 'ReadingSettingsSubPage'
+    },
+    {
+      id: 'font',
+      title: '字体设置',
+      subtitle: '界面字体、小说字体、电子书字体',
+      icon: $r('sys.symbol.textformat'),
+      targetPage: 'FontSettingsSubPage'
     },
     {
       id: 'interaction',
@@ -110,6 +120,13 @@ export struct GlobalSettingsPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -120,6 +137,7 @@ export struct GlobalSettingsPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -210,9 +228,11 @@ export struct GlobalSettingsPage {
         Text(item.title)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Text(item.subtitle)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })

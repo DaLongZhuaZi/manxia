@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
@@ -29,6 +30,8 @@ export struct NotificationSettingsSubPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'NotificationSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -60,6 +63,13 @@ export struct NotificationSettingsSubPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -73,6 +83,7 @@ export struct NotificationSettingsSubPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -152,6 +163,7 @@ export struct NotificationSettingsSubPage {
       Text('通知设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -159,9 +171,11 @@ export struct NotificationSettingsSubPage {
         Column({ space: 4 }) {
           Text('下载完成通知')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text('下载完成时显示通知提醒')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .alignItems(HorizontalAlign.Start)
@@ -182,9 +196,11 @@ export struct NotificationSettingsSubPage {
         Column({ space: 4 }) {
           Text('更新通知')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text('有新版本时显示更新提醒')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .alignItems(HorizontalAlign.Start)

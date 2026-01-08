@@ -11,7 +11,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { bookParser, readerCore, ReadPageComponent } from '@kit.ReaderKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { display } from '@kit.ArkUI';
+import { display, font } from '@kit.ArkUI';
 
 const TAG = 'ReaderKitViewerComponent';
 
@@ -127,11 +127,26 @@ export struct ReaderKitViewerComponent {
     // 获取屏幕密度，Reader Kit 需要使用 scaledDensity
     const scaledDensity = this.getDefaultScaledDensity();
     
-    logger.info(TAG, `Reader Kit 设置: fontSize=${settings.fontSize}, scaledDensity=${scaledDensity}, viewPort=${this.windowWidth}x${this.windowHeight}`);
+    logger.info(TAG, `Reader Kit 设置: fontSize=${settings.fontSize}, fontFamily=${settings.fontFamily}, fontPath=${settings.fontPath}, scaledDensity=${scaledDensity}, viewPort=${this.windowWidth}x${this.windowHeight}`);
+    
+    // 如果有自定义字体路径，先注册字体
+    const fontPath = settings.fontPath || '';
+    if (fontPath && fontPath.length > 0) {
+      try {
+        const fontUri = fontPath.startsWith('file://') ? fontPath : `file://${fontPath}`;
+        font.registerFont({
+          familyName: settings.fontFamily,
+          familySrc: fontUri
+        });
+        logger.info(TAG, `初始化时注册自定义字体: ${settings.fontFamily}, 路径: ${fontUri}`);
+      } catch (fontError) {
+        logger.warn(TAG, `初始化时注册自定义字体失败: ${String(fontError)}`);
+      }
+    }
     
     return {
       fontName: settings.fontFamily || DEFAULT_EBOOK_READING_SETTINGS.fontFamily,
-      fontPath: settings.fontPath || '',
+      fontPath: fontPath,
       fontSize: settings.fontSize || DEFAULT_EBOOK_READING_SETTINGS.fontSize,
       fontColor: settings.textColor || DEFAULT_EBOOK_READING_SETTINGS.textColor,
       fontWeight: settings.fontWeight || DEFAULT_EBOOK_READING_SETTINGS.fontWeight,
@@ -164,9 +179,24 @@ export struct ReaderKitViewerComponent {
     this.lastSettingsApplyTime = now;
 
     try {
+      // 如果有自定义字体路径，先注册字体
+      const fontPath = settings.fontPath || '';
+      if (fontPath && fontPath.length > 0) {
+        try {
+          const fontUri = fontPath.startsWith('file://') ? fontPath : `file://${fontPath}`;
+          font.registerFont({
+            familyName: settings.fontFamily,
+            familySrc: fontUri
+          });
+          logger.info(TAG, `自定义字体已注册: ${settings.fontFamily}, 路径: ${fontUri}`);
+        } catch (fontError) {
+          logger.warn(TAG, `注册自定义字体失败: ${String(fontError)}`);
+        }
+      }
+
       // 更新设置对象
       this.readerSetting.fontName = settings.fontFamily;
-      this.readerSetting.fontPath = settings.fontPath || '';
+      this.readerSetting.fontPath = fontPath;
       this.readerSetting.fontSize = settings.fontSize;
       this.readerSetting.fontColor = settings.textColor;
       this.readerSetting.fontWeight = settings.fontWeight || 400;
@@ -176,6 +206,8 @@ export struct ReaderKitViewerComponent {
       this.readerSetting.themeBgImg = settings.themeBgImage || '';
       this.readerSetting.flipMode = settings.pageMode;
       this.readerSetting.scaledDensity = this.getDefaultScaledDensity();
+
+      logger.info(TAG, `应用阅读设置: fontName=${this.readerSetting.fontName}, fontPath=${this.readerSetting.fontPath}, fontSize=${this.readerSetting.fontSize}`);
 
       // 应用设置 - 注意：这会触发页面重新渲染
       this.readerController.setPageConfig(this.readerSetting);

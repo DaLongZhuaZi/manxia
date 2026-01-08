@@ -11,6 +11,7 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { EBook, EBookChapter, EBookFormat, EBookStatus } from '../Models/EBookModels';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookReaderParams } from './EBookReaderPage';
@@ -42,6 +43,8 @@ export interface EBookSettingsPageParams {
 export struct EBookDetailPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'EBookDetailPage';
   private scroller: Scroller = new Scroller();
 
@@ -83,6 +86,15 @@ export struct EBookDetailPage {
       logger.info(TAG, `主题切换: ${theme}`);
     });
     
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+    
     // 初始化设备方向
     this.updateDeviceOrientation();
     
@@ -99,6 +111,7 @@ export struct EBookDetailPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除设备方向监听器
     if (this.deviceOrientationListener) {
@@ -683,6 +696,7 @@ export struct EBookDetailPage {
 
       Text('加载中...')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .width('100%')
@@ -704,11 +718,13 @@ export struct EBookDetailPage {
 
       Text(this.errorMessage)
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .textAlign(TextAlign.Center)
 
       Button('返回')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .height(40)
         .onClick(() => {
           this.pathStack.pop();
@@ -776,6 +792,7 @@ export struct EBookDetailPage {
           Text(this.ebook.metadata.title)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -791,6 +808,7 @@ export struct EBookDetailPage {
           // 作者 - 长按搜索
           Text(this.ebook.metadata.author)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .gesture(
               LongPressGesture({ repeat: false, duration: 500 })
@@ -805,6 +823,7 @@ export struct EBookDetailPage {
           Row({ space: 8 }) {
             Text(this.ebook.format)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -812,6 +831,7 @@ export struct EBookDetailPage {
 
             Text(this.getStatusText())
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .backgroundColor(this.getStatusColor())
@@ -824,6 +844,7 @@ export struct EBookDetailPage {
               Row() {
                 Text(`已读 ${Math.floor(this.ebook!.readingProgress.progress)}%`)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
               .width('100%')
@@ -856,6 +877,7 @@ export struct EBookDetailPage {
       // 开始阅读按钮 - 根据阅读进度显示不同文本
       Button(this.hasReadingProgress() ? '继续阅读' : '开始阅读')
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .layoutWeight(1)
         .height(48)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -919,28 +941,29 @@ export struct EBookDetailPage {
           Text('简介与详细信息')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
 
-          // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
-          // Row({ space: 4 }) {
-          //   Image($r('app.media.ic_scraper'))
-          //     .width(14)
-          //     .height(14)
-          //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          //   Text('刮削')
-          //     .fontSize(12)
-          //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          // }
-          // .height(28)
-          // .padding({ left: 10, right: 10 })
-          // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-          // .borderRadius(14)
-          // .onClick(() => {
-          //   this.openScraperDialog();
-          // })
-          // .margin({ right: 8 })
+          // 刮削按钮
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('刮削')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .height(28)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+          .borderRadius(14)
+          .onClick(() => {
+            this.openScraperDialog();
+          })
+          .margin({ right: 8 })
           
           // 编辑按钮
           Button() {
@@ -951,6 +974,7 @@ export struct EBookDetailPage {
                 .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               Text('编辑')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
           }
@@ -974,10 +998,12 @@ export struct EBookDetailPage {
             Text('简介')
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
             Text(this.ebook.metadata.description)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .lineHeight(22)
               .maxLines(this.expandedDescription ? 999 : 3)
@@ -997,6 +1023,7 @@ export struct EBookDetailPage {
           Text('详细信息')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
           this.buildInfoItem('出版社', this.ebook.metadata.publisher || '未知')
@@ -1036,11 +1063,13 @@ export struct EBookDetailPage {
     Row() {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .width(80)
 
       Text(value)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .layoutWeight(1)
     }
@@ -1058,6 +1087,7 @@ export struct EBookDetailPage {
           Text(`章节列表 (${this.ebook.chapters.length})`)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           Blank()
@@ -1065,6 +1095,7 @@ export struct EBookDetailPage {
           Button(this.showChapterList ? '收起' : '展开')
             .fontSize(12)
             .height(28)
+            .fontFamily(this.appFontFamily)
             .padding({ left: 12, right: 12 })
             .backgroundColor('transparent')
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -1106,11 +1137,13 @@ export struct EBookDetailPage {
     Row({ space: 12 }) {
       Text(`${index + 1}`)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .width(40)
 
       Text(chapter.title)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -1119,10 +1152,12 @@ export struct EBookDetailPage {
         if (this.getChapterDisplayWordCount(chapter) >= 1000) {
           Text(`${Math.floor(this.getChapterDisplayWordCount(chapter) / 1000)}k字`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         } else {
           Text(`${this.getChapterDisplayWordCount(chapter)}字`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
       }
@@ -1263,6 +1298,7 @@ export struct EBookDetailPage {
             Text(this.ebook.metadata.title)
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1272,6 +1308,7 @@ export struct EBookDetailPage {
             // 作者
             Text(this.ebook.metadata.author)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .width('100%')
               .textAlign(TextAlign.Center)
@@ -1280,6 +1317,7 @@ export struct EBookDetailPage {
             Row({ space: 8 }) {
               Text(this.ebook.format)
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .padding({ left: 6, right: 6, top: 3, bottom: 3 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -1287,6 +1325,7 @@ export struct EBookDetailPage {
 
               Text(this.getStatusText())
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .padding({ left: 6, right: 6, top: 3, bottom: 3 })
                 .backgroundColor(this.getStatusColor())
@@ -1300,6 +1339,7 @@ export struct EBookDetailPage {
               Column({ space: 4 }) {
                 Text(`已读 ${Math.floor(this.ebook!.readingProgress.progress)}%`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 Progress({
                   value: this.ebook!.readingProgress.progress,
@@ -1319,6 +1359,7 @@ export struct EBookDetailPage {
               Button({ stateEffect: true }) {
                 Text(this.hasReadingProgress() ? '继续' : '开始')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               }
               .height(32)
@@ -1369,11 +1410,13 @@ export struct EBookDetailPage {
                 Text('简介')
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .width('100%')
 
                 Text(this.ebook.metadata.description)
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .lineHeight(18)
                   .maxLines(this.expandedDescription ? 999 : 5)
@@ -1402,6 +1445,7 @@ export struct EBookDetailPage {
             Column({ space: 8 }) {
               Text('详细信息')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .width('100%')
@@ -1424,6 +1468,7 @@ export struct EBookDetailPage {
                 Text(`章节列表 (${this.ebook.chapters.length})`)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .width('100%')
 
@@ -1433,11 +1478,13 @@ export struct EBookDetailPage {
                       Row({ space: 8 }) {
                         Text(`${index + 1}`)
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                           .width(30)
 
                         Text(chapter.title)
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                           .layoutWeight(1)
                           .maxLines(1)
@@ -1496,6 +1543,7 @@ export struct EBookDetailPage {
           Text('编辑书籍信息')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
 
@@ -1550,6 +1598,7 @@ export struct EBookDetailPage {
             Column({ space: 8 }) {
               Text('简介')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .width('100%')
 
@@ -1584,6 +1633,7 @@ export struct EBookDetailPage {
             .fontSize(14)
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor('transparent')
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .border({
@@ -1598,6 +1648,7 @@ export struct EBookDetailPage {
             .fontSize(14)
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
             .onClick(() => {
@@ -1627,6 +1678,7 @@ export struct EBookDetailPage {
     Column({ space: 8 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .width('100%')
 

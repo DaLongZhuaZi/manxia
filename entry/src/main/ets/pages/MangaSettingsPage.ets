@@ -10,6 +10,7 @@ import fs from '@ohos.file.fs';
 import { common } from '@kit.AbilityKit';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { AnimatedComponent } from '../Framework/Animation/AnimatedComponent';
 import { AnimationType } from '../Framework/Animation/GlobalAnimationSystem';
 import { logger } from '../Utils/Logger';
@@ -26,6 +27,7 @@ import { CoverSelectionData, showCoverSelectionDialog } from '../Framework/Compo
 import { CoverSelectionPageParams } from './CoverSelectionPage';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
+import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 
 const TAG: string = 'MangaSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -51,7 +53,10 @@ struct MangaSettingsPage {
 
   // 主题相关
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'MangaSettingsPage';
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -201,10 +206,19 @@ struct MangaSettingsPage {
 
     // 初始化主题感知
     ThemeAwareHelper.initializeThemeAware(
-      TAG,
+      this.componentId,
       this.themeState,
       (newTheme: ThemeType) => {
         logger.info(TAG, `主题切换到: ${newTheme}`);
+      }
+    );
+    
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
       }
     );
 
@@ -220,7 +234,8 @@ struct MangaSettingsPage {
   aboutToDisappear() {
     this.lifecycle.destroy();
     // 清理主题感知
-    ThemeAwareHelper.cleanupThemeAware(TAG);
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -230,6 +245,63 @@ struct MangaSettingsPage {
 
     // 取消订阅封面选择事件，避免泄漏
     eventBus.unsubscribe(GameEvent.COVER_SELECTION_COMPLETED, this.onCoverSelectedHandler);
+  }
+
+  private showMangaSettingsHelp(): void {
+    const helpContent = `# 漫画设置帮助
+
+## 功能介绍
+
+漫画设置页面允许您为单部漫画配置个性化的阅读设置，这些设置会覆盖全局默认设置。
+
+## 基本信息编辑
+
+### 修改封面
+点击封面图片可以更换漫画封面：
+- 从漫画页面中选择
+- 从相册选择图片
+
+### 修改标题和作者
+点击对应字段可以编辑漫画的标题和作者信息。
+
+## 阅读方向设置
+
+| 选项 | 说明 |
+|------|------|
+| 从左到右 | 适合国漫、欧美漫画 |
+| 从右到左 | 适合日漫 |
+| 垂直滚动 | 条漫模式 |
+
+## 阅读模式设置
+
+- **单页模式**: 每次显示一页
+- **双页模式**: 同时显示两页（适合平板）
+- **条漫模式**: 垂直连续滚动
+
+## 翻页动画
+
+- **无动画**: 直接切换
+- **滑动**: 左右滑动效果
+- **卷页**: 仿真翻书效果
+- **淡入淡出**: 渐变切换
+
+## 预加载设置
+
+设置预加载的页数，可以提升阅读流畅度，但会占用更多内存和流量。
+
+## 高级设置
+
+- **图片缩放**: 设置默认缩放比例
+- **亮度调节**: 单独设置阅读亮度
+- **背景颜色**: 自定义阅读背景
+
+## 操作按钮
+
+- **保存设置**: 保存当前设置
+- **重置为默认**: 恢复全局默认设置
+- **删除漫画**: 从书架移除此漫画`;
+
+    getHelpPanelManagerV2().showInlineHelp('漫画设置帮助', helpContent);
   }
 
   /**
@@ -959,6 +1031,7 @@ struct MangaSettingsPage {
       Text('漫画信息')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -971,6 +1044,7 @@ struct MangaSettingsPage {
           
           Text('加载中...')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .margin({ top: 8 })
         }
@@ -999,6 +1073,7 @@ struct MangaSettingsPage {
               Text(this.currentManga.title)
                 .fontSize(16)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .maxLines(2)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1006,6 +1081,7 @@ struct MangaSettingsPage {
               if (this.currentManga.metadata.authors.length > 0) {
                 Text(`作者: ${this.currentManga.metadata.authors.join(', ')}`)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1013,18 +1089,21 @@ struct MangaSettingsPage {
 
               Text(`章节: ${this.currentManga.chapters.length} | 状态: ${this.currentManga.status}`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               
               // 操作按钮
               Button('从漫画页面选择封面')
                 .width('100%')
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .fontSize(14)
                 .onClick(() => { this.selectCoverFromMangaPages(); })
 
               Button('从相册选择封面')
                 .width('100%')
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .fontSize(14)
                 .onClick(() => { this.selectCoverImage(); })
             }
@@ -1059,6 +1138,7 @@ struct MangaSettingsPage {
             Text(this.currentManga.title)
               .fontSize(16)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1067,10 +1147,12 @@ struct MangaSettingsPage {
               Row({ space: 4 }) {
                 Text('作者:')
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 
                 Text(this.currentManga.metadata.authors.join(', '))
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1083,10 +1165,12 @@ struct MangaSettingsPage {
               Row({ space: 4 }) {
                 Text('标签:')
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 
                 Text(this.currentManga.metadata.genres.slice(0, 3).join(', '))
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1098,10 +1182,12 @@ struct MangaSettingsPage {
             Row({ space: 8 }) {
               Text(`章节: ${this.currentManga.chapters.length}`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               
               Text(`状态: ${this.currentManga.status}`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
 
@@ -1110,11 +1196,13 @@ struct MangaSettingsPage {
               Button('从漫画页面选择封面')
                 .type(ButtonType.ROUNDED_RECTANGLE)
                 .height(40)
+                .fontFamily(this.appFontFamily)
                 .onClick(() => { this.selectCoverFromMangaPages(); })
 
               Button('从相册选择封面')
                 .type(ButtonType.ROUNDED_RECTANGLE)
                 .height(40)
+                .fontFamily(this.appFontFamily)
                 .onClick(() => { this.selectCoverImage(); })
             }
             .position({ x: '0%', y: '37%' })
@@ -1135,11 +1223,13 @@ struct MangaSettingsPage {
               Text('简介')
                 .fontSize(14)
                 .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .alignSelf(ItemAlign.Start)
               
               Text(this.currentManga.description)
                 .fontSize(13)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .maxLines(3)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1169,33 +1259,35 @@ struct MangaSettingsPage {
         Text('编辑基础信息')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Blank()
 
-        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
-        // Row({ space: 4 }) {
-        //   Image($r('app.media.ic_scraper'))
-        //     .width(16)
-        //     .height(16)
-        //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        //
-        //   Text('刮削')
-        //     .fontSize(12)
-        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        // }
-        // .padding({ left: 8, right: 10, top: 4, bottom: 4 })
-        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        // .borderRadius(14)
-        // .onClick(() => {
-        //   this.openScraperDialog();
-        // })
-        // .margin({ right: 8 })
+        // 刮削按钮
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(14)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+          Text('刮削')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .padding({ left: 8, right: 10, top: 4, bottom: 4 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        .borderRadius(14)
+        .onClick(() => {
+          this.openScraperDialog();
+        })
+        .margin({ right: 8 })
         
         // 展开/收起按钮
         Button() {
           Text(this.basicInfoExpanded ? '▲' : '▼')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .width(36)
@@ -1213,6 +1305,7 @@ struct MangaSettingsPage {
           Column({ space: 4 }) {
             Text('漫画标题')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .alignSelf(ItemAlign.Start)
             
@@ -1232,6 +1325,7 @@ struct MangaSettingsPage {
           Column({ space: 4 }) {
             Text('作者（多个用逗号分隔）')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .alignSelf(ItemAlign.Start)
             
@@ -1251,6 +1345,7 @@ struct MangaSettingsPage {
           Column({ space: 4 }) {
             Text('标签（多个用逗号分隔）')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .alignSelf(ItemAlign.Start)
             
@@ -1270,6 +1365,7 @@ struct MangaSettingsPage {
           Column({ space: 4 }) {
             Text('漫画简介')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .alignSelf(ItemAlign.Start)
             
@@ -1291,6 +1387,7 @@ struct MangaSettingsPage {
               .layoutWeight(1)
               .height(40)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
               .onClick(() => {
@@ -1301,6 +1398,7 @@ struct MangaSettingsPage {
               .layoutWeight(1)
               .height(40)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .enabled(!this.isSavingBasicInfo)
@@ -1329,6 +1427,7 @@ struct MangaSettingsPage {
         Text('阅读方向')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
@@ -1336,12 +1435,14 @@ struct MangaSettingsPage {
         if (this.isTTBDisabled()) {
           Text('双页模式不支持从上到下')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
 
         if (this.isHorizontalDirectionDisabled()) {
           Text('条漫模式仅支持从上到下')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
       }
@@ -1352,6 +1453,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: !this.isTTBDisabled() }) {
             Text('从上到下')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(
                 this.isTTBDisabled() 
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -1379,6 +1481,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: !this.isHorizontalDirectionDisabled() }) {
             Text('从左到右')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(
                 this.isHorizontalDirectionDisabled()
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -1406,6 +1509,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: !this.isHorizontalDirectionDisabled() }) {
             Text('从右到左')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(
                 this.isHorizontalDirectionDisabled()
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -1445,6 +1549,7 @@ struct MangaSettingsPage {
       Text('阅读模式')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -1454,6 +1559,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: true }) {
             Text('单页')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width('100%')
@@ -1471,6 +1577,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: true }) {
             Text('双页')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width('100%')
@@ -1488,6 +1595,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: true }) {
             Text('连续滚动')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width('100%')
@@ -1509,6 +1617,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: true }) {
             Text('条漫')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width('100%')
@@ -1526,6 +1635,7 @@ struct MangaSettingsPage {
           Button({ stateEffect: true }) {
             Text('垂直滚动')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width('100%')
@@ -1557,12 +1667,14 @@ struct MangaSettingsPage {
       Text('基础设置')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
       Row() {
         Text('显示页码信息')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.showPageInfo })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1577,6 +1689,7 @@ struct MangaSettingsPage {
       Row() {
         Text('显示页面指示器')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.showPageIndicator })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1591,6 +1704,7 @@ struct MangaSettingsPage {
       Row() {
         Text('保持屏幕常亮')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.keepScreenOn })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1605,6 +1719,7 @@ struct MangaSettingsPage {
       Row() {
         Text('音量键翻页')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.volumeKeyNavigation })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1630,12 +1745,14 @@ struct MangaSettingsPage {
       Text('预加载设置')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
       Row() {
         Text('预加载当前章所有页')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         Toggle({ type: ToggleType.Switch, isOn: this.preloadAllPages })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -1652,10 +1769,12 @@ struct MangaSettingsPage {
           Row() {
             Text('预加载页数')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text(`${this.preloadPagesCount}`)
               .fontSize(14)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           }
           .width('100%')
@@ -1678,6 +1797,7 @@ struct MangaSettingsPage {
 
           Text(`当前设置: 提前加载 ${this.preloadPagesCount} 页 (最大${MAX_PRELOAD_PAGES}页)`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .width('100%')
         }
@@ -1699,11 +1819,13 @@ struct MangaSettingsPage {
         Text('高级设置')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
         
         Text(this.advancedSettingsExpanded ? '收起' : '展开')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
           .onClick(() => {
             this.advancedSettingsExpanded = !this.advancedSettingsExpanded;
@@ -1719,10 +1841,12 @@ struct MangaSettingsPage {
             Row() {
               Text('页面间距')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text(`${this.readingSettings.pageSpacing}px`)
                 .fontSize(14)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
             }
             .width('100%')
@@ -1750,10 +1874,12 @@ struct MangaSettingsPage {
             Row() {
               Text('自动翻页间隔')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text(this.readingSettings.autoPageTurnInterval === 0 ? '禁用' : `${this.readingSettings.autoPageTurnInterval}秒`)
                 .fontSize(14)
                 .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
             }
             .width('100%')
@@ -1776,6 +1902,7 @@ struct MangaSettingsPage {
             
             Text('设置为0将禁用自动翻页')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .width('100%')
           }
@@ -1785,6 +1912,7 @@ struct MangaSettingsPage {
           Column({ space: 8 }) {
             Text('翻页动画')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .width('100%')
 
@@ -1793,6 +1921,7 @@ struct MangaSettingsPage {
               Column() {
                 Text('无')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.NONE ? 
                     ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                     ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1808,6 +1937,7 @@ struct MangaSettingsPage {
               Column() {
                 Text('滑动')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.SLIDE ? 
                     ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                     ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1823,6 +1953,7 @@ struct MangaSettingsPage {
               Column() {
                 Text('淡入淡出')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.FADE ? 
                     ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                     ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1842,6 +1973,7 @@ struct MangaSettingsPage {
               Column() {
                 Text('立方体')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CUBE ? 
                     ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                     ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1857,6 +1989,7 @@ struct MangaSettingsPage {
               Column() {
                 Text('覆盖')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.COVER ? 
                     ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                     ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1872,6 +2005,7 @@ struct MangaSettingsPage {
               Column() {
                 Text('景深')
                   .fontSize(12)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.DEPTH ? 
                     ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                     ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1893,6 +2027,7 @@ struct MangaSettingsPage {
                 Column() {
                   Text('卷页')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL ? 
                       ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
                       ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1908,9 +2043,11 @@ struct MangaSettingsPage {
                 Column() {
                   Text('卷页')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                   Text('(仅单页左右)')
                     .fontSize(9)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 }
                 .layoutWeight(1)
@@ -1951,6 +2088,7 @@ struct MangaSettingsPage {
         Button({ stateEffect: true }) {
           Text('重置为默认设置')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
           .width('100%')
@@ -1975,6 +2113,7 @@ struct MangaSettingsPage {
         Button({ stateEffect: true }) {
           Text('删除漫画')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         }
           .width('100%')
@@ -2009,17 +2148,20 @@ struct MangaSettingsPage {
         Text('确认删除')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Column({ space: 12 }) {
           Text('您确定要删除这部漫画吗？')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           if (this.currentManga) {
             Text(this.currentManga.title)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2027,6 +2169,7 @@ struct MangaSettingsPage {
           
           Text('此操作将删除漫画的所有数据和文件，包括阅读进度、书签等，且不可恢复。')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .lineHeight(20)
         }
@@ -2037,6 +2180,7 @@ struct MangaSettingsPage {
             Button({ stateEffect: true }) {
               Text('取消')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             }
               .width('100%')
@@ -2055,6 +2199,7 @@ struct MangaSettingsPage {
             Button({ stateEffect: true }) {
               Text(this.isDeleting ? '删除中...' : '确认删除')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
             }
             .width('100%')
@@ -2196,7 +2341,19 @@ struct MangaSettingsPage {
         }
       },
       content: {
-        title: { mainTitle: '漫画设置' }
+        title: { mainTitle: '漫画设置' },
+        menu: {
+          value: [{
+            content: {
+              label: '帮助',
+              icon: $r('sys.symbol.questionmark_circle'),
+              isEnabled: true,
+              action: () => {
+                this.showMangaSettingsHelp();
+              }
+            }
+          }]
+        }
       }
     })
     .onReady((context: NavDestinationContext) => {

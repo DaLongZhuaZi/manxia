@@ -5,6 +5,7 @@
 import { logger } from '../Utils/Logger';
 import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONFIGS } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
@@ -72,6 +73,8 @@ interface RGBColor {
 export struct ThemeSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private uiContext: UIContext | undefined = undefined;
 
@@ -148,6 +151,9 @@ export struct ThemeSettingsPage {
     ThemeAwareHelper.initializeThemeAware(TAG, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题已切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(TAG, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
     
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -172,6 +178,7 @@ export struct ThemeSettingsPage {
     logger.lifecycle(TAG, 'aboutToDisappear');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(TAG);
+    FontAwareHelper.cleanupFontAware(TAG);
     
     // 移除设备变化监听器
     if (this.deviceChangeListener) {
@@ -1757,6 +1764,7 @@ export struct ThemeSettingsPage {
                 Column({ space: 12 }) {
                   Text('自定义主题')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
@@ -1788,6 +1796,7 @@ export struct ThemeSettingsPage {
 
                                 Text('默认主题')
                                   .fontSize(14)
+                                  .fontFamily(this.appFontFamily)
                                   .fontColor(theme.isDark ? '#FFFFFF' : '#333333')
                                   .opacity(0.7)
                               }
@@ -1826,12 +1835,14 @@ export struct ThemeSettingsPage {
                               Column({ space: 4 }) {
                                 Text(theme.name)
                                   .fontSize(14)
+                                  .fontFamily(this.appFontFamily)
                                   .fontWeight(FontWeight.Medium)
                                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                                   .maxLines(1)
                                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                                 Text(theme.isDark ? '深色主题' : '浅色主题')
                                   .fontSize(12)
+                                  .fontFamily(this.appFontFamily)
                                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                               }
                               .layoutWeight(1)
@@ -1840,6 +1851,7 @@ export struct ThemeSettingsPage {
                               Button(this.currentCustomThemeId === theme.id ? '已激活' : '应用')
                                 .fontSize(12)
                                 .height(32)
+                                .fontFamily(this.appFontFamily)
                                 .backgroundColor(this.currentCustomThemeId === theme.id ? $r('app.color.text_secondary') : $r('app.color.accent_primary'))
                                 .enabled(this.currentCustomThemeId !== theme.id)
                                 .onClick(async () => {
@@ -1879,6 +1891,7 @@ export struct ThemeSettingsPage {
                     .width('100%')
                     .height(48)
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .backgroundColor($r('app.color.accent_primary'))
                     .onClick(() => { this.isCreatingCustomTheme = true; })
                 }
@@ -1893,6 +1906,7 @@ export struct ThemeSettingsPage {
                 Column() {
                   Text('预览效果')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
@@ -1910,11 +1924,13 @@ export struct ThemeSettingsPage {
                       Column() {
                         Text('主色调')
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(Color.White)
                         Text(this.extractedColor)
                           .fontSize(10)
                           .fontColor(Color.White)
                           .margin({ top: 4 })
+                          .fontFamily(this.appFontFamily)
                       }
                       .padding(8)
                       .backgroundColor(this.extractedColor)
@@ -1934,6 +1950,7 @@ export struct ThemeSettingsPage {
                 Column() {
                   Text('原始图片')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
@@ -1957,6 +1974,7 @@ export struct ThemeSettingsPage {
                 .width('100%')
                 .height(48)
                 .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                 .backgroundColor($r('app.color.accent_primary'))
                 .onClick(() => this.selectImage())
               }
@@ -1968,11 +1986,13 @@ export struct ThemeSettingsPage {
                     .width('100%')
                     .height(48)
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .backgroundColor($r('app.color.accent_primary'))
                     .onClick(() => this.selectSplashImage())
                   
                   Text('提示：未设置开屏图片将使用背景图片作为开屏图片')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     .opacity(0.8)
                     .width('100%')
@@ -1989,10 +2009,12 @@ export struct ThemeSettingsPage {
                     Row() {
                       Text('模糊程度')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       Blank()
                       Text(`${this.blurLevel}%`)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     }
                     .width('100%')
@@ -2019,13 +2041,16 @@ export struct ThemeSettingsPage {
                     Row() {
                       Text('亮度')
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       Blank()
                       Text(`${this.brightnessLevel}%`)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                       Text(this.brightnessLevel < 50 ? ' (变暗)' : this.brightnessLevel > 50 ? ' (变亮)' : ' (原始)')
                         .fontSize(12)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                         .opacity(0.7)
                         .margin({ left: 4 })
@@ -2061,6 +2086,7 @@ export struct ThemeSettingsPage {
                 Column() {
                   Text('开屏图片预览')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
@@ -2083,6 +2109,7 @@ export struct ThemeSettingsPage {
                 Column({ space: 12 }) {
                   Text('选择主题色')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
@@ -2101,13 +2128,16 @@ export struct ThemeSettingsPage {
                       Column({ space: 4 }) {
                         Text('从图片提取')
                           .fontSize(12)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                         Text(this.extractedColor)
                           .fontSize(14)
+                          .fontFamily(this.appFontFamily)
                           .fontWeight(FontWeight.Medium)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                         Text(this.extractedColorRGB)
                           .fontSize(11)
+                          .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                       }
                       .alignItems(HorizontalAlign.Start)
@@ -2120,6 +2150,7 @@ export struct ThemeSettingsPage {
 
                   Text('可选主题色')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                     .width('100%')
 
@@ -2160,6 +2191,7 @@ export struct ThemeSettingsPage {
                 Column({ space: 8 }) {
                   Text('主题名称（可选）')
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   TextInput({ text: this.newThemeName })
                     .width('100%')
@@ -2180,6 +2212,7 @@ export struct ThemeSettingsPage {
                   .width('100%')
                   .height(48)
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                   .backgroundColor($r('app.color.color_success'))
                   .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
                   .onClick(() => this.saveAndApplyTheme())
@@ -2196,6 +2229,7 @@ export struct ThemeSettingsPage {
 
                   Text(this.processingMessage)
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
                   Progress({

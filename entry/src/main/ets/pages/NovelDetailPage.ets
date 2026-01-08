@@ -19,6 +19,7 @@ import { LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes'
 import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
 import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS } from '../Models/TextReaderModels';
@@ -35,6 +36,8 @@ const TITLE_BAR_HEIGHT_MINI = 56;
 export struct NovelDetailPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelDetailPage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -81,6 +84,15 @@ export struct NovelDetailPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
   }
 
   private lifecycle = new PageLifecycleManager('NovelDetailPage', { enableDebug: true });
@@ -88,6 +100,7 @@ export struct NovelDetailPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   async loadBookInfo(): Promise<void> {
@@ -482,6 +495,7 @@ export struct NovelDetailPage {
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       Text('加载中...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         .margin({ top: 16 })
     }
@@ -495,8 +509,10 @@ export struct NovelDetailPage {
     Column() {
       Text('加载失败')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
       Button('重试')
+        .fontFamily(this.appFontFamily)
         .margin({ top: 16 })
         .onClick(() => {
           this.isLoading = true;
@@ -523,6 +539,7 @@ export struct NovelDetailPage {
         Column() {
           Text((this.book?.name || '').substring(0, 1))
             .fontSize(32)
+            .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
         }
         .width(100)
@@ -538,18 +555,21 @@ export struct NovelDetailPage {
         Text(this.book?.name || '')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         
         Text(this.book?.author || '未知作者')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 8 })
         
         if (this.book?.kind) {
           Text(this.book.kind)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 4 })
         }
@@ -557,6 +577,7 @@ export struct NovelDetailPage {
         Row() {
           Text(this.book?.originName || '')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -564,6 +585,7 @@ export struct NovelDetailPage {
           
           Text(`${this.chapters.length}章`)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor('#52C41A')
             .margin({ left: 8 })
         }
@@ -584,12 +606,14 @@ export struct NovelDetailPage {
           Text('简介')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
           Text(this.showFullIntro ? '收起' : '展开')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .onClick(() => {
               this.showFullIntro = !this.showFullIntro;
@@ -599,6 +623,7 @@ export struct NovelDetailPage {
         
         Text(this.book.intro)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 8 })
           .maxLines(this.showFullIntro ? 100 : 3)
@@ -619,6 +644,7 @@ export struct NovelDetailPage {
       Row() {
         Button(this.isFavorite ? '已收藏' : '加入书架')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(this.isFavorite ? 
             ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme) : '#FFFFFF')
           .backgroundColor(this.isFavorite ? 
@@ -632,6 +658,7 @@ export struct NovelDetailPage {
         
         Button(this.lastReadChapterIndex >= 0 ? '继续阅读' : '开始阅读')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor('#52C41A')
           .borderRadius(20)
@@ -651,6 +678,7 @@ export struct NovelDetailPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
           Text('换源')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 4 })
         }
@@ -673,6 +701,7 @@ export struct NovelDetailPage {
           }
           Text(this.isDownloading ? `${Math.round(this.downloadProgress)}%` : '缓存')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .margin({ top: 4 })
         }
@@ -691,6 +720,7 @@ export struct NovelDetailPage {
               .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
             Text('设置')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ top: 4 })
           }
@@ -714,12 +744,14 @@ export struct NovelDetailPage {
         Text('章节列表')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Blank()
         
         Text('查看全部')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .onClick(() => {
             this.showChapterPanel = true;
@@ -737,12 +769,14 @@ export struct NovelDetailPage {
             if (index === this.lastReadChapterIndex) {
               Text('▶')
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .margin({ right: 6 })
             }
             
             Text(chapter.title)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(index === this.lastReadChapterIndex ? 
                 ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                 (chapter.isVip ? '#FF9800' : 
@@ -755,6 +789,7 @@ export struct NovelDetailPage {
             if (this.cachedChapterIndexes.has(index)) {
               Text('✓')
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor('#52C41A')
                 .margin({ left: 4 })
             }
@@ -762,6 +797,7 @@ export struct NovelDetailPage {
             if (index === this.lastReadChapterIndex) {
               Text('上次阅读')
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
                 .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -770,6 +806,7 @@ export struct NovelDetailPage {
             } else if (chapter.isVip) {
               Text('VIP')
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor('#FF9800')
                 .margin({ left: 8 })
             }
@@ -786,6 +823,7 @@ export struct NovelDetailPage {
       if (!this.showAllChapters && this.chapters.length > 20) {
         Text(`还有${this.chapters.length - 20}章，点击展开`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .padding(16)
           .onClick(() => {
@@ -1185,6 +1223,7 @@ export struct NovelDetailPage {
         Text('选择下载范围')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Blank()
@@ -1203,10 +1242,12 @@ export struct NovelDetailPage {
       Row() {
         Text(`共 ${this.chapters.length} 章`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text(`已缓存 ${this.cachedChapterIndexes.size} 章`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor('#52C41A')
           .margin({ left: 16 })
       }
@@ -1218,18 +1259,21 @@ export struct NovelDetailPage {
         Row() {
           Text('起始章节')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
           Text(`第 ${this.downloadStartIndex + 1} 章`)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         }
         .width('100%')
         
         Text(this.chapters[this.downloadStartIndex]?.title || '')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1264,18 +1308,21 @@ export struct NovelDetailPage {
         Row() {
           Text('结束章节')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
           Text(`第 ${this.downloadEndIndex + 1} 章`)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         }
         .width('100%')
         
         Text(this.chapters[this.downloadEndIndex]?.title || '')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1309,10 +1356,12 @@ export struct NovelDetailPage {
       Column() {
         Text(`将下载 ${this.getUncachedCount()} 章（共选择 ${this.downloadEndIndex - this.downloadStartIndex + 1} 章）`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Button('开始下载')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .borderRadius(24)
@@ -1340,6 +1389,7 @@ export struct NovelDetailPage {
         Text('章节列表')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Blank()
@@ -1362,6 +1412,7 @@ export struct NovelDetailPage {
             Row() {
               Text(`${index + 1}.`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(index === this.lastReadChapterIndex ? 
                   ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                   ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
@@ -1369,6 +1420,7 @@ export struct NovelDetailPage {
               
               Text(chapter.title)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(index === this.lastReadChapterIndex ? 
                   ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                   (chapter.isVip ? '#FF9800' : 
@@ -1382,6 +1434,7 @@ export struct NovelDetailPage {
               if (this.cachedChapterIndexes.has(index)) {
                 Text('✓')
                   .fontSize(10)
+                  .fontFamily(this.appFontFamily)
                   .fontColor('#52C41A')
                   .margin({ left: 4 })
               }
@@ -1389,11 +1442,13 @@ export struct NovelDetailPage {
               if (index === this.lastReadChapterIndex) {
                 Text('上次阅读')
                   .fontSize(10)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                   .margin({ left: 8 })
               } else if (chapter.isVip) {
                 Text('VIP')
                   .fontSize(10)
+                  .fontFamily(this.appFontFamily)
                   .fontColor('#FF9800')
                   .margin({ left: 8 })
               }
@@ -1423,6 +1478,7 @@ export struct NovelDetailPage {
       Row() {
         Text('换源')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -1446,6 +1502,7 @@ export struct NovelDetailPage {
             .height(32)
           Text('正在搜索可用书源...')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 12 })
         }
@@ -1456,6 +1513,7 @@ export struct NovelDetailPage {
         Column() {
           Text('未找到其他书源')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -1470,12 +1528,14 @@ export struct NovelDetailPage {
                   Text(source.sourceName)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(source.sourceId === this.sourceId ? 
                       ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
                       ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   
                   Text(source.latestChapterTitle || '暂无最新章节信息')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
                     .margin({ top: 4 })
                     .maxLines(1)
@@ -1487,6 +1547,7 @@ export struct NovelDetailPage {
                 if (source.sourceId === this.sourceId) {
                   Text('当前')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                     .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
@@ -1561,6 +1622,7 @@ export struct NovelDetailPage {
       
       // 标题文字层
       Text(this.formatCoverTitle(title))
+        .fontFamily(this.appFontFamily)
         .fontSize(this.calculateCoverFontSize(title))
         .fontWeight(FontWeight.Bold)
         .fontColor('#1a1a1a')

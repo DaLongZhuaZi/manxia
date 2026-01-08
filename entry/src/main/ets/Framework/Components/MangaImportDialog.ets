@@ -7,6 +7,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
@@ -137,6 +138,7 @@ export struct MangaImportDialog {
   @Prop parsedStructure: ParsedArchiveStructure;
   @Prop existingMangaCandidates: ExistingMangaCandidate[] = [];
   @Prop sourceFileUri: string = '';
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
   // 回调函数
   onConfirm: (result: MangaImportDialogResult) => void = () => {};
@@ -452,28 +454,29 @@ export struct MangaImportDialog {
       Row() {
         Text('漫画导入设置')
           .fontSize(20)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Blank()
 
-        // [暂时禁用] 刮削按钮 - 功能暂时关闭，保留逻辑实现
-        // Row({ space: 4 }) {
-        //   Image($r('app.media.ic_scraper'))
-        //     .width(18)
-        //     .height(18)
-        //     .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        //
-        //   Text('刮削')
-        //     .fontSize(13)
-        //     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        // }
-        // .padding({ left: 10, right: 12, top: 6, bottom: 6 })
-        // .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
-        // .borderRadius(16)
-        // .onClick(() => {
-        //   this.openScraperDialog();
-        // })
+        // 刮削按钮
+        Row({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+          Text('刮削')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .padding({ left: 10, right: 12, top: 6, bottom: 6 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+        .borderRadius(16)
+        .onClick(() => {
+          this.openScraperDialog();
+        })
       }
       .width('100%')
 
@@ -481,8 +484,10 @@ export struct MangaImportDialog {
       Row({ space: 8 }) {
         Text('📁')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
         Text(this.fileName)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -542,6 +547,7 @@ export struct MangaImportDialog {
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .onClick(() => {
             this.onCancel();
             this.controller.close();
@@ -554,6 +560,7 @@ export struct MangaImportDialog {
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .onClick(() => {
             if (this.validateForm()) {
               // 获取选中的封面路径
@@ -597,6 +604,7 @@ export struct MangaImportDialog {
     Column({ space: 8 }) {
       Text('导入模式')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -619,6 +627,7 @@ export struct MangaImportDialog {
     Column({ space: 2 }) {
       Text(label)
         .fontSize(13)
+        .fontFamily(this.appFontFamily)
         .fontWeight(this.importMode === mode ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.importMode === mode ?
           ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -626,6 +635,7 @@ export struct MangaImportDialog {
       
       Text(subtitle)
         .fontSize(10)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
     }
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -651,6 +661,7 @@ export struct MangaImportDialog {
     Column({ space: 8 }) {
       Text('章节信息')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -660,6 +671,7 @@ export struct MangaImportDialog {
         Column({ space: 4 }) {
           Text('编号')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           
           TextInput({ text: this.chapterNumber.toString(), placeholder: '1' })
@@ -683,6 +695,7 @@ export struct MangaImportDialog {
         Column({ space: 4 }) {
           Text('标题')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           
           TextInput({ text: this.chapterTitle, placeholder: '第1话' })
@@ -716,6 +729,7 @@ export struct MangaImportDialog {
       Row() {
         Text('章节列表')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -723,6 +737,7 @@ export struct MangaImportDialog {
         
         Text(`共 ${this.chapters.length} 章`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
@@ -753,6 +768,7 @@ export struct MangaImportDialog {
       // 排序序号
       Text(`${index + 1}`)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .width(24)
         .textAlign(TextAlign.Center)
@@ -791,6 +807,7 @@ export struct MangaImportDialog {
       // 页数
       Text(`${chapter.pageCount}页`)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .width(40)
 
@@ -798,6 +815,7 @@ export struct MangaImportDialog {
       Row({ space: 4 }) {
         Text('↑')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(index > 0 ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
             ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -809,6 +827,7 @@ export struct MangaImportDialog {
         
         Text('↓')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(index < this.chapters.length - 1 ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
             ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -852,6 +871,7 @@ export struct MangaImportDialog {
         
         Text('合并到已有漫画')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
       .width('100%')
@@ -861,6 +881,7 @@ export struct MangaImportDialog {
         Column({ space: 4 }) {
           Text('选择目标漫画:')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .width('100%')
 
@@ -877,12 +898,14 @@ export struct MangaImportDialog {
               Column({ space: 2 }) {
                 Text(manga.title)
                   .fontSize(13)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                 
                 Text(`${manga.author} · ${manga.chapterCount}章`)
                   .fontSize(11)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               }
               .layoutWeight(1)
@@ -919,6 +942,7 @@ export struct MangaImportDialog {
     Column({ space: 4 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -945,6 +969,7 @@ export struct MangaImportDialog {
     Column({ space: 4 }) {
       Text(label)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -971,6 +996,7 @@ export struct MangaImportDialog {
     Column({ space: 4 }) {
       Text('漫画标题 *')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -999,6 +1025,7 @@ export struct MangaImportDialog {
     Column({ space: 4 }) {
       Text('作者')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -1027,6 +1054,7 @@ export struct MangaImportDialog {
     Column({ space: 4 }) {
       Text('简介')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -1055,6 +1083,7 @@ export struct MangaImportDialog {
     Column({ space: 4 }) {
       Text('标签（逗号分隔）')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -1083,6 +1112,7 @@ export struct MangaImportDialog {
     Column({ space: 8 }) {
       Text('选择封面 *')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .width('100%')
@@ -1090,6 +1120,7 @@ export struct MangaImportDialog {
       if (this.coverCandidates.length === 0) {
         Text('正在加载封面候选...')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       } else {
         Row({ space: 12 }) {

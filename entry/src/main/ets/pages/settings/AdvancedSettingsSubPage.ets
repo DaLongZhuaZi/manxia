@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { ContentFilterManager } from '../../Framework/Managers/ContentFilterManager';
 import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
@@ -32,6 +33,8 @@ export struct AdvancedSettingsSubPage {
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'AdvancedSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -79,6 +82,13 @@ export struct AdvancedSettingsSubPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
     });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
@@ -92,6 +102,7 @@ export struct AdvancedSettingsSubPage {
   aboutToDisappear(): void {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
     
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
@@ -212,6 +223,7 @@ export struct AdvancedSettingsSubPage {
       Text('调试设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -219,9 +231,11 @@ export struct AdvancedSettingsSubPage {
         Column({ space: 4 }) {
           Text('高级模式')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           Text('启用后显示更多开发者选项')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .alignItems(HorizontalAlign.Start)
@@ -244,9 +258,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('日志悬浮窗')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('显示实时日志输出')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -267,9 +283,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('强制平板模式')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('在手机上使用平板布局')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -291,9 +309,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('强制横屏模式')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('锁定应用为横屏显示')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -315,9 +335,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('预加载调试信息')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('显示漫画阅读器的预加载队列详情')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -347,9 +369,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('SFW模式')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('隐藏所有NSFW(成人)内容')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -373,9 +397,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('自动检查更新')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('启动时检查应用更新')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -396,9 +422,11 @@ export struct AdvancedSettingsSubPage {
           Column({ space: 4 }) {
             Text('后台模糊遮罩')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             Text('在多任务界面显示模糊效果保护隐私')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -428,9 +456,11 @@ export struct AdvancedSettingsSubPage {
             Column({ space: 4 }) {
               Text('遮罩图标')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               Text('选择遮罩中央显示的图标')
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
             .alignItems(HorizontalAlign.Start)
@@ -474,6 +504,7 @@ export struct AdvancedSettingsSubPage {
       Text('其他操作')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
@@ -481,6 +512,8 @@ export struct AdvancedSettingsSubPage {
       Button({ stateEffect: true }) {
         Text('重播引导页面')
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
         .width('100%')
@@ -518,16 +551,19 @@ export struct AdvancedSettingsSubPage {
         Text('需要重启应用')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Text('设置已更改，需要重启应用才能生效。')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .textAlign(TextAlign.Center)
 
         Row({ space: 12 }) {
           Button('稍后重启')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
             .layoutWeight(1)
@@ -537,6 +573,7 @@ export struct AdvancedSettingsSubPage {
 
           Button('立即重启')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .layoutWeight(1)

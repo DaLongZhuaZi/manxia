@@ -8,6 +8,7 @@
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { logger } from '../../Utils/Logger';
 import { zlib } from '@kit.BasicServicesKit';
+import { util } from '@kit.ArkTS';
 
 const TAG = 'TarPackager';
 
@@ -55,11 +56,11 @@ export class TarPackager {
    */
   async createTarArchive(sourceDir: string, outputPath: string): Promise<void> {
     try {
-      logger.info(TAG, `Creating tar archive: ${outputPath}`);
+      logger.info(TAG, `正在创建tar归档: ${outputPath}`);
       
       // 获取目录中的所有文件
       const files = await this.getAllFiles(sourceDir);
-      logger.info(TAG, `Found ${files.length} files to archive`);
+      logger.info(TAG, `找到 ${files.length} 个文件待归档`);
       
       // 创建临时 tar 文件
       const tempTarPath = `${outputPath}.tmp`;
@@ -80,18 +81,18 @@ export class TarPackager {
         // 重命名为最终文件名
         fs.renameSync(tempTarPath, outputPath);
         
-        logger.info(TAG, `Tar archive created successfully: ${outputPath}`);
+        logger.info(TAG, `tar归档创建成功: ${outputPath}`);
       } catch (error) {
         fs.closeSync(tarFile);
         // 清理临时文件
         if (fs.accessSync(tempTarPath)) {
           fs.unlinkSync(tempTarPath);
         }
-        throw new Error(`Tar creation failed: ${error}`);
+        throw new Error(`tar创建失败: ${error}`);
       }
     } catch (error) {
-      logger.error(TAG, `Failed to create tar archive: ${error}`);
-      throw new Error(`Failed to create tar archive: ${error}`);
+      logger.error(TAG, `创建tar归档失败: ${error}`);
+      throw new Error(`创建tar归档失败: ${error}`);
     }
   }
 
@@ -99,10 +100,11 @@ export class TarPackager {
    * 解压 tar 包
    * @param tarPath tar 文件路径（.mxbackup）
    * @param outputDir 输出目录
+   * [修复] 正确处理文件和目录条目，添加详细日志
    */
   async extractTarArchive(tarPath: string, outputDir: string): Promise<void> {
     try {
-      logger.info(TAG, `Extracting tar archive: ${tarPath}`);
+      logger.info(TAG, `正在解压tar归档: ${tarPath}`);
       
       // 确保输出目录存在
       if (!fs.accessSync(outputDir)) {
@@ -110,6 +112,8 @@ export class TarPackager {
       }
       
       const tarFile = fs.openSync(tarPath, fs.OpenMode.READ_ONLY);
+      let extractedCount = 0;
+      let dirCount = 0;
       
       try {
         let offset = 0;
@@ -120,6 +124,7 @@ export class TarPackager {
           const readBytes = fs.readSync(tarFile.fd, headerBuffer, { offset: offset });
           
           if (readBytes < 512) {
+            logger.debug(TAG, `读取字节数不足512: ${readBytes}`);
             break; // 文件结束
           }
           
@@ -128,52 +133,95 @@ export class TarPackager {
           
           // 检查是否为结束标记（全零块）
           if (header.name === '') {
+            logger.debug(TAG, `遇到空名称条目，结束解压`);
             break;
           }
           
           offset += 512;
           
-          // 读取文件内容
-          const fileSize = parseInt(header.size, 8);
-          if (fileSize > 0) {
-            const fileBuffer = new ArrayBuffer(fileSize);
-            fs.readSync(tarFile.fd, fileBuffer, { offset: offset });
-            
-            // 写入文件
-            const outputPath = `${outputDir}/${header.name}`;
-            const outputDirPath = outputPath.substring(0, outputPath.lastIndexOf('/'));
-            
-            if (!fs.accessSync(outputDirPath)) {
-              fs.mkdirSync(outputDirPath, true);
+          // 获取文件大小和类型
+          const fileSize = parseInt(header.size, 8) || 0;
+          const typeFlag = header.typeflag;
+          
+          // [修复] 处理目录条目 (typeflag='5') 或以/结尾的路径
+          const isDirectory = typeFlag === '5' || header.name.endsWith('/');
+          
+          if (isDirectory) {
+            // 创建目录
+            const dirPath = `${outputDir}/${header.name}`;
+            try {
+              if (!fs.accessSync(dirPath)) {
+                fs.mkdirSync(dirPath, true);
+              }
+              dirCount++;
+              logger.debug(TAG, `已创建目录: ${header.name}`);
+            } catch (mkdirError) {
+              logger.warn(TAG, `创建目录失败: ${header.name}, ${mkdirError}`);
             }
-            
-            const outputFile = fs.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-            fs.writeSync(outputFile.fd, fileBuffer);
-            fs.closeSync(outputFile);
-            
-            logger.debug(TAG, `Extracted: ${header.name}`);
+          } else if (fileSize > 0) {
+            // 读取并写入文件
+            try {
+              const fileBuffer = new ArrayBuffer(fileSize);
+              fs.readSync(tarFile.fd, fileBuffer, { offset: offset });
+              
+              // 确定输出路径
+              const outputPath = `${outputDir}/${header.name}`;
+              const outputDirPath = outputPath.substring(0, outputPath.lastIndexOf('/'));
+              
+              // 确保父目录存在
+              if (outputDirPath && outputDirPath !== outputDir) {
+                try {
+                  if (!fs.accessSync(outputDirPath)) {
+                    fs.mkdirSync(outputDirPath, true);
+                  }
+                } catch (e) {
+                  // 目录可能已存在
+                }
+              }
+              
+              const outputFile = fs.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+              fs.writeSync(outputFile.fd, fileBuffer);
+              fs.closeSync(outputFile);
+              
+              extractedCount++;
+              logger.debug(TAG, `已解压文件: ${header.name} (${fileSize}字节)`);
+            } catch (extractError) {
+              logger.error(TAG, `解压文件失败: ${header.name}, ${extractError}`);
+            }
             
             // 移动到下一个512字节边界
             const paddedSize = Math.ceil(fileSize / 512) * 512;
             offset += paddedSize;
+          } else {
+            // 空文件，只记录日志
+            logger.debug(TAG, `跳过空文件: ${header.name}`);
           }
         }
         
         fs.closeSync(tarFile);
         
-        logger.info(TAG, `Tar archive extracted successfully to: ${outputDir}`);
+        logger.info(TAG, `tar归档解压成功: ${outputDir}, 文件=${extractedCount}, 目录=${dirCount}`);
+        
+        // [修复] 验证解压结果
+        try {
+          const extractedContents = fs.listFileSync(outputDir);
+          logger.info(TAG, `解压后目录内容: ${extractedContents.join(', ')}`);
+        } catch (listError) {
+          logger.warn(TAG, `无法列出解压目录: ${listError}`);
+        }
       } catch (error) {
         fs.closeSync(tarFile);
-        throw new Error(`Tar extraction failed: ${error}`);
+        throw new Error(`tar解压失败: ${error}`);
       }
     } catch (error) {
-      logger.error(TAG, `Failed to extract tar archive: ${error}`);
-      throw new Error(`Failed to extract tar archive: ${error}`);
+      logger.error(TAG, `解压tar归档失败: ${error}`);
+      throw new Error(`解压tar归档失败: ${error}`);
     }
   }
 
   /**
    * 获取目录中的所有文件（递归）
+   * [修复] 为每个条目添加单独的错误处理，防止单个条目失败导致整个目录被跳过
    */
   private async getAllFiles(dir: string, baseDir?: string): Promise<string[]> {
     const base = baseDir || dir;
@@ -181,33 +229,46 @@ export class TarPackager {
     
     try {
       if (!fs.accessSync(dir)) {
-        logger.warn(TAG, `Directory does not exist: ${dir}`);
+        logger.warn(TAG, `目录不存在: ${dir}`);
         return files;
       }
       
       const entries = fs.listFileSync(dir);
-      logger.debug(TAG, `Scanning directory: ${dir}, found ${entries.length} entries`);
+      logger.debug(TAG, `扫描目录: ${dir}, 找到 ${entries.length} 个条目`);
+      
+      // [修复] 在根目录级别记录所有条目名称，便于调试
+      if (dir === base) {
+        logger.info(TAG, `根目录条目列表: ${entries.join(', ')}`);
+      }
       
       for (const entry of entries) {
         const fullPath = `${dir}/${entry}`;
-        const stat = fs.statSync(fullPath);
         
-        if (stat.isDirectory()) {
-          logger.debug(TAG, `Entering subdirectory: ${entry}`);
-          const subFiles = await this.getAllFiles(fullPath, base);
-          files.push(...subFiles);
-        } else {
-          // 返回相对路径
-          const relativePath = fullPath.substring(base.length + 1);
-          files.push(relativePath);
-          logger.debug(TAG, `Found file: ${relativePath} (${stat.size} bytes)`);
+        // [修复] 为每个条目单独捕获异常，避免一个条目失败导致整个循环中断
+        try {
+          const stat = fs.statSync(fullPath);
+          
+          if (stat.isDirectory()) {
+            logger.debug(TAG, `进入子目录: ${entry}`);
+            const subFiles = await this.getAllFiles(fullPath, base);
+            files.push(...subFiles);
+          } else {
+            // 返回相对路径
+            const relativePath = fullPath.substring(base.length + 1);
+            files.push(relativePath);
+            logger.debug(TAG, `找到文件: ${relativePath} (${stat.size} 字节)`);
+          }
+        } catch (entryError) {
+          // [修复] 单个条目处理失败时记录错误但继续处理其他条目
+          logger.error(TAG, `处理条目失败: ${entry}, 路径: ${fullPath}, 错误: ${entryError}`);
+          // 继续处理下一个条目
         }
       }
     } catch (error) {
-      logger.error(TAG, `Failed to list files in ${dir}: ${error}`);
+      logger.error(TAG, `列出目录文件失败 ${dir}: ${error}`);
     }
     
-    logger.info(TAG, `Total files found in ${dir}: ${files.length}`);
+    logger.info(TAG, `目录 ${dir} 共找到 ${files.length} 个文件`);
     return files;
   }
 
@@ -242,7 +303,7 @@ export class TarPackager {
       }
     }
     
-    logger.debug(TAG, `Added to tar: ${relativePath} (${stat.size} bytes)`);
+    logger.debug(TAG, `已添加到tar: ${relativePath} (${stat.size} 字节)`);
   }
 
   /**
@@ -336,36 +397,89 @@ export class TarPackager {
 
   /**
    * 写入字符串到 Uint8Array (UTF-8编码)
+   * [修复] 正确处理UTF-8编码，支持中文等多字节字符
    */
   private writeString(view: Uint8Array, offset: number, str: string, maxLength: number): void {
-    const length = Math.min(str.length, maxLength);
-    
-    for (let i = 0; i < length; i++) {
-      const code = str.charCodeAt(i);
-      view[offset + i] = code < 256 ? code : 63; // 使用 '?' 替代非ASCII字符
-    }
-    
-    // 填充剩余空间为0
-    for (let i = length; i < maxLength; i++) {
-      view[offset + i] = 0;
+    try {
+      // 使用TextEncoder将字符串转换为UTF-8字节数组
+      const encoder = new util.TextEncoder();
+      const encoded: Uint8Array = encoder.encodeInto(str);
+      
+      if (!encoded || encoded.length === 0) {
+        // 如果编码失败，使用简单的ASCII编码
+        const length = Math.min(str.length, maxLength);
+        for (let i = 0; i < length; i++) {
+          const code = str.charCodeAt(i);
+          view[offset + i] = code < 256 ? code : 63; // 使用 '?' 替代非ASCII字符
+        }
+        for (let i = length; i < maxLength; i++) {
+          view[offset + i] = 0;
+        }
+        return;
+      }
+      
+      const length = Math.min(encoded.length, maxLength);
+      
+      for (let i = 0; i < length; i++) {
+        view[offset + i] = encoded[i];
+      }
+      
+      // 填充剩余空间为0
+      for (let i = length; i < maxLength; i++) {
+        view[offset + i] = 0;
+      }
+    } catch (error) {
+      // 编码失败时使用简单的ASCII编码
+      logger.warn(TAG, `UTF-8编码失败，使用ASCII编码: ${error}`);
+      const length = Math.min(str.length, maxLength);
+      for (let i = 0; i < length; i++) {
+        const code = str.charCodeAt(i);
+        view[offset + i] = code < 256 ? code : 63;
+      }
+      for (let i = length; i < maxLength; i++) {
+        view[offset + i] = 0;
+      }
     }
   }
 
   /**
    * 从 Uint8Array 读取字符串 (UTF-8解码)
+   * [修复] 正确处理UTF-8编码，支持中文等多字节字符
    */
   private readString(view: Uint8Array, offset: number, maxLength: number): string {
-    const bytes: number[] = [];
-    
-    for (let i = 0; i < maxLength; i++) {
-      const byte = view[offset + i];
-      if (byte === 0) {
-        break;
+    try {
+      // 找到字符串结束位置（null终止符）
+      let endIndex = offset;
+      for (let i = 0; i < maxLength; i++) {
+        if (view[offset + i] === 0) {
+          break;
+        }
+        endIndex = offset + i + 1;
       }
-      bytes.push(byte);
+      
+      // 提取字节数组
+      const bytes = view.slice(offset, endIndex);
+      
+      if (bytes.length === 0) {
+        return '';
+      }
+      
+      // 使用TextDecoder将UTF-8字节数组转换为字符串
+      const decoder = new util.TextDecoder('utf-8');
+      return decoder.decodeToString(bytes);
+    } catch (error) {
+      // 解码失败时使用简单的ASCII解码
+      logger.warn(TAG, `UTF-8解码失败，使用ASCII解码: ${error}`);
+      const bytes: number[] = [];
+      for (let i = 0; i < maxLength; i++) {
+        const byte = view[offset + i];
+        if (byte === 0) {
+          break;
+        }
+        bytes.push(byte);
+      }
+      return String.fromCharCode(...bytes);
     }
-    
-    return String.fromCharCode(...bytes);
   }
 }
 

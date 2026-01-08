@@ -10,6 +10,7 @@ import { LengthMetrics, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
@@ -53,6 +54,8 @@ export interface NovelSourceDebugPageParams {
 export struct NovelSourceDebugPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
   @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private lifecycle = new PageLifecycleManager('NovelSourceDebugPage', { enableDebug: true });
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `NovelSourceDebugPage_${Date.now()}`;
@@ -99,6 +102,9 @@ export struct NovelSourceDebugPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
+    FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+    });
     
     // 从AppStorage获取参数
     const params = AppStorage.get<NovelSourceDebugPageParams>('NovelSourceDebugPageParams');
@@ -112,6 +118,7 @@ export struct NovelSourceDebugPage {
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
   }
 
   /**
@@ -487,6 +494,7 @@ export struct NovelSourceDebugPage {
           .fontSize(14)
           .height(40)
           .margin({ left: 8 })
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .enabled(!this.isRunning)
           .onClick(() => this.testSearch())
@@ -495,6 +503,7 @@ export struct NovelSourceDebugPage {
           .fontSize(14)
           .height(40)
           .margin({ left: 8 })
+          .fontFamily(this.appFontFamily)
           .backgroundColor('#FF9800')
           .enabled(!this.isRunning)
           .onClick(() => this.testAll())
@@ -549,6 +558,7 @@ export struct NovelSourceDebugPage {
       
       Text(label)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(completed ? '#52C41A' : 
                    this.currentStep === step ? 
                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -563,6 +573,7 @@ export struct NovelSourceDebugPage {
       Row() {
         Text(`搜索结果 (${this.searchResults.length})`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -570,6 +581,7 @@ export struct NovelSourceDebugPage {
         
         Text(this.showSearchResults ? '收起' : '展开')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .onClick(() => {
             this.showSearchResults = !this.showSearchResults;
@@ -584,12 +596,14 @@ export struct NovelSourceDebugPage {
             Column() {
               Text(book.name)
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
               
               Text(`${book.author || '未知作者'} · ${book.kind || '未分类'}`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
                 .margin({ top: 4 })
             }
@@ -599,6 +613,7 @@ export struct NovelSourceDebugPage {
             Button('详情')
               .fontSize(12)
               .height(28)
+              .fontFamily(this.appFontFamily)
               .enabled(!this.isRunning)
               .onClick(() => {
                 this.selectedBookIndex = index;
@@ -625,6 +640,7 @@ export struct NovelSourceDebugPage {
       Row() {
         Text('书籍详情')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -633,11 +649,13 @@ export struct NovelSourceDebugPage {
         Button('获取目录')
           .fontSize(12)
           .height(28)
+          .fontFamily(this.appFontFamily)
           .enabled(!this.isRunning)
           .onClick(() => this.testToc())
         
         Text(this.showBookInfo ? '收起' : '展开')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .margin({ left: 12 })
           .onClick(() => {
@@ -670,11 +688,13 @@ export struct NovelSourceDebugPage {
     Row() {
       Text(label + ':')
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         .width(60)
       
       Text(value)
         .fontSize(12)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
     }
@@ -688,6 +708,7 @@ export struct NovelSourceDebugPage {
       Row() {
         Text(`目录 (${this.chapters.length}章)`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -695,6 +716,7 @@ export struct NovelSourceDebugPage {
         
         Text(this.showChapters ? '收起' : '展开')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .onClick(() => {
             this.showChapters = !this.showChapters;
@@ -708,6 +730,7 @@ export struct NovelSourceDebugPage {
           Row() {
             Text(`${index + 1}. ${chapter.title}`)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
               .maxLines(1)
@@ -716,6 +739,7 @@ export struct NovelSourceDebugPage {
             Button('正文')
               .fontSize(12)
               .height(26)
+              .fontFamily(this.appFontFamily)
               .enabled(!this.isRunning)
               .onClick(() => {
                 this.selectedChapterIndex = index;
@@ -734,6 +758,7 @@ export struct NovelSourceDebugPage {
         if (this.chapters.length > 20) {
           Text(`... 还有 ${this.chapters.length - 20} 章`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
             .margin({ top: 8 })
         }
@@ -749,6 +774,7 @@ export struct NovelSourceDebugPage {
       Row() {
         Text('正文预览')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -756,10 +782,12 @@ export struct NovelSourceDebugPage {
         
         Text(`${this.chapterContent.length} 字`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
         
         Text(this.showContent ? '收起' : '展开')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .margin({ left: 12 })
           .onClick(() => {
@@ -772,6 +800,7 @@ export struct NovelSourceDebugPage {
       if (this.showContent) {
         Text(this.chapterContent.substring(0, 2000) + (this.chapterContent.length > 2000 ? '...' : ''))
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .lineHeight(22)
           .width('100%')
@@ -790,6 +819,7 @@ export struct NovelSourceDebugPage {
       Row() {
         Text(`调试日志 (${this.logs.length})`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
@@ -797,6 +827,7 @@ export struct NovelSourceDebugPage {
         
         Text('清空')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
           .onClick(() => this.clearLogs())
       }
@@ -809,15 +840,18 @@ export struct NovelSourceDebugPage {
             Row() {
               Text(log.time)
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .width(80)
               
               Text(this.getLogLevelIcon(log.level))
                 .fontSize(12)
                 .width(20)
+                .fontFamily(this.appFontFamily)
               
               Text(log.message)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(this.getLogColor(log.level))
                 .layoutWeight(1)
             }
@@ -847,6 +881,7 @@ export struct NovelSourceDebugPage {
       
       Text('正在执行...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .margin({ top: 12 })
     }

@@ -8,6 +8,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { logger } from '../Utils/Logger';
 import { StorageAnalyzer, StorageStatistics, StorageItem, StorageType, ClearOptions } from '../Framework/Storage/StorageAnalyzer';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { LengthMetrics } from '@kit.ArkUI';
@@ -19,6 +20,7 @@ import { CacheConfigManager, CacheConfig } from '../Framework/Cache/CacheConfigM
 import { SmartPreloadStrategy, PreloadStats } from '../Framework/Cache/SmartPreloadStrategy';
 import { DiskCacheManager } from '../Framework/Cache/DiskCacheManager';
 import { CacheManagementPanel } from '../components/CacheManagementPanel';
+import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 
 const TAG = 'StorageManagementPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -51,6 +53,8 @@ interface DiskCacheStatsInfo {
 @ComponentV2
 export struct StorageManagementPage {
   @Local themeState: ThemeState = { currentTheme: ThemeType.DARK };
+  @Local fontState: FontAwareState = new FontAwareState();
+  @Local appFontFamily: string = 'HarmonyOS Sans';
   @Local isLoading: boolean = true;
   @Local statistics: StorageStatistics | null = null;
   @Local selectedItems: Set<StorageType> = new Set();
@@ -86,6 +90,12 @@ export struct StorageManagementPage {
 
     // 加载存储统计
     this.loadStorageStatistics();
+    
+    // 初始化字体管理
+    FontAwareHelper.initializeFontAware('StorageManagementPage', this.fontState, (newState: FontAwareState) => {
+      this.fontState = newState;
+      this.appFontFamily = newState.appFontFamily;
+    });
   }
 
   aboutToDisappear(): void {
@@ -95,6 +105,7 @@ export struct StorageManagementPage {
       this.themeManager.offThemeChange(this.themeChangeCallback);
     }
     this.lifecycle.destroy();
+    FontAwareHelper.cleanupFontAware('StorageManagementPage');
   }
 
   /**
@@ -320,6 +331,7 @@ export struct StorageManagementPage {
     Column({ space: 16 }) {
       Text('存储总览')
         .fontSize(18)
+        .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
@@ -328,10 +340,12 @@ export struct StorageManagementPage {
           Row() {
             Text('总使用空间')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             Blank()
             Text(this.storageAnalyzer.formatSize(this.statistics.usedSize))
               .fontSize(16)
+              .fontFamily(this.appFontFamily)
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           }
@@ -349,6 +363,7 @@ export struct StorageManagementPage {
 
           Text(`共 ${this.statistics.items.length} 个存储项`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
       }
@@ -380,12 +395,14 @@ export struct StorageManagementPage {
         Row({ space: 8 }) {
           Text(item.name)
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           if (!item.canClear) {
             Text('不可清理')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .padding({
                 left: 6,
@@ -401,6 +418,7 @@ export struct StorageManagementPage {
 
         Text(item.description)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -408,12 +426,14 @@ export struct StorageManagementPage {
         Row({ space: 8 }) {
           Text(this.storageAnalyzer.formatSize(item.size))
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
 
           if (item.fileCount > 0) {
             Text(`${item.fileCount} 个文件`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           }
         }
@@ -438,6 +458,7 @@ export struct StorageManagementPage {
     Row({ space: 12 }) {
       Button('刷新')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
           this.themeState.currentTheme))
@@ -450,6 +471,7 @@ export struct StorageManagementPage {
 
       Button(`清理选中 (${this.selectedItems.size})`)
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(Color.White)
         .backgroundColor(this.selectedItems.size > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -491,6 +513,7 @@ export struct StorageManagementPage {
                 .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               Text('加载中...')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
                   this.themeState.currentTheme))
             }
@@ -507,6 +530,7 @@ export struct StorageManagementPage {
                 Button('缓存管理')
                   .layoutWeight(1)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(Color.White)
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue',
                     this.themeState.currentTheme))
@@ -518,6 +542,7 @@ export struct StorageManagementPage {
                 Button(this.showCacheDetails ? '收起详情' : '查看详情')
                   .layoutWeight(1)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
                     this.themeState.currentTheme))
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
@@ -534,22 +559,26 @@ export struct StorageManagementPage {
                 Column({ space: 8 }) {
                   Text('缓存详情')
                     .fontSize(16)
+                    .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
                       this.themeState.currentTheme))
 
                   Text(`内存缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.memoryCacheSize)}`)
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
                       this.themeState.currentTheme))
 
                   Text(`磁盘缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.diskCacheSize)}`)
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
                       this.themeState.currentTheme))
 
                   Text(`永久缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.permanentCacheSize)}`)
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
                       this.themeState.currentTheme))
                 }
@@ -564,6 +593,7 @@ export struct StorageManagementPage {
               Column({ space: 8 }) {
                 Text('存储项目')
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
                     this.themeState.currentTheme))
@@ -593,9 +623,11 @@ export struct StorageManagementPage {
             Column({ space: 20 }) {
               Text('加载失败')
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
                   this.themeState.currentTheme))
               Button('重试')
+                .fontFamily(this.appFontFamily)
                 .onClick(() => {
                   this.loadStorageStatistics();
                 })
@@ -675,8 +707,64 @@ export struct StorageManagementPage {
         }
       },
       content: {
-        title: { mainTitle: '存储管理' }
+        title: { mainTitle: '存储管理' },
+        menu: {
+          value: [{
+            content: {
+              label: '帮助',
+              icon: $r('sys.symbol.questionmark_circle'),
+              isEnabled: true,
+              action: () => {
+                this.showStorageHelp();
+              }
+            }
+          }]
+        }
       }
     })
+  }
+
+  private showStorageHelp(): void {
+    const helpContent = `# 存储管理帮助
+
+## 功能介绍
+
+存储管理页面帮助您了解和管理应用占用的存储空间。
+
+## 存储类型说明
+
+### 缓存数据
+- **内存缓存**: 临时存储在内存中的图片，应用关闭后自动清除
+- **磁盘缓存**: 存储在本地的图片缓存，加快重复访问速度
+- **永久缓存**: 已下载的漫画章节图片，不会自动清除
+
+### 应用数据
+- **漫画数据**: 漫画信息、阅读进度、收藏等
+- **电子书数据**: 电子书文件和阅读记录
+- **小说数据**: 小说内容和阅读进度
+- **封面图片**: 漫画和电子书的封面缓存
+
+## 清理操作
+
+### 清理缓存
+点击"清理缓存"可以释放临时缓存空间，不会影响已下载的内容。
+
+### 清理特定类型
+点击各存储项的清理按钮，可以单独清理该类型的数据。
+
+## 缓存配置
+
+点击"缓存配置"可以设置：
+- 内存缓存大小限制
+- 磁盘缓存大小限制
+- 自动清理策略
+
+## 注意事项
+
+- 清理永久缓存会删除已下载的漫画章节
+- 清理应用数据会删除阅读进度和收藏
+- 建议定期清理临时缓存以释放空间`;
+
+    getHelpPanelManagerV2().showInlineHelp('存储管理帮助', helpContent);
   }
 }

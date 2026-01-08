@@ -20,6 +20,7 @@ import { AppNotificationManager } from '../Framework/Managers/NotificationManage
 // 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
 // import { TestManagementPage } from './TestManagementPage';
 import { DataManagementPage } from './DataManagementPage';
+import { DownloadSyncPage } from './DownloadSyncPage';
 import { MangaReaderPage } from './MangaReaderPage';
 import { MangaDetailPage, MangaDetailPageParams } from './MangaDetailPage';
 import { WebViewConfigurableSystemTestPage } from './WebViewConfigurableSystemTestPage';
@@ -57,6 +58,7 @@ import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
 import { WindowManager } from '../Utils/WindowManager';
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
+import { HelpPanelOverlayV2 } from '../Framework/Components/HelpPanelV2';
 import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
 import { BookSourceManagementPage } from './BookSourceManagementPage';
@@ -80,6 +82,9 @@ import { LifecycleMonitorPage } from './LifecycleMonitorPage';
 import { FileEditorPage } from './FileEditorPage';
 import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOverlay';
 import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
+import { HelpCenterPage } from './HelpCenterPage';
+import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
+import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
@@ -122,6 +127,7 @@ import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelD
 // 导入事件总线
 import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload } from '../Framework/EventBus';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
+import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
@@ -295,6 +301,11 @@ struct MainMenuPage {
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  
+  // 字体相关状态
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') @Watch('onAppFontFamilyChange') appFontFamily: string = 'HarmonyOS Sans';
+  @State private fontRefreshKey: number = 0;
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   private privacyModeManager: PrivacyModeManager = PrivacyModeManager.getInstance();
@@ -634,6 +645,7 @@ struct MainMenuPage {
 
   aboutToAppear() {
     logger.lifecycle(TAG, '🚀 漫画阅读应用启动');
+    logger.info(TAG, `初始化时appFontFamily值: ${this.appFontFamily}`);
 
     // 使用 @StorageProp 自动响应设置变化，无需手动从 AppStorage 加载
 
@@ -670,6 +682,16 @@ struct MainMenuPage {
       (newState: ThemeAwareState) => {
         // 重新赋值整个themeState对象以触发UI更新
         this.themeState = newState;
+      }
+    );
+
+    // 初始化字体感知
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+        logger.info(TAG, `字体设置已更新: ${newState.appFontFamily}`);
       }
     );
 
@@ -727,6 +749,7 @@ struct MainMenuPage {
     this.initializeSystem();
     this.loadVersionInfo();
     this.initializeUserManualIfNeeded(); // 首次运行时添加使用手册
+    this.checkAndShowChangelog(); // 新版本首次启动显示更新日志
     this.initializeContentData(); // 加载漫画、电子书并提取标签作者
     this.loadLibraryViewMode();
     this.loadRecentReadingList();
@@ -1095,30 +1118,37 @@ struct MainMenuPage {
         Text('使用说明')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text('• 本应用不包含任何内置图源，需用户自行导入')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 图源是JSON格式的配置文件，定义了漫画数据的获取方式')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
-        Text('• 点击"图源管理"按钮，可以导入本地图源或同步在线仓库')
+        Text('• 点击“图源管理”按钮，可以导入本地图源或同步在线仓库')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 支持单个图源或图源数组格式的JSON文件')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 也可以输入仓库地址同步在线仓库的图源')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 用户需自行承担使用第三方图源的风险和责任')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .opacity(0.8)
       } else if (this.sourceTypeFilter === 'manga') {
@@ -1126,18 +1156,22 @@ struct MainMenuPage {
         Text('漫画源说明')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text('• 漫画源用于获取在线漫画内容，支持搜索、浏览和阅读')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 点击漫画源卡片可进入该图源浏览漫画')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 漫画源需要在source.json中设置 "type": "manga"')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .opacity(0.8)
       } else if (this.sourceTypeFilter === 'ebook') {
@@ -1145,18 +1179,22 @@ struct MainMenuPage {
         Text('电子书源说明')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text('• 电子书源用于获取在线电子书内容，支持EPUB、PDF等格式')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 点击电子书源卡片可进入该图源浏览电子书')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 电子书源需要在source.json中设置 "type": "ebook"')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .opacity(0.8)
       } else if (this.sourceTypeFilter === 'novel') {
@@ -1164,18 +1202,22 @@ struct MainMenuPage {
         Text('小说源说明')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text('• 小说源用于获取在线小说内容，支持章节阅读')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 点击小说源卡片可进入该图源浏览小说')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
         Text('• 小说源需要在source.json中设置 "type": "novel"')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .opacity(0.8)
       }
@@ -1994,6 +2036,7 @@ struct MainMenuPage {
             Text(manga.title)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2030,6 +2073,7 @@ struct MainMenuPage {
             Text(ebook.metadata.title)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2059,6 +2103,7 @@ struct MainMenuPage {
               // 小说标识
               Text('小说')
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor('#FFFFFF')
                 .backgroundColor('#4CAF50')
                 .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -2075,6 +2120,7 @@ struct MainMenuPage {
             Text(novel.name)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3231,6 +3277,7 @@ struct MainMenuPage {
     }
 
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
 
     // 取消订阅漫画导入完成事件
     eventBus.unsubscribe(GameEvent.MANGA_IMPORT_COMPLETED, (payload: IEventPayload) => {
@@ -3300,6 +3347,7 @@ struct MainMenuPage {
 
       Text('正在刷新...')
         .fontSize(14)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .justifyContent(FlexAlign.Center)
@@ -3339,6 +3387,21 @@ struct MainMenuPage {
   }
 
   /**
+   * 检查并显示更新日志（新版本首次启动）
+   */
+  private async checkAndShowChangelog(): Promise<void> {
+    try {
+      const changelogManager = getChangelogManager();
+      const shown = await changelogManager.checkAndShowChangelog();
+      if (shown) {
+        logger.info(TAG, '✅ 已显示新版本更新日志');
+      }
+    } catch (error) {
+      logger.error(TAG, '检查更新日志失败', String(error));
+    }
+  }
+
+  /**
    * 加载版本信息
    */
   private loadVersionInfo(): void {
@@ -3354,6 +3417,17 @@ struct MainMenuPage {
   /**
    * 加载可见标签配置
    */
+  /**
+   * 字体变化回调
+   */
+  private onAppFontFamilyChange(): void {
+    logger.info(TAG, `字体变化回调触发: ${this.appFontFamily}, fontRefreshKey=${this.fontRefreshKey}`);
+    // 强制触发UI刷新
+    this.fontRefreshKey = this.fontRefreshKey + 1;
+    // 同步更新fontState
+    this.fontState.appFontFamily = this.appFontFamily;
+  }
+
   private loadVisibleTabs(): void {
     try {
       const savedTabs = AppStorage.get<number[]>('visible_tabs');
@@ -4133,9 +4207,10 @@ struct MainMenuPage {
     Column() {
       Row() {
         // 标题
-        Text(this.getPageTitle())
+        Text(`${this.getPageTitle()}`)
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
 
@@ -4218,6 +4293,7 @@ struct MainMenuPage {
       Text(this.getPageTitle())
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -4322,10 +4398,12 @@ struct MainMenuPage {
             Text(item.title)
               .fontSize(this.responsive_isLandscape ? 18 : 24)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(Color.White)
 
             Text(item.subtitle)
               .fontSize(this.responsive_isLandscape ? 13 : 16)
+              .fontFamily(this.appFontFamily)
               .fontColor(Color.White)
               .opacity(0.9)
           }
@@ -4382,10 +4460,12 @@ struct MainMenuPage {
         Text('小说阅读')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Text('支持Legado书源，海量小说资源')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .margin({ top: 4 })
       }
@@ -4426,6 +4506,7 @@ struct MainMenuPage {
           Text('最近阅读')
             .fontSize(18)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           Blank()
@@ -4433,6 +4514,7 @@ struct MainMenuPage {
           Text('查看全部 >')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .onClick(() => {
               this.currentTabIndex = TabIndex.LIBRARY;
@@ -4452,6 +4534,7 @@ struct MainMenuPage {
 
             Text('加载中...')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .margin({ left: 8 })
           }
@@ -4472,11 +4555,13 @@ struct MainMenuPage {
 
             Text('暂无阅读记录')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
 
             Button('去书库看看')
               .fontSize(14)
               .height(32)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .onClick(() => {
@@ -4526,6 +4611,7 @@ struct MainMenuPage {
       Text(`已选择 ${this.selectedMangaIds.size} 项`)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -4533,6 +4619,7 @@ struct MainMenuPage {
       Button('全选')
         .fontSize(14)
         .height(36)
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .onClick(() => {
@@ -4543,6 +4630,7 @@ struct MainMenuPage {
       Button('删除')
         .fontSize(14)
         .height(36)
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         .onClick(() => {
@@ -4580,6 +4668,7 @@ struct MainMenuPage {
       Text(`已选择 ${this.selectedEBookIds.size} 项`)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -4587,6 +4676,7 @@ struct MainMenuPage {
       Button('全选')
         .fontSize(14)
         .height(36)
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .onClick(() => {
@@ -4597,6 +4687,7 @@ struct MainMenuPage {
       Button('删除')
         .fontSize(14)
         .height(36)
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         .onClick(() => {
@@ -4677,6 +4768,7 @@ struct MainMenuPage {
             Text(this.categoryManager.getCategory(this.selectedCategoryId)?.name || '分类详情')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
           } else {
@@ -4684,6 +4776,7 @@ struct MainMenuPage {
             Text('书架视图')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
           }
@@ -4740,6 +4833,7 @@ struct MainMenuPage {
             Button('漫画')
               .fontSize(16)
               .height(40)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(this.libraryContentType === LibraryContentType.MANGA
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                 : Color.Transparent)
@@ -4753,6 +4847,7 @@ struct MainMenuPage {
             Button('电子书')
               .fontSize(16)
               .height(40)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(this.libraryContentType === LibraryContentType.EBOOK
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                 : Color.Transparent)
@@ -4766,6 +4861,7 @@ struct MainMenuPage {
             Button('小说')
               .fontSize(16)
               .height(40)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(this.libraryContentType === LibraryContentType.NOVEL
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
                 : Color.Transparent)
@@ -4802,6 +4898,7 @@ struct MainMenuPage {
         Button('全部')
           .fontSize(14)
           .height(36)
+          .fontFamily(this.appFontFamily)
           .type(ButtonType.ROUNDED_RECTANGLE)
           .backgroundColor(this.libraryFilterType === LibraryFilterType.ALL
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -4823,6 +4920,7 @@ struct MainMenuPage {
         Button('未读')
           .fontSize(14)
           .height(36)
+          .fontFamily(this.appFontFamily)
           .type(ButtonType.ROUNDED_RECTANGLE)
           .backgroundColor(this.libraryFilterType === LibraryFilterType.UNREAD
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -4844,6 +4942,7 @@ struct MainMenuPage {
         Button('阅读中')
           .fontSize(14)
           .height(36)
+          .fontFamily(this.appFontFamily)
           .type(ButtonType.ROUNDED_RECTANGLE)
           .backgroundColor(this.libraryFilterType === LibraryFilterType.READING
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -4919,6 +5018,7 @@ struct MainMenuPage {
 
             Text('正在加载漫画列表...')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .width('100%')
@@ -4936,16 +5036,19 @@ struct MainMenuPage {
             Text(this.mangaList.length === 0 ? '书库为空' : '没有符合条件的漫画')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
             Text(this.mangaList.length === 0 ? '导入一些漫画开始阅读吧' : '尝试更换筛选条件')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
             if (this.mangaList.length === 0) {
               Button('导入漫画')
                 .fontSize(14)
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .onClick(() => {
@@ -5002,6 +5105,7 @@ struct MainMenuPage {
 
             Text('正在加载电子书列表...')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .width('100%')
@@ -5019,16 +5123,19 @@ struct MainMenuPage {
             Text((this.ebookList.length === 0 && this.pdfEbookList.length === 0) ? '电子书库为空' : '没有符合条件的电子书')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
             Text((this.ebookList.length === 0 && this.pdfEbookList.length === 0) ? '导入一些电子书开始阅读吧' : '尝试更换筛选条件')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
             if (this.ebookList.length === 0 && this.pdfEbookList.length === 0) {
               Button('导入电子书')
                 .fontSize(14)
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .onClick(() => {
@@ -5100,6 +5207,7 @@ struct MainMenuPage {
 
             Text('正在加载小说列表...')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .width('100%')
@@ -5117,16 +5225,19 @@ struct MainMenuPage {
             Text(this.novelList.length === 0 ? '小说书架为空' : '没有符合条件的小说')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
             Text(this.novelList.length === 0 ? '去小说书架添加一些小说吧' : '尝试更换筛选条件')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
             if (this.novelList.length === 0) {
               Button('前往小说书架')
                 .fontSize(14)
                 .height(36)
+                .fontFamily(this.appFontFamily)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
                 .onClick(() => {
@@ -5191,9 +5302,11 @@ struct MainMenuPage {
         Text(this.getSwipeProgressText(manga.id))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         Text('松手删除')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
       }
       .width(96)
@@ -5224,6 +5337,7 @@ struct MainMenuPage {
           Text(manga.title)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -5231,12 +5345,14 @@ struct MainMenuPage {
           // 漫画章节数和状态
           Text(`${manga.chapters.length}话 · ${StatusConverter.mangaStatusToDisplayText(manga.status)}`)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
           // 阅读进度信息（仅显示章节名称和页数，不显示进度条）
           if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
             Text(this.getMangaReadingProgressText(manga))
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -5245,6 +5361,7 @@ struct MainMenuPage {
           // 漫画描述
           Text(manga.description)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -5287,6 +5404,7 @@ struct MainMenuPage {
         Text(this.isCategoryEditMode ? '拖动分类进行排序' : '分类书架')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Blank()
@@ -5294,6 +5412,7 @@ struct MainMenuPage {
         Button(this.isCategoryEditMode ? '完成' : '编辑')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.isCategoryEditMode
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -5409,6 +5528,7 @@ struct MainMenuPage {
           // 空状态：显示"空无一物"提示（向上偏移）
           Text('空无一物')
             .fontSize(24)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .offset({ y: -30 })
         }
@@ -5421,12 +5541,14 @@ struct MainMenuPage {
         Text(category.name)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         
         Text(`${this.getCategoryItemCount(category)} 项`)
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       }
       .alignItems(HorizontalAlign.Center)
@@ -5479,6 +5601,7 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
           Text('新建分类')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .offset({ y: -20 })
@@ -5619,11 +5742,13 @@ struct MainMenuPage {
         Text('新建分类')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         TextInput({ placeholder: '输入分类名称', text: this.newCategoryName })
           .width('100%')
           .height(44)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .borderRadius(8)
           .onChange((value: string) => {
@@ -5634,6 +5759,7 @@ struct MainMenuPage {
           Button('取消')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .onClick(() => {
@@ -5646,6 +5772,7 @@ struct MainMenuPage {
           Button('创建')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .fontColor(Color.White)
             .enabled(this.newCategoryName.trim().length > 0)
@@ -5683,11 +5810,13 @@ struct MainMenuPage {
         Text('编辑分类')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         TextInput({ placeholder: '输入分类名称', text: this.newCategoryName })
           .width('100%')
           .height(44)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .borderRadius(8)
           .onChange((value: string) => {
@@ -5698,6 +5827,7 @@ struct MainMenuPage {
           Button('删除')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor('#FF3B30')
             .fontColor(Color.White)
             .onClick(() => {
@@ -5709,6 +5839,7 @@ struct MainMenuPage {
           Button('取消')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .onClick(() => {
@@ -5722,6 +5853,7 @@ struct MainMenuPage {
           Button('保存')
             .layoutWeight(1)
             .height(44)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .fontColor(Color.White)
             .enabled(this.newCategoryName.trim().length > 0)
@@ -5754,6 +5886,7 @@ struct MainMenuPage {
         Button('全部')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryFilterType === LibraryFilterType.ALL
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -5772,6 +5905,7 @@ struct MainMenuPage {
         Button('漫画')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.MANGA
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -5785,6 +5919,7 @@ struct MainMenuPage {
         Button('电子书')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.EBOOK
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -5972,6 +6107,7 @@ struct MainMenuPage {
         Text(this.categoryManager.getCategory(this.selectedCategoryId)?.name || '分类详情')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
@@ -5989,6 +6125,7 @@ struct MainMenuPage {
         Button('全部')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryFilterType === LibraryFilterType.ALL
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -6008,6 +6145,7 @@ struct MainMenuPage {
         Button('漫画')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.MANGA
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -6021,6 +6159,7 @@ struct MainMenuPage {
         Button('电子书')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.EBOOK
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -6034,6 +6173,7 @@ struct MainMenuPage {
         Button('小说')
           .fontSize(14)
           .height(32)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.libraryContentType === LibraryContentType.NOVEL
             ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
             : Color.Transparent)
@@ -6124,6 +6264,7 @@ struct MainMenuPage {
         Text('移动到分类')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         // 分类列表
@@ -6137,11 +6278,13 @@ struct MainMenuPage {
 
                 Text(category.name)
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .layoutWeight(1)
 
                 Text(`${category.itemCount} 项`)
                   .fontSize(14)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               }
               .width('100%')
@@ -6169,6 +6312,7 @@ struct MainMenuPage {
         Button('取消')
           .width('100%')
           .height(44)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .onClick(() => {
@@ -6397,6 +6541,7 @@ struct MainMenuPage {
       Text(manga.title)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6407,6 +6552,7 @@ struct MainMenuPage {
       if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
         Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
           .fontSize(10)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       }
     }
@@ -6656,6 +6802,7 @@ struct MainMenuPage {
       Text(manga.title)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6695,6 +6842,7 @@ struct MainMenuPage {
         // 小说标识
         Text('小说')
           .fontSize(10)
+          .fontFamily(this.appFontFamily)
           .fontColor('#FFFFFF')
           .backgroundColor('#4CAF50')
           .padding({ left: 4, right: 4, top: 2, bottom: 2 })
@@ -6706,6 +6854,7 @@ struct MainMenuPage {
       Text(novel.name)
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6733,9 +6882,11 @@ struct MainMenuPage {
         Text(this.getEBookSwipeProgressText(ebook.id))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
         Text('松手删除')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
       }
       .width(96)
@@ -6781,12 +6932,14 @@ struct MainMenuPage {
           Text(ebook.metadata.title)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
           Text(`${ebook.metadata.author} · ${ebook.format}`)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
           // 阅读进度条和百分比
@@ -6803,6 +6956,7 @@ struct MainMenuPage {
 
               Text(`${Math.floor(ebook.readingProgress.progress)}%`)
                 .fontSize(12)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             }
           }
@@ -6810,6 +6964,7 @@ struct MainMenuPage {
           // 电子书简介
           Text(ebook.metadata.description || '暂无简介')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -6823,6 +6978,7 @@ struct MainMenuPage {
             Button(this.hasEBookReadingProgress(ebook) ? '继续阅读' : '开始阅读')
               .fontSize(14)
               .height(32)
+              .fontFamily(this.appFontFamily)
               .padding({ left: 16, right: 16 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -7472,6 +7628,7 @@ struct MainMenuPage {
           Text(ebook.metadata.title)
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7480,6 +7637,7 @@ struct MainMenuPage {
 
           Text(ebook.metadata.author)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7500,6 +7658,7 @@ struct MainMenuPage {
 
               Text(`${Math.floor(ebook.readingProgress.progress)}%`)
                 .fontSize(10)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
           }
@@ -7561,18 +7720,21 @@ struct MainMenuPage {
         Text(novel.name)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(novel.author || '未知作者')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(novel.sourceName || '未知来源')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .maxLines(1)
 
@@ -7582,6 +7744,7 @@ struct MainMenuPage {
         Row({ space: 8 }) {
           Text(this.getNovelReadStatusText(novel.readStatus))
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
@@ -7589,6 +7752,7 @@ struct MainMenuPage {
 
           Text(`${novel.chapterCount}章`)
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
       }
@@ -7638,6 +7802,7 @@ struct MainMenuPage {
         // 阅读状态标签
         Text(this.getNovelReadStatusText(novel.readStatus))
           .fontSize(10)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -7650,6 +7815,7 @@ struct MainMenuPage {
       Text(novel.name)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7658,6 +7824,7 @@ struct MainMenuPage {
       // 作者
       Text(novel.author || '未知作者')
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7734,6 +7901,7 @@ struct MainMenuPage {
           Text(manga.title)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7742,6 +7910,7 @@ struct MainMenuPage {
           // PDF标识
           Text('PDF')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
             .backgroundColor('#FF6B6B')
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -7751,10 +7920,12 @@ struct MainMenuPage {
 
         Text(`${manga.metadata.authors.length > 0 ? manga.metadata.authors[0] : '未知作者'} · PDF电子书`)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Text(manga.description || '暂无简介')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7766,6 +7937,7 @@ struct MainMenuPage {
           if (manga.readingProgress && manga.readingProgress.currentPageIndex > 0) {
             Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
 
@@ -7775,6 +7947,7 @@ struct MainMenuPage {
           Button(this.hasMangaReadingProgress(manga) ? '继续阅读' : '开始阅读')
             .fontSize(14)
             .height(32)
+            .fontFamily(this.appFontFamily)
             .padding({ left: 16, right: 16 })
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
@@ -7836,6 +8009,7 @@ struct MainMenuPage {
           Column() {
             Text('PDF')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
               .backgroundColor('#FF6B6B')
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
@@ -7853,6 +8027,7 @@ struct MainMenuPage {
           Text(manga.title)
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7861,6 +8036,7 @@ struct MainMenuPage {
 
           Text(manga.metadata.authors.length > 0 ? manga.metadata.authors[0] : '未知作者')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -7871,6 +8047,7 @@ struct MainMenuPage {
           if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
             Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           }
         }
@@ -7898,10 +8075,12 @@ struct MainMenuPage {
       Text(this.libraryContentType === LibraryContentType.MANGA ? '筛选漫画' : '筛选电子书')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 12 })
 
       Button('全部')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.libraryFilterType = LibraryFilterType.ALL;
@@ -7915,6 +8094,7 @@ struct MainMenuPage {
 
       Button('未读')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.libraryFilterType = LibraryFilterType.UNREAD;
@@ -7928,6 +8108,7 @@ struct MainMenuPage {
 
       Button('阅读中')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
           this.libraryFilterType = LibraryFilterType.READING;
@@ -7964,11 +8145,13 @@ struct MainMenuPage {
           Text(this.libraryContentType === LibraryContentType.MANGA ? '筛选漫画' : '筛选电子书')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .layoutWeight(1)
 
           Button('✕')
             .fontSize(20)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .backgroundColor(Color.Transparent)
             .width(32)
@@ -8007,6 +8190,7 @@ struct MainMenuPage {
     Row() {
       Text(label)
         .fontSize(16)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .layoutWeight(1)
 
@@ -8307,6 +8491,7 @@ struct MainMenuPage {
         Text(`选择标签 (${this.allTags.length})`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Blank()
@@ -8314,6 +8499,7 @@ struct MainMenuPage {
         if (this.selectedTags.size > 0) {
           Text('清除全部')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .onClick(() => {
               this.clearTagSelection();
@@ -8329,6 +8515,7 @@ struct MainMenuPage {
           ForEach(this.allTags, (tag: string) => {
             Text(tag)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .margin({ right: 8, bottom: 8 })
               .backgroundColor(this.selectedTags.has(tag)
@@ -8365,6 +8552,7 @@ struct MainMenuPage {
         Text(`选择作者 (${this.allAuthors.length})`)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Blank()
@@ -8372,6 +8560,7 @@ struct MainMenuPage {
         if (this.selectedAuthors.size > 0) {
           Text('清除全部')
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .onClick(() => {
               this.clearAuthorSelection();
@@ -8387,6 +8576,7 @@ struct MainMenuPage {
           ForEach(this.allAuthors, (author: string) => {
             Text(author)
               .fontSize(13)
+              .fontFamily(this.appFontFamily)
               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .margin({ right: 8, bottom: 8 })
               .backgroundColor(this.selectedAuthors.has(author)
@@ -8451,14 +8641,17 @@ struct MainMenuPage {
         Row({ space: 6 }) {
           Text('🏷️')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
           Text(this.selectedTags.size > 0 ? `标签 (${this.selectedTags.size})` : '标签')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.selectedTags.size > 0
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           if (this.selectedTags.size > 0) {
             Text('×')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .onClick(() => {
                 this.clearTagSelection();
@@ -8489,14 +8682,17 @@ struct MainMenuPage {
         Row({ space: 6 }) {
           Text('👤')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
           Text(this.selectedAuthors.size > 0 ? `作者 (${this.selectedAuthors.size})` : '作者')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(this.selectedAuthors.size > 0
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           if (this.selectedAuthors.size > 0) {
             Text('×')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .onClick(() => {
                 this.clearAuthorSelection();
@@ -8532,6 +8728,7 @@ struct MainMenuPage {
       Row({ space: 8 }) {
         Text('全部')
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'all' ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -8547,6 +8744,7 @@ struct MainMenuPage {
 
         Text(`漫画 (${this.filteredMangaCount})`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'manga' ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -8567,6 +8765,7 @@ struct MainMenuPage {
 
         Text(`电子书 (${this.filteredEBookCount})`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'ebook' ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -8587,6 +8786,7 @@ struct MainMenuPage {
 
         Text(`小说 (${this.filteredNovelCount})`)
           .fontSize(13)
+          .fontFamily(this.appFontFamily)
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor(this.discoverContentType === 'novel' ?
             ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -8613,6 +8813,7 @@ struct MainMenuPage {
         Row() {
           Text(`找到 ${this.discoveredMangaList.length} 本漫画, ${this.discoveredEBookList.length} 本电子书, ${this.discoveredNovelList.length} 本小说`)
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -8630,6 +8831,7 @@ struct MainMenuPage {
                   Text(`漫画 (${this.discoveredMangaList.length})`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                     .margin({ bottom: 8 })
@@ -8657,6 +8859,7 @@ struct MainMenuPage {
                   Text(`电子书 (${this.discoveredEBookList.length})`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                     .margin({ top: 16, bottom: 8 })
@@ -8684,6 +8887,7 @@ struct MainMenuPage {
                   Text(`小说 (${this.discoveredNovelList.length})`)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                     .margin({ top: 16, bottom: 8 })
@@ -8711,6 +8915,7 @@ struct MainMenuPage {
         Column() {
           Text(this.mangaList.length === 0 && this.ebookList.length === 0 && this.novelList.length === 0 ? '暂无数据' : '没有符合条件的内容')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .layoutWeight(1)
@@ -8730,6 +8935,7 @@ struct MainMenuPage {
       Text('图源管理')
         .fontSize(20)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       
       // 本地导入按钮
@@ -8737,6 +8943,7 @@ struct MainMenuPage {
         Button('导入本地图源文件')
           .width('100%')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_primary', this.themeState.currentTheme))
           .onClick(async () => {
             this.sourceRepoDialogController?.close();
@@ -8749,6 +8956,7 @@ struct MainMenuPage {
         
         Text('或使用在线仓库同步')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .textAlign(TextAlign.Center)
       }
@@ -8759,11 +8967,13 @@ struct MainMenuPage {
           Row({ space: 8 }) {
             Text('已保存的仓库')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             
             Button(this.showRepositorySelector ? '收起' : '展开')
               .fontSize(12)
               .height(24)
+              .fontFamily(this.appFontFamily)
               .padding({ left: 8, right: 8 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
               .onClick(() => {
@@ -8790,12 +9000,14 @@ struct MainMenuPage {
                     Column({ space: 4 }) {
                       Text(repo.name)
                         .fontSize(14)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                         .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
                       
                       Text(`${repo.sourceCount} 个图源 · ${new Date(repo.lastSync).toLocaleDateString()}`)
                         .fontSize(12)
+                        .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     }
                     .layoutWeight(1)
@@ -8810,6 +9022,24 @@ struct MainMenuPage {
                   .onClick(() => {
                     this.selectedRepositoryId = repo.id;
                     this.sourceRepoUrl = repo.url;
+                  })
+                  .gesture(
+                    LongPressGesture({ repeat: false, duration: 500 })
+                      .onAction(() => {
+                        this.repositoryToDelete = repo;
+                        this.showDeleteRepoPopup = true;
+                      })
+                  )
+                  .bindPopup(this.showDeleteRepoPopup && this.repositoryToDelete?.id === repo.id, {
+                    builder: this.buildDeleteRepoPopup,
+                    placement: Placement.Top,
+                    popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+                    onStateChange: (e) => {
+                      if (!e.isVisible) {
+                        this.showDeleteRepoPopup = false;
+                        this.repositoryToDelete = null;
+                      }
+                    }
                   })
                 }
               }, (repo: SavedRepository) => repo.id)
@@ -8851,6 +9081,7 @@ struct MainMenuPage {
             
             Text(`${this.syncProgress}%`)
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
               .width(50)
               .textAlign(TextAlign.End)
@@ -8860,6 +9091,7 @@ struct MainMenuPage {
           // 当前进度消息
           Text(this.syncProgressMessage)
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .width('100%')
             .textAlign(TextAlign.Start)
@@ -8896,6 +9128,7 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         Button(this.isSyncingRepo ? '关闭' : '取消')
           .layoutWeight(1)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .onClick(() => {
@@ -8907,6 +9140,7 @@ struct MainMenuPage {
         if (!this.isSyncingRepo) {
           Button('确认同步')
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .fontColor(Color.White)
             .onClick(async () => {
@@ -8931,9 +9165,11 @@ struct MainMenuPage {
       Text('删除仓库')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
       Button(this.repositoryToDelete ? `删除 "${this.repositoryToDelete.name}"` : '确认删除')
         .width('100%')
+        .fontFamily(this.appFontFamily)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
         .fontColor(Color.White)
         .onClick(async () => {
@@ -8956,10 +9192,12 @@ struct MainMenuPage {
         Text('自定义底栏标签')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
         Text('选择要显示的标签页（书库和设置为必须显示）')
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Column({ space: 12 }) {
@@ -8978,11 +9216,13 @@ struct MainMenuPage {
               Column({ space: 4 }) {
                 Text(cfg.title)
                   .fontSize(16)
+                  .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
                 if (cfg.required) {
                   Text('必须显示')
                     .fontSize(12)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 }
               }
@@ -9000,6 +9240,7 @@ struct MainMenuPage {
         Row({ space: 12 }) {
           Button('取消')
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
             .onClick(() => {
               this.showTabCustomDialog = false;
@@ -9007,6 +9248,7 @@ struct MainMenuPage {
 
           Button('保存')
             .layoutWeight(1)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .onClick(async () => {
               await this.applyTabCustomization();
@@ -9064,6 +9306,7 @@ struct MainMenuPage {
         Row({ space: 6 }) {
           Button('图源管理')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .onClick(() => {
               this.openSourceRepoDialog();
@@ -9128,6 +9371,7 @@ struct MainMenuPage {
           Text(this.getSourceListTitle())
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .padding({ left: 16, right: 16 })
           
@@ -9142,6 +9386,7 @@ struct MainMenuPage {
               
               Text('加载中...')
                 .fontSize(14)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             }
             .width('100%')
@@ -9158,17 +9403,20 @@ struct MainMenuPage {
               
               Text(this.getEmptySourceTitle())
                 .fontSize(16)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               
               if (!this.sourceSearchKeyword) {
                 Column({ space: 8 }) {
                   Text(this.getEmptySourceDescription())
                     .fontSize(14)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     .textAlign(TextAlign.Center)
                   
                   Text(this.getEmptySourceHint())
                     .fontSize(13)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     .opacity(0.8)
                     .textAlign(TextAlign.Center)
@@ -9250,6 +9498,7 @@ struct MainMenuPage {
           Text(`在 ${this.searchTargetSource?.name || '图源'} 中搜索`)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9259,6 +9508,7 @@ struct MainMenuPage {
           .width('100%')
           .height(44)
           .borderRadius(8)
+          .fontFamily(this.appFontFamily)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
           .onChange((value: string) => {
             this.sourceSearchInput = value;
@@ -9271,6 +9521,7 @@ struct MainMenuPage {
         Row({ space: 12 }) {
           Button('取消')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
             .height(40)
@@ -9284,6 +9535,7 @@ struct MainMenuPage {
           
           Button('搜索')
             .fontSize(14)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .height(40)
@@ -9325,6 +9577,7 @@ struct MainMenuPage {
           Text('网络代理设置')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .margin({ left: 8 })
         }
@@ -9336,6 +9589,7 @@ struct MainMenuPage {
         Row() {
           Text('启用代理')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
@@ -9363,6 +9617,7 @@ struct MainMenuPage {
             Text('HTTP代理')
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .margin({ left: 8 })
           }
@@ -9373,6 +9628,7 @@ struct MainMenuPage {
               .layoutWeight(2)
               .height(40)
               .borderRadius(8)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
               .onChange((value: string) => {
                 this.proxyConfig.httpHost = value;
@@ -9383,6 +9639,7 @@ struct MainMenuPage {
               .layoutWeight(1)
               .height(40)
               .borderRadius(8)
+              .fontFamily(this.appFontFamily)
               .type(InputType.Number)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
               .onChange((value: string) => {
@@ -9409,6 +9666,7 @@ struct MainMenuPage {
             Text('HTTPS代理')
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .margin({ left: 8 })
           }
@@ -9419,6 +9677,7 @@ struct MainMenuPage {
               .layoutWeight(2)
               .height(40)
               .borderRadius(8)
+              .fontFamily(this.appFontFamily)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
               .onChange((value: string) => {
                 this.proxyConfig.httpsHost = value;
@@ -9429,6 +9688,7 @@ struct MainMenuPage {
               .layoutWeight(1)
               .height(40)
               .borderRadius(8)
+              .fontFamily(this.appFontFamily)
               .type(InputType.Number)
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
               .onChange((value: string) => {
@@ -9453,12 +9713,14 @@ struct MainMenuPage {
           Text('需要代理的图源')
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
           Text(`${this.proxySourceList.length} 个`)
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9482,11 +9744,13 @@ struct MainMenuPage {
                   
                   Text(source.name)
                     .fontSize(13)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .layoutWeight(1)
                   
                   Text(source.isEnabled ? '已启用' : '已禁用')
                     .fontSize(11)
+                    .fontFamily(this.appFontFamily)
                     .fontColor(source.isEnabled ? 
                       ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) :
                       ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -9505,6 +9769,7 @@ struct MainMenuPage {
         } else {
           Text('暂无需要代理的图源')
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .margin({ top: 8 })
         }
@@ -9513,6 +9778,7 @@ struct MainMenuPage {
         Button(this.isTestingProxy ? '测试中...' : '测试代理连接')
           .fontSize(14)
           .fontColor('#FFFFFF')
+          .fontFamily(this.appFontFamily)
           .backgroundColor(this.isTestingProxy ? 
             ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
             ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
@@ -9549,6 +9815,7 @@ struct MainMenuPage {
           Scroll() {
             Text(this.proxyTestResults)
               .fontSize(11)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .fontFamily('monospace')
           }
@@ -9563,6 +9830,7 @@ struct MainMenuPage {
         // 提示信息
         Text('提示：代理将应用于图源和图源仓库的网络请求')
           .fontSize(12)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .margin({ top: 12 })
 
@@ -9570,6 +9838,7 @@ struct MainMenuPage {
         Row({ space: 16 }) {
           Button('取消')
             .fontSize(16)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             .borderRadius(8)
@@ -9582,6 +9851,7 @@ struct MainMenuPage {
           Button('保存')
             .fontSize(16)
             .fontColor('#FFFFFF')
+            .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .borderRadius(8)
             .layoutWeight(1)
@@ -9634,6 +9904,7 @@ struct MainMenuPage {
           Text(source.name)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -9641,6 +9912,7 @@ struct MainMenuPage {
           if (!source.isEnabled) {
             Text('已禁用')
               .fontSize(12)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
@@ -9652,6 +9924,7 @@ struct MainMenuPage {
         if (source.description) {
           Text(source.description)
             .fontSize(13)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -9660,6 +9933,7 @@ struct MainMenuPage {
         Row({ space: 4 }) {
           Text(`${source.language} · v${source.version}`)
             .fontSize(12)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           
           if (source.requireProxy) {
@@ -9669,6 +9943,7 @@ struct MainMenuPage {
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
               Text('需要代理')
                 .fontSize(11)
+                .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
             }
           }
@@ -9732,6 +10007,7 @@ struct MainMenuPage {
           Column() {
             Text('已禁用')
               .fontSize(10)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
           }
           .width('100%')
@@ -9756,6 +10032,7 @@ struct MainMenuPage {
       Text(source.name)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -9765,6 +10042,7 @@ struct MainMenuPage {
       // 版本和语言
       Text(`${source.language} · v${source.version}`)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -9779,6 +10057,7 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           Text('需要代理')
             .fontSize(10)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9795,6 +10074,7 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('热门')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9813,6 +10093,7 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('最新')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9831,6 +10112,7 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('搜索')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9849,6 +10131,7 @@ struct MainMenuPage {
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           Text('设置')
             .fontSize(11)
+            .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width('100%')
@@ -9912,10 +10195,12 @@ struct MainMenuPage {
             Text('阅读报告')
               .fontSize(18)
               .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
             Text('查看您的阅读统计和分析')
               .fontSize(14)
+              .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .alignItems(HorizontalAlign.Start)
@@ -10008,7 +10293,7 @@ struct MainMenuPage {
             })
           }
 
-          this.buildSettingItem('备份与恢复', '备份所有数据或从备份恢复', $r('sys.symbol.arrow_right_folder_fill'), () => {
+          this.buildSettingItem('备份与恢复', '备份所有数据或从备份恢复', $r('sys.symbol.mobiledata_and_cloud'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'BackupPage',
@@ -10044,7 +10329,7 @@ struct MainMenuPage {
               }
             })
           }
-          this.buildSettingItem('文件导入', '导入Mihon/Komikku本地漫画、电子书、小说', $r('sys.symbol.folder'), () => {
+          this.buildSettingItem('文件导入', '单独导入Mihon/Komikku本地漫画、电子书、小说', $r('sys.symbol.folder'), () => {
             try {
               const navigationPath: NavigationPath = {
                 name: 'DataManagementPage',
@@ -10058,6 +10343,22 @@ struct MainMenuPage {
             } catch (error) {
               logger.error(TAG, '导航到数据管理页面失败', String(error));
               this.showToast('打开数据管理页面失败');
+            }
+          })
+          this.buildSettingItem('Download同步', '从Download目录扫描并导入文件', $r('sys.symbol.folder_fill'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'DownloadSyncPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到Download同步页面');
+            } catch (error) {
+              logger.error(TAG, '导航到Download同步页面失败', String(error));
+              this.showToast('打开Download同步页面失败');
             }
           })
           // 文件编辑器仅在高级模式下显示
@@ -10201,12 +10502,14 @@ struct MainMenuPage {
       Column({ space: 2 }) {
         Text(title)
           .fontSize(16)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .textAlign(TextAlign.Start)
           .width('100%')
 
         Text(subtitle)
           .fontSize(14)
+          .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .textAlign(TextAlign.Start)
           .width('100%')
@@ -10242,6 +10545,8 @@ struct MainMenuPage {
     // } else
     if (name === 'DataManagementPage') {
       DataManagementPage()
+    } else if (name === 'DownloadSyncPage') {
+      DownloadSyncPage()
     } else if (name === 'MangaReaderPage') {
       MangaReaderPage()
     } else if (name === 'MangaDetailPage') {
@@ -10348,6 +10653,10 @@ struct MainMenuPage {
       FileEditorPage()
     } else if (name === 'SystemResourcePreviewPage') {
       SystemResourcePreviewPage()
+    } else if (name === 'HelpCenterPage') {
+      HelpCenterPage()
+    } else if (name === 'FontSettingsSubPage') {
+      FontSettingsSubPage()
       // 测试页面导航已移除
       // } else if (name === 'ReaderKitTestPage') {
       //   ReaderKitTestPage()
@@ -10485,6 +10794,7 @@ struct MainMenuPage {
 
       Text(config.title)
         .fontSize(this.responsive_tabBarVertical ? 10 : 12)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.currentTabIndex === config.index
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -10752,6 +11062,9 @@ struct MainMenuPage {
       
     // 书籍翻开/关闭过渡动画覆盖层（放在Navigation外部的最顶层）
     BookTransitionOverlay()
+    
+    // 全局帮助面板覆盖层
+    HelpPanelOverlayV2({ themeState: this.themeState })
     
     // 后台模糊遮罩层（当应用进入后台且启用了模糊遮罩时显示）
     BackgroundBlurOverlay({
