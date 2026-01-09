@@ -18,6 +18,8 @@
 .cursor/
 .windsurf/
 .kiro/
+*.windsurfrules
+.windsurfrules
 
 # Logs
 *.log

@@ -7,6 +7,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { AppColors } from '../Theme/AppColors';
 import { fileIo } from '@kit.CoreFileKit';
 import { MangaImportMode, ChapterInfo, ParsedArchiveStructure, PrefilledComicInfo, ExistingMangaCandidate } from './MangaImportDialog';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
@@ -1142,7 +1143,7 @@ export struct BatchMangaImportDialog {
                 Text('✓')
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
-                  .fontColor('#FFFFFF')
+                  .fontColor(AppColors.onPrimary)
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                   .borderRadius(10)
                   .width(20)
@@ -1269,11 +1270,11 @@ export struct BatchMangaImportDialog {
         Row({ space: 4 }) {
           SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
             .fontSize(12)
-            .fontColor(['#FF9800'])
+            .fontColor([AppColors.warning])
           Text('该章节可能已存在于目标漫画中')
             .fontSize(10)
             .fontFamily(this.appFontFamily)
-            .fontColor('#FF9800')
+            .fontColor(AppColors.warning)
         }
         .width('100%')
         .padding({ left: 53 })
@@ -1451,7 +1452,7 @@ export struct BatchMangaImportDialog {
           .height(28)
           .padding({ left: 8, right: 8 })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .fontColor('#FFFFFF')
+          .fontColor(AppColors.onPrimary)
           .borderRadius(4)
           .enabled(this.selectedFileIndices.size >= 2)
           .onClick(() => {
@@ -1681,7 +1682,7 @@ export struct BatchMangaImportDialog {
           Text(file.parseError)
             .fontSize(11)
             .fontFamily(this.appFontFamily)
-            .fontColor('#F44336')
+            .fontColor(AppColors.error)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         } else if (file.parsedStructure) {
@@ -1797,8 +1798,8 @@ export struct BatchMangaImportDialog {
 
       Button('开始导入')
         .fontSize(15)
-        .fontColor('#FFFFFF')
-        .backgroundColor('#2196F3')
+        .fontColor(AppColors.onPrimary)
+        .backgroundColor(AppColors.primary)
         .borderRadius(8)
         .height(44)
         .layoutWeight(1)

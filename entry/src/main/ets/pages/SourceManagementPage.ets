@@ -341,7 +341,7 @@ export struct SourceManagementPage {
         .height(80)
         .opacity(0.3)
       
-      Text(this.searchText ? '未找到匹配的图源' : '暂无图源')
+      Text(this.searchText ? '未找到匹配的图源\n如欲搜索作品请直接补全id' : '暂无图源')
         .fontSize(16)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

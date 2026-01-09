@@ -235,14 +235,23 @@ export struct FileEditorPage {
     this.isLoading = true;
     try {
       const fileInfo = await fileEditorService.getFileInfo(this.filePath);
-      this.fileName = fileInfo.name;
-      this.language = fileEditorService.getLanguageByExtension(fileInfo.extension);
+      // 如果没有预设文件名，使用文件信息中的名称
+      if (!this.fileName || this.fileName === '文件编辑器') {
+        this.fileName = fileInfo.name;
+      }
+      // 如果没有预设语言，根据扩展名推断
+      if (!this.language || this.language === 'plaintext') {
+        this.language = fileEditorService.getLanguageByExtension(fileInfo.extension);
+      }
       
       this.content = await fileEditorService.readFile(this.filePath);
       this.originalContent = this.content;
       this.isDirty = false;
       
-      logger.info(TAG, `文件加载成功: ${this.fileName}, 语言: ${this.language}`);
+      // 创建标签页
+      this.addTab(this.filePath, this.fileName, this.content, this.language, this.isReadOnly);
+      
+      logger.info(TAG, `文件加载成功: ${this.fileName}, 语言: ${this.language}, 内容长度: ${this.content.length}`);
     } catch (e) {
       logger.error(TAG, `加载文件失败: ${e}`);
       promptAction.showToast({ message: `加载失败: ${e}` });
@@ -1027,6 +1036,34 @@ export struct FileEditorPage {
     .mode(NavDestinationMode.STANDARD)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      
+      // 处理传入的参数
+      const params = context.pathInfo?.param as FileEditorParams | undefined;
+      if (params) {
+        logger.info(TAG, `接收到参数: filePath=${params.filePath}, language=${params.language}, title=${params.title}`);
+        
+        if (params.filePath) {
+          this.filePath = params.filePath;
+          this.isReadOnly = params.readOnly ?? false;
+          if (params.language) {
+            this.language = params.language;
+          }
+          if (params.title) {
+            this.fileName = params.title;
+          }
+          // 加载文件
+          this.loadFile();
+        } else if (params.content !== undefined) {
+          // 直接传入内容
+          this.content = params.content;
+          this.originalContent = params.content;
+          this.language = params.language ?? 'plaintext';
+          this.fileName = params.title ?? '未命名';
+          this.isReadOnly = params.readOnly ?? false;
+          // 创建一个新标签
+          this.addTab('', this.fileName, this.content, this.language, this.isReadOnly);
+        }
+      }
     })
     .onBackPressed(() => {
       this.handleBack();

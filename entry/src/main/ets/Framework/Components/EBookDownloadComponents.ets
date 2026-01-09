@@ -7,6 +7,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
 import { logger } from '../../Utils/Logger';
+import { AppColors } from '../Theme/AppColors';
 
 const TAG = 'EBookDownloadComponents';
 
@@ -341,13 +342,13 @@ export struct FileFormatSelector {
 
   private getFormatColor(format: string): ResourceColor {
     const colorMap: Record<string, string> = {
-      'epub': '#4CAF50',
-      'mobi': '#FF9800',
-      'pdf': '#F44336',
-      'azw3': '#9C27B0',
-      'txt': '#607D8B'
+      'epub': AppColors.success,
+      'mobi': AppColors.warning,
+      'pdf': AppColors.error,
+      'azw3': AppColors.tertiary,
+      'txt': AppColors.secondary
     };
-    return colorMap[format.toLowerCase()] || '#2196F3';
+    return colorMap[format.toLowerCase()] || AppColors.info;
   }
 
   build() {
@@ -535,15 +536,15 @@ export struct TaskProgressPanel {
   private getStatusColor(status: StepStatus): ResourceColor {
     switch (status) {
       case StepStatus.COMPLETED:
-        return '#4CAF50';
+        return AppColors.success;
       case StepStatus.RUNNING:
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+        return AppColors.info;
       case StepStatus.FAILED:
-        return '#F44336';
+        return AppColors.error;
       case StepStatus.WAITING:
-        return '#FF9800';
+        return AppColors.warning;
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+        return AppColors.textTertiary;
     }
   }
 
@@ -614,10 +615,10 @@ export struct TaskProgressPanel {
         if (this.taskState.error) {
           Text(this.taskState.error)
             .fontSize(12)
-            .fontColor('#F44336')
+            .fontColor(AppColors.error)
             .width('100%')
             .padding(8)
-            .backgroundColor('#F4433620')
+            .backgroundColor(AppColors.errorContainer)
             .borderRadius(6)
         }
 
@@ -680,14 +681,14 @@ export struct TaskProgressPanel {
         if (step.status === StepStatus.WAITING && step.interactionPrompt) {
           Text(step.interactionPrompt)
             .fontSize(12)
-            .fontColor('#FF9800')
+            .fontColor(AppColors.warning)
         }
 
         // 错误信息
         if (step.status === StepStatus.FAILED && step.error) {
           Text(step.error)
             .fontSize(12)
-            .fontColor('#F44336')
+            .fontColor(AppColors.error)
         }
       }
       .layoutWeight(1)
@@ -698,7 +699,7 @@ export struct TaskProgressPanel {
         Button('继续')
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-          .backgroundColor('#FF9800')
+          .backgroundColor(AppColors.warning)
           .height(28)
           .onClick(() => this.onInteraction(step.id))
       }
@@ -804,11 +805,11 @@ export struct DownloadButton {
   private getButtonColor(): ResourceColor {
     switch (this.state) {
       case DownloadButtonState.COMPLETED:
-        return '#4CAF50';
+        return AppColors.success;
       case DownloadButtonState.FAILED:
-        return '#F44336';
+        return AppColors.error;
       default:
-        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+        return AppColors.primary;
     }
   }
 

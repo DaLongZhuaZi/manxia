@@ -2,10 +2,14 @@
 /**
  * 主题感知组件基类
  * 提供主题切换的基础功能，简化主题相关组件的开发
+ * 
+ * 注意：推荐使用新的统一主题色系统 AppColors / ThemeColorState
+ * 详见 Framework/Theme/THEME_COLORS_GUIDE.md
  */
 
 import { ThemeManager, ThemeType } from '../Managers/ThemeManager';
 import { logger } from '../../Utils/Logger';
+import { AppColors, ColorRole } from '../Theme/AppColors';
 
 // 定义类型
 interface AnimateParam {
@@ -509,5 +513,92 @@ export class ThemeAwareHelper {
     theme: ThemeType
   ): T {
     return theme === ThemeType.LIGHT ? lightStyle : darkStyle;
+  }
+
+  // ==================== 新主题色系统桥接方法 ====================
+  // 以下方法提供从旧系统到新 AppColors 系统的桥接
+  // 推荐直接使用 AppColors 或 ThemeColorState
+
+  /**
+   * 获取语义化主题色（推荐使用）
+   * 使用新的 AppColors 系统，自动适配当前主题
+   * 
+   * @param role 颜色角色
+   * @returns 当前主题对应的颜色字符串
+   * 
+   * @example
+   * .fontColor(ThemeAwareHelper.getSemanticColor(ColorRole.TEXT_PRIMARY))
+   * .backgroundColor(ThemeAwareHelper.getSemanticColor(ColorRole.SURFACE))
+   */
+  public static getSemanticColor(role: ColorRole): string {
+    return AppColors.getColor(role);
+  }
+
+  /**
+   * 获取带透明度的语义化主题色
+   * 
+   * @param role 颜色角色
+   * @param alpha 透明度 (0-1)
+   * @returns 带透明度的颜色字符串
+   */
+  public static getSemanticColorWithAlpha(role: ColorRole, alpha: number): string {
+    return AppColors.withAlpha(role, alpha);
+  }
+
+  /**
+   * 快捷方法：获取主要文字颜色
+   */
+  public static get textPrimary(): string {
+    return AppColors.textPrimary;
+  }
+
+  /**
+   * 快捷方法：获取次要文字颜色
+   */
+  public static get textSecondary(): string {
+    return AppColors.textSecondary;
+  }
+
+  /**
+   * 快捷方法：获取表面背景色
+   */
+  public static get surface(): string {
+    return AppColors.surface;
+  }
+
+  /**
+   * 快捷方法：获取页面背景色
+   */
+  public static get background(): string {
+    return AppColors.background;
+  }
+
+  /**
+   * 快捷方法：获取主色
+   */
+  public static get primary(): string {
+    return AppColors.primary;
+  }
+
+  /**
+   * 快捷方法：获取边框色
+   */
+  public static get outline(): string {
+    return AppColors.outline;
+  }
+
+  /**
+   * 快捷方法：获取分割线颜色
+   */
+  public static get dividerColor(): string {
+    return AppColors.divider;
+  }
+
+  /**
+   * 快捷方法：获取阴影颜色
+   * @param elevation 阴影高度 (0-24)
+   */
+  public static getShadowColor(elevation: number = 4): string {
+    return AppColors.getShadowColor(elevation);
   }
 }

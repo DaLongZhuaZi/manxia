@@ -7,6 +7,7 @@
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
+import { AppColors } from '../Theme/AppColors';
 import { EBookReadingSettings, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 import { getFontManager, SystemFont, CustomFont } from '../Managers/FontManager';
 
@@ -603,20 +604,20 @@ export struct EBookReadingSettingsPanel {
       Text('主题跟随说明')
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#333333')
+        .fontColor(AppColors.textPrimary)
       
       Text('• "默认"和"夜间"主题会自动跟随App全局主题切换')
         .fontSize(12)
-        .fontColor('#666666')
+        .fontColor(AppColors.textSecondary)
       
       Text('• "护眼"和"羊皮纸"主题为固定主题，不会跟随系统变化')
         .fontSize(12)
-        .fontColor('#666666')
+        .fontColor(AppColors.textSecondary)
       
       Row() {
         Text(this.settings.followSystemTheme !== false ? '当前：跟随系统' : '当前：固定主题')
           .fontSize(12)
-          .fontColor(this.settings.followSystemTheme !== false ? '#4CAF50' : '#FF9800')
+          .fontColor(this.settings.followSystemTheme !== false ? AppColors.success : AppColors.warning)
           .fontWeight(FontWeight.Medium)
       }
       .margin({ top: 4 })
@@ -624,7 +625,7 @@ export struct EBookReadingSettingsPanel {
     .padding(12)
     .backgroundColor(Color.White)
     .borderRadius(8)
-    .shadow({ radius: 8, color: '#33000000', offsetX: 0, offsetY: 2 })
+    .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetX: 0, offsetY: 2 })
   }
 
   /**

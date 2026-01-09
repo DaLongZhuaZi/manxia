@@ -7,6 +7,7 @@
 import { webview } from '@kit.ArkWeb';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { logger } from '../../Utils/Logger';
+import { AppColors } from '../Theme/AppColors';
 
 const TAG = 'WebViewInteractionDialog';
 
@@ -356,7 +357,7 @@ export struct WebViewInteractionDialog {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor('#00000080')
+          .backgroundColor(AppColors.scrim)
           .onClick(() => {
             // 点击遮罩不关闭
           })
@@ -452,7 +453,7 @@ export struct WebViewInteractionDialog {
         Text(`${this.remainingSeconds}s`)
           .fontSize(14)
           .fontColor(this.remainingSeconds <= 10 
-            ? '#F44336' 
+            ? AppColors.error 
             : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
 

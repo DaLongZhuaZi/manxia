@@ -403,7 +403,7 @@ export struct NovelDictRulePage {
           value: [{
             content: {
               label: '添加',
-              icon: $r('app.media.ic_add'),
+              icon: $r('sys.symbol.plus'),
               isEnabled: true,
               action: () => { 
                 this.resetForm();
@@ -413,21 +413,21 @@ export struct NovelDictRulePage {
           }, {
             content: {
               label: '导入',
-              icon: $r('app.media.ic_download'),
+              icon: $r('sys.symbol.download'),
               isEnabled: true,
               action: () => { this.showImportOptions(); }
             }
           }, {
             content: {
               label: '导出',
-              icon: $r('app.media.ic_download'),
+              icon: $r('sys.symbol.upload'),
               isEnabled: true,
               action: () => { this.exportToClipboard(); }
             }
           }, {
             content: {
               label: '重置',
-              icon: $r('app.media.ic_refresh'),
+              icon: $r('sys.symbol.arrow_counterclockwise'),
               isEnabled: true,
               action: () => { this.resetToDefault(); }
             }

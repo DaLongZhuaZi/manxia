@@ -1,0 +1,473 @@
+/**
+ * 用户自定义主题配置系统（精简版）
+ * 
+ * 功能：
+ * 1. 组件透明度自定义
+ * 2. 特效开关（模糊、动画、阴影等）
+ * 3. 与现有ThemeSettingsPage集成
+ * 
+ * 文件路径: entry/src/main/ets/Framework/Theme/UserThemeConfig.ets
+ */
+
+import { logger } from '../../Utils/Logger';
+import { preferences } from '@kit.ArkData';
+import { getContext } from '../../GlobalContext';
+
+const TAG = 'UserThemeConfig';
+
+// AppStorage keys for user theme config (用于声明式UI绑定)
+export class USER_THEME_KEYS {
+  static readonly CARD_OPACITY: string = 'userTheme_cardOpacity';
+  static readonly NAV_BAR_OPACITY: string = 'userTheme_navBarOpacity';
+  static readonly TAB_BAR_OPACITY: string = 'userTheme_tabBarOpacity';
+  static readonly DIALOG_OPACITY: string = 'userTheme_dialogOpacity';
+  static readonly FLOATING_BALL_OPACITY: string = 'userTheme_floatingBallOpacity';
+  static readonly MENU_OPACITY: string = 'userTheme_menuOpacity';
+  static readonly SIDEBAR_OPACITY: string = 'userTheme_sidebarOpacity';
+  static readonly CORNER_RADIUS: string = 'userTheme_cornerRadius';
+  static readonly BLUR_ENABLED: string = 'userTheme_blurEnabled';
+  static readonly SHADOW_ENABLED: string = 'userTheme_shadowEnabled';
+  static readonly ANIMATION_ENABLED: string = 'userTheme_animationEnabled';
+  static readonly GLASSMORPHISM_ENABLED: string = 'userTheme_glassmorphismEnabled';
+}
+
+// 保留旧的key以兼容
+export const USER_THEME_CONFIG_VERSION_KEY = 'userThemeConfigVersion';
+
+// ==================== 类型定义 ====================
+
+/**
+ * 透明度配置 - 组件透明度设置
+ */
+export interface TransparencyConfig {
+  /** 导航栏透明度 (0-1) */
+  navigationBar: number;
+  /** 标签栏透明度 (0-1) */
+  tabBar: number;
+  /** 卡片透明度 (0-1) */
+  card: number;
+  /** 对话框透明度 (0-1) */
+  dialog: number;
+  /** 悬浮球透明度 (0-1) */
+  floatingBall: number;
+  /** 菜单透明度 (0-1) */
+  menu: number;
+  /** 侧边栏透明度 (0-1) */
+  sidebar: number;
+}
+
+/**
+ * 特效配置 - 视觉特效开关
+ */
+export interface EffectsConfig {
+  /** 启用模糊效果 */
+  enableBlur: boolean;
+  /** 模糊强度 (0-100) */
+  blurIntensity: number;
+  /** 启用阴影效果 */
+  enableShadow: boolean;
+  /** 阴影强度 (0-100) */
+  shadowIntensity: number;
+  /** 启用动画效果 */
+  enableAnimation: boolean;
+  /** 动画速度倍率 (0.5-2.0) */
+  animationSpeed: number;
+  /** 启用圆角效果 */
+  enableRoundedCorners: boolean;
+  /** 圆角大小 (0-32) */
+  cornerRadius: number;
+  /** 启用玻璃拟态效果 */
+  enableGlassmorphism: boolean;
+}
+
+/**
+ * 完整的用户主题配置
+ */
+export interface UserThemeProfile {
+  /** 配置ID */
+  id: string;
+  /** 配置名称 */
+  name: string;
+  /** 最后修改时间 */
+  lastModified: number;
+  /** 透明度配置 */
+  transparency: TransparencyConfig;
+  /** 特效配置 */
+  effects: EffectsConfig;
+}
+
+// ==================== 默认配置 ====================
+
+/**
+ * 默认透明度配置
+ */
+const DEFAULT_TRANSPARENCY: TransparencyConfig = {
+  navigationBar: 1.0,
+  tabBar: 1.0,
+  card: 1.0,
+  dialog: 0.95,
+  floatingBall: 0.9,
+  menu: 0.95,
+  sidebar: 1.0
+};
+
+/**
+ * 默认特效配置
+ */
+const DEFAULT_EFFECTS: EffectsConfig = {
+  enableBlur: true,
+  blurIntensity: 50,
+  enableShadow: true,
+  shadowIntensity: 30,
+  enableAnimation: true,
+  animationSpeed: 1.0,
+  enableRoundedCorners: true,
+  cornerRadius: 12,
+  enableGlassmorphism: true
+};
+
+/**
+ * 复制透明度配置
+ */
+function copyTransparency(source: TransparencyConfig): TransparencyConfig {
+  return {
+    navigationBar: source.navigationBar,
+    tabBar: source.tabBar,
+    card: source.card,
+    dialog: source.dialog,
+    floatingBall: source.floatingBall,
+    menu: source.menu,
+    sidebar: source.sidebar
+  };
+}
+
+/**
+ * 复制特效配置
+ */
+function copyEffects(source: EffectsConfig): EffectsConfig {
+  return {
+    enableBlur: source.enableBlur,
+    blurIntensity: source.blurIntensity,
+    enableShadow: source.enableShadow,
+    shadowIntensity: source.shadowIntensity,
+    enableAnimation: source.enableAnimation,
+    animationSpeed: source.animationSpeed,
+    enableRoundedCorners: source.enableRoundedCorners,
+    cornerRadius: source.cornerRadius,
+    enableGlassmorphism: source.enableGlassmorphism
+  };
+}
+
+/**
+ * 合并透明度配置（用partial覆盖base）
+ */
+function mergeTransparency(base: TransparencyConfig, partial: Partial<TransparencyConfig>): TransparencyConfig {
+  return {
+    navigationBar: partial.navigationBar !== undefined ? partial.navigationBar : base.navigationBar,
+    tabBar: partial.tabBar !== undefined ? partial.tabBar : base.tabBar,
+    card: partial.card !== undefined ? partial.card : base.card,
+    dialog: partial.dialog !== undefined ? partial.dialog : base.dialog,
+    floatingBall: partial.floatingBall !== undefined ? partial.floatingBall : base.floatingBall,
+    menu: partial.menu !== undefined ? partial.menu : base.menu,
+    sidebar: partial.sidebar !== undefined ? partial.sidebar : base.sidebar
+  };
+}
+
+/**
+ * 合并特效配置（用partial覆盖base）
+ */
+function mergeEffects(base: EffectsConfig, partial: Partial<EffectsConfig>): EffectsConfig {
+  return {
+    enableBlur: partial.enableBlur !== undefined ? partial.enableBlur : base.enableBlur,
+    blurIntensity: partial.blurIntensity !== undefined ? partial.blurIntensity : base.blurIntensity,
+    enableShadow: partial.enableShadow !== undefined ? partial.enableShadow : base.enableShadow,
+    shadowIntensity: partial.shadowIntensity !== undefined ? partial.shadowIntensity : base.shadowIntensity,
+    enableAnimation: partial.enableAnimation !== undefined ? partial.enableAnimation : base.enableAnimation,
+    animationSpeed: partial.animationSpeed !== undefined ? partial.animationSpeed : base.animationSpeed,
+    enableRoundedCorners: partial.enableRoundedCorners !== undefined ? partial.enableRoundedCorners : base.enableRoundedCorners,
+    cornerRadius: partial.cornerRadius !== undefined ? partial.cornerRadius : base.cornerRadius,
+    enableGlassmorphism: partial.enableGlassmorphism !== undefined ? partial.enableGlassmorphism : base.enableGlassmorphism
+  };
+}
+
+/**
+ * 创建默认主题配置
+ */
+function createDefaultProfile(): UserThemeProfile {
+  return {
+    id: 'default',
+    name: '默认配置',
+    lastModified: Date.now(),
+    transparency: copyTransparency(DEFAULT_TRANSPARENCY),
+    effects: copyEffects(DEFAULT_EFFECTS)
+  };
+}
+
+// ==================== 用户主题配置管理器 ====================
+
+/**
+ * 用户主题配置管理器
+ * 单例模式，负责管理用户自定义主题配置
+ */
+export class UserThemeConfigManager {
+  private static instance: UserThemeConfigManager | null = null;
+  private preferencesStore: preferences.Preferences | null = null;
+  private currentProfile: UserThemeProfile;
+  private isInitialized: boolean = false;
+  private changeCallbacks: Set<(profile: UserThemeProfile) => void> = new Set();
+  
+  private readonly PREFS_NAME = 'user_theme_config';
+  private readonly CURRENT_PROFILE_KEY = 'current_profile';
+  
+  private constructor() {
+    this.currentProfile = createDefaultProfile();
+  }
+  
+  /**
+   * 获取单例实例
+   */
+  public static getInstance(): UserThemeConfigManager {
+    if (!UserThemeConfigManager.instance) {
+      UserThemeConfigManager.instance = new UserThemeConfigManager();
+    }
+    return UserThemeConfigManager.instance;
+  }
+  
+  /**
+   * 初始化
+   */
+  public async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+    
+    try {
+      logger.info(TAG, '开始初始化用户主题配置管理器');
+      
+      const context = getContext();
+      this.preferencesStore = await preferences.getPreferences(context, this.PREFS_NAME);
+      
+      // 初始化AppStorage版本号
+      if (!AppStorage.has(USER_THEME_CONFIG_VERSION_KEY)) {
+        AppStorage.setOrCreate<number>(USER_THEME_CONFIG_VERSION_KEY, 0);
+      }
+      
+      // 加载保存的配置
+      await this.loadCurrentProfile();
+      
+      // 初始化时同步到AppStorage
+      this.syncToAppStorage();
+      
+      this.isInitialized = true;
+      logger.info(TAG, '用户主题配置管理器初始化完成');
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `初始化失败: ${errMsg}`);
+      this.isInitialized = true;
+    }
+  }
+  
+  /**
+   * 加载当前配置
+   */
+  private async loadCurrentProfile(): Promise<void> {
+    try {
+      if (!this.preferencesStore) return;
+      
+      const profileJson = await this.preferencesStore.get(this.CURRENT_PROFILE_KEY, '') as string;
+      if (profileJson && profileJson.length > 0) {
+        const loaded = JSON.parse(profileJson) as UserThemeProfile;
+        // 合并默认值，确保新增字段有默认值
+        const defaultProfile = createDefaultProfile();
+        this.currentProfile = {
+          id: loaded.id ? loaded.id : defaultProfile.id,
+          name: loaded.name ? loaded.name : defaultProfile.name,
+          lastModified: loaded.lastModified ? loaded.lastModified : defaultProfile.lastModified,
+          transparency: mergeTransparency(DEFAULT_TRANSPARENCY, loaded.transparency ? loaded.transparency : {}),
+          effects: mergeEffects(DEFAULT_EFFECTS, loaded.effects ? loaded.effects : {})
+        };
+        logger.info(TAG, `加载当前配置: ${this.currentProfile.name}`);
+      }
+    } catch (error) {
+      logger.error(TAG, '加载当前配置失败', error);
+      this.currentProfile = createDefaultProfile();
+    }
+  }
+  
+  /**
+   * 保存当前配置
+   */
+  private async saveCurrentProfile(): Promise<void> {
+    try {
+      if (!this.preferencesStore) return;
+      
+      this.currentProfile.lastModified = Date.now();
+      await this.preferencesStore.put(this.CURRENT_PROFILE_KEY, JSON.stringify(this.currentProfile));
+      await this.preferencesStore.flush();
+      
+      logger.debug(TAG, '当前配置已保存');
+    } catch (error) {
+      logger.error(TAG, '保存当前配置失败', error);
+    }
+  }
+  
+  // ==================== 公开API ====================
+  
+  /**
+   * 获取当前配置
+   */
+  public getCurrentProfile(): UserThemeProfile {
+    return {
+      id: this.currentProfile.id,
+      name: this.currentProfile.name,
+      lastModified: this.currentProfile.lastModified,
+      transparency: copyTransparency(this.currentProfile.transparency),
+      effects: copyEffects(this.currentProfile.effects)
+    };
+  }
+  
+  /**
+   * 设置透明度配置
+   */
+  public async setTransparency(transparency: Partial<TransparencyConfig>): Promise<void> {
+    this.currentProfile.transparency = mergeTransparency(this.currentProfile.transparency, transparency);
+    await this.saveCurrentProfile();
+    this.notifyChange();
+  }
+  
+  /**
+   * 设置特效配置
+   */
+  public async setEffects(effects: Partial<EffectsConfig>): Promise<void> {
+    this.currentProfile.effects = mergeEffects(this.currentProfile.effects, effects);
+    await this.saveCurrentProfile();
+    this.notifyChange();
+  }
+  
+  /**
+   * 重置为默认配置
+   */
+  public async resetToDefault(): Promise<void> {
+    this.currentProfile = createDefaultProfile();
+    await this.saveCurrentProfile();
+    this.notifyChange();
+    logger.info(TAG, '重置为默认配置');
+  }
+  
+  /**
+   * 注册配置变化监听器
+   */
+  public onConfigChange(callback: (profile: UserThemeProfile) => void): void {
+    this.changeCallbacks.add(callback);
+  }
+  
+  /**
+   * 移除配置变化监听器
+   */
+  public offConfigChange(callback: (profile: UserThemeProfile) => void): void {
+    this.changeCallbacks.delete(callback);
+  }
+  
+  /**
+   * 通知配置变化
+   */
+  private notifyChange(): void {
+    const profile = this.getCurrentProfile();
+    this.changeCallbacks.forEach(callback => {
+      try {
+        callback(profile);
+      } catch (error) {
+        logger.error(TAG, '配置变化回调执行失败', error);
+      }
+    });
+    
+    // 同步配置值到AppStorage以触发声明式UI刷新
+    this.syncToAppStorage();
+  }
+  
+  /**
+   * 同步配置到AppStorage（用于声明式UI绑定）
+   */
+  private syncToAppStorage(): void {
+    try {
+      const profile = this.currentProfile;
+      // 透明度配置
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.CARD_OPACITY, profile.transparency.card);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.NAV_BAR_OPACITY, profile.transparency.navigationBar);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.TAB_BAR_OPACITY, profile.transparency.tabBar);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.DIALOG_OPACITY, profile.transparency.dialog);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.FLOATING_BALL_OPACITY, profile.transparency.floatingBall);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.MENU_OPACITY, profile.transparency.menu);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.SIDEBAR_OPACITY, profile.transparency.sidebar);
+      // 特效配置
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.CORNER_RADIUS, profile.effects.cornerRadius);
+      AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.BLUR_ENABLED, profile.effects.enableBlur);
+      AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.SHADOW_ENABLED, profile.effects.enableShadow);
+      AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.ANIMATION_ENABLED, profile.effects.enableAnimation);
+      AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.GLASSMORPHISM_ENABLED, profile.effects.enableGlassmorphism);
+      logger.debug(TAG, '配置已同步到AppStorage');
+    } catch (error) {
+      logger.error(TAG, '同步配置到AppStorage失败', error);
+    }
+  }
+  
+  // ==================== 便捷访问方法 ====================
+  
+  /** 是否启用模糊 */
+  public get blurEnabled(): boolean {
+    return this.currentProfile.effects.enableBlur;
+  }
+  
+  /** 获取模糊强度 */
+  public get blurIntensity(): number {
+    return this.currentProfile.effects.blurIntensity;
+  }
+  
+  /** 是否启用阴影 */
+  public get shadowEnabled(): boolean {
+    return this.currentProfile.effects.enableShadow;
+  }
+  
+  /** 是否启用动画 */
+  public get animationEnabled(): boolean {
+    return this.currentProfile.effects.enableAnimation;
+  }
+  
+  /** 获取动画速度 */
+  public get animationSpeed(): number {
+    return this.currentProfile.effects.animationSpeed;
+  }
+  
+  /** 获取圆角大小 */
+  public get cornerRadius(): number {
+    return this.currentProfile.effects.enableRoundedCorners ? this.currentProfile.effects.cornerRadius : 0;
+  }
+  
+  /** 是否启用玻璃拟态 */
+  public get glassmorphismEnabled(): boolean {
+    return this.currentProfile.effects.enableGlassmorphism;
+  }
+  
+  /** 获取导航栏透明度 */
+  public get navigationBarTransparency(): number {
+    return this.currentProfile.transparency.navigationBar;
+  }
+  
+  /** 获取卡片透明度 */
+  public get cardTransparency(): number {
+    return this.currentProfile.transparency.card;
+  }
+  
+  /** 获取对话框透明度 */
+  public get dialogTransparency(): number {
+    return this.currentProfile.transparency.dialog;
+  }
+  
+  /** 获取悬浮球透明度 */
+  public get floatingBallTransparency(): number {
+    return this.currentProfile.transparency.floatingBall;
+  }
+}
+
+/**
+ * 导出单例实例
+ */
+export const userThemeConfig = UserThemeConfigManager.getInstance();

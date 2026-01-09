@@ -49,6 +49,55 @@ export interface MangaSourceSettings {
   bypassCloudflare: boolean;
 }
 
+/**
+ * 搜索类型定义（用于图源JSON配置）
+ */
+export interface SearchTypeOption {
+  /** 搜索类型ID，对应工作流名称 */
+  id: string;
+  /** 显示名称 */
+  label: string;
+  /** 占位符提示文本 */
+  placeholder?: string;
+  /** 是否为默认选项 */
+  isDefault?: boolean;
+  /** 直达URL模板，使用 {{query}} 作为占位符，如 "https://pixiv.net/artworks/{{query}}" */
+  urlTemplate?: string;
+  /** 直达类型：'detail'跳转详情页, 'webview'在WebView中打开 */
+  directType?: 'detail' | 'webview';
+}
+
+/**
+ * 搜索配置
+ */
+export interface SearchConfig {
+  /** 支持的搜索类型列表 */
+  types?: SearchTypeOption[];
+}
+
+/**
+ * 直达搜索结果类型
+ */
+export type DirectSearchResultType = 'detail' | 'list' | 'redirect';
+
+/**
+ * 直达搜索结果
+ */
+export interface DirectSearchResult {
+  /** 结果类型：detail=单个作品详情, list=作品列表, redirect=重定向URL */
+  type: DirectSearchResultType;
+  /** 单个作品详情（当type=detail时） */
+  manga?: MangaInfo;
+  /** 作品列表（当type=list时） */
+  mangas?: MangaInfo[];
+  /** 重定向URL（当type=redirect时） */
+  redirectUrl?: string;
+  /** 是否有更多结果 */
+  hasNext?: boolean;
+  /** 总数 */
+  total?: number;
+}
+
 // ==================== 选择器系统 ====================
 
 /**
@@ -531,6 +580,9 @@ export enum WorkflowType {
   LOGIN = 'login',
   SEARCH = 'search',
   SEARCH_BY_ID = 'searchById',
+  SEARCH_BY_AUTHOR = 'searchByAuthor',
+  SEARCH_BY_SERIES = 'searchBySeries',
+  RESOLVE_URL = 'resolveUrl',
   FILTER = 'filter',
   GET_MANGA_LIST = 'getMangaList',
   GET_MANGA_DETAIL = 'getMangaDetail',
@@ -552,7 +604,9 @@ export enum WorkflowType {
   CLICK_SEARCH_BUTTON = 'clickSearchButton',
   WAIT_FOR_DOWNLOAD_SOURCES = 'waitForDownloadSources',
   SELECT_DOWNLOAD_SOURCE = 'selectDownloadSource',
-  EXTRACT_FILE_LIST = 'extractFileList'
+  EXTRACT_FILE_LIST = 'extractFileList',
+  // 直达搜索工作流（不进行URL规范化，直接使用原始输入）
+  DIRECT_SEARCH = 'directSearch'
 }
 
 /**
@@ -563,6 +617,9 @@ export interface Workflow {
   [WorkflowType.LOGIN]?: Action[];
   [WorkflowType.SEARCH]?: Action[];
   [WorkflowType.SEARCH_BY_ID]?: Action[];
+  [WorkflowType.SEARCH_BY_AUTHOR]?: Action[];
+  [WorkflowType.SEARCH_BY_SERIES]?: Action[];
+  [WorkflowType.RESOLVE_URL]?: Action[];
   [WorkflowType.FILTER]?: Action[];
   [WorkflowType.GET_MANGA_LIST]?: Action[];
   [WorkflowType.GET_MANGA_DETAIL]?: Action[];
@@ -585,6 +642,8 @@ export interface Workflow {
   [WorkflowType.WAIT_FOR_DOWNLOAD_SOURCES]?: Action[];
   [WorkflowType.SELECT_DOWNLOAD_SOURCE]?: Action[];
   [WorkflowType.EXTRACT_FILE_LIST]?: Action[];
+  // 直达搜索工作流
+  [WorkflowType.DIRECT_SEARCH]?: Action[];
 }
 
 // ==================== 错误处理和重试 ====================
@@ -777,6 +836,8 @@ export interface MangaSourceConfig {
   authentication?: AuthenticationConfig;
   /** 工作流程 */
   workflows: Workflow;
+  /** 搜索配置 */
+  searchConfig?: SearchConfig;
   /** 变量定义 */
   variables?: Record<string, string>;
   /** 重试策略 */

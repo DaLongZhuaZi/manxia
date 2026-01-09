@@ -5109,7 +5109,7 @@ export struct MangaReaderPage {
     } else if (this.readerState.errorMessage) {
       // 错误状态1：加载失败
       Column() {
-        Image($r('app.media.ic_error'))
+        Image($r('sys.symbol.exclamationmark_circle_fill'))
           .width(64)
           .height(64)
           .fillColor($r('app.color.color_error'))
@@ -5173,7 +5173,7 @@ export struct MangaReaderPage {
     } else if (!this.readerState.currentChapter) {
       // 错误状态2：章节数据为空
       Column() {
-        Image($r('app.media.ic_error'))
+        Image($r('sys.symbol.exclamationmark_circle_fill'))
           .width(64)
           .height(64)
           .fillColor($r('app.color.color_error'))

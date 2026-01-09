@@ -711,7 +711,7 @@ export struct EBookDetailPage {
   @Builder
   buildErrorView() {
     Column({ space: 16 }) {
-      Image($r('app.media.ic_error'))
+      Image($r('sys.symbol.exclamationmark_circle_fill'))
         .width(80)
         .height(80)
         .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

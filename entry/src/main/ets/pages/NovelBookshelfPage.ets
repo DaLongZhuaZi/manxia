@@ -464,14 +464,14 @@ export struct NovelBookshelfPage {
           value: this.isEditMode ? [] : [{
             content: {
               label: '搜索',
-              icon: $r('app.media.ic_search'),
+              icon: $r('sys.symbol.magnifyingglass'),
               isEnabled: true,
               action: () => this.goToSearch()
             }
           }, {
             content: {
               label: '发现',
-              icon: $r('app.media.ic_discover_normal'),
+              icon: $r('sys.symbol.crown'),
               isEnabled: true,
               action: () => {
                 const params: NovelExplorePageParams = {};
@@ -481,7 +481,7 @@ export struct NovelBookshelfPage {
           }, {
             content: {
               label: '小说设置',
-              icon: $r('app.media.ic_settings'),
+              icon: $r('sys.symbol.gearshape'),
               isEnabled: true,
               action: () => this.goToNovelSettings()
             }

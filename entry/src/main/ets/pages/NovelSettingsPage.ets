@@ -122,7 +122,7 @@ export struct NovelSettingsPage {
     {
       title: 'JSVM Playground',
       subtitle: 'JavaScript代码测试环境',
-      icon: $r('app.media.ic_terminal'),
+      icon: $r('sys.symbol.wrench_and_screwdriver'),
       iconColor: '#607D8B',
       route: 'JsvmPlaygroundPage'
     }
@@ -208,6 +208,15 @@ export struct NovelSettingsPage {
   build() {
     HdsNavDestination() {
       Stack() {
+        // 背景层：扩展到系统栏区域，实现完全沉浸式背景，避免页面转场时重叠
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .animation(ThemeAwareHelper.getThemeTransitionAnimation())
+        
+        // 内容层
         Column() {
           Scroll() {
             Column() {

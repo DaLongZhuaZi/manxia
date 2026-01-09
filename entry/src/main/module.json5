@@ -68,6 +68,21 @@
                 "utd": "general.plain-text"
               }
             ]
+          },
+          {
+            "entities": [
+              "entity.system.default"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "manxia",
+                "host": "search",
+                "pathStartWith": ""
+              }
+            ]
           }
         ]
       }

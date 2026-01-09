@@ -7,6 +7,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { AppColors, ColorRole } from '../Theme/AppColors';
 import { ScraperManager } from '../Scraper/ScraperManager';
 import { ScraperSource, ScraperContentType, ScrapedMetadata } from '../Scraper/ScraperTypes';
 import { LengthMetrics } from '@kit.ArkUI';
@@ -268,17 +269,17 @@ export struct ScraperDialog {
       Image($r('app.media.ic_info'))
         .width(16)
         .height(16)
-        .fillColor('#FF9800')
+        .fillColor(AppColors.warning)
       
       Text(this.isSearching ? '当前刮削源需要海外网络环境' : '请检查当前网络环境')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
-        .fontColor('#FF9800')
+        .fontColor(AppColors.warning)
         .layoutWeight(1)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-    .backgroundColor('#FFF3E0')
+    .backgroundColor(AppColors.withAlpha(ColorRole.WARNING, 0.1))
     .borderRadius(8)
     .margin({ bottom: 8 })
   }
@@ -289,7 +290,7 @@ export struct ScraperDialog {
       if (this.searchError.length > 0) {
         // 错误提示
         Column({ space: 8 }) {
-          Image($r('app.media.ic_error'))
+          Image($r('sys.symbol.exclamationmark_circle_fill'))
             .width(48)
             .height(48)
             .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
