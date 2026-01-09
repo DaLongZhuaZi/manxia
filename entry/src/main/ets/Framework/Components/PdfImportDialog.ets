@@ -7,6 +7,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { AppColors, ColorRole } from '../Theme/AppColors';
 import { PdfContentType } from '../Parsers/PdfToMangaImporter';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
@@ -155,7 +156,7 @@ export struct PdfImportDialog {
       Text('⚠️ PDF转换为图片是耗时操作，大文件可能需要几分钟')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
-        .fontColor('#FF9800')
+        .fontColor(AppColors.warning)
         .width('100%')
         .textAlign(TextAlign.Center)
 
@@ -341,8 +342,8 @@ export struct PdfImportDialog {
 
         Button('开始导入')
           .fontSize(16)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#2196F3')
+          .fontColor(AppColors.onPrimary)
+          .backgroundColor(AppColors.primary)
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)
@@ -417,7 +418,7 @@ export struct PdfImportDialog {
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.selectedType === type ? '#2196F3' : 
+        .fontColor(this.selectedType === type ? AppColors.primary : 
           ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
       Text(subtitle)
@@ -426,12 +427,12 @@ export struct PdfImportDialog {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
     }
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor(this.selectedType === type ? '#E3F2FD' : 
+    .backgroundColor(this.selectedType === type ? AppColors.primaryContainer : 
       ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
     .borderRadius(8)
     .border({
       width: 2,
-      color: this.selectedType === type ? '#2196F3' : Color.Transparent
+      color: this.selectedType === type ? AppColors.primary : Color.Transparent
     })
     .layoutWeight(1)
     .onClick(() => {
@@ -460,7 +461,7 @@ export struct PdfImportDialog {
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
-            .fontColor(this.importMode === PdfImportMode.TANKOUBON ? '#2196F3' :
+            .fontColor(this.importMode === PdfImportMode.TANKOUBON ? AppColors.primary :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           Text('整个PDF作为一部漫画')
@@ -469,12 +470,12 @@ export struct PdfImportDialog {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-        .backgroundColor(this.importMode === PdfImportMode.TANKOUBON ? '#E3F2FD' :
+        .backgroundColor(this.importMode === PdfImportMode.TANKOUBON ? AppColors.primaryContainer :
           ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(8)
         .border({
           width: 2,
-          color: this.importMode === PdfImportMode.TANKOUBON ? '#2196F3' : Color.Transparent
+          color: this.importMode === PdfImportMode.TANKOUBON ? AppColors.primary : Color.Transparent
         })
         .layoutWeight(1)
         .onClick(() => {
@@ -487,7 +488,7 @@ export struct PdfImportDialog {
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontWeight(FontWeight.Medium)
-            .fontColor(this.importMode === PdfImportMode.SINGLE_CHAPTER ? '#2196F3' :
+            .fontColor(this.importMode === PdfImportMode.SINGLE_CHAPTER ? AppColors.primary :
               ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
           Text('作为漫画的一个章节')
@@ -496,12 +497,12 @@ export struct PdfImportDialog {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         }
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-        .backgroundColor(this.importMode === PdfImportMode.SINGLE_CHAPTER ? '#E3F2FD' :
+        .backgroundColor(this.importMode === PdfImportMode.SINGLE_CHAPTER ? AppColors.primaryContainer :
           ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(8)
         .border({
           width: 2,
-          color: this.importMode === PdfImportMode.SINGLE_CHAPTER ? '#2196F3' : Color.Transparent
+          color: this.importMode === PdfImportMode.SINGLE_CHAPTER ? AppColors.primary : Color.Transparent
         })
         .layoutWeight(1)
         .onClick(() => {
@@ -521,10 +522,10 @@ export struct PdfImportDialog {
       Text('💡 单章节模式：此PDF将作为漫画的一个章节导入。如果已存在同名漫画，将自动合并。')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
-        .fontColor('#FF9800')
+        .fontColor(AppColors.warning)
         .width('100%')
         .padding({ left: 8, right: 8, top: 8, bottom: 8 })
-        .backgroundColor('#FFF3E0')
+        .backgroundColor(AppColors.withAlpha(ColorRole.WARNING, 0.1))
         .borderRadius(6)
 
       // 章节编号和标题

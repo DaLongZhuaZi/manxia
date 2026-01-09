@@ -16,13 +16,15 @@ import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { DataManager } from '../Framework/Data/DataManager';
 import { MangaSourceEngine, SearchResult, EngineResult, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
-import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
+import { MangaSourceConfig, MangaInfo, AntiCrawlerConfig, SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { WebViewAuthManager } from '../Framework/WebView/WebViewAuthManager';
 import { TabConfig, TabType, SourceTabsConfig, getDefaultTabsConfig, filterTabsByLoginStatus, sortTabs, parseTabsFromSourceConfig, FilterConfig, FilterGroup, FilterOption } from '../Framework/WebView/TabConfig';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { OnlineEBookDetailPageParams } from './OnlineEBookDetailPage';
 import { SourceSettingsPageParams } from './SourceSettingsPage';
+import { SearchIntentParser } from '../Framework/Search/SearchIntentParser';
+import { SearchIntent, SearchIntentType } from '../Framework/Search/SearchIntentTypes';
 import CookieManager from '../Framework/Managers/CookieManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { image } from '@kit.ImageKit';
@@ -139,6 +141,12 @@ export struct SourceDetailPage {
   @State searchResults: ComicInfo[] = []; // 搜索结果（独立存储）
   @State lastSearchKeyword: string = ''; // 上次搜索的关键词
   @State searchTabVisible: boolean = false; // 搜索标签是否可见
+  @State showAmbiguousDialog: boolean = false; // 纯数字歧义选择对话框
+  @State ambiguousId: string = ''; // 待确认的ID
+  @State searchTypes: SearchTypeOption[] = []; // 搜索类型列表
+  @State selectedSearchType: string = 'search'; // 当前选中的搜索类型
+  @State searchPlaceholder: string = '搜索漫画名称、粘贴URL、或输入 id:作品ID'; // 搜索框占位符
+  @State sourceUserAgent: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'; // 图源UA配置
 
   private sourceId: number = 0;
   private sourceName: string = '';
@@ -200,9 +208,10 @@ export struct SourceDetailPage {
         // 保存初始标签和搜索关键词参数
         const initialTab = param.initialTab as string | undefined;
         const searchKeyword = param.searchKeyword as string | undefined;
+        const searchType = param.searchType as string | undefined;
         
         // 异步初始化
-        this.initializeAsyncWithParams(initialTab, searchKeyword);
+        this.initializeAsyncWithParams(initialTab, searchKeyword, searchType);
       }
     }
     
@@ -219,13 +228,13 @@ export struct SourceDetailPage {
    * 异步初始化（无参数版本，向后兼容）
    */
   private async initializeAsync(): Promise<void> {
-    await this.initializeAsyncWithParams(undefined, undefined);
+    await this.initializeAsyncWithParams(undefined, undefined, undefined);
   }
 
   /**
    * 异步初始化（带参数版本）
    */
-  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string): Promise<void> {
+  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string): Promise<void> {
     try {
       // 首先加载 sourceName（用于页面跳转参数传递）
       await this.loadSourceName();
@@ -272,9 +281,19 @@ export struct SourceDetailPage {
         // 如果是搜索标签且有关键词，先设置关键词再执行搜索
         if (initialTab === 'search' && searchKeyword) {
           this.searchKeyword = searchKeyword;
+          // 如果传入了搜索类型，设置选中的搜索类型
+          if (searchType) {
+            this.selectedSearchType = searchType;
+            const typeConfig = this.searchTypes.find((t: SearchTypeOption) => t.id === searchType);
+            if (typeConfig) {
+              this.searchPlaceholder = typeConfig.placeholder || '输入搜索内容';
+            }
+            logger.info(TAG, `初始化搜索标签，类型: ${searchType}, 关键词: ${searchKeyword}`);
+          } else {
+            logger.info(TAG, `初始化搜索标签，关键词: ${searchKeyword}`);
+          }
           this.addOrUpdateSearchTab();
           this.currentTabId = 'search';
-          logger.info(TAG, `初始化搜索标签，关键词: ${searchKeyword}`);
         } else {
           // 切换到指定标签
           const targetTab = this.tabsConfig.find(t => t.id === initialTab);
@@ -751,6 +770,12 @@ export struct SourceDetailPage {
       const configJson = JSON.stringify(config);
       await this.mangaSourceEngine.loadConfig(configJson);
       
+      // 从配置中读取UserAgent
+      this.initUserAgentFromConfig(config);
+      
+      // 初始化搜索类型配置
+      this.initSearchTypes(config);
+      
       this.webViewReady = true;
       logger.info(TAG, 'WebView引擎初始化成功');
     } catch (error) {
@@ -758,6 +783,70 @@ export struct SourceDetailPage {
       this.useWebView = false;
       this.webViewReady = false;
     }
+  }
+
+  /**
+   * 从配置中初始化UserAgent
+   */
+  private initUserAgentFromConfig(config: ESObject): void {
+    // 默认移动端UA
+    const defaultMobileUA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
+    
+    // 尝试从 network.userAgent 读取
+    const network = config.network as Record<string, string> | undefined;
+    if (network && network.userAgent && network.userAgent.length > 0) {
+      this.sourceUserAgent = network.userAgent;
+      logger.info(TAG, `使用图源配置的UserAgent: ${this.sourceUserAgent.substring(0, 50)}...`);
+      return;
+    }
+    
+    // 尝试从 settings.userAgent 读取（兼容旧格式）
+    const settings = config.settings as Record<string, string> | undefined;
+    if (settings && settings.userAgent && settings.userAgent.length > 0) {
+      this.sourceUserAgent = settings.userAgent;
+      logger.info(TAG, `使用图源settings的UserAgent: ${this.sourceUserAgent.substring(0, 50)}...`);
+      return;
+    }
+    
+    // 使用默认UA
+    this.sourceUserAgent = defaultMobileUA;
+    logger.info(TAG, '使用默认移动端UserAgent');
+  }
+
+  /**
+   * 初始化搜索类型配置
+   */
+  private initSearchTypes(config: ESObject): void {
+    // 默认搜索类型
+    const defaultTypes: SearchTypeOption[] = [
+      { id: 'search', label: '关键词', placeholder: '输入漫画名称或标签', isDefault: true }
+    ];
+
+    // 从配置中读取搜索类型
+    const searchConfig: SearchConfig | undefined = config.searchConfig as SearchConfig | undefined;
+    if (searchConfig && searchConfig.types && Array.isArray(searchConfig.types)) {
+      const configTypes: SearchTypeOption[] = searchConfig.types;
+      if (configTypes.length > 0) {
+        this.searchTypes = configTypes;
+        // 找到默认类型
+        const defaultType = configTypes.find((t: SearchTypeOption) => t.isDefault);
+        if (defaultType) {
+          this.selectedSearchType = defaultType.id;
+          this.searchPlaceholder = defaultType.placeholder || '输入搜索内容';
+        } else {
+          this.selectedSearchType = configTypes[0].id;
+          this.searchPlaceholder = configTypes[0].placeholder || '输入搜索内容';
+        }
+        logger.info(TAG, `加载了 ${configTypes.length} 个搜索类型: ${configTypes.map((t: SearchTypeOption) => t.label).join(', ')}`);
+        return;
+      }
+    }
+
+    // 使用默认配置
+    this.searchTypes = defaultTypes;
+    this.selectedSearchType = 'search';
+    this.searchPlaceholder = defaultTypes[0].placeholder || '输入搜索内容';
+    logger.info(TAG, '使用默认搜索类型配置');
   }
 
   private async loadBaseUrlAndCookieBootstrap(): Promise<void> {
@@ -1397,7 +1486,8 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 执行搜索
+   * 执行搜索（增强版）
+   * 根据用户选择的搜索类型执行对应的搜索
    */
   private async performSearch(): Promise<void> {
     if (!this.searchKeyword.trim()) {
@@ -1405,42 +1495,369 @@ export struct SourceDetailPage {
       return;
     }
 
+    const rawQuery = this.searchKeyword.trim();
+    logger.info(TAG, `执行搜索: 类型="${this.selectedSearchType}", 查询="${rawQuery}"`);
+
+    // 根据搜索类型执行不同的搜索
+    if (this.selectedSearchType === 'search') {
+      // 关键词搜索：先尝试解析URL和前缀，否则按关键词搜索
+      const intent: SearchIntent = SearchIntentParser.parse(rawQuery);
+      if (intent.type === SearchIntentType.URL) {
+        await this.executeUrlDirectAccess(intent);
+      } else {
+        await this.executeKeywordSearch(rawQuery);
+      }
+    } else {
+      // 非关键词搜索：使用directSearch工作流
+      await this.executeDirectSearch(this.selectedSearchType, rawQuery);
+    }
+  }
+
+  /**
+   * 执行直达搜索（使用directSearch工作流）
+   */
+  private async executeDirectSearch(searchType: string, query: string): Promise<void> {
     this.showSearchDialog = false;
     this.isLoading = true;
-    this.lastSearchKeyword = this.searchKeyword.trim();
-    
+    this.lastSearchKeyword = `${this.getSelectedSearchTypeLabel()}: ${query}`;
+
+    this.addOrUpdateSearchTab();
+    this.currentTabId = 'search';
+    this.searchResults = [];
+    this.comicList = [];
+    this.comicDataSource.updateItems([]);
+
+    try {
+      if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
+        // 检查是否支持directSearch工作流
+        if (this.mangaSourceEngine.supportsDirectSearch()) {
+          logger.info(TAG, `执行直达搜索: type=${searchType}, query=${query}`);
+          const result = await this.mangaSourceEngine.directSearch(searchType, query);
+
+          if (result.success && result.data) {
+            const directResult = result.data;
+            logger.info(TAG, `直达搜索结果: type=${directResult.type}`);
+
+            if (directResult.type === 'detail' && directResult.manga) {
+              // 单个作品：直接跳转详情页
+              logger.info(TAG, `直达单个作品: ${directResult.manga.title}`);
+              this.isLoading = false;
+              this.navigateToMangaDetail(directResult.manga);
+              return;
+            } else if (directResult.type === 'list' && directResult.mangas && directResult.mangas.length > 0) {
+              // 作品列表：显示在搜索结果中
+              this.searchResults = this.convertMangaInfoToComicInfo(directResult.mangas);
+              this.comicList = this.searchResults;
+              this.comicDataSource.updateItems(this.comicList);
+              this.hasMore = directResult.hasNext || false;
+              logger.info(TAG, `直达搜索完成，找到 ${directResult.mangas.length} 个结果`);
+            } else if (directResult.type === 'redirect' && directResult.redirectUrl) {
+              // 重定向：构造MangaInfo并跳转
+              const manga: MangaInfo = {
+                id: query,
+                title: `作品 ${query}`,
+                url: directResult.redirectUrl,
+                cover: ''
+              };
+              this.isLoading = false;
+              this.navigateToMangaDetail(manga);
+              return;
+            } else {
+              this.getUIContext().getPromptAction().showToast({
+                message: '未找到相关内容'
+              });
+            }
+          } else {
+            this.getUIContext().getPromptAction().showToast({
+              message: result.error || '搜索失败'
+            });
+          }
+        } else {
+          // 不支持directSearch，降级为关键词搜索
+          logger.warn(TAG, '图源不支持directSearch工作流，降级为关键词搜索');
+          await this.executeKeywordSearch(query);
+          return;
+        }
+      } else {
+        // 非WebView图源，降级为关键词搜索
+        logger.warn(TAG, '非WebView图源，降级为关键词搜索');
+        await this.executeKeywordSearch(query);
+        return;
+      }
+    } catch (error) {
+      logger.error(TAG, '直达搜索失败', String(error));
+      this.getUIContext().getPromptAction().showToast({
+        message: `搜索失败: ${error instanceof Error ? error.message : String(error)}`
+      });
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  /**
+   * 获取当前选中搜索类型的标签
+   */
+  private getSelectedSearchTypeLabel(): string {
+    const config = this.searchTypes.find((t: SearchTypeOption) => t.id === this.selectedSearchType);
+    return config ? config.label : '搜索';
+  }
+
+  /**
+   * 执行关键词搜索（原有逻辑）
+   */
+  private async executeKeywordSearch(keyword: string): Promise<void> {
+    this.showSearchDialog = false;
+    this.isLoading = true;
+    this.lastSearchKeyword = keyword;
+
     // 添加或更新搜索标签页
     this.addOrUpdateSearchTab();
-    
+
     // 切换到搜索标签页
     this.currentTabId = 'search';
     this.searchResults = [];
     this.comicList = []; // 清空列表以显示加载动画
     this.comicDataSource.updateItems([]);
-    
+
     try {
       let comics: ComicInfo[] = [];
-      
+
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
-        logger.info(TAG, `使用WebView系统搜索: 关键词="${this.lastSearchKeyword}"`);
-        const result = await this.mangaSourceEngine.searchManga(this.lastSearchKeyword, 1);
+        logger.info(TAG, `使用WebView系统搜索: 关键词="${keyword}"`);
+        const result = await this.mangaSourceEngine.searchManga(keyword, 1);
         if (result && result.success && result.data) {
           comics = this.convertMangaInfoToComicInfo(result.data.mangas);
         }
       } else {
-        logger.info(TAG, `使用HTTP系统搜索: 关键词="${this.lastSearchKeyword}"`);
-        comics = await this.sourceManager.search(this.sourceId, this.lastSearchKeyword, 1, 20);
+        logger.info(TAG, `使用HTTP系统搜索: 关键词="${keyword}"`);
+        comics = await this.sourceManager.search(this.sourceId, keyword, 1, 20);
       }
-      
+
       this.searchResults = comics;
-      this.comicList = comics; // 同步更新 comicList 以正确显示结果
+      this.comicList = comics;
       this.comicDataSource.updateItems(this.searchResults);
+      this.hasMore = comics.length >= 20;
       logger.info(TAG, `搜索完成，找到 ${comics.length} 个结果`);
     } catch (error) {
       logger.error(TAG, '搜索失败', String(error));
+      this.getUIContext().getPromptAction().showToast({
+        message: `搜索失败: ${error instanceof Error ? error.message : String(error)}`
+      });
+    } finally {
+      this.isLoading = false;
+      this.isRefreshing = false;
+    }
+  }
+
+  /**
+   * 执行ID直达 - 直接跳转到作品详情页
+   */
+  private async executeIdDirectAccess(id: string, type: 'manga' | 'chapter'): Promise<void> {
+    this.showSearchDialog = false;
+
+    try {
+      logger.info(TAG, `执行ID直达: id="${id}", type=${type}`);
+
+      // 直接构造MangaInfo并跳转详情页，详情页会调用getMangaDetail获取完整信息
+      const manga: MangaInfo = {
+        id: id,
+        title: `作品 ${id}`,
+        url: '',
+        cover: ''
+      };
+
+      logger.info(TAG, `ID直达，跳转详情页: ID=${id}`);
+      this.navigateToMangaDetail(manga);
+    } catch (error) {
+      logger.error(TAG, 'ID直达失败', String(error));
+      this.getUIContext().getPromptAction().showToast({
+        message: `ID直达失败: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+  }
+
+  /**
+   * 执行作者搜索
+   */
+  private async executeAuthorSearch(authorId: string): Promise<void> {
+    this.showSearchDialog = false;
+    this.isLoading = true;
+    this.lastSearchKeyword = `作者: ${authorId}`;
+
+    this.addOrUpdateSearchTab();
+    this.currentTabId = 'search';
+    this.searchResults = [];
+    this.comicList = [];
+    this.comicDataSource.updateItems([]);
+
+    try {
+      if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
+        // 检查是否支持作者搜索
+        if (this.mangaSourceEngine.supportsCapability('searchByAuthor')) {
+          logger.info(TAG, `执行作者搜索: authorId="${authorId}"`);
+          const result = await this.mangaSourceEngine.searchByAuthor(authorId, 1);
+
+          if (result.success && result.data) {
+            this.searchResults = this.convertMangaInfoToComicInfo(result.data.mangas);
+            this.comicList = this.searchResults;
+            this.comicDataSource.updateItems(this.comicList);
+            this.hasMore = result.data.hasNext;
+            logger.info(TAG, `作者搜索完成，找到 ${result.data.mangas.length} 个结果`);
+            return;
+          }
+        }
+
+        // 不支持或失败，提示并降级
+        logger.warn(TAG, '图源不支持作者ID搜索，降级为关键词搜索');
+        this.getUIContext().getPromptAction().showToast({
+          message: '该图源不支持作者ID搜索，已按关键词搜索'
+        });
+        await this.executeKeywordSearch(authorId);
+      } else {
+        await this.executeKeywordSearch(authorId);
+      }
+    } catch (error) {
+      logger.error(TAG, '作者搜索失败', String(error));
+      this.getUIContext().getPromptAction().showToast({
+        message: `作者搜索失败: ${error instanceof Error ? error.message : String(error)}`
+      });
     } finally {
       this.isLoading = false;
     }
+  }
+
+  /**
+   * 执行系列搜索
+   */
+  private async executeSeriesSearch(seriesId: string): Promise<void> {
+    this.showSearchDialog = false;
+    this.isLoading = true;
+    this.lastSearchKeyword = `系列: ${seriesId}`;
+
+    this.addOrUpdateSearchTab();
+    this.currentTabId = 'search';
+    this.searchResults = [];
+    this.comicList = [];
+    this.comicDataSource.updateItems([]);
+
+    try {
+      if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
+        // 检查是否支持系列搜索
+        if (this.mangaSourceEngine.supportsCapability('searchBySeries')) {
+          logger.info(TAG, `执行系列搜索: seriesId="${seriesId}"`);
+          const result = await this.mangaSourceEngine.searchBySeries(seriesId, 1);
+
+          if (result.success && result.data) {
+            this.searchResults = this.convertMangaInfoToComicInfo(result.data.mangas);
+            this.comicList = this.searchResults;
+            this.comicDataSource.updateItems(this.comicList);
+            this.hasMore = result.data.hasNext;
+            logger.info(TAG, `系列搜索完成，找到 ${result.data.mangas.length} 个结果`);
+            return;
+          }
+        }
+
+        // 不支持或失败，提示并降级
+        logger.warn(TAG, '图源不支持系列ID搜索，降级为关键词搜索');
+        this.getUIContext().getPromptAction().showToast({
+          message: '该图源不支持系列ID搜索，已按关键词搜索'
+        });
+        await this.executeKeywordSearch(seriesId);
+      } else {
+        await this.executeKeywordSearch(seriesId);
+      }
+    } catch (error) {
+      logger.error(TAG, '系列搜索失败', String(error));
+      this.getUIContext().getPromptAction().showToast({
+        message: `系列搜索失败: ${error instanceof Error ? error.message : String(error)}`
+      });
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  /**
+   * 执行URL直达
+   */
+  private async executeUrlDirectAccess(intent: SearchIntent): Promise<void> {
+    this.showSearchDialog = false;
+    this.isLoading = true;
+
+    try {
+      const urlInfo = intent.urlParsedInfo;
+
+      if (urlInfo && urlInfo.extractedId) {
+        // URL已解析出ID，根据类型处理
+        switch (urlInfo.pathType) {
+          case 'artwork':
+            await this.executeIdDirectAccess(urlInfo.extractedId, 'manga');
+            return;
+          case 'user':
+            await this.executeAuthorSearch(urlInfo.extractedId);
+            return;
+          case 'series':
+            await this.executeSeriesSearch(urlInfo.extractedId);
+            return;
+        }
+      }
+
+      // 无法解析，降级为关键词搜索
+      logger.warn(TAG, 'URL无法解析，降级为关键词搜索');
+      await this.executeKeywordSearch(intent.rawQuery);
+    } catch (error) {
+      logger.error(TAG, 'URL直达失败', String(error));
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  /**
+   * 跳转到漫画详情页
+   */
+  private navigateToMangaDetail(manga: MangaInfo): void {
+    const sourceType = this.sourceInfo?.type || 'manga';
+
+    if (sourceType === 'ebook') {
+      const params: OnlineEBookDetailPageParams = {
+        sourceId: this.sourceId,
+        bookId: manga.id || '',
+        cachedTitle: manga.title || undefined,
+        cachedCover: manga.cover || undefined
+      };
+      this.pathStack.pushPathByName('OnlineEBookDetailPage', params);
+    } else {
+      const params: MangaDetailPageParams = {
+        sourceId: this.sourceId,
+        mangaId: manga.id || '',
+        cachedTitle: manga.title || undefined,
+        cachedCover: manga.cover || undefined
+      };
+      this.pathStack.pushPathByName('MangaDetailPage', params);
+    }
+  }
+
+  /**
+   * 处理歧义ID选择（作品ID）
+   */
+  private handleAmbiguousAsMangaId(): void {
+    this.showAmbiguousDialog = false;
+    this.executeIdDirectAccess(this.ambiguousId, 'manga');
+  }
+
+  /**
+   * 处理歧义ID选择（作者ID）
+   */
+  private handleAmbiguousAsAuthorId(): void {
+    this.showAmbiguousDialog = false;
+    this.executeAuthorSearch(this.ambiguousId);
+  }
+
+  /**
+   * 处理歧义ID选择（关键词搜索）
+   */
+  private handleAmbiguousAsKeyword(): void {
+    this.showAmbiguousDialog = false;
+    this.executeKeywordSearch(this.ambiguousId);
   }
 
   /**
@@ -1605,7 +2022,7 @@ export struct SourceDetailPage {
             .fileAccess(true)
             .mixedMode(MixedMode.All)
             .cacheMode(CacheMode.Default)
-            .userAgent('Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36')
+            .userAgent(this.sourceUserAgent)
             .onControllerAttached(() => {
               logger.info(TAG, 'WebView控制器已附加');
               this.webViewControllerAttached = true;
@@ -1646,6 +2063,11 @@ export struct SourceDetailPage {
         // WebView调试对话框
         if (this.showWebViewDebugDialog) {
           this.buildWebViewDebugDialog()
+        }
+
+        // 搜索歧义选择对话框（纯数字输入时）
+        if (this.showAmbiguousDialog) {
+          this.buildAmbiguousDialog()
         }
       }
       .width('100%')
@@ -2126,7 +2548,36 @@ export struct SourceDetailPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .width('100%')
 
-        Search({ placeholder: '输入漫画名称' })
+        // 搜索类型选择器（仅当有多个搜索类型时显示）
+        if (this.searchTypes.length > 1) {
+          Scroll() {
+            Row({ space: 8 }) {
+              ForEach(this.searchTypes, (type: SearchTypeOption) => {
+                Button(type.label)
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .height(32)
+                  .padding({ left: 14, right: 14 })
+                  .backgroundColor(this.selectedSearchType === type.id
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .fontColor(this.selectedSearchType === type.id
+                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .borderRadius(16)
+                  .onClick(() => {
+                    this.selectedSearchType = type.id;
+                    this.searchPlaceholder = type.placeholder || '输入搜索内容';
+                  })
+              }, (type: SearchTypeOption) => type.id)
+            }
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('100%')
+        }
+
+        Search({ placeholder: this.searchPlaceholder })
           .width('100%')
           .onChange((value: string) => {
             this.searchKeyword = value;
@@ -2506,23 +2957,52 @@ export struct SourceDetailPage {
    */
   @Builder
   buildSearchBar() {
-    Row({ space: 8 }) {
-      Search({ placeholder: '搜索漫画' })
-        .layoutWeight(1)
-        .onChange((value: string) => {
-          this.searchKeyword = value;
-        })
-        .onSubmit(() => {
-          this.performSearch();
-        })
+    Column({ space: 8 }) {
+      // 搜索类型选择器（仅当有多个搜索类型时显示）
+      if (this.searchTypes.length > 1) {
+        Row({ space: 8 }) {
+          ForEach(this.searchTypes, (type: SearchTypeOption) => {
+            Button(type.label)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .height(28)
+              .padding({ left: 12, right: 12 })
+              .backgroundColor(this.selectedSearchType === type.id
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .fontColor(this.selectedSearchType === type.id
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .borderRadius(14)
+              .onClick(() => {
+                this.selectedSearchType = type.id;
+                this.searchPlaceholder = type.placeholder || '输入搜索内容';
+              })
+          }, (type: SearchTypeOption) => type.id)
+        }
+        .width('100%')
+      }
 
-      Button('搜索')
-        .fontSize(14)
-        .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        .onClick(() => {
-          this.performSearch();
-        })
+      // 搜索输入框
+      Row({ space: 8 }) {
+        Search({ placeholder: this.searchPlaceholder })
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.searchKeyword = value;
+          })
+          .onSubmit(() => {
+            this.performSearch();
+          })
+
+        Button('搜索')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onClick(() => {
+            this.performSearch();
+          })
+      }
+      .width('100%')
     }
     .width('100%')
     .padding(16)
@@ -2579,6 +3059,84 @@ export struct SourceDetailPage {
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+  }
+
+  /**
+   * 构建搜索歧义选择对话框
+   */
+  @Builder
+  buildAmbiguousDialog() {
+    Column() {
+      // 半透明背景
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#80000000')
+        .onClick(() => {
+          this.showAmbiguousDialog = false;
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+
+    // 对话框内容
+    Column() {
+      Text('请选择搜索类型')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .margin({ bottom: 12 })
+
+      Text(`输入的数字 "${this.ambiguousId}" 可能是：`)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .margin({ bottom: 24 })
+
+      // 作品ID按钮
+      Button('作品ID')
+        .width('100%')
+        .height(48)
+        .fontSize(16)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .margin({ bottom: 12 })
+        .onClick(() => {
+          this.handleAmbiguousAsMangaId();
+        })
+
+      // 作者ID按钮
+      Button('作者ID')
+        .width('100%')
+        .height(48)
+        .fontSize(16)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .margin({ bottom: 12 })
+        .onClick(() => {
+          this.handleAmbiguousAsAuthorId();
+        })
+
+      // 关键词搜索按钮
+      Button('按关键词搜索')
+        .width('100%')
+        .height(48)
+        .fontSize(16)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .onClick(() => {
+          this.handleAmbiguousAsKeyword();
+        })
+    }
+    .width('80%')
+    .padding(24)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+    .borderRadius(16)
+    .position({ x: '10%', y: '30%' })
   }
 
   /**

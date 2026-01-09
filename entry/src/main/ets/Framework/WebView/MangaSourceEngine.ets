@@ -26,7 +26,9 @@ import {
   Workflow,
   WorkflowType,
   TaskDefinition,
-  TaskResult
+  TaskResult,
+  DirectSearchResult,
+  DirectSearchResultType
 } from './MangaSourceTypes';
 import { TaskExecutor, TaskExecutorConfig } from './TaskExecutor';
 
@@ -348,6 +350,470 @@ export class MangaSourceEngine {
         actionCount: 0
       };
     }
+  }
+
+  // ==================== 搜索增强方法 ====================
+
+  /**
+   * 直达搜索 - 根据搜索类型和原始查询执行直达访问
+   * 不进行URL规范化，直接使用原始输入值
+   * @param searchType 搜索类型ID（对应searchConfig中的type.id）
+   * @param query 原始查询值
+   * @returns 直达搜索结果
+   */
+  async directSearch(searchType: string, query: string): Promise<EngineResult<DirectSearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行直达搜索');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始直达搜索: 类型="${searchType}", 查询="${query}"`);
+
+    try {
+      // 构建直达搜索操作序列
+      const actions = this.configParser.buildDirectSearchActions(this.config, searchType, query);
+      logger.debug(TAG, `直达搜索操作序列包含 ${actions.length} 个操作`);
+
+      // 执行操作序列
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['useCookies'] = 'true';
+      // 直达搜索专用变量（不进行URL规范化）
+      context.variables['searchType'] = searchType;
+      context.variables['query'] = query;
+      context.variables['rawQuery'] = query;
+
+      let resultData: DirectSearchResult = {
+        type: 'detail' as DirectSearchResultType,
+        manga: undefined,
+        mangas: []
+      };
+
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        logger.debug(TAG, `执行直达搜索操作 ${i + 1}/${actions.length}: ${action.type}`);
+
+        const result = await this.actionEngine.executeAction(action, context);
+
+        if (!result.success) {
+          logger.error(TAG, `直达搜索操作 ${i + 1} 失败: ${result.error}`);
+          throw new MangaSourceError(
+            MangaSourceErrorCode.ACTION_FAILED,
+            `直达搜索操作失败: ${result.error}`
+          );
+        }
+
+        // 处理脚本返回的结果
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // 解除双重序列化
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+
+          if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              
+              // 解析结果类型
+              const resultType = String(parsed['type'] || 'detail') as DirectSearchResultType;
+              resultData.type = resultType;
+
+              // 解析单个作品
+              if (parsed['manga']) {
+                resultData.manga = this.transformToMangaInfo(parsed['manga'] as Record<string, Object>);
+              }
+
+              // 解析作品列表
+              if (parsed['mangas'] && Array.isArray(parsed['mangas'])) {
+                resultData.mangas = (parsed['mangas'] as Array<Record<string, Object>>)
+                  .map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+              }
+
+              // 解析重定向URL
+              if (parsed['redirectUrl']) {
+                resultData.redirectUrl = String(parsed['redirectUrl']);
+              }
+
+              // 解析分页信息
+              if (parsed['hasNext'] !== undefined) {
+                resultData.hasNext = Boolean(parsed['hasNext']);
+              }
+              if (parsed['total'] !== undefined) {
+                resultData.total = Number(parsed['total']);
+              }
+
+              logger.debug(TAG, `直达搜索结果: type=${resultData.type}, manga=${!!resultData.manga}, mangas=${resultData.mangas?.length || 0}`);
+            } catch (e) {
+              logger.error(TAG, `解析直达搜索结果失败: ${e}`);
+            }
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `直达搜索完成，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: resultData,
+        duration,
+        actionCount: actions.length
+      };
+
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `直达搜索失败: ${errorMessage}`);
+
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 检查是否支持直达搜索
+   */
+  supportsDirectSearch(): boolean {
+    if (!this.config || !this.config.workflows) {
+      return false;
+    }
+    // 使用configParser检查是否有directSearch工作流
+    try {
+      const workflow = this.configParser.getWorkflow(this.config, 'directSearch');
+      return !!workflow;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 通过ID搜索/获取单个作品
+   * @param illustId 作品ID
+   * @returns 搜索结果（单个作品包装为列表）
+   */
+  async searchById(illustId: string): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行ID搜索');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始ID直达搜索: illustId="${illustId}"`);
+
+    try {
+      // 检查是否有专用工作流
+      const hasSearchById = this.configParser.hasWorkflow(this.config, 'searchById');
+
+      if (hasSearchById) {
+        // 使用专用工作流
+        const actions = this.configParser.buildSearchByIdActions(this.config, illustId);
+        if (actions.length === 0) {
+          logger.warn(TAG, 'searchById工作流返回空操作序列');
+        }
+
+        const context = this.createActionContext();
+        await this.populateSourceSettings(context);
+        context.variables['illustId'] = illustId;
+        context.variables['mangaId'] = illustId;
+
+        let results: MangaInfo[] = [];
+        for (let i = 0; i < actions.length; i++) {
+          const action = actions[i];
+          const result = await this.actionEngine.executeAction(action, context);
+          if (!result.success && !action.optional) {
+            throw new MangaSourceError(MangaSourceErrorCode.ACTION_FAILED, result.error || '操作失败');
+          }
+          if ((action.type === 'extract' || action.type === 'api' || action.type === 'script') && result.data) {
+            results = this.extractMangaResults(result.data);
+          }
+        }
+
+        const duration = Date.now() - startTime;
+        logger.info(TAG, `ID搜索完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+
+        return {
+          success: true,
+          data: {
+            mangas: results,
+            total: results.length,
+            page: 1,
+            hasNext: false
+          },
+          duration,
+          actionCount: actions.length
+        };
+      } else {
+        // 降级：使用 getMangaDetail 获取详情，包装为搜索结果
+        logger.info(TAG, '图源未实现searchById，使用getMangaDetail降级');
+        const detailResult = await this.getMangaDetail(illustId);
+        const duration = Date.now() - startTime;
+
+        if (detailResult.success && detailResult.data) {
+          const manga: MangaInfo = detailResult.data;
+          return {
+            success: true,
+            data: {
+              mangas: [manga],
+              total: 1,
+              page: 1,
+              hasNext: false
+            },
+            duration,
+            actionCount: 1
+          };
+        }
+
+        return {
+          success: false,
+          error: detailResult.error || 'ID搜索失败',
+          duration,
+          actionCount: 0
+        };
+      }
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `ID搜索失败: ${errorMessage}`);
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 通过作者ID搜索作品列表
+   * @param authorId 作者ID
+   * @param page 页码
+   * @returns 搜索结果
+   */
+  async searchByAuthor(authorId: string, page: number = 1): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行作者搜索');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始作者搜索: authorId="${authorId}", page=${page}`);
+
+    // 检查是否支持作者搜索
+    const hasSearchByAuthor = this.configParser.hasWorkflow(this.config, 'searchByAuthor');
+    if (!hasSearchByAuthor) {
+      logger.warn(TAG, '图源未实现searchByAuthor工作流');
+      return {
+        success: false,
+        error: '该图源不支持作者ID搜索',
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+    }
+
+    try {
+      const actions = this.configParser.buildSearchByAuthorActions(this.config, authorId);
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['authorId'] = authorId;
+      context.variables['userId'] = authorId;
+      context.variables['page'] = page.toString();
+      const pageSize: number = Number(context.variables['pageSize'] || '30');
+      context.variables['offset'] = ((page - 1) * pageSize).toString();
+
+      let results: MangaInfo[] = [];
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        const result = await this.actionEngine.executeAction(action, context);
+        if (!result.success && !action.optional) {
+          throw new MangaSourceError(MangaSourceErrorCode.ACTION_FAILED, result.error || '操作失败');
+        }
+        if ((action.type === 'extract' || action.type === 'api' || action.type === 'script') && result.data) {
+          results = this.extractMangaResults(result.data);
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `作者搜索完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: {
+          mangas: results,
+          total: results.length,
+          page: page,
+          hasNext: results.length >= 20
+        },
+        duration,
+        actionCount: actions.length
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `作者搜索失败: ${errorMessage}`);
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 通过系列ID搜索作品列表
+   * @param seriesId 系列ID
+   * @param page 页码
+   * @returns 搜索结果
+   */
+  async searchBySeries(seriesId: string, page: number = 1): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行系列搜索');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始系列搜索: seriesId="${seriesId}", page=${page}`);
+
+    // 检查是否支持系列搜索
+    const hasSearchBySeries = this.configParser.hasWorkflow(this.config, 'searchBySeries');
+    if (!hasSearchBySeries) {
+      logger.warn(TAG, '图源未实现searchBySeries工作流');
+      return {
+        success: false,
+        error: '该图源不支持系列ID搜索',
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+    }
+
+    try {
+      const actions = this.configParser.buildSearchBySeriesActions(this.config, seriesId);
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['seriesId'] = seriesId;
+      context.variables['page'] = page.toString();
+      const pageSize: number = Number(context.variables['pageSize'] || '30');
+      context.variables['offset'] = ((page - 1) * pageSize).toString();
+
+      let results: MangaInfo[] = [];
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        const result = await this.actionEngine.executeAction(action, context);
+        if (!result.success && !action.optional) {
+          throw new MangaSourceError(MangaSourceErrorCode.ACTION_FAILED, result.error || '操作失败');
+        }
+        if ((action.type === 'extract' || action.type === 'api' || action.type === 'script') && result.data) {
+          results = this.extractMangaResults(result.data);
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `系列搜索完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: {
+          mangas: results,
+          total: results.length,
+          page: page,
+          hasNext: results.length >= 20
+        },
+        duration,
+        actionCount: actions.length
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `系列搜索失败: ${errorMessage}`);
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
+   * 检查图源是否支持指定能力
+   * @param capability 能力名称（工作流名称）
+   * @returns 是否支持
+   */
+  supportsCapability(capability: string): boolean {
+    if (!this.config) return false;
+    return this.configParser.hasWorkflow(this.config, capability);
+  }
+
+  /**
+   * 从结果数据中提取漫画列表（辅助方法）
+   */
+  private extractMangaResults(data: ESObject): MangaInfo[] {
+    // 处理数组类型
+    if (Array.isArray(data)) {
+      return (data as Array<Record<string, Object>>).map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+    }
+
+    // 处理字符串类型（可能是JSON）
+    if (typeof data === 'string') {
+      let scriptData = (data as string).trim();
+      // 解除双重序列化
+      if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+        try {
+          scriptData = JSON.parse(scriptData) as string;
+        } catch (e) {
+          logger.debug(TAG, `解除双重序列化失败: ${e}`);
+        }
+      }
+
+      // 尝试解析为数组
+      if (scriptData.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+          if (Array.isArray(parsed)) {
+            return parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+          }
+        } catch (e) {
+          logger.debug(TAG, `JSON数组解析失败: ${e}`);
+        }
+      }
+
+      // 尝试解析为包含mangas字段的对象
+      if (scriptData.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(scriptData) as Record<string, Object>;
+          const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+          if (Array.isArray(mangasArray)) {
+            return mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+          }
+        } catch (e) {
+          logger.debug(TAG, `JSON对象解析失败: ${e}`);
+        }
+      }
+    }
+
+    return [];
   }
 
   /**

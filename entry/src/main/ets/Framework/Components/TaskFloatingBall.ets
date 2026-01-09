@@ -5,6 +5,7 @@
 import { BackgroundTaskManager, BackgroundTask, TaskStatus, TaskProgress } from '../Task/BackgroundTaskManager';
 import { logger } from '../../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
+import { AppColors, ColorRole } from '../Theme/AppColors';
 
 const TAG = 'TaskFloatingBall';
 
@@ -73,10 +74,10 @@ export struct TaskFloatingBall {
    * 获取进度颜色
    */
   private getProgressColor(): ResourceColor {
-    if (!this.mainProgress) return '#4CAF50';
-    if (this.mainProgress.percentage >= 100) return '#4CAF50';
-    if (this.mainProgress.percentage >= 50) return '#2196F3';
-    return '#FF9800';
+    if (!this.mainProgress) return AppColors.success;
+    if (this.mainProgress.percentage >= 100) return AppColors.success;
+    if (this.mainProgress.percentage >= 50) return AppColors.info;
+    return AppColors.warning;
   }
 
   /**
@@ -105,14 +106,15 @@ export struct TaskFloatingBall {
         }
         .width(this.isExpanded ? 200 : 56)
         .height(this.isExpanded ? 'auto' : 56)
-        .backgroundColor(this.isExpanded ? '#F5F5F5' : this.getProgressColor())
-        .borderRadius(this.isExpanded ? 12 : 28)
-        .shadow({
+        .backgroundColor(this.isExpanded ? AppColors.surfaceVariant : this.getProgressColor())
+        .borderRadius(this.isExpanded ? AppColors.cornerRadius : 28)
+        .opacity(AppColors.getTransparency('floatingBall'))
+        .shadow(AppColors.shadowEnabled ? {
           radius: 8,
-          color: '#00000040',
+          color: AppColors.getShadowColor(4),
           offsetX: 2,
           offsetY: 2
-        })
+        } : undefined)
         .animation({
           duration: 200,
           curve: Curve.EaseOut
@@ -160,7 +162,7 @@ export struct TaskFloatingBall {
         .width(48)
         .height(48)
         .fill(Color.Transparent)
-        .stroke('#FFFFFF40')
+        .stroke(AppColors.withAlpha(ColorRole.ON_PRIMARY, 0.25))
         .strokeWidth(4)
 
       // 进度环
@@ -172,7 +174,7 @@ export struct TaskFloatingBall {
         })
           .width(48)
           .height(48)
-          .color('#FFFFFF')
+          .color(AppColors.onPrimary)
           .backgroundColor(Color.Transparent)
           .style({ strokeWidth: 4 })
       }
@@ -181,7 +183,7 @@ export struct TaskFloatingBall {
       Text(this.mainProgress ? `${this.mainProgress.percentage}%` : '0%')
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
+        .fontColor(AppColors.onPrimary)
     }
     .width(56)
     .height(56)
@@ -196,13 +198,13 @@ export struct TaskFloatingBall {
         Text('后台任务')
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor(AppColors.textPrimary)
         
         Blank()
         
         Text('×')
           .fontSize(18)
-          .fontColor('#666666')
+          .fontColor(AppColors.textSecondary)
           .onClick(() => {
             this.isExpanded = false;
           })
@@ -227,7 +229,7 @@ export struct TaskFloatingBall {
       Row() {
         Text(task.name)
           .fontSize(12)
-          .fontColor('#333333')
+          .fontColor(AppColors.textPrimary)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -251,14 +253,14 @@ export struct TaskFloatingBall {
       // 进度信息
       Text(task.progress.message)
         .fontSize(10)
-        .fontColor('#666666')
+        .fontColor(AppColors.textSecondary)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-    .backgroundColor('#FFFFFF')
+    .backgroundColor(AppColors.surface)
     .borderRadius(8)
     .margin({ left: 8, right: 8 })
   }
@@ -276,12 +278,12 @@ export struct TaskFloatingBall {
 
   private getTaskStatusColor(status: TaskStatus): ResourceColor {
     switch (status) {
-      case TaskStatus.PENDING: return '#FF9800';
-      case TaskStatus.RUNNING: return '#2196F3';
-      case TaskStatus.COMPLETED: return '#4CAF50';
-      case TaskStatus.FAILED: return '#F44336';
-      case TaskStatus.CANCELLED: return '#9E9E9E';
-      default: return '#9E9E9E';
+      case TaskStatus.PENDING: return AppColors.warning;
+      case TaskStatus.RUNNING: return AppColors.info;
+      case TaskStatus.COMPLETED: return AppColors.success;
+      case TaskStatus.FAILED: return AppColors.error;
+      case TaskStatus.CANCELLED: return AppColors.textTertiary;
+      default: return AppColors.textTertiary;
     }
   }
 }

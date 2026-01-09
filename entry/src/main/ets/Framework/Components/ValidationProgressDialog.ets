@@ -6,6 +6,7 @@
  */
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
+import { AppColors } from '../Theme/AppColors';
 
 /**
  * 校验进度信息
@@ -98,7 +99,7 @@ export struct ValidationProgressDialog {
           Text(`${this.progressInfo.validCount}`)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#52C41A')
+            .fontColor(AppColors.success)
           Text('有效')
             .fontSize(12)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -109,7 +110,7 @@ export struct ValidationProgressDialog {
           Text(`${this.progressInfo.invalidCount}`)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#FF4D4F')
+            .fontColor(AppColors.error)
           Text('失效')
             .fontSize(12)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -144,12 +145,12 @@ export struct ValidationProgressDialog {
       if (this.progressInfo.isComplete) {
         Text(`校验完成！有效: ${this.progressInfo.validCount}, 失效: ${this.progressInfo.invalidCount}`)
           .fontSize(14)
-          .fontColor('#52C41A')
+          .fontColor(AppColors.success)
           .margin({ bottom: 16 })
       } else if (this.progressInfo.isCancelled) {
         Text(`已取消，完成: ${this.progressInfo.current}/${this.progressInfo.total}`)
           .fontSize(14)
-          .fontColor('#FF4D4F')
+          .fontColor(AppColors.error)
           .margin({ bottom: 16 })
       }
       
@@ -162,8 +163,8 @@ export struct ValidationProgressDialog {
           .width('100%')
           .height(44)
           .fontSize(16)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#FF4D4F')
+          .fontColor(AppColors.onError)
+          .backgroundColor(AppColors.error)
           .borderRadius(8)
           .margin({ bottom: 8 })
           .onClick(() => {
@@ -179,8 +180,8 @@ export struct ValidationProgressDialog {
           .width('100%')
           .height(44)
           .fontSize(16)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#FF4D4F')
+          .fontColor(AppColors.onError)
+          .backgroundColor(AppColors.error)
           .borderRadius(8)
           .onClick(() => {
             if (this.onCancel) {

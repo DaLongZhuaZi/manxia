@@ -338,7 +338,7 @@ export struct NovelReplaceRulePage {
           value: [{
             content: {
               label: '添加',
-              icon: $r('app.media.ic_add'),
+              icon: $r('sys.symbol.plus'),
               isEnabled: true,
               action: () => {
                 this.resetForm();
@@ -348,14 +348,14 @@ export struct NovelReplaceRulePage {
           }, {
             content: {
               label: '导入',
-              icon: $r('app.media.ic_download'),
+              icon: $r('sys.symbol.download'),
               isEnabled: true,
               action: () => { this.showImportOptions(); }
             }
           }, {
             content: {
               label: '导出',
-              icon: $r('app.media.ic_download'),
+              icon: $r('sys.symbol.upload'),
               isEnabled: true,
               action: () => { this.exportToClipboard(); }
             }
@@ -374,7 +374,7 @@ export struct NovelReplaceRulePage {
   @Builder
   buildTopBar() {
     Row() {
-      Image($r('app.media.ic_back'))
+      Image($r('sys.symbol.arrow_left'))
         .width(24)
         .height(24)
         .margin({ left: 16 })

@@ -9,6 +9,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { AppColors } from '../Theme/AppColors';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
 import { fileIo } from '@kit.CoreFileKit';
@@ -555,8 +556,8 @@ export struct MangaImportDialog {
 
         Button('开始导入')
           .fontSize(16)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#2196F3')
+          .fontColor(AppColors.onPrimary)
+          .backgroundColor(AppColors.primary)
           .borderRadius(8)
           .height(44)
           .layoutWeight(1)

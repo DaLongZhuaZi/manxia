@@ -4,7 +4,7 @@
 import { logger } from '../Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
-import { CommonModifier, LengthMetrics, router } from '@kit.ArkUI';
+import { CommonModifier, LengthMetrics, promptAction, router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { picker } from '@kit.CoreFileKit';
@@ -79,7 +79,7 @@ import { NovelTxtTocRulePage } from './NovelTxtTocRulePage';
 import { NovelDictRulePage } from './NovelDictRulePage';
 import { JsvmPlaygroundPage } from './JsvmPlaygroundPage';
 import { LifecycleMonitorPage } from './LifecycleMonitorPage';
-import { FileEditorPage } from './FileEditorPage';
+import { FileEditorPage, FileEditorParams } from './FileEditorPage';
 import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOverlay';
 import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 import { HelpCenterPage } from './HelpCenterPage';
@@ -102,6 +102,7 @@ import { isOnlineManga, isLocalManga, MangaSourceType } from '../Framework/Types
 
 // 导入图源相关
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
+import { SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSourceTypes';
 import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback } from '../Framework/Source/SourceRepositoryManager';
 
 // 导入数据管理器
@@ -111,6 +112,8 @@ import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
+import { AppColors, ColorRole } from '../Framework/Theme/AppColors';
+import { USER_THEME_KEYS } from '../Framework/Theme/UserThemeConfig';
 import { DataService } from '../Framework/Services/DataService';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 
@@ -143,6 +146,24 @@ import { util } from '@kit.ArkTS';
 
 
 const TAG = 'MainMenuPage';
+
+// 图源名称映射（支持全名和简称）
+const SOURCE_NAME_MAP: Record<string, string> = {
+  'pixiv': 'Pixiv',
+  'jinmantiantang': '禁漫天堂',
+  'jm': '禁漫天堂',
+  'picacomic': '哔咔漫画',
+  'pica': '哔咔漫画',
+  'bika': '哔咔漫画'
+};
+
+// 搜索类型映射
+const SEARCH_TYPE_MAP: Record<string, string> = {
+  'id': 'searchById',
+  'user': 'searchByAuthor',
+  'author': 'searchByAuthor',
+  'uid': 'searchByAuthor'
+};
 
 /**
  * 恢复目标接口
@@ -205,6 +226,16 @@ interface SourceDetailPageParams {
   sourceId: number;
   initialTab?: string;  // 初始标签ID（如 'popular', 'latest', 'search'）
   searchKeyword?: string;  // 搜索关键词（当initialTab为'search'时使用）
+  searchType?: string;  // 搜索类型（如 'search', 'searchById', 'searchByAuthor'）
+}
+
+/**
+ * 搜索前缀解析结果接口
+ */
+interface SearchPrefixData {
+  sourceName: string;
+  searchType: string;
+  query: string;
 }
 
 /**
@@ -306,6 +337,14 @@ struct MainMenuPage {
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') @Watch('onAppFontFamilyChange') appFontFamily: string = 'HarmonyOS Sans';
   @State private fontRefreshKey: number = 0;
+  
+  // 用户主题配置（声明式绑定，自动触发UI刷新）
+  @StorageLink('userTheme_cardOpacity') userThemeCardOpacity: number = 1.0;
+  @StorageLink('userTheme_navBarOpacity') userThemeNavBarOpacity: number = 1.0;
+  @StorageLink('userTheme_tabBarOpacity') userThemeTabBarOpacity: number = 1.0;
+  @StorageLink('userTheme_cornerRadius') userThemeCornerRadius: number = 12;
+  @StorageLink('userTheme_blurEnabled') userThemeBlurEnabled: boolean = true;
+  @StorageLink('userTheme_shadowEnabled') userThemeShadowEnabled: boolean = true;
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   private privacyModeManager: PrivacyModeManager = PrivacyModeManager.getInstance();
@@ -460,6 +499,9 @@ struct MainMenuPage {
   @State showSourceSearchDialog: boolean = false; // 是否显示图源搜索对话框
   @State sourceSearchInput: string = ''; // 图源搜索输入框内容
   @State searchTargetSource: SourceInfo | null = null; // 搜索目标图源
+  @State sourceSearchTypes: SearchTypeOption[] = []; // 当前图源支持的搜索类型
+  @State selectedSourceSearchType: string = 'search'; // 选中的搜索类型
+  @State sourceSearchPlaceholder: string = '输入关键词搜索'; // 搜索框占位符
   @State isLoadingSourceList: boolean = false; // 是否正在加载图源列表
   @State isRefreshingSourceList: boolean = false; // 是否正在下拉刷新图源列表
   @State hasSourceUpdate: boolean = false; // 是否有图源更新
@@ -558,7 +600,7 @@ struct MainMenuPage {
     {
       title: '个性化分析',
       subtitle: '根据您的阅读习惯分析阅读偏好',
-      image: $r('app.media.ic_theme'),
+      image: $r('sys.symbol.hi_vison'),
       backgroundColor: '#0F3460'  // 深靛蓝色
     }
   ];
@@ -699,15 +741,15 @@ struct MainMenuPage {
     eventBus.subscribe(GameEvent.MANGA_IMPORT_COMPLETED, (payload: IEventPayload) => {
       const mangaPayload = payload as MangaImportCompletedPayload;
       logger.info(TAG, `收到漫画导入完成事件，成功导入 ${mangaPayload.importedCount} 个漫画`);
-      // 刷新漫画列表
-      this.loadMangaList();
+      // 静默刷新漫画列表（增量更新，避免闪烁）
+      this.silentRefreshLibrary();
     });
 
     // 订阅漫画删除事件
     eventBus.subscribe(GameEvent.MANGA_DELETED, (payload: IEventPayload) => {
       logger.info(TAG, `收到漫画删除事件，刷新书库列表`);
-      // 刷新漫画列表并切换到书库标签
-      this.loadMangaList();
+      // 静默刷新漫画列表并切换到书库标签（增量更新，避免闪烁）
+      this.silentRefreshLibrary();
       this.currentTabIndex = TabIndex.LIBRARY;
       this.tabsController.changeIndex(TabIndex.LIBRARY);
     });
@@ -720,9 +762,8 @@ struct MainMenuPage {
       if (isPrivacy && this.libraryViewMode === LibraryViewMode.CATEGORY) {
         this.libraryViewMode = LibraryViewMode.GRID;
       }
-      // 刷新书库内容
-      this.loadMangaList();
-      this.loadEBookList();
+      // 静默刷新书库内容（增量更新，避免闪烁）
+      this.silentRefreshLibrary();
       this.loadNovelList();
     };
     this.privacyModeManager.addListener(this.privacyModeListener);
@@ -762,6 +803,67 @@ struct MainMenuPage {
     // 处理引导跳转
     if (this.fromGuide) {
       this.handleGuideNavigation();
+    }
+
+    // 处理 Deep Link
+    this.handleDeepLinkIfPresent();
+  }
+
+  /**
+   * 处理 Deep Link（如果存在）
+   */
+  private async handleDeepLinkIfPresent(): Promise<void> {
+    try {
+      const hasDeepLink = AppStorage.get<boolean>('hasDeepLink');
+      if (!hasDeepLink) {
+        return;
+      }
+
+      const source = AppStorage.get<string>('deepLinkSource');
+      const type = AppStorage.get<string>('deepLinkType');
+      const query = AppStorage.get<string>('deepLinkQuery');
+
+      if (source && query) {
+        logger.info(TAG, `🔗 处理 Deep Link: source=${source}, type=${type}, query=${query}`);
+
+        // 清除 Deep Link 标记
+        AppStorage.setOrCreate('hasDeepLink', false);
+
+        // 等待图源列表加载完成
+        await this.waitForSourceListLoaded();
+
+        // 构造前缀格式并执行全局搜索
+        const searchInput = `${source}//${type}//${query}`;
+        const handled = await this.executeGlobalSourceSearch(searchInput);
+
+        if (handled) {
+          logger.info(TAG, `🔗 Deep Link 处理成功`);
+        } else {
+          logger.warn(TAG, `🔗 Deep Link 处理失败: 未找到匹配的图源或搜索类型`);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `🔗 处理 Deep Link 失败: ${error}`);
+    }
+  }
+
+  /**
+   * 等待图源列表加载完成
+   */
+  private async waitForSourceListLoaded(): Promise<void> {
+    const maxWaitTime = 5000; // 最多等待5秒
+    const checkInterval = 100; // 每100ms检查一次
+    let waitedTime = 0;
+
+    while (this.sourceList.length === 0 && waitedTime < maxWaitTime) {
+      await new Promise<void>(resolve => setTimeout(resolve, checkInterval));
+      waitedTime += checkInterval;
+    }
+
+    if (this.sourceList.length === 0) {
+      logger.warn(TAG, '等待图源列表加载超时');
+    } else {
+      logger.info(TAG, `图源列表已加载，共 ${this.sourceList.length} 个图源`);
     }
   }
 
@@ -1599,11 +1701,133 @@ struct MainMenuPage {
   /**
    * 打开图源详情页并显示搜索（弹出搜索对话框）
    */
-  private openSourceDetailWithSearch(source: SourceInfo): void {
+  private async openSourceDetailWithSearch(source: SourceInfo): Promise<void> {
     logger.info(TAG, `显示图源搜索对话框: ${source.name} (ID: ${source.id})`);
     this.searchTargetSource = source;
     this.sourceSearchInput = '';
+    
+    // 加载图源的搜索类型配置
+    await this.loadSourceSearchTypes(source);
+    
     this.showSourceSearchDialog = true;
+  }
+
+  /**
+   * 加载图源的搜索类型配置
+   */
+  private async loadSourceSearchTypes(source: SourceInfo): Promise<void> {
+    // 默认搜索类型
+    const defaultTypes: SearchTypeOption[] = [
+      { id: 'search', label: '关键词', placeholder: '输入漫画名称或标签', isDefault: true }
+    ];
+
+    try {
+      // 尝试从图源配置中读取searchConfig
+      const sourceRecord: ComicSourceDatabaseRecord | null = await DataManager.getInstance().getComicSourceByName(source.name);
+      if (sourceRecord && sourceRecord.configJson) {
+        const configJson: Record<string, Object> = JSON.parse(sourceRecord.configJson) as Record<string, Object>;
+        const searchConfig: SearchConfig | undefined = configJson['searchConfig'] as SearchConfig | undefined;
+        if (searchConfig && searchConfig.types && Array.isArray(searchConfig.types) && searchConfig.types.length > 0) {
+          this.sourceSearchTypes = searchConfig.types;
+          // 找到默认类型
+          const defaultType: SearchTypeOption | undefined = searchConfig.types.find((t: SearchTypeOption) => t.isDefault);
+          if (defaultType) {
+            this.selectedSourceSearchType = defaultType.id;
+            this.sourceSearchPlaceholder = defaultType.placeholder || '输入搜索内容';
+          } else {
+            this.selectedSourceSearchType = searchConfig.types[0].id;
+            this.sourceSearchPlaceholder = searchConfig.types[0].placeholder || '输入搜索内容';
+          }
+          logger.info(TAG, `加载了 ${searchConfig.types.length} 个搜索类型: ${searchConfig.types.map((t: SearchTypeOption) => t.label).join(', ')}`);
+          return;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `加载图源搜索类型配置失败: ${error}`);
+    }
+
+    // 使用默认配置
+    this.sourceSearchTypes = defaultTypes;
+    this.selectedSourceSearchType = 'search';
+    this.sourceSearchPlaceholder = defaultTypes[0].placeholder || '输入搜索内容';
+  }
+
+  /**
+   * 解析搜索前缀
+   * 格式: 图源名称//搜索类型//搜索内容
+   * 返回: SearchPrefixData 或 null
+   */
+  private parseSearchPrefix(input: string): SearchPrefixData | null {
+    const parts = input.split('//');
+    if (parts.length === 3) {
+      const sourceName = parts[0].trim().toLowerCase();
+      const searchType = parts[1].trim().toLowerCase();
+      const query = parts[2].trim();
+      
+      // 映射图源名称
+      const mappedSourceName = SOURCE_NAME_MAP[sourceName];
+      if (!mappedSourceName) {
+        logger.warn(TAG, `未知的图源名称: ${sourceName}`);
+        return null;
+      }
+      
+      // 映射搜索类型
+      const mappedSearchType = SEARCH_TYPE_MAP[searchType] || searchType;
+      
+      const result: SearchPrefixData = {
+        sourceName: mappedSourceName,
+        searchType: mappedSearchType,
+        query: query
+      };
+      return result;
+    }
+    return null;
+  }
+
+  /**
+   * 执行全局图源搜索（支持前缀格式）
+   */
+  private async executeGlobalSourceSearch(input: string): Promise<boolean> {
+    const prefixData = this.parseSearchPrefix(input);
+    if (!prefixData) {
+      return false;
+    }
+
+    logger.info(TAG, `解析到前缀搜索: 图源=${prefixData.sourceName}, 类型=${prefixData.searchType}, 内容=${prefixData.query}`);
+
+    // 查找图源
+    const source = this.sourceList.find((s: SourceInfo) => s.name === prefixData.sourceName);
+    if (!source) {
+      this.showToast(`未找到图源: ${prefixData.sourceName}`);
+      return true;
+    }
+
+    // 加载图源的搜索类型配置
+    await this.loadSourceSearchTypes(source);
+
+    // 验证图源是否支持该搜索类型
+    const supportedType = this.sourceSearchTypes.find((t: SearchTypeOption) => t.id === prefixData.searchType);
+    if (!supportedType) {
+      this.showToast(`图源 ${prefixData.sourceName} 不支持搜索类型: ${prefixData.searchType}`);
+      return true;
+    }
+
+    // 直接跳转到图源详情页并执行搜索
+    try {
+      logger.info(TAG, `执行全局图源搜索: ${source.name}, 类型: ${prefixData.searchType}, 关键词: ${prefixData.query}`);
+      const params: SourceDetailPageParams = {
+        sourceId: source.id,
+        initialTab: 'search',
+        searchKeyword: prefixData.query,
+        searchType: prefixData.searchType
+      };
+      this.pathStack.pushPathByName('SourceDetailPage', params);
+      return true;
+    } catch (err) {
+      logger.error(TAG, '打开图源详情页失败', String(err));
+      this.showToast('打开图源详情页失败');
+      return true;
+    }
   }
 
   /**
@@ -1623,36 +1847,104 @@ struct MainMenuPage {
   /**
    * 执行图源搜索（从对话框确认后调用）
    */
-  private executeSourceSearch(): void {
+  private async executeSourceSearch(): Promise<void> {
+    const keyword = this.sourceSearchInput.trim();
+    if (keyword.length === 0) {
+      this.showToast('请输入搜索内容');
+      return;
+    }
+
+    // 检查是否是全局前缀格式（图源名称//搜索类型//搜索内容）
+    if (keyword.includes('//')) {
+      const handled = await this.executeGlobalSourceSearch(keyword);
+      if (handled) {
+        // 关闭对话框并清空输入
+        this.showSourceSearchDialog = false;
+        this.searchTargetSource = null;
+        this.sourceSearchInput = '';
+        this.selectedSourceSearchType = 'search';
+        return;
+      }
+      // 如果前缀格式解析失败，继续执行普通搜索
+    }
+
+    // 普通图源搜索
     if (!this.searchTargetSource) {
       return;
     }
-    const keyword = this.sourceSearchInput.trim();
-    if (keyword.length === 0) {
-      this.showToast('请输入搜索关键词');
-      return;
-    }
     try {
-      logger.info(TAG, `执行图源搜索: ${this.searchTargetSource.name}, 关键词: ${keyword}`);
+      logger.info(TAG, `执行图源搜索: ${this.searchTargetSource.name}, 类型: ${this.selectedSourceSearchType}, 关键词: ${keyword}`);
       const params: SourceDetailPageParams = {
         sourceId: this.searchTargetSource.id,
         initialTab: 'search',
-        searchKeyword: keyword
+        searchKeyword: keyword,
+        searchType: this.selectedSourceSearchType
       };
       this.pathStack.pushPathByName('SourceDetailPage', params);
       this.showSourceSearchDialog = false;
       this.searchTargetSource = null;
       this.sourceSearchInput = '';
+      this.selectedSourceSearchType = 'search';
     } catch (err) {
       logger.error(TAG, '打开图源详情页失败', String(err));
       this.showToast('打开图源详情页失败');
     }
   }
 
+  // 图源长按菜单状态
+  @State showSourceContextMenu: boolean = false;
+  @State contextMenuSource: SourceInfo | null = null;
+
   /**
-   * 删除图源
+   * 显示图源操作菜单（长按触发）
    */
-  private async deleteSource(source: SourceInfo): Promise<void> {
+  private showSourceActionMenu(source: SourceInfo): void {
+    logger.info(TAG, `显示图源操作菜单: ${source.name}`);
+    this.contextMenuSource = source;
+    this.showSourceContextMenu = true;
+  }
+
+  /**
+   * 隐藏图源操作菜单
+   */
+  private hideSourceContextMenu(): void {
+    this.showSourceContextMenu = false;
+    this.contextMenuSource = null;
+  }
+
+  /**
+   * 编辑图源配置文件
+   */
+  private editSourceConfig(source: SourceInfo): void {
+    try {
+      logger.info(TAG, `编辑图源配置: ${source.name} (pkg: ${source.pkg})`);
+      
+      // 构建图源JSON文件路径
+      const context = getContext(this) as common.UIAbilityContext;
+      const filesDir = context.filesDir;
+      const sourceJsonPath = `${filesDir}/extensions-source/${source.pkg}.json`;
+      
+      logger.info(TAG, `图源配置文件路径: ${sourceJsonPath}`);
+      
+      // 导航到文件编辑器页面
+      const params: FileEditorParams = {
+        filePath: sourceJsonPath,
+        language: 'json',
+        readOnly: false,
+        title: `编辑: ${source.name}`
+      };
+      
+      this.pathStack.pushPathByName('FileEditorPage', params);
+    } catch (err) {
+      logger.error(TAG, '编辑图源配置失败', String(err));
+      this.showToast('打开编辑器失败');
+    }
+  }
+
+  /**
+   * 确认删除图源
+   */
+  private async confirmDeleteSource(source: SourceInfo): Promise<void> {
     try {
       logger.info(TAG, `删除图源: ${source.name} (ID: ${source.id})`);
       
@@ -1690,6 +1982,13 @@ struct MainMenuPage {
       logger.error(TAG, '删除图源失败', String(err));
       this.showToast('删除图源失败');
     }
+  }
+
+  /**
+   * 删除图源（兼容旧调用）
+   */
+  private async deleteSource(source: SourceInfo): Promise<void> {
+    this.showSourceActionMenu(source);
   }
 
   /**
@@ -2026,7 +2325,7 @@ struct MainMenuPage {
                 })
                 .id(`cover_manga_home_${manga.id}`)
             }
-            .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+            .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
             .borderRadius(8)
             .onClick(() => {
               // 点击封面直接开始阅读（带翻开动画）
@@ -2063,7 +2362,7 @@ struct MainMenuPage {
                 })
                 .id(`cover_ebook_home_${ebook.id}`)
             }
-            .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+            .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
             .borderRadius(8)
             .onClick(() => {
               // 点击封面直接开始阅读（带翻开动画）
@@ -2104,13 +2403,13 @@ struct MainMenuPage {
               Text('小说')
                 .fontSize(10)
                 .fontFamily(this.appFontFamily)
-                .fontColor('#FFFFFF')
-                .backgroundColor('#4CAF50')
+                .fontColor(AppColors.onSuccess)
+                .backgroundColor(AppColors.success)
                 .padding({ left: 4, right: 4, top: 2, bottom: 2 })
                 .borderRadius(4)
                 .position({ x: 4, y: 4 })
             }
-            .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+            .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
             .borderRadius(8)
             .onClick(() => {
               // 点击封面打开小说详情页
@@ -2749,9 +3048,8 @@ struct MainMenuPage {
     try {
       logger.info(TAG, '开始刷新发现页面数据');
 
-      // 重新加载漫画和电子书列表
-      await this.loadMangaList();
-      await this.loadEBookList();
+      // 静默刷新书库数据（增量更新，避免闪烁）
+      await this.silentRefreshLibrary();
 
       // 重新提取标签和作者
       await this.extractTagsAndAuthors();
@@ -3283,8 +3581,8 @@ struct MainMenuPage {
     eventBus.unsubscribe(GameEvent.MANGA_IMPORT_COMPLETED, (payload: IEventPayload) => {
       const mangaPayload = payload as MangaImportCompletedPayload;
       logger.info(TAG, `收到漫画导入完成事件，成功导入 ${mangaPayload.importedCount} 个漫画`);
-      // 刷新漫画列表
-      this.loadMangaList();
+      // 静默刷新漫画列表（增量更新）
+      this.silentRefreshLibrary();
     });
   }
 
@@ -3427,7 +3725,7 @@ struct MainMenuPage {
     // 同步更新fontState
     this.fontState.appFontFamily = this.appFontFamily;
   }
-
+  
   private loadVisibleTabs(): void {
     try {
       const savedTabs = AppStorage.get<number[]>('visible_tabs');
@@ -3773,8 +4071,8 @@ struct MainMenuPage {
       // 退出多选模式
       this.exitMultiSelectMode();
 
-      // 刷新漫画列表
-      await this.loadMangaList();
+      // 静默刷新漫画列表（增量更新，避免闪烁）
+      await this.silentRefreshLibrary();
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -4062,11 +4360,11 @@ struct MainMenuPage {
       this.getUIContext().getPromptAction().showActionMenu({
         title: '更多选项',
         buttons: [
-          { text: '首页', color: '#007DFF' },
-          { text: '我的书库', color: '#007DFF' },
-          { text: '发现', color: '#007DFF' },
-          { text: '设置', color: '#007DFF' },
-          { text: '关于应用', color: '#007DFF' }
+          { text: '首页', color: AppColors.primary },
+          { text: '我的书库', color: AppColors.primary },
+          { text: '发现', color: AppColors.primary },
+          { text: '设置', color: AppColors.primary },
+          { text: '关于应用', color: AppColors.primary }
         ]
       }, (err, data) => {
         const result = data as ActionMenuResult | undefined;
@@ -4171,7 +4469,7 @@ struct MainMenuPage {
   private getEBookCoverSource(ebook: EBook): ResourceStr {
     const raw = ebook?.metadata?.coverImagePath || '';
     if (raw.length === 0) {
-      return $r('app.media.ic_ebook');
+      return $r('sys.symbol.doc_plaintext_fill');
     }
 
     // 检查是否为应用资源路径 (app.media.xxx)
@@ -4181,12 +4479,12 @@ struct MainMenuPage {
       if (resourceName === 'mangabook') {
         return $r('app.media.mangabook');
       } else if (resourceName === 'ic_ebook') {
-        return $r('app.media.ic_ebook');
+        return $r('sys.symbol.doc_plaintext_fill');
       } else if (resourceName === 'icon') {
         return $r('app.media.icon');
       }
       // 默认返回电子书图标
-      return $r('app.media.ic_ebook');
+      return $r('sys.symbol.doc_plaintext_fill');
     }
 
     // 本地文件路径
@@ -4275,6 +4573,7 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .opacity(this.getNavBarOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor() })
       .justifyContent(FlexAlign.SpaceBetween)
       .margin({ left: 12, right: 12 })
@@ -4343,6 +4642,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getNavBarOpacity())
     .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor() })
     .margin({ left: 12, right: 12 })
     .animation({ duration: 300, curve: Curve.Smooth })
@@ -4548,10 +4848,10 @@ struct MainMenuPage {
         } else if (this.recentReadingList.length === 0) {
           // 空状态
           Column({ space: 8 }) {
-            Image($r('app.media.ic_library_empty'))
+            Image($r('sys.symbol.archivebox'))
               .width(48)
               .height(48)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
 
             Text('暂无阅读记录')
               .fontSize(14)
@@ -5007,31 +5307,14 @@ struct MainMenuPage {
 
       // 内容列表（根据类型显示漫画或电子书）
       if (this.libraryContentType === LibraryContentType.MANGA) {
-        // 漫画列表
-        if (this.isLoadingMangaList) {
-          // 加载状态
-          Column({ space: 16 }) {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-            Text('正在加载漫画列表...')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else if (this.filteredMangaList.length === 0) {
+        // 漫画列表 - 增量更新模式：始终显示列表，避免加载动画闪烁
+        if (this.filteredMangaList.length === 0 && !this.isLoadingMangaList) {
           // 空状态
           Column({ space: 16 }) {
-            Image($r('app.media.ic_library_empty'))
+            Image($r('sys.symbol.archivebox'))
               .width(80)
               .height(80)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
 
             Text(this.mangaList.length === 0 ? '书库为空' : '没有符合条件的漫画')
               .fontSize(16)
@@ -5115,10 +5398,10 @@ struct MainMenuPage {
         } else if (this.filteredEbookList.length === 0 && this.filteredPdfEbookList.length === 0) {
           // 空状态
           Column({ space: 16 }) {
-            Image($r('app.media.ic_library_empty'))
+            Image($r('sys.symbol.archivebox'))
               .width(80)
               .height(80)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
 
             Text((this.ebookList.length === 0 && this.pdfEbookList.length === 0) ? '电子书库为空' : '没有符合条件的电子书')
               .fontSize(16)
@@ -5217,10 +5500,10 @@ struct MainMenuPage {
         } else if (this.filteredNovelList.length === 0) {
           // 空状态
           Column({ space: 16 }) {
-            Image($r('app.media.ic_library_empty'))
+            Image($r('sys.symbol.archivebox'))
               .width(80)
               .height(80)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
 
             Text(this.novelList.length === 0 ? '小说书架为空' : '没有符合条件的小说')
               .fontSize(16)
@@ -5326,7 +5609,7 @@ struct MainMenuPage {
           .objectFit(ImageFit.Contain)
           .backgroundColor(Color.Transparent)
           .borderRadius(8)
-          .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+          .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
           .onError(() => {
             logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
           })
@@ -5378,6 +5661,7 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
       .gesture(
         GestureGroup(GestureMode.Parallel,
@@ -5828,7 +6112,7 @@ struct MainMenuPage {
             .layoutWeight(1)
             .height(44)
             .fontFamily(this.appFontFamily)
-            .backgroundColor('#FF3B30')
+            .backgroundColor(AppColors.error)
             .fontColor(Color.White)
             .onClick(() => {
               if (this.editingCategory) {
@@ -6497,7 +6781,7 @@ struct MainMenuPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .shadow({
             radius: 8,
-            color: '#1F000000',
+            color: AppColors.getShadowColor(4),
             offsetY: 4
           })
           .onError(() => {
@@ -6510,22 +6794,22 @@ struct MainMenuPage {
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor('#80007DFF')
+            .backgroundColor(AppColors.withAlpha(ColorRole.PRIMARY, 0.5))
             .borderRadius(8)
         }
 
         // 选中图标
         if (this.isMultiSelectMode) {
           Column() {
-            Image($r('app.media.ic_check'))
+            Image($r('sys.symbol.checkmark'))
               .width(24)
               .height(24)
               .fillColor(this.selectedMangaIds.has(manga.id)
                 ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : '#80FFFFFF')
+                : AppColors.withAlpha(ColorRole.ON_SURFACE, 0.5))
               .backgroundColor(this.selectedMangaIds.has(manga.id)
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-                : '#40000000')
+                : AppColors.withAlpha(ColorRole.SHADOW, 0.25))
               .borderRadius(12)
               .padding(4)
           }
@@ -6561,6 +6845,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
     .border({
       width: this.isMultiSelectMode && this.selectedMangaIds.has(manga.id) ? 2 : 0,
       color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -6707,8 +6992,8 @@ struct MainMenuPage {
         return;
       }
       
-      // 重新从数据库加载数据，确保隐私筛选正确
-      await this.loadMangaList();
+      // 静默刷新书库数据（增量更新，避免闪烁）
+      await this.silentRefreshLibrary();
       
       // 显示提示
       this.showToast(isPrivate ? '已移动到隐私书库' : '已移出隐私书库');
@@ -6794,7 +7079,7 @@ struct MainMenuPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
         .shadow({
           radius: 8,
-          color: '#1F000000',
+          color: AppColors.getShadowColor(4),
           offsetY: 4
         })
 
@@ -6814,6 +7099,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
     .onClick(() => {
       this.openMangaDetail(manga);
     })
@@ -6835,7 +7121,7 @@ struct MainMenuPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .shadow({
             radius: 8,
-            color: '#1F000000',
+            color: AppColors.getShadowColor(4),
             offsetY: 4
           })
         
@@ -6843,8 +7129,8 @@ struct MainMenuPage {
         Text('小说')
           .fontSize(10)
           .fontFamily(this.appFontFamily)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#4CAF50')
+          .fontColor(AppColors.onSuccess)
+          .backgroundColor(AppColors.success)
           .padding({ left: 4, right: 4, top: 2, bottom: 2 })
           .borderRadius(4)
           .position({ x: 4, y: 4 })
@@ -6866,6 +7152,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
     .onClick(() => {
       this.openNovelDetail(novel);
     })
@@ -6922,7 +7209,7 @@ struct MainMenuPage {
         .justifyContent(FlexAlign.Center)
         .shadow({
           radius: 8,
-          color: '#1F000000',
+          color: AppColors.getShadowColor(4),
           offsetY: 4
         })
         .id(`cover_ebook_lib_${ebook.id}`)
@@ -7001,6 +7288,7 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
       .gesture(
         GestureGroup(GestureMode.Parallel,
@@ -7587,7 +7875,7 @@ struct MainMenuPage {
           .justifyContent(FlexAlign.Center)
           .shadow({
             radius: 8,
-            color: '#1F000000',
+            color: AppColors.getShadowColor(4),
             offsetY: 4
           })
 
@@ -7596,22 +7884,22 @@ struct MainMenuPage {
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor('#80007DFF')
+              .backgroundColor(AppColors.withAlpha(ColorRole.PRIMARY, 0.5))
               .borderRadius(8)
           }
 
           // 选中图标
           if (this.isEBookMultiSelectMode) {
             Column() {
-              Image($r('app.media.ic_check'))
+              Image($r('sys.symbol.checkmark'))
                 .width(24)
                 .height(24)
                 .fillColor(this.selectedEBookIds.has(ebook.id)
                   ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                  : '#80FFFFFF')
+                  : AppColors.withAlpha(ColorRole.ON_SURFACE, 0.5))
                 .backgroundColor(this.selectedEBookIds.has(ebook.id)
                   ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-                  : '#40000000')
+                  : AppColors.withAlpha(ColorRole.SHADOW, 0.25))
                 .borderRadius(12)
                 .padding(4)
             }
@@ -7671,6 +7959,7 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .opacity(this.getCardOpacity())
       .border({
         width: this.isEBookMultiSelectMode && this.selectedEBookIds.has(ebook.id) ? 2 : 0,
         color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -7713,7 +8002,7 @@ struct MainMenuPage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
       .borderRadius(8)
       .justifyContent(FlexAlign.Center)
-      .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+      .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
       // 小说信息
       Column({ space: 6 }) {
@@ -7765,6 +8054,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
     .onClick(() => {
       this.openNovelDetail(novel);
     })
@@ -7797,7 +8087,7 @@ struct MainMenuPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(8)
         .justifyContent(FlexAlign.Center)
-        .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+        .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
         // 阅读状态标签
         Text(this.getNovelReadStatusText(novel.readStatus))
@@ -7835,6 +8125,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
     .onClick(() => {
       this.openNovelDetail(novel);
     })
@@ -7879,7 +8170,7 @@ struct MainMenuPage {
     Row({ space: 12 }) {
       // 封面图片
       Column() {
-        Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.ic_ebook'))
+        Image(this.normalizeDisplayPathForManga(manga) || $r('sys.symbol.doc_plaintext_fill'))
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
@@ -7891,7 +8182,7 @@ struct MainMenuPage {
       .justifyContent(FlexAlign.Center)
       .shadow({
         radius: 8,
-        color: '#1F000000',
+        color: AppColors.getShadowColor(4),
         offsetY: 4
       })
 
@@ -7912,7 +8203,7 @@ struct MainMenuPage {
             .fontSize(10)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .backgroundColor('#FF6B6B')
+            .backgroundColor(AppColors.error)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .borderRadius(4)
         }
@@ -7989,7 +8280,7 @@ struct MainMenuPage {
         // 封面区域
         Stack() {
           Column() {
-            Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.ic_ebook'))
+            Image(this.normalizeDisplayPathForManga(manga) || $r('sys.symbol.doc_plaintext_fill'))
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
@@ -8001,7 +8292,7 @@ struct MainMenuPage {
           .justifyContent(FlexAlign.Center)
           .shadow({
             radius: 8,
-            color: '#1F000000',
+            color: AppColors.getShadowColor(4),
             offsetY: 4
           })
 
@@ -8011,7 +8302,7 @@ struct MainMenuPage {
               .fontSize(10)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .backgroundColor('#FF6B6B')
+              .backgroundColor(AppColors.error)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .borderRadius(4)
           }
@@ -9271,12 +9562,64 @@ struct MainMenuPage {
     Column({ space: 0 }) {
       // 搜索栏
       Row({ space: 8 }) {
-        Search({ placeholder: '搜索图源名称、URL或描述' })
+        Search({ value: this.sourceSearchKeyword, placeholder: '可使用前缀格式 pixiv//id//作品ID' })
           .searchButton('搜索')
           .layoutWeight(1)
           .onChange((value: string) => {
             this.searchSources(value);
           })
+          .onSubmit(async (value: string) => {
+            // 检查是否是全局前缀格式
+            if (value.includes('//')) {
+              const handled = await this.executeGlobalSourceSearch(value);
+              if (handled) {
+                // 清空搜索框
+                this.sourceSearchKeyword = '';
+                this.applySourceFilters();
+              }
+            }
+          })
+        
+        // 快捷前缀选择按钮
+        Button() {
+          SymbolGlyph($r('sys.symbol.capture_smiles'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .bindMenu([
+          {
+            value: 'Pixiv - 作品ID',
+            action: () => {
+              this.sourceSearchKeyword = 'pixiv//id//';
+              this.applySourceFilters();
+            }
+          },
+          {
+            value: 'Pixiv - 用户ID',
+            action: () => {
+              this.sourceSearchKeyword = 'pixiv//user//';
+              this.applySourceFilters();
+            }
+          },
+          {
+            value: '禁漫天堂 - 作品ID',
+            action: () => {
+              this.sourceSearchKeyword = 'jm//id//';
+              this.applySourceFilters();
+            }
+          },
+          {
+            value: '哔咔漫画 - 作品ID',
+            action: () => {
+              this.sourceSearchKeyword = 'pica//id//';
+              this.applySourceFilters();
+            }
+          }
+        ])
         
         // 代理设置按钮
         Button() {
@@ -9502,9 +9845,38 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         }
         .width('100%')
+
+        // 搜索类型选择器（仅当有多个搜索类型时显示）
+        if (this.sourceSearchTypes.length > 1) {
+          Scroll() {
+            Row({ space: 8 }) {
+              ForEach(this.sourceSearchTypes, (type: SearchTypeOption) => {
+                Button(type.label)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .height(30)
+                  .padding({ left: 12, right: 12 })
+                  .backgroundColor(this.selectedSourceSearchType === type.id
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .fontColor(this.selectedSourceSearchType === type.id
+                    ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .borderRadius(15)
+                  .onClick(() => {
+                    this.selectedSourceSearchType = type.id;
+                    this.sourceSearchPlaceholder = type.placeholder || '输入搜索内容';
+                  })
+              }, (type: SearchTypeOption) => type.id)
+            }
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('100%')
+        }
         
         // 搜索输入框
-        TextInput({ placeholder: '输入搜索关键词', text: this.sourceSearchInput })
+        TextInput({ placeholder: this.sourceSearchPlaceholder, text: this.sourceSearchInput })
           .width('100%')
           .height(44)
           .borderRadius(8)
@@ -9531,6 +9903,7 @@ struct MainMenuPage {
               this.showSourceSearchDialog = false;
               this.searchTargetSource = null;
               this.sourceSearchInput = '';
+              this.selectedSourceSearchType = 'search';
             })
           
           Button('搜索')
@@ -9777,7 +10150,7 @@ struct MainMenuPage {
         // 测试代理按钮
         Button(this.isTestingProxy ? '测试中...' : '测试代理连接')
           .fontSize(14)
-          .fontColor('#FFFFFF')
+          .fontColor(AppColors.onSuccess)
           .fontFamily(this.appFontFamily)
           .backgroundColor(this.isTestingProxy ? 
             ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
@@ -9850,7 +10223,7 @@ struct MainMenuPage {
 
           Button('保存')
             .fontSize(16)
-            .fontColor('#FFFFFF')
+            .fontColor(AppColors.onSuccess)
             .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .borderRadius(8)
@@ -9968,9 +10341,88 @@ struct MainMenuPage {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
           logger.info(TAG, `长按图源卡片: ${source.name}`);
-          this.deleteSource(source);
+          this.showSourceActionMenu(source);
         })
     )
+    .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
+      builder: this.buildSourceContextMenu(source),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideSourceContextMenu();
+        }
+      }
+    })
+  }
+
+  /**
+   * 构建图源上下文菜单
+   */
+  @Builder
+  buildSourceContextMenu(source: SourceInfo) {
+    Column({ space: 0 }) {
+      // 编辑按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.square_and_pencil'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('编辑')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        logger.info(TAG, '点击编辑按钮');
+        const sourceToEdit = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToEdit) {
+          this.editSourceConfig(sourceToEdit);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 删除按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+          Text('删除')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        logger.info(TAG, '点击删除按钮');
+        const sourceToDelete = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToDelete) {
+          this.confirmDeleteSource(sourceToDelete);
+        }
+      })
+    }
+    .width(120)
+    .borderRadius(8)
   }
 
   /**
@@ -10026,7 +10478,7 @@ struct MainMenuPage {
         }
       }
       .width('100%')
-      .shadow({ radius: 8, color: '#1F000000', offsetY: 4 })
+      .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
       // 图源名称
       Text(source.name)
@@ -10158,9 +10610,21 @@ struct MainMenuPage {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
           logger.info(TAG, `长按图源卡片: ${source.name}`);
-          this.deleteSource(source);
+          this.showSourceActionMenu(source);
         })
     )
+    .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
+      builder: this.buildSourceContextMenu(source),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideSourceContextMenu();
+        }
+      }
+    })
   }
 
   /**
@@ -10704,6 +11168,7 @@ struct MainMenuPage {
     .backgroundColor(this.getGlassBackground())
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
+    .opacity(this.getTabBarOpacity())
     .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
   }
 
@@ -10833,31 +11298,59 @@ struct MainMenuPage {
   /**
    * 获取玻璃效果模糊样式（根据当前主题返回不同的模糊样式）
    */
-  private getGlassBlur(): BlurStyle {
+  private getGlassBlur(): BlurStyle | undefined {
+    // 使用StorageLink绑定的用户配置
+    if (!this.userThemeBlurEnabled) {
+      return undefined;
+    }
     if (this.themeState.currentTheme === ThemeType.LIGHT) {
-      return BlurStyle.Thin; // 浅色模式使用较薄的模糊
+      return BlurStyle.Thin;
     } else {
-      return BlurStyle.Regular; // 深色模式使用常规模糊
+      return BlurStyle.Regular;
     }
   }
 
   /**
-   * 获取玻璃效果圆角（依赖 themeState 以触发 UI 更新）
+   * 获取玻璃效果圆角（使用StorageLink绑定的用户配置）
    */
   private getGlassRadius(): number {
     const _theme = this.themeState.currentTheme;
-    return this.themeManager.getGlassRadius();
+    return this.userThemeCornerRadius;
   }
 
   /**
-   * 获取玻璃效果阴影颜色（根据当前主题返回不同的阴影颜色）
+   * 获取玻璃效果阴影颜色（使用StorageLink绑定的用户配置）
    */
   private getGlassShadowColor(): string {
-    if (this.themeState.currentTheme === ThemeType.LIGHT) {
-      return 'rgba(0, 0, 0, 0.1)'; // 浅色模式：较浅的阴影
-    } else {
-      return 'rgba(0, 0, 0, 0.3)'; // 深色模式：较深的阴影
+    if (!this.userThemeShadowEnabled) {
+      return 'rgba(0, 0, 0, 0)';
     }
+    if (this.themeState.currentTheme === ThemeType.LIGHT) {
+      return 'rgba(0, 0, 0, 0.1)';
+    } else {
+      return 'rgba(0, 0, 0, 0.3)';
+    }
+  }
+  
+  /**
+   * 获取卡片透明度（使用StorageLink绑定的用户配置）
+   */
+  private getCardOpacity(): number {
+    return this.userThemeCardOpacity;
+  }
+  
+  /**
+   * 获取导航栏透明度
+   */
+  private getNavBarOpacity(): number {
+    return this.userThemeNavBarOpacity;
+  }
+  
+  /**
+   * 获取标签栏透明度
+   */
+  private getTabBarOpacity(): number {
+    return this.userThemeTabBarOpacity;
   }
 
   build() {

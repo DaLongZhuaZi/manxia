@@ -534,7 +534,7 @@ export struct ReaderKitViewerComponent {
       
       // 3. 错误状态 - 使用 Visibility 控制
       Column({ space: 16 }) {
-        Image($r('app.media.ic_error'))
+        Image($r('sys.symbol.exclamationmark_circle_fill'))
           .width(80)
           .height(80)
           .fillColor(Color.Red)

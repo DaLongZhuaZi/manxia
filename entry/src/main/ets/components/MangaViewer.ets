@@ -3967,7 +3967,7 @@ export struct MangaViewer {
       // 显示加载失败提示（增强版：添加重试按钮）
       if (this.getPageLoadState(page)?.error) {
         Column() {
-          Image($r('app.media.ic_error'))
+          Image($r('sys.symbol.exclamationmark_circle_fill'))
             .width(48)
             .height(48)
             .fillColor(colorMap.error)
@@ -4112,7 +4112,7 @@ export struct MangaViewer {
 
       if (this.getPageLoadState(page)?.error) {
         Column() {
-          Image($r('app.media.ic_error'))
+          Image($r('sys.symbol.exclamationmark_circle_fill'))
             .width(32)
             .height(32)
             .fillColor(colorMap.error)
@@ -5773,7 +5773,7 @@ export struct MangaViewer {
         // 显示加载失败提示
         if (this.getPageLoadState(page)?.error) {
           Column() {
-            Image($r('app.media.ic_error'))
+            Image($r('sys.symbol.exclamationmark_circle_fill'))
               .width(48)
               .height(48)
               .fillColor(colorMap.error)

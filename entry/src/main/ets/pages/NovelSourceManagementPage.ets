@@ -36,6 +36,7 @@ import { NovelSourceLoginPageParams } from './NovelSourceLoginPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
 import { GroupManagementDialog, GroupInfo, GroupOperationCallback, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
+import { FileEditorParams } from './FileEditorPage';
 
 const TAG = 'NovelSourceManagementPage';
 
@@ -107,6 +108,9 @@ export struct NovelSourceManagementPage {
   private validationDialogController: CustomDialogController | null = null;
   // 存储最近一次校验的失效书源ID列表
   private lastValidationInvalidSourceIds: string[] = [];
+  // 书源长按菜单状态
+  @State showSourceContextMenu: boolean = false;
+  @State contextMenuSource: NovelSourceInfo | null = null;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -413,7 +417,7 @@ export struct NovelSourceManagementPage {
           value: [{
             content: {
               label: '搜索',
-              icon: $r('app.media.ic_search'),
+              icon: $r('sys.symbol.magnifyingglass'),
               isEnabled: true,
               action: () => { 
                 this.showSearchBar = !this.showSearchBar;
@@ -426,28 +430,28 @@ export struct NovelSourceManagementPage {
           }, {
             content: {
               label: this.isMultiSelectMode ? '取消多选' : '多选',
-              icon: $r('app.media.ic_check'),
+              icon: $r('sys.symbol.checkmark'),
               isEnabled: true,
               action: () => { this.toggleMultiSelectMode(); }
             }
           }, {
             content: {
               label: '导入书源',
-              icon: $r('app.media.ic_add'),
+              icon: $r('sys.symbol.folder'),
               isEnabled: true,
               action: () => { this.showImportOptions(); }
             }
           }, {
             content: {
               label: '校验书源',
-              icon: $r('app.media.ic_check'),
+              icon: $r('sys.symbol.wrench_arrow_counterclockwise'),
               isEnabled: true,
               action: () => { this.validateAllSources(); }
             }
           }, {
             content: {
               label: '更多',
-              icon: $r('app.media.ic_more'),
+              icon: $r('sys.symbol.more'),
               isEnabled: true,
               action: () => { this.showMoreOptions(); }
             }
@@ -1081,6 +1085,138 @@ export struct NovelSourceManagementPage {
           }
         })
     )
+    .bindPopup(this.showSourceContextMenu && this.contextMenuSource?.id === source.id, {
+      builder: this.buildSourceContextMenu(source),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideSourceContextMenu();
+        }
+      }
+    })
+  }
+
+  /**
+   * 构建书源上下文菜单
+   */
+  @Builder
+  buildSourceContextMenu(source: NovelSourceInfo) {
+    Column({ space: 0 }) {
+      // 搜索按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          Text('搜索')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const sourceToSearch = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToSearch) {
+          this.goToSourceSearch(sourceToSearch);
+        }
+      })
+
+      Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 编辑按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.square_and_pencil'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('编辑')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const sourceToEdit = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToEdit) {
+          this.editSourceConfig(sourceToEdit);
+        }
+      })
+
+      Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 置顶按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.pin'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          Text(source.weight > 0 ? '取消置顶' : '置顶')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const sourceToPin = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToPin) {
+          this.toggleSourcePin(sourceToPin);
+        }
+      })
+
+      Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 删除按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+          Text('删除')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const sourceToDelete = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToDelete) {
+          this.deleteSource(sourceToDelete);
+        }
+      })
+    }
+    .width(120)
+    .borderRadius(8)
   }
 
   /**
@@ -1422,41 +1558,52 @@ export struct NovelSourceManagementPage {
   // ==================== 书源操作菜单 ====================
 
   /**
-   * 显示书源操作菜单（使用官方ActionMenu组件）
+   * 显示书源操作菜单（使用popup形式）
    */
   showSourceActionMenu(source: NovelSourceInfo): void {
-    const pinText = source.weight > 0 ? '取消置顶' : '置顶书源';
-    
-    promptAction.showActionMenu({
-      title: source.name,
-      buttons: [
-        { text: '搜索此书源', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: pinText, color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '调试书源', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '登录', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '删除', color: '#FF4D4F' }
-      ]
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      switch (result.index) {
-        case 0: // 搜索此书源
-          this.goToSourceSearch(source);
-          break;
-        case 1: // 置顶/取消置顶
-          this.toggleSourcePin(source);
-          break;
-        case 2: // 调试书源
-          this.goToDebugSource(source);
-          break;
-        case 3: // 登录
-          this.goToLogin(source);
-          break;
-        case 4: // 删除
-          this.deleteSource(source);
-          break;
+    logger.info(TAG, `显示书源操作菜单: ${source.name}`);
+    this.contextMenuSource = source;
+    this.showSourceContextMenu = true;
+  }
+
+  /**
+   * 隐藏书源操作菜单
+   */
+  hideSourceContextMenu(): void {
+    this.showSourceContextMenu = false;
+    this.contextMenuSource = null;
+  }
+
+  /**
+   * 编辑书源配置文件
+   */
+  editSourceConfig(source: NovelSourceInfo): void {
+    try {
+      logger.info(TAG, `编辑书源配置: ${source.name} (id: ${source.id})`);
+      
+      // 获取书源的原始JSON
+      const rawSource = this.sourceManager.getSource(source.id);
+      if (!rawSource) {
+        promptAction.showToast({ message: '书源不存在' });
+        return;
       }
-    }).catch(() => {
-      // 用户取消
-    });
+      
+      // 将书源对象转换为JSON字符串
+      const sourceJson = JSON.stringify(rawSource, null, 2);
+      
+      // 导航到文件编辑器页面，传入内容而非文件路径
+      const params: FileEditorParams = {
+        content: sourceJson,
+        language: 'json',
+        readOnly: false,
+        title: `编辑: ${source.name}`
+      };
+      
+      this.pathStack.pushPathByName('FileEditorPage', params);
+    } catch (err) {
+      logger.error(TAG, `编辑书源配置失败: ${String(err)}`);
+      promptAction.showToast({ message: '打开编辑器失败' });
+    }
   }
 
   /**

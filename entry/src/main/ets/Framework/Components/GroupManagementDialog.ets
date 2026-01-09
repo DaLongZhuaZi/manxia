@@ -9,6 +9,7 @@ import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { promptAction } from '@kit.ArkUI';
 import { logger } from '../../Utils/Logger';
+import { AppColors } from '../Theme/AppColors';
 
 const TAG = 'GroupManagementDialog';
 
@@ -338,17 +339,17 @@ export struct GroupManagementDialog {
           Text(`启用: ${group.enabledCount}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor('#52C41A')
+            .fontColor(AppColors.success)
           
           Text(`禁用: ${group.disabledCount}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor('#FF4D4F')
+            .fontColor(AppColors.error)
           
           Text(`置顶: ${group.pinnedCount}`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor('#1890FF')
+            .fontColor(AppColors.info)
         }
       }
       .layoutWeight(1)
@@ -395,15 +396,15 @@ export struct GroupManagementDialog {
         }
         .width(32)
         .height(32)
-        .backgroundColor('#FF4D4F')
+        .backgroundColor(AppColors.error)
         .borderRadius(6)
         .onClick(() => {
           promptAction.showDialog({
             title: '确认删除',
             message: `确定要删除分组"${group.name}"吗？这将移除所有书源的该分组标记。`,
             buttons: [
-              { text: '取消', color: '#666666' },
-              { text: '删除', color: '#FF4D4F' }
+              { text: '取消', color: AppColors.textSecondary },
+              { text: '删除', color: AppColors.error }
             ]
           }).then((result) => {
             if (result.index === 1) {
@@ -438,7 +439,7 @@ export struct GroupManagementDialog {
         .width('100%')
         .height(44)
         .fontSize(16)
-        .fontColor('#FFFFFF')
+        .fontColor(AppColors.onPrimary)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
         .fontFamily(this.appFontFamily)
@@ -489,7 +490,7 @@ export struct GroupManagementDialog {
         .width('100%')
         .height(44)
         .fontSize(16)
-        .fontColor('#FFFFFF')
+        .fontColor(AppColors.onPrimary)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
         .fontFamily(this.appFontFamily)
@@ -570,7 +571,7 @@ export struct GroupManagementDialog {
         .width('100%')
         .height(44)
         .fontSize(16)
-        .fontColor('#FFFFFF')
+        .fontColor(AppColors.onPrimary)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
         .fontFamily(this.appFontFamily)
@@ -593,7 +594,7 @@ export struct GroupManagementDialog {
         .width('100%')
         .height(44)
         .fontSize(15)
-        .fontColor('#FFFFFF')
+        .fontColor(AppColors.onPrimary)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .borderRadius(8)
         .fontFamily(this.appFontFamily)

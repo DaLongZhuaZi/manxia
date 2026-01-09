@@ -11,6 +11,8 @@ import { Configuration } from '@kit.AbilityKit';
 import { getContext } from '../../GlobalContext';
 import { CommonModifier } from '@kit.ArkUI';
 import { colorMap } from '../../Data/ResourceMap';
+import { AppColors, ColorRole } from '../Theme/AppColors';
+import { UserThemeConfigManager, UserThemeProfile } from '../Theme/UserThemeConfig';
 
 const TAG = 'ThemeManager';
 
@@ -103,37 +105,39 @@ export interface GlassEffectOptions {
 
 /**
  * 主题配置常量
+ * 注意：推荐使用 AppColors 系统获取颜色，此配置仅用于兼容旧代码
+ * @deprecated 请使用 AppColors 替代
  */
 export const THEME_CONFIGS: Record<ThemeType, ThemeConfig> = {
   [ThemeType.LIGHT]: {
     name: 'light',
     displayName: '浅色主题',
-    primaryColor: '#007AFF',
-    backgroundColor: '#FFFFFF',
+    primaryColor: '#007DFF',
+    backgroundColor: '#FAFAFA',
     textColor: '#000000',
-    cardColor: '#F8F8F8',
+    cardColor: '#FFFFFF',
     borderColor: '#E0E0E0',
-    shadowColor: 'rgba(0, 0, 0, 0.1)'
+    shadowColor: '#1F000000'
   },
   [ThemeType.DARK]: {
     name: 'dark',
     displayName: '深色主题',
-    primaryColor: '#0A84FF',
-    backgroundColor: '#000000',
+    primaryColor: '#4BA3FF',
+    backgroundColor: '#121214',
     textColor: '#FFFFFF',
     cardColor: '#1C1C1E',
-    borderColor: '#38383A',
-    shadowColor: 'rgba(255, 255, 255, 0.1)'
+    borderColor: '#3A3A3A',
+    shadowColor: '#1F000000'
   },
   [ThemeType.AUTO]: {
     name: 'auto',
     displayName: '跟随系统',
-    primaryColor: '#007AFF',
-    backgroundColor: '#FFFFFF',
+    primaryColor: '#007DFF',
+    backgroundColor: '#FAFAFA',
     textColor: '#000000',
-    cardColor: '#F8F8F8',
+    cardColor: '#FFFFFF',
     borderColor: '#E0E0E0',
-    shadowColor: 'rgba(0, 0, 0, 0.1)'
+    shadowColor: '#1F000000'
   },
   [ThemeType.PRIVACY]: {
     name: 'privacy',
@@ -143,7 +147,7 @@ export const THEME_CONFIGS: Record<ThemeType, ThemeConfig> = {
     textColor: '#E0D5FF',
     cardColor: '#1A1A2E',
     borderColor: '#4A3A6A',
-    shadowColor: 'rgba(139, 0, 255, 0.2)'
+    shadowColor: '#33000000'
   }
 };
 
@@ -212,8 +216,11 @@ export class ThemeManager {
       
       // 3.5. 加载自定义主题状态
       await this.loadCustomThemeState();
+      
+      // 3.6. 初始化用户主题配置管理器
+      await this.initializeUserThemeConfig();
 
-      // 3.6. 如果自定义主题处于激活状态，则强制使用AUTO以跟随系统
+      // 3.7. 如果自定义主题处于激活状态，则强制使用AUTO以跟随系统
       // 避免用户之前保存的固定深色/浅色导致与系统不一致
       const customActive: boolean = this.isCustomThemeActive();
       if (customActive && this.currentTheme !== ThemeType.AUTO) {
@@ -823,6 +830,168 @@ export class ThemeManager {
    */
   public async resetToDefault(): Promise<void> {
     await this.setTheme(ThemeType.AUTO);
+  }
+
+  // ==================== AppColors 便捷访问方法 ====================
+  // 推荐直接使用 AppColors 类，以下方法仅为便捷访问
+
+  /**
+   * 获取主色
+   */
+  public getPrimaryColor(): string {
+    return AppColors.primary;
+  }
+
+  /**
+   * 获取背景色
+   */
+  public getBackgroundColor(): string {
+    return AppColors.background;
+  }
+
+  /**
+   * 获取表面色
+   */
+  public getSurfaceColor(): string {
+    return AppColors.surface;
+  }
+
+  /**
+   * 获取主要文字颜色
+   */
+  public getTextPrimaryColor(): string {
+    return AppColors.textPrimary;
+  }
+
+  /**
+   * 获取次要文字颜色
+   */
+  public getTextSecondaryColor(): string {
+    return AppColors.textSecondary;
+  }
+
+  /**
+   * 获取边框颜色
+   */
+  public getOutlineColor(): string {
+    return AppColors.outline;
+  }
+
+  /**
+   * 获取分割线颜色
+   */
+  public getDividerColor(): string {
+    return AppColors.divider;
+  }
+
+  /**
+   * 获取指定颜色角色的颜色
+   */
+  public getColorByRole(role: ColorRole): string {
+    return AppColors.getColor(role);
+  }
+  
+  // ==================== 用户主题配置管理 ====================
+  
+  /**
+   * 初始化用户主题配置管理器
+   */
+  private async initializeUserThemeConfig(): Promise<void> {
+    try {
+      const userConfigManager = UserThemeConfigManager.getInstance();
+      await userConfigManager.initialize();
+      logger.info(TAG, '用户主题配置管理器初始化完成');
+    } catch (error) {
+      logger.error(TAG, '用户主题配置管理器初始化失败', error);
+    }
+  }
+  
+  /**
+   * 获取用户主题配置管理器
+   */
+  public getUserThemeConfigManager(): UserThemeConfigManager {
+    return UserThemeConfigManager.getInstance();
+  }
+  
+  /**
+   * 获取当前用户主题配置
+   */
+  public getUserThemeProfile(): UserThemeProfile {
+    return UserThemeConfigManager.getInstance().getCurrentProfile();
+  }
+  
+  /**
+   * 检查是否启用模糊效果
+   */
+  public isBlurEffectEnabled(): boolean {
+    try {
+      return UserThemeConfigManager.getInstance().blurEnabled;
+    } catch {
+      return true;
+    }
+  }
+  
+  /**
+   * 检查是否启用阴影效果
+   */
+  public isShadowEffectEnabled(): boolean {
+    try {
+      return UserThemeConfigManager.getInstance().shadowEnabled;
+    } catch {
+      return true;
+    }
+  }
+  
+  /**
+   * 检查是否启用动画效果
+   */
+  public isAnimationEnabled(): boolean {
+    try {
+      return UserThemeConfigManager.getInstance().animationEnabled;
+    } catch {
+      return true;
+    }
+  }
+  
+  /**
+   * 获取动画速度倍率
+   */
+  public getAnimationSpeed(): number {
+    try {
+      return UserThemeConfigManager.getInstance().animationSpeed;
+    } catch {
+      return 1.0;
+    }
+  }
+  
+  /**
+   * 获取用户配置的圆角大小
+   */
+  public getUserCornerRadius(): number {
+    try {
+      return UserThemeConfigManager.getInstance().cornerRadius;
+    } catch {
+      return 12;
+    }
+  }
+  
+  /**
+   * 获取组件透明度
+   */
+  public getComponentTransparency(component: 'navigationBar' | 'tabBar' | 'card' | 'dialog' | 'floatingBall' | 'menu' | 'sidebar'): number {
+    try {
+      const profile = UserThemeConfigManager.getInstance().getCurrentProfile();
+      if (component === 'navigationBar') return profile.transparency.navigationBar;
+      if (component === 'tabBar') return profile.transparency.tabBar;
+      if (component === 'card') return profile.transparency.card;
+      if (component === 'dialog') return profile.transparency.dialog;
+      if (component === 'floatingBall') return profile.transparency.floatingBall;
+      if (component === 'menu') return profile.transparency.menu;
+      if (component === 'sidebar') return profile.transparency.sidebar;
+      return 1.0;
+    } catch {
+      return 1.0;
+    }
   }
 
   /**

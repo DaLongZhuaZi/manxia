@@ -31,6 +31,11 @@ export default class EntryAbility extends UIAbility {
     if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
     }
+    // 检查是否通过 Deep Link 打开应用
+    else if (want.uri && want.uri.startsWith('manxia://')) {
+      logger.info('EntryAbility', `🔗 通过 Deep Link 打开应用: ${want.uri}`);
+      this.handleDeepLink(want.uri);
+    }
     // 检查是否通过文件打开应用
     else if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用: ${want.uri}`);
@@ -437,6 +442,71 @@ export default class EntryAbility extends UIAbility {
     
     // 设置后台状态，触发模糊遮罩（如果已启用）
     AppStorage.setOrCreate('isInBackground', true);
+  }
+
+  /**
+   * 处理 Deep Link URI
+   * 格式: manxia://search/{source}?type={searchType}&query={query}
+   */
+  private handleDeepLink(uri: string): void {
+    try {
+      logger.info('EntryAbility', `🔗 开始解析 Deep Link: ${uri}`);
+      
+      // 手动解析 URI: manxia://search/pixiv?type=id&query=139692726
+      // 1. 提取 host 和 path
+      const schemeEnd = uri.indexOf('://');
+      if (schemeEnd === -1) {
+        logger.warn('EntryAbility', `🔗 无效的 URI 格式: ${uri}`);
+        return;
+      }
+      
+      const afterScheme = uri.substring(schemeEnd + 3); // 去掉 "manxia://"
+      const queryStart = afterScheme.indexOf('?');
+      const pathPart = queryStart === -1 ? afterScheme : afterScheme.substring(0, queryStart);
+      const queryPart = queryStart === -1 ? '' : afterScheme.substring(queryStart + 1);
+      
+      // 2. 解析 path: search/pixiv
+      const pathSegments = pathPart.split('/');
+      if (pathSegments.length < 2 || pathSegments[0] !== 'search') {
+        logger.warn('EntryAbility', `🔗 不支持的 Deep Link 格式: ${uri}`);
+        return;
+      }
+      
+      const source: string = pathSegments[1];
+      
+      // 3. 解析 query 参数
+      let type: string = 'id';
+      let query: string = '';
+      
+      if (queryPart) {
+        const params = queryPart.split('&');
+        for (const param of params) {
+          const parts = param.split('=');
+          const key = parts[0];
+          const value = parts.length > 1 ? parts[1] : '';
+          if (key === 'type' && value) {
+            type = decodeURIComponent(value);
+          } else if (key === 'query' && value) {
+            query = decodeURIComponent(value);
+          }
+        }
+      }
+      
+      if (source && query) {
+        logger.info('EntryAbility', `🔗 Deep Link 解析成功: source=${source}, type=${type}, query=${query}`);
+        
+        // 保存到 AppStorage，在 MainMenuPage 中处理
+        AppStorage.setOrCreate('deepLinkSource', source);
+        AppStorage.setOrCreate('deepLinkType', type);
+        AppStorage.setOrCreate('deepLinkQuery', query);
+        AppStorage.setOrCreate('hasDeepLink', true);
+      } else {
+        logger.warn('EntryAbility', `🔗 Deep Link 参数不完整: source=${source}, query=${query}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `🔗 Deep Link 解析失败: ${errorMessage}`);
+    }
   }
 
   // 在Ability销毁时的清理工作（游戏引擎已移除）

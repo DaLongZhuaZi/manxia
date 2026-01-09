@@ -406,7 +406,7 @@ export struct PdfKitViewerComponent {
       // 错误提示
       if (this.errorMessage.length > 0) {
         Column({ space: 16 }) {
-          Image($r('app.media.ic_error'))
+          Image($r('sys.symbol.exclamationmark_circle_fill'))
             .width(80)
             .height(80)
             .fillColor('#FF3B30')

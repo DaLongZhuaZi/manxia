@@ -9,6 +9,7 @@
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareHelper } from './ThemeAware';
 import { ThemeType } from '../Managers/ThemeManager';
+import { AppColors } from '../Theme/AppColors';
 import { MarkdownViewerComponent, MarkdownTheme } from '../../components/editor/MarkdownViewerComponent';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -113,7 +114,7 @@ const DEFAULT_STYLE_CONFIG: PanelStyleConfig = {
   showFloatBall: true,
   floatBallConfig: {
     icon: $r('sys.symbol.doc_text_fill'),
-    color: '#007AFF',
+    color: AppColors.primary,
     showBadge: true
   }
 };
@@ -613,14 +614,14 @@ export struct ContentPanelOverlay {
       .height(48)
       .borderRadius(24)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .shadow({ radius: 8, color: '#40000000', offsetX: 2, offsetY: 2 })
+      .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetX: 2, offsetY: 2 })
       .justifyContent(FlexAlign.Center)
       
       if (this.tabs.length > 1 && this.styleConfig.floatBallConfig?.showBadge) {
         Text(`${this.tabs.length}`)
           .fontSize(10)
           .fontColor(Color.White)
-          .backgroundColor('#FF5722')
+          .backgroundColor(AppColors.error)
           .borderRadius(8)
           .padding({ left: 4, right: 4 })
           .position({ x: 32, y: 0 })
@@ -852,7 +853,7 @@ export struct ContentPanelOverlay {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
         .borderRadius(this.styleConfig.borderRadius)
         .clip(true)
-        .shadow({ radius: 16, color: '#30000000', offsetX: 0, offsetY: 4 })
+        .shadow({ radius: 16, color: AppColors.getShadowColor(3), offsetX: 0, offsetY: 4 })
         .scale({ x: this.panelScale, y: this.panelScale })
         .opacity(this.contentOpacity)
         .position({ x: '7.5%', y: '15%' })

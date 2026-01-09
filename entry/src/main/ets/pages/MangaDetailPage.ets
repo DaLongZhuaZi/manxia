@@ -5442,7 +5442,7 @@ struct MangaDetailPage {
 
           } else if (this.loadError) {
             Column({ space: 20 }) {
-              Image($r('app.media.ic_error'))
+              Image($r('sys.symbol.exclamationmark_circle_fill'))
                 .width(64)
                 .height(64)
                 .fillColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))

@@ -7,6 +7,7 @@ import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONF
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { UserThemeConfigManager, TransparencyConfig, EffectsConfig, USER_THEME_KEYS } from '../Framework/Theme/UserThemeConfig';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -135,6 +136,31 @@ export struct ThemeSettingsPage {
   
   // 滑块调节防抖定时器
   private effectDebounceTimer: number = -1;
+  
+  // 用户主题配置管理器
+  private userThemeConfigManager: UserThemeConfigManager = UserThemeConfigManager.getInstance();
+  
+  // 透明度设置状态（使用StorageLink实现声明式绑定和实时预览）
+  @StorageLink('userTheme_navBarOpacity') navBarOpacity: number = 1.0;
+  @StorageLink('userTheme_cardOpacity') cardOpacity: number = 1.0;
+  @StorageLink('userTheme_dialogOpacity') dialogOpacity: number = 0.95;
+  @StorageLink('userTheme_floatingBallOpacity') floatingBallOpacity: number = 0.9;
+  
+  // 特效设置状态（使用StorageLink实现声明式绑定）
+  @StorageLink('userTheme_blurEnabled') blurEnabled: boolean = true;
+  @StorageLink('userTheme_shadowEnabled') shadowEnabled: boolean = true;
+  @StorageLink('userTheme_animationEnabled') animationEnabled: boolean = true;
+  @StorageLink('userTheme_glassmorphismEnabled') glassmorphismEnabled: boolean = true;
+  @StorageLink('userTheme_cornerRadius') cornerRadius: number = 12;
+  
+  // 本地状态（用于滑块显示，百分比形式）
+  @State navBarTransparency: number = 100;
+  @State cardTransparency: number = 100;
+  @State dialogTransparency: number = 95;
+  @State floatingBallTransparency: number = 90;
+  @State effectBlurIntensity: number = 50;
+  @State effectAnimationSpeed: number = 100;
+  @State effectCornerRadius: number = 12;
 
   // 默认自定义主题常量
   private DEFAULT_THEME_ID: string = 'default_custom_theme';
@@ -170,6 +196,33 @@ export struct ThemeSettingsPage {
     colorsInit.push(THEME_CONFIGS[ThemeType.LIGHT].primaryColor);
     colorsInit.push(THEME_CONFIGS[ThemeType.DARK].primaryColor);
     this.availablePrimaryColors = colorsInit;
+    
+    // 初始化用户主题配置并加载当前设置
+    this.initializeUserThemeConfig();
+  }
+  
+  /**
+   * 初始化用户主题配置
+   */
+  private async initializeUserThemeConfig(): Promise<void> {
+    try {
+      await this.userThemeConfigManager.initialize();
+      const profile = this.userThemeConfigManager.getCurrentProfile();
+      
+      // 同步本地滑块状态（百分比形式）
+      this.navBarTransparency = Math.round(profile.transparency.navigationBar * 100);
+      this.cardTransparency = Math.round(profile.transparency.card * 100);
+      this.dialogTransparency = Math.round(profile.transparency.dialog * 100);
+      this.floatingBallTransparency = Math.round(profile.transparency.floatingBall * 100);
+      this.effectBlurIntensity = profile.effects.blurIntensity;
+      this.effectAnimationSpeed = Math.round(profile.effects.animationSpeed * 100);
+      this.effectCornerRadius = profile.effects.cornerRadius;
+      
+      // StorageLink绑定的值会自动从AppStorage同步，无需手动设置
+      logger.info(TAG, '用户主题配置加载完成');
+    } catch (error) {
+      logger.error(TAG, '初始化用户主题配置失败', error);
+    }
   }
 
   private lifecycle = new PageLifecycleManager('ThemeSettingsPage', { enableDebug: true });
@@ -1715,6 +1768,63 @@ export struct ThemeSettingsPage {
   private goBack(): void {
     this.pathStack.pop();
   }
+  
+  // ==================== 透明度和特效设置方法 ====================
+  
+  /**
+   * 更新透明度设置
+   */
+  private async updateTransparency(key: keyof TransparencyConfig, value: number): Promise<void> {
+    try {
+      let update: Partial<TransparencyConfig> = {};
+      if (key === 'navigationBar') { update = { navigationBar: value }; }
+      else if (key === 'tabBar') { update = { tabBar: value }; }
+      else if (key === 'card') { update = { card: value }; }
+      else if (key === 'dialog') { update = { dialog: value }; }
+      else if (key === 'floatingBall') { update = { floatingBall: value }; }
+      else if (key === 'menu') { update = { menu: value }; }
+      else if (key === 'sidebar') { update = { sidebar: value }; }
+      await this.userThemeConfigManager.setTransparency(update);
+      logger.debug(TAG, `透明度更新: ${key} = ${value}`);
+    } catch (error) {
+      logger.error(TAG, '更新透明度失败', error);
+    }
+  }
+  
+  /**
+   * 更新特效设置
+   */
+  private async updateEffect(key: keyof EffectsConfig, value: boolean | number): Promise<void> {
+    try {
+      let update: Partial<EffectsConfig> = {};
+      if (key === 'enableBlur') { update = { enableBlur: value as boolean }; }
+      else if (key === 'blurIntensity') { update = { blurIntensity: value as number }; }
+      else if (key === 'enableShadow') { update = { enableShadow: value as boolean }; }
+      else if (key === 'shadowIntensity') { update = { shadowIntensity: value as number }; }
+      else if (key === 'enableAnimation') { update = { enableAnimation: value as boolean }; }
+      else if (key === 'animationSpeed') { update = { animationSpeed: value as number }; }
+      else if (key === 'enableRoundedCorners') { update = { enableRoundedCorners: value as boolean }; }
+      else if (key === 'cornerRadius') { update = { cornerRadius: value as number }; }
+      else if (key === 'enableGlassmorphism') { update = { enableGlassmorphism: value as boolean }; }
+      await this.userThemeConfigManager.setEffects(update);
+      logger.debug(TAG, `特效更新: ${key} = ${value}`);
+    } catch (error) {
+      logger.error(TAG, '更新特效设置失败', error);
+    }
+  }
+  
+  /**
+   * 重置透明度和特效为默认值
+   */
+  private async resetEffectsToDefault(): Promise<void> {
+    try {
+      await this.userThemeConfigManager.resetToDefault();
+      await this.initializeUserThemeConfig();
+      logger.info(TAG, '已重置透明度和特效设置为默认值');
+    } catch (error) {
+      logger.error(TAG, '重置设置失败', error);
+    }
+  }
 
   /**
    * 显示删除确认对话框（使用系统组件）
@@ -1754,7 +1864,7 @@ export struct ThemeSettingsPage {
         // 内容层
         Column() {
           // 预留标题栏占位（与 HdsNavDestination 标题栏高度一致）
-          Blank().height(56)
+          // Blank().height(56)
 
           // 内容区域
           Scroll() {
@@ -1894,6 +2004,330 @@ export struct ThemeSettingsPage {
                     .fontFamily(this.appFontFamily)
                     .backgroundColor($r('app.color.accent_primary'))
                     .onClick(() => { this.isCreatingCustomTheme = true; })
+                }
+                .width('100%')
+                .padding(16)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                .borderRadius(12)
+                
+                // 透明度设置面板（应用实时预览）
+                Column({ space: 12 }) {
+                  Text('透明度设置')
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .width('100%')
+                  
+                  // 预览卡片
+                  Column({ space: 8 }) {
+                    Text('预览效果')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Row({ space: 12 }) {
+                      // 卡片预览（使用StorageLink绑定的值实现实时预览）
+                      Column() {
+                        Text('卡片')
+                          .fontSize(10)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      }
+                      .width(60)
+                      .height(40)
+                      .justifyContent(FlexAlign.Center)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                      .borderRadius(this.cornerRadius)
+                      .opacity(this.cardOpacity)
+                      .shadow(this.shadowEnabled ? { radius: 4, color: 'rgba(0,0,0,0.2)', offsetY: 2 } : undefined)
+                      
+                      // 悬浮球预览
+                      Column() {
+                        Text('悬浮球')
+                          .fontSize(8)
+                          .fontColor(Color.White)
+                      }
+                      .width(50)
+                      .height(50)
+                      .justifyContent(FlexAlign.Center)
+                      .backgroundColor($r('app.color.accent_primary'))
+                      .borderRadius(25)
+                      .opacity(this.floatingBallOpacity)
+                      .shadow(this.shadowEnabled ? { radius: 6, color: 'rgba(0,0,0,0.3)', offsetY: 2 } : undefined)
+                      
+                      // 对话框预览
+                      Column() {
+                        Text('对话框')
+                          .fontSize(10)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                      }
+                      .width(60)
+                      .height(40)
+                      .justifyContent(FlexAlign.Center)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(this.cornerRadius)
+                      .opacity(this.dialogOpacity)
+                      .shadow(this.shadowEnabled ? { radius: 4, color: 'rgba(0,0,0,0.2)', offsetY: 2 } : undefined)
+                    }
+                    .width('100%')
+                    .justifyContent(FlexAlign.SpaceAround)
+                  }
+                  .width('100%')
+                  .padding(12)
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .borderRadius(8)
+                  
+                  // 导航栏透明度
+                  Column({ space: 4 }) {
+                    Row() {
+                      Text('导航栏')
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`${this.navBarTransparency}%`)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+                    Slider({ value: $$this.navBarTransparency, min: 0, max: 100, step: 5 })
+                      .width('100%')
+                      .selectedColor($r('app.color.accent_primary'))
+                      .trackColor($r('app.color.divider_primary'))
+                      .onChange((value: number) => {
+                        this.updateTransparency('navigationBar', value / 100);
+                      })
+                  }
+                  
+                  // 卡片透明度
+                  Column({ space: 4 }) {
+                    Row() {
+                      Text('卡片')
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`${this.cardTransparency}%`)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+                    Slider({ value: $$this.cardTransparency, min: 0, max: 100, step: 5 })
+                      .width('100%')
+                      .selectedColor($r('app.color.accent_primary'))
+                      .trackColor($r('app.color.divider_primary'))
+                      .onChange((value: number) => {
+                        this.updateTransparency('card', value / 100);
+                      })
+                  }
+                  
+                  // 对话框透明度
+                  Column({ space: 4 }) {
+                    Row() {
+                      Text('对话框')
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`${this.dialogTransparency}%`)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+                    Slider({ value: $$this.dialogTransparency, min: 0, max: 100, step: 5 })
+                      .width('100%')
+                      .selectedColor($r('app.color.accent_primary'))
+                      .trackColor($r('app.color.divider_primary'))
+                      .onChange((value: number) => {
+                        this.updateTransparency('dialog', value / 100);
+                      })
+                  }
+                  
+                  // 悬浮球透明度
+                  Column({ space: 4 }) {
+                    Row() {
+                      Text('悬浮球')
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`${this.floatingBallTransparency}%`)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+                    Slider({ value: $$this.floatingBallTransparency, min: 0, max: 100, step: 5 })
+                      .width('100%')
+                      .selectedColor($r('app.color.accent_primary'))
+                      .trackColor($r('app.color.divider_primary'))
+                      .onChange((value: number) => {
+                        this.updateTransparency('floatingBall', value / 100);
+                      })
+                  }
+                }
+                .width('100%')
+                .padding(16)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                .borderRadius(12)
+                
+                // 特效设置面板
+                Column({ space: 12 }) {
+                  Text('特效设置')
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .width('100%')
+                  
+                  // 模糊效果开关
+                  Row() {
+                    Text('模糊效果')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Toggle({ type: ToggleType.Switch, isOn: this.blurEnabled })
+                      .selectedColor($r('app.color.accent_primary'))
+                      .onChange((isOn: boolean) => {
+                        this.updateEffect('enableBlur', isOn);
+                      })
+                  }
+                  .width('100%')
+                  .height(48)
+                  
+                  // 模糊强度（仅在启用时显示）
+                  if (this.blurEnabled) {
+                    Column({ space: 4 }) {
+                      Row() {
+                        Text('模糊强度')
+                          .fontSize(14)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                        Blank()
+                        Text(`${this.effectBlurIntensity}`)
+                          .fontSize(14)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                      }
+                      .width('100%')
+                      Slider({ value: $$this.effectBlurIntensity, min: 0, max: 100, step: 5 })
+                        .width('100%')
+                        .selectedColor($r('app.color.accent_primary'))
+                        .trackColor($r('app.color.divider_primary'))
+                        .onChange((value: number) => {
+                          this.updateEffect('blurIntensity', value);
+                        })
+                    }
+                  }
+                  
+                  // 阴影效果开关
+                  Row() {
+                    Text('阴影效果')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Toggle({ type: ToggleType.Switch, isOn: this.shadowEnabled })
+                      .selectedColor($r('app.color.accent_primary'))
+                      .onChange((isOn: boolean) => {
+                        this.updateEffect('enableShadow', isOn);
+                      })
+                  }
+                  .width('100%')
+                  .height(48)
+                  
+                  // 动画效果开关
+                  Row() {
+                    Text('动画效果')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Toggle({ type: ToggleType.Switch, isOn: this.animationEnabled })
+                      .selectedColor($r('app.color.accent_primary'))
+                      .onChange((isOn: boolean) => {
+                        this.updateEffect('enableAnimation', isOn);
+                      })
+                  }
+                  .width('100%')
+                  .height(48)
+                  
+                  // 动画速度（仅在启用时显示）
+                  if (this.animationEnabled) {
+                    Column({ space: 4 }) {
+                      Row() {
+                        Text('动画速度')
+                          .fontSize(14)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                        Blank()
+                        Text(`${this.effectAnimationSpeed}%`)
+                          .fontSize(14)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                      }
+                      .width('100%')
+                      Slider({ value: $$this.effectAnimationSpeed, min: 50, max: 200, step: 10 })
+                        .width('100%')
+                        .selectedColor($r('app.color.accent_primary'))
+                        .trackColor($r('app.color.divider_primary'))
+                        .onChange((value: number) => {
+                          this.updateEffect('animationSpeed', value / 100);
+                        })
+                    }
+                  }
+                  
+                  // 圆角大小
+                  Column({ space: 4 }) {
+                    Row() {
+                      Text('圆角大小')
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      Blank()
+                      Text(`${this.effectCornerRadius}`)
+                        .fontSize(14)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    }
+                    .width('100%')
+                    Slider({ value: $$this.effectCornerRadius, min: 0, max: 32, step: 2 })
+                      .width('100%')
+                      .selectedColor($r('app.color.accent_primary'))
+                      .trackColor($r('app.color.divider_primary'))
+                      .onChange((value: number) => {
+                        this.updateEffect('cornerRadius', value);
+                      })
+                  }
+                  
+                  // 玻璃拟态效果开关
+                  Row() {
+                    Text('玻璃拟态效果')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    Blank()
+                    Toggle({ type: ToggleType.Switch, isOn: this.glassmorphismEnabled })
+                      .selectedColor($r('app.color.accent_primary'))
+                      .onChange((isOn: boolean) => {
+                        this.updateEffect('enableGlassmorphism', isOn);
+                      })
+                  }
+                  .width('100%')
+                  .height(48)
+                  
+                  // 重置按钮
+                  Button('重置为默认')
+                    .width('100%')
+                    .height(40)
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor($r('app.color.color_error'))
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .onClick(() => { this.resetEffectsToDefault(); })
                 }
                 .width('100%')
                 .padding(16)
@@ -2315,7 +2749,7 @@ export struct ThemeSettingsPage {
             {
               content: {
                 label: '取消选择',
-                icon: $r('app.media.ic_cancel'),
+                icon: $r('sys.media.ohos_ic_public_cancel'),
                 isEnabled: true,
                 action: () => { this.exitSelectionMode(); }
               }
@@ -2324,7 +2758,7 @@ export struct ThemeSettingsPage {
             {
               content: {
                 label: '恢复默认主题',
-                icon: $r('app.media.ic_restore'),
+                icon: $r('sys.symbol.arrow_counterclockwise'),
                 isEnabled: true,
                 action: () => { this.restoreDefaultCustomTheme(); }
               }

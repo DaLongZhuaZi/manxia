@@ -9,6 +9,7 @@ import { GlobalTaskCoordinator, GlobalStats, PageStats } from '../Lifecycle';
 import { logger } from '../../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { SettingsManager } from '../Managers/SettingsManager';
+import { AppColors, ColorRole } from '../Theme/AppColors';
 
 const TAG = 'LifecycleFloatingBall';
 
@@ -125,10 +126,10 @@ export struct LifecycleFloatingBall {
    */
   private getStatusColor(): ResourceColor {
     const totalTasks = this.getTotalTasks();
-    if (totalTasks === 0) return '#4CAF50';
-    if (totalTasks > 50) return '#F44336';
-    if (totalTasks > 20) return '#FF9800';
-    return '#2196F3';
+    if (totalTasks === 0) return AppColors.success;
+    if (totalTasks > 50) return AppColors.error;
+    if (totalTasks > 20) return AppColors.warning;
+    return AppColors.info;
   }
 
   build() {
@@ -143,14 +144,15 @@ export struct LifecycleFloatingBall {
         }
         .width(this.isExpanded ? 220 : 56)
         .height(this.isExpanded ? 'auto' : 56)
-        .backgroundColor(this.isExpanded ? '#F5F5F5' : this.getStatusColor())
-        .borderRadius(this.isExpanded ? 12 : 28)
-        .shadow({
+        .backgroundColor(this.isExpanded ? AppColors.surfaceVariant : this.getStatusColor())
+        .borderRadius(this.isExpanded ? AppColors.cornerRadius : 28)
+        .opacity(AppColors.getTransparency('floatingBall'))
+        .shadow(AppColors.shadowEnabled ? {
           radius: 8,
-          color: '#00000040',
+          color: AppColors.getShadowColor(4),
           offsetX: 2,
           offsetY: 2
-        })
+        } : undefined)
         .animation({
           duration: 200,
           curve: Curve.EaseOut
@@ -198,7 +200,7 @@ export struct LifecycleFloatingBall {
         .width(48)
         .height(48)
         .fill(Color.Transparent)
-        .stroke('#FFFFFF40')
+        .stroke(AppColors.withAlpha(ColorRole.ON_PRIMARY, 0.25))
         .strokeWidth(2)
 
       // 任务数文字
@@ -206,11 +208,11 @@ export struct LifecycleFloatingBall {
         Text(this.getTotalTasks().toString())
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
+          .fontColor(AppColors.onPrimary)
         
         Text('任务')
           .fontSize(8)
-          .fontColor('#FFFFFFCC')
+          .fontColor(AppColors.withAlpha(ColorRole.ON_PRIMARY, 0.8))
       }
     }
     .width(56)
@@ -226,13 +228,13 @@ export struct LifecycleFloatingBall {
         Text('生命周期')
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor(AppColors.textPrimary)
         
         Blank()
         
         Text('×')
           .fontSize(18)
-          .fontColor('#666666')
+          .fontColor(AppColors.textSecondary)
           .onClick(() => {
             this.isExpanded = false;
           })
@@ -242,15 +244,15 @@ export struct LifecycleFloatingBall {
 
       // 统计信息
       Column({ space: 6 }) {
-        this.buildStatRow('活跃页面', this.globalStats.totalPages, '#4CAF50')
-        this.buildStatRow('定时器', this.globalStats.totalTimers, '#2196F3')
-        this.buildStatRow('Promise', this.globalStats.totalPromises, '#FF9800')
-        this.buildStatRow('资源', this.globalStats.totalResources, '#9C27B0')
-        this.buildStatRow('监听器', this.globalStats.totalListeners, '#F44336')
+        this.buildStatRow('活跃页面', this.globalStats.totalPages, AppColors.success)
+        this.buildStatRow('定时器', this.globalStats.totalTimers, AppColors.info)
+        this.buildStatRow('Promise', this.globalStats.totalPromises, AppColors.warning)
+        this.buildStatRow('资源', this.globalStats.totalResources, AppColors.tertiary)
+        this.buildStatRow('监听器', this.globalStats.totalListeners, AppColors.error)
       }
       .width('100%')
       .padding({ left: 12, right: 12 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(AppColors.surface)
       .borderRadius(8)
       .margin({ left: 8, right: 8 })
 
@@ -265,7 +267,7 @@ export struct LifecycleFloatingBall {
     Row() {
       Text(label)
         .fontSize(11)
-        .fontColor('#666666')
+        .fontColor(AppColors.textSecondary)
         .layoutWeight(1)
       
       Text(value.toString())

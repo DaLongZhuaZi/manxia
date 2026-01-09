@@ -18,6 +18,7 @@ import {
   PageInfo,
   WorkflowType,
   MangaSourceSettings,
+  SearchConfig,
   NavigateAction,
   WaitAction,
   ClickAction,
@@ -59,6 +60,14 @@ export interface VariableMap {
   mangaId?: string;
   chapterId?: string;
   pageIndex?: string;
+  /** 作品ID（用于ID直达） */
+  illustId?: string;
+  /** 作者ID（用于作者搜索） */
+  authorId?: string;
+  /** 系列ID（用于系列搜索） */
+  seriesId?: string;
+  /** 直达URL（用于URL解析） */
+  directUrl?: string;
 }
 
 /**
@@ -77,6 +86,12 @@ export interface WorkflowContext {
   pageIndex?: number;
   /** 变量映射 */
   variables: VariableMap;
+  /** 直达搜索类型 */
+  searchType?: string;
+  /** 直达搜索查询（原始值，不进行URL规范化） */
+  query?: string;
+  /** 直达搜索查询别名 */
+  rawQuery?: string;
 }
 
 /**
@@ -257,6 +272,17 @@ export class MangaSourceConfigParser {
         return this.getWorkflowByType(workflow, WorkflowType.GET_BOOK_DETAIL);
       case 'getDownloadUrl':
         return this.getWorkflowByType(workflow, WorkflowType.GET_DOWNLOAD_URL);
+      // ========== 搜索增强工作流 ==========
+      case 'searchById':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_ID);
+      case 'searchByAuthor':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_AUTHOR);
+      case 'searchBySeries':
+        return this.getWorkflowByType(workflow, WorkflowType.SEARCH_BY_SERIES);
+      case 'resolveUrl':
+        return this.getWorkflowByType(workflow, WorkflowType.RESOLVE_URL);
+      case 'directSearch':
+        return this.getWorkflowByType(workflow, WorkflowType.DIRECT_SEARCH);
       default:
         return undefined;
     }
@@ -303,6 +329,17 @@ export class MangaSourceConfigParser {
         return workflow.getBookDetail;
       case WorkflowType.GET_DOWNLOAD_URL:
         return workflow.getDownloadUrl;
+      // ========== 搜索增强工作流 ==========
+      case WorkflowType.SEARCH_BY_ID:
+        return workflow.searchById;
+      case WorkflowType.SEARCH_BY_AUTHOR:
+        return workflow.searchByAuthor;
+      case WorkflowType.SEARCH_BY_SERIES:
+        return workflow.searchBySeries;
+      case WorkflowType.RESOLVE_URL:
+        return workflow.resolveUrl;
+      case WorkflowType.DIRECT_SEARCH:
+        return workflow.directSearch;
       default:
         return undefined;
     }
@@ -367,6 +404,9 @@ export class MangaSourceConfigParser {
       case WorkflowType.GET_DOWNLOAD_URL:
         workflow.getDownloadUrl = actions;
         break;
+      case WorkflowType.DIRECT_SEARCH:
+        workflow.directSearch = actions;
+        break;
     }
   }
 
@@ -383,6 +423,29 @@ export class MangaSourceConfigParser {
     }
 
     return this.processActions(workflow, { searchKeyword: keyword });
+  }
+
+  /**
+   * 构建直达搜索操作序列
+   * @param config 图源配置
+   * @param searchType 搜索类型ID（对应searchConfig中的type.id）
+   * @param query 原始查询值（不进行URL规范化）
+   */
+  buildDirectSearchActions(config: MangaSourceConfig, searchType: string, query: string): Action[] {
+    const workflow = this.getWorkflow(config, 'directSearch');
+    if (!workflow) {
+      throw new MangaSourceError(
+        MangaSourceErrorCode.INVALID_CONFIG,
+        '缺少直达搜索工作流配置'
+      );
+    }
+
+    // 直达搜索使用原始query，不进行URL规范化
+    return this.processActions(workflow, { 
+      searchType: searchType,
+      query: query,
+      rawQuery: query  // 保留原始值的别名
+    });
   }
 
   /**
@@ -580,6 +643,63 @@ export class MangaSourceConfigParser {
     return this.processActions(workflow, { pageIndex });
   }
 
+  // ==================== 搜索增强方法 ====================
+
+  /**
+   * 构建ID搜索操作序列
+   * @param config 图源配置
+   * @param illustId 作品ID
+   * @returns 操作序列，如果工作流不存在则返回空数组
+   */
+  buildSearchByIdActions(config: MangaSourceConfig, illustId: string): Action[] {
+    const workflow = this.getWorkflow(config, 'searchById');
+    if (!workflow) {
+      logger.info(TAG, 'searchById工作流不存在，返回空数组');
+      return [];
+    }
+    return this.processActions(workflow, { illustId, mangaId: illustId } as Partial<WorkflowContext>);
+  }
+
+  /**
+   * 构建作者搜索操作序列
+   * @param config 图源配置
+   * @param authorId 作者ID
+   * @returns 操作序列，如果工作流不存在则返回空数组
+   */
+  buildSearchByAuthorActions(config: MangaSourceConfig, authorId: string): Action[] {
+    const workflow = this.getWorkflow(config, 'searchByAuthor');
+    if (!workflow) {
+      logger.info(TAG, 'searchByAuthor工作流不存在，返回空数组');
+      return [];
+    }
+    return this.processActions(workflow, { authorId } as Partial<WorkflowContext>);
+  }
+
+  /**
+   * 构建系列搜索操作序列
+   * @param config 图源配置
+   * @param seriesId 系列ID
+   * @returns 操作序列，如果工作流不存在则返回空数组
+   */
+  buildSearchBySeriesActions(config: MangaSourceConfig, seriesId: string): Action[] {
+    const workflow = this.getWorkflow(config, 'searchBySeries');
+    if (!workflow) {
+      logger.info(TAG, 'searchBySeries工作流不存在，返回空数组');
+      return [];
+    }
+    return this.processActions(workflow, { seriesId } as Partial<WorkflowContext>);
+  }
+
+  /**
+   * 检查图源是否支持指定工作流
+   * @param config 图源配置
+   * @param workflowName 工作流名称
+   * @returns 是否支持
+   */
+  hasWorkflow(config: MangaSourceConfig, workflowName: string): boolean {
+    return this.getWorkflow(config, workflowName) !== undefined;
+  }
+
   /**
    * 处理操作序列，替换变量
    */
@@ -598,6 +718,21 @@ export class MangaSourceConfigParser {
     }
     if (context.pageIndex !== undefined) {
       variables.pageIndex = context.pageIndex.toString();
+    }
+    
+    // ========== 搜索增强变量 ==========
+    const extContext: Record<string, string | number | undefined> = context as Record<string, string | number | undefined>;
+    if (extContext['illustId']) {
+      variables.illustId = String(extContext['illustId']);
+    }
+    if (extContext['authorId']) {
+      variables.authorId = String(extContext['authorId']);
+    }
+    if (extContext['seriesId']) {
+      variables.seriesId = String(extContext['seriesId']);
+    }
+    if (extContext['directUrl']) {
+      variables.directUrl = String(extContext['directUrl']);
     }
 
     const processedActions: Action[] = [];
@@ -967,6 +1102,21 @@ export class MangaSourceConfigParser {
       result = result.replace(/\{\{pageIndex\}\}/g, variables.pageIndex);
     }
     
+    // ========== 搜索增强变量 ==========
+    if (variables.illustId) {
+      result = result.replace(/\{\{illustId\}\}/g, variables.illustId);
+    }
+    if (variables.authorId) {
+      result = result.replace(/\{\{authorId\}\}/g, variables.authorId);
+      result = result.replace(/\{\{userId\}\}/g, variables.authorId); // 别名
+    }
+    if (variables.seriesId) {
+      result = result.replace(/\{\{seriesId\}\}/g, variables.seriesId);
+    }
+    if (variables.directUrl) {
+      result = result.replace(/\{\{directUrl\}\}/g, variables.directUrl);
+    }
+    
     return result;
   }
 
@@ -1059,7 +1209,9 @@ export class MangaSourceConfigParser {
       settings: rawConfig.settings as MangaSourceSettings || defaultSettings,
       workflows: {} as Workflow,
       // [修复] 解析 authentication 字段，用于 JWT Token 管理
-      authentication: rawConfig.authentication as AuthenticationConfig | undefined
+      authentication: rawConfig.authentication as AuthenticationConfig | undefined,
+      // 解析搜索配置
+      searchConfig: rawConfig.searchConfig as SearchConfig | undefined
     };
     
     // 记录 authentication 配置信息
@@ -1119,6 +1271,15 @@ export class MangaSourceConfigParser {
             break;
           case 'searchById':
             this.setWorkflowByType(config.workflows, WorkflowType.SEARCH_BY_ID, actions);
+            break;
+          case 'searchByAuthor':
+            this.setWorkflowByType(config.workflows, WorkflowType.SEARCH_BY_AUTHOR, actions);
+            break;
+          case 'searchBySeries':
+            this.setWorkflowByType(config.workflows, WorkflowType.SEARCH_BY_SERIES, actions);
+            break;
+          case 'resolveUrl':
+            this.setWorkflowByType(config.workflows, WorkflowType.RESOLVE_URL, actions);
             break;
           case 'filter':
             this.setWorkflowByType(config.workflows, WorkflowType.FILTER, actions);
@@ -1181,6 +1342,10 @@ export class MangaSourceConfigParser {
             break;
           case 'extractFileList':
             this.setWorkflowByType(config.workflows, WorkflowType.EXTRACT_FILE_LIST, actions);
+            break;
+          // 直达搜索工作流
+          case 'directSearch':
+            this.setWorkflowByType(config.workflows, WorkflowType.DIRECT_SEARCH, actions);
             break;
           default:
             warnings.push(`未知的工作流类型: ${name}`);
