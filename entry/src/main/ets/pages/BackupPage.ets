@@ -27,14 +27,38 @@ import { Want } from '@kit.AbilityKit';
 import { getWebDAVBackupManager, RemoteBackupInfo, WebDAVSyncStatus } from '../Framework/WebDAV/WebDAVBackupManager';
 import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from '../Models/WebDAVModels';
 import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from '../Framework/WebDAV/WebDAVClient';
+import { quickTestWebDAVNative } from '../Framework/WebDAV/WebDAVNativeTest';
+import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from '../Framework/WebDAV/WebDAVNativeClient';
+import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from '../Framework/FTP/FTPNativeClient';
+import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from '../Models/FTPModels';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
+import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 interface ThemeState {
   currentTheme: ThemeType;
+}
+
+interface NativeTestResult {
+  testName: string;
+  success: boolean;
+  message: string;
+  duration: number;
+}
+
+interface NativeTestConfig {
+  testConnection: boolean;
+  testList: boolean;
+  testCreateDir: boolean;
+  testUpload: boolean;
+  testDownload: boolean;
+  testDelete: boolean;
+  testQuota: boolean;
+  customTestPath: string;
+  customTestContent: string;
 }
 
 @ComponentV2
@@ -50,7 +74,7 @@ struct BackupPage {
   pathStack: NavPathStack = new NavPathStack();
   
   // Tab状态
-  @Local currentTab: 'local' | 'cloud' = 'local';
+  @Local currentTab: 'local' | 'cloud' | 'native_test' | 'ftp' = 'local';
   
   // 本地备份状态
   @Local isCreatingBackup: boolean = false;
@@ -97,6 +121,35 @@ struct BackupPage {
   @Local restoreSuccess: boolean = false;
   @Local restoreErrorMessage: string = '';
   
+  // Native测试状态
+  @Local nativeTestRunning: boolean = false;
+  @Local nativeTestResults: NativeTestResult[] = [];
+  @Local nativeTestSummary: string = '';
+  @Local nativeTestConfig: NativeTestConfig = {
+    testConnection: true,
+    testList: true,
+    testCreateDir: true,
+    testUpload: true,
+    testDownload: true,
+    testDelete: true,
+    testQuota: true,
+    customTestPath: '',
+    customTestContent: ''
+  };
+  
+  // FTP管理器状态
+  @Local savedFTPConnections: SavedFTPConnection[] = [];
+  @Local currentFTPConnection: SavedFTPConnection | null = null;
+  @Local ftpEditingConnection: SavedFTPConnection | null = null;
+  @Local ftpConnected: boolean = false;
+  @Local ftpCurrentPath: string = '/';
+  @Local ftpFiles: FTPFileInfo[] = [];
+  @Local ftpLoading: boolean = false;
+  @Local ftpClient: FTPNativeClient | null = null;
+  @Local showFTPEditDialog: boolean = false;
+  @Local ftpTestResult: string = '';
+  @Local ftpConnectionName: string = '';
+  
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   
   aboutToAppear(): void {
@@ -125,6 +178,9 @@ struct BackupPage {
     // 加载WebDAV配置
     this.loadWebDAVSettings();
     
+    // 加载FTP连接配置
+    this.loadFTPConnections();
+    
     this.loadBackupFiles();
   }
   
@@ -139,59 +195,103 @@ struct BackupPage {
   private showBackupHelp(): void {
     const helpContent = `# 备份与恢复帮助
 
-## 功能介绍
+## 功能概述
 
-备份与恢复功能允许您导出和导入所有应用数据，包括漫画、电子书、小说的阅读进度、收藏、设置等。
+本页面提供三种数据管理方式：**本地备份**、**WebDAV云端同步**和**FTP文件管理**。
 
-## 本地备份
+---
+
+## 📦 本地备份
 
 ### 创建备份
-1. 切换到"本地备份"标签
-2. 点击"创建备份"按钮
-3. 选择要备份的内容（漫画、电子书、小说、设置等）
-4. 等待备份完成
+1. 切换到"本地备份"标签页
+2. 点击顶部"创建备份"按钮
+3. 选择要备份的数据类型
+4. 等待备份完成，备份文件将显示在列表中
 
-### 恢复备份
-1. 在备份列表中找到要恢复的备份
-2. 点击"恢复"按钮
-3. 选择要恢复的内容
-4. 确认恢复操作
+### 管理备份
+- **恢复**: 将备份数据还原到应用中
+- **上传**: 将本地备份上传到WebDAV云端（需先配置WebDAV）
+- **导出**: 将备份文件导出到设备存储，方便传输
+- **删除**: 删除不需要的备份文件
 
-### 导出/导入备份文件
-- **导出**: 将备份文件保存到设备存储，方便传输到其他设备
-- **导入**: 从设备存储导入备份文件
+### 导入备份
+点击"导入备份"按钮，从设备存储选择备份文件导入
 
-## 云端备份 (WebDAV)
+---
 
-### 配置WebDAV
-1. 切换到"云端备份"标签
-2. 点击"配置WebDAV"
-3. 输入服务器地址、用户名、密码
-4. 测试连接后保存
+## ☁️ WebDAV云端同步
+
+### 配置WebDAV服务器
+1. 切换到"云端备份"标签页
+2. 点击"配置WebDAV"按钮
+3. 填写服务器信息：
+   - **服务器地址**: WebDAV服务URL（如 https://dav.jianguoyun.com/dav/）
+   - **用户名/密码**: 登录凭据
+   - **备份路径**: 云端存储目录（如 /manxia_backup/）
+4. 点击"测试连接"验证配置
+5. 保存配置
 
 ### 支持的WebDAV服务
-- 坚果云
-- Nextcloud
-- 群晖NAS
-- 其他标准WebDAV服务
+- **坚果云**: 国内推荐，稳定可靠
+- **Nextcloud**: 自建云盘首选
+- **群晖NAS**: 家庭NAS用户
+- **其他**: 任何标准WebDAV协议服务
 
-### 自动同步
-配置完成后，可以设置自动同步间隔，应用会定期将数据备份到云端。
+### 云端操作
+- **上传**: 将本地备份同步到云端
+- **下载**: 从云端下载备份到本地
+- **删除**: 删除云端备份文件
 
-## 备份内容说明
+---
 
-| 类型 | 包含内容 |
-|------|----------|
-| 漫画 | 收藏、阅读进度、章节信息 |
-| 电子书 | 书架、阅读进度、书签 |
-| 小说 | 收藏、阅读进度 |
-| 设置 | 主题、阅读设置、图源配置 |
+## 📁 FTP文件管理
 
-## 注意事项
+### 添加FTP连接
+1. 切换到"FTP管理"标签页
+2. 点击右上角"添加"按钮
+3. 填写连接信息：
+   - **连接名称**: 自定义名称，便于识别
+   - **服务器地址**: FTP服务器IP或域名
+   - **端口**: FTP端口（默认21，FTPS默认990）
+   - **用户名/密码**: 登录凭据
+   - **FTPS**: 启用加密传输
+   - **被动模式**: 推荐开启，解决NAT穿透问题
+4. 点击"保存"
 
-- 备份不包含实际的图片和文件内容
-- 恢复时会覆盖现有数据，请谨慎操作
-- 建议定期备份重要数据`;
+### 连接管理
+- 点击连接卡片直接连接到FTP服务器
+- 点击编辑图标修改连接配置
+- 点击删除图标移除连接（需确认）
+
+### 文件浏览器
+连接成功后进入文件浏览器：
+- **导航**: 点击文件夹进入，点击"上级"返回
+- **刷新**: 重新加载当前目录
+- **新建文件夹**: 在当前目录创建文件夹
+- **下载**: 下载文件到本地
+- **删除**: 删除文件或文件夹
+
+---
+
+## 📋 备份内容说明
+
+| 数据类型 | 包含内容 |
+|----------|----------|
+| 漫画数据 | 收藏列表、阅读进度、章节缓存信息 |
+| 电子书数据 | 书架、阅读进度、书签、笔记 |
+| 小说数据 | 收藏、阅读进度、书源配置 |
+| 应用设置 | 主题、阅读设置、显示偏好 |
+
+---
+
+## ⚠️ 注意事项
+
+1. **备份不含原始文件**: 备份仅包含元数据和进度，不含图片/文档原文件
+2. **恢复会覆盖数据**: 恢复操作会覆盖现有数据，请谨慎操作
+3. **定期备份**: 建议定期创建备份，防止数据丢失
+4. **网络安全**: WebDAV和FTP传输建议使用HTTPS/FTPS加密
+5. **密码安全**: 连接密码仅存储在本地，不会上传到云端`;
 
     getHelpPanelManagerV2().showInlineHelp('备份与恢复帮助', helpContent);
   }
@@ -373,6 +473,7 @@ struct BackupPage {
       }
       
       // 如果已启用且连接成功，配置WebDAV管理器
+      logger.info(TAG, `检查是否需要配置WebDAV管理器: enabled=${settings.enabled}, status=${settings.connectionStatus}`);
       if (settings.enabled && settings.connectionStatus === 'success') {
         const config: WebDAVConfig = {
           serverUrl: settings.serverUrl,
@@ -381,8 +482,12 @@ struct BackupPage {
           basePath: settings.basePath
         };
         
+        logger.info(TAG, '开始配置WebDAV管理器');
         await this.webdavManager.configure(config);
+        logger.info(TAG, 'WebDAV管理器配置完成');
         await this.loadCloudBackups();
+      } else {
+        logger.warn(TAG, `跳过WebDAV管理器配置: enabled=${settings.enabled}, status=${settings.connectionStatus}`);
       }
       
       // 保存配置到本地存储（无论测试结果如何都保存）
@@ -472,6 +577,30 @@ struct BackupPage {
   
   async testWebDAVConnection(settings: WebDAVSettings): Promise<WebDAVTestResult> {
     try {
+      // 优先使用Native客户端（支持HTTPS自签名证书）
+      if (isNativeModuleAvailable()) {
+        logger.info(TAG, '使用Native客户端测试WebDAV连接');
+        const nativeConfig: WebDAVNativeConfig = {
+          serverUrl: settings.serverUrl,
+          username: settings.username,
+          password: settings.password,
+          basePath: settings.basePath,
+          timeoutMs: 30000,
+          verifySSL: false // 禁用SSL验证以支持自签名证书
+        };
+        const nativeClient = new WebDAVNativeClient(nativeConfig);
+        await nativeClient.initialize();
+        const result = await nativeClient.testConnection();
+        
+        // 增强错误提示
+        if (!result.success) {
+          result.message = this.enhanceWebDAVErrorMessage(result.message, settings.basePath);
+        }
+        return result;
+      }
+      
+      // 回退到ArkTS客户端
+      logger.info(TAG, '使用ArkTS客户端测试WebDAV连接');
       const client = new WebDAVClient({
         serverUrl: settings.serverUrl,
         username: settings.username,
@@ -479,15 +608,378 @@ struct BackupPage {
         basePath: settings.basePath
       });
       
-      return await client.testConnection();
+      const result = await client.testConnection();
+      // 增强错误提示
+      if (!result.success) {
+        result.message = this.enhanceWebDAVErrorMessage(result.message, settings.basePath);
+      }
+      return result;
     } catch (error) {
       logger.error(TAG, `测试WebDAV连接失败: ${error}`);
+      const errorMsg = this.enhanceWebDAVErrorMessage(String(error), settings.basePath);
       const result: WebDAVTestResult = { 
         success: false, 
         needCreateDir: false, 
-        message: `测试失败: ${error}` 
+        message: errorMsg
       };
       return result;
+    }
+  }
+  
+  /**
+   * 增强WebDAV错误提示信息
+   */
+  private enhanceWebDAVErrorMessage(originalMessage: string, basePath: string): string {
+    const msg = originalMessage.toLowerCase();
+    
+    // SSL证书错误
+    if (msg.includes('ssl') || msg.includes('certificate')) {
+      return `SSL证书验证失败。如果使用自签名证书，请确保Native模块已正确加载。原始错误: ${originalMessage}`;
+    }
+    
+    // 403 Forbidden - 权限问题
+    if (msg.includes('403') || msg.includes('forbidden')) {
+      return `权限被拒绝(403)。可能原因：\n1. 用户名或密码错误\n2. 服务器不允许在根目录创建文件\n3. 目录 "${basePath}" 不存在且无法自动创建\n\n建议：请在WebDAV服务器上手动创建 "${basePath}" 目录后重试`;
+    }
+    
+    // 404 Not Found - 目录不存在
+    if (msg.includes('404') || msg.includes('not found')) {
+      return `目录不存在(404)。目录 "${basePath}" 在服务器上不存在。\n\n建议：请在WebDAV服务器上手动创建此目录后重试，或更改为已存在的目录路径`;
+    }
+    
+    // 405 Method Not Allowed - 方法不支持
+    if (msg.includes('405') || msg.includes('method not allowed')) {
+      return `操作不支持(405)。服务器不支持此WebDAV操作。\n\n建议：请确认服务器已启用完整的WebDAV支持`;
+    }
+    
+    // 401 Unauthorized - 认证失败
+    if (msg.includes('401') || msg.includes('unauthorized')) {
+      return `认证失败(401)。用户名或密码错误，请检查后重试`;
+    }
+    
+    // 连接超时
+    if (msg.includes('timeout') || msg.includes('超时')) {
+      return `连接超时。请检查：\n1. 服务器地址是否正确\n2. 网络连接是否正常\n3. 服务器是否在线`;
+    }
+    
+    // 无法连接
+    if (msg.includes('connect') || msg.includes('连接')) {
+      return `无法连接到服务器。请检查：\n1. 服务器地址格式是否正确（如 https://example.com:5006）\n2. 网络连接是否正常\n3. 服务器是否在线`;
+    }
+    
+    return originalMessage;
+  }
+
+  async runNativeWebDAVTest(): Promise<void> {
+    try {
+      logger.info(TAG, '开始WebDAV Native模块测试');
+      
+      promptAction.showToast({
+        message: '正在运行Native测试...',
+        duration: 2000
+      });
+
+      const nativeConfig: WebDAVNativeConfig = {
+        serverUrl: this.webdavSettings.serverUrl,
+        username: this.webdavSettings.username,
+        password: this.webdavSettings.password,
+        basePath: this.webdavSettings.basePath,
+        timeoutMs: 30000,
+        verifySSL: false // 禁用SSL验证以支持自签名证书
+      };
+
+      const summary = await quickTestWebDAVNative(nativeConfig);
+      logger.info(TAG, `Native测试结果:\n${summary}`);
+
+      // 显示测试结果对话框
+      AlertDialog.show({
+        title: 'WebDAV Native 测试结果',
+        message: summary,
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        confirm: {
+          value: '确定',
+          action: () => {}
+        }
+      });
+    } catch (error) {
+      logger.error(TAG, `Native测试失败: ${error}`);
+      promptAction.showToast({
+        message: `Native测试失败: ${error}`,
+        duration: 3000
+      });
+    }
+  }
+
+  async runFullNativeTest(): Promise<void> {
+    if (this.nativeTestRunning) return;
+    
+    this.nativeTestRunning = true;
+    this.nativeTestResults = [];
+    this.nativeTestSummary = '';
+    
+    try {
+      logger.info(TAG, '开始完整Native测试');
+      
+      const nativeConfig: WebDAVNativeConfig = {
+        serverUrl: this.webdavSettings.serverUrl,
+        username: this.webdavSettings.username,
+        password: this.webdavSettings.password,
+        basePath: this.webdavSettings.basePath,
+        timeoutMs: 30000,
+        verifySSL: false // 禁用SSL验证以支持自签名证书
+      };
+
+      const client = new WebDAVNativeClient(nativeConfig);
+      const testDir = this.nativeTestConfig.customTestPath || `_native_test_${Date.now()}`;
+      const testFile = `${testDir}/test_file.txt`;
+      const testContent = `Native Test Content - ${new Date().toISOString()}`;
+      let totalDuration = 0;
+      let passedCount = 0;
+
+      // 初始化客户端
+      const initStart = Date.now();
+      const initResult = await client.initialize();
+      const initDuration = Date.now() - initStart;
+      totalDuration += initDuration;
+      
+      if (!initResult) {
+        this.nativeTestResults.push({
+          testName: '初始化客户端',
+          success: false,
+          message: 'Native模块初始化失败',
+          duration: initDuration
+        });
+        this.nativeTestSummary = `测试失败: Native模块初始化失败`;
+        this.nativeTestRunning = false;
+        return;
+      }
+      
+      this.nativeTestResults.push({
+        testName: '初始化客户端',
+        success: true,
+        message: '客户端初始化成功',
+        duration: initDuration
+      });
+      passedCount++;
+
+      // 连接测试
+      if (this.nativeTestConfig.testConnection) {
+        const start = Date.now();
+        try {
+          const result = await client.testConnection();
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '连接测试',
+            success: result.success,
+            message: result.message,
+            duration
+          });
+          if (result.success) passedCount++;
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '连接测试',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 目录列表测试
+      if (this.nativeTestConfig.testList) {
+        const start = Date.now();
+        try {
+          const files = await client.list('');
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '目录列表 (PROPFIND)',
+            success: true,
+            message: `获取到 ${files.length} 个文件/目录`,
+            duration
+          });
+          passedCount++;
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '目录列表 (PROPFIND)',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 创建目录测试
+      if (this.nativeTestConfig.testCreateDir) {
+        const start = Date.now();
+        try {
+          const result = await client.createDirectory(testDir);
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '创建目录 (MKCOL)',
+            success: result.success,
+            message: result.success ? `目录创建成功: ${testDir}` : result.message,
+            duration
+          });
+          if (result.success) passedCount++;
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '创建目录 (MKCOL)',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 上传文件测试
+      if (this.nativeTestConfig.testUpload) {
+        const start = Date.now();
+        try {
+          const result = await client.putFileContents(testFile, testContent);
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '上传文件 (PUT)',
+            success: result.success,
+            message: result.success ? `上传成功: ${testFile}` : result.message,
+            duration
+          });
+          if (result.success) passedCount++;
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '上传文件 (PUT)',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 下载文件测试
+      if (this.nativeTestConfig.testDownload) {
+        const start = Date.now();
+        try {
+          const content = await client.getFileContents(testFile);
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          const contentMatch = content === testContent;
+          this.nativeTestResults.push({
+            testName: '下载文件 (GET)',
+            success: contentMatch,
+            message: contentMatch ? `下载成功，内容匹配` : `内容不匹配`,
+            duration
+          });
+          if (contentMatch) passedCount++;
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '下载文件 (GET)',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 删除文件测试
+      if (this.nativeTestConfig.testDelete) {
+        const start = Date.now();
+        try {
+          // 先删除文件
+          await client.deleteFile(testFile);
+          // 再删除目录
+          const result = await client.deleteFile(testDir);
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '删除文件 (DELETE)',
+            success: result.success,
+            message: result.success ? '删除成功' : result.message,
+            duration
+          });
+          if (result.success) passedCount++;
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '删除文件 (DELETE)',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 配额测试
+      if (this.nativeTestConfig.testQuota) {
+        const start = Date.now();
+        try {
+          const quota = await client.getQuota();
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          if (quota.success) {
+            const usedGB = (quota.usedBytes / 1024 / 1024 / 1024).toFixed(2);
+            const availableGB = (quota.availableBytes / 1024 / 1024 / 1024).toFixed(2);
+            this.nativeTestResults.push({
+              testName: '磁盘配额',
+              success: true,
+              message: `已用: ${usedGB}GB, 可用: ${availableGB}GB`,
+              duration
+            });
+            passedCount++;
+          } else {
+            this.nativeTestResults.push({
+              testName: '磁盘配额',
+              success: false,
+              message: quota.message || '不支持配额查询',
+              duration
+            });
+          }
+        } catch (e) {
+          const duration = Date.now() - start;
+          totalDuration += duration;
+          this.nativeTestResults.push({
+            testName: '磁盘配额',
+            success: false,
+            message: `${e}`,
+            duration
+          });
+        }
+      }
+
+      // 销毁客户端
+      client.destroy();
+
+      // 生成摘要
+      const totalTests = this.nativeTestResults.length;
+      this.nativeTestSummary = `总计: ${totalTests} | 通过: ${passedCount} | 失败: ${totalTests - passedCount} | 耗时: ${totalDuration}ms`;
+      
+      logger.info(TAG, `Native测试完成: ${this.nativeTestSummary}`);
+      
+    } catch (error) {
+      logger.error(TAG, `Native测试异常: ${error}`);
+      this.nativeTestResults.push({
+        testName: '测试异常',
+        success: false,
+        message: `${error}`,
+        duration: 0
+      });
+      this.nativeTestSummary = `测试异常: ${error}`;
+    } finally {
+      this.nativeTestRunning = false;
     }
   }
   
@@ -820,13 +1312,7 @@ struct BackupPage {
       }
     });
   }
-  
-  formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  }
-  
+
   formatDate(timestamp: number): string {
     const date = new Date(timestamp);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -1005,8 +1491,12 @@ struct BackupPage {
               // 备份列表
               if (this.currentTab === 'local') {
                 this.buildLocalBackupList()
-              } else {
+              } else if (this.currentTab === 'cloud') {
                 this.buildCloudBackupList()
+              } else if (this.currentTab === 'native_test') {
+                this.buildNativeTestPanel()
+              } else if (this.currentTab === 'ftp') {
+                this.buildFTPManagerPanel()
               }
             }
             .width('100%')
@@ -1156,6 +1646,68 @@ struct BackupPage {
           }
         })
         .animation({ duration: 150 })
+        
+        // Native测试Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.spanner_case_fill'))
+            .fontSize(14)
+            .fontColor([this.currentTab === 'native_test'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 6 })
+          
+          Text('Native测试')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.currentTab === 'native_test'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.currentTab === 'native_test'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.currentTab === 'native_test' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          color: '#4CAF50'
+        })
+        .onClick(() => {
+          this.currentTab = 'native_test';
+        })
+        .animation({ duration: 150 })
+        
+        // FTP管理器Tab
+        Row() {
+          SymbolGlyph($r('sys.symbol.folder_circle'))
+            .fontSize(14)
+            .fontColor([this.currentTab === 'ftp'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .margin({ right: 6 })
+          
+          Text('FTP管理')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.currentTab === 'ftp'
+              ? ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.currentTab === 'ftp'
+          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+          : Color.Transparent)
+        .border({
+          width: { top: this.currentTab === 'ftp' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          color: '#FF9800'
+        })
+        .onClick(() => {
+          this.currentTab = 'ftp';
+        })
+        .animation({ duration: 150 })
       }
     }
     .scrollable(ScrollDirection.Horizontal)
@@ -1163,6 +1715,250 @@ struct BackupPage {
     .height(35)
     .width('100%')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+  }
+
+  @Builder
+  buildNativeTestPanel() {
+    Column({ space: 16 }) {
+      // 标题区域
+      Row() {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.spanner_case_fill'))
+            .fontSize(20)
+            .fontColor(['#4CAF50'])
+          Text('WebDAV Native 测试')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        Blank()
+        if (this.nativeTestRunning) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color('#4CAF50')
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 16 })
+
+      // WebDAV配置状态
+      Column() {
+        Row() {
+          Text('服务器状态')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          if (this.webdavSettings.enabled) {
+            Row({ space: 4 }) {
+              Circle().width(8).height(8).fill('#4CAF50')
+              Text('已配置')
+                .fontSize(12)
+                .fontColor('#4CAF50')
+                .fontFamily(this.appFontFamily)
+            }
+          } else {
+            Row({ space: 4 }) {
+              Circle().width(8).height(8).fill('#FF5252')
+              Text('未配置')
+                .fontSize(12)
+                .fontColor('#FF5252')
+                .fontFamily(this.appFontFamily)
+            }
+          }
+        }
+        .width('100%')
+        
+        if (this.webdavSettings.enabled) {
+          Text(this.webdavSettings.serverUrl)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .margin({ top: 4 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .borderRadius(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .margin({ left: 16, right: 16 })
+
+      // 测试选项配置
+      Column({ space: 12 }) {
+        Text('测试项目')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+
+        this.buildTestOptionRow('连接测试', this.nativeTestConfig.testConnection, (v: boolean) => {
+          this.nativeTestConfig.testConnection = v;
+        })
+        this.buildTestOptionRow('目录列表 (PROPFIND)', this.nativeTestConfig.testList, (v: boolean) => {
+          this.nativeTestConfig.testList = v;
+        })
+        this.buildTestOptionRow('创建目录 (MKCOL)', this.nativeTestConfig.testCreateDir, (v: boolean) => {
+          this.nativeTestConfig.testCreateDir = v;
+        })
+        this.buildTestOptionRow('上传文件 (PUT)', this.nativeTestConfig.testUpload, (v: boolean) => {
+          this.nativeTestConfig.testUpload = v;
+        })
+        this.buildTestOptionRow('下载文件 (GET)', this.nativeTestConfig.testDownload, (v: boolean) => {
+          this.nativeTestConfig.testDownload = v;
+        })
+        this.buildTestOptionRow('删除文件 (DELETE)', this.nativeTestConfig.testDelete, (v: boolean) => {
+          this.nativeTestConfig.testDelete = v;
+        })
+        this.buildTestOptionRow('磁盘配额', this.nativeTestConfig.testQuota, (v: boolean) => {
+          this.nativeTestConfig.testQuota = v;
+        })
+      }
+      .width('100%')
+      .padding(16)
+      .borderRadius(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .margin({ left: 16, right: 16 })
+
+      // 自定义测试路径
+      Column({ space: 8 }) {
+        Text('自定义测试路径（可选）')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        
+        TextInput({ placeholder: '例如: /test/custom_folder', text: this.nativeTestConfig.customTestPath })
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(40)
+          .onChange((value: string) => {
+            this.nativeTestConfig.customTestPath = value;
+          })
+      }
+      .width('100%')
+      .padding(16)
+      .borderRadius(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .margin({ left: 16, right: 16 })
+
+      // 运行测试按钮
+      Button(this.nativeTestRunning ? '测试中...' : '运行完整测试')
+        .width('90%')
+        .height(48)
+        .fontSize(16)
+        .fontFamily(this.appFontFamily)
+        .fontColor('#FFFFFF')
+        .backgroundColor(this.nativeTestRunning ? '#9E9E9E' : '#4CAF50')
+        .borderRadius(24)
+        .enabled(!this.nativeTestRunning && this.webdavSettings.enabled)
+        .onClick(async () => {
+          await this.runFullNativeTest();
+        })
+
+      // 测试结果区域
+      if (this.nativeTestResults.length > 0) {
+        Column({ space: 8 }) {
+          Row() {
+            Text('测试结果')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Blank()
+            Button('清除')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .backgroundColor('transparent')
+              .onClick(() => {
+                this.nativeTestResults = [];
+                this.nativeTestSummary = '';
+              })
+          }
+          .width('100%')
+
+          ForEach(this.nativeTestResults, (result: NativeTestResult) => {
+            this.buildTestResultRow(result)
+          })
+
+          if (this.nativeTestSummary) {
+            Text(this.nativeTestSummary)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+              .width('100%')
+              .margin({ top: 8 })
+          }
+        }
+        .width('100%')
+        .padding(16)
+        .borderRadius(12)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .margin({ left: 16, right: 16, bottom: 16 })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  buildTestOptionRow(label: string, checked: boolean, onChange: (value: boolean) => void) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Blank()
+      Toggle({ type: ToggleType.Switch, isOn: checked })
+        .selectedColor('#4CAF50')
+        .onChange((isOn: boolean) => {
+          onChange(isOn);
+        })
+    }
+    .width('100%')
+    .height(40)
+  }
+
+  @Builder
+  buildTestResultRow(result: NativeTestResult) {
+    Row({ space: 8 }) {
+      Text(result.success ? '✓' : '✗')
+        .fontSize(16)
+        .fontColor(result.success ? '#4CAF50' : '#FF5252')
+        .fontWeight(FontWeight.Bold)
+      
+      Column({ space: 2 }) {
+        Text(result.testName)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(result.message)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      
+      Text(`${result.duration}ms`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding({ top: 8, bottom: 8 })
+    .borderRadius(8)
+    .backgroundColor(result.success 
+      ? 'rgba(76, 175, 80, 0.1)' 
+      : 'rgba(255, 82, 82, 0.1)')
   }
 
   @Builder
@@ -1280,10 +2076,15 @@ struct BackupPage {
               // 删除配置按钮
               Button() {
                 Row() {
-                  Image($r('sys.symbol.clean_fill'))
+                  Image($r('sys.symbol.trash'))
                     .width(16)
                     .height(16)
                     .fillColor('#FFFFFF')
+                  Text('删除')
+                    .fontSize(12)
+                    .fontColor('#FFFFFF')
+                    .fontFamily(this.appFontFamily)
+                    .margin({ left: 4 })
                 }
               }
               .backgroundColor('rgba(255, 82, 82, 0.6)')
@@ -1397,6 +2198,22 @@ struct BackupPage {
                   this.webdavSettings.lastTestMessage = result.message;
                   this.webdavSettings.needCreateDir = result.needCreateDir;
                   await this.persistWebDAVSettings(this.webdavSettings);
+                })
+              
+              Blank().width(8)
+              
+              Button('Native测试')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor('#4CAF50')
+                .backgroundColor('transparent')
+                .borderRadius(6)
+                .border({
+                  width: 1,
+                  color: '#4CAF50'
+                })
+                .onClick(async () => {
+                  await this.runNativeWebDAVTest();
                 })
               
               Blank().width(8)
@@ -1910,6 +2727,785 @@ struct BackupPage {
       .height('100%')
       .backgroundColor('rgba(0, 0, 0, 0.5)')
       .justifyContent(FlexAlign.Center)
+    }
+  }
+  
+  @Builder
+  buildFTPManagerPanel() {
+    Column({ space: 12 }) {
+      // 连接状态和配置区域
+      if (!this.ftpConnected) {
+        // 未连接时显示连接列表
+        this.buildFTPConnectionList()
+      } else {
+        // 已连接时显示文件浏览器
+        this.buildFTPFileBrowser()
+      }
+      
+      // 编辑对话框
+      if (this.showFTPEditDialog) {
+        this.buildFTPEditDialog()
+      }
+    }
+    .width('100%')
+  }
+  
+  @Builder
+  buildFTPConnectionList() {
+    Column({ space: 12 }) {
+      // 标题和添加按钮
+      Row() {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.folder_circle'))
+            .fontSize(20)
+            .fontColor(['#FF9800'])
+          Text('FTP 连接管理')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        Blank()
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(16)
+              .fontColor(['#FFFFFF'])
+            Text('添加').fontSize(13).fontColor('#FFFFFF').fontFamily(this.appFontFamily)
+          }
+        }
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor('#FF9800')
+        .borderRadius(6)
+        .onClick(() => {
+          this.ftpEditingConnection = null;
+          this.ftpConnectionName = '';
+          this.showFTPEditDialog = true;
+        })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 16 })
+
+      // 连接列表
+      if (this.savedFTPConnections.length === 0) {
+        Column() {
+          SymbolGlyph($r('sys.symbol.folder_circle'))
+            .fontSize(48)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          Text('暂无保存的FTP连接')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 8 })
+          Text('点击右上角"添加"按钮创建新连接')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .height(200)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List({ space: 8 }) {
+          ForEach(this.savedFTPConnections, (conn: SavedFTPConnection) => {
+            ListItem() {
+              this.buildFTPConnectionItem(conn)
+            }
+          })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16 })
+      }
+      
+      // 错误提示
+      if (this.ftpTestResult) {
+        Text(this.ftpTestResult)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.ftpTestResult.startsWith('') ? '#4CAF50' : '#F44336')
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ left: 16, right: 16 })
+      }
+      
+      // 加载状态
+      if (this.ftpLoading) {
+        Row({ space: 8 }) {
+          LoadingProgress().width(20).height(20).color('#FF9800')
+          Text('连接中...').fontSize(13).fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding(16)
+      }
+    }
+  }
+  
+  @Builder
+  buildFTPConnectionItem(conn: SavedFTPConnection) {
+    Row({ space: 12 }) {
+      // 图标
+      Column() {
+        SymbolGlyph($r('sys.symbol.folder_circle'))
+          .fontSize(28)
+          .fontColor([conn.useFTPS ? '#4CAF50' : '#FF9800'])
+      }
+      .width(44)
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(8)
+      
+      // 连接信息
+      Column({ space: 2 }) {
+        Text(conn.name || conn.host)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        
+        Text(`${conn.host}:${conn.port}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Row({ space: 8 }) {
+          if (conn.useFTPS) {
+            Text('FTPS')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#4CAF50')
+              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              .backgroundColor('#E8F5E9')
+              .borderRadius(4)
+          }
+          Text(`@${conn.username}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      
+      // 操作按钮
+      Row({ space: 4 }) {
+        // 编辑
+        Button() {
+          SymbolGlyph($r('sys.symbol.square_and_pencil'))
+            .fontSize(18)
+            .fontColor(['#2196F3'])
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.ftpEditingConnection = conn;
+          this.ftpConnectionName = conn.name;
+          this.showFTPEditDialog = true;
+        })
+        
+        // 删除
+        Button() {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(18)
+            .fontColor(['#F44336'])
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          AlertDialog.show({
+            title: '删除连接',
+            message: `确定要删除 "${conn.name || conn.host}" 吗？`,
+            primaryButton: { value: '取消', action: () => {} },
+            secondaryButton: {
+              value: '删除',
+              fontColor: '#F44336',
+              action: () => this.deleteFTPConnection(conn.id)
+            }
+          });
+        })
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .borderRadius(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .onClick(() => this.connectToSavedFTP(conn))
+  }
+  
+  @Builder
+  buildFTPEditDialog() {
+    Column() {
+      Column({ space: 12 }) {
+        // 标题
+        Text(this.ftpEditingConnection ? '编辑FTP连接' : '添加FTP连接')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        // 连接名称
+        TextInput({ placeholder: '连接名称（可选）', text: this.ftpConnectionName })
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .height(44)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .onChange((value: string) => { this.ftpConnectionName = value; })
+        
+        // 主机地址
+        TextInput({ placeholder: 'FTP服务器地址', text: this.ftpEditingConnection?.host || '' })
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .height(44)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .onChange((value: string) => {
+            if (this.ftpEditingConnection) {
+              this.ftpEditingConnection.host = value;
+            } else {
+              this.ftpEditingConnection = createFTPConnection(this.ftpConnectionName, value, 21, '', '', false, true);
+            }
+          })
+        
+        // 端口
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '端口', text: (this.ftpEditingConnection?.port || 21).toString() })
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .type(InputType.Number)
+            .width(100)
+            .height(44)
+            .borderRadius(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              if (this.ftpEditingConnection) {
+                this.ftpEditingConnection.port = parseInt(value) || 21;
+              }
+            })
+          
+          Row({ space: 6 }) {
+            Checkbox().select(this.ftpEditingConnection?.useFTPS || false).selectedColor('#FF9800')
+              .onChange((value: boolean) => {
+                if (this.ftpEditingConnection) {
+                  this.ftpEditingConnection.useFTPS = value;
+                  this.ftpEditingConnection.port = value ? 990 : 21;
+                }
+              })
+            Text('FTPS').fontSize(13).fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          
+          Row({ space: 6 }) {
+            Checkbox().select(this.ftpEditingConnection?.passive !== false).selectedColor('#FF9800')
+              .onChange((value: boolean) => {
+                if (this.ftpEditingConnection) {
+                  this.ftpEditingConnection.passive = value;
+                }
+              })
+            Text('被动模式').fontSize(13).fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+        
+        // 用户名
+        TextInput({ placeholder: '用户名', text: this.ftpEditingConnection?.username || '' })
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .height(44)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .onChange((value: string) => {
+            if (this.ftpEditingConnection) {
+              this.ftpEditingConnection.username = value;
+            }
+          })
+        
+        // 密码
+        TextInput({ placeholder: '密码', text: this.ftpEditingConnection?.password || '' })
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .type(InputType.Password)
+          .height(44)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .onChange((value: string) => {
+            if (this.ftpEditingConnection) {
+              this.ftpEditingConnection.password = value;
+            }
+          })
+        
+        // 按钮
+        Row({ space: 12 }) {
+          Button('取消')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(44)
+            .onClick(() => {
+              this.showFTPEditDialog = false;
+              this.ftpEditingConnection = null;
+            })
+          
+          Button('保存')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .fontFamily(this.appFontFamily)
+            .backgroundColor('#FF9800')
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(44)
+            .onClick(async () => {
+              if (!this.ftpEditingConnection?.host) {
+                this.getUIContext().getPromptAction().showToast({ message: '请输入服务器地址', duration: 2000 });
+                return;
+              }
+              
+              this.ftpEditingConnection.name = this.ftpConnectionName || this.ftpEditingConnection.host;
+              
+              // 检查是新建还是编辑
+              const existingIndex = this.savedFTPConnections.findIndex((c: SavedFTPConnection) => c.id === this.ftpEditingConnection!.id);
+              if (existingIndex >= 0) {
+                await this.updateFTPConnection(this.ftpEditingConnection);
+              } else {
+                await this.addFTPConnection(this.ftpEditingConnection);
+              }
+              
+              this.showFTPEditDialog = false;
+              this.ftpEditingConnection = null;
+              this.getUIContext().getPromptAction().showToast({ message: '保存成功', duration: 2000 });
+            })
+        }
+        .width('100%')
+      }
+      .width('90%')
+      .padding(20)
+      .borderRadius(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0, 0, 0, 0.5)')
+    .justifyContent(FlexAlign.Center)
+  }
+  
+  @Builder
+  buildFTPFileBrowser() {
+    Column({ space: 0 }) {
+      // 顶部工具栏
+      Row({ space: 8 }) {
+        // 断开连接按钮
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.xmark_circle'))
+              .fontSize(16)
+              .fontColor(['#FFFFFF'])
+            Text('断开').fontSize(13).fontColor('#FFFFFF').fontFamily(this.appFontFamily)
+          }
+        }
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor('#F44336')
+        .borderRadius(6)
+        .onClick(() => this.disconnectFTP())
+        
+        // 服务器信息
+        Text(this.currentFTPConnection ? `${this.currentFTPConnection.name || this.currentFTPConnection.host}` : '')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        // 刷新按钮
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+            .fontSize(18)
+            .fontColor(['#FF9800'])
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .onClick(() => this.refreshFTPList())
+        
+        // 新建文件夹按钮
+        Button() {
+          SymbolGlyph($r('sys.symbol.folder_badge_plus'))
+            .fontSize(18)
+            .fontColor(['#FF9800'])
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .onClick(() => this.createFTPDirectory())
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+      
+      // 当前路径
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.folder'))
+          .fontSize(16)
+          .fontColor(['#FF9800'])
+        Text(this.ftpCurrentPath || '/')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        
+        // 返回上级目录
+        if (this.ftpCurrentPath !== '/') {
+          Button() {
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.arrow_up'))
+                .fontSize(14)
+                .fontColor(['#FF9800'])
+              Text('上级').fontSize(12).fontColor('#FF9800').fontFamily(this.appFontFamily)
+            }
+          }
+          .height(28)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(6)
+          .onClick(() => this.navigateToParent())
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 8 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      
+      // 文件列表
+      if (this.ftpLoading) {
+        Column() {
+          LoadingProgress().width(40).height(40).color('#FF9800')
+          Text('加载中...').fontSize(13).fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .height(200)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.ftpFiles.length === 0) {
+        Column() {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(48)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          Text('目录为空').fontSize(14).fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .height(200)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List({ space: 0 }) {
+          ForEach(this.ftpFiles, (file: FTPFileInfo) => {
+            ListItem() {
+              this.buildFTPFileItem(file)
+            }
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+  
+  @Builder
+  buildFTPFileItem(file: FTPFileInfo) {
+    Row({ space: 12 }) {
+      // 文件图标
+      SymbolGlyph(file.isDirectory ? $r('sys.symbol.folder_fill') : $r('sys.symbol.doc_plaintext_fill'))
+        .fontSize(24)
+        .fontColor([file.isDirectory ? '#FF9800' : '#2196F3'])
+      
+      // 文件信息
+      Column({ space: 2 }) {
+        Text(file.name)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        
+        Row({ space: 8 }) {
+          if (!file.isDirectory && file.size > 0) {
+            Text(this.formatFileSize(file.size))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          if (file.permissions) {
+            Text(file.permissions)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      
+      // 操作按钮
+      if (!file.isDirectory) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+            .fontSize(20)
+            .fontColor(['#4CAF50'])
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => this.downloadFTPFile(file))
+      }
+      
+      Button() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(20)
+          .fontColor(['#F44336'])
+      }
+      .width(36)
+      .height(36)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => this.deleteFTPItem(file))
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .onClick(() => {
+      if (file.isDirectory) {
+        this.navigateToDirectory(file.path);
+      }
+    })
+  }
+  
+  // FTP操作方法
+  disconnectFTP(): void {
+    this.currentFTPConnection = null;
+    if (this.ftpClient) {
+      this.ftpClient.destroy();
+      this.ftpClient = null;
+    }
+    this.ftpConnected = false;
+    this.ftpFiles = [];
+    this.ftpCurrentPath = '/';
+    this.ftpTestResult = '';
+  }
+  
+  async refreshFTPList(): Promise<void> {
+    if (!this.ftpClient) return;
+    
+    this.ftpLoading = true;
+    try {
+      this.ftpFiles = await this.ftpClient.list(this.ftpCurrentPath);
+    } catch (e) {
+      logger.error(TAG, `刷新FTP列表失败: ${e}`);
+      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${e}`, duration: 2000 });
+    } finally {
+      this.ftpLoading = false;
+    }
+  }
+  
+  async navigateToDirectory(path: string): Promise<void> {
+    this.ftpCurrentPath = path;
+    await this.refreshFTPList();
+  }
+  
+  navigateToParent(): void {
+    if (this.ftpCurrentPath === '/') return;
+    const parts = this.ftpCurrentPath.split('/').filter((p: string) => p);
+    parts.pop();
+    this.ftpCurrentPath = '/' + parts.join('/');
+    if (this.ftpCurrentPath !== '/') this.ftpCurrentPath += '/';
+    this.refreshFTPList();
+  }
+  
+  async createFTPDirectory(): Promise<void> {
+    if (!this.ftpClient) return;
+    
+    // 使用简单的输入对话框
+    AlertDialog.show({
+      title: '新建文件夹',
+      message: '请输入文件夹名称',
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '创建',
+        action: async () => {
+          // 由于AlertDialog不支持输入，使用默认名称
+          const dirName = 'new_folder_' + Date.now();
+          const result = await this.ftpClient!.mkdir(this.ftpCurrentPath + dirName);
+          if (result.success) {
+            this.getUIContext().getPromptAction().showToast({ message: '文件夹创建成功', duration: 2000 });
+            await this.refreshFTPList();
+          } else {
+            this.getUIContext().getPromptAction().showToast({ message: `创建失败: ${result.message}`, duration: 2000 });
+          }
+        }
+      }
+    });
+  }
+  
+  async downloadFTPFile(file: FTPFileInfo): Promise<void> {
+    if (!this.ftpClient) return;
+    
+    this.getUIContext().getPromptAction().showToast({ message: '开始下载...', duration: 1000 });
+    
+    const localPath = `/data/storage/el2/base/haps/entry/files/downloads/${file.name}`;
+    const result = await this.ftpClient.download(file.path, localPath);
+    
+    if (result.success) {
+      this.getUIContext().getPromptAction().showToast({ message: `下载成功: ${file.name}`, duration: 2000 });
+    } else {
+      this.getUIContext().getPromptAction().showToast({ message: `下载失败: ${result.message}`, duration: 2000 });
+    }
+  }
+  
+  async deleteFTPItem(file: FTPFileInfo): Promise<void> {
+    if (!this.ftpClient) return;
+    
+    AlertDialog.show({
+      title: '确认删除',
+      message: `确定要删除 "${file.name}" 吗？`,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: '#F44336',
+        action: async () => {
+          const result = file.isDirectory 
+            ? await this.ftpClient!.rmdir(file.path)
+            : await this.ftpClient!.deleteFile(file.path);
+          
+          if (result.success) {
+            this.getUIContext().getPromptAction().showToast({ message: '删除成功', duration: 2000 });
+            await this.refreshFTPList();
+          } else {
+            this.getUIContext().getPromptAction().showToast({ message: `删除失败: ${result.message}`, duration: 2000 });
+          }
+        }
+      }
+    });
+  }
+  
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+  
+  // FTP连接配置持久化方法
+  async loadFTPConnections(): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const options: preferences.Options = { name: 'ftp_connections' };
+      const dataPreferences: preferences.Preferences = await preferences.getPreferences(context, options);
+      
+      const connectionsJson = await dataPreferences.get('connections', '[]') as string;
+      this.savedFTPConnections = JSON.parse(connectionsJson) as SavedFTPConnection[];
+      logger.info(TAG, `加载了 ${this.savedFTPConnections.length} 个FTP连接配置`);
+    } catch (e) {
+      logger.error(TAG, `加载FTP连接配置失败: ${e}`);
+      this.savedFTPConnections = [];
+    }
+  }
+  
+  async saveFTPConnections(): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const options: preferences.Options = { name: 'ftp_connections' };
+      const dataPreferences: preferences.Preferences = await preferences.getPreferences(context, options);
+      
+      await dataPreferences.put('connections', JSON.stringify(this.savedFTPConnections));
+      await dataPreferences.flush();
+      logger.info(TAG, `保存了 ${this.savedFTPConnections.length} 个FTP连接配置`);
+    } catch (e) {
+      logger.error(TAG, `保存FTP连接配置失败: ${e}`);
+    }
+  }
+  
+  async addFTPConnection(connection: SavedFTPConnection): Promise<void> {
+    this.savedFTPConnections.push(connection);
+    await this.saveFTPConnections();
+  }
+  
+  async updateFTPConnection(connection: SavedFTPConnection): Promise<void> {
+    const index = this.savedFTPConnections.findIndex((c: SavedFTPConnection) => c.id === connection.id);
+    if (index >= 0) {
+      this.savedFTPConnections[index] = connection;
+      await this.saveFTPConnections();
+    }
+  }
+  
+  async deleteFTPConnection(connectionId: string): Promise<void> {
+    this.savedFTPConnections = this.savedFTPConnections.filter((c: SavedFTPConnection) => c.id !== connectionId);
+    await this.saveFTPConnections();
+  }
+  
+  async connectToSavedFTP(connection: SavedFTPConnection): Promise<void> {
+    this.currentFTPConnection = connection;
+    this.ftpLoading = true;
+    this.ftpTestResult = '';
+    
+    try {
+      const config: FTPConfig = {
+        host: connection.host,
+        port: connection.port,
+        username: connection.username,
+        password: connection.password,
+        useFTPS: connection.useFTPS,
+        passive: connection.passive,
+        timeoutMs: connection.timeoutMs
+      };
+      
+      this.ftpClient = new FTPNativeClient(config);
+      const result = await this.ftpClient.testConnection();
+      
+      if (result.success) {
+        this.ftpConnected = true;
+        this.ftpCurrentPath = '/';
+        // 更新最后使用时间
+        connection.lastUsedAt = Date.now();
+        await this.updateFTPConnection(connection);
+        await this.refreshFTPList();
+      } else {
+        this.ftpTestResult = `❌ ${result.message}`;
+        this.ftpClient.destroy();
+        this.ftpClient = null;
+        this.currentFTPConnection = null;
+      }
+    } catch (e) {
+      this.ftpTestResult = `❌ 连接失败: ${e}`;
+      if (this.ftpClient) {
+        this.ftpClient.destroy();
+        this.ftpClient = null;
+      }
+      this.currentFTPConnection = null;
+    } finally {
+      this.ftpLoading = false;
     }
   }
 }

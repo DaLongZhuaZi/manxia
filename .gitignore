@@ -59,3 +59,31 @@ response.json
 *.jks
 *.keystore
 *.csr
+
+# Native build artifacts
+/entry/src/main/cpp/.cxx/
+/entry/.cxx/
+**/.cxx/
+**/CMakeFiles/
+**/cmake_install.cmake
+**/CMakeCache.txt
+**/Makefile
+
+# Third-party source code (too large, use pre-compiled libs)
+/entry/src/main/cpp/webdav/mbedtls-3.5.1/
+/entry/src/main/cpp/webdav/curl-8.5.0/
+/entry/src/main/cpp/webdav/install-mbedtls-arm64/
+/entry/src/main/cpp/webdav/install-curl-arm64/
+
+# Compiled native libraries (keep source, ignore build outputs)
+# Note: libs/ contains pre-compiled dependencies, should be tracked
+# /entry/libs/ - tracked for libcurl, mbedtls
+
+# DevEco Studio cache
+/.deveco/
+/entry/.preview/
+**/.preview/
+
+# Hvigor cache
+/.hvigor/
+**/hvigorfile.ts.timestamp
