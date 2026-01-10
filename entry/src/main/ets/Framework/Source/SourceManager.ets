@@ -512,6 +512,21 @@ export class SourceManager {
   }
 
   /**
+   * 更新图源的代理设置
+   * @param sourceId 图源ID
+   * @param requireProxy 是否需要代理
+   */
+  async updateSourceProxySetting(sourceId: number, requireProxy: boolean): Promise<void> {
+    try {
+      await this.dataManager.updateSourceProxySetting(sourceId, requireProxy);
+      logger.info(TAG, `图源 ${sourceId} 代理设置已更新: ${requireProxy}`);
+    } catch (error) {
+      logger.error(TAG, `更新图源代理设置失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+  
+  /**
    * 清除缓存
    */
   clearCache(): void {

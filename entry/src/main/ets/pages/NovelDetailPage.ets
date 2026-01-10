@@ -22,11 +22,12 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelReaderPageParams } from './NovelBookshelfPage';
 import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
-import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS } from '../Models/TextReaderModels';
+import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType, DEFAULT_TEXT_STYLE, TextAlignment } from '../Models/TextReaderModels';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { AppColors } from '../Framework/Theme/AppColors';
 
 const TAG = 'NovelDetailPage';
 
@@ -1172,6 +1173,8 @@ export struct NovelDetailPage {
       }
       
       if (bookSettings) {
+        // 兼容性处理：确保所有子对象完整
+        this.ensureSettingsComplete(bookSettings);
         this.novelSettings = bookSettings;
         logger.info(TAG, `加载书籍专属设置: ${this.bookId}`);
       } else {
@@ -1180,12 +1183,46 @@ export struct NovelDetailPage {
           SettingKeys.NOVEL_READER_SETTINGS, 
           DEFAULT_TEXT_READER_SETTINGS
         );
+        // 兼容性处理：确保所有子对象完整
+        this.ensureSettingsComplete(globalSettings);
         this.novelSettings = globalSettings;
         logger.info(TAG, `使用全局小说阅读器设置`);
       }
     } catch (error) {
       logger.error(TAG, `加载小说设置失败: ${String(error)}`);
       this.novelSettings = DEFAULT_TEXT_READER_SETTINGS;
+    }
+  }
+  
+  /**
+   * 确保设置对象的所有子属性完整（兼容旧版本设置）
+   */
+  private ensureSettingsComplete(settings: TextReaderSettings): void {
+    // 确保background对象完整
+    if (!settings.background) {
+      settings.background = { type: BackgroundType.COLOR, color: '#F5F0E1' };
+    } else if (!settings.background.type) {
+      settings.background.type = BackgroundType.COLOR;
+    }
+    
+    // 确保textStyle对象完整
+    if (!settings.textStyle) {
+      settings.textStyle = DEFAULT_TEXT_STYLE;
+    } else {
+      if (settings.textStyle.fontSize === undefined) settings.textStyle.fontSize = 18;
+      if (settings.textStyle.lineHeight === undefined) settings.textStyle.lineHeight = 1.8;
+      if (settings.textStyle.paragraphSpacing === undefined) settings.textStyle.paragraphSpacing = 16;
+      if (settings.textStyle.firstLineIndent === undefined) settings.textStyle.firstLineIndent = 2;
+      if (settings.textStyle.letterSpacing === undefined) settings.textStyle.letterSpacing = 0.5;
+      if (settings.textStyle.textColor === undefined) settings.textStyle.textColor = '#333333';
+      if (settings.textStyle.fontWeight === undefined) settings.textStyle.fontWeight = 400;
+      if (settings.textStyle.fontFamily === undefined) settings.textStyle.fontFamily = 'HarmonyOS Sans';
+      if (settings.textStyle.textAlignment === undefined) settings.textStyle.textAlignment = TextAlignment.JUSTIFY;
+    }
+    
+    // 确保pageMargins对象完整
+    if (!settings.pageMargins) {
+      settings.pageMargins = { top: 48, bottom: 48, left: 24, right: 24 };
     }
   }
 

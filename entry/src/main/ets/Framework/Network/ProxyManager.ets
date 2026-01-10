@@ -309,6 +309,14 @@ export class ProxyManager {
     
     return results;
   }
+  
+  /**
+   * 测试单个URL
+   * @param url 要测试的URL
+   */
+  async testSingleUrl(url: string): Promise<ProxyTestResult> {
+    return await this.testProxy(url, url.startsWith('https'));
+  }
 }
 
 /**

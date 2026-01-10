@@ -1583,6 +1583,17 @@ export class LegadoRuleAnalyzer {
       return this.getStringByLegadoRule(selector);
     }
     
+    // 检查是否是纯属性名（如 text, href, src 等）
+    // 这种情况下直接从当前内容中提取属性，不需要查找元素
+    const pureAttrNames = ['text', 'href', 'src', 'html', 'textcontent', 'textnodes', 'owntext', 
+                           'innerhtml', 'title', 'alt', 'value', 'content', 'class', 'id', 'name',
+                           'data-src', 'data-original', 'type', 'placeholder', 'action'];
+    const lowerSelector = selector.trim().toLowerCase();
+    if (pureAttrNames.includes(lowerSelector) || lowerSelector.startsWith('data-')) {
+      // 纯属性名，直接从当前内容提取
+      return this.extractAttribute(this.content, lowerSelector);
+    }
+    
     // 解析选择器和属性
     const result = this.parseCSSSelectorAndAttr(selector);
     
@@ -2555,9 +2566,12 @@ export class LegadoRuleAnalyzer {
     const isCssClassSelector = selector.startsWith('.') && !/^\.\d/.test(selector);
     const isCssIdSelector = selector.startsWith('#');
     
-    if (isCssClassSelector || isCssIdSelector) {
-      // 直接使用findElementsBySimpleSelector处理CSS标准选择器
-      logger.debug(TAG, `findElementsBySingleSelector: CSS选择器=${selector}, htmlLen=${html.length}`);
+    // 检查是否包含空格（后代选择器），如 "#chapterlist li a"
+    const hasDescendant = selector.includes(' ');
+    
+    if ((isCssClassSelector || isCssIdSelector) && !hasDescendant) {
+      // 简单的CSS选择器（不含后代选择器），直接使用findElementsBySimpleSelector处理
+      logger.debug(TAG, `findElementsBySingleSelector: 简单CSS选择器=${selector}, htmlLen=${html.length}`);
       return this.findElementsBySimpleSelector(html, selector);
     }
     

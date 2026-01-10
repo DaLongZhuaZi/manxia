@@ -1,0 +1,556 @@
+Device info:nova 12 Ultra
+Build info:ADL-AL00U 6.0.0.125(SP8C00E125R2P7)
+Fingerprint:8d5cf692d75c7d406d94773fc954365cd4acb6e97926e961b945853b43ffec35
+Timestamp:2026-01-10 21:15:55.962
+Module name:com.dlzz.manxia
+Version:0.0.5
+VersionCode:1013027
+PreInstalled:No
+Foreground:Yes
+Pid:16308
+Uid:20020189
+Process life time:60s
+Process Memory(kB): 362344(Rss)
+Device Memory(kB): Total 11863248, Free 561276, Available 3274752
+Page switch history:
+  21:15:55.006 /ets/pages/MainMenuPage:NovelReaderPage
+  21:15:49.058 /ets/pages/MainMenuPage:NovelDetailPage
+  21:15:43.279 /ets/pages/MainMenuPage:NovelBookshelfPage
+  21:14:58.501 :enters foreground
+Reason:TypeError
+Error name:TypeError
+Error message:Cannot read property fontPath of undefined
+Stacktrace:
+    at registerCustomFontIfNeeded entry (entry/src/main/ets/components/TextReaderComponent.ets:178:46)
+    at aboutToAppear entry (entry/src/main/ets/components/TextReaderComponent.ets:164:10)
+HybridStack:
+#00 pc 0000000000565084 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#01 pc 0000000000563384 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#02 pc 0000000000562d60 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#03 pc 000000000044322c /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#04 pc 000000000034c358 /system/lib64/platformsdk/libark_jsruntime.so(panda::ecmascript::ObjectFactory::GetJSError(panda::ecmascript::base::ErrorType const&, char const*, panda::ecmascript::StackCheck)+292)(7a9330d8d0cab080a6916701f498ea55)
+#05 pc 00000000003125a0 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#06 pc 000000000030fa84 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#07 pc 0000000000e2714c /system/lib64/module/arkcompiler/stub.an(RTStub_CallRuntime+44)
+#08 pc 0000000000479ac8 /system/lib64/module/arkcompiler/stub.an(BCStub_HandleLdobjbynameImm8Id16StwCopy+5408)
+#09 at registerCustomFontIfNeeded entry (entry/src/main/ets/components/TextReaderComponent.ets:178:46)
+#10 at aboutToAppear entry (entry/src/main/ets/components/TextReaderComponent.ets:164:10)
+#11 pc 00000000002b2f10 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+#12 pc 00000000006d7e30 /system/lib64/platformsdk/libark_jsruntime.so(panda::FunctionRef::Call(panda::ecmascript::EcmaVM const*, panda::Local<panda::JSValueRef>, panda::Local<panda::JSValueRef> const*, int)+520)(7a9330d8d0cab080a6916701f498ea55)
+#13 pc 0000000000a29cf4 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#14 pc 0000000000c29a2c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#15 pc 0000000000abb138 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#16 pc 0000000000abaf90 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#17 pc 0000000000a2b464 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::CustomNode::Render(long)+860)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#18 pc 0000000000a2bb84 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::CustomNode::GetFrameChildByIndex(unsigned int, bool, bool, bool)+152)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#19 pc 0000000000afac90 /system/lib64/platformsdk/libace_compatible.z.so(non-virtual thunk to OHOS::Ace::NG::FrameNode::GetChildByIndex(unsigned int, bool)+1372)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#20 pc 0000000000a8ad24 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#21 pc 000000000219025c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#22 pc 0000000000b75750 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FrameNode::Measure(std::__h::optional<OHOS::Ace::NG::LayoutConstraintT<float>> const&)+1936)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#23 pc 0000000000b6d8f4 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FlexLayoutAlgorithm::MeasureAndCleanMagicNodes(OHOS::Ace::NG::LayoutWrapper*, OHOS::Ace::NG::FlexItemProperties&)+672)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#24 pc 0000000000b68c48 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FlexLayoutAlgorithm::Measure(OHOS::Ace::NG::LayoutWrapper*)+2476)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#25 pc 000000000219025c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#26 pc 0000000000b75750 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FrameNode::Measure(std::__h::optional<OHOS::Ace::NG::LayoutConstraintT<float>> const&)+1936)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#27 pc 0000000000a2d454 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FrameNode::CreateLayoutTask(bool, OHOS::Ace::LayoutType)+2932)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#28 pc 0000000000aa32c8 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#29 pc 0000000000a9fdb8 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#30 pc 0000000001909278 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::PipelineContext::FlushVsync(unsigned long, unsigned long)+1180)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#31 pc 000000000136561c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#32 pc 000000000137c868 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+#33 pc 0000000000052930 /system/lib64/platformsdk/libwmutil.z.so(OHOS::Rosen::VsyncStation::VsyncCallbackInner(long, long)+272)(b054f8ffe905ccd3c6b7668ad53e125b)
+#34 pc 00000000000539ac /system/lib64/platformsdk/libwmutil.z.so(b054f8ffe905ccd3c6b7668ad53e125b)
+#35 pc 000000000001bf9c /system/lib64/libvsync.z.so(543c171dcb41b910b4decc3af85a9397)
+#36 pc 000000000002ffc8 /system/lib64/libvsync.z.so(OHOS::Rosen::VSyncCallBackListener::OnReadable(int)+792)(543c171dcb41b910b4decc3af85a9397)
+#37 pc 0000000000033240 /system/lib64/chipset-sdk-sp/libeventhandler.z.so(13ee6af084312aed7d56fa5086b9592e)
+#38 pc 0000000000017b08 /system/lib64/chipset-sdk-sp/libeventhandler.z.so(13ee6af084312aed7d56fa5086b9592e)
+#39 pc 0000000000016f3c /system/lib64/chipset-sdk-sp/libeventhandler.z.so(13ee6af084312aed7d56fa5086b9592e)
+#40 pc 000000000003e164 /system/lib64/chipset-sdk-sp/libeventhandler.z.so(OHOS::AppExecFwk::EventRunner::Run()+400)(13ee6af084312aed7d56fa5086b9592e)
+#41 pc 00000000000d38fc /system/lib64/platformsdk/libappkit_native.z.so(OHOS::AppExecFwk::MainThread::Start()+600)(6c1b6faa639e920aa253ddabececa286)
+#42 pc 0000000000005ae0 /system/lib64/appspawn/appspawn/libappspawn_ace.z.so(0235a752bcf3f5e2d4b3ac798cab3e8d)
+#43 pc 000000000000bd5c /system/bin/appspawn(d09bfeb11282e18c8bb6a3dfd21397d9)
+#44 pc 0000000000017528 /system/bin/appspawn(d09bfeb11282e18c8bb6a3dfd21397d9)
+#45 pc 0000000000014a50 /system/bin/appspawn(d09bfeb11282e18c8bb6a3dfd21397d9)
+#46 pc 0000000000017b90 /system/lib64/chipset-sdk-sp/libbegetutil.z.so(b2d372e73cb00907ae786283b8767081)
+#47 pc 00000000000174a8 /system/lib64/chipset-sdk-sp/libbegetutil.z.so(b2d372e73cb00907ae786283b8767081)
+#48 pc 0000000000014798 /system/lib64/chipset-sdk-sp/libbegetutil.z.so(b2d372e73cb00907ae786283b8767081)
+#49 pc 0000000000014228 /system/lib64/chipset-sdk-sp/libbegetutil.z.so(b2d372e73cb00907ae786283b8767081)
+#50 pc 000000000001174c /system/bin/appspawn(d09bfeb11282e18c8bb6a3dfd21397d9)
+#51 pc 000000000000f500 /system/bin/appspawn(d09bfeb11282e18c8bb6a3dfd21397d9)
+#52 pc 00000000000a898c /system/lib/ld-musl-aarch64.so.1(f83970fe414a8a0eaeb706794b1b2f7b)
+#53 pc 000000000000baa0 /system/bin/appspawn(d09bfeb11282e18c8bb6a3dfd21397d9)
+
+HiLog:
+01-10 21:15:48.407 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [][OnPointerEvent:242] ac: down: 542258
+01-10 21:15:48.407 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [P:D:542258][OnPointerEvent:649] recv
+01-10 21:15:48.408 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: HandleInputEvent: eid:4,InputId:542258,wid:532,ac:2
+01-10 21:15:48.409 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542258, fId:0, T:0, I=0, M=0
+01-10 21:15:48.410 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542258, TTHNI:fId: 0{ T: Refresh, D: 14 };{ T: List, D: 17 };
+01-10 21:15:48.410 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542258, TTHRTI: T ClickRecognizer info: { T: Row };T PanRecognizer info: { T: ListItem }; { T: Refresh };
+01-10 21:15:48.412 16308 16308 I C03919/com.dlzz.manxia/AceInputTracking: [(100000:100000:scope)] Consumed id:542258, last id:542256
+01-10 21:15:48.412 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: ConsumePointerEventInner: InputId:542258,wid:532,pointId:0,srcType:2,rect:[0,0,1224,2776],notify:1
+01-10 21:15:48.412 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [][OnPointerEvent:242] ac: move: 542259
+01-10 21:15:48.455 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [][OnPointerEvent:242] ac: move, first: 542260-(2026-01-10 21:15:48.413ms), 542265, count: 6, last: ac: up: 542266
+01-10 21:15:48.455 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [P:U:542266][OnPointerEvent:649] recv
+01-10 21:15:48.455 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: HandleInputEvent: eid:5,InputId:542266,wid:532,ac:4
+01-10 21:15:48.456 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542266, fId:0, T:1, I=0, M=0
+01-10 21:15:48.456 16308 16308 I C0391E/com.dlzz.manxia/AceGesture: [(100000:100000:scope)] Click try accept
+01-10 21:15:48.456 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] CLK RACC, T: Row
+01-10 21:15:48.457 16308 16308 I C03919/com.dlzz.manxia/AceInputTracking: [(100000:100000:scope)] Consumed id:542266, last id:542265
+01-10 21:15:48.457 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: ConsumePointerEventInner: InputId:542266,wid:532,pointId:0,srcType:2,rect:[0,0,1224,2776],notify:1
+01-10 21:15:48.458 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] sync with js stack, id: , UINodeId: 18, preStackSize: 1, newStackSize: 2
+01-10 21:15:48.458 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] find in nowhere, navigation stack create new node, index: 1, removeSize: 0, name: NovelDetailPage.
+01-10 21:15:48.461 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.461] 🔍 调试 [SandboxManager] 获取目录路径: files -> /data/storage/el2/base/haps/entry/files
+01-10 21:15:48.462 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.462] ℹ️ 信息 [GlobalTaskCoordinator] 页面已注册: NovelDetailPage, 当前总数: 2
+01-10 21:15:48.462 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.462] ℹ️ 信息 [PageLifecycleManager] [NovelDetailPage] 生命周期管理器已创建
+01-10 21:15:48.462 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] render current custom node: NovelDetailPage
+01-10 21:15:48.462 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.462] 🔍 调试 [ThemeManager] 注册主题变化监听器，当前监听器数量: 3
+01-10 21:15:48.462 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.462] ℹ️ 信息 [NovelDetailPage] 主题切换: light
+01-10 21:15:48.462 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.462] 🔍 调试 [ThemeManager] 已向新监听器通知当前主题: light
+01-10 21:15:48.462 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.462] 🔍 调试 [FontAware] 组件 NovelDetailPage_1768050948460 字体感知功能已初始化
+01-10 21:15:48.463 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.463] 🔍 调试 [ThemeAwareHelper] 组件 NovelDetailPage_1768050948460 主题感知功能已初始化，实际主题: light
+01-10 21:15:48.464 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] User defined Background color: #00000000
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] style from Color, color: #FF000000, flag: true
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] current system bar style, color: #FF000000, flag: true
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] load destination by buildermap
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onWillAppear state. navdestinationId:307, navigationId:18
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] last standard page index is 1
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] serialize navDestination param success! its index: 1
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] mountToParent navdestinationId:307, slot:1
+01-10 21:15:48.465 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] navDestination context is ready.
+01-10 21:15:48.465 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.465] ℹ️ 信息 [NovelDetailPage] HdsNavDestination.onReady 已触发
+01-10 21:15:48.466 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.466] 🔍 调试 [NovelSourceExecutor] 请求: GET https://www.huanmengacg.com/index.php/book/info/4967
+01-10 21:15:48.466 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.466] 🔍 调试 [NovelLoginManager] getCookieString: 查找=https://www.huanmengacg.com, 已保存的keys=[], initialized=true
+01-10 21:15:48.466 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.466] 🔍 调试 [NovelSourceExecutor] 查找Cookie: sourceUrl=https://www.huanmengacg.com, found=no
+01-10 21:15:48.467 16308 16308 I C015B0/com.dlzz.manxia/NETSTACK: [hi_app_event_report.cpp:75] AddProcessor enter
+01-10 21:15:48.467 16308 16308 W C02D07/com.dlzz.manxia/Verify: invalid configName=
+01-10 21:15:48.467 16308 16308 I C02D07/com.dlzz.manxia/ObserverMgr: register processor=1 exit
+01-10 21:15:48.470 16308 16308 I C015B0/com.dlzz.manxia/NetConnManager: Get json failed.
+01-10 21:15:48.470 16308 16308 I C015B0/com.dlzz.manxia/NetConnManager: GetConfig failed
+01-10 21:15:48.477 16308 17081 W C02D07/com.dlzz.manxia/Verify: invalid configName=
+01-10 21:15:48.477 16308 17081 I C02D07/com.dlzz.manxia/ObserverMgr: register processor=1 exit
+01-10 21:15:48.479 16308 17081 E C057C2/com.dlzz.manxia/IPCObjectProxy: PrintErrorDetailedInfo 163: failed, handle:33 error:201 desc:*.INetMgrEnhancedServer proxy:3871032000 time:86128458533212
+01-10 21:15:48.479 16308 17081 E C015B5/com.dlzz.manxia/NetMgrEnhanced: proxy SendRequest failed, error code: 201
+01-10 21:15:48.479 16308 17081 E C015B5/com.dlzz.manxia/NetMgrEnhanced: RegisterHandoverChangeCallback failed
+01-10 21:15:48.479 16308 17081 E C015B0/com.dlzz.manxia/ConnectivityExt:  RegisterHandoverChangeCallback fail
+01-10 21:15:48.479 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [http_handover_handler.cpp:162] http handover manager init fail
+01-10 21:15:48.480 16308 16308 W C03926/com.dlzz.manxia/AceTheme: [(100000:100000:scope)] style 125829872 not contains slider_pattern!
+01-10 21:15:48.480 16308 16308 W C03926/com.dlzz.manxia/AceTheme: [(100000:100000:scope)] style slider_pattern not contains block_outer_edge_color!
+01-10 21:15:48.480 16308 16308 W C03926/com.dlzz.manxia/AceTheme: [(100000:100000:scope)] style slider_pattern get attr slider_pixels_per_inch error!
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onAppear state. navdestinationId:307, navigationId:18
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] set system bar style, color: #FF000000, flag: true
+01-10 21:15:48.483 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] view: NavDestination/307 show
+01-10 21:15:48.483 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] View: NavDestination/228 lost focus
+01-10 21:15:48.483 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] Scope(NavDestination/228) has no last focusNode.
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] transition start, disableAllAnimation: 0, animated: 1, isPopPage: 0, isDialog: 0, isReplace: 0, isCustomAnimation: 0
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelBookshelfPage lifecycle change to onWillHide state. navdestinationId:228, navigationId:18
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onWillShow state. navdestinationId:307, navigationId:18
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] User defined Background color: #00000000
+01-10 21:15:48.483 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] style from Color, color: #FF000000, flag: true
+01-10 21:15:48.484 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] style from Color, color: #FF000000, flag: true
+01-10 21:15:48.484 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] set system bar style, color: #FF000000, flag: true
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] can't find inner navigation
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelBookshelfPage lifecycle change to onInactive state. navdestinationId:228, navigationId:18
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelBookshelfPage lifecycle change to onHidden state. navdestinationId:228, navigationId:18
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onShown state. navdestinationId:307, navigationId:18
+01-10 21:15:48.490 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.490] ℹ️ 信息 [NovelDetailPage] 页面显示，刷新阅读进度和缓存状态
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onActive state. navdestinationId:307, navigationId:18
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] can't find inner navigation
+01-10 21:15:48.490 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] navigation push animation start
+01-10 21:15:48.494 16308 16308 W C01408/com.dlzz.manxia/Text: generatePaintRegion: Call generatePaintRegion when paragraph is not formatted
+01-10 21:15:48.494 16308 16308 W C01408/com.dlzz.manxia/Text: generatePaintRegion: Call generatePaintRegion when paragraph is not formatted
+01-10 21:15:48.497 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] Request focus on focusView: NavDestination/307.
+01-10 21:15:48.497 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] FocusSwitch end, NavDestination/secure_field onBlur, NavDestination/secure_field onFocus, start: 2, end: 1, update: 2
+01-10 21:15:48.497 16308 16308 I C03933/com.dlzz.manxia/AceKeyboard: [(100000:100000:scope)] current focus node: (NavDestination/307). isDynamic: 0
+01-10 21:15:48.497 16308 16308 I C03933/com.dlzz.manxia/AceKeyboard: [(100000:100000:scope)] FrameNode(NavDestination/307) notNeedSoftKeyboard.
+01-10 21:15:48.498 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.498] 🔍 调试 [SandboxManager] 目录已存在，跳过创建: /data/storage/el2/base/haps/entry/files/novels
+01-10 21:15:48.498 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:48.498] ℹ️ 信息 [NovelChapterCacheManager] 小说缓存目录初始化: /data/storage/el2/base/haps/entry/files/novels
+01-10 21:15:48.499 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663275 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:48.499 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663276 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:48.499 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663277 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:48.499 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663278 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:48.773 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] User defined Background color: #00000000
+01-10 21:15:48.774 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] style from Color, color: #FF000000, flag: true
+01-10 21:15:48.774 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] set system bar style, color: #FF000000, flag: true
+01-10 21:15:49.059 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] navigation push animation end
+01-10 21:15:49.060 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] Clear page-level SystemBar type:2108
+01-10 21:15:49.060 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSystemBarPropertyForPage: win 532 property is nullptr use main window prop
+01-10 21:15:49.061 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] Clear page-level SystemBar type:2131
+01-10 21:15:49.061 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSystemBarPropertyForPage: win 532 property is nullptr use main window prop
+01-10 21:15:49.061 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] conditions are not met, don't set Orientation
+01-10 21:15:49.081 16308 17058 W C01719/com.dlzz.manxia/ffrt: 9:RecordSymbolAndBacktrace:397 Process:com.dlzz.manxia,Tid:17043,Qos:2,CWorker:3,EWorker:1,SWorker:2,TaskType:0,timeout:5s
+01-10 21:15:49.085 16308 17058 W C01719/com.dlzz.manxia/ffrt: 10:RecordSymbolAndBacktrace:405 Tid:17043, Name:OS_FFRT_2_6
+01-10 21:15:49.085 16308 17058 W C01719/com.dlzz.manxia/ffrt: #00 pc 000000000016a538 /lib/ld-musl-aarch64.so.1
+01-10 21:15:49.085 16308 17058 W C01719/com.dlzz.manxia/ffrt: #01 pc 000000000005eac8 /system/lib64/libpreload_native_rust.z.so
+01-10 21:15:49.085 16308 17058 W C01719/com.dlzz.manxia/ffrt: #02 pc 0000000000056774 /system/lib64/libpreload_native_rust.z.so
+01-10 21:15:49.085 16308 17058 W C01719/com.dlzz.manxia/ffrt: #03 pc 0000000000093304 /system/lib64/ndk/libffrt.so
+01-10 21:15:49.085 16308 17058 W C01719/com.dlzz.manxia/ffrt: #04 pc 000000000005ffec /system/lib64/ndk/libffrt.so
+01-10 21:15:50.077 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:95] BUSSINESS_ISSUE_HTTP: {PROCESS_NAME: com.dlzz.manxia, HTTP_INFO: {"uid":20020189,"response_code":200,"total_time":1582394,"namelookup_time":1577,"connect_time":459857,"pretransfer_time":974282,"size_upload":0,"size_download":12038,"speed_download":7607,"speed_upload":0,"effective_method":"GET","starttransfer_time":1570897,"content_type":"text/html; charset=utf-8","redirect_time":0,"redirect_count":0,"os_errno":0,"ssl_verifyresult":0,"appconnect_time":972954,"retry_after":0,"proxy_error":0,"queue_time":1582,"curl_code":0,"request_start_time":1768050950076}, TCP_INFO: {"tcpi_unacked":1,"tcpi_last_data_sent":10,"tcpi_last_ack_sent":0,"tcpi_last_data_recv":20,"tcpi_last_ack_recv":20,"tcpi_retransmits": 0,"tcpi_total_retrans":0,"tcpi_rtt":506506,"tcpi_rttvar":142521,"ip_type":10,"src_ip":"2408:8266:****:****:****:****:****:****","dst_ip":"2606:4700:****::****:****","src_port":37520,"dst_port":443}}
+01-10 21:15:50.085 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:78] Stack name: http, event report success iptype: 10, 0 are ignores.
+01-10 21:15:50.086 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [http_exec.cpp:499] taskid=-2147483648, size:12038, dns:1.577, connect:458.280, tls:513.097, firstSend:1.328, firstRecv:596.615, total:1582.394, redirect:0.000, no handover, errCode:0, RespCode:200, httpVer:3, method:GET, osErr:0, saddr:2408:8266:****:****:****:****:****:****, sport:37520, daddr:2606:4700:****::****:****, dport:443
+01-10 21:15:50.093 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.093] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.094 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.094] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=.book-title, parts=1
+01-10 21:15:50.094 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.094] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=.book-title, htmlLen=99706
+01-10 21:15:50.104 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.104] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=.book-title, found=1
+01-10 21:15:50.105 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.105] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.105 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.105] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=.book-metas.0, parts=1
+01-10 21:15:50.105 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.105] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=.book-metas.0, htmlLen=99706
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=.book-metas.0, found=4
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=.book-metas.1, parts=1
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=.book-metas.1, htmlLen=99706
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=.book-metas.1, found=4
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=.book-metas.2, parts=1
+01-10 21:15:50.109 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.109] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=.book-metas.2, htmlLen=99706
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=.book-metas.2, found=4
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=.book-metas.3, parts=1
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=.book-metas.3, htmlLen=99706
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=.book-metas.3, found=4
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=.book-summary, parts=1
+01-10 21:15:50.110 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.110] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=.book-summary, htmlLen=99706
+01-10 21:15:50.113 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.113] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=.book-summary, found=1
+01-10 21:15:50.113 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.113] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.113 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.113] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=dt@img, parts=2
+01-10 21:15:50.114 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.114] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: selector=dt, htmlLen=99706, startsWithId=false, startsWithClass=false
+01-10 21:15:50.117 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.117] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=dt, found=1
+01-10 21:15:50.117 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.117] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: selector=img, htmlLen=147, startsWithId=false, startsWithClass=false
+01-10 21:15:50.117 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.117] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[1]=img, found=1
+01-10 21:15:50.118 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.118] 🔍 调试 [NovelSourceExecutor] 请求: GET https://www.huanmengacg.com/index.php/book/info/4967
+01-10 21:15:50.118 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.118] 🔍 调试 [NovelLoginManager] getCookieString: 查找=https://www.huanmengacg.com, 已保存的keys=[], initialized=true
+01-10 21:15:50.118 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.118] 🔍 调试 [NovelSourceExecutor] 查找Cookie: sourceUrl=https://www.huanmengacg.com, found=no
+01-10 21:15:50.121 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] User defined Background color: #00000000
+01-10 21:15:50.121 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] style from Color, color: #FF000000, flag: true
+01-10 21:15:50.121 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] set system bar style, color: #FF000000, flag: true
+01-10 21:15:50.783 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:95] BUSSINESS_ISSUE_HTTP: {PROCESS_NAME: com.dlzz.manxia, HTTP_INFO: {"uid":20020189,"response_code":200,"total_time":662057,"namelookup_time":283,"connect_time":0,"pretransfer_time":891,"size_upload":0,"size_download":12038,"speed_download":18182,"speed_upload":0,"effective_method":"GET","starttransfer_time":654613,"content_type":"text/html; charset=utf-8","redirect_time":0,"redirect_count":0,"os_errno":0,"ssl_verifyresult":0,"appconnect_time":0,"retry_after":0,"proxy_error":0,"queue_time":294,"curl_code":0,"request_start_time":1768050950782}, TCP_INFO: {"tcpi_unacked":0,"tcpi_last_data_sent":660,"tcpi_last_ack_sent":0,"tcpi_last_data_recv":10,"tcpi_last_ack_recv":10,"tcpi_retransmits": 0,"tcpi_total_retrans":0,"tcpi_rtt":547168,"tcpi_rttvar":148714,"ip_type":10,"src_ip":"2408:8266:****:****:****:****:****:****","dst_ip":"2606:4700:****::****:****","src_port":37520,"dst_port":443}}
+01-10 21:15:50.783 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:65] Stack name: http, event report failed, iptype: 10, ignores: 1
+01-10 21:15:50.783 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_client.cpp:210] Send to CHR failed, error code 1
+01-10 21:15:50.783 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [http_exec.cpp:499] taskid=-2147483647, size:12038, dns:0.283, connect:0.000, tls:0.000, firstSend:0.608, firstRecv:653.722, total:662.057, redirect:0.000, no handover, errCode:0, RespCode:200, httpVer:3, method:GET, osErr:0, saddr:2408:8266:****:****:****:****:****:****, sport:37520, daddr:2606:4700:****::****:****, dport:443
+01-10 21:15:50.790 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.790] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:50.790 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.790] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=#chapterlist li a, parts=1
+01-10 21:15:50.791 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.791] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=#chapterlist li a, htmlLen=99706
+01-10 21:15:50.805 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.805] 🔍 调试 [LegadoRuleAnalyzer] findElementsById: 找到元素 <ul id="chapterlist">
+01-10 21:15:50.808 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.808] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=#chapterlist li a, found=1
+01-10 21:15:50.846 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.846] ℹ️ 信息 [NovelSourceExecutor] 章节列表: 1 章 (1 页)
+01-10 21:15:50.846 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.846] ℹ️ 信息 [NovelDetailPage] 加载完成: 欢迎来到实力至上主义的教室, 1章
+01-10 21:15:50.971 16308 16308 I C02D66/com.dlzz.manxia/Hiview-PerfMonitor: ProcessJank: JankFrameMonitor::ProcessJank jank >= threshold
+01-10 21:15:50.973 16308 16308 W C01320/com.dlzz.manxia/JsEnv: [source_map145]the stack without line info
+01-10 21:15:50.974 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.974] ℹ️ 信息 [NovelDetailPage] 已缓存 0 章
+01-10 21:15:50.982 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.982] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 1
+01-10 21:15:50.988 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.988] 🔍 调试 [DatabaseManager] SQL执行成功: UPDATE user_settings 
+01-10 21:15:50.988 16308 16308 D A00000/com.dlzz.manxia/wwssadad:                      SET settingValue = ?, settingType = ?, updateTime = ? 
+01-10 21:15:50.988 16308 16308 D A00000/com.dlzz.manxia/wwssadad:                      WHERE userId = ? AND settingKey = ?
+01-10 21:15:50.989 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.989] 🔍 调试 [📊 数据管理器] 设置已保存: novel_browse_history = [{"sourceId":"https://www.huanmengacg.com","bookUrl":"https://www.huanmengacg.com/index.php/book/info/4967","bookName":"欢迎来到实力至上主义的教室","author":"衣笠彰梧","coverUrl":"https://www.huanmengacg.com/image/A/1973s.jpg","sourceName":"🍇幻梦轻小说3.0（发现新增最近更新）","browseTime":1768050950974}]
+01-10 21:15:50.989 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.989] 🔍 调试 [SettingsManager] ✅ 设置已保存: novel_browse_history = [{"sourceId":"https://www.huanmengacg.com","bookUrl":"https://www.huanmengacg.com/index.php/book/info/4967","bookName":"欢迎来到实力至上主义的教室","author":"衣笠彰梧","coverUrl":"https://www.huanmengacg.com/image/A/1973s.jpg","sourceName":"🍇幻梦轻小说3.0（发现新增最近更新）","browseTime":1768050950974}]
+01-10 21:15:50.989 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:50.989] 🔍 调试 [NovelDetailPage] 已记录历史浏览: 欢迎来到实力至上主义的教室
+01-10 21:15:53.454 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [][OnPointerEvent:242] ac: down: 542267
+01-10 21:15:53.454 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [P:D:542267][OnPointerEvent:649] recv
+01-10 21:15:53.454 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: HandleInputEvent: eid:6,InputId:542267,wid:532,ac:2
+01-10 21:15:53.455 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542267, fId:0, T:0, I=0, M=0
+01-10 21:15:53.456 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542267, TTHNI:fId: 0{ T: Scroll, D: 11 };{ T: Button, D: 16 };
+01-10 21:15:53.456 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542267, TTHRTI: T ClickRecognizer info: { T: Scroll }; { T: Button };T PanRecognizer info: { T: Scroll };
+01-10 21:15:53.457 16308 16308 I C03945/com.dlzz.manxia/AceStateStyle: [(100000:100000:scope)] Handle TouchDown event node: Button
+01-10 21:15:53.457 16308 16308 I C03919/com.dlzz.manxia/AceInputTracking: [(100000:100000:scope)] Consumed id:542267, last id:542265
+01-10 21:15:53.457 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: ConsumePointerEventInner: InputId:542267,wid:532,pointId:0,srcType:2,rect:[0,0,1224,2776],notify:1
+01-10 21:15:53.458 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [][OnPointerEvent:242] ac: move: 542268
+01-10 21:15:53.499 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [][OnPointerEvent:242] ac: move, first: 542269-(2026-01-10 21:15:53.458ms), 542271, count: 3, last: ac: up: 542272
+01-10 21:15:53.499 16308 16308 I C02805/com.dlzz.manxia/InputKeyFlow: [P:U:542272][OnPointerEvent:649] recv
+01-10 21:15:53.499 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: HandleInputEvent: eid:7,InputId:542272,wid:532,ac:4
+01-10 21:15:53.499 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] ITK Id:542272, fId:0, T:1, I=0, M=0
+01-10 21:15:53.499 16308 16308 I C03945/com.dlzz.manxia/AceStateStyle: [(100000:100000:scope)] Handle TouchUp or Cancel event node: Button
+01-10 21:15:53.500 16308 16308 I C0391E/com.dlzz.manxia/AceGesture: [(100000:100000:scope)] Click try accept
+01-10 21:15:53.500 16308 16308 I C0390B/com.dlzz.manxia/AceScrollable: [(100000:100000:scope)] Scrollable GestureJudge:0, 0
+01-10 21:15:53.500 16308 16308 I C0391E/com.dlzz.manxia/AceGesture: [(100000:100000:scope)] Click gesture judge reject
+01-10 21:15:53.500 16308 16308 I C0391E/com.dlzz.manxia/AceGesture: [(100000:100000:scope)] Click try accept
+01-10 21:15:53.500 16308 16308 I C03951/com.dlzz.manxia/InputKeyFlow: [(100000:100000:scope)] CLK RACC, T: Button
+01-10 21:15:53.500 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.500] ℹ️ 信息 [NovelDetailPage] 跳转阅读器: tocUrl=https://www.huanmengacg.com/index.php/book/info/4967, bookUrl=https://www.huanmengacg.com/index.php/book/info/4967
+01-10 21:15:53.501 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.501] ℹ️ 信息 [NovelDetailPage] 触发翻开过渡动画: coverPath=https://www.huanmengacg.com/image/A/1973s.jpg, componentId=novel_cover_https://www.huanmengacg.com_https%3A%2F%2Fwww.huanmengacg.com%2Findex.php%2Fbook%2Finfo%2F4967
+01-10 21:15:53.501 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.501] ℹ️ 信息 [BookTransitionOverlay] 获取组件位置成功: id=novel_cover_https://www.huanmengacg.com_https%3A%2F%2Fwww.huanmengacg.com%2Findex.php%2Fbook%2Finfo%2F4967, pos=(16, 116.07407407407408), size=100x140
+01-10 21:15:53.501 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.501] ℹ️ 信息 [BookTransitionOverlay] 开始翻开过渡: bookId=https://www.huanmengacg.com_https%3A%2F%2Fwww.huanmengacg.com%2Findex.php%2Fbook%2Finfo%2F4967, type=novel, 有背景设置=否
+01-10 21:15:53.501 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.501] ℹ️ 信息 [BookTransitionOverlay] 保存封面位置: pos=(16, 116.07407407407408), size=100x140
+01-10 21:15:53.501 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.501] 🔍 调试 [BookTransitionOverlay] 状态更新: isActive=true, mode=open, isReaderReady=false, imagePath=无, ebookBg=无
+01-10 21:15:53.502 16308 16308 I C03919/com.dlzz.manxia/AceInputTracking: [(100000:100000:scope)] Consumed id:542272, last id:542271
+01-10 21:15:53.502 16308 16308 I C04213/com.dlzz.manxia/InputKeyFlow: ConsumePointerEventInner: InputId:542272,wid:532,pointId:0,srcType:2,rect:[0,0,1224,2776],notify:1
+01-10 21:15:53.506 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.506] ℹ️ 信息 [BookOpenTransition] 组件初始化，模式: open, ebookBackground=无
+01-10 21:15:53.507 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.507] ℹ️ 信息 [BookOpenTransition] 检测到网络图片: https://www.huanmengacg.com/image/A/1973s.jpg，跳过PixelMap加载，使用默认封面尺寸
+01-10 21:15:53.507 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.507] ℹ️ 信息 [BookOpenTransition] 等待组件尺寸就绪后启动动画
+01-10 21:15:53.509 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.509] ℹ️ 信息 [BookOpenTransition] Canvas已就绪, mode=open, imagePath=无
+01-10 21:15:53.509 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: RSCanvasDrawingNode::ResetSurface id:70042326663511 width:1224 height:2534
+01-10 21:15:53.510 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] 🔍 调试 [BookOpenTransition] 组件尺寸: 362.6666666666667x822.5185185185185
+01-10 21:15:53.510 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] 🔍 调试 [BookOpenTransition] 中央位置: (54.400000000000006, 233.55259259259256), 尺寸: 253.86666666666667x355.41333333333336
+01-10 21:15:53.510 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] ℹ️ 信息 [BookOpenTransition] 条件就绪，启动等待中的动画
+01-10 21:15:53.510 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] ℹ️ 信息 [BookOpenTransition] 开始过渡动画，模式: open
+01-10 21:15:53.510 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] 🔍 调试 [BookOpenTransition] 中央位置: (54.400000000000006, 233.55259259259256), 尺寸: 253.86666666666667x355.41333333333336
+01-10 21:15:53.510 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] ℹ️ 信息 [BookOpenTransition] 阶段变化: idle -> cover_moving
+01-10 21:15:53.510 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:53.510] ℹ️ 信息 [BookTransitionOverlay] 阶段变化: cover_moving
+01-10 21:15:54.087 16308 17117 W C01719/com.dlzz.manxia/ffrt: 11:RecordSymbolAndBacktrace:397 Process:com.dlzz.manxia,Tid:17043,Qos:2,CWorker:3,EWorker:1,SWorker:2,TaskType:0,timeout:10s
+01-10 21:15:54.089 16308 17117 W C01719/com.dlzz.manxia/ffrt: 12:RecordSymbolAndBacktrace:405 Tid:17043, Name:OS_FFRT_2_6
+01-10 21:15:54.089 16308 17117 W C01719/com.dlzz.manxia/ffrt: #00 pc 000000000016a538 /lib/ld-musl-aarch64.so.1
+01-10 21:15:54.089 16308 17117 W C01719/com.dlzz.manxia/ffrt: #01 pc 000000000005eac8 /system/lib64/libpreload_native_rust.z.so
+01-10 21:15:54.089 16308 17117 W C01719/com.dlzz.manxia/ffrt: #02 pc 0000000000056774 /system/lib64/libpreload_native_rust.z.so
+01-10 21:15:54.089 16308 17117 W C01719/com.dlzz.manxia/ffrt: #03 pc 0000000000093304 /system/lib64/ndk/libffrt.so
+01-10 21:15:54.089 16308 17117 W C01719/com.dlzz.manxia/ffrt: #04 pc 000000000005ffec /system/lib64/ndk/libffrt.so
+01-10 21:15:54.415 16308 16308 I C03F01/com.dlzz.manxia/NAPI: ID: 14, cnt: 2
+01-10 21:15:54.416 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.415] ℹ️ 信息 [BookOpenTransition] 阶段变化: cover_moving -> completed
+01-10 21:15:54.416 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.416] ℹ️ 信息 [BookTransitionOverlay] 阶段变化: completed
+01-10 21:15:54.416 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.416] ℹ️ 信息 [BookOpenTransition] 动画完成，触发页面过渡
+01-10 21:15:54.416 16308 16308 I C03F01/com.dlzz.manxia/NAPI: ID: 13, cnt: 3
+01-10 21:15:54.416 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.416] ℹ️ 信息 [BookTransitionOverlay] 动画完成: mode=open
+01-10 21:15:54.420 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] sync with js stack, id: , UINodeId: 18, preStackSize: 2, newStackSize: 3
+01-10 21:15:54.421 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] find in nowhere, navigation stack create new node, index: 2, removeSize: 0, name: NovelReaderPage.
+01-10 21:15:54.422 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.422] ℹ️ 信息 [GlobalTaskCoordinator] 页面已注册: NovelReaderPage, 当前总数: 3
+01-10 21:15:54.422 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.422] ℹ️ 信息 [PageLifecycleManager] [NovelReaderPage] 生命周期管理器已创建
+01-10 21:15:54.423 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] render current custom node: NovelReaderPage
+01-10 21:15:54.424 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.424] 🔍 调试 [ThemeManager] 注册主题变化监听器，当前监听器数量: 4
+01-10 21:15:54.424 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.424] ℹ️ 信息 [NovelReaderPage] 主题切换到: light
+01-10 21:15:54.424 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.424] 🔍 调试 [ThemeManager] 已向新监听器通知当前主题: light
+01-10 21:15:54.424 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.424] 🔍 调试 [FontAware] 组件 NovelReaderPage 字体感知功能已初始化
+01-10 21:15:54.424 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.424] 🔍 调试 [ThemeAwareHelper] 组件 NovelReaderPage 主题感知功能已初始化，实际主题: light
+01-10 21:15:54.425 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] load destination by buildermap
+01-10 21:15:54.426 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelReaderPage lifecycle change to onWillAppear state. navdestinationId:441, navigationId:18
+01-10 21:15:54.426 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] last standard page index is 2
+01-10 21:15:54.426 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] serialize navDestination param success! its index: 2
+01-10 21:15:54.426 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] mountToParent navdestinationId:441, slot:2
+01-10 21:15:54.426 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] navDestination context is ready.
+01-10 21:15:54.426 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.426] ℹ️ 信息 [NovelReaderPage] NavDestination.onReady 已触发
+01-10 21:15:54.426 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.426] ℹ️ 信息 [NovelReaderPage] 使用全局小说阅读器设置，已调整为在线小说页边距
+01-10 21:15:54.427 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.427] ℹ️ 信息 [NovelReaderPage] 设置完全沉浸式阅读模式
+01-10 21:15:54.427 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.427] ℹ️ 信息 [NovelReaderPage] 加载章节列表: tocUrl=https://www.huanmengacg.com/index.php/book/info/4967
+01-10 21:15:54.427 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.427] 🔍 调试 [NovelSourceExecutor] 请求: GET https://www.huanmengacg.com/index.php/book/info/4967
+01-10 21:15:54.427 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.427] 🔍 调试 [NovelLoginManager] getCookieString: 查找=https://www.huanmengacg.com, 已保存的keys=[], initialized=true
+01-10 21:15:54.427 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.427] 🔍 调试 [NovelSourceExecutor] 查找Cookie: sourceUrl=https://www.huanmengacg.com, found=no
+01-10 21:15:54.432 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelReaderPage lifecycle change to onAppear state. navdestinationId:441, navigationId:18
+01-10 21:15:54.432 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSystemBarProperties: win 532 set status bar content color 3841982464
+01-10 21:15:54.432 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSpecificBarProperty: win [532 manxia0] type 2108 1 0 e5000000 1 5
+01-10 21:15:54.434 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] set system bar style, color: #E5000000, flag: true
+01-10 21:15:54.434 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] view: NavDestination/441 show
+01-10 21:15:54.434 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] View: NavDestination/307 lost focus
+01-10 21:15:54.434 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] Scope(NavDestination/307) has no last focusNode.
+01-10 21:15:54.434 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] transition start, disableAllAnimation: 0, animated: 1, isPopPage: 0, isDialog: 0, isReplace: 0, isCustomAnimation: 0
+01-10 21:15:54.435 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onWillHide state. navdestinationId:307, navigationId:18
+01-10 21:15:54.435 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelReaderPage lifecycle change to onWillShow state. navdestinationId:441, navigationId:18
+01-10 21:15:54.435 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] User defined Background color: #00000000
+01-10 21:15:54.435 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] style from Color, color: #FF000000, flag: true
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] can't find inner navigation
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onInactive state. navdestinationId:307, navigationId:18
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelDetailPage lifecycle change to onHidden state. navdestinationId:307, navigationId:18
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelReaderPage lifecycle change to onShown state. navdestinationId:441, navigationId:18
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] NovelReaderPage lifecycle change to onActive state. navdestinationId:441, navigationId:18
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] can't find inner navigation
+01-10 21:15:54.437 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] navigation push animation start
+01-10 21:15:54.440 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] Request focus on focusView: NavDestination/441.
+01-10 21:15:54.440 16308 16308 I C0391C/com.dlzz.manxia/AceFocus: [(100000:100000:scope)] FocusSwitch end, NavDestination/secure_field onBlur, NavDestination/secure_field onFocus, start: 2, end: 1, update: 2
+01-10 21:15:54.440 16308 16308 I C03933/com.dlzz.manxia/AceKeyboard: [(100000:100000:scope)] current focus node: (NavDestination/441). isDynamic: 0
+01-10 21:15:54.440 16308 16308 I C03933/com.dlzz.manxia/AceKeyboard: [(100000:100000:scope)] FrameNode(NavDestination/441) notNeedSoftKeyboard.
+01-10 21:15:54.441 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetLayoutFullScreenByApiVersion: win 532 status 1
+01-10 21:15:54.441 16308 16308 I C03917/com.dlzz.manxia/AceSafeArea: [(-2:100000:singleton)] [com.dlzz.manxia][entry][100000]: SetIgnoreViewSafeArea:1
+01-10 21:15:54.441 16308 16308 I C03917/com.dlzz.manxia/AceSafeArea: [(100000:100000:scope)] SetIgnoreSafeArea 1
+01-10 21:15:54.441 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.441] ℹ️ 信息 [WindowManager] ✅ 全屏布局设置成功
+01-10 21:15:54.441 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSpecificBarProperty: win [532 manxia0] type 2131 0 ffffff ff000000 0 2
+01-10 21:15:54.442 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSpecificBarProperty: win [532 manxia0] type 2112 0 0 e5000000 1 3
+01-10 21:15:54.443 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSpecificBarProperty: win [532 manxia0] type 2108 0 0 e5000000 1 7
+01-10 21:15:54.444 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.444] ℹ️ 信息 [WindowManager] ✅ 完全沉浸式模式设置成功
+01-10 21:15:54.461 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.461] ℹ️ 信息 [BookOpenTransition] Canvas已就绪, mode=open, imagePath=无
+01-10 21:15:54.461 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663290 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:54.461 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663291 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:54.461 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663292 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:54.461 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: [RenderAnimation] Id: 70042326663293 SetExpectedFrameRateRange{15, 60, 30}
+01-10 21:15:54.462 16308 16308 I C01406/com.dlzz.manxia/OHOS::RS: RSCanvasDrawingNode::ResetSurface id:70042326663511 width:1224 height:2776
+01-10 21:15:54.464 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.464] 🔍 调试 [BookOpenTransition] 组件尺寸: 362.6666666666667x822.5185185185185
+01-10 21:15:54.464 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.464] 🔍 调试 [BookOpenTransition] 中央位置: (54.400000000000006, 233.55259259259256), 尺寸: 253.86666666666667x355.41333333333336
+01-10 21:15:54.468 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.468] 🔍 调试 [DatabaseManager] SQL查询成功，结果数量: 1
+01-10 21:15:54.473 16308 16439 I C04208/com.dlzz.manxia/WMSLayout: UpdateRect: id:532 name:manxia0 rect:[0 0 1224 2776]->[0 0 1224 2776] reason:23 displayId:0
+01-10 21:15:54.474 16308 16308 I C04209/com.dlzz.manxia/WMSImms: NotifyAvoidAreaChange: win 532 api 19 type 0 area empty
+01-10 21:15:54.474 16308 16308 I C04209/com.dlzz.manxia/WMSImms: NotifyAvoidAreaChange: win 532 api 19 type 4 area empty
+01-10 21:15:54.474 16308 16308 I C04208/com.dlzz.manxia/WMSLayout: UpdateViewportConfig: Id: 532, reason: 23, windowRect: [0 0 1224 2776], displayOrientation: 0, config[0, 0, 0, 3.375000]
+01-10 21:15:54.477 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.477] 🔍 调试 [DatabaseManager] SQL执行成功: UPDATE user_settings 
+01-10 21:15:54.477 16308 16308 D A00000/com.dlzz.manxia/wwssadad:                      SET settingValue = ?, settingType = ?, updateTime = ? 
+01-10 21:15:54.477 16308 16308 D A00000/com.dlzz.manxia/wwssadad:                      WHERE userId = ? AND settingKey = ?
+01-10 21:15:54.477 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.477] 🔍 调试 [📊 数据管理器] 设置已保存: novel_browse_history = [{"sourceId":"https://www.huanmengacg.com","bookUrl":"https://www.huanmengacg.com/index.php/book/info/4967","bookName":"欢迎来到实力至上主义的教室","author":"","coverUrl":"","sourceName":"","browseTime":1768050954431}]
+01-10 21:15:54.477 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.477] 🔍 调试 [SettingsManager] ✅ 设置已保存: novel_browse_history = [{"sourceId":"https://www.huanmengacg.com","bookUrl":"https://www.huanmengacg.com/index.php/book/info/4967","bookName":"欢迎来到实力至上主义的教室","author":"","coverUrl":"","sourceName":"","browseTime":1768050954431}]
+01-10 21:15:54.477 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:54.477] 🔍 调试 [NovelReaderPage] 已记录浏览历史: 欢迎来到实力至上主义的教室
+01-10 21:15:55.007 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] navigation push animation end
+01-10 21:15:55.008 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] Clear page-level SystemBar type:2108
+01-10 21:15:55.008 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSystemBarPropertyForPage: win 532 property is nullptr use main window prop
+01-10 21:15:55.011 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] Clear page-level SystemBar type:2131
+01-10 21:15:55.012 16308 16308 I C04209/com.dlzz.manxia/WMSImms: SetSystemBarPropertyForPage: win 532 property is nullptr use main window prop
+01-10 21:15:55.013 16308 16308 I C03922/com.dlzz.manxia/AceNavigation: [(100000:100000:scope)] conditions are not met, don't set Orientation
+01-10 21:15:55.084 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:95] BUSSINESS_ISSUE_HTTP: {PROCESS_NAME: com.dlzz.manxia, HTTP_INFO: {"uid":20020189,"response_code":200,"total_time":652438,"namelookup_time":308,"connect_time":0,"pretransfer_time":2131,"size_upload":0,"size_download":12038,"speed_download":18450,"speed_upload":0,"effective_method":"GET","starttransfer_time":647287,"content_type":"text/html; charset=utf-8","redirect_time":0,"redirect_count":0,"os_errno":0,"ssl_verifyresult":0,"appconnect_time":0,"retry_after":0,"proxy_error":0,"queue_time":319,"curl_code":0,"request_start_time":1768050955084}, TCP_INFO: {"tcpi_unacked":0,"tcpi_last_data_sent":650,"tcpi_last_ack_sent":0,"tcpi_last_data_recv":10,"tcpi_last_ack_recv":10,"tcpi_retransmits": 0,"tcpi_total_retrans":0,"tcpi_rtt":559114,"tcpi_rttvar":135430,"ip_type":10,"src_ip":"2408:8266:****:****:****:****:****:****","dst_ip":"2606:4700:****::****:****","src_port":37520,"dst_port":443}}
+01-10 21:15:55.084 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:65] Stack name: http, event report failed, iptype: 10, ignores: 2
+01-10 21:15:55.085 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_client.cpp:210] Send to CHR failed, error code 1
+01-10 21:15:55.086 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [http_exec.cpp:499] taskid=-2147483646, size:12038, dns:0.308, connect:0.000, tls:0.000, firstSend:1.823, firstRecv:645.156, total:652.438, redirect:0.000, no handover, errCode:0, RespCode:200, httpVer:3, method:GET, osErr:0, saddr:2408:8266:****:****:****:****:****:****, sport:37520, daddr:2606:4700:****::****:****, dport:443
+01-10 21:15:55.094 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.093] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: HTML过大(99706字节)，使用字符串解析避免ANR
+01-10 21:15:55.094 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.094] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: selector=#chapterlist li a, parts=1
+01-10 21:15:55.094 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.094] 🔍 调试 [LegadoRuleAnalyzer] findElementsBySingleSelector: CSS选择器=#chapterlist li a, htmlLen=99706
+01-10 21:15:55.101 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.101] 🔍 调试 [LegadoRuleAnalyzer] findElementsById: 找到元素 <ul id="chapterlist">
+01-10 21:15:55.104 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.104] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSChain: part[0]=#chapterlist li a, found=1
+01-10 21:15:55.111 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.111] ℹ️ 信息 [NovelSourceExecutor] 章节列表: 1 章 (1 页)
+01-10 21:15:55.112 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.112] ℹ️ 信息 [NovelReaderPage] 加载章节列表成功: 1章
+01-10 21:15:55.112 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.112] ℹ️ 信息 [NovelReaderPage] 尝试从缓存加载章节: bookId=https://www.huanmengacg.com_https%3A%2F%2Fwww.huanmengacg.com%2Findex.php%2Fbook%2Finfo%2F4967, index=0
+01-10 21:15:55.113 16308 16308 W C01320/com.dlzz.manxia/JsEnv: [source_map145]the stack without line info
+01-10 21:15:55.113 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.113] 🔍 调试 [NovelChapterCacheManager] 缓存未命中: /data/storage/el2/base/haps/entry/files/novels/https___www.huanmengacg.com_https_3A_2F_2Fwww.huanmengacg.com_2Findex.php_2Fbook_2Finfo_2F4967/chapters/0001.txt
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.113] ℹ️ 信息 [NovelReaderPage] 缓存未命中，从网络加载: 第一卷 KEYWORDS
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 日本的社会结构
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 欢迎来到梦幻般的校园生活
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 D班的各位
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 各位男士，久等了
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 朋友
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 终结的日常
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 欢迎来到实力至上主义的世界
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 集合吧，不及格组
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 再次集合的不及格组
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 期中考
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 开始
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 庆功宴
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 特典 happy．unhappy？
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 GAMERS特典短篇
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第一卷 特典 某天午前的游泳池
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 佐仓爱里的独白
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 突如其来的风波开端
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 weak point
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 意外的目击者
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 各有所图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 真实与谎言
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 唯一的解决方案
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 特典 堀北铃音的预兆
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 特典 通俗的妄想
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第二卷 特典 自己的容身之处
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 茶柱佐枝的独白
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 天堂与地狱的界线
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 展开行动的对手们
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 自由的意义
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 寂静地开战
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 虚假的团队合作
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 开幕
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 特典 重要的时间
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 特典 一之濑帆波的考试状况
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第三卷 特典 萌芽之物
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 轻井泽惠的独白
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 平稳的日常生活突然间就……
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 千差万别的想法
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 Double Question
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 各自的差距
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 特典 稀薄的存在
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第四卷 特典 在梦与现实的夹缝中
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 即使如此暑假也会迈向尾声
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 没想到伊吹澪是个有常识的人
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 没想到葛城康平正在烦恼
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 尽管如此，危险也是潜藏在日常之中
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 犯桃花的灾难日。恶魔的天使般笑容
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 与别班的交流会
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 池宽治、山内春树、须藤健的暑假（番外篇）
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 特典 泳衣短篇·堀北铃音
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 特典 泳衣短篇·一之濑帆波
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 特典 泳衣短篇·栉田桔梗
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第4.5卷 特典 泳衣短篇·佐仓爱理
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 须藤健的独白
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 体育祭开幕
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 D班的方针
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 各有所思
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 关系演变至此是有理由的
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 开幕
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 为了谁
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 我以及我的不足之处
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 时代的转捩点
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 特典 体育祭 · 一之濑的战斗
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 特典 怎样选优待者
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第五卷 特典 少女复杂的心境
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 栉田桔梗的独白
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 逐渐改变的D班
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 Paper Shuffle
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 开始行动的C班
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 活路的征兆
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 组成绫小路组
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 决心的差别
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 特典 也许能交到朋友
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 特典 喜欢的人
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第六卷 特典 坂柳有栖的日常——期末考试的幕后篇
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 龙园翔的独白
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 严冬的脚步声
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 再会与离别的通知
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 超脱常识
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 了断之时
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 交错的思绪
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 龙园得到以及失去之物
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 后记
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 插图
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 特典 希望成为朋友
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 特典 本人佐仓爱里，被来回折腾
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 特典 看不见的黑暗
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第七卷 特典 我，长谷部波琉加不打算做出改变
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 第一个冬天
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 恋爱的箭矢
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 伊吹澪灾难的一天
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 各自的过节方法
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 曲折的双重约会
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 箭矢的去向
+01-10 21:15:55.114 16308 16308 I A00000/com.dlzz.manxia/wwssadad: 第7.5卷 �
+01-10 21:15:55.114 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.114] 🔍 调试 [NovelSourceExecutor] 请求: GET https://www.huanmengacg.com/index.php/book_read_4967_1726.html
+01-10 21:15:55.114 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.114] 🔍 调试 [NovelLoginManager] getCookieString: 查找=https://www.huanmengacg.com, 已保存的keys=[], initialized=true
+01-10 21:15:55.114 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.114] 🔍 调试 [NovelSourceExecutor] 查找Cookie: sourceUrl=https://www.huanmengacg.com, found=no
+01-10 21:15:55.905 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:95] BUSSINESS_ISSUE_HTTP: {PROCESS_NAME: com.dlzz.manxia, HTTP_INFO: {"uid":20020189,"response_code":200,"total_time":785221,"namelookup_time":245,"connect_time":0,"pretransfer_time":1739,"size_upload":0,"size_download":5772,"speed_download":7350,"speed_upload":0,"effective_method":"GET","starttransfer_time":782885,"content_type":"text/html; charset=utf-8","redirect_time":0,"redirect_count":0,"os_errno":0,"ssl_verifyresult":0,"appconnect_time":0,"retry_after":0,"proxy_error":0,"queue_time":254,"curl_code":0,"request_start_time":1768050955904}, TCP_INFO: {"tcpi_unacked":0,"tcpi_last_data_sent":790,"tcpi_last_ack_sent":0,"tcpi_last_data_recv":10,"tcpi_last_ack_recv":10,"tcpi_retransmits": 0,"tcpi_total_retrans":0,"tcpi_rtt":586295,"tcpi_rttvar":155933,"ip_type":10,"src_ip":"2408:8266:****:****:****:****:****:****","dst_ip":"2606:4700:****::****:****","src_port":37520,"dst_port":443}}
+01-10 21:15:55.905 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_report.cpp:65] Stack name: http, event report failed, iptype: 10, ignores: 3
+01-10 21:15:55.905 16308 17081 E C015B0/com.dlzz.manxia/NETSTACK: [netstack_chr_client.cpp:210] Send to CHR failed, error code 1
+01-10 21:15:55.906 16308 17081 I C015B0/com.dlzz.manxia/NETSTACK: [http_exec.cpp:499] taskid=-2147483645, size:5772, dns:0.245, connect:0.000, tls:0.000, firstSend:1.494, firstRecv:781.146, total:785.221, redirect:0.000, no handover, errCode:0, RespCode:200, httpVer:3, method:GET, osErr:0, saddr:2408:8266:****:****:****:****:****:****, sport:37520, daddr:2606:4700:****::****:****, dport:443
+01-10 21:15:55.921 16308 16308 D A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.921] 🔍 调试 [LegadoRuleAnalyzer] getElementsByCSSWithBridge: 使用HTML桥接解析链式规则，结果数量=42
+01-10 21:15:55.945 16308 16308 I A00000/com.dlzz.manxia/wwssadad: [NGF] [21:15:55.945] ℹ️ 信息 [TextReaderComponent] 文本阅读器组件初始化
+01-10 21:15:55.945 16308 16308 W C03F00/com.dlzz.manxia/ArkCompiler: [default] [Call] occur exception need return
+01-10 21:15:55.945 16308 16308 E C03F00/com.dlzz.manxia/ArkCompiler: [ecmascript] Pending exception before ExecutePendingJob called, in line:5894, exception details as follows:
+01-10 21:15:55.945 16308 16308 E C03F00/com.dlzz.manxia/ArkCompiler: TypeError: Cannot read property fontPath of undefined
+01-10 21:15:55.945 16308 16308 E C03F00/com.dlzz.manxia/ArkCompiler:     at registerCustomFontIfNeeded entry (entry/src/main/ets/components/TextReaderComponent.ets:178:46)
+01-10 21:15:55.945 16308 16308 E C03F00/com.dlzz.manxia/ArkCompiler:     at aboutToAppear entry (entry/src/main/ets/components/TextReaderComponent.ets:164:10)
+01-10 21:15:55.945 16308 16308 W C03900/com.dlzz.manxia/Ace: [(100000:100000:scope)] after call jsFunction hasError, empty: 0, caught: 1
+01-10 21:15:55.948 16308 16308 I C03F00/com.dlzz.manxia/ArkCompiler: [ecmascript] Add reference, count: 1
+01-10 21:15:55.963 16308 16308 I C01356/com.dlzz.manxia/Recovery: [app_recovery255]scheduleRecoverApp  begin
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: [MAINTHD2037]
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: com.dlzz.manxia is about to exit due to RuntimeError
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: Error type:TypeError
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: Error name:TypeError
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: Error message:Cannot read property fontPath of undefined
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: Stacktrace:
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit:     at registerCustomFontIfNeeded entry (entry/src/main/ets/components/TextReaderComponent.ets:178:46)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit:     at aboutToAppear entry (entry/src/main/ets/components/TextReaderComponent.ets:164:10)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: HybridStack:
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #00 pc 0000000000565084 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #01 pc 0000000000563384 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #02 pc 0000000000562d60 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #03 pc 000000000044322c /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #04 pc 000000000034c358 /system/lib64/platformsdk/libark_jsruntime.so(panda::ecmascript::ObjectFactory::GetJSError(panda::ecmascript::base::ErrorType const&, char const*, panda::ecmascript::StackCheck)+292)(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #05 pc 00000000003125a0 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #06 pc 000000000030fa84 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #07 pc 0000000000e2714c /system/lib64/module/arkcompiler/stub.an(RTStub_CallRuntime+44)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #08 pc 0000000000479ac8 /system/lib64/module/arkcompiler/stub.an(BCStub_HandleLdobjbynameImm8Id16StwCopy+5408)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #09 at registerCustomFontIfNeeded entry (entry/src/main/ets/components/TextReaderComponent.ets:178:46)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #10 at aboutToAppear entry (entry/src/main/ets/components/TextReaderComponent.ets:164:10)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #11 pc 00000000002b2f10 /system/lib64/platformsdk/libark_jsruntime.so(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #12 pc 00000000006d7e30 /system/lib64/platformsdk/libark_jsruntime.so(panda::FunctionRef::Call(panda::ecmascript::EcmaVM const*, panda::Local<panda::JSValueRef>, panda::Local<panda::JSValueRef> const*, int)+520)(7a9330d8d0cab080a6916701f498ea55)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #13 pc 0000000000a29cf4 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #14 pc 0000000000c29a2c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #15 pc 0000000000abb138 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #16 pc 0000000000abaf90 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #17 pc 0000000000a2b464 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::CustomNode::Render(long)+860)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #18 pc 0000000000a2bb84 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::CustomNode::GetFrameChildByIndex(unsigned int, bool, bool, bool)+152)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #19 pc 0000000000afac90 /system/lib64/platformsdk/libace_compatible.z.so(non-virtual thunk to OHOS::Ace::NG::FrameNode::GetChildByIndex(unsigned int, bool)+1372)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #20 pc 0000000000a8ad24 /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #21 pc 000000000219025c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #22 pc 0000000000b75750 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FrameNode::Measure(std::__h::optional<OHOS::Ace::NG::LayoutConstraintT<float>> const&)+1936)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #23 pc 0000000000b6d8f4 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FlexLayoutAlgorithm::MeasureAndCleanMagicNodes(OHOS::Ace::NG::LayoutWrapper*, OHOS::Ace::NG::FlexItemProperties&)+672)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #24 pc 0000000000b68c48 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FlexLayoutAlgorithm::Measure(OHOS::Ace::NG::LayoutWrapper*)+2476)(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #25 pc 000000000219025c /system/lib64/platformsdk/libace_compatible.z.so(da4bb1ce85d7bf8b4b0c5d4fac3e3b5a)
+01-10 21:15:55.963 16308 16308 E C01317/com.dlzz.manxia/AppKit: #26 pc 0000000000b75750 /system/lib64/platformsdk/libace_compatible.z.so(OHOS::Ace::NG::FrameNode::Measure(std::__h::optional<OHOS::Ace::NG::LayoutConstraintT<float>> cons
+01-10 21:15:55.963 16308 16308 W C01317/com.dlzz.manxia/AppKit: [MAINTHD2049]hisysevent write result=0, send event [FRAMEWORK,PROCESS_KILL], pid=16308, processName=com.dlzz.manxia, msg=Kill Reason:Js Error, foreground=1, isUncatchable=0
