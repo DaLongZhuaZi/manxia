@@ -24,8 +24,10 @@
   </tr>
   <tr>
     <td align="center">首页</td>
-    <td align="center">书架</td>
-    <td align="center">阅读器</td>
+    <td align="center">发现</td>
+    <td align="center">漫画详情页</td>
+    <td align="center">图源</td>
+    <td align="center">开源阅读书源</td>
     <td align="center">设置</td>
   </tr>
 </table>
