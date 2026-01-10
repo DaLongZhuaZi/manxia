@@ -10,6 +10,28 @@
 
 </div>
 
+## 📱 应用截图
+
+<div align="center">
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home.jpg" width="200" alt="首页"/></td>
+    <td><img src="docs/screenshots/discover.jpg" width="200" alt="发现"/></td>
+    <td><img src="docs/screenshots/manga.jpg" width="200" alt="漫画详情页"/></td>
+    <td><img src="docs/screenshots/extension.jpg" width="200" alt="图源"/></td>
+    <td><img src="docs/screenshots/legado.jpg" width="200" alt="开源阅读书源"/></td>
+    <td><img src="docs/screenshots/setting.jpg" width="200" alt="设置"/></td>
+  </tr>
+  <tr>
+    <td align="center">首页</td>
+    <td align="center">书架</td>
+    <td align="center">阅读器</td>
+    <td align="center">设置</td>
+  </tr>
+</table>
+</div>
+
+
 ## 📖 项目简介
 
 漫匣是一款专为 HarmonyOS Next 平台开发的综合阅读应用，支持**漫画**、**电子书**和**网络小说**三大内容类型。采用纯 ArkTS 架构，提供流畅的阅读体验和丰富的功能特性。
@@ -253,8 +275,22 @@ manxia/
 │       ├── cpp/                    # C++ Native代码
 │       │   ├── CMakeLists.txt                       # CMake配置
 │       │   ├── jsvm_engine.cpp                      # JSVM引擎实现
+│       │   ├── webdav/                              # WebDAV/FTP Native模块
+│       │   │   ├── CMakeLists.txt                   # WebDAV模块CMake配置
+│       │   │   ├── webdav_client.cpp/h              # WebDAV客户端实现
+│       │   │   ├── webdav_napi.cpp                  # WebDAV NAPI接口
+│       │   │   ├── ftp_client.cpp/h                 # FTP客户端实现
+│       │   │   ├── ftp_napi.cpp                     # FTP NAPI接口
+│       │   │   └── include/                         # libcurl头文件
 │       │   └── types/                               # 类型定义
-│       │       └── libjsvm_engine/                  # JSVM引擎类型
+│       │       ├── libjsvm_engine/                  # JSVM引擎类型
+│       │       └── libwebdav_native/                # WebDAV/FTP类型定义
+│       ├── libs/                   # 预编译Native库
+│       │   └── arm64-v8a/                           # ARM64架构库
+│       │       ├── libcurl.so                       # libcurl (HTTP/FTP)
+│       │       ├── libmbedtls.so                    # mbedTLS (SSL/TLS)
+│       │       ├── libmbedcrypto.so                 # mbedTLS加密库
+│       │       └── libmbedx509.so                   # mbedTLS X509库
 │       ├── resources/              # 资源文件
 │       │   ├── base/               # 基础资源
 │       │   ├── dark/               # 深色主题资源
@@ -416,6 +452,15 @@ manxia/
 | lz4js | 0.2.0 | MIT | LZ4压缩/解压支持 |
 | snappyjs | 0.7.0 | MIT | Snappy压缩/解压支持 |
 | text-encoding | 0.7.0 | Unlicense | 文本编码转换 |
+
+### Native层开源库
+
+| 库名称 | 版本 | 许可证 | 用途 |
+|--------|------|--------|------|
+| libcurl | 8.5.0 | curl License | HTTP/HTTPS/FTP/FTPS网络请求 |
+| mbedTLS | 3.5.1 | Apache-2.0 | SSL/TLS加密支持 |
+
+> **说明**: libcurl和mbedTLS已交叉编译为HarmonyOS ARM64架构的动态库，用于实现WebDAV云端同步和FTP文件管理功能。
 
 ### 源实现参考
 

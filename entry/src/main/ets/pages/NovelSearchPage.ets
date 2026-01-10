@@ -18,6 +18,7 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
+import { AppColors } from '../Framework/Theme/AppColors';
 
 /**
  * 书源搜索结果分组

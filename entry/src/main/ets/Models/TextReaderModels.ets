@@ -234,7 +234,7 @@ export const DEFAULT_TEXT_READER_SETTINGS: TextReaderSettings = {
   showPageNumber: true,
   showProgress: true,
   showTime: true,
-  showBattery: false,
+  showBattery: true,
   tapToTurn: true,
   volumeKeyNavigation: true,
   autoScrollSpeed: 50,

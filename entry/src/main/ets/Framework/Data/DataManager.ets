@@ -4061,6 +4061,22 @@ export class DataManager {
       throw new Error(`更新图源baseUrl失败: ${String(error)}`);
     }
   }
+  
+  /**
+   * 更新图源的代理设置
+   * @param sourceId 图源ID
+   * @param requireProxy 是否需要代理
+   */
+  async updateSourceProxySetting(sourceId: number, requireProxy: boolean): Promise<void> {
+    try {
+      const sql = 'UPDATE comic_source SET requireProxy = ?, lastUpdateTime = ? WHERE id = ?';
+      await this.databaseManager.executeSql(sql, [requireProxy ? 1 : 0, Date.now(), sourceId]);
+      logger.info(TAG, `图源代理设置已更新: id=${sourceId}, requireProxy=${requireProxy}`);
+    } catch (error) {
+      logger.error(TAG, `更新图源代理设置失败: id=${sourceId}`, String(error));
+      throw new Error(`更新图源代理设置失败: ${String(error)}`);
+    }
+  }
 
   /**
    * 从图源保存漫画信息

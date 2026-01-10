@@ -1161,6 +1161,34 @@ export struct NovelSourceManagementPage {
 
       Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
 
+      // 调试按钮
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.wrench_and_screwdriver'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          Text('调试')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const sourceToDebug = this.contextMenuSource;
+        this.hideSourceContextMenu();
+        if (sourceToDebug) {
+          this.goToDebugSource(sourceToDebug);
+        }
+      })
+
+      Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
       // 置顶按钮
       Button({ type: ButtonType.Normal }) {
         Row({ space: 8 }) {

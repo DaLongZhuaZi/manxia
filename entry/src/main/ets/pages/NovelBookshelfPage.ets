@@ -16,6 +16,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { getNovelSettingsManager, BookshelfSettings, BookshelfSortType, BrowseHistoryItem } from '../Framework/Novel/NovelSettingsManager';
+import { AppColors } from '../Framework/Theme/AppColors';
 
 const TAG = 'NovelBookshelfPage';
 const TITLE_BAR_HEIGHT_MINI = 56;
@@ -125,6 +126,10 @@ export struct NovelBookshelfPage {
     gridColumns: 3,
     displayMode: 'list'
   };
+  @State showFilterPopup: boolean = false; // 筛选popup显示状态
+  @State showSortPopup: boolean = false; // 排序popup显示状态
+  @State viewMode: 'list' | 'grid' = 'list'; // 视图模式
+  @State filterType: 'all' | 'unread' | 'reading' | 'finished' = 'all'; // 筛选类型
   private dataManager: NovelDataManager = getNovelDataManager();
   private settingsManager = getNovelSettingsManager();
   private browseHistoryListener: (() => void) | null = null;
@@ -574,49 +579,91 @@ export struct NovelBookshelfPage {
       // 分组和排序工具栏（仅在收藏页显示）
       if (this.currentTab === 0 && !this.isEditMode) {
         Row() {
-          // 分组筛选
-          Row() {
-            Text(this.selectedGroup || '全部')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            Text('▼')
-              .fontSize(10)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-              .margin({ left: 4 })
+          // 视图切换按钮
+          Button() {
+            SymbolGlyph(this.viewMode === 'list' ? $r('sys.symbol.square_grid_2x2') : $r('sys.symbol.list_bullet'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
           }
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(16)
-          .onClick(() => this.showGroupSelector())
+          .type(ButtonType.Circle)
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.viewMode = this.viewMode === 'list' ? 'grid' : 'list';
+          })
           
-          // 排序
-          Row() {
-            Text(this.getSortTypeName())
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            Text('▼')
-              .fontSize(10)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-              .margin({ left: 4 })
+          // 筛选按钮（使用popup）
+          Button() {
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.slider_vertical_3'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text(this.getFilterTypeName())
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
           }
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(16)
+          .height(32)
+          .backgroundColor(Color.Transparent)
           .margin({ left: 8 })
-          .onClick(() => this.showSortSelector())
+          .onClick(() => {
+            this.showFilterPopup = true;
+          })
+          .bindPopup(this.showFilterPopup, {
+            builder: this.buildFilterPopup(),
+            placement: Placement.Bottom,
+            width: '180vp',
+            onStateChange: (e) => {
+              if (!e.isVisible) {
+                this.showFilterPopup = false;
+              }
+            }
+          })
+          
+          // 排序按钮（使用popup）
+          Button() {
+            Row({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.slider_vertical_3'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text(this.getSortTypeName())
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+          }
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .margin({ left: 8 })
+          .onClick(() => {
+            this.showSortPopup = true;
+          })
+          .bindPopup(this.showSortPopup, {
+            builder: this.buildSortPopup(),
+            placement: Placement.Bottom,
+            width: '160vp',
+            onStateChange: (e) => {
+              if (!e.isVisible) {
+                this.showSortPopup = false;
+              }
+            }
+          })
           
           Blank()
           
           // 编辑按钮
-          Text('编辑')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .onClick(() => this.toggleEditMode())
+          Button() {
+            SymbolGlyph($r('sys.symbol.square_and_pencil'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+          .type(ButtonType.Circle)
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => this.toggleEditMode())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -671,42 +718,137 @@ export struct NovelBookshelfPage {
     };
     return names[this.bookshelfSettings.sortType] || '最近阅读';
   }
-
-  showGroupSelector(): void {
-    const buttons: ActionButton[] = [
-      { text: '全部', color: $r('sys.color.ohos_id_color_text_primary') }
-    ];
-    for (let i = 0; i < this.bookGroups.length && buttons.length < 6; i++) {
-      const btn: ActionButton = { text: this.bookGroups[i], color: $r('sys.color.ohos_id_color_text_primary') };
-      buttons.push(btn);
-    }
-    
-    promptAction.showActionMenu({
-      title: '选择分组',
-      buttons: buttons as [ActionButton, ActionButton?, ActionButton?, ActionButton?, ActionButton?, ActionButton?]
-    }).then((result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === 0) {
-        this.selectGroup('');
-      } else {
-        this.selectGroup(this.bookGroups[result.index - 1]);
-      }
-    }).catch(() => {});
+  
+  getFilterTypeName(): string {
+    const names: Record<string, string> = {
+      'all': '全部',
+      'unread': '未读',
+      'reading': '阅读中',
+      'finished': '已读完'
+    };
+    return names[this.filterType] || '全部';
   }
-
-  showSortSelector(): void {
-    promptAction.showActionMenu({
-      title: '排序方式',
-      buttons: [
-        { text: '最近阅读', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '书名', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '作者', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '添加时间', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '更新时间', color: $r('sys.color.ohos_id_color_text_primary') }
-      ]
-    }).then((result) => {
-      const sortTypes: BookshelfSortType[] = ['lastRead', 'name', 'author', 'addTime', 'updateTime'];
-      this.changeSortType(sortTypes[result.index]);
-    }).catch(() => {});
+  
+  /**
+   * 获取筛选后的书籍列表
+   */
+  getFilteredBooks(): NovelBook[] {
+    if (this.filterType === 'all') {
+      return this.favoriteBooks;
+    }
+    return this.favoriteBooks.filter((book: NovelBook) => {
+      if (this.filterType === 'unread') {
+        return book.readStatus === NovelReadStatus.UNREAD || !book.readStatus;
+      } else if (this.filterType === 'reading') {
+        return book.readStatus === NovelReadStatus.READING;
+      } else if (this.filterType === 'finished') {
+        return book.readStatus === NovelReadStatus.FINISHED;
+      }
+      return true;
+    });
+  }
+  
+  /**
+   * 构建筛选Popup
+   */
+  @Builder
+  buildFilterPopup() {
+    Column() {
+      Text('筛选')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .margin({ bottom: 12 })
+      
+      this.buildFilterOption('全部', 'all')
+      this.buildFilterOption('未读', 'unread')
+      this.buildFilterOption('阅读中', 'reading')
+      this.buildFilterOption('已读完', 'finished')
+    }
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+  }
+  
+  @Builder
+  buildFilterOption(label: string, type: 'all' | 'unread' | 'reading' | 'finished') {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.filterType === type ?
+          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Blank()
+      if (this.filterType === type) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      }
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: 8, right: 8 })
+    .borderRadius(8)
+    .backgroundColor(this.filterType === type ?
+      ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+      Color.Transparent)
+    .onClick(() => {
+      this.filterType = type;
+      this.showFilterPopup = false;
+    })
+  }
+  
+  /**
+   * 构建排序Popup
+   */
+  @Builder
+  buildSortPopup() {
+    Column() {
+      Text('排序')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .margin({ bottom: 12 })
+      
+      this.buildSortOption('最近阅读', 'lastRead')
+      this.buildSortOption('书名', 'name')
+      this.buildSortOption('作者', 'author')
+      this.buildSortOption('添加时间', 'addTime')
+      this.buildSortOption('更新时间', 'updateTime')
+    }
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+  }
+  
+  @Builder
+  buildSortOption(label: string, type: BookshelfSortType) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.bookshelfSettings.sortType === type ?
+          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Blank()
+      if (this.bookshelfSettings.sortType === type) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      }
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: 8, right: 8 })
+    .borderRadius(8)
+    .backgroundColor(this.bookshelfSettings.sortType === type ?
+      ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+      Color.Transparent)
+    .onClick(() => {
+      this.changeSortType(type);
+      this.showSortPopup = false;
+    })
   }
 
   @Builder
@@ -730,7 +872,7 @@ export struct NovelBookshelfPage {
   @Builder
   buildContent() {
     if (this.currentTab === 0) {
-      this.buildBookList(this.favoriteBooks, '暂无收藏的小说')
+      this.buildBookList(this.getFilteredBooks(), '暂无收藏的小说')
     } else {
       this.buildBrowseHistoryList()
     }
@@ -868,7 +1010,8 @@ export struct NovelBookshelfPage {
     .width('100%')
     .padding(12)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(10)
+    .borderRadius(AppColors.cornerRadius)
+    .opacity(AppColors.getTransparency('card'))
     .margin({ left: 16, right: 16, bottom: 8 })
     .onClick(() => this.openBrowseHistoryDetail(item))
   }
@@ -917,10 +1060,18 @@ export struct NovelBookshelfPage {
     Refresh({ refreshing: $$this.isRefreshing }) {
       if (books.length === 0) {
         Column() {
-          Text(emptyText)
+          Text(this.filterType === 'all' ? emptyText : '没有符合条件的小说')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          
+          if (this.filterType !== 'all') {
+            Text('尝试更换筛选条件')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+              .margin({ top: 8 })
+          }
           
           Button('去搜索小说')
             .fontSize(14)
@@ -936,20 +1087,175 @@ export struct NovelBookshelfPage {
         .height('100%')
         .justifyContent(FlexAlign.Center)
       } else {
-        List() {
-          ForEach(books, (book: NovelBook) => {
-            ListItem() {
-              this.buildBookItem(book)
+        if (this.viewMode === 'list') {
+          // 列表视图
+          List() {
+            ForEach(books, (book: NovelBook) => {
+              ListItem() {
+                this.buildBookItem(book)
+              }
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.buildBookDeleteButton(book)
+                  }
+                }
+              })
+            })
+          }
+          .width('100%')
+          .padding({ top: 8 })
+        } else {
+          // 网格视图
+          Scroll() {
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+              ForEach(books, (book: NovelBook) => {
+                this.buildBookGridItem(book)
+              })
             }
-          })
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8 })
+          }
+          .width('100%')
         }
-        .width('100%')
-        .padding({ top: 8 })
       }
     }
     .onRefreshing(() => this.onRefresh())
     .width('100%')
     .layoutWeight(1)
+  }
+  
+  /**
+   * 构建书籍删除按钮（滑动删除）
+   */
+  @Builder
+  buildBookDeleteButton(book: NovelBook) {
+    Row() {
+      Text('删除')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor('#FFFFFF')
+    }
+    .width(80)
+    .height('100%')
+    .backgroundColor('#FF4444')
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      promptAction.showDialog({
+        title: '确认删除',
+        message: `确定要删除"${book.name}"吗？`,
+        buttons: [
+          { text: '取消', color: '#666666' },
+          { text: '删除', color: '#FF4D4F' }
+        ]
+      }).then(async (result) => {
+        if (result.index === 1) {
+          await this.dataManager.deleteBook(book.id);
+          await this.loadBooks();
+          promptAction.showToast({ message: '删除成功' });
+        }
+      });
+    })
+  }
+  
+  /**
+   * 构建网格视图的书籍项
+   */
+  @Builder
+  buildBookGridItem(book: NovelBook) {
+    Column() {
+      Stack({ alignContent: Alignment.TopStart }) {
+        // 封面
+        if (book.coverUrl) {
+          Image(book.coverUrl)
+            .width('100%')
+            .height(140)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+        } else {
+          Column() {
+            Text(book.name.substring(0, 1))
+              .fontSize(28)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#FFFFFF')
+              .fontWeight(FontWeight.Bold)
+          }
+          .width('100%')
+          .height(140)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
+        }
+        
+        // 编辑模式选择框
+        if (this.isEditMode) {
+          Stack() {
+            Circle()
+              .width(20)
+              .height(20)
+              .fill(this.isBookSelected(book.id) ?
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                'rgba(0,0,0,0.3)')
+              .stroke(this.isBookSelected(book.id) ?
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                '#FFFFFF')
+              .strokeWidth(2)
+            
+            if (this.isBookSelected(book.id)) {
+              Text('✓')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+          }
+          .margin(6)
+        }
+      }
+      
+      // 书名
+      Text(book.name)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .margin({ top: 6 })
+        .width('100%')
+      
+      // 作者
+      Text(book.author || '未知作者')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .margin({ top: 2 })
+        .width('100%')
+    }
+    .width('31%')
+    .margin({ left: '1%', right: '1%', bottom: 12 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(AppColors.cornerRadius)
+    .opacity(AppColors.getTransparency('card'))
+    .padding(6)
+    .onClick(() => {
+      if (this.isEditMode) {
+        this.toggleBookSelection(book.id);
+      } else {
+        this.openBook(book);
+      }
+    })
+    .gesture(
+      LongPressGesture()
+        .onAction(() => {
+          if (!this.isEditMode) {
+            this.isEditMode = true;
+            this.toggleBookSelection(book.id);
+          }
+        })
+    )
   }
 
   @Builder
@@ -1055,7 +1361,8 @@ export struct NovelBookshelfPage {
     .backgroundColor(this.isBookSelected(book.id) ? 
       ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
       ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(8)
+    .borderRadius(AppColors.cornerRadius)
+    .opacity(AppColors.getTransparency('card'))
     .margin({ left: 12, right: 12, bottom: 8 })
     .onClick(() => {
       if (this.isEditMode) {

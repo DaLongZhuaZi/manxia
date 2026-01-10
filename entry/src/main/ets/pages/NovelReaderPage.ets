@@ -20,9 +20,11 @@ import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { 
   TextReaderSettings, 
   DEFAULT_TEXT_READER_SETTINGS,
+  DEFAULT_TEXT_STYLE,
   TextChapter,
   BackgroundType,
-  PageMargins
+  PageMargins,
+  TextAlignment
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
@@ -324,17 +326,54 @@ export struct NovelReaderPage {
         logger.info(TAG, `加载书籍专属设置: ${this.bookId}`);
         // 为在线小说调整页边距
         bookSettings.pageMargins = onlineNovelMargins;
+        // 兼容性处理：确保所有子对象完整
+        this.ensureSettingsComplete(bookSettings);
         this.settings = bookSettings;
       } else {
         // 使用全局设置
         const globalSettings = this.settingsManager.getJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, DEFAULT_TEXT_READER_SETTINGS);
         // 为在线小说调整页边距
         globalSettings.pageMargins = onlineNovelMargins;
+        // 兼容性处理：确保所有子对象完整
+        this.ensureSettingsComplete(globalSettings);
         this.settings = globalSettings;
         logger.info(TAG, `使用全局小说阅读器设置，已调整为在线小说页边距`);
       }
     } catch (e) {
       logger.warn(TAG, `加载设置失败: ${String(e)}`);
+    }
+  }
+  
+  /**
+   * 确保设置对象的所有子属性完整（兼容旧版本设置）
+   */
+  private ensureSettingsComplete(settings: TextReaderSettings): void {
+    // 确保background对象完整
+    if (!settings.background) {
+      settings.background = { type: BackgroundType.COLOR, color: '#F5F0E1' };
+    } else if (!settings.background.type) {
+      settings.background.type = BackgroundType.COLOR;
+    }
+    
+    // 确保textStyle对象完整
+    if (!settings.textStyle) {
+      settings.textStyle = DEFAULT_TEXT_STYLE;
+    } else {
+      // 确保textStyle的所有属性都有默认值
+      if (settings.textStyle.fontSize === undefined) settings.textStyle.fontSize = 18;
+      if (settings.textStyle.lineHeight === undefined) settings.textStyle.lineHeight = 1.8;
+      if (settings.textStyle.paragraphSpacing === undefined) settings.textStyle.paragraphSpacing = 16;
+      if (settings.textStyle.firstLineIndent === undefined) settings.textStyle.firstLineIndent = 2;
+      if (settings.textStyle.letterSpacing === undefined) settings.textStyle.letterSpacing = 0.5;
+      if (settings.textStyle.textColor === undefined) settings.textStyle.textColor = '#333333';
+      if (settings.textStyle.fontWeight === undefined) settings.textStyle.fontWeight = 400;
+      if (settings.textStyle.fontFamily === undefined) settings.textStyle.fontFamily = 'HarmonyOS Sans';
+      if (settings.textStyle.textAlignment === undefined) settings.textStyle.textAlignment = TextAlignment.JUSTIFY;
+    }
+    
+    // 确保pageMargins对象完整
+    if (!settings.pageMargins) {
+      settings.pageMargins = { top: 48, bottom: 48, left: 24, right: 24 };
     }
   }
 
@@ -623,10 +662,12 @@ export struct NovelReaderPage {
   }
 
   getBackgroundColor(): string {
-    if (this.settings.background.type === BackgroundType.COLOR) {
+    // 防御性检查：确保background对象存在且有type属性
+    if (this.settings?.background?.type === BackgroundType.COLOR) {
       return this.settings.background.color || '#F5F0E1';
     }
-    return '#F5F0E1';
+    // 如果background存在但type不是COLOR，或者background不存在，返回默认颜色
+    return this.settings?.background?.color || '#F5F0E1';
   }
 
   build() {
@@ -969,17 +1010,17 @@ export struct NovelReaderPage {
   @Builder
   buildSettingsPanel() {
     Stack() {
-      // 遮罩
+      // 遮罩层 - 使用轻微模糊效果而非压暗
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor('rgba(0,0,0,0.5)')
+        .backgroundColor('rgba(0,0,0,0.15)')
         .opacity(this.settingsPanelOpacity)
         .onClick(() => {
           this.hideSettingsPanelWithAnimation();
         })
       
-      // 设置面板
+      // 设置面板 - 使用磨砂效果
       Column() {
         TextReaderSettingsPanel({
           settings: this.settings,
@@ -994,11 +1035,18 @@ export struct NovelReaderPage {
       .width('95%')
       .height('80%')
       .constraintSize({ maxWidth: 450, minWidth: 320 })
-      .backgroundColor($r('app.color.panel_background'))
+      .backgroundColor('rgba(255,255,255,0.95)')
+      .backdropBlur(20)
       .borderRadius(16)
       .opacity(this.settingsPanelOpacity)
       .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
       .clip(true)
+      .shadow({
+        radius: 20,
+        color: 'rgba(0,0,0,0.15)',
+        offsetX: 0,
+        offsetY: 4
+      })
     }
     .width('100%')
     .height('100%')
@@ -1006,6 +1054,10 @@ export struct NovelReaderPage {
   }
 
   toggleNightMode(): void {
+    // 防御性检查：确保background对象存在
+    if (!this.settings.background) {
+      this.settings.background = { type: BackgroundType.COLOR, color: '#F5F0E1' };
+    }
     const isDark = this.settings.background.color === '#1E1E1E';
     if (isDark) {
       // 切换到护眼黄

@@ -147,6 +147,30 @@ import { util } from '@kit.ArkTS';
 
 const TAG = 'MainMenuPage';
 
+/**
+ * 代理测试网站接口
+ */
+interface ProxyTestSite {
+  name: string;
+  url: string;
+  icon: string | Resource;
+  status: 'idle' | 'testing' | 'success' | 'failed';
+  responseTime?: number;
+  error?: string;
+}
+
+/**
+ * 默认测试网站列表
+ */
+const DEFAULT_PROXY_TEST_SITES: ProxyTestSite[] = [
+  { name: 'Google', url: 'https://www.google.com', icon: '🔍', status: 'idle' },
+  { name: 'GitHub', url: 'https://github.com', icon: '🐈️', status: 'idle' },
+  { name: 'Pixiv', url: 'https://www.pixiv.net', icon: '🎨', status: 'idle' },
+  { name: 'Twitter', url: 'https://twitter.com', icon: '🐦', status: 'idle' },
+  { name: 'YouTube', url: 'https://www.youtube.com', icon: '📺', status: 'idle' },
+  { name: 'Telegram', url: 'https://telegram.org', icon: '✈️', status: 'idle' },
+];
+
 // 图源名称映射（支持全名和简称）
 const SOURCE_NAME_MAP: Record<string, string> = {
   'pixiv': 'Pixiv',
@@ -512,6 +536,9 @@ struct MainMenuPage {
   @State proxyTestResults: string = ''; // 代理测试结果
   @State isTestingProxy: boolean = false; // 是否正在测试代理
   @State proxySourceList: SourceInfo[] = []; // 需要代理的图源列表
+  @State proxyDialogTab: 'settings' | 'sources' | 'test' = 'settings'; // 代理对话框当前标签页
+  @State proxyTestSites: ProxyTestSite[] = []; // 代理测试网站列表
+  @State customTestUrl: string = ''; // 自定义测试URL
   private sourceManager: SourceManager = SourceManager.getInstance(); // 图源管理器
   private sourceUpdateManager: SourceUpdateManager = SourceUpdateManager.getInstance(); // 图源更新管理器
   // WebView容器引用
@@ -8466,6 +8493,7 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .opacity(AppColors.getTransparency('dialog'))
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     }
     .width('100%')
@@ -9636,6 +9664,8 @@ struct MainMenuPage {
         .onClick(() => {
           // 加载需要代理的图源列表
           this.proxySourceList = this.sourceList.filter((s: SourceInfo) => s.requireProxy === true);
+          // 初始化测试网站列表
+          this.proxyTestSites = this.initProxyTestSites();
           this.showProxyDialog = true;
         })
       }
@@ -9941,7 +9971,7 @@ struct MainMenuPage {
   buildProxyConfigDialog() {
     Column() {
       Column() {
-        // 标题
+        // 标题栏
         Row() {
           SymbolGlyph($r('sys.symbol.airplane_departure'))
             .fontSize(24)
@@ -9953,259 +9983,45 @@ struct MainMenuPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .margin({ left: 8 })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .margin({ bottom: 16 })
-
-        // 启用开关
-        Row() {
-          Text('启用代理')
-            .fontSize(16)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
           Blank()
           
+          // 启用开关
           Toggle({ type: ToggleType.Switch, isOn: this.proxyConfig.enabled })
             .onChange((isOn: boolean) => {
               this.proxyConfig.enabled = isOn;
             })
         }
         .width('100%')
-        .padding({ top: 8, bottom: 8 })
+        .margin({ bottom: 12 })
 
+        // 标签页切换 - VSC风格
+        Row({ space: 0 }) {
+          this.buildProxyTabButton('代理设置', 'settings')
+          this.buildProxyTabButton('图源列表', 'sources')
+          this.buildProxyTabButton('连接测试', 'test')
+        }
+        .width('100%')
+        
         Divider()
           .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
-          .margin({ top: 12, bottom: 12 })
 
-        // HTTP代理配置
-        Column({ space: 8 }) {
-          Row() {
-            Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpEnabled })
-              .onChange((isOn: boolean) => {
-                this.proxyConfig.httpEnabled = isOn;
-              })
-            
-            Text('HTTP代理')
-              .fontSize(15)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .margin({ left: 8 })
-          }
-          .width('100%')
-
-          Row({ space: 8 }) {
-            TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpHost })
-              .layoutWeight(2)
-              .height(40)
-              .borderRadius(8)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .onChange((value: string) => {
-                this.proxyConfig.httpHost = value;
-              })
-              .enabled(this.proxyConfig.httpEnabled)
-
-            TextInput({ placeholder: '端口', text: this.proxyConfig.httpPort.toString() })
-              .layoutWeight(1)
-              .height(40)
-              .borderRadius(8)
-              .fontFamily(this.appFontFamily)
-              .type(InputType.Number)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .onChange((value: string) => {
-                const port = parseInt(value);
-                if (!isNaN(port) && port > 0 && port <= 65535) {
-                  this.proxyConfig.httpPort = port;
-                }
-              })
-              .enabled(this.proxyConfig.httpEnabled)
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .padding({ top: 8, bottom: 8 })
-        
-        // HTTPS代理配置
-        Column({ space: 8 }) {
-          Row() {
-            Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpsEnabled })
-              .onChange((isOn: boolean) => {
-                this.proxyConfig.httpsEnabled = isOn;
-              })
-            
-            Text('HTTPS代理')
-              .fontSize(15)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .margin({ left: 8 })
-          }
-          .width('100%')
-
-          Row({ space: 8 }) {
-            TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpsHost })
-              .layoutWeight(2)
-              .height(40)
-              .borderRadius(8)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .onChange((value: string) => {
-                this.proxyConfig.httpsHost = value;
-              })
-              .enabled(this.proxyConfig.httpsEnabled)
-
-            TextInput({ placeholder: '端口', text: this.proxyConfig.httpsPort.toString() })
-              .layoutWeight(1)
-              .height(40)
-              .borderRadius(8)
-              .fontFamily(this.appFontFamily)
-              .type(InputType.Number)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-              .onChange((value: string) => {
-                const port = parseInt(value);
-                if (!isNaN(port) && port > 0 && port <= 65535) {
-                  this.proxyConfig.httpsPort = port;
-                }
-              })
-              .enabled(this.proxyConfig.httpsEnabled)
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .padding({ top: 8, bottom: 8 })
-
-        Divider()
-          .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
-          .margin({ top: 12, bottom: 12 })
-        
-        // 需要代理的图源列表
-        Row() {
-          Text('需要代理的图源')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          
-          Blank()
-          
-          Text(`${this.proxySourceList.length} 个`)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        .width('100%')
-        
-        if (this.proxySourceList.length > 0) {
-          Scroll() {
-            Column({ space: 4 }) {
-              ForEach(this.proxySourceList, (source: SourceInfo) => {
-                Row({ space: 8 }) {
-                  if (source.iconPath) {
-                    Image('file://' + source.iconPath)
-                      .width(24)
-                      .height(24)
-                      .borderRadius(4)
-                  } else {
-                    Image($r('app.media.ic_source_normal'))
-                      .width(24)
-                      .height(24)
-                      .borderRadius(4)
-                  }
-                  
-                  Text(source.name)
-                    .fontSize(13)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .layoutWeight(1)
-                  
-                  Text(source.isEnabled ? '已启用' : '已禁用')
-                    .fontSize(11)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(source.isEnabled ? 
-                      ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) :
-                      ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                }
-                .width('100%')
-                .padding(8)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .borderRadius(6)
-              })
+        // 内容区域
+        Scroll() {
+          Column({ space: 12 }) {
+            if (this.proxyDialogTab === 'settings') {
+              this.buildProxySettingsTab()
+            } else if (this.proxyDialogTab === 'sources') {
+              this.buildProxySourcesTab()
+            } else {
+              this.buildProxyTestTab()
             }
-            .width('100%')
           }
           .width('100%')
-          .height(100)
-          .margin({ top: 8 })
-        } else {
-          Text('暂无需要代理的图源')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .margin({ top: 8 })
+          .padding({ top: 12 })
         }
-
-        // 测试代理按钮
-        Button(this.isTestingProxy ? '测试中...' : '测试代理连接')
-          .fontSize(14)
-          .fontColor(AppColors.onSuccess)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(this.isTestingProxy ? 
-            ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
-            ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
-          .borderRadius(8)
-          .width('100%')
-          .margin({ top: 12 })
-          .enabled(!this.isTestingProxy)
-          .onClick(async () => {
-            this.isTestingProxy = true;
-            this.proxyTestResults = '正在测试...';
-            
-            // 先保存配置
-            await ProxyManager.getInstance().saveConfig(this.proxyConfig);
-            
-            // 执行测试
-            const results = await ProxyManager.getInstance().testProxyBatch();
-            
-            // 格式化结果
-            let resultText = '';
-            for (const r of results) {
-              const status = r.success ? '✓' : '✗';
-              const time = r.responseTime ? `${r.responseTime}ms` : '';
-              const code = r.responseCode ? `(${r.responseCode})` : '';
-              const err = r.error ? `: ${r.error.substring(0, 30)}` : '';
-              resultText += `${status} ${r.url} ${code} ${time}${err}\n`;
-            }
-            
-            this.proxyTestResults = resultText;
-            this.isTestingProxy = false;
-          })
-        
-        // 测试结果显示
-        if (this.proxyTestResults) {
-          Scroll() {
-            Text(this.proxyTestResults)
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .fontFamily('monospace')
-          }
-          .width('100%')
-          .height(80)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-          .borderRadius(8)
-          .padding(8)
-          .margin({ top: 8 })
-        }
-
-        // 提示信息
-        Text('提示：代理将应用于图源和图源仓库的网络请求')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .margin({ top: 12 })
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
 
         // 按钮
         Row({ space: 16 }) {
@@ -10219,6 +10035,7 @@ struct MainMenuPage {
             .onClick(() => {
               this.showProxyDialog = false;
               this.proxyTestResults = '';
+              this.proxyDialogTab = 'settings';
             })
 
           Button('保存')
@@ -10232,21 +10049,469 @@ struct MainMenuPage {
               ProxyManager.getInstance().saveConfig(this.proxyConfig);
               this.showProxyDialog = false;
               this.proxyTestResults = '';
+              this.proxyDialogTab = 'settings';
             })
         }
         .width('100%')
-        .margin({ top: 20 })
+        .margin({ top: 16 })
       }
       .width('85%')
+      .height('70%')
+      .constraintSize({ maxWidth: 450, maxHeight: 550 })
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
+      .borderRadius(this.userThemeCornerRadius)
+      .opacity(AppColors.getTransparency('dialog'))
       .padding(20)
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
+    .backgroundColor('rgba(0,0,0,0.1)')
+    .onClick(() => {
+      // 点击遮罩关闭
+    })
     .position({ x: 0, y: 0 })
     .transition(TransitionEffect.opacity(0.01).animation({ duration: 200, curve: Curve.EaseOut }))
+  }
+  
+  @Builder
+  buildProxyTabButton(title: string, tab: 'settings' | 'sources' | 'test') {
+    Column() {
+      Text(title)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.proxyDialogTab === tab ? 
+          ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) : 
+          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontWeight(this.proxyDialogTab === tab ? FontWeight.Medium : FontWeight.Normal)
+      
+      if (this.proxyDialogTab === tab) {
+        Divider()
+          .width(24)
+          .strokeWidth(2)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .margin({ top: 4 })
+      }
+    }
+    .layoutWeight(1)
+    .padding({ top: 12, bottom: 8 })
+    .onClick(() => {
+      this.proxyDialogTab = tab;
+    })
+  }
+  
+  @Builder
+  buildProxySettingsTab() {
+    Column({ space: 16 }) {
+      // HTTP代理配置
+      Column({ space: 8 }) {
+        Row() {
+          Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpEnabled })
+            .onChange((isOn: boolean) => {
+              this.proxyConfig.httpEnabled = isOn;
+            })
+          
+          Text('HTTP代理')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .margin({ left: 8 })
+        }
+        .width('100%')
+
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpHost })
+            .layoutWeight(2)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              this.proxyConfig.httpHost = value;
+            })
+            .enabled(this.proxyConfig.httpEnabled)
+
+          TextInput({ placeholder: '端口', text: this.proxyConfig.httpPort.toString() })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .type(InputType.Number)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              const port = parseInt(value);
+              if (!isNaN(port) && port > 0 && port <= 65535) {
+                this.proxyConfig.httpPort = port;
+              }
+            })
+            .enabled(this.proxyConfig.httpEnabled)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      
+      // HTTPS代理配置
+      Column({ space: 8 }) {
+        Row() {
+          Toggle({ type: ToggleType.Checkbox, isOn: this.proxyConfig.httpsEnabled })
+            .onChange((isOn: boolean) => {
+              this.proxyConfig.httpsEnabled = isOn;
+            })
+          
+          Text('HTTPS代理')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .margin({ left: 8 })
+        }
+        .width('100%')
+
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '代理地址', text: this.proxyConfig.httpsHost })
+            .layoutWeight(2)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              this.proxyConfig.httpsHost = value;
+            })
+            .enabled(this.proxyConfig.httpsEnabled)
+
+          TextInput({ placeholder: '端口', text: this.proxyConfig.httpsPort.toString() })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .type(InputType.Number)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              const port = parseInt(value);
+              if (!isNaN(port) && port > 0 && port <= 65535) {
+                this.proxyConfig.httpsPort = port;
+              }
+            })
+            .enabled(this.proxyConfig.httpsEnabled)
+        }
+        .width('100%')
+      }
+      .width('100%')
+
+      // 提示信息
+      Text('提示：代理将应用于图源和图源仓库的网络请求')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .margin({ top: 8 })
+    }
+    .width('100%')
+  }
+  
+  @Builder
+  buildProxySourcesTab() {
+    Column({ space: 12 }) {
+      // 标题
+      Row() {
+        Text('图源代理设置')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        Text(`${this.proxySourceList.filter(s => s.requireProxy).length}/${this.sourceList.length} 个已启用`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      
+      // 显示所有图源，允许用户切换代理开关
+      if (this.sourceList.length > 0) {
+        Column({ space: 4 }) {
+          ForEach(this.sourceList, (source: SourceInfo) => {
+            Row({ space: 8 }) {
+              if (source.iconPath) {
+                Image('file://' + source.iconPath)
+                  .width(28)
+                  .height(28)
+                  .borderRadius(6)
+              } else {
+                Image($r('app.media.ic_source_normal'))
+                  .width(28)
+                  .height(28)
+                  .borderRadius(6)
+              }
+              
+              Column({ space: 2 }) {
+                Text(source.name)
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                
+                Text(source.baseUrl || '')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+              
+              // 代理开关
+              Toggle({ type: ToggleType.Switch, isOn: source.requireProxy === true })
+                .onChange(async (isOn: boolean) => {
+                  // 更新图源的代理设置
+                  source.requireProxy = isOn;
+                  await this.sourceManager.updateSourceProxySetting(source.id, isOn);
+                  // 刷新代理图源列表
+                  this.proxySourceList = this.sourceList.filter((s: SourceInfo) => s.requireProxy === true);
+                })
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+          })
+        }
+        .width('100%')
+      } else {
+        Column() {
+          SymbolGlyph($r('sys.symbol.doc_text'))
+            .fontSize(40)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+          
+          Text('暂无图源')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .margin({ top: 8 })
+          
+          Text('请先添加图源')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .padding({ top: 40, bottom: 40 })
+      }
+    }
+    .width('100%')
+  }
+  
+  @Builder
+  buildProxyTestTab() {
+    Column({ space: 12 }) {
+      // 网站磁贴网格
+      Text('点击测试网站连接')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+      
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.proxyTestSites, (site: ProxyTestSite, index: number) => {
+          this.buildProxyTestTile(site, index)
+        })
+      }
+      .width('100%')
+      
+      // 自定义测试URL
+      Column({ space: 8 }) {
+        Text('自定义测试')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .width('100%')
+        
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '输入网址，如 https://example.com', text: this.customTestUrl })
+            .layoutWeight(1)
+            .height(40)
+            .borderRadius(8)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .onChange((value: string) => {
+              this.customTestUrl = value;
+            })
+          
+          Button('测试')
+            .fontSize(14)
+            .fontColor(AppColors.onSuccess)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .borderRadius(8)
+            .width(60)
+            .height(40)
+            .enabled(this.customTestUrl.length > 0 && !this.isTestingProxy)
+            .onClick(async () => {
+              if (!this.customTestUrl.startsWith('http')) {
+                this.customTestUrl = 'https://' + this.customTestUrl;
+              }
+              await this.testSingleUrl(this.customTestUrl, -1);
+            })
+        }
+        .width('100%')
+        
+        // 自定义测试结果
+        if (this.proxyTestResults) {
+          Text(this.proxyTestResults)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+            .padding(10)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(8)
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+  
+  @Builder
+  buildProxyTestTile(site: ProxyTestSite, index: number) {
+    Column({ space: 4 }) {
+      Text(site.icon)
+        .fontSize(24)
+      
+      Text(site.name)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      
+      // 状态显示
+      if (site.status === 'testing') {
+        LoadingProgress()
+          .width(16)
+          .height(16)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+      } else if (site.status === 'success') {
+        Text(`${site.responseTime}ms`)
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+      } else if (site.status === 'failed') {
+        Text('失败')
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+      } else {
+        Text('点击测试')
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+    }
+    .width('30%')
+    .aspectRatio(1)
+    .padding(8)
+    .margin(4)
+    .backgroundColor(site.status === 'success' ? 
+      'rgba(76, 175, 80, 0.1)' : 
+      site.status === 'failed' ? 
+        'rgba(244, 67, 54, 0.1)' : 
+        ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .justifyContent(FlexAlign.Center)
+    .onClick(async () => {
+      if (site.status !== 'testing') {
+        await this.testSingleUrl(site.url, index);
+      }
+    })
+  }
+  
+  /**
+   * 初始化代理测试网站列表
+   */
+  private initProxyTestSites(): ProxyTestSite[] {
+    const sites: ProxyTestSite[] = [];
+    for (const site of DEFAULT_PROXY_TEST_SITES) {
+      const newSite: ProxyTestSite = {
+        name: site.name,
+        url: site.url,
+        icon: site.icon,
+        status: 'idle'
+      };
+      sites.push(newSite);
+    }
+    return sites;
+  }
+  
+  /**
+   * 更新测试网站状态
+   */
+  private updateProxyTestSiteStatus(index: number, status: 'idle' | 'testing' | 'success' | 'failed', 
+    responseTime?: number, error?: string): void {
+    const sites: ProxyTestSite[] = [];
+    for (let i = 0; i < this.proxyTestSites.length; i++) {
+      if (i === index) {
+        const updatedSite: ProxyTestSite = {
+          name: this.proxyTestSites[i].name,
+          url: this.proxyTestSites[i].url,
+          icon: this.proxyTestSites[i].icon,
+          status: status,
+          responseTime: responseTime,
+          error: error
+        };
+        sites.push(updatedSite);
+      } else {
+        sites.push(this.proxyTestSites[i]);
+      }
+    }
+    this.proxyTestSites = sites;
+  }
+  
+  /**
+   * 测试单个URL
+   */
+  private async testSingleUrl(url: string, index: number): Promise<void> {
+    // 更新状态为测试中
+    if (index >= 0) {
+      this.updateProxyTestSiteStatus(index, 'testing');
+    } else {
+      this.proxyTestResults = '正在测试...';
+    }
+    
+    this.isTestingProxy = true;
+    
+    try {
+      // 先保存配置
+      await ProxyManager.getInstance().saveConfig(this.proxyConfig);
+      
+      const startTime = Date.now();
+      const result = await ProxyManager.getInstance().testSingleUrl(url);
+      const responseTime = Date.now() - startTime;
+      
+      if (index >= 0) {
+        this.updateProxyTestSiteStatus(
+          index, 
+          result.success ? 'success' : 'failed',
+          result.success ? responseTime : undefined,
+          result.error
+        );
+      } else {
+        this.proxyTestResults = result.success ? 
+          `✓ 连接成功 (${responseTime}ms)` : 
+          `✗ 连接失败: ${result.error || '未知错误'}`;
+      }
+    } catch (error) {
+      if (index >= 0) {
+        this.updateProxyTestSiteStatus(index, 'failed', undefined, String(error));
+      } else {
+        this.proxyTestResults = `✗ 测试失败: ${String(error)}`;
+      }
+    }
+    
+    this.isTestingProxy = false;
   }
 
   /**

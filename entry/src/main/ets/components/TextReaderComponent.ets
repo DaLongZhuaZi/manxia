@@ -24,6 +24,7 @@ import {
   DEFAULT_TEXT_READER_SETTINGS
 } from '../Models/TextReaderModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
+import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
 
 
 const TAG = 'TextReaderComponent';
@@ -124,10 +125,18 @@ export struct TextReaderComponent {
   @State private curlAnimateFrom: number = 0;     // 内部动画起始进度
   private curlPendingPageIndex: number = -1;      // 待切换的页面索引
   private curlAnimationTimer: number = -1;        // 卷页动画定时器
+  private animationTimeoutTimer: number = -1;     // 动画超时保护定时器
+  private static readonly ANIMATION_TIMEOUT_MS: number = 3000;  // 动画超时时间(3秒)
   private pagePixelMapCache: Map<number, image.PixelMap> = new Map();  // 页面 PixelMap 缓存
   private isGeneratingPixelMap: boolean = false;  // 是否正在生成 PixelMap
   private isPaginating: boolean = false;  // 是否正在分页
   private paginationVersion: number = 0;  // 分页版本号，用于取消旧的分页任务
+  private paginationRetryCount: number = 0;  // 分页重试次数
+  private static readonly MAX_PAGINATION_RETRIES: number = 10;  // 最大分页重试次数
+  private areaChangeDebounceTimer: number = -1;  // onAreaChange防抖定时器
+  private static readonly AREA_CHANGE_DEBOUNCE_MS: number = 100;  // 防抖时间(100ms)
+  private lastContentAreaWidth: number = 0;  // 上次内容区域宽度
+  private lastContentAreaHeight: number = 0;  // 上次内容区域高度
   @State private isLoading: boolean = false;  // 加载状态
   
   // ========== 章节切换过渡状态 ==========
@@ -175,6 +184,10 @@ export struct TextReaderComponent {
    * 注册自定义字体（如果设置了fontPath）
    */
   private registerCustomFontIfNeeded(): void {
+    // 防御性检查：确保textStyle对象存在
+    if (!this.settings?.textStyle) {
+      return;
+    }
     const fontPath = this.settings.textStyle.fontPath;
     if (fontPath && fontPath.length > 0) {
       try {
@@ -250,7 +263,14 @@ export struct TextReaderComponent {
     
     // 检查组件尺寸是否有效
     if (this.contentAreaWidth <= 0 || this.contentAreaHeight <= 0) {
-      logger.info(TAG, `组件尺寸未初始化，延迟分页`);
+      this.paginationRetryCount++;
+      if (this.paginationRetryCount > TextReaderComponent.MAX_PAGINATION_RETRIES) {
+        logger.error(TAG, `分页重试次数超过限制(${TextReaderComponent.MAX_PAGINATION_RETRIES})，停止重试`);
+        this.isLoading = false;
+        this.paginationRetryCount = 0;
+        return;
+      }
+      logger.info(TAG, `组件尺寸未初始化，延迟分页(重试${this.paginationRetryCount}/${TextReaderComponent.MAX_PAGINATION_RETRIES})`);
       // 延迟重试，等待组件尺寸初始化
       setTimeout(() => {
         if (currentVersion === this.paginationVersion) {
@@ -259,6 +279,9 @@ export struct TextReaderComponent {
       }, 100);
       return;
     }
+    
+    // 重置重试计数
+    this.paginationRetryCount = 0;
     
     // 使用 setTimeout 延迟执行，让 UI 有机会更新
     setTimeout(() => {
@@ -345,6 +368,67 @@ export struct TextReaderComponent {
     this.stopCurlAnimation();
     // 停止时间更新
     this.stopTimeUpdate();
+    // 清理动画超时定时器
+    this.clearAnimationTimeout();
+    // 清理防抖定时器
+    if (this.areaChangeDebounceTimer !== -1) {
+      clearTimeout(this.areaChangeDebounceTimer);
+      this.areaChangeDebounceTimer = -1;
+    }
+  }
+  
+  /**
+   * 启动动画超时保护
+   * 如果动画在指定时间内未完成，强制重置动画状态
+   */
+  private startAnimationTimeout(): void {
+    this.clearAnimationTimeout();
+    this.animationTimeoutTimer = setTimeout(() => {
+      if (this.isAnimating) {
+        logger.warn(TAG, `动画超时(${TextReaderComponent.ANIMATION_TIMEOUT_MS}ms)，强制重置动画状态`);
+        this.forceResetAnimationState();
+      }
+    }, TextReaderComponent.ANIMATION_TIMEOUT_MS);
+  }
+  
+  /**
+   * 清理动画超时定时器
+   */
+  private clearAnimationTimeout(): void {
+    if (this.animationTimeoutTimer !== -1) {
+      clearTimeout(this.animationTimeoutTimer);
+      this.animationTimeoutTimer = -1;
+    }
+  }
+  
+  /**
+   * 强制重置所有动画状态
+   */
+  private forceResetAnimationState(): void {
+    this.isAnimating = false;
+    this.showCurlEffect = false;
+    this.isChapterTransition = false;
+    this.slideOffset = 0;
+    this.slideOpacity = 1;
+    this.curlProgress = 0;
+    this.curlAnimateTarget = -1;
+    this.isDragging = false;
+    this.clearAnimationTimeout();
+    logger.info(TAG, '动画状态已强制重置');
+  }
+  
+  /**
+   * 提供边界反馈（已到达第一页或最后一页时）
+   */
+  private provideBoundaryFeedback(): void {
+    try {
+      // 使用警告震动提示用户已到达边界
+      InteractionManager.getInstance().vibrate(VibrationScene.WARNING);
+      logger.debug(TAG, '边界反馈：已到达页面边界');
+    } catch (error) {
+      // 震动失败不影响正常使用
+      logger.debug(TAG, `边界反馈失败: ${String(error)}`);
+    }
   }
   
   /**
@@ -714,6 +798,8 @@ export struct TextReaderComponent {
       return;
     }
     if (this.currentPageIndex >= this.totalPages - 1) {
+      // 已是最后一页，提供边界反馈
+      this.provideBoundaryFeedback();
       return;
     }
     
@@ -731,6 +817,8 @@ export struct TextReaderComponent {
       return;
     }
     if (this.currentPageIndex <= 0) {
+      // 已是第一页，提供边界反馈
+      this.provideBoundaryFeedback();
       return;
     }
     
@@ -811,6 +899,7 @@ export struct TextReaderComponent {
     }
     
     this.isAnimating = true;
+    this.startAnimationTimeout();  // 启动动画超时保护
     const direction = this.isForward ? -1 : 1;
     const targetOffset = direction * this.componentWidth;
     const capturedVersion = this.paginationVersion;  // 捕获当前版本
@@ -828,6 +917,7 @@ export struct TextReaderComponent {
         logger.warn(TAG, `performSlideAnimation: 动画完成后页面数据已变化，取消更新`);
         this.slideOffset = 0;
         this.isAnimating = false;
+        this.clearAnimationTimeout();
         return;
       }
       
@@ -835,6 +925,7 @@ export struct TextReaderComponent {
       this.updatePageContents();
       this.slideOffset = 0;
       this.isAnimating = false;
+      this.clearAnimationTimeout();
       this.notifyPageChange();
     }, 300);
   }
@@ -850,6 +941,7 @@ export struct TextReaderComponent {
     }
     
     this.isAnimating = true;
+    this.startAnimationTimeout();  // 启动动画超时保护
     const capturedVersion = this.paginationVersion;
     
     animateTo({
@@ -865,6 +957,7 @@ export struct TextReaderComponent {
         logger.warn(TAG, `performFadeAnimation: 动画完成后页面数据已变化，取消更新`);
         this.slideOpacity = 1;
         this.isAnimating = false;
+        this.clearAnimationTimeout();
         return;
       }
       
@@ -880,6 +973,7 @@ export struct TextReaderComponent {
       
       setTimeout(() => {
         this.isAnimating = false;
+        this.clearAnimationTimeout();
         this.notifyPageChange();
       }, 150);
     }, 150);
@@ -920,6 +1014,7 @@ export struct TextReaderComponent {
     }
     
     this.isAnimating = true;
+    this.startAnimationTimeout();  // 启动动画超时保护
     this.isForward = isForward;
     
     // 从当前位置继续滑动到目标位置
@@ -939,6 +1034,7 @@ export struct TextReaderComponent {
       this.updatePageContents();
       this.slideOffset = 0;
       this.isAnimating = false;
+      this.clearAnimationTimeout();
       this.notifyPageChange();
       logger.info(TAG, `completeSlidePageTurn: 翻页完成，currentPage=${this.currentPageIndex}`);
     }, 200);
@@ -967,8 +1063,10 @@ export struct TextReaderComponent {
     
     const nextChapterIndex = this.currentChapterIndex + 1;
     const nextChapter = this.chapters[nextChapterIndex];
+    const capturedVersion = this.paginationVersion;  // 捕获版本用于中断检测
     
     this.isAnimating = true;
+    this.startAnimationTimeout();  // 启动动画超时保护
     this.isForward = true;
     this.transitionDirection = true;
     this.transitionChapterName = nextChapter?.title || `第 ${nextChapterIndex + 1} 章`;
@@ -982,12 +1080,24 @@ export struct TextReaderComponent {
     });
     
     setTimeout(() => {
+      // 检查是否被中断
+      if (capturedVersion !== this.paginationVersion || !this.isAnimating) {
+        this.forceResetAnimationState();
+        return;
+      }
+      
       // 显示过渡页
       this.isChapterTransition = true;
       this.slideOffset = 0;
       
       // 100ms 后切换章节并滑动过去
       setTimeout(() => {
+        // 检查是否被中断
+        if (capturedVersion !== this.paginationVersion || !this.isAnimating) {
+          this.forceResetAnimationState();
+          return;
+        }
+        
         // 切换章节
         this.currentChapterIndex = nextChapterIndex;
         this.currentPageIndex = 0;
@@ -997,6 +1107,11 @@ export struct TextReaderComponent {
         
         // 延迟一帧后滑动出过渡页
         setTimeout(() => {
+          // 检查是否被中断
+          if (!this.isAnimating) {
+            return;
+          }
+          
           this.slideOffset = this.componentWidth;
           animateTo({
             duration: 150,
@@ -1008,6 +1123,7 @@ export struct TextReaderComponent {
           setTimeout(() => {
             this.isChapterTransition = false;
             this.isAnimating = false;
+            this.clearAnimationTimeout();
             logger.info(TAG, `switchToNextChapter: 切换到章节 ${this.currentChapterIndex}`);
           }, 150);
         }, 16);
@@ -1026,8 +1142,10 @@ export struct TextReaderComponent {
     
     const prevChapterIndex = this.currentChapterIndex - 1;
     const prevChapter = this.chapters[prevChapterIndex];
+    const capturedVersion = this.paginationVersion;  // 捕获版本用于中断检测
     
     this.isAnimating = true;
+    this.startAnimationTimeout();  // 启动动画超时保护
     this.isForward = false;
     this.transitionDirection = false;
     this.transitionChapterName = prevChapter?.title || `第 ${prevChapterIndex + 1} 章`;
@@ -1044,12 +1162,24 @@ export struct TextReaderComponent {
     });
     
     setTimeout(() => {
+      // 检查是否被中断
+      if (capturedVersion !== this.paginationVersion || !this.isAnimating) {
+        this.forceResetAnimationState();
+        return;
+      }
+      
       // 显示过渡页
       this.isChapterTransition = true;
       this.slideOffset = 0;
       
       // 100ms 后切换章节并滑动过去
       setTimeout(() => {
+        // 检查是否被中断
+        if (capturedVersion !== this.paginationVersion || !this.isAnimating) {
+          this.forceResetAnimationState();
+          return;
+        }
+        
         // 切换章节
         this.currentChapterIndex = prevChapterIndex;
         
@@ -1058,6 +1188,11 @@ export struct TextReaderComponent {
         
         // 延迟一帧后滑动出过渡页
         setTimeout(() => {
+          // 检查是否被中断
+          if (!this.isAnimating) {
+            return;
+          }
+          
           this.slideOffset = -this.componentWidth;
           animateTo({
             duration: 150,
@@ -1069,6 +1204,7 @@ export struct TextReaderComponent {
           setTimeout(() => {
             this.isChapterTransition = false;
             this.isAnimating = false;
+            this.clearAnimationTimeout();
             logger.info(TAG, `switchToPrevChapter: 切换到章节 ${this.currentChapterIndex}，将跳转到最后一页`);
           }, 150);
         }, 16);
@@ -1096,6 +1232,7 @@ export struct TextReaderComponent {
       if (this.pages.length === 0 || this.isPaginating || this.isLoading) {
         logger.warn(TAG, `performCurlAnimation: 异步完成后页面数据已变化，取消动画`);
         this.isAnimating = false;
+        this.clearAnimationTimeout();
         return;
       }
       
@@ -1119,6 +1256,7 @@ export struct TextReaderComponent {
     }).catch((err: Error) => {
       logger.error(TAG, `生成页面PixelMap失败: ${err.message}`);
       this.isAnimating = false;
+      this.clearAnimationTimeout();
       // 如果页面数据仍然有效，尝试降级到滑动动画
       if (this.pages.length > 0 && targetPageIndex < this.pages.length) {
         this.performSlideAnimation(targetPageIndex);
@@ -1137,6 +1275,9 @@ export struct TextReaderComponent {
       return;
     }
     
+    // 捕获当前分页版本，用于检测异步过程中是否发生了章节切换
+    const capturedVersion = this.paginationVersion;
+    
     this.isGeneratingPixelMap = true;
     
     try {
@@ -1149,9 +1290,22 @@ export struct TextReaderComponent {
       } else {
         // 生成当前页 PixelMap
         this.currentPixelMap = await this.renderPageToPixelMap(currentIndex);
+        
+        // 检查版本是否变化（章节切换）
+        if (capturedVersion !== this.paginationVersion) {
+          logger.warn(TAG, 'generatePagePixelMaps: 生成过程中发生章节切换，取消');
+          return;
+        }
+        
         if (this.currentPixelMap) {
           this.pagePixelMapCache.set(currentIndex, this.currentPixelMap);
         }
+      }
+      
+      // 再次检查版本
+      if (capturedVersion !== this.paginationVersion) {
+        logger.warn(TAG, 'generatePagePixelMaps: 生成过程中发生章节切换，取消');
+        return;
       }
       
       if (cachedTarget) {
@@ -1159,6 +1313,13 @@ export struct TextReaderComponent {
       } else if (targetIndex >= 0 && targetIndex < this.totalPages) {
         // 生成目标页 PixelMap
         this.nextPixelMap = await this.renderPageToPixelMap(targetIndex);
+        
+        // 检查版本是否变化
+        if (capturedVersion !== this.paginationVersion) {
+          logger.warn(TAG, 'generatePagePixelMaps: 生成过程中发生章节切换，取消');
+          return;
+        }
+        
         if (this.nextPixelMap) {
           this.pagePixelMapCache.set(targetIndex, this.nextPixelMap);
         }
@@ -1910,16 +2071,34 @@ export struct TextReaderComponent {
     .onAreaChange((_, newArea) => {
       this.componentWidth = newArea.width as number;
       this.componentHeight = newArea.height as number;
-      this.contentAreaWidth = this.componentWidth - this.settings.pageMargins.left - this.settings.pageMargins.right;
+      const newContentWidth = this.componentWidth - this.settings.pageMargins.left - this.settings.pageMargins.right;
       // 内容区域高度 = 组件高度 - 上下页边距 - 底部状态栏高度
       const bottomBarHeight = this.getEffectiveBottomBarHeight();
-      this.contentAreaHeight = this.componentHeight - this.settings.pageMargins.top - this.settings.pageMargins.bottom - bottomBarHeight;
+      const newContentHeight = this.componentHeight - this.settings.pageMargins.top - this.settings.pageMargins.bottom - bottomBarHeight;
       
-      logger.debug(TAG, `内容区域: ${this.contentAreaWidth}x${this.contentAreaHeight}, 底部状态栏高度: ${bottomBarHeight}`);
-      logger.debug(TAG, `[分页调试] 组件宽度=${this.componentWidth.toFixed(2)}, 页边距left=${this.settings.pageMargins.left}, right=${this.settings.pageMargins.right}, 内容宽度=${this.contentAreaWidth.toFixed(2)}`);
+      // 检查内容区域是否真正变化（避免重复分页）
+      const widthChanged = Math.abs(newContentWidth - this.lastContentAreaWidth) > 1;
+      const heightChanged = Math.abs(newContentHeight - this.lastContentAreaHeight) > 1;
       
-      // 重新分页
-      this.paginateContent();
+      if (!widthChanged && !heightChanged) {
+        return;  // 尺寸未变化，跳过分页
+      }
+      
+      this.contentAreaWidth = newContentWidth;
+      this.contentAreaHeight = newContentHeight;
+      this.lastContentAreaWidth = newContentWidth;
+      this.lastContentAreaHeight = newContentHeight;
+      
+      logger.debug(TAG, `内容区域变化: ${this.contentAreaWidth.toFixed(0)}x${this.contentAreaHeight.toFixed(0)}`);
+      
+      // 使用防抖机制重新分页
+      if (this.areaChangeDebounceTimer !== -1) {
+        clearTimeout(this.areaChangeDebounceTimer);
+      }
+      this.areaChangeDebounceTimer = setTimeout(() => {
+        this.areaChangeDebounceTimer = -1;
+        this.paginateContent();
+      }, TextReaderComponent.AREA_CHANGE_DEBOUNCE_MS);
     })
     .gesture(
       GestureGroup(GestureMode.Exclusive,
