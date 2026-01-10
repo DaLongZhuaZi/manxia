@@ -41,3 +41,6 @@ target_compile_definitions(jsvm_engine PRIVATE
 
 # QuickJS引擎模块（可选，用于替代JSVM）
 add_subdirectory(quickjs)
+
+# WebDAV Native模块（使用libcurl实现完整WebDAV协议）
+add_subdirectory(webdav)

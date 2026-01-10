@@ -2,10 +2,13 @@
  * WebDAV备份管理器
  * 管理WebDAV云端备份的上传、下载、同步等操作
  * 
+ * 已升级为使用Native C++ WebDAV客户端，支持完整的WebDAV协议
+ * 
  * 文件路径: entry/src/main/ets/Framework/WebDAV/WebDAVBackupManager.ets
  */
 
 import { WebDAVClient, WebDAVConfig, WebDAVFile } from './WebDAVClient';
+import { WebDAVNativeClient, WebDAVNativeConfig, isNativeModuleAvailable, getNativeModuleError } from './WebDAVNativeClient';
 import { BackupMetadata } from '../../Models/BackupModels';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { logger } from '../../Utils/Logger';
@@ -42,7 +45,9 @@ export interface WebDAVSyncStatus {
 export class WebDAVBackupManager {
   private static instance: WebDAVBackupManager;
   private client: WebDAVClient | null = null;
+  private nativeClient: WebDAVNativeClient | null = null;
   private config: WebDAVConfig | null = null;
+  private useNative: boolean = true; // 优先使用Native客户端
   private sandboxManager = SandboxManager.getInstance();
   private syncStatus: WebDAVSyncStatus = {
     isUploading: false,
@@ -66,9 +71,44 @@ export class WebDAVBackupManager {
    */
   async configure(config: WebDAVConfig): Promise<void> {
     this.config = config;
-    this.client = new WebDAVClient(config);
     
-    // 测试连接
+    // 尝试初始化Native客户端
+    logger.info(TAG, `配置WebDAV: useNative=${this.useNative}, nativeAvailable=${isNativeModuleAvailable()}`);
+    if (this.useNative && isNativeModuleAvailable()) {
+      try {
+        const nativeConfig: WebDAVNativeConfig = {
+          serverUrl: config.serverUrl,
+          username: config.username,
+          password: config.password,
+          basePath: config.basePath,
+          timeoutMs: 30000,
+          verifySSL: false // 禁用SSL验证以支持自签名证书
+        };
+        this.nativeClient = new WebDAVNativeClient(nativeConfig);
+        const initResult = await this.nativeClient.initialize();
+        
+        if (initResult) {
+          // 测试Native连接
+          const testResult = await this.nativeClient.testConnection();
+          if (testResult.success) {
+            logger.info(TAG, 'WebDAV Native客户端配置成功');
+            // 确保备份目录存在
+            await this.ensureBackupDirectory();
+            return;
+          } else {
+            logger.warn(TAG, `Native连接测试失败: ${testResult.message}，回退到ArkTS客户端`);
+          }
+        } else {
+          logger.warn(TAG, 'Native客户端初始化失败，回退到ArkTS客户端');
+        }
+      } catch (e) {
+        logger.warn(TAG, `Native客户端异常: ${e}，回退到ArkTS客户端`);
+      }
+      this.nativeClient = null;
+    }
+    
+    // 回退到ArkTS客户端
+    this.client = new WebDAVClient(config);
     const isConnected = await this.client.testConnection();
     if (!isConnected) {
       const errorMsg = '无法连接到WebDAV服务器';
@@ -85,7 +125,14 @@ export class WebDAVBackupManager {
    * 检查是否已配置
    */
   isConfigured(): boolean {
-    return this.client !== null && this.config !== null;
+    return (this.client !== null || this.nativeClient !== null) && this.config !== null;
+  }
+
+  /**
+   * 检查是否使用Native客户端
+   */
+  isUsingNative(): boolean {
+    return this.nativeClient !== null;
   }
 
   /**
@@ -99,7 +146,7 @@ export class WebDAVBackupManager {
    * 上传备份到云端
    */
   async uploadBackup(localBackupPath: string): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
@@ -118,9 +165,18 @@ export class WebDAVBackupManager {
       const stat = fileIo.statSync(localBackupPath);
       const fileSize = stat.size;
 
-      await this.client.upload(localBackupPath, remotePath, (progress) => {
-        this.syncStatus.uploadProgress = progress;
-      });
+      // 优先使用Native客户端
+      if (this.nativeClient) {
+        const result = await this.nativeClient.uploadFile(localBackupPath, remotePath);
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+        this.syncStatus.uploadProgress = 100;
+      } else if (this.client) {
+        await this.client.upload(localBackupPath, remotePath, (progress) => {
+          this.syncStatus.uploadProgress = progress;
+        });
+      }
 
       // 更新备份索引
       const backupInfo: RemoteBackupInfo = {
@@ -148,7 +204,7 @@ export class WebDAVBackupManager {
    * 从云端下载备份
    */
   async downloadBackup(remoteBackupInfo: RemoteBackupInfo): Promise<string> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
@@ -167,9 +223,18 @@ export class WebDAVBackupManager {
 
       logger.info(TAG, `开始下载备份: ${remoteBackupInfo.fileName}`);
 
-      await this.client.download(remoteBackupInfo.remotePath, localPath, (progress) => {
-        this.syncStatus.downloadProgress = progress;
-      });
+      // 优先使用Native客户端
+      if (this.nativeClient) {
+        const result = await this.nativeClient.downloadFile(remoteBackupInfo.remotePath, localPath);
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+        this.syncStatus.downloadProgress = 100;
+      } else if (this.client) {
+        await this.client.download(remoteBackupInfo.remotePath, localPath, (progress) => {
+          this.syncStatus.downloadProgress = progress;
+        });
+      }
 
       this.syncStatus.lastSyncTime = Date.now();
       logger.info(TAG, `备份下载成功: ${remoteBackupInfo.fileName}`);
@@ -190,15 +255,22 @@ export class WebDAVBackupManager {
    * 检查索引文件是否存在
    */
   async checkIndexExists(): Promise<boolean> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       return false;
     }
 
     try {
       const indexPath = `backups/${BACKUP_INDEX_FILE}`;
-      const content = await this.client.getFileContents(indexPath, 'string');
+      let content: string = '';
       
-      if (typeof content === 'string' && content.trim().length > 0) {
+      if (this.nativeClient) {
+        content = await this.nativeClient.getFileContents(indexPath);
+      } else if (this.client) {
+        const result = await this.client.getFileContents(indexPath, 'string');
+        content = typeof result === 'string' ? result : '';
+      }
+      
+      if (content.trim().length > 0) {
         // 验证是否是有效的JSON
         const parsed = JSON.parse(content) as BackupIndex;
         logger.info(TAG, `索引文件存在，包含 ${parsed.backups?.length || 0} 个备份`);
@@ -215,7 +287,7 @@ export class WebDAVBackupManager {
    * 初始化云端备份（创建索引文件）
    */
   async initializeCloudBackup(): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       throw new Error('WebDAV未配置');
     }
 
@@ -235,15 +307,22 @@ export class WebDAVBackupManager {
    * 读取备份索引文件
    */
   private async readBackupIndex(): Promise<BackupIndex> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       return { version: 1, lastUpdated: 0, backups: [] };
     }
 
     try {
       const indexPath = `backups/${BACKUP_INDEX_FILE}`;
-      const content = await this.client.getFileContents(indexPath, 'string');
+      let content: string = '';
       
-      if (typeof content === 'string' && content.trim()) {
+      if (this.nativeClient) {
+        content = await this.nativeClient.getFileContents(indexPath);
+      } else if (this.client) {
+        const result = await this.client.getFileContents(indexPath, 'string');
+        content = typeof result === 'string' ? result : '';
+      }
+      
+      if (content.trim()) {
         const index = JSON.parse(content) as BackupIndex;
         logger.info(TAG, `读取到备份索引，包含 ${index.backups.length} 个备份`);
         return index;
@@ -259,7 +338,7 @@ export class WebDAVBackupManager {
    * 保存备份索引文件
    */
   private async saveBackupIndex(index: BackupIndex): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       throw new Error('WebDAV未配置');
     }
 
@@ -268,7 +347,14 @@ export class WebDAVBackupManager {
       const indexPath = `backups/${BACKUP_INDEX_FILE}`;
       const content = JSON.stringify(index, null, 2);
       
-      await this.client.putFileContents(indexPath, content);
+      if (this.nativeClient) {
+        const result = await this.nativeClient.putFileContents(indexPath, content);
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+      } else if (this.client) {
+        await this.client.putFileContents(indexPath, content);
+      }
       logger.info(TAG, `备份索引已保存，包含 ${index.backups.length} 个备份`);
     } catch (error) {
       logger.error(TAG, `保存备份索引失败: ${error}`);
@@ -309,7 +395,7 @@ export class WebDAVBackupManager {
    * 列出云端所有备份（从索引文件读取）
    */
   async listRemoteBackups(): Promise<RemoteBackupInfo[]> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
@@ -328,13 +414,20 @@ export class WebDAVBackupManager {
    * 删除云端备份
    */
   async deleteRemoteBackup(remoteBackupInfo: RemoteBackupInfo): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
 
     try {
-      await this.client.delete(remoteBackupInfo.remotePath);
+      if (this.nativeClient) {
+        const result = await this.nativeClient.deleteFile(remoteBackupInfo.remotePath);
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+      } else if (this.client) {
+        await this.client.delete(remoteBackupInfo.remotePath);
+      }
       
       // 从索引中移除
       await this.removeFromBackupIndex(remoteBackupInfo.fileName);
@@ -351,7 +444,7 @@ export class WebDAVBackupManager {
    * 自动备份（上传最新的本地备份）
    */
   async autoBackup(): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
@@ -409,7 +502,7 @@ export class WebDAVBackupManager {
    * 清理旧备份（保留最近N个）
    */
   async cleanOldBackups(keepCount: number = 5): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.nativeClient) {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
@@ -452,16 +545,28 @@ export class WebDAVBackupManager {
 
   /**
    * 确保备份目录存在
-   * 注意：HarmonyOS不支持MKCOL方法，目录会在首次上传文件时自动创建
+   * Native客户端支持MKCOL方法，可以直接创建目录
    */
   private async ensureBackupDirectory(): Promise<void> {
-    if (!this.client) return;
+    if (!this.client && !this.nativeClient) return;
 
     try {
-      const exists = await this.client.exists('backups');
-      if (!exists) {
-        // 通过上传测试文件来创建目录
-        logger.info(TAG, '备份目录不存在，将在上传时自动创建');
+      // Native客户端支持直接创建目录
+      if (this.nativeClient) {
+        const existsResult = await this.nativeClient.exists('backups');
+        if (!existsResult) {
+          const createResult = await this.nativeClient.createDirectory('backups');
+          if (createResult.success) {
+            logger.info(TAG, '备份目录创建成功');
+          } else {
+            logger.info(TAG, '备份目录可能已存在或将在上传时自动创建');
+          }
+        }
+      } else if (this.client) {
+        const exists = await this.client.exists('backups');
+        if (!exists) {
+          logger.info(TAG, '备份目录不存在，将在上传时自动创建');
+        }
       }
     } catch (error) {
       // 忽略检查错误，上传时会自动创建目录

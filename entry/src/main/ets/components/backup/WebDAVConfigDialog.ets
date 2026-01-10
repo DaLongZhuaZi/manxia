@@ -251,12 +251,7 @@ export struct WebDAVConfigDialog {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
           .borderRadius(8)
 
-        Button(this.showPassword ? '隐藏' : '显示')
-          .fontSize(12)
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.showPassword = !this.showPassword;
-          })
+        
       }
       .width('100%')
     }
