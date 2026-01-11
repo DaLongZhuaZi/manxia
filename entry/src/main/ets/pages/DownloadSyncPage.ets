@@ -30,6 +30,13 @@ import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EBookParser';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { NovelImportDialog, NovelImportDialogResult, TextEncoding } from '../Framework/Components/NovelImportDialog';
+import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
+import { EBookMetadata, EBookChapter, EBook } from '../Models/EBookModels';
+import { fileIo } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
+import { image } from '@kit.ImageKit';
+import { componentSnapshot } from '@kit.ArkUI';
 
 const TAG = 'DownloadSyncPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -75,6 +82,14 @@ struct DownloadSyncPage {
   private scroller: Scroller = new Scroller();
   private sandboxManager: SandboxManager = SandboxManager.getInstance();
   
+  // 封面生成器常量（基于 ebook.webp 图片精确测量）
+  private static readonly COVER_WIDTH = 400;
+  private static readonly COVER_HEIGHT = 600;
+  private static readonly TITLE_AREA_TOP_PERCENT = 0.130;
+  private static readonly TITLE_AREA_BOTTOM_PERCENT = 0.345;
+  private static readonly TITLE_AREA_LEFT_PERCENT = 0.110;
+  private static readonly TITLE_AREA_RIGHT_PERCENT = 0.895;
+  
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -104,6 +119,19 @@ struct DownloadSyncPage {
   private pdfImportDialogController: CustomDialogController | null = null;
   private mangaImportDialogController: CustomDialogController | null = null;
   private batchMangaImportDialogController: CustomDialogController | null = null;
+  private novelImportDialogController: CustomDialogController | null = null;
+  private ebookMetadataDialogController: CustomDialogController | null = null;
+  
+  // 电子书导入临时数据
+  @State private pendingEbookData: EBook | null = null;
+  @State private pendingEbookFolderPath: string = '';
+  @State private pendingEbookSourceUri: string = '';
+  @State private pendingEbookFilename: string = '';
+  
+  // 批量导入Promise回调
+  private batchImportResolve: ((success: boolean) => void) | null = null;
+  private batchImportCurrentIndex: number = 0;
+  private batchImportTotalCount: number = 0;
   
   @State private currentParsedStructure: ParsedArchiveStructure | null = null;
   @State private currentFileUri: string = '';
@@ -176,7 +204,8 @@ struct DownloadSyncPage {
       
       this.deviceManager.addListener(this.deviceChangeListener);
       logger.info(TAG, '✅ 响应式布局初始化完成');
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, '响应式布局初始化失败', String(error));
     }
   }
@@ -235,7 +264,8 @@ struct DownloadSyncPage {
           AppStorage.delete('downloadSyncDirUri');
         }
       }
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.warn(TAG, `自动初始化检查失败: ${String(error)}`);
     }
   }
@@ -274,7 +304,8 @@ struct DownloadSyncPage {
       }
       
       logger.info(TAG, `已加载 ${this.importedFilesMap.size} 个已导入文件记录`);
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `加载已导入状态失败: ${String(error)}`);
     }
   }
@@ -431,7 +462,8 @@ A: 不会，原文件保持不变。`;
         logger.error(TAG, `DOWNLOAD模式失败: ${err.message}`);
         promptAction.showToast({ message: `创建失败: ${err.message}` });
       });
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `访问Download目录失败: ${String(error)}`);
       promptAction.showToast({ message: `访问失败: ${String(error)}` });
     }
@@ -448,7 +480,7 @@ A: 不会，原文件保持不变。`;
           fs.mkdirSync(folderPath);
           logger.info(TAG, `创建保留文件夹: ${folderName}`);
         }
-      } catch (error) {
+      } catch (e) {
         // 文件夹可能已存在或创建失败
         try {
           fs.mkdirSync(`${this.downloadDirPath}/${folderName}`);
@@ -479,7 +511,8 @@ A: 不会，原文件保持不变。`;
         await settingsManager.setString(SettingKeys.DOWNLOAD_SYNC_DIR_URI, this.downloadDirUri);
       }
       logger.info(TAG, '✅ Download同步设置已保存到数据库');
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `保存Download同步设置失败: ${String(error)}`);
     }
   }
@@ -513,7 +546,8 @@ A: 不会，原文件保持不变。`;
       
       logger.info(TAG, `扫描完成: 漫画=${this.pendingMangaFiles.length}, 电子书=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, 小说=${this.pendingNovelFiles.length}`);
       promptAction.showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `扫描目录失败: ${String(error)}`);
       promptAction.showToast({ message: `扫描失败: ${String(error)}` });
     } finally {
@@ -563,7 +597,7 @@ A: 不会，原文件保持不变。`;
           logger.warn(TAG, `获取文件状态失败: ${fullPath}`);
         }
       }
-    } catch (error) {
+    } catch (e) {
       logger.warn(TAG, `扫描目录失败: ${currentPath}`);
     }
     
@@ -1440,7 +1474,8 @@ A: 不会，原文件保持不变。`;
       try {
         await this.importDownloadMangaGroup(group);
         successCount++;
-      } catch (error) {
+      } catch (e) {
+        const error = e as Error;
         logger.error(TAG, `导入失败 ${group.title}: ${String(error)}`);
       }
     }
@@ -1575,7 +1610,8 @@ A: 不会，原文件保持不变。`;
 
       this.mangaImportDialogController.open();
       this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `解析失败: ${filename}`, String(error));
       promptAction.showToast({ message: `解析失败: ${String(error)}` });
       this.pendingMangaFiles = [];
@@ -1679,7 +1715,8 @@ A: 不会，原文件保持不变。`;
       if (result.sourceFileUri) {
         this.askDeleteSourceFile(result.sourceFileUri, result.title);
       }
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
       promptAction.showToast({ message: `导入失败: ${String(error)}` });
@@ -1718,7 +1755,8 @@ A: 不会，原文件保持不变。`;
       fs.unlinkSync(filePath);
       logger.info(TAG, `原文件已删除: ${filePath}`);
       promptAction.showToast({ message: '原文件已删除' });
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `删除原文件失败: ${String(error)}`);
       promptAction.showToast({ message: `删除失败: ${String(error)}` });
     }
@@ -1779,7 +1817,8 @@ A: 不会，原文件保持不变。`;
         description: getTagValue('Summary') || getTagValue('Description'),
         tags: (getTagValue('Genre') || getTagValue('Tags')).split(',').map(t => t.trim()).filter(t => t)
       };
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.warn(TAG, `解析ComicInfo.xml失败: ${String(error)}`);
       return null;
     }
@@ -1811,7 +1850,8 @@ A: 不会，原文件保持不变。`;
       }
       this.existingMangaCandidates = candidates;
       logger.info(TAG, `找到 ${candidates.length} 个可能的重复漫画`);
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.warn(TAG, `查找现有漫画失败: ${String(error)}`);
       this.existingMangaCandidates = [];
     }
@@ -1834,8 +1874,9 @@ A: 不会，原文件保持不变。`;
       }
       this.existingMangaCandidates = candidates;
       logger.info(TAG, `批量导入找到 ${this.existingMangaCandidates.length} 个已有漫画候选`);
-    } catch (error) {
-      logger.error(TAG, `查找已有漫画失败: ${error}`);
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `查找已有漫画失败: ${String(error)}`);
       this.existingMangaCandidates = [];
     }
   }
@@ -1859,7 +1900,8 @@ A: 不会，原文件保持不变。`;
       }
       
       logger.info(TAG, `已添加 ${imageFiles.length} 页到数据库`);
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `添加页面信息失败: ${String(error)}`);
     }
   }
@@ -1870,56 +1912,285 @@ A: 不会，原文件保持不变。`;
       return;
     }
     
-    // [修复] 电子书存储到ebooks子目录
-    const ebooksBasePath = `${this.downloadDirPath}/ebooks`;
-    try { fs.mkdirSync(ebooksBasePath); } catch (e) { /* 已存在 */ }
-    
-    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
-    if (!context) {
-      promptAction.showToast({ message: '无法获取上下文' });
-      return;
-    }
-    
-    const totalFiles = this.pendingEbookFiles.length;
-    let successCount = 0;
+    // 逐个处理电子书，每本都显示确认窗口
     const sourceFiles: string[] = [...this.pendingEbookFiles];
     this.pendingEbookFiles = [];
+    this.batchImportTotalCount = sourceFiles.length;
+    
+    promptAction.showToast({ message: `开始导入 ${sourceFiles.length} 个电子书/小说文件` });
+    
+    let successCount = 0;
+    let failCount = 0;
     
     for (let i = 0; i < sourceFiles.length; i++) {
       const relativePath = sourceFiles[i];
-      const sourceUri = `${this.downloadDirUri}/${relativePath}`;
-      const sourcePath = `${this.downloadDirPath}/${relativePath}`;
+      this.batchImportCurrentIndex = i + 1;
       
-      try {
-        this.updateProgress(ImportStatus.PROCESSING, `正在处理第 ${i + 1}/${totalFiles} 个电子书...`, ((i + 1) / totalFiles) * 100);
-        
-        // [修复] 只提取文件名部分（去掉路径前缀）
-        const filename = relativePath.includes('/') ? relativePath.substring(relativePath.lastIndexOf('/') + 1) : relativePath;
-        
-        // [修复] 为每本电子书创建单独的文件夹
-        const bookName = filename.replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '').replace(/[<>:"/\\|?*]/g, '_');
-        const bookFolderPath = `${ebooksBasePath}/${bookName}`;
-        try { fs.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
-        
-        // 获取文件扩展名
-        const ext = filename.includes('.') ? filename.substring(filename.lastIndexOf('.')) : '.epub';
-        const targetPath = `${bookFolderPath}/${bookName}${ext}`;
-        
-        fs.copyFileSync(sourcePath, targetPath);
-        logger.info(TAG, `电子书复制成功: ${targetPath}`);
-        
-        const importSuccess = await this.continueImportEBookWithFolder(targetPath, bookFolderPath);
-        if (importSuccess) {
-          successCount++;
-          this.askDeleteSourceFile(sourceUri, relativePath);
-        }
-      } catch (error) {
-        logger.error(TAG, `导入电子书失败 ${relativePath}: ${String(error)}`);
+      promptAction.showToast({ message: `正在处理第 ${i + 1}/${sourceFiles.length} 个: ${relativePath.substring(relativePath.lastIndexOf('/') + 1)}` });
+      
+      // 等待用户确认后再处理下一个
+      const success = await this.showEbookMetadataDialogAsync(relativePath, i + 1, sourceFiles.length);
+      
+      if (success) {
+        successCount++;
+      } else {
+        failCount++;
       }
     }
     
-    this.updateProgress(ImportStatus.COMPLETED, `电子书导入完成: 成功 ${successCount}/${totalFiles}`, 100);
-    promptAction.showToast({ message: `电子书导入完成: 成功 ${successCount}` });
+    // 显示最终结果
+    if (successCount > 0 || failCount > 0) {
+      promptAction.showToast({ 
+        message: `导入完成: 成功 ${successCount} 个${failCount > 0 ? `, 失败/取消 ${failCount} 个` : ''}` 
+      });
+    }
+    
+    this.batchImportCurrentIndex = 0;
+    this.batchImportTotalCount = 0;
+  }
+
+  /**
+   * 显示电子书元数据确认对话框（异步等待用户确认）
+   */
+  private async showEbookMetadataDialogAsync(relativePath: string, currentIndex: number, totalCount: number): Promise<boolean> {
+    const sourceUri = `${this.downloadDirUri}/${relativePath}`;
+    const sourcePath = `${this.downloadDirPath}/${relativePath}`;
+    const filename = relativePath.includes('/') ? relativePath.substring(relativePath.lastIndexOf('/') + 1) : relativePath;
+    
+    try {
+      this.updateProgress(ImportStatus.PARSING, `正在解析第 ${currentIndex}/${totalCount} 个电子书...`, (currentIndex / totalCount) * 50);
+      
+      // 创建临时目录用于解析
+      const ebooksBasePath = `${this.downloadDirPath}/ebooks`;
+      try { fs.mkdirSync(ebooksBasePath); } catch (e) { /* 已存在 */ }
+      
+      const bookName = filename.replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '').replace(/[<>:"/\\|?*]/g, '_');
+      const bookFolderPath = `${ebooksBasePath}/${bookName}`;
+      try { fs.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
+      
+      const ext = filename.includes('.') ? filename.substring(filename.lastIndexOf('.')) : '.epub';
+      const targetPath = `${bookFolderPath}/${bookName}${ext}`;
+      
+      // 复制文件到目标位置
+      fs.copyFileSync(sourcePath, targetPath);
+      logger.info(TAG, `电子书复制成功: ${targetPath}`);
+      
+      // 解析电子书
+      const parser = EBookParserFactory.createParser(targetPath);
+      if (!parser) {
+        logger.warn(TAG, `不支持的电子书格式: ${targetPath}`);
+        promptAction.showToast({ message: `不支持的电子书格式: ${filename}` });
+        return false;
+      }
+      
+      const ebook = await parser.parse();
+      logger.info(TAG, `电子书解析完成: ${ebook.metadata.title}`);
+      
+      // 提取封面
+      await this.extractEbookCover(ebook, targetPath, bookFolderPath);
+      
+      // 保存临时数据
+      this.pendingEbookData = ebook;
+      this.pendingEbookFolderPath = bookFolderPath;
+      this.pendingEbookSourceUri = sourceUri;
+      this.pendingEbookFilename = relativePath;
+      
+      // 显示确认对话框并等待用户操作
+      return await this.openEbookMetadataDialogAsync(ebook);
+      
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `解析电子书失败 ${relativePath}: ${String(error)}`);
+      promptAction.showToast({ message: `解析失败: ${filename}` });
+      return false;
+    }
+  }
+
+  /**
+   * 提取电子书封面
+   */
+  private async extractEbookCover(ebook: EBook, filePath: string, folderPath: string): Promise<void> {
+    let coverSaved = false;
+    
+    // 方式1：从解析器获取的封面路径复制
+    if (ebook.metadata.coverImagePath) {
+      try {
+        const originalCoverPath = ebook.metadata.coverImagePath;
+        if (fs.accessSync(originalCoverPath)) {
+          const coverExt = originalCoverPath.includes('.') ? 
+            originalCoverPath.substring(originalCoverPath.lastIndexOf('.')) : '.jpg';
+          const newCoverPath = `${folderPath}/cover${coverExt}`;
+          fs.copyFileSync(originalCoverPath, newCoverPath);
+          ebook.metadata.coverImagePath = newCoverPath;
+          coverSaved = true;
+          logger.info(TAG, `电子书封面已保存: ${newCoverPath}`);
+        }
+      } catch (e) {
+        logger.warn(TAG, `复制封面失败: ${String(e)}`);
+      }
+    }
+    
+    // 方式2：主动提取封面
+    if (!coverSaved) {
+      try {
+        const extractResult = await EBookCoverExtractor.extractCover(filePath, folderPath);
+        if (extractResult.success && extractResult.coverPath) {
+          ebook.metadata.coverImagePath = extractResult.coverPath;
+          coverSaved = true;
+          logger.info(TAG, `电子书封面提取成功: ${extractResult.coverPath}`);
+        }
+      } catch (e) {
+        logger.warn(TAG, `提取封面失败: ${String(e)}`);
+      }
+    }
+    
+    // 方式3：生成文字封面
+    if (!coverSaved) {
+      try {
+        const coverPath = `${folderPath}/cover.webp`;
+        const success = await this.generateCoverWithSnapshot(ebook.metadata.title, coverPath);
+        if (success) {
+          ebook.metadata.coverImagePath = coverPath;
+          logger.info(TAG, `生成文字封面: ${coverPath}`);
+        }
+      } catch (e) {
+        logger.warn(TAG, `生成封面失败: ${String(e)}`);
+      }
+    }
+  }
+
+  /**
+   * 打开电子书元数据确认对话框（异步等待用户操作）
+   */
+  private openEbookMetadataDialogAsync(ebook: EBook): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.batchImportResolve = resolve;
+      
+      this.ebookMetadataDialogController = new CustomDialogController({
+        builder: EBookMetadataDialog({
+          themeState: this.themeState,
+          initialMetadata: ebook.metadata,
+          chapters: ebook.chapters,
+          onConfirm: (result: EBookMetadataDialogResult) => {
+            this.handleEbookMetadataConfirmAsync(result).then((success: boolean) => {
+              if (this.batchImportResolve) {
+                this.batchImportResolve(success);
+                this.batchImportResolve = null;
+              }
+            });
+          },
+          onCancel: () => {
+            logger.info(TAG, '用户取消电子书导入');
+            this.pendingEbookData = null;
+            this.updateProgress(ImportStatus.IDLE, '已取消', 0);
+            if (this.batchImportResolve) {
+              this.batchImportResolve(false);
+              this.batchImportResolve = null;
+            }
+          },
+          onRegenerateCover: async (title: string, oldCoverPath: string): Promise<string> => {
+            return await this.regenerateEbookCover(title, oldCoverPath);
+          }
+        }),
+        autoCancel: false,
+        alignment: DialogAlignment.Center,
+        customStyle: true
+      });
+      
+      this.ebookMetadataDialogController.open();
+    });
+  }
+
+  /**
+   * 重新生成电子书封面
+   */
+  private async regenerateEbookCover(title: string, oldCoverPath: string): Promise<string> {
+    if (!this.pendingEbookData || !this.pendingEbookFolderPath) {
+      return '';
+    }
+    
+    try {
+      // 删除旧封面
+      if (oldCoverPath) {
+        try {
+          await fileIo.unlink(oldCoverPath);
+        } catch (e) {
+          // 忽略删除失败
+        }
+      }
+      
+      const coverPath = `${this.pendingEbookFolderPath}/cover_${Date.now()}.webp`;
+      const success = await this.generateCoverWithSnapshot(title, coverPath);
+      if (success) {
+        logger.info(TAG, `重新生成封面成功: ${coverPath}`);
+        return coverPath;
+      }
+      return '';
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `重新生成封面失败: ${String(error)}`);
+      return '';
+    }
+  }
+
+  /**
+   * 处理电子书元数据确认结果（异步版本，返回是否成功）
+   */
+  private async handleEbookMetadataConfirmAsync(result: EBookMetadataDialogResult): Promise<boolean> {
+    if (!this.pendingEbookData) {
+      logger.error(TAG, '没有待处理的电子书数据');
+      return false;
+    }
+    
+    try {
+      this.updateProgress(ImportStatus.IMPORTING, `正在导入: ${result.metadata.title}`, 70);
+      
+      // 应用用户修改的元数据
+      this.pendingEbookData.metadata = result.metadata;
+      
+      // 如果用户选择了自定义封面，复制到目标位置
+      if (result.customCoverPath) {
+        try {
+          const coverExt = result.customCoverPath.includes('.') ? 
+            result.customCoverPath.substring(result.customCoverPath.lastIndexOf('.')) : '.jpg';
+          const newCoverPath = `${this.pendingEbookFolderPath}/cover${coverExt}`;
+          fs.copyFileSync(result.customCoverPath, newCoverPath);
+          this.pendingEbookData.metadata.coverImagePath = newCoverPath;
+          logger.info(TAG, `自定义封面已保存: ${newCoverPath}`);
+        } catch (e) {
+          logger.warn(TAG, `保存自定义封面失败: ${String(e)}`);
+        }
+      }
+      
+      // 标记为收藏
+      this.pendingEbookData.isFavorite = true;
+      
+      // 保存到数据库
+      this.updateProgress(ImportStatus.IMPORTING, `正在保存: ${result.metadata.title}`, 90);
+      await this.ebookDataManager.saveEBook(this.pendingEbookData);
+      
+      logger.info(TAG, `电子书导入成功: ${result.metadata.title}`);
+      this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${result.metadata.title}`, 100);
+      promptAction.showToast({ message: `导入成功: ${result.metadata.title}` });
+      
+      // 批量导入时不询问删除源文件，最后统一处理
+      if (this.batchImportTotalCount <= 1) {
+        this.askDeleteSourceFile(this.pendingEbookSourceUri, this.pendingEbookFilename);
+      }
+      
+      return true;
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `保存电子书失败: ${String(error)}`);
+      this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
+      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      return false;
+    } finally {
+      this.pendingEbookData = null;
+      this.pendingEbookFolderPath = '';
+      this.pendingEbookSourceUri = '';
+      this.pendingEbookFilename = '';
+    }
   }
 
   private async continueImportEBook(sandboxPath: string): Promise<boolean> {
@@ -2022,7 +2293,8 @@ A: 不会，原文件保持不变。`;
       this.updateProgress(ImportStatus.COMPLETED, '电子书导入成功', 100);
       logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}, ID: ${ebook.id}`);
       return true;
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `电子书导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
       return false;
@@ -2051,7 +2323,7 @@ A: 不会，原文件保持不变。`;
 
   /**
    * 导入小说文件（txt格式）
-   * 将小说文件复制到Download/novel/书名/目录下
+   * 显示小说导入对话框，让用户配置元数据和章节规则
    */
   private async importNovelsFromDownloadDir(): Promise<void> {
     if (this.pendingNovelFiles.length === 0) {
@@ -2059,46 +2331,484 @@ A: 不会，原文件保持不变。`;
       return;
     }
     
-    // 创建novel子目录
-    const novelBasePath = `${this.downloadDirPath}/novel`;
-    try { fs.mkdirSync(novelBasePath); } catch (e) { /* 已存在 */ }
-    
-    const totalFiles = this.pendingNovelFiles.length;
-    let successCount = 0;
+    // 逐个显示导入对话框
     const sourceFiles: string[] = [...this.pendingNovelFiles];
     this.pendingNovelFiles = [];
     
-    for (let i = 0; i < sourceFiles.length; i++) {
-      const filename = sourceFiles[i];
-      const sourceUri = `${this.downloadDirUri}/${filename}`;
-      const sourcePath = `${this.downloadDirPath}/${filename}`;
-      
-      try {
-        this.updateProgress(ImportStatus.PROCESSING, `正在处理第 ${i + 1}/${totalFiles} 个小说...`, ((i + 1) / totalFiles) * 100);
-        
-        // 为每本小说创建单独的文件夹
-        const bookName = filename.replace(/\.txt$/i, '').replace(/[<>:"/\\|?*]/g, '_');
-        const bookFolderPath = `${novelBasePath}/${bookName}`;
-        try { fs.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
-        
-        const targetPath = `${bookFolderPath}/${bookName}.txt`;
-        
-        fs.copyFileSync(sourcePath, targetPath);
-        logger.info(TAG, `小说复制成功: ${targetPath}`);
-        
-        // 导入到电子书数据库（txt作为电子书处理）
-        const importSuccess = await this.continueImportEBookWithFolder(targetPath, bookFolderPath);
-        if (importSuccess) {
-          successCount++;
-          this.askDeleteSourceFile(sourceUri, filename);
+    // 处理第一个文件，后续文件在对话框关闭后继续处理
+    await this.showNovelImportDialogForFile(sourceFiles, 0);
+  }
+
+  /**
+   * 显示小说导入对话框
+   */
+  private async showNovelImportDialogForFile(files: string[], index: number): Promise<void> {
+    if (index >= files.length) {
+      this.updateProgress(ImportStatus.COMPLETED, `小说导入完成`, 100);
+      return;
+    }
+    
+    const filename = files[index];
+    const sourcePath = `${this.downloadDirPath}/${filename}`;
+    const sourceUri = `${this.downloadDirUri}/${filename}`;
+    
+    // 提取文件名（去掉路径前缀）
+    const displayName = filename.includes('/') ? filename.substring(filename.lastIndexOf('/') + 1) : filename;
+    const defaultTitle = displayName.replace(/\.txt$/i, '').replace(/^\d+_/, '');
+    
+    // 提取文件夹路径
+    const folderPath = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
+    
+    this.novelImportDialogController = new CustomDialogController({
+      builder: NovelImportDialog({
+        themeState: this.themeState,
+        defaultTitle: defaultTitle,
+        filePath: sourcePath,
+        folderPath: folderPath,
+        onConfirm: (result: NovelImportDialogResult) => {
+          this.handleNovelImportResult(result, sourcePath, sourceUri, displayName).then(() => {
+            // 处理下一个文件
+            this.showNovelImportDialogForFile(files, index + 1);
+          });
+        },
+        onCancel: () => {
+          this.updateProgress(ImportStatus.IDLE, '已取消小说导入', 0);
+          // 询问是否继续处理剩余文件
+          if (index < files.length - 1) {
+            AlertDialog.show({
+              title: '继续导入',
+              message: `还有 ${files.length - index - 1} 个小说文件未处理，是否继续？`,
+              primaryButton: {
+                value: '继续',
+                action: () => {
+                  this.showNovelImportDialogForFile(files, index + 1);
+                }
+              },
+              secondaryButton: {
+                value: '取消全部',
+                action: () => {
+                  logger.info(TAG, '用户取消所有小说导入');
+                }
+              }
+            });
+          }
         }
-      } catch (error) {
-        logger.error(TAG, `导入小说失败 ${filename}: ${String(error)}`);
+      }),
+      autoCancel: false,
+      customStyle: true,
+      alignment: DialogAlignment.Center
+    });
+
+    this.novelImportDialogController.open();
+    this.updateProgress(ImportStatus.IDLE, `配置小说导入 (${index + 1}/${files.length})`, 10);
+  }
+
+  /**
+   * 处理小说导入结果
+   */
+  private async handleNovelImportResult(
+    result: NovelImportDialogResult, 
+    sourcePath: string, 
+    sourceUri: string,
+    filename: string
+  ): Promise<void> {
+    try {
+      this.updateProgress(ImportStatus.IMPORTING, `正在导入: ${result.title}`, 30);
+      
+      // 创建novel子目录
+      const novelBasePath = `${this.downloadDirPath}/novel`;
+      try { fs.mkdirSync(novelBasePath); } catch (e) { /* 已存在 */ }
+      
+      // 为小说创建单独的文件夹
+      const bookName = result.title.replace(/[<>:"/\\|?*]/g, '_');
+      const bookFolderPath = `${novelBasePath}/${bookName}`;
+      try { fs.mkdirSync(bookFolderPath); } catch (e) { /* 已存在 */ }
+      
+      const targetPath = `${bookFolderPath}/${bookName}.txt`;
+      
+      // 处理文件：应用替换净化规则并确保UTF-8编码
+      await this.processAndSaveNovelFile(sourcePath, targetPath, result);
+      logger.info(TAG, `小说处理并保存成功: ${targetPath}`);
+      
+      this.updateProgress(ImportStatus.IMPORTING, `正在解析: ${result.title}`, 50);
+      
+      // 使用自定义元数据导入
+      const importSuccess = await this.continueImportNovelWithMetadata(
+        targetPath, 
+        bookFolderPath, 
+        result
+      );
+      
+      if (importSuccess) {
+        this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${result.title}`, 100);
+        promptAction.showToast({ message: `小说导入成功: ${result.title}` });
+        this.askDeleteSourceFile(sourceUri, filename);
+      } else {
+        this.updateProgress(ImportStatus.ERROR, `导入失败: ${result.title}`, 0);
+      }
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `导入小说失败 ${filename}: ${String(error)}`);
+      this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
+      promptAction.showToast({ message: `导入失败: ${String(error)}` });
+    }
+  }
+
+  /**
+   * 处理并保存小说文件
+   * 应用替换净化规则，删除广告行，确保UTF-8编码输出
+   */
+  private async processAndSaveNovelFile(
+    sourcePath: string,
+    targetPath: string,
+    result: NovelImportDialogResult
+  ): Promise<void> {
+    try {
+      // 读取源文件
+      const file = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(file.fd);
+      const buffer = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+      
+      // 根据用户选择的编码解码文件内容
+      let encoding = 'utf-8';
+      switch (result.encoding) {
+        case TextEncoding.UTF8:
+          encoding = 'utf-8';
+          break;
+        case TextEncoding.GBK:
+          encoding = 'gbk';
+          break;
+        case TextEncoding.GB2312:
+          encoding = 'gb2312';
+          break;
+        case TextEncoding.BIG5:
+          encoding = 'big5';
+          break;
+        case TextEncoding.AUTO:
+        default:
+          // 自动检测编码
+          encoding = this.detectFileEncoding(new Uint8Array(buffer));
+          break;
+      }
+      
+      const decoder = new util.TextDecoder(encoding);
+      let content = decoder.decodeToString(new Uint8Array(buffer));
+      logger.info(TAG, `文件解码完成，使用编码: ${encoding}, 内容长度: ${content.length}`);
+      
+      // 应用替换净化规则
+      if (result.enableReplaceRules && result.adLinesToRemove && result.adLinesToRemove.length > 0) {
+        const lines = content.split('\n');
+        const adLineSet = new Set(result.adLinesToRemove);
+        const filteredLines: string[] = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+          // 行号从1开始
+          if (!adLineSet.has(i + 1)) {
+            filteredLines.push(lines[i]);
+          }
+        }
+        
+        content = filteredLines.join('\n');
+        logger.info(TAG, `已删除 ${result.adLinesToRemove.length} 行广告内容`);
+      }
+      
+      // 使用UTF-8编码保存文件（确保阅读器能正常读取）
+      const encoder = new util.TextEncoder('utf-8');
+      const utf8Buffer = encoder.encodeInto(content);
+      
+      const targetFile = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(targetFile.fd, utf8Buffer.buffer);
+      fileIo.closeSync(targetFile);
+      
+      logger.info(TAG, `文件已保存为UTF-8编码: ${targetPath}`);
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `处理小说文件失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 检测文件编码
+   */
+  private detectFileEncoding(bytes: Uint8Array): string {
+    // UTF-8 BOM
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      return 'utf-8';
+    }
+    // UTF-16 LE BOM
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      return 'utf-16le';
+    }
+    // UTF-16 BE BOM
+    if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+      return 'utf-16be';
+    }
+    
+    // 简单的GBK/UTF-8检测
+    let utf8Score = 0;
+    let gbkScore = 0;
+    
+    for (let i = 0; i < Math.min(bytes.length, 10000); i++) {
+      const b = bytes[i];
+      
+      // UTF-8多字节序列检测
+      if (b >= 0xC0 && b <= 0xDF && i + 1 < bytes.length) {
+        if ((bytes[i + 1] & 0xC0) === 0x80) {
+          utf8Score++;
+          i++;
+        }
+      } else if (b >= 0xE0 && b <= 0xEF && i + 2 < bytes.length) {
+        if ((bytes[i + 1] & 0xC0) === 0x80 && (bytes[i + 2] & 0xC0) === 0x80) {
+          utf8Score += 2;
+          i += 2;
+        }
+      }
+      
+      // GBK双字节检测
+      if (b >= 0x81 && b <= 0xFE && i + 1 < bytes.length) {
+        const b2 = bytes[i + 1];
+        if ((b2 >= 0x40 && b2 <= 0x7E) || (b2 >= 0x80 && b2 <= 0xFE)) {
+          gbkScore++;
+          i++;
+        }
       }
     }
     
-    this.updateProgress(ImportStatus.COMPLETED, `小说导入完成: 成功 ${successCount}/${totalFiles}`, 100);
-    promptAction.showToast({ message: `小说导入完成: 成功 ${successCount}` });
+    // 如果GBK得分明显高于UTF-8，使用GBK
+    if (gbkScore > utf8Score * 2 && gbkScore > 10) {
+      return 'gbk';
+    }
+    
+    return 'utf-8';
+  }
+
+  /**
+   * 使用自定义元数据导入小说
+   */
+  private async continueImportNovelWithMetadata(
+    sandboxPath: string, 
+    bookFolderPath: string,
+    metadata: NovelImportDialogResult
+  ): Promise<boolean> {
+    try {
+      logger.info(TAG, `导入小说: ${metadata.title}, 作者: ${metadata.author}`);
+      
+      this.updateProgress(ImportStatus.PARSING, '正在解析小说...', 60);
+      
+      const parser = EBookParserFactory.createParser(sandboxPath);
+      if (!parser) {
+        this.updateProgress(ImportStatus.ERROR, '不支持的文件格式', 0);
+        logger.warn(TAG, `不支持的文件格式: ${sandboxPath}`);
+        return false;
+      }
+
+      const ebook = await parser.parse();
+      logger.info(TAG, `小说解析完成，原标题: ${ebook.metadata.title}`);
+      
+      this.updateProgress(ImportStatus.PROCESSING, `正在处理: ${metadata.title}`, 70);
+
+      // 应用用户自定义的元数据
+      ebook.metadata.title = metadata.title;
+      ebook.metadata.author = metadata.author || '未知作者';
+      ebook.metadata.description = metadata.description || '';
+      ebook.metadata.tags = metadata.tags || [];
+      ebook.isFavorite = true;
+      
+      this.updateProgress(ImportStatus.PROCESSING, '正在处理封面...', 80);
+
+      // 处理封面
+      if (bookFolderPath) {
+        let coverSaved = false;
+        
+        // 方式1：使用用户在对话框中选择/生成的封面
+        if (metadata.coverPath) {
+          try {
+            // 如果封面路径不在目标文件夹中，复制过去
+            if (!metadata.coverPath.startsWith(bookFolderPath)) {
+              const coverExt = metadata.coverPath.includes('.') ? 
+                metadata.coverPath.substring(metadata.coverPath.lastIndexOf('.')) : '.jpg';
+              const newCoverPath = `${bookFolderPath}/cover${coverExt}`;
+              fs.copyFileSync(metadata.coverPath, newCoverPath);
+              ebook.metadata.coverImagePath = newCoverPath;
+              logger.info(TAG, `封面已复制到: ${newCoverPath}`);
+            } else {
+              ebook.metadata.coverImagePath = metadata.coverPath;
+              logger.info(TAG, `使用对话框封面: ${metadata.coverPath}`);
+            }
+            coverSaved = true;
+          } catch (e) {
+            logger.warn(TAG, `复制封面失败: ${String(e)}`);
+          }
+        }
+        
+        // 方式2：检查文件夹中是否已有封面文件
+        if (!coverSaved) {
+          const coverFormats = ['jpg', 'jpeg', 'png', 'webp'];
+          for (const ext of coverFormats) {
+            const testPath = `${bookFolderPath}/cover.${ext}`;
+            try {
+              fs.accessSync(testPath);
+              ebook.metadata.coverImagePath = testPath;
+              coverSaved = true;
+              logger.info(TAG, `使用已有封面: ${testPath}`);
+              break;
+            } catch (e) {
+              // 文件不存在，继续检查
+            }
+          }
+        }
+        
+        // 方式3：生成文字封面
+        if (!coverSaved) {
+          try {
+            const coverPath = `${bookFolderPath}/cover.webp`;
+            const success = await this.generateCoverWithSnapshot(metadata.title, coverPath);
+            if (success) {
+              ebook.metadata.coverImagePath = coverPath;
+              coverSaved = true;
+              logger.info(TAG, `生成文字封面: ${coverPath}`);
+            }
+          } catch (e) {
+            logger.warn(TAG, `生成封面失败: ${String(e)}`);
+          }
+        }
+        
+        if (!coverSaved) {
+          logger.info(TAG, `小说无封面: ${metadata.title}`);
+        }
+      }
+
+      this.updateProgress(ImportStatus.IMPORTING, '正在保存到数据库...', 90);
+      
+      await this.ebookDataManager.saveEBook(ebook);
+      
+      logger.info(TAG, `小说导入成功: ${metadata.title}, ID: ${ebook.id}`);
+      return true;
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `小说导入失败: ${String(error)}`);
+      this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
+      return false;
+    }
+  }
+
+  /**
+   * 使用 componentSnapshot 生成封面
+   */
+  private async generateCoverWithSnapshot(title: string, outputPath: string): Promise<boolean> {
+    try {
+      const pixelMap = await componentSnapshot.createFromBuilder(
+        () => { this.buildCoverForSnapshot(title); }
+      );
+      
+      if (!pixelMap) {
+        logger.warn(TAG, '封面生成失败: PixelMap 为空');
+        return false;
+      }
+      
+      const success = await this.savePixelMapToFile(pixelMap, outputPath);
+      pixelMap.release();
+      return success;
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `封面生成异常: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 构建封面组件（用于 componentSnapshot）
+   */
+  @Builder
+  buildCoverForSnapshot(title: string) {
+    Stack() {
+      // 底层：默认封面图片
+      Image($r('app.media.ebook'))
+        .width(DownloadSyncPage.COVER_WIDTH)
+        .height(DownloadSyncPage.COVER_HEIGHT)
+        .objectFit(ImageFit.Cover)
+      
+      // 标题文字层
+      Text(this.formatCoverTitle(title))
+        .fontSize(this.calculateCoverFontSize(title))
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#1a1a1a')
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .lineHeight(this.calculateCoverFontSize(title) * 1.3)
+        .width(DownloadSyncPage.COVER_WIDTH * (DownloadSyncPage.TITLE_AREA_RIGHT_PERCENT - DownloadSyncPage.TITLE_AREA_LEFT_PERCENT) - 24)
+        .constraintSize({
+          maxHeight: DownloadSyncPage.COVER_HEIGHT * (DownloadSyncPage.TITLE_AREA_BOTTOM_PERCENT - DownloadSyncPage.TITLE_AREA_TOP_PERCENT) - 20
+        })
+        .position({
+          x: DownloadSyncPage.COVER_WIDTH * DownloadSyncPage.TITLE_AREA_LEFT_PERCENT + 12,
+          y: DownloadSyncPage.COVER_HEIGHT * (DownloadSyncPage.TITLE_AREA_TOP_PERCENT + DownloadSyncPage.TITLE_AREA_BOTTOM_PERCENT) / 2 - this.calculateCoverFontSize(title) * 0.65
+        })
+    }
+    .width(DownloadSyncPage.COVER_WIDTH)
+    .height(DownloadSyncPage.COVER_HEIGHT)
+  }
+
+  /**
+   * 格式化封面标题
+   */
+  private formatCoverTitle(title: string): string {
+    let cleanTitle = title.replace(/\.(txt|epub|pdf|mobi|azw3?)$/i, '');
+    if (cleanTitle.length > 20) {
+      cleanTitle = cleanTitle.substring(0, 17) + '...';
+    }
+    return cleanTitle;
+  }
+
+  /**
+   * 根据标题长度计算合适的字体大小
+   */
+  private calculateCoverFontSize(title: string): number {
+    const length = title.length;
+    if (length <= 2) return 70;
+    else if (length <= 4) return 56;
+    else if (length <= 6) return 48;
+    else if (length <= 8) return 36;
+    else if (length <= 12) return 32;
+    else if (length <= 16) return 28;
+    else return 24;
+  }
+
+  /**
+   * 将 PixelMap 保存为图片文件
+   */
+  private async savePixelMapToFile(pixelMap: image.PixelMap, filePath: string): Promise<boolean> {
+    try {
+      const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+      try {
+        await fileIo.mkdir(dirPath);
+      } catch (e) {
+        // 目录可能已存在
+      }
+      
+      const imagePacker = image.createImagePacker();
+      const packOptions: image.PackingOption = {
+        format: 'image/webp',
+        quality: 90
+      };
+      
+      const arrayBuffer = await imagePacker.packing(pixelMap, packOptions);
+      const file = await fileIo.open(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      await fileIo.write(file.fd, arrayBuffer);
+      await fileIo.close(file.fd);
+      imagePacker.release();
+      
+      logger.info(TAG, `封面图片已保存: ${filePath}`);
+      return true;
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `保存封面失败: ${String(error)}`);
+      return false;
+    }
   }
 
   private showPdfImportDialog(fileUri: string): void {
@@ -2133,7 +2843,8 @@ A: 不会，原文件保持不变。`;
       logger.info(TAG, `PDF导入请求: ${result.title}, 文件: ${fileUri}`);
       
       this.updateProgress(ImportStatus.COMPLETED, 'PDF导入完成', 100);
-    } catch (error) {
+    } catch (e) {
+      const error = e as Error;
       logger.error(TAG, `PDF导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `PDF导入失败: ${String(error)}`, 0);
     }

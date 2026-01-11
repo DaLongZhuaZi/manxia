@@ -349,62 +349,64 @@ export struct InteractionSettingsSubPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+        Scroll() {
+          Column({ space: 16 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-          Scroll() {
-            Column({ space: 16 }) {
-              // 全局开关
-              Column() {
-                this.buildSettingItem(
-                  '启用震动反馈',
-                  '关闭后所有震动效果将被禁用',
-                  this.vibrationEnabled,
-                  async (value: boolean) => {
-                    this.vibrationEnabled = value;
-                    await this.interactionManager.setVibrationEnabled(value);
-                    if (value) {
-                      this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
-                    }
+            // 全局开关
+            Column() {
+              this.buildSettingItem(
+                '启用震动反馈',
+                '关闭后所有震动效果将被禁用',
+                this.vibrationEnabled,
+                async (value: boolean) => {
+                  this.vibrationEnabled = value;
+                  await this.interactionManager.setVibrationEnabled(value);
+                  if (value) {
+                    this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
                   }
-                )
-              }
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-              .borderRadius(12)
-
-              if (this.vibrationEnabled) {
-                // 震动强度
-                this.buildIntensitySelector()
-
-                // 场景设置
-                ForEach(this.getSceneGroups(), (group: SceneGroup) => {
-                  this.buildSceneGroup(group)
-                })
-
-                // 重置按钮
-                Button('恢复默认设置')
-                  .width('100%')
-                  .height(44)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                  .borderRadius(12)
-                  .onClick(async () => {
-                    await this.interactionManager.resetToDefault();
-                    this.loadSettings();
-                    this.interactionManager.vibrate(VibrationScene.SUCCESS);
-                  })
-              }
+                }
+              )
             }
-            .width('100%')
-            .padding(16)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(12)
+
+            if (this.vibrationEnabled) {
+              // 震动强度
+              this.buildIntensitySelector()
+
+              // 场景设置
+              ForEach(this.getSceneGroups(), (group: SceneGroup) => {
+                this.buildSceneGroup(group)
+              })
+
+              // 重置按钮
+              Button('恢复默认设置')
+                .width('100%')
+                .height(44)
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                .borderRadius(12)
+                .onClick(async () => {
+                  await this.interactionManager.resetToDefault();
+                  this.loadSettings();
+                  this.interactionManager.vibrate(VibrationScene.SUCCESS);
+                })
+            }
+
+            Blank().height(40)
           }
-          .scrollBar(BarState.Off)
-          .layoutWeight(1)
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
         }
         .width('100%')
         .height('100%')
+        .align(Alignment.TopStart)
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.Spring)
       }
     }
     .titleBar({

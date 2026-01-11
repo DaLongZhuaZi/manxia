@@ -28,6 +28,8 @@ import { CoverSelectionPageParams } from './CoverSelectionPage';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from '../Framework/Components/ScraperDialog';
 import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
+import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
+import { image } from '@kit.ImageKit';
 
 const TAG: string = 'MangaSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -447,11 +449,21 @@ struct MangaSettingsPage {
   }
 
   /**
-   * 提供设置页封面图片的 UI 渲染源：返回规范化后的路径或资源占位图
+   * 提供设置页封面图片的 UI 渲染源：返回规范化后的路径、PixelMap或资源占位图
+   * 支持AVIF格式：优先使用预加载的PixelMap
    */
-  private getCoverImageSourceForUI(): string | ResourceStr {
+  private getCoverImageSourceForUI(): string | ResourceStr | image.PixelMap {
     const raw: string = this.coverImagePath;
     if (raw && raw.length > 0) {
+      // 检查是否有预加载的PixelMap（用于AVIF等特殊格式）
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        const coverManager = getCoverImageManager();
+        const cachedPixelMap = coverManager.getCachedPixelMap(raw);
+        if (cachedPixelMap) {
+          return cachedPixelMap;
+        }
+      }
+      
       const srcType: ImageSourceType = this.currentManga && this.currentManga.coverSourceType !== undefined
         ? (this.currentManga.coverSourceType as ImageSourceType)
         : this.detectImageSourceType(raw);

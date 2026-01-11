@@ -51,6 +51,7 @@ import { DatabaseManager } from '../Framework/Database/DatabaseManager';
 import { OnlineImageLoader, RequestHeaders as OnlineRequestHeaders } from '../Framework/Cache/OnlineImageLoader';
 import { promptAction } from '@kit.ArkUI';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { AvifImage } from '../components/AvifImage';
 
 const TAG: string = 'MangaDetailPage';
 
@@ -767,12 +768,28 @@ struct MangaDetailPage {
 
   /**
    * 刷新封面显示尺寸，优先使用实际分辨率，否则使用默认比例
+   * 对于网络图片，直接使用OnlineImageLoader预加载（支持AVIF格式）
    */
   private async refreshCoverSize(): Promise<void> {
     let aspect: number = DEFAULT_COVER_ASPECT_RATIO;
     const mg: Manga | null = this.currentManga;
     if (mg && mg.coverImagePath && mg.coverImagePath.length > 0 && mg.coverSourceType !== undefined) {
-      const computed: number | null = await this.getImageAspectRatio(mg.coverImagePath as string, mg.coverSourceType as ImageSourceType);
+      const coverUrl = mg.coverImagePath as string;
+      
+      // 对于网络图片，直接使用OnlineImageLoader预加载（支持AVIF等特殊格式）
+      if (coverUrl.startsWith('http://') || coverUrl.startsWith('https://')) {
+        try {
+          await this.loadCoverWithHeaders(coverUrl);
+          // 如果成功加载了PixelMap，尺寸已在loadCoverWithHeaders中设置
+          if (this.coverPixelMap) {
+            return;
+          }
+        } catch (e) {
+          logger.warn(TAG, `预加载网络封面失败，回退到Image组件: ${e}`);
+        }
+      }
+      
+      const computed: number | null = await this.getImageAspectRatio(coverUrl, mg.coverSourceType as ImageSourceType);
       if (computed !== null) {
         aspect = computed;
       }

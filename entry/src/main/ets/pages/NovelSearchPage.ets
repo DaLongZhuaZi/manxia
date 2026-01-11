@@ -19,6 +19,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { NovelDetailPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { DeviceAdaptationManager, DeviceChangeListener } from '../Framework/Managers/DeviceAdaptationManager';
 import { AppColors } from '../Framework/Theme/AppColors';
+import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
+import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 
 /**
  * 书源搜索结果分组
@@ -363,19 +365,36 @@ export struct NovelSearchPage {
   }
 
   openBookDetail(book: NovelSearchResult): void {
-    const params: NovelDetailPageParams = {
-      sourceId: book.sourceId,
-      bookUrl: book.bookUrl,
-      bookName: book.name,
-      author: book.author,
-      kind: book.kind,
-      intro: book.intro,
-      coverUrl: book.coverUrl,
-      latestChapterTitle: book.latestChapterTitle,
-      wordCount: book.wordCount,
-      sourceName: book.sourceName
-    };
-    this.pathStack.pushPathByName('NovelDetailPage', params);
+    // 根据页面设置决定使用哪个详情页
+    const pageType = PageSettingsHelper.getNovelDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: book.bookUrl,
+        sourceId: book.sourceId,
+        cachedTitle: book.name,
+        cachedCover: book.coverUrl,
+        cachedAuthor: book.author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+    } else {
+      // 使用原有小说详情页
+      const params: NovelDetailPageParams = {
+        sourceId: book.sourceId,
+        bookUrl: book.bookUrl,
+        bookName: book.name,
+        author: book.author,
+        kind: book.kind,
+        intro: book.intro,
+        coverUrl: book.coverUrl,
+        latestChapterTitle: book.latestChapterTitle,
+        wordCount: book.wordCount,
+        sourceName: book.sourceName
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    }
   }
 
   build() {

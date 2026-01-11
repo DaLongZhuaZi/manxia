@@ -757,6 +757,87 @@ export class MangaSourceEngine {
   }
 
   /**
+   * 通过标签/分类搜索作品列表
+   * @param tagId 标签ID或标签名称
+   * @param page 页码
+   * @returns 搜索结果
+   */
+  async searchByTag(tagId: string, page: number = 1): Promise<EngineResult<SearchResult>> {
+    if (!this.config) {
+      logger.error(TAG, '配置未加载，无法执行标签搜索');
+      throw new MangaSourceError(
+        MangaSourceErrorCode.CONFIG_NOT_LOADED,
+        '配置未加载'
+      );
+    }
+
+    const startTime = Date.now();
+    logger.info(TAG, `开始标签搜索: tagId="${tagId}", page=${page}`);
+
+    // 检查是否支持标签搜索
+    const hasSearchByTag = this.configParser.hasWorkflow(this.config, 'searchByTag');
+    if (!hasSearchByTag) {
+      logger.warn(TAG, '图源未实现searchByTag工作流');
+      return {
+        success: false,
+        error: '该图源不支持标签搜索',
+        duration: Date.now() - startTime,
+        actionCount: 0
+      };
+    }
+
+    try {
+      const actions = this.configParser.buildSearchByTagActions(this.config, tagId);
+      const context = this.createActionContext();
+      await this.populateSourceSettings(context);
+      context.variables['tagId'] = tagId;
+      context.variables['tag'] = tagId;
+      context.variables['category'] = tagId;
+      context.variables['genre'] = tagId;
+      context.variables['page'] = page.toString();
+      const pageSize: number = Number(context.variables['pageSize'] || '30');
+      context.variables['offset'] = ((page - 1) * pageSize).toString();
+
+      let results: MangaInfo[] = [];
+      for (let i = 0; i < actions.length; i++) {
+        const action = actions[i];
+        const result = await this.actionEngine.executeAction(action, context);
+        if (!result.success && !action.optional) {
+          throw new MangaSourceError(MangaSourceErrorCode.ACTION_FAILED, result.error || '操作失败');
+        }
+        if ((action.type === 'extract' || action.type === 'api' || action.type === 'script') && result.data) {
+          results = this.extractMangaResults(result.data);
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info(TAG, `标签搜索完成，找到 ${results.length} 个结果，耗时 ${duration}ms`);
+
+      return {
+        success: true,
+        data: {
+          mangas: results,
+          total: results.length,
+          page: page,
+          hasNext: results.length >= 20
+        },
+        duration,
+        actionCount: actions.length
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `标签搜索失败: ${errorMessage}`);
+      return {
+        success: false,
+        error: errorMessage,
+        duration,
+        actionCount: 0
+      };
+    }
+  }
+
+  /**
    * 检查图源是否支持指定能力
    * @param capability 能力名称（工作流名称）
    * @returns 是否支持
@@ -2176,7 +2257,8 @@ export class MangaSourceEngine {
     logger.info(TAG, `使用合并工作流获取详情和章节: ${mangaId}`);
 
     try {
-      const actions: Action[] = workflowActions || [];
+      // 使用configParser处理actions，替换变量
+      const actions: Action[] = this.configParser.buildMangaDetailWithChaptersActions(this.config, mangaId);
       const context = this.createActionContext();
       await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'true';

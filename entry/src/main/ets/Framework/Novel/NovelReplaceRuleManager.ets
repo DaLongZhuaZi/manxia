@@ -87,11 +87,67 @@ export class NovelReplaceRuleManager {
 
     try {
       await this.loadRulesFromStorage();
+      
+      // 如果数据库中没有规则，添加默认规则
+      if (this.rules.size === 0) {
+        await this.loadDefaultRules();
+      }
+      
       this.initialized = true;
       logger.info(TAG, `替换规则管理器初始化完成，共 ${this.rules.size} 条规则`);
     } catch (error) {
       logger.error(TAG, `初始化失败: ${String(error)}`);
     }
+  }
+
+  /**
+   * 加载默认替换净化规则
+   */
+  private async loadDefaultRules(): Promise<void> {
+    // 使用函数逐个添加规则，避免ArkTS数组字面量类型推断问题
+    const addDefaultRule = async (name: string, pattern: string, replacement: string, isRegex: boolean, scope: ReplaceScope, enabled: boolean, order: number): Promise<void> => {
+      const params: AddRuleParams = {
+        name: name,
+        pattern: pattern,
+        replacement: replacement,
+        isRegex: isRegex,
+        scope: scope,
+        enabled: enabled,
+        order: order
+      };
+      try {
+        await this.addRule(params);
+      } catch (error) {
+        logger.warn(TAG, `添加默认规则失败 [${name}]: ${String(error)}`);
+      }
+    };
+    
+    logger.info(TAG, '开始加载默认替换规则');
+    
+    // 广告类规则
+    await addDefaultRule('求收藏推荐', '(?:求|跪求|恳请).{0,10}(?:收藏|推荐|订阅|打赏|月票|评论|投票|追读)', '', true, ReplaceScope.CONTENT, true, 0);
+    await addDefaultRule('首发声明', '(?:本书|本文|小说|作品).{0,20}(?:首发|独家|连载|发布).{0,20}(?:网站|平台|app|网)', '', true, ReplaceScope.CONTENT, true, 1);
+    await addDefaultRule('更新提示', '(?:更多|更新|最新).{0,10}(?:章节|内容|小说).{0,20}(?:请|搜索|访问|百度)', '', true, ReplaceScope.CONTENT, true, 2);
+    await addDefaultRule('阅读提示', '(?:手机|电脑|移动端).{0,10}(?:阅读|观看|访问).{0,20}(?:网址|地址|链接|搜索)', '', true, ReplaceScope.CONTENT, true, 3);
+    await addDefaultRule('版权声明', '(?:正版|盗版|版权).{0,20}(?:支持|打击|举报|所有)', '', true, ReplaceScope.CONTENT, true, 4);
+    await addDefaultRule('群聊广告', '(?:加入|欢迎|进入).{0,10}(?:书友群|QQ群|微信群|读者群|粉丝群)', '', true, ReplaceScope.CONTENT, true, 5);
+    await addDefaultRule('网址链接', '(?:www\\.|http:|https:|\\.com|\\.cn|\\.net|\\.org)[^\\s]{5,}', '', true, ReplaceScope.CONTENT, true, 6);
+    await addDefaultRule('网站名称广告', '(?:起点|晋江|纵横|17k|潇湘|红袖|番茄|七猫|书旗|飞卢|塔读|掌阅|咪咕|QQ阅读).{0,10}(?:中文网|小说网|文学|阅读|书城)', '', true, ReplaceScope.CONTENT, true, 7);
+    await addDefaultRule('章节提示', '(?:本章|下章|上章|本节|下节).{0,10}(?:未完|待续|继续|完毕|结束)', '', true, ReplaceScope.CONTENT, false, 8);
+    await addDefaultRule('作者有话说', '(?:作者|笔者|小编).{0,5}(?:有话说|的话|说|曰|云)', '', true, ReplaceScope.CONTENT, false, 9);
+    
+    // 乱码类规则
+    await addDefaultRule('乱码符号', '[□■◇◆○●△▲▽▼☆★]{3,}', '', true, ReplaceScope.CONTENT, true, 10);
+    await addDefaultRule('控制字符', '[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]{2,}', '', true, ReplaceScope.CONTENT, true, 11);
+    await addDefaultRule('重复标点', '([。！？，、；：]){3,}', '$1$1', true, ReplaceScope.CONTENT, true, 12);
+    await addDefaultRule('多余空行', '\\n{4,}', '\\n\\n', true, ReplaceScope.CONTENT, true, 13);
+    await addDefaultRule('多余空格', '[ ]{4,}', '  ', true, ReplaceScope.CONTENT, true, 14);
+    
+    // 标题净化规则
+    await addDefaultRule('标题网站名', '[-_].{0,20}(?:起点|晋江|纵横|番茄|七猫).{0,10}$', '', true, ReplaceScope.TITLE, true, 15);
+    await addDefaultRule('标题作者名', '[-_].{0,5}(?:作者|著|by).{0,20}$', '', true, ReplaceScope.TITLE, false, 16);
+    
+    logger.info(TAG, `默认替换规则加载完成，共 ${this.rules.size} 条`);
   }
 
   /**

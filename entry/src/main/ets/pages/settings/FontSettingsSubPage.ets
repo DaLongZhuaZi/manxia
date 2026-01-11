@@ -13,6 +13,8 @@ import { FontManager, getFontManager, FontType, FontScene, SystemFont, CustomFon
 import { logger } from '../../Utils/Logger';
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 
 const TAG = 'FontSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -28,6 +30,13 @@ export struct FontSettingsSubPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private fontManager: FontManager = getFontManager();
   private componentId: string = 'FontSettingsSubPage';
+  
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+  @State responsive_isLandscape: boolean = false;
   
   // 字体设置状态
   @State settings: FontSettings | null = null;
@@ -45,7 +54,43 @@ export struct FontSettingsSubPage {
     FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
       this.fontState = newState;
     });
+    this.initializeResponsiveLayout();
     this.loadFontData();
+  }
+
+  private initializeResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+    } catch (e) {
+      logger.error(TAG, '响应式布局初始化失败', String(e));
+    }
+  }
+
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    // 根据断点设置最大内容宽度
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        break;
+    }
   }
 
   private loadFontData(): void {
@@ -57,6 +102,10 @@ export struct FontSettingsSubPage {
   aboutToDisappear(): void {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
   }
 
   private async importCustomFont(): Promise<void> {
@@ -414,37 +463,36 @@ export struct FontSettingsSubPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+        Scroll(this.scroller) {
+          Column({ space: 16 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-          Scroll(this.scroller) {
-            Column({ space: 16 }) {
-              // 自定义字体管理
-              this.buildCustomFontManagement()
+            // 自定义字体管理
+            this.buildCustomFontManagement()
 
-              // 界面字体设置
-              this.buildAppFontSection()
+            // 界面字体设置
+            this.buildAppFontSection()
 
-              // 小说字体设置
-              this.buildNovelFontSection()
+            // 小说字体设置
+            this.buildNovelFontSection()
 
-              // 电子书字体设置
-              this.buildEbookFontSection()
+            // 电子书字体设置
+            this.buildEbookFontSection()
 
-              // 重置按钮
-              this.buildResetButton()
+            // 重置按钮
+            this.buildResetButton()
 
-              Blank().height(20)
-            }
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 8 })
+            Blank().height(40)
           }
-          .layoutWeight(1)
-          .scrollBar(BarState.Auto)
-          .edgeEffect(EdgeEffect.Spring)
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
         }
         .width('100%')
         .height('100%')
+        .align(Alignment.TopStart)
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.Spring)
       }
     }
     .titleBar({

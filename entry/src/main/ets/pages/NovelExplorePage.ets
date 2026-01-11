@@ -17,6 +17,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
+import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
+import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 
 const TAG = 'NovelExplorePage';
 
@@ -194,20 +196,37 @@ export struct NovelExplorePage {
   }
 
   openBookDetail(book: NovelSearchResult): void {
-    const params: NovelDetailPageParams = {
-      sourceId: book.sourceId,
-      bookUrl: book.bookUrl,
-      bookName: book.name,
-      // 传递完整fallback信息
-      author: book.author,
-      kind: book.kind,
-      intro: book.intro,
-      coverUrl: book.coverUrl,
-      latestChapterTitle: book.latestChapterTitle,
-      wordCount: book.wordCount,
-      sourceName: book.sourceName
-    };
-    this.pathStack.pushPathByName('NovelDetailPage', params);
+    // 根据页面设置决定使用哪个详情页
+    const pageType = PageSettingsHelper.getNovelDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: book.bookUrl,
+        sourceId: book.sourceId,
+        cachedTitle: book.name,
+        cachedCover: book.coverUrl,
+        cachedAuthor: book.author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+    } else {
+      // 使用原有小说详情页
+      const params: NovelDetailPageParams = {
+        sourceId: book.sourceId,
+        bookUrl: book.bookUrl,
+        bookName: book.name,
+        // 传递完整fallback信息
+        author: book.author,
+        kind: book.kind,
+        intro: book.intro,
+        coverUrl: book.coverUrl,
+        latestChapterTitle: book.latestChapterTitle,
+        wordCount: book.wordCount,
+        sourceName: book.sourceName
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    }
   }
 
   build() {

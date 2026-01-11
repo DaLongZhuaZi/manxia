@@ -17,6 +17,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { getNovelSettingsManager, BookshelfSettings, BookshelfSortType, BrowseHistoryItem } from '../Framework/Novel/NovelSettingsManager';
 import { AppColors } from '../Framework/Theme/AppColors';
+import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
+import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 
 const TAG = 'NovelBookshelfPage';
 const TITLE_BAR_HEIGHT_MINI = 56;
@@ -233,15 +235,32 @@ export struct NovelBookshelfPage {
    * 打开历史浏览的书籍详情
    */
   openBrowseHistoryDetail(item: BrowseHistoryItem): void {
-    const params: NovelDetailPageParams = {
-      sourceId: item.sourceId,
-      bookUrl: item.bookUrl,
-      bookName: item.bookName,
-      author: item.author,
-      coverUrl: item.coverUrl,
-      sourceName: item.sourceName
-    };
-    this.pathStack.pushPathByName('NovelDetailPage', params);
+    // 根据页面设置决定使用哪个详情页
+    const pageType = PageSettingsHelper.getNovelDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: item.bookUrl,
+        sourceId: item.sourceId,
+        cachedTitle: item.bookName,
+        cachedCover: item.coverUrl,
+        cachedAuthor: item.author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+    } else {
+      // 使用原有小说详情页
+      const params: NovelDetailPageParams = {
+        sourceId: item.sourceId,
+        bookUrl: item.bookUrl,
+        bookName: item.bookName,
+        author: item.author,
+        coverUrl: item.coverUrl,
+        sourceName: item.sourceName
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    }
   }
 
   async changeSortType(sortType: BookshelfSortType): Promise<void> {
@@ -1393,12 +1412,29 @@ export struct NovelBookshelfPage {
   }
 
   openBook(book: NovelBook): void {
-    const params: NovelDetailPageParams = {
-      sourceId: book.sourceId,
-      bookUrl: book.bookUrl,
-      bookId: book.id,
-      bookName: book.name
-    };
-    this.pathStack.pushPathByName('NovelDetailPage', params);
+    // 根据页面设置决定使用哪个详情页
+    const pageType = PageSettingsHelper.getNovelDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: book.bookUrl,
+        sourceId: book.sourceId,
+        cachedTitle: book.name,
+        cachedCover: book.coverUrl,
+        cachedAuthor: book.author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+    } else {
+      // 使用原有小说详情页
+      const params: NovelDetailPageParams = {
+        sourceId: book.sourceId,
+        bookUrl: book.bookUrl,
+        bookId: book.id,
+        bookName: book.name
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    }
   }
 }

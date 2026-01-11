@@ -14,6 +14,44 @@ import { LegadoHtmlBridge, createLegadoHtmlBridge, HTMLElement as HtmlElement } 
 const TAG = 'LegadoRuleAnalyzer';
 
 /**
+ * 性能保护配置
+ * 用于防止大型HTML解析导致ANR闪退
+ */
+class PerformanceConfig {
+  // 最大元素数量 - 支持超过5000章节的小说
+  static readonly MAX_ELEMENTS = 5000;
+  // 最大内容大小 - 2MB
+  static readonly MAX_CONTENT_SIZE = 2 * 1024 * 1024;
+  // 单次处理批次大小 - 每批处理500个元素后让出主线程
+  static readonly BATCH_SIZE = 500;
+  // ID查找最大元素数量（ID通常较少）
+  static readonly MAX_ID_ELEMENTS = 1000;
+  
+  /**
+   * 安全截取内容，避免处理过大的HTML
+   */
+  static safeSubstring(content: string, maxSize: number = PerformanceConfig.MAX_CONTENT_SIZE): string {
+    if (content.length <= maxSize) {
+      return content;
+    }
+    // 尝试在标签边界截断，避免截断标签中间
+    const truncated = content.substring(0, maxSize);
+    const lastTagEnd = truncated.lastIndexOf('>');
+    if (lastTagEnd > maxSize * 0.9) {
+      return truncated.substring(0, lastTagEnd + 1);
+    }
+    return truncated;
+  }
+  
+  /**
+   * 检查是否应该继续处理（防止无限循环）
+   */
+  static shouldContinue(count: number, maxCount: number = PerformanceConfig.MAX_ELEMENTS): boolean {
+    return count < maxCount;
+  }
+}
+
+/**
  * CSS选择器解析结果接口
  */
 interface CssSelectorResult {
@@ -212,7 +250,7 @@ export class LegadoRuleAnalyzer {
 
   /**
    * 设置要解析的内容
-   * 对于大型HTML（>50KB），跳过DOM解析以避免ANR
+   * 对于大型HTML（>100KB），跳过DOM解析以避免ANR
    */
   setContent(content: string, baseUrl?: string): LegadoRuleAnalyzer {
     this.content = content;
@@ -222,7 +260,8 @@ export class LegadoRuleAnalyzer {
     this.isJSON = this.checkIsJSON(content);
     
     // HTML大小阈值：超过此大小不创建DOM桥接，使用字符串解析
-    const HTML_SIZE_THRESHOLD = 50000; // 50KB
+    // 增加到100KB以支持更大的章节列表页面
+    const HTML_SIZE_THRESHOLD = 100000; // 100KB
     
     // 如果不是JSON，且内容不太大，初始化HTML解析桥接
     if (!this.isJSON && content.trim()) {
@@ -1952,10 +1991,9 @@ export class LegadoRuleAnalyzer {
   private getChildElements(content: string): string[] {
     const results: string[] = [];
     
-    // 性能保护：限制最大元素数量和内容大小
-    const MAX_ELEMENTS = 500;
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    const searchContent = content.length > MAX_CONTENT_SIZE ? content.substring(0, MAX_CONTENT_SIZE) : content;
+    // 性能保护：使用统一配置
+    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    const searchContent = PerformanceConfig.safeSubstring(content);
     
     // 匹配第一层子元素
     const tagRegex = /<([a-zA-Z][a-zA-Z0-9]*)[^>]*>/g;
@@ -1992,10 +2030,9 @@ export class LegadoRuleAnalyzer {
   private findElementsByClass(content: string, className: string): string[] {
     const results: string[] = [];
     
-    // 性能保护：限制最大元素数量和内容大小
-    const MAX_ELEMENTS = 500;
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    const searchContent = content.length > MAX_CONTENT_SIZE ? content.substring(0, MAX_CONTENT_SIZE) : content;
+    // 性能保护：使用统一配置
+    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    const searchContent = PerformanceConfig.safeSubstring(content);
     
     // 分割多个class名称
     const classNames = className.split(/\s+/).filter(c => c.length > 0);
@@ -2151,10 +2188,9 @@ export class LegadoRuleAnalyzer {
   private findElementsById(content: string, idName: string): string[] {
     const results: string[] = [];
     
-    // 性能保护：限制最大元素数量和内容大小
-    const MAX_ELEMENTS = 100; // ID通常是唯一的，不需要太多
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    const searchContent = content.length > MAX_CONTENT_SIZE ? content.substring(0, MAX_CONTENT_SIZE) : content;
+    // 性能保护：使用统一配置（ID查找使用较小限制）
+    const MAX_ELEMENTS = PerformanceConfig.MAX_ID_ELEMENTS;
+    const searchContent = PerformanceConfig.safeSubstring(content);
     
     // 性能优化：减少大型内容时的日志输出
     if (searchContent.length < 10000) {
@@ -2282,11 +2318,9 @@ export class LegadoRuleAnalyzer {
   private findElementsByTag(content: string, tagName: string): string[] {
     const results: string[] = [];
     
-    // 性能保护：限制最大元素数量，避免在大型HTML中无限循环
-    const MAX_ELEMENTS = 500;
-    // 性能保护：对于超大内容，限制搜索范围
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    const searchContent = content.length > MAX_CONTENT_SIZE ? content.substring(0, MAX_CONTENT_SIZE) : content;
+    // 性能保护：使用统一配置
+    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    const searchContent = PerformanceConfig.safeSubstring(content);
     
     const pattern = `<${this.escapeRegex(tagName)}[^>]*>`;
     try {
@@ -2312,10 +2346,9 @@ export class LegadoRuleAnalyzer {
   private findElementsByText(content: string, searchText: string): string[] {
     const results: string[] = [];
     
-    // 性能保护：限制最大元素数量和内容大小
-    const MAX_ELEMENTS = 500;
-    const MAX_CONTENT_SIZE = 500000; // 500KB
-    const searchContent = content.length > MAX_CONTENT_SIZE ? content.substring(0, MAX_CONTENT_SIZE) : content;
+    // 性能保护：使用统一配置
+    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    const searchContent = PerformanceConfig.safeSubstring(content);
     
     const pattern = `<([a-zA-Z][a-zA-Z0-9]*)[^>]*>[^<]*${this.escapeRegex(searchText)}[^<]*</\\1>`;
     try {
