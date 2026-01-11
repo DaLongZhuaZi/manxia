@@ -1,0 +1,31 @@
+{
+  "fileContextMenu": [
+    {
+      "abilityName": "EntryAbility",
+      "menuItem": "用漫匣打开",
+      "menuHandler": "openFile",
+      "menuContext": [
+        {
+          "menuKind": 1,
+          "menuRule": "single",
+          "fileSupportType": [
+            ".cbz",
+            ".cbr",
+            ".zip",
+            ".rar",
+            ".epub",
+            ".pdf",
+            ".txt",
+            ".avif",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".webp"
+          ],
+          "fileNotSupportType": []
+        }
+      ]
+    }
+  ]
+}

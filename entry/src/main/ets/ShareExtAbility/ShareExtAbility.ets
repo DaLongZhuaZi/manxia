@@ -104,9 +104,10 @@ export default class ShareExtAbility extends UIExtensionAbility {
           const normalizedUri = this.normalizeFileUri(uri);
           
           // 验证文件类型
-          if (this.isValidComicFile(normalizedUri)) {
+          const fileType = this.getFileType(normalizedUri);
+          if (fileType !== 'unknown') {
             validUris.push(normalizedUri);
-            logger.info(TAG, `✅ 有效的漫画文件: ${normalizedUri}`);
+            logger.info(TAG, `✅ 有效的${fileType}文件: ${normalizedUri}`);
           } else {
             logger.warn(TAG, `⚠️ 不支持的文件类型: ${normalizedUri}`);
           }
@@ -116,14 +117,17 @@ export default class ShareExtAbility extends UIExtensionAbility {
       }
       
       if (validUris.length === 0) {
-        logger.warn(TAG, '没有找到有效的漫画文件');
+        logger.warn(TAG, '没有找到有效的文件');
         // 通知用户
-        this.showToast('未找到支持的漫画文件（ZIP/CBZ）', session);
+        this.showToast('未找到支持的文件类型', session);
         return;
       }
       
+      // 确定文件类型
+      const firstFileType = this.getFileType(validUris[0]);
+      
       // 启动主应用并传递文件URI
-      await this.launchMainAppWithFiles(validUris);
+      await this.launchMainAppWithFiles(validUris, firstFileType);
       
       // 显示成功提示
       this.showToast(`正在导入 ${validUris.length} 个文件...`, session);
@@ -178,20 +182,53 @@ export default class ShareExtAbility extends UIExtensionAbility {
   }
 
   /**
-   * 验证是否是有效的漫画文件
+   * 获取文件类型
    */
-  private isValidComicFile(uri: string): boolean {
+  private getFileType(uri: string): string {
     const lowerUri = uri.toLowerCase();
-    return lowerUri.endsWith('.zip') || 
-           lowerUri.endsWith('.cbz') ||
-           lowerUri.includes('.zip?') ||
-           lowerUri.includes('.cbz?');
+    
+    // 漫画压缩包
+    if (lowerUri.endsWith('.zip') || lowerUri.endsWith('.cbz') || 
+        lowerUri.endsWith('.cbr') || lowerUri.endsWith('.rar') ||
+        lowerUri.includes('.zip?') || lowerUri.includes('.cbz?')) {
+      return 'comic';
+    }
+    
+    // AVIF图片
+    if (lowerUri.endsWith('.avif') || lowerUri.includes('.avif?')) {
+      return 'avif';
+    }
+    
+    // 其他图片
+    if (lowerUri.endsWith('.jpg') || lowerUri.endsWith('.jpeg') || 
+        lowerUri.endsWith('.png') || lowerUri.endsWith('.gif') ||
+        lowerUri.endsWith('.webp') || lowerUri.endsWith('.bmp')) {
+      return 'image';
+    }
+    
+    // PDF
+    if (lowerUri.endsWith('.pdf') || lowerUri.includes('.pdf?')) {
+      return 'pdf';
+    }
+    
+    // 电子书
+    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') || 
+        lowerUri.endsWith('.azw3') || lowerUri.endsWith('.txt')) {
+      return 'ebook';
+    }
+    
+    // 备份文件
+    if (lowerUri.endsWith('.mxbackup') || lowerUri.endsWith('.mxbak')) {
+      return 'backup';
+    }
+    
+    return 'unknown';
   }
 
   /**
    * 启动主应用并传递文件URI
    */
-  private async launchMainAppWithFiles(uris: string[]): Promise<void> {
+  private async launchMainAppWithFiles(uris: string[], fileType: string): Promise<void> {
     try {
       // 使用应用包名常量 - ShareExtAbility和EntryAbility在同一应用包中
       // 直接使用常量避免any/unknown类型问题和ApplicationInfo属性不存在的问题
@@ -200,7 +237,7 @@ export default class ShareExtAbility extends UIExtensionAbility {
         abilityName: 'EntryAbility',
         parameters: {
           'share_import_files': uris,
-          'share_import_type': 'comic',
+          'share_import_type': fileType,
           'share_import_source': 'system_share'
         }
       };

@@ -84,7 +84,12 @@ import { BackgroundBlurOverlay } from '../Framework/Components/BackgroundBlurOve
 import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 import { HelpCenterPage } from './HelpCenterPage';
 import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
+import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } from './settings/PageSettingsSubPage';
+import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { UnifiedDetailPage } from './UnifiedDetailPage';
+import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
+import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
@@ -637,7 +642,7 @@ struct MainMenuPage {
   @State private initializationProgress: string = '正在初始化...';
 
   // 版本信息
-  @State public appVersion: string = '0.0.5';
+  @State public appVersion: string = '0.0.6';
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
@@ -2341,7 +2346,7 @@ struct MainMenuPage {
         GridItem() {
           Column({ space: 8 }) {
             Stack() {
-              Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.mangabook'))
+              Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
                 .width('100%')
                 .aspectRatio(0.7)
                 .objectFit(ImageFit.Cover)
@@ -3358,12 +3363,36 @@ struct MainMenuPage {
    */
   private checkPendingFileImport(): void {
     try {
-      // 优先检查系统分享导入
-      const pendingShareFiles = AppStorage.get<string[]>('pendingShareFiles');
-      if (pendingShareFiles && Array.isArray(pendingShareFiles) && pendingShareFiles.length > 0) {
-        logger.info(TAG, `📤 检测到系统分享文件: ${pendingShareFiles.length} 个`);
-        this.checkPendingShareImport();
+      // 优先检查AVIF文件打开
+      const pendingAvifUri = AppStorage.get<string>('pendingAvifUri');
+      if (pendingAvifUri) {
+        logger.info(TAG, `🖼️ 检测到待打开的AVIF文件: ${pendingAvifUri}`);
+        // 清除标记
+        AppStorage.delete('pendingAvifUri');
+        // 导航到AVIF查看器
+        const avifParams: AvifTestPageParams = { fileUri: pendingAvifUri };
+        setTimeout(() => {
+          this.pathStack.pushPathByName('AvifTestPage', avifParams);
+        }, 500);
         return;
+      }
+
+      // 优先检查系统分享导入（注意：可能是JSON字符串或数组）
+      const rawShareFiles = AppStorage.get<string | string[]>('pendingShareFiles');
+      if (rawShareFiles) {
+        let hasShareFiles = false;
+        if (typeof rawShareFiles === 'string' && rawShareFiles.length > 2) {
+          // JSON字符串格式
+          hasShareFiles = true;
+        } else if (Array.isArray(rawShareFiles) && rawShareFiles.length > 0) {
+          // 数组格式
+          hasShareFiles = true;
+        }
+        if (hasShareFiles) {
+          logger.info(TAG, `📤 检测到系统分享文件`);
+          this.checkPendingShareImport();
+          return;
+        }
       }
 
       // 检查普通文件导入
@@ -3392,23 +3421,58 @@ struct MainMenuPage {
    */
   private checkPendingShareImport(): void {
     try {
-      const pendingShareFiles = AppStorage.get<string[]>('pendingShareFiles');
+      // 注意：pendingShareFiles可能是JSON字符串或数组
+      let pendingShareFiles: string[] = [];
+      const rawShareFiles = AppStorage.get<string | string[]>('pendingShareFiles');
+      if (typeof rawShareFiles === 'string') {
+        try {
+          pendingShareFiles = JSON.parse(rawShareFiles) as string[];
+        } catch {
+          pendingShareFiles = [];
+        }
+      } else if (Array.isArray(rawShareFiles)) {
+        pendingShareFiles = rawShareFiles;
+      }
+      
       const pendingShareType = AppStorage.get<string>('pendingShareType');
       const pendingShareSource = AppStorage.get<string>('pendingShareSource');
 
-      if (!pendingShareFiles || !Array.isArray(pendingShareFiles) || pendingShareFiles.length === 0) {
+      if (!pendingShareFiles || pendingShareFiles.length === 0) {
         return;
       }
 
       logger.info(TAG, `📤 处理系统分享导入: ${pendingShareFiles.length} 个文件, 类型: ${pendingShareType}, 来源: ${pendingShareSource}`);
 
-      // 设置标记，让DataManagementPage读取
-      AppStorage.setOrCreate('shareImportPending', true);
+      // 清除标记
+      AppStorage.delete('pendingShareFiles');
+      AppStorage.delete('pendingShareType');
+      AppStorage.delete('pendingShareSource');
 
-      // 直接导航到DataManagementPage
-      setTimeout(() => {
-        this.navigateToDataManagement();
-      }, 500);
+      // 根据文件类型进行不同处理
+      if (pendingShareType === 'avif' && pendingShareFiles.length > 0) {
+        // AVIF文件：跳转到AVIF查看器
+        const avifParams: AvifTestPageParams = { fileUri: pendingShareFiles[0] };
+        setTimeout(() => {
+          this.pathStack.pushPathByName('AvifTestPage', avifParams);
+        }, 500);
+      } else if (pendingShareType === 'image' && pendingShareFiles.length > 0) {
+        // 普通图片：也可以用AVIF查看器查看
+        const avifParams: AvifTestPageParams = { fileUri: pendingShareFiles[0] };
+        setTimeout(() => {
+          this.pathStack.pushPathByName('AvifTestPage', avifParams);
+        }, 500);
+      } else {
+        // 其他类型（comic, pdf, ebook, backup）：导航到数据管理页面
+        // 重新设置标记，让DataManagementPage读取
+        AppStorage.setOrCreate('pendingShareFiles', JSON.stringify(pendingShareFiles));
+        AppStorage.setOrCreate('pendingShareType', pendingShareType || 'comic');
+        AppStorage.setOrCreate('pendingShareSource', pendingShareSource || 'system_share');
+        AppStorage.setOrCreate('shareImportPending', true);
+        
+        setTimeout(() => {
+          this.navigateToDataManagement();
+        }, 500);
+      }
 
     } catch (error) {
       logger.error(TAG, '检查系统分享文件失败', String(error));
@@ -3639,6 +3703,9 @@ struct MainMenuPage {
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
+
+    // 检查是否有待处理的文件打开请求（来自onNewWant）
+    this.checkPendingFileImport();
 
     // 根据当前标签页静默刷新对应数据（不显示加载状态，避免闪屏）
     switch (this.currentTabIndex) {
@@ -3981,6 +4048,9 @@ struct MainMenuPage {
       this.mangaList = mangaList;
       logger.info(TAG, `成功加载 ${this.mangaList.length} 部漫画`);
 
+      // 预加载网络封面图片（支持AVIF格式）
+      this.preloadNetworkCovers(mangaList);
+
       // 应用筛选
       this.applyLibraryFilter();
     } catch (error) {
@@ -3993,6 +4063,32 @@ struct MainMenuPage {
     }
   }
 
+
+  /**
+   * 预加载网络封面图片（支持AVIF格式）
+   * 对于网络图片，使用CoverImageManager预加载到PixelMap
+   */
+  private preloadNetworkCovers(mangaList: Manga[]): void {
+    const coverManager = getCoverImageManager();
+    const networkCovers: string[] = [];
+    
+    for (const manga of mangaList) {
+      const coverUrl = manga.coverImagePath;
+      if (coverUrl && (coverUrl.startsWith('http://') || coverUrl.startsWith('https://'))) {
+        networkCovers.push(coverUrl);
+      }
+    }
+    
+    if (networkCovers.length > 0) {
+      logger.info(TAG, `开始预加载 ${networkCovers.length} 个网络封面图片`);
+      // 异步预加载，不阻塞UI
+      coverManager.preloadCovers(networkCovers).then(() => {
+        logger.info(TAG, `网络封面预加载完成`);
+      }).catch((e: Error) => {
+        logger.warn(TAG, `网络封面预加载部分失败: ${e.message}`);
+      });
+    }
+  }
 
   /**
    * 刷新书库（漫画与电子书）列表
@@ -4463,6 +4559,29 @@ struct MainMenuPage {
       return normalized;
     }
     return raw;
+  }
+
+  /**
+   * 获取封面图片源（支持AVIF格式）
+   * 优先使用预加载的PixelMap，否则返回URL字符串
+   */
+  private getCoverImageSource(mg: Manga): string | image.PixelMap {
+    if (!mg || !mg.coverImagePath) {
+      return '';
+    }
+    const raw: string = mg.coverImagePath;
+    
+    // 检查是否有预加载的PixelMap（用于AVIF等特殊格式）
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      const coverManager = getCoverImageManager();
+      const cachedPixelMap = coverManager.getCachedPixelMap(raw);
+      if (cachedPixelMap) {
+        return cachedPixelMap;
+      }
+    }
+    
+    // 回退到普通路径
+    return this.normalizeDisplayPathForManga(mg);
   }
 
   private normalizeDisplayPathForEBook(ebook: EBook): string {
@@ -5630,7 +5749,7 @@ struct MainMenuPage {
 
       // 卡片内容层
       Row({ space: 12 }) {
-        Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.mangabook'))
+        Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
           .width(80)
           .height(120)
           .objectFit(ImageFit.Contain)
@@ -6800,7 +6919,7 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 封面图片
       Stack() {
-        Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.mangabook'))
+        Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
           .width('100%')
           .aspectRatio(0.7)
           .objectFit(ImageFit.Cover)
@@ -7098,7 +7217,7 @@ struct MainMenuPage {
   buildDiscoverMangaGridCard(manga: Manga) {
     Column({ space: 8 }) {
       // 封面图片
-      Image(this.normalizeDisplayPathForManga(manga) || $r('app.media.mangabook'))
+      Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
         .width('100%')
         .aspectRatio(0.7)
         .objectFit(ImageFit.Cover)
@@ -7548,11 +7667,28 @@ struct MainMenuPage {
    * 打开电子书详情页
    */
   private openEBookDetail(ebook: EBook): void {
-    logger.info(TAG, `打开电子书详情页: ${ebook.metadata.title}`);
-    const detailParams: EBookDetailPageParams = {
-      bookId: ebook.id
-    };
-    this.pathStack.pushPath({ name: 'EBookDetailPage', param: detailParams });
+    // 根据页面设置决定使用哪个详情页
+    const pageType = PageSettingsHelper.getEBookDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.EBOOK,
+        contentId: ebook.id,
+        cachedTitle: ebook.metadata?.title,
+        cachedCover: ebook.metadata?.coverImagePath,
+        cachedAuthor: ebook.metadata?.author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      logger.info(TAG, `打开统一详情页(电子书): ${ebook.metadata?.title}`);
+    } else {
+      // 使用原有电子书详情页
+      logger.info(TAG, `打开电子书详情页: ${ebook.metadata?.title}`);
+      const detailParams: EBookDetailPageParams = {
+        bookId: ebook.id
+      };
+      this.pathStack.pushPath({ name: 'EBookDetailPage', param: detailParams });
+    }
   }
 
   /**
@@ -8179,14 +8315,54 @@ struct MainMenuPage {
    * 打开小说详情页
    */
   private openNovelDetail(novel: NovelBook): void {
-    const params: NovelDetailPageParams = {
-      sourceId: novel.sourceId,
-      bookUrl: novel.bookUrl,
-      bookName: novel.name,
-      author: novel.author,
-      coverUrl: novel.coverUrl
-    };
-    this.pathStack.pushPathByName('NovelDetailPage', params);
+    // 根据页面设置决定使用哪个详情页
+    const pageType = PageSettingsHelper.getNovelDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: novel.bookUrl,
+        sourceId: novel.sourceId,
+        cachedTitle: novel.name,
+        cachedCover: novel.coverUrl,
+        cachedAuthor: novel.author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      logger.info(TAG, `打开统一详情页(小说): ${novel.name}`);
+    } else if (pageType === DetailPageType.MANGA) {
+      // 使用漫画详情页样式（小说内容无法在漫画详情页正常显示，回退到小说详情页）
+      logger.warn(TAG, `小说内容不支持漫画详情页，使用小说详情页: ${novel.name}`);
+      const params: NovelDetailPageParams = {
+        sourceId: novel.sourceId,
+        bookUrl: novel.bookUrl,
+        bookName: novel.name,
+        author: novel.author,
+        coverUrl: novel.coverUrl
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    } else if (pageType === DetailPageType.EBOOK) {
+      // 使用电子书详情页样式（小说内容无法在电子书详情页正常显示，回退到小说详情页）
+      logger.warn(TAG, `小说内容不支持电子书详情页，使用小说详情页: ${novel.name}`);
+      const params: NovelDetailPageParams = {
+        sourceId: novel.sourceId,
+        bookUrl: novel.bookUrl,
+        bookName: novel.name,
+        author: novel.author,
+        coverUrl: novel.coverUrl
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    } else {
+      // 使用原有小说详情页（DEFAULT或NOVEL）
+      const params: NovelDetailPageParams = {
+        sourceId: novel.sourceId,
+        bookUrl: novel.bookUrl,
+        bookName: novel.name,
+        author: novel.author,
+        coverUrl: novel.coverUrl
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+    }
   }
 
   /**
@@ -8197,7 +8373,7 @@ struct MainMenuPage {
     Row({ space: 12 }) {
       // 封面图片
       Column() {
-        Image(this.normalizeDisplayPathForManga(manga) || $r('sys.symbol.doc_plaintext_fill'))
+        Image(this.getCoverImageSource(manga) || $r('sys.symbol.doc_plaintext_fill'))
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
@@ -8307,7 +8483,7 @@ struct MainMenuPage {
         // 封面区域
         Stack() {
           Column() {
-            Image(this.normalizeDisplayPathForManga(manga) || $r('sys.symbol.doc_plaintext_fill'))
+            Image(this.getCoverImageSource(manga) || $r('sys.symbol.doc_plaintext_fill'))
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
@@ -8568,13 +8744,47 @@ struct MainMenuPage {
         logger.warn(TAG, `获取漫画sourceId失败: ${String(err)}`);
       }
 
-      const params: MangaDetailPageParams = {
-        mangaId: manga.id,
-        sourceId: sourceId
-      };
-
-      this.pathStack.pushPathByName('MangaDetailPage', params);
-      logger.info(TAG, `打开漫画详情页: ${manga.title}`);
+      // 根据页面设置决定使用哪个详情页
+      const pageType = PageSettingsHelper.getMangaDetailPageType();
+      
+      if (pageType === DetailPageType.UNIFIED) {
+        // 使用统一详情页
+        const unifiedParams: UnifiedDetailPageParams = {
+          contentType: UnifiedContentType.MANGA,
+          contentId: manga.id,
+          sourceId: sourceId?.toString(),
+          cachedTitle: manga.title,
+          cachedCover: manga.coverImagePath
+        };
+        this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+        logger.info(TAG, `打开统一详情页(漫画): ${manga.title}`);
+      } else if (pageType === DetailPageType.EBOOK) {
+        // 使用电子书详情页样式
+        const ebookParams: EBookDetailPageParams = {
+          bookId: manga.id
+        };
+        this.pathStack.pushPathByName('EBookDetailPage', ebookParams);
+        logger.info(TAG, `打开电子书详情页(漫画内容): ${manga.title}`);
+      } else if (pageType === DetailPageType.NOVEL) {
+        // 使用小说详情页样式（需要转换参数）
+        const novelParams: NovelDetailPageParams = {
+          sourceId: sourceId?.toString() || '',
+          bookUrl: manga.id,
+          bookName: manga.title,
+          author: manga.metadata?.authors?.join(', ') || '',
+          coverUrl: manga.coverImagePath
+        };
+        this.pathStack.pushPathByName('NovelDetailPage', novelParams);
+        logger.info(TAG, `打开小说详情页(漫画内容): ${manga.title}`);
+      } else {
+        // 使用原有漫画详情页（DEFAULT或MANGA）
+        const params: MangaDetailPageParams = {
+          mangaId: manga.id,
+          sourceId: sourceId
+        };
+        this.pathStack.pushPathByName('MangaDetailPage', params);
+        logger.info(TAG, `打开漫画详情页: ${manga.title}`);
+      }
     } catch (error) {
       logger.error(TAG, '打开漫画详情页失败', String(error));
       this.showToast('打开漫画详情页失败');
@@ -11108,58 +11318,68 @@ struct MainMenuPage {
                 this.showToast('打开文件编辑器页面失败');
               }
             })
-            this.buildSettingItem('系统资源预览', '浏览系统图标和颜色资源', $r('sys.symbol.paintpalette'), () => {
-              try {
-                const navigationPath: NavigationPath = {
-                  name: 'SystemResourcePreviewPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
-                };
-                this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到系统资源预览页面');
-              } catch (error) {
-                logger.error(TAG, '导航到系统资源预览页面失败', String(error));
-                this.showToast('打开系统资源预览页面失败');
-              }
-            })
+          //   this.buildSettingItem('系统资源预览', '浏览系统图标和颜色资源', $r('sys.symbol.paintpalette'), () => {
+          //     try {
+          //       const navigationPath: NavigationPath = {
+          //         name: 'SystemResourcePreviewPage',
+          //         param: {
+          //           fromPage: 'MainMenuPage',
+          //           timestamp: Date.now()
+          //         }
+          //       };
+          //       this.pathStack.pushPath(navigationPath);
+          //       logger.info(TAG, '导航到系统资源预览页面');
+          //     } catch (error) {
+          //       logger.error(TAG, '导航到系统资源预览页面失败', String(error));
+          //       this.showToast('打开系统资源预览页面失败');
+          //     }
+          //   })
+          // }
+          // // 日志管理仅在高级模式下显示
+          // if (this.advancedModeEnabled) {
+          //   this.buildSettingItem('日志管理', '查看和导出应用日志', $r('sys.symbol.doc_text'), () => {
+          //     try {
+          //       const navigationPath: NavigationPath = {
+          //         name: 'LogManagerPage',
+          //         param: {
+          //           fromPage: 'MainMenuPage',
+          //           timestamp: Date.now()
+          //         }
+          //       };
+          //       this.pathStack.pushPath(navigationPath);
+          //       logger.info(TAG, '导航到日志管理页面');
+          //     } catch (error) {
+          //       logger.error(TAG, '导航到日志管理页面失败', String(error));
+          //       this.showToast('打开日志管理页面失败');
+          //     }
+          //   })
+          //   this.buildSettingItem('生命周期监控', '实时监控页面任务和资源', $r('sys.symbol.checkmark_shield_fill'), () => {
+          //     try {
+          //       const navigationPath: NavigationPath = {
+          //         name: 'LifecycleMonitorPage',
+          //         param: {
+          //           fromPage: 'MainMenuPage',
+          //           timestamp: Date.now()
+          //         }
+          //       };
+          //       this.pathStack.pushPath(navigationPath);
+          //       logger.info(TAG, '导航到生命周期监控页面');
+          //     } catch (error) {
+          //       logger.error(TAG, '导航到生命周期监控页面失败', String(error));
+          //       this.showToast('打开生命周期监控页面失败');
+          //     }
+          //   })
           }
-          // 日志管理仅在高级模式下显示
-          if (this.advancedModeEnabled) {
-            this.buildSettingItem('日志管理', '查看和导出应用日志', $r('sys.symbol.doc_text'), () => {
-              try {
-                const navigationPath: NavigationPath = {
-                  name: 'LogManagerPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
-                };
-                this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到日志管理页面');
-              } catch (error) {
-                logger.error(TAG, '导航到日志管理页面失败', String(error));
-                this.showToast('打开日志管理页面失败');
+          this.buildSettingItem('AVIF解码测试', '测试AVIF图片解码功能', $r('sys.symbol.camera_macro'), () => {
+            const navigationPath: NavigationPath = {
+              name: 'AvifTestPage',
+              param: {
+                fromPage: 'MainMenuPage',
+                timestamp: Date.now()
               }
-            })
-            this.buildSettingItem('生命周期监控', '实时监控页面任务和资源', $r('sys.symbol.checkmark_shield_fill'), () => {
-              try {
-                const navigationPath: NavigationPath = {
-                  name: 'LifecycleMonitorPage',
-                  param: {
-                    fromPage: 'MainMenuPage',
-                    timestamp: Date.now()
-                  }
-                };
-                this.pathStack.pushPath(navigationPath);
-                logger.info(TAG, '导航到生命周期监控页面');
-              } catch (error) {
-                logger.error(TAG, '导航到生命周期监控页面失败', String(error));
-                this.showToast('打开生命周期监控页面失败');
-              }
-            })
-          }
+            };
+            this.pathStack.pushPath(navigationPath);
+          })
           this.buildSettingItem('关于应用', `版本 ${this.appVersion}`, $r('sys.symbol.info_circle'), () => {
             try {
               const navigationPath: NavigationPath = {
@@ -11199,6 +11419,7 @@ struct MainMenuPage {
           //   };
           //   this.pathStack.pushPath(navigationPath);
           // })
+
           
         }
         .backgroundColor(this.getGlassBackground())
@@ -11386,6 +11607,12 @@ struct MainMenuPage {
       HelpCenterPage()
     } else if (name === 'FontSettingsSubPage') {
       FontSettingsSubPage()
+    } else if (name === 'PageSettingsSubPage') {
+      PageSettingsSubPage()
+    } else if (name === 'UnifiedDetailPage') {
+      UnifiedDetailPage()
+    } else if (name === 'AvifTestPage') {
+      AvifTestPage()
       // 测试页面导航已移除
       // } else if (name === 'ReaderKitTestPage') {
       //   ReaderKitTestPage()
