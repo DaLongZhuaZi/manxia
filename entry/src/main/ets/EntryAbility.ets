@@ -26,6 +26,12 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.startup('EntryAbility', 'onCreate START', 'EntryAbility开始创建');
+    
+    // 详细记录Want信息用于调试
+    logger.info('EntryAbility', `📋 Want详情: uri=${want.uri || 'null'}, type=${want.type || 'null'}, action=${want.action || 'null'}`);
+    if (want.parameters) {
+      logger.info('EntryAbility', `📋 Want参数: ${JSON.stringify(Object.keys(want.parameters))}`);
+    }
 
     // 检查是否通过系统分享接收文件
     if (want.parameters && want.parameters['share_import_files']) {
@@ -38,18 +44,45 @@ export default class EntryAbility extends UIAbility {
     }
     // 检查是否通过文件打开应用
     else if (want.uri) {
-      logger.info('EntryAbility', `📁 通过文件打开应用: ${want.uri}`);
-      // 保存文件URI到AppStorage，在窗口创建后处理
-      AppStorage.setOrCreate('pendingFileUri', want.uri);
-      AppStorage.setOrCreate('pendingFileType', want.type || '');
+      logger.info('EntryAbility', `📁 通过文件打开应用: ${want.uri}, type=${want.type || 'unknown'}`);
+      // 检查是否为AVIF文件（通过扩展名或MIME类型）
+      const lowerUri = want.uri.toLowerCase();
+      const isAvif = lowerUri.endsWith('.avif') || want.type === 'image/avif';
+      if (isAvif) {
+        logger.info('EntryAbility', `🖼️ 检测到AVIF文件，将打开AVIF查看器`);
+        AppStorage.setOrCreate('pendingAvifUri', want.uri);
+      } else {
+        // 保存文件URI到AppStorage，在窗口创建后处理
+        AppStorage.setOrCreate('pendingFileUri', want.uri);
+        AppStorage.setOrCreate('pendingFileType', want.type || '');
+      }
     } else if (want.parameters) {
       // 兼容性处理：某些系统可能将文件信息放在parameters中
       const uri = want.parameters['uri'] as string;
       const type = want.parameters['type'] as string;
-      if (uri) {
+      // 检查是否来自fileContextMenu（文件管理器右键菜单）
+      const fileUris = want.parameters['fileUris'] as string[];
+      const menuHandler = want.parameters['menuHandler'] as string;
+      
+      if (fileUris && fileUris.length > 0) {
+        logger.info('EntryAbility', `📁 通过右键菜单打开文件: ${fileUris[0]}, handler=${menuHandler}`);
+        const fileUri = fileUris[0];
+        const lowerUri = fileUri.toLowerCase();
+        if (lowerUri.endsWith('.avif')) {
+          AppStorage.setOrCreate('pendingAvifUri', fileUri);
+        } else {
+          AppStorage.setOrCreate('pendingFileUri', fileUri);
+          AppStorage.setOrCreate('pendingFileType', '');
+        }
+      } else if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件: ${uri}`);
-        AppStorage.setOrCreate('pendingFileUri', uri);
-        AppStorage.setOrCreate('pendingFileType', type || '');
+        const lowerUri = uri.toLowerCase();
+        if (lowerUri.endsWith('.avif')) {
+          AppStorage.setOrCreate('pendingAvifUri', uri);
+        } else {
+          AppStorage.setOrCreate('pendingFileUri', uri);
+          AppStorage.setOrCreate('pendingFileType', type || '');
+        }
       }
     }
 
@@ -394,15 +427,27 @@ export default class EntryAbility extends UIAbility {
     // 检查是否通过文件打开应用
     if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用（onNewWant）: ${want.uri}`);
-      AppStorage.setOrCreate('pendingFileUri', want.uri);
-      AppStorage.setOrCreate('pendingFileType', want.type || '');
+      // 检查是否为AVIF文件
+      const lowerUri = want.uri.toLowerCase();
+      if (lowerUri.endsWith('.avif')) {
+        logger.info('EntryAbility', `🖼️ 检测到AVIF文件（onNewWant），将打开AVIF查看器`);
+        AppStorage.setOrCreate('pendingAvifUri', want.uri);
+      } else {
+        AppStorage.setOrCreate('pendingFileUri', want.uri);
+        AppStorage.setOrCreate('pendingFileType', want.type || '');
+      }
     } else if (want.parameters) {
       const uri = want.parameters['uri'] as string;
       const type = want.parameters['type'] as string;
       if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${uri}`);
-        AppStorage.setOrCreate('pendingFileUri', uri);
-        AppStorage.setOrCreate('pendingFileType', type || '');
+        const lowerUri = uri.toLowerCase();
+        if (lowerUri.endsWith('.avif')) {
+          AppStorage.setOrCreate('pendingAvifUri', uri);
+        } else {
+          AppStorage.setOrCreate('pendingFileUri', uri);
+          AppStorage.setOrCreate('pendingFileType', type || '');
+        }
       }
     }
   }

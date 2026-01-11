@@ -4,12 +4,19 @@
     "querySchemes": [
       "mqq",
       "mqqapi",
-      "mqqwpa"
+      "mqqwpa",
+      "manxia"
     ],
     "type": "entry",
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
     "srcEntry": "./ets/MyAbilityStage.ets",
+    "metadata": [
+      {
+        "name": "utd.declarations",
+        "resource": "$profile:utd"
+      }
+    ],
     "deviceTypes": [
       "phone",
       "tablet",
@@ -18,6 +25,7 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "fileContextMenu": "$profile:file_context_menu",
     "abilities": [
       {
         "name": "EntryAbility",
@@ -41,7 +49,7 @@
           },
           {
             "entities": [
-              "entity.system.default"
+              "entity.system.browsable"
             ],
             "actions": [
               "ohos.want.action.viewData"
@@ -49,29 +57,79 @@
             "uris": [
               {
                 "scheme": "file",
-                "utd": "general.comic-archive"
+                "type": "application/cbz",
+                "linkFeature": "FileOpen"
               },
               {
                 "scheme": "file",
-                "utd": "general.archive"
+                "type": "application/cbr",
+                "linkFeature": "FileOpen"
               },
               {
                 "scheme": "file",
-                "utd": "general.ebook"
+                "type": "application/zip",
+                "linkFeature": "FileOpen"
               },
               {
                 "scheme": "file",
-                "utd": "general.pdf"
+                "type": "application/rar-compressed",
+                "linkFeature": "FileOpen"
               },
               {
                 "scheme": "file",
-                "utd": "general.plain-text"
+                "type": "application/epub+zip",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/epub",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/mobi",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/azw3",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/pdf",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "text/plain",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "image/avif",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "image/*",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/mxbackup",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/mxbak",
+                "linkFeature": "FileOpen"
               }
             ]
           },
           {
             "entities": [
-              "entity.system.default"
+              "entity.system.browsable"
             ],
             "actions": [
               "ohos.want.action.viewData"
@@ -79,8 +137,8 @@
             "uris": [
               {
                 "scheme": "manxia",
-                "host": "search",
-                "pathStartWith": ""
+                "host": "open",
+                "path": ""
               }
             ]
           }
@@ -105,23 +163,45 @@
         "srcEntry": "./ets/ShareExtAbility/ShareExtAbility.ets",
         "type": "share",
         "exported": true,
-        "description": "接收系统分享的漫画文件",
+        "description": "接收系统分享的文件",
         "skills": [
           {
-            "entities": [
-              "entity.system.default"
-            ],
             "actions": [
               "ohos.want.action.sendData"
+            ],
+            "entities": [
+              "entity.system.browsable"
             ],
             "uris": [
               {
                 "scheme": "file",
-                "utd": "general.comic-archive"
+                "utd": "general.image",
+                "maxFileSupported": 100
               },
               {
                 "scheme": "file",
-                "utd": "general.archive"
+                "utd": "general.archive",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.pdf",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.ebook",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.plain-text",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "com.manxia.avif",
+                "maxFileSupported": 100
               },
               {
                 "scheme": "content"
