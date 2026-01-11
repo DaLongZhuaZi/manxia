@@ -496,6 +496,77 @@ export struct AdvancedSettingsSubPage {
   }
 
   /**
+   * 构建开发者工具区域
+   */
+  @Builder
+  buildDeveloperTools() {
+    Column({ space: 16 }) {
+      Text('开发者工具')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Column({ space: 0 }) {
+        // 生命周期监控
+        this.buildToolItem('生命周期监控', '查看页面生命周期状态', $r('sys.symbol.timer'), 'LifecycleMonitorPage')
+        
+        Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)).margin({ left: 52 })
+        
+        // 日志管理
+        this.buildToolItem('日志管理', '查看和导出应用日志', $r('sys.symbol.doc_text'), 'LogManagerPage')
+        
+        Divider().color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)).margin({ left: 52 })
+        
+        // 系统资源预览
+        this.buildToolItem('系统资源预览', '预览系统图标和资源', $r('sys.symbol.paintpalette'), 'SystemResourcePreviewPage')
+      }
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建工具项
+   */
+  @Builder
+  buildToolItem(title: string, subtitle: string, icon: Resource, targetPage: string) {
+    Row({ space: 12 }) {
+      SymbolGlyph(icon)
+        .fontSize(20)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+
+      Column({ space: 4 }) {
+        Text(title)
+          .fontSize(15)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(subtitle)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .onClick(() => {
+      this.pathStack.pushPathByName(targetPage, null);
+    })
+  }
+
+  /**
    * 构建其他操作区域
    */
   @Builder
@@ -512,7 +583,6 @@ export struct AdvancedSettingsSubPage {
       Button({ stateEffect: true }) {
         Text('重播引导页面')
           .fontSize(16)
-          .fontFamily(this.appFontFamily)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       }
@@ -678,14 +748,21 @@ export struct AdvancedSettingsSubPage {
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
-                  this.buildOtherActions()
+                  this.buildDeveloperTools()
                 }
                 .width('48%')
+                .margin({ bottom: 16 })
+                
+                Column({ space: 16 }) {
+                  this.buildOtherActions()
+                }
+                .width('100%')
                 .margin({ bottom: 16 })
               }
               .width('100%')
             } else {
               this.buildDebugSettings()
+              this.buildDeveloperTools()
               this.buildOtherActions()
             }
 

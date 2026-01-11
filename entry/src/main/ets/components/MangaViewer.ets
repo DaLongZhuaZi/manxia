@@ -465,10 +465,13 @@ export struct MangaViewer {
     const chapterTitle = this.chapter ? this.chapter.title : '未知章节';
     const currentPage = this.chapter && this.chapter.pages ? (this.currentPageIndex + 1) : 0;
     const totalPages = this.chapter && this.chapter.pages ? this.chapter.pages.length : 0;
+    const readingModeStr = this.readingSettings && this.readingSettings.readingMode !== undefined 
+      ? String(this.readingSettings.readingMode) 
+      : '未知';
 
     logger.info(TAG, '漫画查看器组件初始化' + "当前章节: " + chapterTitle +
       "当前页面: " + '第' + currentPage + '/' + totalPages + '页' +
-      "阅读模式: " + this.readingSettings.readingMode.toString());
+      "阅读模式: " + readingModeStr);
   }
 
   /**
@@ -6675,7 +6678,7 @@ export struct MangaViewer {
         this.buildWebtoonQuickNavigation()
       }
     }
-    .key(`${this.readingSettings.readingMode.toString()}_${this.viewCurrentPageIndex}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}`)
+    .key(`${this.readingSettings && this.readingSettings.readingMode !== undefined ? String(this.readingSettings.readingMode) : 'default'}_${this.viewCurrentPageIndex}_${this.leftPageIndex}_${this.rightPageIndex}_${this.renderEpoch}`)
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Transparent)

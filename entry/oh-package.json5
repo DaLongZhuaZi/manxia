@@ -9,7 +9,9 @@
   "devDependencies": {
     "libjsvm_engine.so": "file:./src/main/cpp/types/libjsvm_engine",
     "libquickjs_engine.so": "file:./src/main/cpp/quickjs/types/libquickjs_engine",
-    "libwebdav_native.so": "file:./src/main/cpp/types/libwebdav_native"
+    "libwebdav_native.so": "file:./src/main/cpp/types/libwebdav_native",
+    "libavif_decoder.so": "file:./src/main/cpp/types/libavif_decoder"
   }
 }
+
 

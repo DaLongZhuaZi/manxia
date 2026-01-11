@@ -20,6 +20,8 @@ import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBook } from '../Models/EBookModels';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { NovelBook } from '../Models/NovelModels';
+import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
+import { image } from '@kit.ImageKit';
 
 const TAG = 'ReadingAnalyticsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1586,7 +1588,7 @@ struct ReadingAnalyticsPage {
    * @param path 封面路径
    * @param isEBook 是否为电子书（电子书无封面时使用默认电子书图标）
    */
-  private normalizeCoverPath(path: string, isEBook: boolean = false): string | Resource {
+  private normalizeCoverPath(path: string, isEBook: boolean = false): string | Resource | image.PixelMap {
     if (!path || path.length === 0) {
       // 电子书无封面时使用默认电子书图标
       if (isEBook) {
@@ -1594,6 +1596,16 @@ struct ReadingAnalyticsPage {
       }
       return '';
     }
+    
+    // 检查是否有预加载的PixelMap（用于AVIF等特殊格式）
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      const coverManager = getCoverImageManager();
+      const cachedPixelMap = coverManager.getCachedPixelMap(path);
+      if (cachedPixelMap) {
+        return cachedPixelMap;
+      }
+    }
+    
     // 如果是资源路径（app.media.xxx 格式），转换为 $r() 格式
     if (path.startsWith('app.media.')) {
       return $r(path);

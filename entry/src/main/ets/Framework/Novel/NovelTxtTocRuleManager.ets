@@ -368,11 +368,51 @@ export class NovelTxtTocRuleManager {
   }
 
   /**
+   * 使用指定规则解析章节
+   * @param content 文本内容
+   * @param ruleId 规则ID，空字符串表示使用所有启用规则
+   */
+  parseChaptersByRuleId(content: string, ruleId: string): TxtChapter[] {
+    let pattern: RegExp | null = null;
+    
+    if (ruleId && ruleId.length > 0) {
+      // 使用指定规则 - rules是Map类型，使用get方法
+      const rule: TxtTocRule | undefined = this.rules.get(ruleId);
+      if (rule) {
+        try {
+          pattern = new RegExp(rule.rule, 'gm');
+          logger.info(TAG, `使用指定规则解析章节: ${rule.name}`);
+        } catch (error) {
+          logger.error(TAG, `规则正则表达式无效: ${rule.name}, ${String(error)}`);
+        }
+      }
+    }
+    
+    if (!pattern) {
+      // 使用所有启用规则的组合
+      pattern = this.getCombinedPattern();
+    }
+    
+    return this.parseChaptersWithPattern(content, pattern);
+  }
+
+  /**
    * 解析TXT文本的章节
    */
   parseChapters(content: string): TxtChapter[] {
-    const chapters: TxtChapter[] = [];
     const pattern = this.getCombinedPattern();
+    return this.parseChaptersWithPattern(content, pattern);
+  }
+
+  /**
+   * 使用指定正则表达式解析章节
+   * 添加安全机制：最大章节数限制和进度日志
+   */
+  private parseChaptersWithPattern(content: string, pattern: RegExp | null): TxtChapter[] {
+    const chapters: TxtChapter[] = [];
+    
+    // 安全限制：最大章节数量，防止无限循环
+    const MAX_CHAPTERS = 10000;
     
     if (!pattern) {
       // 没有规则，按固定长度分割
@@ -380,13 +420,19 @@ export class NovelTxtTocRuleManager {
     }
 
     let match: RegExpExecArray | null;
-    let lastEnd = 0;
     let chapterIndex = 0;
+    const startTime = Date.now();
 
     // 重置正则表达式
     pattern.lastIndex = 0;
 
     while ((match = pattern.exec(content)) !== null) {
+      // 安全检查：防止超过最大章节数
+      if (chapters.length >= MAX_CHAPTERS) {
+        logger.warn(TAG, `章节数量达到上限 ${MAX_CHAPTERS}，停止解析`);
+        break;
+      }
+      
       const chapterStart = match.index;
       const chapterTitle = match[0].trim();
 
@@ -421,13 +467,21 @@ export class NovelTxtTocRuleManager {
         start: chapterStart,
         end: chapterEnd
       });
-
-      lastEnd = chapterEnd;
+      
+      // 每1000章输出一次进度日志
+      if (chapters.length % 1000 === 0) {
+        logger.info(TAG, `章节解析进度: ${chapters.length} 章`);
+      }
     }
 
     // 如果没有找到任何章节，按长度分割
     if (chapters.length === 0) {
       return this.splitByLength(content, 10000);
+    }
+    
+    const elapsed = Date.now() - startTime;
+    if (elapsed > 100 || chapters.length > 500) {
+      logger.info(TAG, `章节解析完成: ${chapters.length} 章, 耗时 ${elapsed}ms`);
     }
 
     return chapters;

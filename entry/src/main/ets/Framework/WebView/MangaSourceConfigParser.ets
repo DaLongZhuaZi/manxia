@@ -60,6 +60,10 @@ export interface VariableMap {
   mangaId?: string;
   chapterId?: string;
   pageIndex?: string;
+  /** 漫画URL（mangaId别名） */
+  mangaUrl?: string;
+  /** 章节URL（chapterId别名） */
+  chapterUrl?: string;
   /** 作品ID（用于ID直达） */
   illustId?: string;
   /** 作者ID（用于作者搜索） */
@@ -68,6 +72,14 @@ export interface VariableMap {
   seriesId?: string;
   /** 直达URL（用于URL解析） */
   directUrl?: string;
+  /** 标签ID（用于标签搜索） */
+  tagId?: string;
+  /** 标签名称（tagId别名） */
+  tag?: string;
+  /** 分类名称（tagId别名） */
+  category?: string;
+  /** 类型名称（tagId别名） */
+  genre?: string;
 }
 
 /**
@@ -479,6 +491,21 @@ export class MangaSourceConfigParser {
   }
 
   /**
+   * 构建漫画详情和章节列表合并获取操作序列
+   */
+  buildMangaDetailWithChaptersActions(config: MangaSourceConfig, mangaId: string): Action[] {
+    const workflow = this.getWorkflow(config, 'getMangaDetailWithChapters');
+    if (!workflow) {
+      throw new MangaSourceError(
+        MangaSourceErrorCode.INVALID_CONFIG,
+        '缺少合并详情章节工作流配置'
+      );
+    }
+
+    return this.processActions(workflow, { mangaId });
+  }
+
+  /**
    * 构建页面列表获取操作序列
    */
   buildPageListActions(config: MangaSourceConfig, chapterId: string, mangaId?: string): Action[] {
@@ -691,6 +718,21 @@ export class MangaSourceConfigParser {
   }
 
   /**
+   * 构建标签/分类搜索操作序列
+   * @param config 图源配置
+   * @param tagId 标签ID或标签名称
+   * @returns 操作序列，如果工作流不存在则返回空数组
+   */
+  buildSearchByTagActions(config: MangaSourceConfig, tagId: string): Action[] {
+    const workflow = this.getWorkflow(config, 'searchByTag');
+    if (!workflow) {
+      logger.info(TAG, 'searchByTag工作流不存在，返回空数组');
+      return [];
+    }
+    return this.processActions(workflow, { tagId } as Partial<WorkflowContext>);
+  }
+
+  /**
    * 检查图源是否支持指定工作流
    * @param config 图源配置
    * @param workflowName 工作流名称
@@ -706,15 +748,22 @@ export class MangaSourceConfigParser {
   private processActions(actions: Action[], context: Partial<WorkflowContext>): Action[] {
     const variables: VariableMap = {};
     
+    // 调试日志
+    logger.debug(TAG, `processActions context: mangaId=${context.mangaId}, chapterId=${context.chapterId}`);
+    
     // 设置上下文变量
     if (context.searchKeyword) {
       variables.searchKeyword = context.searchKeyword;
     }
     if (context.mangaId) {
       variables.mangaId = context.mangaId;
+      // 添加别名支持
+      variables.mangaUrl = context.mangaId;
     }
     if (context.chapterId) {
       variables.chapterId = context.chapterId;
+      // 添加别名支持
+      variables.chapterUrl = context.chapterId;
     }
     if (context.pageIndex !== undefined) {
       variables.pageIndex = context.pageIndex.toString();
@@ -730,6 +779,12 @@ export class MangaSourceConfigParser {
     }
     if (extContext['seriesId']) {
       variables.seriesId = String(extContext['seriesId']);
+    }
+    if (extContext['tagId']) {
+      variables.tagId = String(extContext['tagId']);
+      variables.tag = String(extContext['tagId']);
+      variables.category = String(extContext['tagId']);
+      variables.genre = String(extContext['tagId']);
     }
     if (extContext['directUrl']) {
       variables.directUrl = String(extContext['directUrl']);
@@ -781,6 +836,14 @@ export class MangaSourceConfigParser {
       const httpAction = processedAction as HTTPRequestAction;
       if (httpAction.body) {
         httpAction.body = this.replaceObjectVariables(httpAction.body, variables);
+      }
+    }
+    
+    // 处理脚本操作的code字段
+    if (action.type === ActionType.SCRIPT) {
+      const scriptAction = processedAction as ScriptAction;
+      if (scriptAction.code) {
+        scriptAction.code = this.replaceVariables(scriptAction.code, variables);
       }
     }
   
@@ -1095,8 +1158,16 @@ export class MangaSourceConfigParser {
     if (variables.mangaId) {
       result = result.replace(/\{\{mangaId\}\}/g, variables.mangaId);
     }
+    // 添加mangaUrl别名支持
+    if (variables.mangaUrl) {
+      result = result.replace(/\{\{mangaUrl\}\}/g, variables.mangaUrl);
+    }
     if (variables.chapterId) {
       result = result.replace(/\{\{chapterId\}\}/g, variables.chapterId);
+    }
+    // 添加chapterUrl别名支持
+    if (variables.chapterUrl) {
+      result = result.replace(/\{\{chapterUrl\}\}/g, variables.chapterUrl);
     }
     if (variables.pageIndex) {
       result = result.replace(/\{\{pageIndex\}\}/g, variables.pageIndex);

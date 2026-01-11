@@ -18,6 +18,7 @@ import { DiskCacheManager } from './DiskCacheManager';
 import { DataManager } from '../Data/DataManager';
 import { JinmantiantangDescrambler, JinmantiantangParameters } from '../ImageProcessing/JinmantiantangDescrambler';
 import { UserAgentManager } from '../Managers/UserAgentManager';
+import { AvifDecoder, isAvifFormat } from '../Image/AvifDecoder';
 
 const TAG = 'OnlineImageLoader';
 
@@ -440,14 +441,35 @@ export class OnlineImageLoader {
         }
         
         // 创建PixelMap
-        const imageSource = image.createImageSource(finalBuffer);
-        const decodingOptions: image.DecodingOptions = {
-          desiredSize: options.width && options.height ? 
-            { width: options.width, height: options.height } : undefined,
-          desiredPixelFormat: image.PixelMapFormat.RGBA_8888
-        };
+        let pixelMap: image.PixelMap | null = null;
         
-        const pixelMap = await imageSource.createPixelMap(decodingOptions);
+        // 检查是否为AVIF格式，使用专用解码器
+        if (isAvifFormat(finalBuffer)) {
+          logger.info(TAG, `检测到AVIF格式图片，使用AVIF解码器`);
+          const avifDecoder = AvifDecoder.getInstance();
+          if (avifDecoder.isSupported()) {
+            pixelMap = await avifDecoder.decode(finalBuffer);
+            if (pixelMap) {
+              logger.info(TAG, `AVIF解码成功`);
+            } else {
+              logger.warn(TAG, `AVIF解码失败，尝试系统解码器`);
+            }
+          } else {
+            logger.warn(TAG, `AVIF解码器不可用（libavif未安装），尝试系统解码器`);
+          }
+        }
+        
+        // 如果AVIF解码失败或不是AVIF格式，使用系统解码器
+        if (!pixelMap) {
+          const imageSource = image.createImageSource(finalBuffer);
+          const decodingOptions: image.DecodingOptions = {
+            desiredSize: options.width && options.height ? 
+              { width: options.width, height: options.height } : undefined,
+            desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+          };
+          
+          pixelMap = await imageSource.createPixelMap(decodingOptions);
+        }
         
         httpRequest.destroy();
         return pixelMap;

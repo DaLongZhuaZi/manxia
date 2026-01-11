@@ -61,6 +61,13 @@ export struct GlobalSettingsPage {
       targetPage: 'ReadingSettingsSubPage'
     },
     {
+      id: 'page',
+      title: '页面设置',
+      subtitle: '详情页类型选择、页面显示偏好',
+      icon: $r('sys.symbol.doc_text'),
+      targetPage: 'PageSettingsSubPage'
+    },
+    {
       id: 'font',
       title: '字体设置',
       subtitle: '界面字体、小说字体、电子书字体',

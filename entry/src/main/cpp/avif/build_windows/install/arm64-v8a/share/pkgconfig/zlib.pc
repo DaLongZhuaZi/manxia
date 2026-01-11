@@ -1,0 +1,13 @@
+prefix=F:/DevEcoStudioProject/manxia/entry/src/main/cpp/avif/build_windows/install/arm64-v8a
+exec_prefix=F:/DevEcoStudioProject/manxia/entry/src/main/cpp/avif/build_windows/install/arm64-v8a
+libdir=F:/DevEcoStudioProject/manxia/entry/src/main/cpp/avif/build_windows/install/arm64-v8a/lib
+sharedlibdir=F:/DevEcoStudioProject/manxia/entry/src/main/cpp/avif/build_windows/install/arm64-v8a/lib
+includedir=F:/DevEcoStudioProject/manxia/entry/src/main/cpp/avif/build_windows/install/arm64-v8a/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.3.1
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

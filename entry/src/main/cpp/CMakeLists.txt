@@ -44,3 +44,6 @@ add_subdirectory(quickjs)
 
 # WebDAV Native模块（使用libcurl实现完整WebDAV协议）
 add_subdirectory(webdav)
+
+# AVIF图片解码模块（使用libavif实现AVIF格式支持）
+add_subdirectory(avif)

@@ -1,0 +1,14 @@
+# libaom pkg-config.
+prefix=F:/DevEcoStudioProject/manxia/entry/src/main/cpp/avif/build_windows/install/arm64-v8a
+exec_prefix=${prefix}
+includedir=${prefix}/include
+libdir=${exec_prefix}/lib
+
+Name: aom
+Description: Alliance for Open Media AV1 codec library v3.8.0.
+Version: 3.8.0
+Requires:
+Conflicts:
+Libs: -L${libdir} -laom
+Libs.private: -lm
+Cflags: -I${includedir}

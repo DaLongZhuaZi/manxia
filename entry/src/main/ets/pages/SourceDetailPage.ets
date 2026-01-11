@@ -35,6 +35,8 @@ import { AppNotificationManager } from '../Framework/Managers/NotificationManage
 import { CredentialLoginDialog } from '../Framework/Components/CredentialLoginDialog';
 import { SourceCredentials } from '../Framework/Data/DataManager';
 import { ProxyManager } from '../Framework/Network/ProxyManager';
+import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
+import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 
 const TAG = 'SourceDetailPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1507,9 +1509,67 @@ export struct SourceDetailPage {
       } else {
         await this.executeKeywordSearch(rawQuery);
       }
+    } else if (this.selectedSearchType === 'searchByTag') {
+      // 标签搜索：使用searchByTag工作流
+      await this.executeTagSearch(rawQuery);
     } else {
       // 非关键词搜索：使用directSearch工作流
       await this.executeDirectSearch(this.selectedSearchType, rawQuery);
+    }
+  }
+
+  /**
+   * 执行标签搜索（使用searchByTag工作流）
+   */
+  private async executeTagSearch(tagId: string): Promise<void> {
+    this.showSearchDialog = false;
+    this.isLoading = true;
+    this.lastSearchKeyword = `标签: ${tagId}`;
+
+    this.addOrUpdateSearchTab();
+    this.currentTabId = 'search';
+    this.searchResults = [];
+    this.comicList = [];
+    this.comicDataSource.updateItems([]);
+
+    try {
+      if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
+        // 检查是否支持searchByTag工作流
+        if (this.mangaSourceEngine.supportsCapability('searchByTag')) {
+          logger.info(TAG, `执行标签搜索: tagId=${tagId}`);
+          const result = await this.mangaSourceEngine.searchByTag(tagId, 1);
+
+          if (result.success && result.data) {
+            const comics = this.convertMangaInfoToComicInfo(result.data.mangas);
+            this.searchResults = comics;
+            this.comicList = comics;
+            this.comicDataSource.updateItems(comics);
+            this.hasMore = result.data.hasNext || false;
+            logger.info(TAG, `标签搜索完成，找到 ${comics.length} 个结果`);
+          } else {
+            this.getUIContext().getPromptAction().showToast({
+              message: result.error || '标签搜索失败'
+            });
+          }
+        } else {
+          // 不支持searchByTag，降级为关键词搜索
+          logger.warn(TAG, '图源不支持searchByTag工作流，降级为关键词搜索');
+          await this.executeKeywordSearch(tagId);
+          return;
+        }
+      } else {
+        // 非WebView图源，降级为关键词搜索
+        logger.warn(TAG, '非WebView图源，降级为关键词搜索');
+        await this.executeKeywordSearch(tagId);
+        return;
+      }
+    } catch (error) {
+      logger.error(TAG, '标签搜索失败', String(error));
+      this.getUIContext().getPromptAction().showToast({
+        message: `搜索失败: ${error instanceof Error ? error.message : String(error)}`
+      });
+    } finally {
+      this.isLoading = false;
     }
   }
 
@@ -1817,7 +1877,22 @@ export struct SourceDetailPage {
   private navigateToMangaDetail(manga: MangaInfo): void {
     const sourceType = this.sourceInfo?.type || 'manga';
 
-    if (sourceType === 'ebook') {
+    // 根据页面设置决定使用哪个详情页
+    const pageType = sourceType === 'ebook' 
+      ? PageSettingsHelper.getEBookDetailPageType()
+      : PageSettingsHelper.getMangaDetailPageType();
+
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: sourceType === 'ebook' ? UnifiedContentType.EBOOK : UnifiedContentType.MANGA,
+        contentId: manga.id || '',
+        sourceId: this.sourceId?.toString(),
+        cachedTitle: manga.title,
+        cachedCover: manga.cover
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+    } else if (sourceType === 'ebook') {
       const params: OnlineEBookDetailPageParams = {
         sourceId: this.sourceId,
         bookId: manga.id || '',
@@ -1923,7 +1998,22 @@ export struct SourceDetailPage {
     // 根据图源类型导航到不同的详情页
     const sourceType = this.sourceInfo?.type || 'manga';
     
-    if (sourceType === 'ebook') {
+    // 根据页面设置决定使用哪个详情页
+    const pageType = sourceType === 'ebook' 
+      ? PageSettingsHelper.getEBookDetailPageType()
+      : PageSettingsHelper.getMangaDetailPageType();
+
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: sourceType === 'ebook' ? UnifiedContentType.EBOOK : UnifiedContentType.MANGA,
+        contentId: comic.id,
+        sourceId: this.sourceId?.toString(),
+        cachedTitle: comic.title,
+        cachedCover: comic.coverUrl || localCoverPath || undefined
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+    } else if (sourceType === 'ebook') {
       // 电子书源 -> 在线电子书详情页
       const params: OnlineEBookDetailPageParams = {
         sourceId: this.sourceId,
