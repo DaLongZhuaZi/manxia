@@ -433,6 +433,7 @@ export struct AvifTestPage {
           Text('导入')
             .fontSize(14)
             .fontColor(Color.White)
+            .fontFamily(this.appFontFamily)
         }
       }
       .height(40)
@@ -441,6 +442,7 @@ export struct AvifTestPage {
       .borderRadius(20)
       .onClick(() => this.selectFile())
       .enabled(!this.isLoading)
+      .fontFamily(this.appFontFamily)
       
       // 导出PNG按钮
       Button({ type: ButtonType.Normal }) {
@@ -451,6 +453,7 @@ export struct AvifTestPage {
           Text('PNG')
             .fontSize(14)
             .fontColor(this.decodedImage ? Color.White : Color.Gray)
+            .fontFamily(this.appFontFamily)
         }
       }
       .height(40)
@@ -459,6 +462,7 @@ export struct AvifTestPage {
       .borderRadius(20)
       .onClick(() => this.exportAsPng())
       .enabled(!this.isLoading && this.decodedImage !== null)
+      .fontFamily(this.appFontFamily)
       
       // 导出WebP按钮
       Button({ type: ButtonType.Normal }) {
@@ -469,6 +473,7 @@ export struct AvifTestPage {
           Text('WebP')
             .fontSize(14)
             .fontColor(this.decodedImage ? Color.White : Color.Gray)
+            .fontFamily(this.appFontFamily)
         }
       }
       .height(40)
@@ -477,6 +482,7 @@ export struct AvifTestPage {
       .borderRadius(20)
       .onClick(() => this.exportAsWebp())
       .enabled(!this.isLoading && this.decodedImage !== null)
+      .fontFamily(this.appFontFamily)
       
       // 保存到相册按钮
       Button({ type: ButtonType.Normal }) {
@@ -487,6 +493,7 @@ export struct AvifTestPage {
           Text('相册')
             .fontSize(14)
             .fontColor(this.decodedImage ? Color.White : Color.Gray)
+            .fontFamily(this.appFontFamily)
         }
       }
       .height(40)
@@ -495,6 +502,7 @@ export struct AvifTestPage {
       .borderRadius(20)
       .onClick(() => this.saveToGallery())
       .enabled(!this.isLoading && this.decodedImage !== null)
+      .fontFamily(this.appFontFamily)
     }
     .width('100%')
     .padding(16)
@@ -525,14 +533,17 @@ export struct AvifTestPage {
               Text(`尺寸: ${this.imageInfo.width} × ${this.imageInfo.height}`)
                 .fontSize(13)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              
+                .fontFamily(this.appFontFamily)
+
               Text(`大小: ${this.formatFileSize(this.imageInfo.fileSize)}`)
                 .fontSize(13)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              
+                .fontFamily(this.appFontFamily)
+
               Text(`解码: ${this.imageInfo.decodeTime}ms`)
                 .fontSize(13)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .fontFamily(this.appFontFamily)
             }
             .justifyContent(FlexAlign.Center)
             
@@ -542,6 +553,7 @@ export struct AvifTestPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .fontFamily(this.appFontFamily)
             }
           }
           .width('100%')
@@ -557,10 +569,12 @@ export struct AvifTestPage {
           Text('点击"导入"按钮选择AVIF图片')
             .fontSize(16)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fontFamily(this.appFontFamily)
           
           Text('支持查看和转换AVIF格式图片')
             .fontSize(13)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontFamily(this.appFontFamily)
         }
         .width('100%')
         .layoutWeight(1)
@@ -583,6 +597,7 @@ export struct AvifTestPage {
               .fontSize(13)
               .fontColor(this.avifStatus.startsWith('✅') ? '#4CAF50' : 
                          this.avifStatus.startsWith('⚠️') ? '#FF9800' : '#F44336')
+              .fontFamily(this.appFontFamily)
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -612,6 +627,7 @@ export struct AvifTestPage {
               .fontSize(14)
               .fontColor(Color.White)
               .margin({ top: 12 })
+              .fontFamily(this.appFontFamily)
           }
           .width('100%')
           .height('100%')
@@ -668,13 +684,10 @@ export struct AvifTestPage {
       },
       style: {
         originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme) },
+          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { 
-              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), 
-              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) 
-            }
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

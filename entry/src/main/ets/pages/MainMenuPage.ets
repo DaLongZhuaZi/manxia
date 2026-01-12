@@ -39,6 +39,16 @@ import { NetworkSettingsSubPage } from './settings/NetworkSettingsSubPage';
 import { NotificationSettingsSubPage } from './settings/NotificationSettingsSubPage';
 import { AdvancedSettingsSubPage } from './settings/AdvancedSettingsSubPage';
 import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
+import { AnimationSettingsSubPage } from './settings/AnimationSettingsSubPage';
+import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
+import { AniListLoginPage } from './settings/AniListLoginPage';
+import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
+import { SuwayomiWebUIPage } from './settings/SuwayomiWebUIPage';
+import { SuwayomiBrowsePage } from './SuwayomiBrowsePage';
+import { SuwayomiSourceBrowsePage } from './SuwayomiSourceBrowsePage';
+import { getSuwayomiTracker } from '../Framework/Tracking/trackers/SuwayomiTracker';
+import { SuwayomiMangaDetailPage } from './SuwayomiMangaDetailPage';
+import { SuwayomiReaderPage } from './SuwayomiReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
 import { ReadingAnalyticsPage } from './ReadingAnalyticsPage';
@@ -4935,6 +4945,133 @@ struct MainMenuPage {
   }
 
   /**
+   * 构建小说入口卡片（紧凑版，用于并排显示）
+   */
+  @Builder
+  buildNovelEntryCardCompact() {
+    Column({ space: 8 }) {
+      Image($r('app.media.legado'))
+        .width(40)
+        .height(40)
+      
+      Text('小说阅读')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      
+      Text('Legado书源')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.pathStack.pushPathByName('NovelBookshelfPage', null);
+    })
+  }
+
+  /**
+   * 构建 Suwayomi 入口卡片（紧凑版，用于并排显示）
+   */
+  @Builder
+  buildSuwayomiEntryCardCompact() {
+    Column({ space: 8 }) {
+      Image($r('app.media.suwayomi_icon'))
+        .width(40)
+        .height(40)
+      
+      Text('Suwayomi')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      
+      Text('漫画服务器')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.navigateToSuwayomi();
+    })
+  }
+
+  /**
+   * 根据配置导航到 Suwayomi 页面
+   */
+  private async navigateToSuwayomi(): Promise<void> {
+    const tracker = getSuwayomiTracker();
+    await tracker.initialize();
+    const config = tracker.getConfig();
+    if (config.useBrowsePageAsEntry && config.serverUrl) {
+      this.pathStack.pushPathByName('SuwayomiBrowsePage', null);
+    } else {
+      this.pathStack.pushPathByName('SuwayomiSettingsPage', null);
+    }
+  }
+
+  /**
+   * 构建 Suwayomi 入口卡片
+   */
+  @Builder
+  buildSuwayomiEntryCard() {
+    Row() {
+      Column() {
+        Image($r('app.media.suwayomi_icon'))
+          .width(50)
+          .height(50)
+      }
+      .width(50)
+      .height(50)
+      .justifyContent(FlexAlign.Center)
+      
+      Column() {
+        Text('Suwayomi')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Text('连接Suwayomi服务器')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .margin({ top: 4 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .margin({ left: 12 })
+      .layoutWeight(1)
+      
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(20)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+    .onClick(() => {
+      this.navigateToSuwayomi();
+    })
+  }
+
+  /**
    * 构建首页内容
    */
   @Builder
@@ -4943,8 +5080,21 @@ struct MainMenuPage {
       // 轮播横幅
       this.buildBannerSwiper()
 
-      // 小说入口卡片
-      this.buildNovelEntryCard()
+      // 小说入口和Suwayomi入口（各占一半）
+      Row({ space: 12 }) {
+        // 小说入口卡片
+        Column() {
+          this.buildNovelEntryCardCompact()
+        }
+        .layoutWeight(1)
+
+        // Suwayomi入口卡片
+        Column() {
+          this.buildSuwayomiEntryCardCompact()
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
 
       // 最近阅读
       Column({ space: 12 }) {
@@ -9137,6 +9287,10 @@ struct MainMenuPage {
   @Builder
   buildDiscoverContent() {
     Column({ space: 0 }) {
+      // 顶部避让空间（为顶部导航栏留出空间）
+      // 平板设备顶栏高度约56vp，加上margin需要更多空间
+      Blank().height(this.deviceManager.isTabletOrLarger() ? 72 : 0)
+
       // 搜索栏（横屏时减小高度和padding）
       // Row() {
       //   TextInput({ placeholder: '搜索漫画、作者...' })
@@ -11370,7 +11524,7 @@ struct MainMenuPage {
           //     }
           //   })
           }
-          this.buildSettingItem('AVIF解码测试', '测试AVIF图片解码功能', $r('sys.symbol.camera_macro'), () => {
+          this.buildSettingItem('AVIF图片查看器', '测试AVIF图片查看、导出功能', $r('sys.symbol.camera_macro'), () => {
             const navigationPath: NavigationPath = {
               name: 'AvifTestPage',
               param: {
@@ -11535,6 +11689,24 @@ struct MainMenuPage {
       AdvancedSettingsSubPage()
     } else if (name === 'InteractionSettingsSubPage') {
       InteractionSettingsSubPage()
+    } else if (name === 'AnimationSettingsSubPage') {
+      AnimationSettingsSubPage()
+    } else if (name === 'TrackingSettingsSubPage') {
+      TrackingSettingsSubPage()
+    } else if (name === 'AniListLoginPage') {
+      AniListLoginPage()
+    } else if (name === 'SuwayomiSettingsPage') {
+      SuwayomiSettingsPage()
+    } else if (name === 'SuwayomiWebUIPage') {
+      SuwayomiWebUIPage()
+    } else if (name === 'SuwayomiBrowsePage') {
+      SuwayomiBrowsePage()
+    } else if (name === 'SuwayomiSourceBrowsePage') {
+      SuwayomiSourceBrowsePage()
+    } else if (name === 'SuwayomiMangaDetailPage') {
+      SuwayomiMangaDetailPage()
+    } else if (name === 'SuwayomiReaderPage') {
+      SuwayomiReaderPage()
     } else if (name === 'DownloadManagerPage') {
       DownloadManagerPage()
     } else if (name === 'AboutPage') {
@@ -11657,11 +11829,9 @@ struct MainMenuPage {
     .width('100%')
     .height(this.BOTTOM_BAR_HEIGHT)
     .padding({ left: 16, right: 16 })
-    .backgroundColor(this.getGlassBackground())
-    .backgroundBlurStyle(this.getGlassBlur())
+    .backgroundColor(Color.Transparent)
     .borderRadius(this.getGlassRadius())
     .opacity(this.getTabBarOpacity())
-    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
   }
 
   /**
@@ -11970,7 +12140,14 @@ struct MainMenuPage {
           }
           .width(this.getBottomBarWidth())
           .height(this.BOTTOM_BAR_HEIGHT)
+          .borderRadius(this.getGlassRadius())
           .backgroundColor(Color.Transparent)
+          .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+            colorMode: ThemeColorMode.SYSTEM,
+            adaptiveColor: AdaptiveColor.DEFAULT,
+            scale: 1.0
+          })
+          .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .key(`bottomBar_${this.barRenderKey}`)
         }

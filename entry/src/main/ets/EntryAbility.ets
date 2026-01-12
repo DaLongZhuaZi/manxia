@@ -14,6 +14,7 @@ import { DataInitializer } from './Framework/Initialization/DataInitializer';
 import { ThemeManager } from './Framework/Managers/ThemeManager';
 import { DeviceAdaptationManager } from './Framework/Managers/DeviceAdaptationManager';
 import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManager';
+import { AnimationSettingsManager } from './Framework/Animation/AnimationSettingsManager';
 import { AppNotificationManager } from './Framework/Managers/NotificationManager';
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
 import { uiContextManager } from './Framework/Managers/UIContextManager';
@@ -191,6 +192,11 @@ export default class EntryAbility extends UIAbility {
 
       // 同步设置到AppStorage
       settingsManager.syncToAppStorage();
+
+      // 初始化动画设置管理器
+      const animationSettingsManager = AnimationSettingsManager.getInstance();
+      await animationSettingsManager.initialize();
+      logger.info('EntryAbility', '✅ 动画设置管理器初始化完成');
 
       // 记录关键设置
       const advancedMode = settingsManager.getBoolean(SettingKeys.ADVANCED_MODE_ENABLED, true);

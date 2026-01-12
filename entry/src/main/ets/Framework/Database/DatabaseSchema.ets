@@ -233,6 +233,27 @@ export interface WebViewRequestStatsTable {
   createTime: number;           // 创建时间
 }
 
+// 跟踪记录表（用于与第三方服务同步阅读进度）
+export interface TrackRecordTable {
+  id: string;                     // 主键，使用UUID
+  contentId: string;              // 内容ID（漫画/电子书/小说的本地ID）
+  contentType: string;            // 内容类型：manga, ebook, novel
+  trackerId: number;              // 跟踪服务ID：1=MAL, 2=AniList, 3=Kitsu, 4=MangaUpdates, 5=Bangumi, 6=Suwayomi
+  remoteId: string;               // 远程服务上的内容ID
+  remoteTitle: string;            // 远程服务上的标题
+  remoteUrl: string;              // 远程服务上的URL
+  lastChapterRead: number;        // 最后阅读章节号
+  totalChapters: number;          // 总章节数
+  score: number;                  // 评分（0-10或0-100，取决于服务）
+  status: number;                 // 阅读状态：0=未知, 1=阅读中, 2=已完成, 3=暂停, 4=弃坑, 5=计划阅读
+  startedReadingDate: number;     // 开始阅读日期（时间戳）
+  finishedReadingDate: number;    // 完成阅读日期（时间戳）
+  lastSyncTime: number;           // 最后同步时间
+  syncStatus: string;             // 同步状态：synced, pending, failed
+  createTime: number;             // 创建时间
+  updateTime: number;             // 更新时间
+}
+
 // SQL语句集合接口
 export interface CreateTableSQLCollection {
   COMIC_SOURCE: string;
@@ -261,6 +282,8 @@ export interface CreateTableSQLCollection {
   ONLINE_CHAPTER_UNIQUE_INDEX?: string;
   ONLINE_PAGE?: string;
   ONLINE_READ_HISTORY?: string;
+  TRACK_RECORD?: string;
+  TRACK_RECORD_UNIQUE_INDEX?: string;
 }
 
 // 数据库表创建SQL语句
@@ -758,6 +781,35 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       FOREIGN KEY (bookId) REFERENCES ebook_info (id),
       UNIQUE (bookId, userId)
     )
+  `,
+
+  // 跟踪记录表（用于与第三方服务同步阅读进度）
+  TRACK_RECORD: `
+    CREATE TABLE IF NOT EXISTS track_record (
+      id TEXT PRIMARY KEY,
+      contentId TEXT NOT NULL,
+      contentType TEXT NOT NULL DEFAULT 'manga',
+      trackerId INTEGER NOT NULL,
+      remoteId TEXT NOT NULL,
+      remoteTitle TEXT,
+      remoteUrl TEXT,
+      lastChapterRead REAL DEFAULT 0,
+      totalChapters INTEGER DEFAULT 0,
+      score REAL DEFAULT 0,
+      status INTEGER DEFAULT 0,
+      startedReadingDate INTEGER DEFAULT 0,
+      finishedReadingDate INTEGER DEFAULT 0,
+      lastSyncTime INTEGER DEFAULT 0,
+      syncStatus TEXT DEFAULT 'pending',
+      createTime INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL
+    )
+  `,
+
+  // 跟踪记录唯一索引
+  TRACK_RECORD_UNIQUE_INDEX: `
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_track_record_unique 
+    ON track_record (contentId, trackerId)
   `
 };
 
@@ -806,7 +858,12 @@ export const CREATE_INDEX_SQL: string[] = [
   ,
   'CREATE INDEX IF NOT EXISTS idx_online_read_user ON online_read_history (userId)',
   'CREATE INDEX IF NOT EXISTS idx_online_read_comic ON online_read_history (comicId)',
-  'CREATE INDEX IF NOT EXISTS idx_online_read_time ON online_read_history (readTime)'
+  'CREATE INDEX IF NOT EXISTS idx_online_read_time ON online_read_history (readTime)',
+  // 跟踪记录表索引
+  'CREATE INDEX IF NOT EXISTS idx_track_record_content ON track_record (contentId)',
+  'CREATE INDEX IF NOT EXISTS idx_track_record_tracker ON track_record (trackerId)',
+  'CREATE INDEX IF NOT EXISTS idx_track_record_sync ON track_record (syncStatus)',
+  'CREATE INDEX IF NOT EXISTS idx_track_record_update ON track_record (updateTime)'
 ];
 
 // 数据库版本升级脚本
@@ -903,5 +960,31 @@ export const MIGRATION_SCRIPTS: Record<number, string[]> = {
   13: [
     // 版本13：为图源表添加 type 字段，用于区分图源类型（manga/ebook/novel等）
     'ALTER TABLE comic_source ADD COLUMN type TEXT DEFAULT \'manga\''
+  ],
+  14: [
+    // 版本14：添加跟踪记录表，用于与第三方服务同步阅读进度
+    `CREATE TABLE IF NOT EXISTS track_record (
+      id TEXT PRIMARY KEY,
+      contentId TEXT NOT NULL,
+      contentType TEXT NOT NULL DEFAULT 'manga',
+      trackerId INTEGER NOT NULL,
+      remoteId TEXT NOT NULL,
+      remoteTitle TEXT,
+      remoteUrl TEXT,
+      lastChapterRead REAL DEFAULT 0,
+      totalChapters INTEGER DEFAULT 0,
+      score REAL DEFAULT 0,
+      status INTEGER DEFAULT 0,
+      startedReadingDate INTEGER DEFAULT 0,
+      finishedReadingDate INTEGER DEFAULT 0,
+      lastSyncTime INTEGER DEFAULT 0,
+      syncStatus TEXT DEFAULT 'pending',
+      createTime INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_track_record_unique ON track_record (contentId, trackerId)',
+    'CREATE INDEX IF NOT EXISTS idx_track_record_content ON track_record (contentId)',
+    'CREATE INDEX IF NOT EXISTS idx_track_record_tracker ON track_record (trackerId)',
+    'CREATE INDEX IF NOT EXISTS idx_track_record_sync ON track_record (syncStatus)'
   ]
 };

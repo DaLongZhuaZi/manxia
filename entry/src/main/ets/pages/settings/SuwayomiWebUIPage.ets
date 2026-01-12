@@ -1,0 +1,267 @@
+/**
+ * Suwayomi WebUI 页面
+ * 使用 WebView 访问 Suwayomi 服务器的 Web 界面
+ * 支持缩小到通用面板
+ */
+
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
+import { logger } from '../../Utils/Logger';
+import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { FontAwareState } from '../../Framework/Components/FontAware';
+import { ThemeType } from '../../Framework/Managers/ThemeManager';
+import { getSuwayomiTracker, SuwayomiTracker } from '../../Framework/Tracking/trackers/SuwayomiTracker';
+
+const TAG = 'SuwayomiWebUIPage';
+const TITLE_BAR_HEIGHT: number = 56;
+
+// 页面参数接口
+interface SuwayomiWebUIParams {
+  url?: string;
+}
+
+@Component
+export struct SuwayomiWebUIPage {
+  @State pathStack: NavPathStack = new NavPathStack();
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+
+  // WebView 状态
+  @State isLoading: boolean = true;
+  @State currentUrl: string = '';
+  @State pageTitle: string = 'Suwayomi';
+  @State canGoBack: boolean = false;
+  @State canGoForward: boolean = false;
+  @State errorMessage: string = '';
+
+  // 面板模式状态
+  @State isPanelMode: boolean = false;
+
+  private webController: webview.WebviewController = new webview.WebviewController();
+  private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
+  private componentId: string = 'SuwayomiWebUIPage';
+  private serverUrl: string = '';
+
+  aboutToAppear(): void {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
+      logger.info(TAG, `主题切换到: ${newTheme}`);
+    });
+  }
+
+  aboutToDisappear(): void {
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+  }
+
+  private initializeUrl(params: SuwayomiWebUIParams | null): void {
+    if (params?.url) {
+      this.serverUrl = params.url;
+    } else {
+      this.serverUrl = this.suwayomiTracker.getWebUIUrl();
+    }
+    this.currentUrl = this.serverUrl;
+    logger.info(TAG, `初始化 WebUI URL: ${this.serverUrl}`);
+  }
+
+  private goBack(): void {
+    if (this.canGoBack) {
+      this.webController.backward();
+    }
+  }
+
+  private goForward(): void {
+    if (this.canGoForward) {
+      this.webController.forward();
+    }
+  }
+
+  private refresh(): void {
+    this.webController.refresh();
+  }
+
+  private goHome(): void {
+    this.webController.loadUrl(this.serverUrl);
+  }
+
+  private togglePanelMode(): void {
+    this.isPanelMode = !this.isPanelMode;
+    // TODO: 实现缩小到通用面板的逻辑
+    if (this.isPanelMode) {
+      this.showToast('面板模式功能开发中');
+    }
+  }
+
+  private showToast(message: string): void {
+    import('@kit.ArkUI').then(arkUI => {
+      arkUI.promptAction.showToast({
+        message: message,
+        duration: 2000
+      });
+    });
+  }
+
+  @Builder
+  buildTitleBarMenu() {
+    Row({ space: 16 }) {
+      // 返回按钮
+      Image($r('sys.symbol.chevron_left'))
+        .width(24)
+        .height(24)
+        .fillColor(this.canGoBack ?
+          ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .onClick(() => this.goBack())
+
+      // 前进按钮
+      Image($r('sys.symbol.chevron_right'))
+        .width(24)
+        .height(24)
+        .fillColor(this.canGoForward ?
+          ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) :
+          ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .onClick(() => this.goForward())
+
+      // 刷新按钮
+      Image($r('sys.symbol.arrow_clockwise'))
+        .width(24)
+        .height(24)
+        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+        .onClick(() => this.refresh())
+
+      // 主页按钮
+      Image($r('sys.symbol.house'))
+        .width(24)
+        .height(24)
+        .fillColor(ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme))
+        .onClick(() => this.goHome())
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: 16, right: 16 })
+    .justifyContent(FlexAlign.Start)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#000000ff')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        Column() {
+          Blank().height(TITLE_BAR_HEIGHT)
+
+          // 工具栏
+          // this.buildTitleBarMenu()
+
+          // 加载进度条
+          if (this.isLoading) {
+            Progress({ value: 0, type: ProgressType.Linear })
+              .width('100%')
+              .height(2)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          }
+
+          // 错误提示
+          if (this.errorMessage) {
+            Column({ space: 16 }) {
+              Image($r('sys.symbol.exclamationmark_triangle'))
+                .width(48)
+                .height(48)
+                .fillColor('#FF6B6B')
+
+              Text(this.errorMessage)
+                .fontSize(16)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .textAlign(TextAlign.Center)
+                .fontFamily(this.appFontFamily)
+
+              Button('重试')
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                .fontColor(Color.White)
+                .onClick(() => {
+                  this.errorMessage = '';
+                  this.webController.loadUrl(this.serverUrl);
+                })
+                .fontFamily(this.appFontFamily)
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+          } else {
+            // WebView
+            Web({ src: this.currentUrl, controller: this.webController })
+              .width('100%')
+              .layoutWeight(1)
+              .javaScriptAccess(true)
+              .domStorageAccess(true)
+              .mixedMode(MixedMode.All)
+              .cacheMode(CacheMode.Default)
+              .databaseAccess(true)
+              .fileAccess(true)
+              .onlineImageAccess(true)
+              .zoomAccess(true)
+              .overviewModeAccess(true)
+              .onPageBegin(() => {
+                this.isLoading = true;
+              })
+              .onPageEnd(() => {
+                this.isLoading = false;
+                this.canGoBack = this.webController.accessBackward();
+                this.canGoForward = this.webController.accessForward();
+              })
+              .onTitleReceive((event) => {
+                if (event && event.title) {
+                  this.pageTitle = event.title;
+                }
+              })
+              .onErrorReceive((event) => {
+                if (event && event.error) {
+                  const errorInfo = event.error.getErrorInfo();
+                  const errorCode = event.error.getErrorCode();
+                  logger.debug(TAG, `WebView 资源错误: ${errorInfo}, code: ${errorCode}`);
+                  if (this.currentUrl === this.serverUrl && !this.isLoading && errorCode < -100) {
+                    this.errorMessage = `无法连接到服务器\n${errorInfo}`;
+                  }
+                }
+              })
+          }
+        }
+        .width('100%')
+        .height('100%')
+      }
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
+      },
+      style: {
+        originalStyle: {
+          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: this.pageTitle || 'Suwayomi WebUI' }
+      }
+    })
+    .onReady((context: NavDestinationContext) => {
+      this.pathStack = context.pathStack;
+      const param: Object | undefined = context.pathInfo.param as Object | undefined;
+      if (param !== null && param !== undefined) {
+        const params: SuwayomiWebUIParams = param as SuwayomiWebUIParams;
+        this.initializeUrl(params);
+      } else {
+        this.initializeUrl(null);
+      }
+    })
+  }
+}

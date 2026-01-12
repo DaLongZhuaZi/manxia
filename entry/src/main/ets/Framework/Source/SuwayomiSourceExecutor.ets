@@ -1,0 +1,311 @@
+/**
+ * Suwayomi 图源执行器
+ * 将 Suwayomi 图源集成到现有的图源管理系统中
+ */
+
+import { logger } from '../../Utils/Logger';
+import { ComicInfo, ChapterInfo, PageInfo, ComicDetailInfo } from './SourceExecutor';
+import { getSuwayomiSource, SuwayomiSource, SuwayomiSourceConfig, SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from './SuwayomiSource';
+
+const TAG = 'SuwayomiSourceExecutor';
+
+// Suwayomi 源信息（用于选择不同的 Suwayomi 扩展源）
+export interface SuwayomiExtensionSource {
+  id: string;
+  name: string;
+  lang: string;
+  iconUrl: string;
+  isNsfw: boolean;
+}
+
+/**
+ * Suwayomi 图源执行器类
+ * 实现与 SourceExecutor 相同的接口，但使用 Suwayomi GraphQL API
+ */
+export class SuwayomiSourceExecutor {
+  private static instance: SuwayomiSourceExecutor | null = null;
+  private suwayomiSource: SuwayomiSource;
+  private currentSourceId: string = ''; // 当前选择的 Suwayomi 扩展源 ID
+
+  private constructor() {
+    this.suwayomiSource = getSuwayomiSource();
+  }
+
+  public static getInstance(): SuwayomiSourceExecutor {
+    if (!SuwayomiSourceExecutor.instance) {
+      SuwayomiSourceExecutor.instance = new SuwayomiSourceExecutor();
+    }
+    return SuwayomiSourceExecutor.instance;
+  }
+
+  /**
+   * 初始化
+   */
+  public async initialize(): Promise<void> {
+    await this.suwayomiSource.initialize();
+    logger.info(TAG, '初始化完成');
+  }
+
+  /**
+   * 检查是否已配置
+   */
+  public isConfigured(): boolean {
+    return this.suwayomiSource.isConfigured();
+  }
+
+  /**
+   * 获取配置
+   */
+  public getConfig(): SuwayomiSourceConfig {
+    return this.suwayomiSource.getConfig();
+  }
+
+  /**
+   * 获取服务器地址
+   */
+  public getServerUrl(): string {
+    return this.suwayomiSource.getConfig().serverUrl;
+  }
+
+  /**
+   * 保存配置
+   */
+  public async saveConfig(config: SuwayomiSourceConfig): Promise<void> {
+    await this.suwayomiSource.saveConfig(config);
+  }
+
+  /**
+   * 设置当前使用的 Suwayomi 扩展源
+   */
+  public setCurrentSource(sourceId: string): void {
+    this.currentSourceId = sourceId;
+    logger.debug(TAG, `设置当前源: ${sourceId}`);
+  }
+
+  /**
+   * 获取当前使用的 Suwayomi 扩展源 ID
+   */
+  public getCurrentSourceId(): string {
+    return this.currentSourceId;
+  }
+
+  /**
+   * 获取所有可用的 Suwayomi 扩展源
+   */
+  public async getAvailableSources(): Promise<SuwayomiExtensionSource[]> {
+    try {
+      const sources = await this.suwayomiSource.getSources();
+      return sources.map((s): SuwayomiExtensionSource => {
+        const result: SuwayomiExtensionSource = {
+          id: s.id,
+          name: s.name,
+          lang: s.lang,
+          iconUrl: s.iconUrl,
+          isNsfw: s.isNsfw
+        };
+        return result;
+      });
+    } catch (error) {
+      logger.error(TAG, `获取源列表失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 搜索漫画
+   * 如果设置了当前源，则从该源搜索；否则从库中搜索
+   */
+  public async search(query: string): Promise<ComicInfo[]> {
+    try {
+      if (this.currentSourceId) {
+        return await this.suwayomiSource.searchManga(this.currentSourceId, query);
+      } else {
+        return await this.suwayomiSource.searchLibrary(query);
+      }
+    } catch (error) {
+      logger.error(TAG, `搜索失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 在库中搜索漫画
+   */
+  public async searchLibrary(query: string): Promise<ComicInfo[]> {
+    try {
+      return await this.suwayomiSource.searchLibrary(query);
+    } catch (error) {
+      logger.error(TAG, `库搜索失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 获取所有分类
+   */
+  public async getCategories(): Promise<SuwayomiCategory[]> {
+    try {
+      return await this.suwayomiSource.getCategories();
+    } catch (error) {
+      logger.error(TAG, `获取分类失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 获取库中的漫画列表（分页+排序）
+   * @param categoryId 分类ID，-1表示所有
+   * @param offset 偏移量
+   * @param limit 每页数量
+   * @param sortType 排序类型
+   * @param sortDirection 排序方向
+   */
+  public async getLibraryPaginated(
+    categoryId: number = -1,
+    offset: number = 0,
+    limit: number = 50,
+    sortType: MangaSortType = 'TITLE',
+    sortDirection: SortDirection = 'ASC'
+  ): Promise<PaginatedResult<ComicInfo>> {
+    try {
+      return await this.suwayomiSource.getLibraryMangasPaginated(categoryId, offset, limit, sortType, sortDirection);
+    } catch (error) {
+      logger.error(TAG, `获取库列表失败: ${error}`);
+      return { items: [], totalCount: 0, hasMore: false };
+    }
+  }
+
+  /**
+   * 获取可用的排序选项
+   */
+  public getSortOptions(): MangaSortOption[] {
+    return MANGA_SORT_OPTIONS;
+  }
+
+  /**
+   * 获取库中的漫画列表（不推荐用于大型库）
+   * @deprecated 使用 getLibraryPaginated 代替
+   */
+  public async getLibrary(): Promise<ComicInfo[]> {
+    try {
+      return await this.suwayomiSource.getLibraryMangas();
+    } catch (error) {
+      logger.error(TAG, `获取库列表失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 浏览源（热门/最新）
+   */
+  public async browse(type: 'POPULAR' | 'LATEST' = 'POPULAR', page: number = 1): Promise<ComicInfo[]> {
+    if (!this.currentSourceId) {
+      logger.warn(TAG, '未选择源，无法浏览');
+      return [];
+    }
+    try {
+      return await this.suwayomiSource.browseSource(this.currentSourceId, type, page);
+    } catch (error) {
+      logger.error(TAG, `浏览失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 获取漫画详情
+   */
+  public async getDetail(mangaId: string): Promise<ComicDetailInfo | null> {
+    try {
+      return await this.suwayomiSource.getMangaDetail(mangaId);
+    } catch (error) {
+      logger.error(TAG, `获取详情失败: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * 获取章节页面
+   */
+  public async getPages(chapterId: string): Promise<PageInfo[]> {
+    try {
+      return await this.suwayomiSource.getChapterPages(chapterId);
+    } catch (error) {
+      logger.error(TAG, `获取页面失败: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 标记章节为已读
+   */
+  public async markRead(chapterId: string, isRead: boolean = true): Promise<boolean> {
+    try {
+      return await this.suwayomiSource.markChapterRead(chapterId, isRead);
+    } catch (error) {
+      logger.error(TAG, `标记已读失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 更新章节阅读进度（保存当前阅读页码）
+   */
+  public async updateReadingProgress(chapterId: string, lastPageRead: number): Promise<boolean> {
+    try {
+      return await this.suwayomiSource.updateReadingProgress(chapterId, lastPageRead);
+    } catch (error) {
+      logger.error(TAG, `更新阅读进度失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 获取章节阅读进度
+   */
+  public async getChapterProgress(chapterId: string): Promise<number> {
+    try {
+      return await this.suwayomiSource.getChapterProgress(chapterId);
+    } catch (error) {
+      logger.error(TAG, `获取阅读进度失败: ${error}`);
+      return 0;
+    }
+  }
+
+  /**
+   * 添加漫画到库
+   */
+  public async addToLibrary(mangaId: string): Promise<boolean> {
+    try {
+      return await this.suwayomiSource.addToLibrary(mangaId);
+    } catch (error) {
+      logger.error(TAG, `添加到库失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 从库中移除漫画
+   */
+  public async removeFromLibrary(mangaId: string): Promise<boolean> {
+    try {
+      return await this.suwayomiSource.removeFromLibrary(mangaId);
+    } catch (error) {
+      logger.error(TAG, `从库移除失败: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 获取图片请求头
+   */
+  public getImageHeaders(): Record<string, string> {
+    return this.suwayomiSource.getImageHeaders();
+  }
+}
+
+/**
+ * 获取 Suwayomi 图源执行器实例
+ */
+export function getSuwayomiSourceExecutor(): SuwayomiSourceExecutor {
+  return SuwayomiSourceExecutor.getInstance();
+}

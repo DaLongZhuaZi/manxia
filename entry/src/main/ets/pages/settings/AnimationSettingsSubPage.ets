@@ -1,0 +1,436 @@
+// 文件路径: entry/src/main/ets/pages/settings/AnimationSettingsSubPage.ets
+/**
+ * 动画设置子页面
+ * 控制APP内的书籍打开/关闭动画等动画效果
+ */
+
+import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics } from '@kit.ArkUI';
+import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
+import { logger } from '../../Utils/Logger';
+import { PageLifecycleManager } from '../../Framework/Lifecycle';
+import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
+import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+import { 
+  AnimationSettingsManager, 
+  AnimationSettings, 
+  DEFAULT_ANIMATION_SETTINGS,
+  AnimationSettingsListener
+} from '../../Framework/Animation/AnimationSettingsManager';
+
+const TAG = 'AnimationSettingsSubPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
+
+@Component
+export struct AnimationSettingsSubPage {
+  @State pathStack: NavPathStack = new NavPathStack();
+  private scroller: Scroller = new Scroller();
+
+  // 主题相关状态
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  @State fontState: FontAwareState = new FontAwareState();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = 'AnimationSettingsSubPage';
+
+  // 响应式布局相关状态
+  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  private deviceChangeListener: DeviceChangeListener | null = null;
+  @State responsive_contentPadding: number = 16;
+  @State responsive_maxContentWidth: number = 1200;
+  @State responsive_isLandscape: boolean = false;
+
+  // 动画设置管理器
+  private animationSettingsManager: AnimationSettingsManager = AnimationSettingsManager.getInstance();
+  private settingsListener: AnimationSettingsListener | null = null;
+
+  // 动画设置状态
+  @State bookOpenEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.bookOpenEnabled;
+  @State bookCloseEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.bookCloseEnabled;
+  @State bookOpenDuration: number = DEFAULT_ANIMATION_SETTINGS.bookOpenDuration;
+  @State bookCloseDuration: number = DEFAULT_ANIMATION_SETTINGS.bookCloseDuration;
+
+  private lifecycle = new PageLifecycleManager('AnimationSettingsSubPage', { enableDebug: true });
+
+  onPageShow(): void {
+    try {
+      const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (stack) {
+        this.pathStack = stack;
+        logger.debug(TAG, '✅ 成功获取GlobalNavStack');
+      }
+    } catch (err) {
+      logger.error(TAG, 'AppStorage.get 异常', String(err));
+    }
+  }
+
+  onReady(): void {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
+      logger.info(TAG, `主题切换到: ${newTheme}`);
+    });
+    FontAwareHelper.initializeFontAware(
+      this.componentId,
+      this.fontState,
+      (newState: FontAwareState) => {
+        this.fontState = newState;
+      }
+    );
+
+    // 初始化响应式布局
+    this.initializeResponsiveLayout();
+
+    // 加载动画设置
+    this.loadAnimationSettings();
+
+    // 监听设置变化
+    this.settingsListener = (settings: AnimationSettings) => {
+      this.updateLocalState(settings);
+    };
+    this.animationSettingsManager.addListener(this.settingsListener);
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.destroy();
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    FontAwareHelper.cleanupFontAware(this.componentId);
+    
+    // 移除设备变化监听器
+    if (this.deviceChangeListener) {
+      this.deviceManager.removeListener(this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
+
+    // 移除设置变化监听器
+    if (this.settingsListener) {
+      this.animationSettingsManager.removeListener(this.settingsListener);
+      this.settingsListener = null;
+    }
+  }
+
+  /**
+   * 初始化响应式布局
+   */
+  private initializeResponsiveLayout(): void {
+    try {
+      this.updateResponsiveParams();
+      this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
+        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
+        this.updateResponsiveParams();
+      };
+      this.deviceManager.addListener(this.deviceChangeListener);
+      logger.info(TAG, '✅ 响应式布局初始化完成');
+    } catch (error) {
+      logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  /**
+   * 更新响应式布局参数
+   */
+  private updateResponsiveParams(): void {
+    const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    
+    this.responsive_contentPadding = layoutParams.contentPadding;
+    this.responsive_isLandscape = deviceInfo.isLandscape;
+    
+    switch (deviceInfo.breakpoint) {
+      case Breakpoint.XS:
+        this.responsive_maxContentWidth = 600;
+        break;
+      case Breakpoint.SM:
+        this.responsive_maxContentWidth = 840;
+        break;
+      case Breakpoint.MD:
+        this.responsive_maxContentWidth = 1024;
+        break;
+      case Breakpoint.LG:
+        this.responsive_maxContentWidth = 1200;
+        break;
+    }
+    
+    logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
+  }
+
+  /**
+   * 加载动画设置
+   */
+  private loadAnimationSettings(): void {
+    const settings = this.animationSettingsManager.getSettings();
+    this.updateLocalState(settings);
+    logger.info(TAG, '动画设置加载完成');
+  }
+
+  /**
+   * 更新本地状态
+   */
+  private updateLocalState(settings: AnimationSettings): void {
+    this.bookOpenEnabled = settings.bookOpenEnabled;
+    this.bookCloseEnabled = settings.bookCloseEnabled;
+    this.bookOpenDuration = settings.bookOpenDuration;
+    this.bookCloseDuration = settings.bookCloseDuration;
+  }
+
+  /**
+   * 获取时长显示文本
+   */
+  private getDurationText(duration: number): string {
+    if (duration <= 200) {
+      return '快速';
+    } else if (duration <= 400) {
+      return '正常';
+    } else if (duration <= 600) {
+      return '较慢';
+    } else {
+      return '慢速';
+    }
+  }
+
+  private goBack(): void {
+    try {
+      this.pathStack.pop();
+    } catch (error) {
+      logger.error(TAG, '返回失败', String(error));
+    }
+  }
+
+  /**
+   * 构建书籍动画设置区域
+   */
+  @Builder
+  buildBookAnimationSettings() {
+    Column({ space: 16 }) {
+      Text('书籍打开/关闭动画')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Text('控制从书架点击书籍封面进入阅读器时的翻开动画，以及从阅读器返回时的关闭动画效果。')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 打开动画开关
+      Row() {
+        Column({ space: 4 }) {
+          Text('书籍打开动画')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('点击书籍封面时播放翻开动画')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.bookOpenEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            await this.animationSettingsManager.setBookOpenAnimationEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      // 打开动画时长（仅在启用时显示）
+      if (this.bookOpenEnabled) {
+        Column({ space: 8 }) {
+          Row() {
+            Text('打开动画速度')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Blank()
+            Text(`${this.getDurationText(this.bookOpenDuration)} (${this.bookOpenDuration}ms)`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          Slider({
+            value: this.bookOpenDuration,
+            min: 100,
+            max: 800,
+            step: 50,
+            style: SliderStyle.InSet
+          })
+            .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (value: number) => {
+              this.bookOpenDuration = Math.round(value);
+              await this.animationSettingsManager.setBookOpenDuration(this.bookOpenDuration);
+            })
+        }
+        .width('100%')
+        .padding({ left: 8 })
+      }
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+        .margin({ top: 4, bottom: 4 })
+
+      // 关闭动画开关
+      Row() {
+        Column({ space: 4 }) {
+          Text('书籍关闭动画')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('从阅读器返回时播放关闭动画')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.bookCloseEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            await this.animationSettingsManager.setBookCloseAnimationEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+
+      // 关闭动画时长（仅在启用时显示）
+      if (this.bookCloseEnabled) {
+        Column({ space: 8 }) {
+          Row() {
+            Text('关闭动画速度')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Blank()
+            Text(`${this.getDurationText(this.bookCloseDuration)} (${this.bookCloseDuration}ms)`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          Slider({
+            value: this.bookCloseDuration,
+            min: 100,
+            max: 800,
+            step: 50,
+            style: SliderStyle.InSet
+          })
+            .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (value: number) => {
+              this.bookCloseDuration = Math.round(value);
+              await this.animationSettingsManager.setBookCloseDuration(this.bookCloseDuration);
+            })
+        }
+        .width('100%')
+        .padding({ left: 8 })
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
+   * 构建重置按钮区域
+   */
+  @Builder
+  buildResetSection() {
+    Column({ space: 12 }) {
+      Button('恢复默认设置')
+        .width('100%')
+        .height(44)
+        .fontSize(15)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+        .borderRadius(10)
+        .onClick(async () => {
+          await this.animationSettingsManager.resetToDefault();
+        })
+
+      Text('恢复所有动画设置为默认值')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+    }
+    .width('100%')
+    .margin({ top: 8 })
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          
+        Scroll(this.scroller) {
+          Column({ space: 16 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
+
+            // 书籍动画设置
+            this.buildBookAnimationSettings()
+
+            // 重置按钮
+            this.buildResetSection()
+
+            Blank().height(40)
+          }
+          .width('100%')
+          .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+          .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+        }
+        .width('100%')
+        .height('100%')
+        .align(Alignment.TopStart)
+        .edgeEffect(EdgeEffect.Spring)
+        .scrollBar(BarState.Auto)
+      }
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
+        end: LengthMetrics.vp(16)
+      },
+      style: {
+        originalStyle: {
+          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '动画设置' }
+      }
+    })
+    .onReady((context: NavDestinationContext) => {
+      this.pathStack = context.pathStack;
+      this.onPageShow();
+      this.onReady();
+    })
+    .backgroundColor(Color.Transparent)
+  }
+}

@@ -14,6 +14,7 @@ import { getContentPanelManager, ContentSource, ContentPanelType } from '../Comp
 const TAG = 'ChangelogManager';
 const PREFS_NAME = 'changelog_prefs';
 const KEY_LAST_SHOWN_VERSION = 'last_shown_version';
+const KEY_LAST_SHOWN_VERSION_CODE = 'last_shown_version_code';
 
 /**
  * 更新日志管理器 - 单例模式
@@ -22,7 +23,9 @@ export class ChangelogManager {
   private static instance: ChangelogManager;
   private context: common.UIAbilityContext | null = null;
   private currentVersion: string = '';
+  private currentVersionCode: number = 0;
   private lastShownVersion: string = '';
+  private lastShownVersionCode: number = 0;
   private prefs: preferences.Preferences | null = null;
 
   private constructor() {}
@@ -44,12 +47,14 @@ export class ChangelogManager {
       // 获取当前应用版本
       const bundleInfo = await bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
       this.currentVersion = bundleInfo.versionName;
-      logger.info(TAG, `当前应用版本: ${this.currentVersion}`);
+      this.currentVersionCode = bundleInfo.versionCode;
+      logger.info(TAG, `当前应用版本: ${this.currentVersion} (${this.currentVersionCode})`);
       
       // 读取上次显示的版本
       this.prefs = await preferences.getPreferences(context, PREFS_NAME);
       this.lastShownVersion = await this.prefs.get(KEY_LAST_SHOWN_VERSION, '') as string;
-      logger.info(TAG, `上次显示版本: ${this.lastShownVersion || '无'}`);
+      this.lastShownVersionCode = await this.prefs.get(KEY_LAST_SHOWN_VERSION_CODE, 0) as number;
+      logger.info(TAG, `上次显示版本: ${this.lastShownVersion || '无'} (${this.lastShownVersionCode})`);
     } catch (error) {
       logger.error(TAG, `初始化失败: ${error}`);
     }
@@ -57,19 +62,28 @@ export class ChangelogManager {
 
   /**
    * 检查是否需要显示更新日志（新版本首次启动）
+   * 使用 versionCode 进行比较，确保数字版本号变更也能触发
    */
   shouldShowChangelog(): boolean {
-    if (!this.currentVersion) {
+    if (!this.currentVersionCode) {
       return false;
     }
-    return this.currentVersion !== this.lastShownVersion;
+    // 使用 versionCode 比较，只要版本号增加就显示更新日志
+    return this.currentVersionCode > this.lastShownVersionCode;
   }
 
   /**
-   * 获取当前版本号
+   * 获取当前版本号（字符串）
    */
   getCurrentVersion(): string {
     return this.currentVersion;
+  }
+
+  /**
+   * 获取当前版本码（数字）
+   */
+  getCurrentVersionCode(): number {
+    return this.currentVersionCode;
   }
 
   /**
@@ -95,9 +109,11 @@ export class ChangelogManager {
       // 标记为已显示
       if (markAsShown && this.prefs) {
         await this.prefs.put(KEY_LAST_SHOWN_VERSION, this.currentVersion);
+        await this.prefs.put(KEY_LAST_SHOWN_VERSION_CODE, this.currentVersionCode);
         await this.prefs.flush();
         this.lastShownVersion = this.currentVersion;
-        logger.info(TAG, `已标记版本 ${this.currentVersion} 的更新日志为已显示`);
+        this.lastShownVersionCode = this.currentVersionCode;
+        logger.info(TAG, `已标记版本 ${this.currentVersion} (${this.currentVersionCode}) 的更新日志为已显示`);
       }
     } catch (error) {
       logger.error(TAG, `显示更新日志失败: ${error}`);
@@ -129,8 +145,10 @@ export class ChangelogManager {
   async resetShownStatus(): Promise<void> {
     if (this.prefs) {
       await this.prefs.delete(KEY_LAST_SHOWN_VERSION);
+      await this.prefs.delete(KEY_LAST_SHOWN_VERSION_CODE);
       await this.prefs.flush();
       this.lastShownVersion = '';
+      this.lastShownVersionCode = 0;
       logger.info(TAG, '已重置更新日志显示状态');
     }
   }

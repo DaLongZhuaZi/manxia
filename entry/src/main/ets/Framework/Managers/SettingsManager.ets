@@ -100,6 +100,12 @@ export class SettingKeys {
   static readonly BACKGROUND_BLUR_BG_TYPE = 'background_blur_bg_type'; // 后台遮罩背景类型: 'solid' | 'custom'
   static readonly BACKGROUND_BLUR_BG_IMAGE = 'background_blur_bg_image'; // 自定义背景图片路径
   static readonly BACKGROUND_BLUR_ICON_TYPE = 'background_blur_icon_type'; // 图标类型: 'shield' | 'logo'
+  
+  // 动画设置
+  static readonly ANIMATION_BOOK_OPEN_ENABLED = 'animation_book_open_enabled'; // 书籍打开动画开关
+  static readonly ANIMATION_BOOK_CLOSE_ENABLED = 'animation_book_close_enabled'; // 书籍关闭动画开关
+  static readonly ANIMATION_BOOK_OPEN_DURATION = 'animation_book_open_duration'; // 书籍打开动画时长(ms)
+  static readonly ANIMATION_BOOK_CLOSE_DURATION = 'animation_book_close_duration'; // 书籍关闭动画时长(ms)
 }
 
 /**
