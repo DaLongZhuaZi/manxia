@@ -1074,6 +1074,27 @@ export interface GenericQueryRecord {
   isPrivate?: DatabaseValue;  // 是否为隐私内容（0=普通, 1=隐私）
 }
 
+// 跟踪记录数据库记录接口
+export interface TrackRecordDatabaseRecord {
+  id?: DatabaseValue;
+  contentId?: DatabaseValue;
+  contentType?: DatabaseValue;
+  trackerId?: DatabaseValue;
+  remoteId?: DatabaseValue;
+  remoteTitle?: DatabaseValue;
+  remoteUrl?: DatabaseValue;
+  lastChapterRead?: DatabaseValue;
+  totalChapters?: DatabaseValue;
+  score?: DatabaseValue;
+  status?: DatabaseValue;
+  startedReadingDate?: DatabaseValue;
+  finishedReadingDate?: DatabaseValue;
+  lastSyncTime?: DatabaseValue;
+  syncStatus?: DatabaseValue;
+  createTime?: DatabaseValue;
+  updateTime?: DatabaseValue;
+}
+
 export type DatabaseRecord = 
   | ComicSourceDatabaseRecord
   | ComicInfoDatabaseRecord
@@ -1090,7 +1111,8 @@ export type DatabaseRecord =
   | OnlineComicInfoDatabaseRecord
   | OnlineChapterInfoDatabaseRecord
   | OnlinePageInfoDatabaseRecord
-  | GenericQueryRecord;
+  | GenericQueryRecord
+  | TrackRecordDatabaseRecord;
 
 // 统一的更新记录数据接口 - 支持所有数据库记录类型
 export interface UpdateRecordData {

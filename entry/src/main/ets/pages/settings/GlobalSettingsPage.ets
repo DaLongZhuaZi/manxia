@@ -82,6 +82,20 @@ export struct GlobalSettingsPage {
       targetPage: 'InteractionSettingsSubPage'
     },
     {
+      id: 'animation',
+      title: '动画设置',
+      subtitle: '书籍打开/关闭动画效果',
+      icon: $r('sys.symbol.rectangle_below_line_2'),
+      targetPage: 'AnimationSettingsSubPage'
+    },
+    {
+      id: 'tracking',
+      title: '进度记录',
+      subtitle: 'MAL、AniList、Bangumi等进度同步',
+      icon: $r('sys.symbol.mobiledata_and_cloud'),
+      targetPage: 'TrackingSettingsSubPage'
+    },
+    {
       id: 'network',
       title: '下载与网络',
       subtitle: '下载设置、网络请求配置',
@@ -325,23 +339,8 @@ export struct GlobalSettingsPage {
         end: LengthMetrics.vp(16)
       },
       style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
-        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: Color.Transparent },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: {
-            backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
-          },
+          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
             backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }

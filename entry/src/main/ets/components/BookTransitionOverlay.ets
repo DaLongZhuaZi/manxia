@@ -19,6 +19,7 @@ import {
   CoverPosition,
   BookTransitionConfig
 } from './BookOpenTransition';
+import { AnimationSettingsManager } from '../Framework/Animation/AnimationSettingsManager';
 
 const TAG = 'BookTransitionOverlay';
 
@@ -117,6 +118,23 @@ export class TransitionController {
     onComplete?: () => void,
     ebookBackground?: EBookBackgroundSettings
   ): void {
+    // 检查动画是否启用
+    const animationSettingsManager = AnimationSettingsManager.getInstance();
+    if (!animationSettingsManager.isBookOpenAnimationEnabled()) {
+      logger.info(TAG, `书籍打开动画已禁用，直接执行回调: bookId=${targetBookId}`);
+      // 保存封面位置（用于关闭动画）
+      const isDefaultPosition = coverPosition.x === 16 && coverPosition.y === 120 && 
+                                coverPosition.width === 140 && coverPosition.height === 200;
+      if (!isDefaultPosition) {
+        this.lastOpenCoverPosition = coverPosition;
+      }
+      // 直接执行回调，跳过动画
+      if (onComplete) {
+        onComplete();
+      }
+      return;
+    }
+    
     logger.info(TAG, `开始翻开过渡: bookId=${targetBookId}, type=${targetBookType}, 有背景设置=${ebookBackground ? '是' : '否'}`);
     
     // 只在位置有效时保存（避免默认位置覆盖正确位置）
@@ -159,6 +177,17 @@ export class TransitionController {
     onComplete?: () => void,
     readerContentImagePath?: string
   ): void {
+    // 检查动画是否启用
+    const animationSettingsManager = AnimationSettingsManager.getInstance();
+    if (!animationSettingsManager.isBookCloseAnimationEnabled()) {
+      logger.info(TAG, '书籍关闭动画已禁用，直接执行回调');
+      // 直接执行回调，跳过动画
+      if (onComplete) {
+        onComplete();
+      }
+      return;
+    }
+    
     logger.info(TAG, '开始关闭过渡');
     
     // 优先使用翻开动画保存的位置（因为关闭时封面组件可能不在屏幕上）

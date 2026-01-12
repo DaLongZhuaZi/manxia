@@ -859,7 +859,22 @@ export struct UnifiedDetailPage {
     
     readerParams.pageIndex = 0;
 
-    this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+    // 触发翻开过渡动画
+    const coverPath: string = this.content.coverUrl || '';
+    const coverComponentId: string = `cover_${this.componentId}`;
+    
+    logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+    startBookOpenTransitionWithComponentId(
+      coverPath,
+      coverComponentId,
+      this.content.id,
+      'manga',
+      () => {
+        // 动画完成时触发导航
+        logger.info(TAG, '漫画翻开过渡动画触发导航');
+        this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+      }
+    );
   }
 
   /**
@@ -873,7 +888,22 @@ export struct UnifiedDetailPage {
       bookId: this.content.id
     };
 
-    this.pathStack.pushPathByName('EBookReaderPage', params);
+    // 触发翻开过渡动画
+    const coverPath: string = this.content.coverUrl || '';
+    const coverComponentId: string = `cover_${this.componentId}`;
+    
+    logger.info(TAG, `触发电子书翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+    startBookOpenTransitionWithComponentId(
+      coverPath,
+      coverComponentId,
+      this.content.id,
+      'ebook',
+      () => {
+        // 动画完成时触发导航
+        logger.info(TAG, '电子书翻开过渡动画触发导航');
+        this.pathStack.pushPathByName('EBookReaderPage', params);
+      }
+    );
   }
 
   /**
@@ -902,7 +932,22 @@ export struct UnifiedDetailPage {
       coverUrl: this.content.coverUrl
     };
 
-    this.pathStack.pushPathByName('NovelReaderPage', params);
+    // 触发翻开过渡动画
+    const coverPath: string = this.content.coverUrl || '';
+    const coverComponentId: string = `cover_${this.componentId}`;
+    
+    logger.info(TAG, `触发小说翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+    startBookOpenTransitionWithComponentId(
+      coverPath,
+      coverComponentId,
+      this.content.id,
+      'novel',
+      () => {
+        // 动画完成时触发导航
+        logger.info(TAG, '小说翻开过渡动画触发导航');
+        this.pathStack.pushPathByName('NovelReaderPage', params);
+      }
+    );
   }
 
   /**

@@ -58,6 +58,8 @@ import { fileUri } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { TrackingManager } from '../Framework/Tracking/TrackingManager';
+import { TrackContentType } from '../Framework/Tracking/TrackingModels';
 import { window } from '@kit.ArkUI';
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
@@ -3928,10 +3930,73 @@ export struct MangaReaderPage {
     
     logger.info(TAG, `✅ 阅读进度已更新: 章节=${chapter.title}, 页码=${pageIndex + 1}, 时间=${now}`);
 
+    // 更新跟踪服务进度（异步，不阻塞主流程）
+    this.updateTrackingProgress(manga.id, chapter, manga.chapters.length).catch((error: Error) => {
+      logger.debug(TAG, `更新跟踪进度失败: ${error.message}`);
+    });
+
     this.lastSavedPageIndex = pageIndex;
     this.lastProgressSaveTime = now;
     this.sessionStartTimestamp = now;
     logger.debug(TAG, `已保存阅读进度[${trigger}]: ${manga.title} / ${chapter.title} -> 第${pageIndex + 1}页, 时长${duration}ms`);
+  }
+
+  /**
+   * 更新跟踪服务进度
+   */
+  private async updateTrackingProgress(mangaId: string, chapter: MangaChapter, totalChapters: number): Promise<void> {
+    try {
+      const trackingManager = TrackingManager.getInstance();
+      const trackRecords = await trackingManager.getTrackRecords(mangaId);
+      
+      if (trackRecords.length === 0) {
+        return; // 没有跟踪记录，跳过
+      }
+
+      // 计算章节号（从章节索引或标题中提取）
+      const chapterNumber = this.extractChapterNumber(chapter);
+      
+      // 更新所有跟踪服务的进度
+      for (let i = 0; i < trackRecords.length; i++) {
+        const record = trackRecords[i];
+        await trackingManager.updateReadingProgress(
+          mangaId,
+          record.trackerId,
+          chapterNumber,
+          totalChapters
+        );
+      }
+    } catch (error) {
+      logger.debug(TAG, `更新跟踪进度异常: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 从章节信息中提取章节号
+   */
+  private extractChapterNumber(chapter: MangaChapter): number {
+    // 尝试从章节索引获取
+    if (chapter.chapterNumber !== undefined && chapter.chapterNumber > 0) {
+      return chapter.chapterNumber;
+    }
+    
+    // 尝试从标题中提取数字
+    const title = chapter.title || '';
+    const match = title.match(/(\d+(?:\.\d+)?)/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+    
+    // 使用章节在列表中的索引作为备选
+    const manga = this.readerState.currentManga;
+    if (manga && manga.chapters) {
+      const index = manga.chapters.findIndex(c => c.id === chapter.id);
+      if (index >= 0) {
+        return index + 1;
+      }
+    }
+    
+    return 1;
   }
 
   /**
