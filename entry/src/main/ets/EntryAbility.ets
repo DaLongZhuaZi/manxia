@@ -46,17 +46,7 @@ export default class EntryAbility extends UIAbility {
     // 检查是否通过文件打开应用
     else if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用: ${want.uri}, type=${want.type || 'unknown'}`);
-      // 检查是否为AVIF文件（通过扩展名或MIME类型）
-      const lowerUri = want.uri.toLowerCase();
-      const isAvif = lowerUri.endsWith('.avif') || want.type === 'image/avif';
-      if (isAvif) {
-        logger.info('EntryAbility', `🖼️ 检测到AVIF文件，将打开AVIF查看器`);
-        AppStorage.setOrCreate('pendingAvifUri', want.uri);
-      } else {
-        // 保存文件URI到AppStorage，在窗口创建后处理
-        AppStorage.setOrCreate('pendingFileUri', want.uri);
-        AppStorage.setOrCreate('pendingFileType', want.type || '');
-      }
+      this.handleFileOpen(want.uri, want.type || '');
     } else if (want.parameters) {
       // 兼容性处理：某些系统可能将文件信息放在parameters中
       const uri = want.parameters['uri'] as string;
@@ -67,23 +57,10 @@ export default class EntryAbility extends UIAbility {
       
       if (fileUris && fileUris.length > 0) {
         logger.info('EntryAbility', `📁 通过右键菜单打开文件: ${fileUris[0]}, handler=${menuHandler}`);
-        const fileUri = fileUris[0];
-        const lowerUri = fileUri.toLowerCase();
-        if (lowerUri.endsWith('.avif')) {
-          AppStorage.setOrCreate('pendingAvifUri', fileUri);
-        } else {
-          AppStorage.setOrCreate('pendingFileUri', fileUri);
-          AppStorage.setOrCreate('pendingFileType', '');
-        }
+        this.handleFileOpen(fileUris[0], '');
       } else if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件: ${uri}`);
-        const lowerUri = uri.toLowerCase();
-        if (lowerUri.endsWith('.avif')) {
-          AppStorage.setOrCreate('pendingAvifUri', uri);
-        } else {
-          AppStorage.setOrCreate('pendingFileUri', uri);
-          AppStorage.setOrCreate('pendingFileType', type || '');
-        }
+        this.handleFileOpen(uri, type || '');
       }
     }
 
@@ -393,6 +370,206 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
+  // 文件类型常量
+  private static readonly FILE_TYPE_AVIF: string = 'avif';
+  private static readonly FILE_TYPE_BACKUP: string = 'backup';
+  private static readonly FILE_TYPE_COMIC: string = 'comic';
+  private static readonly FILE_TYPE_EBOOK: string = 'ebook';
+  private static readonly FILE_TYPE_PDF: string = 'pdf';
+  private static readonly FILE_TYPE_JSON: string = 'json';
+  private static readonly FILE_TYPE_FONT: string = 'font';
+  private static readonly FILE_TYPE_CODE: string = 'code';
+  private static readonly FILE_TYPE_UNKNOWN: string = 'unknown';
+  
+  // 代码文件扩展名到语言的映射
+  private static readonly CODE_EXTENSIONS: Map<string, string> = new Map([
+    ['.ts', 'typescript'],
+    ['.ets', 'typescript'],
+    ['.js', 'javascript'],
+    ['.jsx', 'javascript'],
+    ['.tsx', 'typescript'],
+    ['.py', 'python'],
+    ['.java', 'java'],
+    ['.cpp', 'cpp'],
+    ['.c', 'c'],
+    ['.h', 'cpp'],
+    ['.hpp', 'cpp'],
+    ['.cs', 'csharp'],
+    ['.go', 'go'],
+    ['.rs', 'rust'],
+    ['.swift', 'swift'],
+    ['.kt', 'kotlin'],
+    ['.rb', 'ruby'],
+    ['.php', 'php'],
+    ['.html', 'html'],
+    ['.htm', 'html'],
+    ['.css', 'css'],
+    ['.scss', 'scss'],
+    ['.less', 'less'],
+    ['.xml', 'xml'],
+    ['.yaml', 'yaml'],
+    ['.yml', 'yaml'],
+    ['.md', 'markdown'],
+    ['.markdown', 'markdown'],
+    ['.sql', 'sql'],
+    ['.sh', 'shell'],
+    ['.bash', 'shell'],
+    ['.zsh', 'shell'],
+    ['.ps1', 'powershell'],
+    ['.bat', 'bat'],
+    ['.cmd', 'bat'],
+    ['.txt', 'plaintext'],
+    ['.log', 'plaintext'],
+    ['.ini', 'ini'],
+    ['.conf', 'ini'],
+    ['.cfg', 'ini'],
+    ['.toml', 'toml'],
+    ['.lua', 'lua'],
+    ['.r', 'r'],
+    ['.dart', 'dart'],
+    ['.vue', 'vue'],
+    ['.svelte', 'svelte']
+  ]);
+
+  /**
+   * 获取文件扩展名（包含点号）
+   */
+  private getFileExtension(uri: string): string {
+    const lastDotIndex = uri.lastIndexOf('.');
+    if (lastDotIndex === -1) return '';
+    return uri.substring(lastDotIndex).toLowerCase();
+  }
+
+  /**
+   * 根据文件URI获取文件类型
+   */
+  private getFileTypeFromUri(uri: string): string {
+    const lowerUri = uri.toLowerCase();
+    
+    // AVIF图片
+    if (lowerUri.endsWith('.avif')) {
+      return EntryAbility.FILE_TYPE_AVIF;
+    }
+    
+    // 备份文件
+    if (lowerUri.endsWith('.mxbak') || lowerUri.endsWith('.mxbackup')) {
+      return EntryAbility.FILE_TYPE_BACKUP;
+    }
+    
+    // 漫画压缩包
+    if (lowerUri.endsWith('.cbz') || lowerUri.endsWith('.cbr')) {
+      return EntryAbility.FILE_TYPE_COMIC;
+    }
+    
+    // 电子书
+    if (lowerUri.endsWith('.epub') || lowerUri.endsWith('.mobi') || lowerUri.endsWith('.azw3')) {
+      return EntryAbility.FILE_TYPE_EBOOK;
+    }
+    
+    // PDF
+    if (lowerUri.endsWith('.pdf')) {
+      return EntryAbility.FILE_TYPE_PDF;
+    }
+    
+    // JSON文件
+    if (lowerUri.endsWith('.json')) {
+      return EntryAbility.FILE_TYPE_JSON;
+    }
+    
+    // 字体文件
+    if (lowerUri.endsWith('.ttf') || lowerUri.endsWith('.otf') || lowerUri.endsWith('.ttc')) {
+      return EntryAbility.FILE_TYPE_FONT;
+    }
+    
+    // 代码文件（检查扩展名是否在映射表中）
+    const ext = this.getFileExtension(lowerUri);
+    if (ext && EntryAbility.CODE_EXTENSIONS.has(ext)) {
+      return EntryAbility.FILE_TYPE_CODE;
+    }
+    
+    return EntryAbility.FILE_TYPE_UNKNOWN;
+  }
+
+  /**
+   * 处理文件打开请求
+   * 根据文件类型设置不同的AppStorage标记，供后续页面处理
+   */
+  private handleFileOpen(uri: string, mimeType: string): void {
+    const fileType = this.getFileTypeFromUri(uri);
+    logger.info('EntryAbility', `📁 文件类型识别: ${fileType}, URI: ${uri}`);
+    
+    switch (fileType) {
+      case EntryAbility.FILE_TYPE_AVIF:
+        // AVIF文件：跳转到AVIF查看器
+        logger.info('EntryAbility', `🖼️ 检测到AVIF文件，将打开AVIF查看器`);
+        AppStorage.setOrCreate('pendingAvifUri', uri);
+        break;
+        
+      case EntryAbility.FILE_TYPE_BACKUP:
+        // 备份文件：跳转到备份恢复页面
+        logger.info('EntryAbility', `💾 检测到备份文件，将跳转到备份恢复页面`);
+        AppStorage.setOrCreate('pendingBackupUri', uri);
+        AppStorage.setOrCreate('pendingFileCategory', 'backup');
+        break;
+        
+      case EntryAbility.FILE_TYPE_COMIC:
+        // 漫画文件：跳转到文件导入页面（漫画导入流程）
+        logger.info('EntryAbility', `📚 检测到漫画文件，将跳转到漫画导入流程`);
+        AppStorage.setOrCreate('pendingFileUri', uri);
+        AppStorage.setOrCreate('pendingFileType', mimeType);
+        AppStorage.setOrCreate('pendingFileCategory', 'comic');
+        break;
+        
+      case EntryAbility.FILE_TYPE_EBOOK:
+        // 电子书文件：跳转到文件导入页面（电子书导入流程）
+        logger.info('EntryAbility', `📖 检测到电子书文件，将跳转到电子书导入流程`);
+        AppStorage.setOrCreate('pendingFileUri', uri);
+        AppStorage.setOrCreate('pendingFileType', mimeType);
+        AppStorage.setOrCreate('pendingFileCategory', 'ebook');
+        break;
+        
+      case EntryAbility.FILE_TYPE_PDF:
+        // PDF文件：跳转到文件导入页面（PDF导入流程）
+        logger.info('EntryAbility', `📄 检测到PDF文件，将跳转到PDF导入流程`);
+        AppStorage.setOrCreate('pendingFileUri', uri);
+        AppStorage.setOrCreate('pendingFileType', mimeType);
+        AppStorage.setOrCreate('pendingFileCategory', 'pdf');
+        break;
+        
+      case EntryAbility.FILE_TYPE_JSON:
+        // JSON文件：显示导入选项对话框（书源/图源/文件编辑器）
+        logger.info('EntryAbility', `📋 检测到JSON文件，将显示导入选项`);
+        AppStorage.setOrCreate('pendingJsonUri', uri);
+        AppStorage.setOrCreate('pendingFileCategory', 'json');
+        break;
+        
+      case EntryAbility.FILE_TYPE_FONT:
+        // 字体文件：导入为自定义字体
+        logger.info('EntryAbility', `🔤 检测到字体文件，将导入为自定义字体`);
+        AppStorage.setOrCreate('pendingFontUri', uri);
+        AppStorage.setOrCreate('pendingFileCategory', 'font');
+        break;
+        
+      case EntryAbility.FILE_TYPE_CODE:
+        // 代码文件：使用文件编辑器打开
+        const codeExt = this.getFileExtension(uri);
+        const codeLang = EntryAbility.CODE_EXTENSIONS.get(codeExt) || 'plaintext';
+        logger.info('EntryAbility', `💻 检测到代码文件，将使用文件编辑器打开，语言: ${codeLang}`);
+        AppStorage.setOrCreate('pendingCodeUri', uri);
+        AppStorage.setOrCreate('pendingCodeLanguage', codeLang);
+        AppStorage.setOrCreate('pendingFileCategory', 'code');
+        break;
+        
+      default:
+        // 未知类型：保存到通用文件URI
+        logger.info('EntryAbility', `❓ 未知文件类型，保存到通用文件URI`);
+        AppStorage.setOrCreate('pendingFileUri', uri);
+        AppStorage.setOrCreate('pendingFileType', mimeType);
+        AppStorage.setOrCreate('pendingFileCategory', 'unknown');
+        break;
+    }
+  }
+
   /**
    * 处理系统分享导入
    */
@@ -433,27 +610,18 @@ export default class EntryAbility extends UIAbility {
     // 检查是否通过文件打开应用
     if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用（onNewWant）: ${want.uri}`);
-      // 检查是否为AVIF文件
-      const lowerUri = want.uri.toLowerCase();
-      if (lowerUri.endsWith('.avif')) {
-        logger.info('EntryAbility', `🖼️ 检测到AVIF文件（onNewWant），将打开AVIF查看器`);
-        AppStorage.setOrCreate('pendingAvifUri', want.uri);
-      } else {
-        AppStorage.setOrCreate('pendingFileUri', want.uri);
-        AppStorage.setOrCreate('pendingFileType', want.type || '');
-      }
+      this.handleFileOpen(want.uri, want.type || '');
     } else if (want.parameters) {
       const uri = want.parameters['uri'] as string;
       const type = want.parameters['type'] as string;
-      if (uri) {
+      const fileUris = want.parameters['fileUris'] as string[];
+      
+      if (fileUris && fileUris.length > 0) {
+        logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${fileUris[0]}`);
+        this.handleFileOpen(fileUris[0], '');
+      } else if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${uri}`);
-        const lowerUri = uri.toLowerCase();
-        if (lowerUri.endsWith('.avif')) {
-          AppStorage.setOrCreate('pendingAvifUri', uri);
-        } else {
-          AppStorage.setOrCreate('pendingFileUri', uri);
-          AppStorage.setOrCreate('pendingFileType', type || '');
-        }
+        this.handleFileOpen(uri, type || '');
       }
     }
   }

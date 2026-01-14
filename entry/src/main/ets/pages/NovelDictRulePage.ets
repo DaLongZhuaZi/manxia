@@ -323,20 +323,40 @@ export struct NovelDictRulePage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
-        Column() {
-          // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
-          // 规则列表
-          if (this.isLoading) {
+        if (this.isLoading) {
+          Column() {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
             this.buildLoading()
-          } else if (this.rules.length === 0) {
-            this.buildEmpty()
-          } else {
-            this.buildRuleList()
           }
+          .width('100%')
+          .height('100%')
+        } else if (this.rules.length === 0) {
+          Column() {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            this.buildEmpty()
+          }
+          .width('100%')
+          .height('100%')
+        } else {
+          List() {
+            ListItem() {
+              Column().height(TITLE_BAR_HEIGHT_MINI)
+            }
+            ForEach(this.rules, (rule: DictRule) => {
+              ListItem() {
+                this.buildRuleItem(rule)
+              }
+              .swipeAction({
+                end: this.buildSwipeActions(rule)
+              })
+            })
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ top: 8 })
+          .edgeEffect(EdgeEffect.Spring)
+          .scrollBar(BarState.Auto)
         }
-        .width('100%')
-        .height('100%')
 
         // 添加/编辑对话框
         if (this.showAddDialog) {
@@ -458,7 +478,7 @@ export struct NovelDictRulePage {
     }
     .width('100%')
     .layoutWeight(1)
-    .padding({ top: 8 })
+    .padding({ left: 12, right: 12, top: 8 })
   }
 
   @Builder
@@ -503,7 +523,7 @@ export struct NovelDictRulePage {
     .width('100%')
     .padding({ left: 12, right: 16, top: 12, bottom: 12 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .margin({ left: 12, right: 12, bottom: 8 })
+    .margin({ bottom: 8 })
     .borderRadius(8)
     .onClick(() => {
       this.editRule(rule);

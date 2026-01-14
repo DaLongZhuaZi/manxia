@@ -149,6 +149,10 @@ export struct SourceDetailPage {
   @State selectedSearchType: string = 'search'; // 当前选中的搜索类型
   @State searchPlaceholder: string = '搜索漫画名称、粘贴URL、或输入 id:作品ID'; // 搜索框占位符
   @State sourceUserAgent: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'; // 图源UA配置
+  
+  // 横向滑动切换标签页相关状态
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
 
   private sourceId: number = 0;
   private sourceName: string = '';
@@ -1170,6 +1174,26 @@ export struct SourceDetailPage {
   }
 
   /**
+   * 切换到下一个标签页（支持循环）
+   */
+  private switchToNextTab(): void {
+    if (this.tabsConfig.length === 0) return;
+    const currentIndex = this.tabsConfig.findIndex(t => t.id === this.currentTabId);
+    const nextIndex = (currentIndex + 1) % this.tabsConfig.length;
+    this.switchToTab(this.tabsConfig[nextIndex].id);
+  }
+  
+  /**
+   * 切换到上一个标签页（支持循环）
+   */
+  private switchToPrevTab(): void {
+    if (this.tabsConfig.length === 0) return;
+    const currentIndex = this.tabsConfig.findIndex(t => t.id === this.currentTabId);
+    const prevIndex = (currentIndex - 1 + this.tabsConfig.length) % this.tabsConfig.length;
+    this.switchToTab(this.tabsConfig[prevIndex].id);
+  }
+
+  /**
    * 切换标签页
    */
   private async switchToTab(tabId: string): Promise<void> {
@@ -1390,7 +1414,7 @@ export struct SourceDetailPage {
         logger.info(TAG, `已设置showLoginDialog=true, 打开登录页面: ${this.loginUrl}`);
       } else {
         logger.warn(TAG, '图源未配置登录URL');
-        this.getUIContext().getPromptAction().showToast({ message: '该图源不支持登录' });
+        this.getUIContext().getPromptAction().showToast({ message: '该图源不支持独立登录模式' });
       }
     } catch (error) {
       logger.error(TAG, '获取登录URL失败', String(error));
@@ -2092,6 +2116,25 @@ export struct SourceDetailPage {
           }
           .width('100%')
           .layoutWeight(1) // 占据剩余垂直空间
+          .gesture(
+            PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+              .onActionStart((event: GestureEvent) => {
+                this.swipeStartX = event.offsetX;
+                this.swipeOffsetX = 0;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                this.swipeOffsetX = event.offsetX - this.swipeStartX;
+              })
+              .onActionEnd((event: GestureEvent) => {
+                const swipeThreshold = 80;
+                if (this.swipeOffsetX < -swipeThreshold) {
+                  this.switchToNextTab();
+                } else if (this.swipeOffsetX > swipeThreshold) {
+                  this.switchToPrevTab();
+                }
+                this.swipeOffsetX = 0;
+              })
+          )
         }
         .width('100%')
         .height('100%')

@@ -47,7 +47,7 @@ struct AboutPage {
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
 
-  @State private appName: string = '';
+  @State private appName: string = '漫匣';
   @State private appVersion: string = '';
   @State private buildNumber: string = '';
   private developer: string = 'DaLongZhuaZi';
@@ -185,7 +185,7 @@ struct AboutPage {
         .borderRadius(20)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
 
-      Text(this.appName)
+      Text('漫匣')
         .fontSize(28)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
@@ -246,7 +246,7 @@ struct AboutPage {
   @Builder
   buildAppInfo() {
     Column() {
-      this.buildInfoItem('应用名称', this.appName)
+      this.buildInfoItem('应用名称','漫匣')
       this.buildInfoItem('版本号', this.appVersion)
       this.buildInfoItem('构建号', this.buildNumber)
       this.buildInfoItem('开发者', this.developer, false)

@@ -2691,6 +2691,7 @@ export struct ThemeSettingsPage {
           .align(Alignment.TopStart) // 响应式：大屏居中对齐
           .layoutWeight(1)
           .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')

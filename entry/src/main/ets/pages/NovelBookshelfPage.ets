@@ -132,9 +132,29 @@ export struct NovelBookshelfPage {
   @State showSortPopup: boolean = false; // 排序popup显示状态
   @State viewMode: 'list' | 'grid' = 'list'; // 视图模式
   @State filterType: 'all' | 'unread' | 'reading' | 'finished' = 'all'; // 筛选类型
+  
+  // 横向滑动切换标签页相关状态
+  private readonly tabCount: number = 2;
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
+  
   private dataManager: NovelDataManager = getNovelDataManager();
   private settingsManager = getNovelSettingsManager();
   private browseHistoryListener: (() => void) | null = null;
+
+  /**
+   * 切换到下一个标签页（支持循环）
+   */
+  private switchToNextTab(): void {
+    this.currentTab = (this.currentTab + 1) % this.tabCount;
+  }
+  
+  /**
+   * 切换到上一个标签页（支持循环）
+   */
+  private switchToPrevTab(): void {
+    this.currentTab = (this.currentTab - 1 + this.tabCount) % this.tabCount;
+  }
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -855,11 +875,34 @@ export struct NovelBookshelfPage {
 
   @Builder
   buildContent() {
-    if (this.currentTab === 0) {
-      this.buildBookList(this.getFilteredBooks(), '暂无收藏的小说')
-    } else {
-      this.buildBrowseHistoryList()
+    Column() {
+      if (this.currentTab === 0) {
+        this.buildBookList(this.getFilteredBooks(), '暂无收藏的小说')
+      } else {
+        this.buildBrowseHistoryList()
+      }
     }
+    .width('100%')
+    .layoutWeight(1)
+    .gesture(
+      PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+        .onActionStart((event: GestureEvent) => {
+          this.swipeStartX = event.offsetX;
+          this.swipeOffsetX = 0;
+        })
+        .onActionUpdate((event: GestureEvent) => {
+          this.swipeOffsetX = event.offsetX - this.swipeStartX;
+        })
+        .onActionEnd((event: GestureEvent) => {
+          const swipeThreshold = 80;
+          if (this.swipeOffsetX < -swipeThreshold) {
+            this.switchToNextTab();
+          } else if (this.swipeOffsetX > swipeThreshold) {
+            this.switchToPrevTab();
+          }
+          this.swipeOffsetX = 0;
+        })
+    )
   }
 
   @Builder
@@ -921,6 +964,7 @@ export struct NovelBookshelfPage {
           }
           .width('100%')
           .layoutWeight(1)
+          .padding({ left: 16, right: 16 })
         }
         .width('100%')
       }
@@ -996,7 +1040,7 @@ export struct NovelBookshelfPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(AppColors.cornerRadius)
     .opacity(AppColors.getTransparency('card'))
-    .margin({ left: 16, right: 16, bottom: 8 })
+    .margin({ bottom: 8 })
     .onClick(() => this.openBrowseHistoryDetail(item))
   }
 
@@ -1088,7 +1132,7 @@ export struct NovelBookshelfPage {
             })
           }
           .width('100%')
-          .padding({ top: 8 })
+          .padding({ left: 16, right: 16, top: 8 })
         } else {
           // 网格视图
           Scroll() {
@@ -1347,7 +1391,7 @@ export struct NovelBookshelfPage {
       ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .borderRadius(AppColors.cornerRadius)
     .opacity(AppColors.getTransparency('card'))
-    .margin({ left: 12, right: 12, bottom: 8 })
+    .margin({ bottom: 8 })
     .onClick(() => {
       if (this.isEditMode) {
         this.toggleBookSelection(book.id);

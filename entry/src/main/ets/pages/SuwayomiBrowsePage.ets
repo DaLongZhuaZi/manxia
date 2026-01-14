@@ -14,6 +14,8 @@ import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSou
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
 import { SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaSortOption, MANGA_SORT_OPTIONS } from '../Framework/Source/SuwayomiSource';
 import { SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
+import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
+import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
 
 const TAG = 'SuwayomiBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -64,10 +66,21 @@ export struct SuwayomiBrowsePage {
   @State selectedSortIndex: number = 0;
   @State showSortMenu: boolean = false;
 
+  // 下拉刷新
+  @State isRefreshing: boolean = false;
+
+  // 缓存图片路径映射
+  @State coverCachePaths: Map<string, string> = new Map();
+  @State sourceIconCachePaths: Map<string, string> = new Map();
+
   // 图源管理
   @State pinnedSourceIds: string[] = [];
   @State selectedLanguage: string = 'all';
   @State availableLanguages: string[] = [];
+  
+  // 横向滑动切换分类相关状态
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
 
   private executor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly PREFS_NAME = 'suwayomi_browse_prefs';
@@ -92,9 +105,11 @@ export struct SuwayomiBrowsePage {
 
       // 加载分类
       await this.loadCategories();
-      // 默认选择第一个分类（如果有的话）
-      if (this.categories.length > 0) {
-        this.selectedCategoryId = this.categories[0].id;
+      // 如果没有保存的分类或保存的分类不存在，默认选择第一个分类
+      if (this.selectedCategoryId === -1 || !this.categories.find(c => c.id === this.selectedCategoryId)) {
+        if (this.categories.length > 0) {
+          this.selectedCategoryId = this.categories[0].id;
+        }
       }
       // 加载库中的漫画（分页）
       await this.loadLibraryPaginated(true);
@@ -112,7 +127,11 @@ export struct SuwayomiBrowsePage {
       const pinnedStr = store.getSync('pinnedSourceIds', '[]') as string;
       this.pinnedSourceIds = JSON.parse(pinnedStr) as string[];
       this.selectedLanguage = store.getSync('selectedLanguage', 'all') as string;
-      logger.info(TAG, `加载偏好设置: displayMode=${this.displayMode}, pinnedSources=${this.pinnedSourceIds.length}`);
+      // 加载排序设置
+      this.selectedSortIndex = store.getSync('selectedSortIndex', 0) as number;
+      // 加载选中的分类
+      this.selectedCategoryId = store.getSync('selectedCategoryId', -1) as number;
+      logger.info(TAG, `加载偏好设置: displayMode=${this.displayMode}, sortIndex=${this.selectedSortIndex}, categoryId=${this.selectedCategoryId}`);
     } catch (error) {
       logger.error(TAG, `加载偏好设置失败: ${error}`);
     }
@@ -124,6 +143,8 @@ export struct SuwayomiBrowsePage {
       store.putSync('displayMode', this.displayMode);
       store.putSync('pinnedSourceIds', JSON.stringify(this.pinnedSourceIds));
       store.putSync('selectedLanguage', this.selectedLanguage);
+      store.putSync('selectedSortIndex', this.selectedSortIndex);
+      store.putSync('selectedCategoryId', this.selectedCategoryId);
       await store.flush();
     } catch (error) {
       logger.error(TAG, `保存偏好设置失败: ${error}`);
@@ -137,6 +158,159 @@ export struct SuwayomiBrowsePage {
     } catch (error) {
       logger.error(TAG, `加载分类失败: ${error}`);
     }
+  }
+
+  /**
+   * 切换到下一个分类（支持循环）
+   */
+  private switchToNextCategory(): void {
+    if (this.categories.length === 0) return;
+    // 构建分类ID列表，包含"全部"(-1)
+    const categoryIds: number[] = [-1, ...this.categories.map(c => c.id)];
+    const currentIndex = categoryIds.indexOf(this.selectedCategoryId);
+    const nextIndex = (currentIndex + 1) % categoryIds.length;
+    this.selectedCategoryId = categoryIds[nextIndex];
+    this.savePreferences();
+    this.loadLibraryPaginated(true);
+  }
+  
+  /**
+   * 切换到上一个分类（支持循环）
+   */
+  private switchToPrevCategory(): void {
+    if (this.categories.length === 0) return;
+    // 构建分类ID列表，包含"全部"(-1)
+    const categoryIds: number[] = [-1, ...this.categories.map(c => c.id)];
+    const currentIndex = categoryIds.indexOf(this.selectedCategoryId);
+    const prevIndex = (currentIndex - 1 + categoryIds.length) % categoryIds.length;
+    this.selectedCategoryId = categoryIds[prevIndex];
+    this.savePreferences();
+    this.loadLibraryPaginated(true);
+  }
+
+  /**
+   * 下拉刷新库漫画（增量更新）
+   */
+  private async refreshLibrary(): Promise<void> {
+    if (this.isRefreshing || this.isLoading) {
+      return;
+    }
+    this.isRefreshing = true;
+    this.errorMessage = '';
+    try {
+      // 重新加载分类（可能有新分类）
+      await this.loadCategories();
+      // 重新加载当前分类的漫画
+      await this.loadLibraryPaginated(true);
+      this.showToast('刷新成功');
+    } catch (error) {
+      logger.error(TAG, `刷新失败: ${error}`);
+      this.errorMessage = `刷新失败: ${error}`;
+    }
+    this.isRefreshing = false;
+  }
+
+  /**
+   * 下拉刷新图源列表
+   */
+  private async refreshSources(): Promise<void> {
+    if (this.isRefreshing || this.isLoading) {
+      return;
+    }
+    this.isRefreshing = true;
+    this.errorMessage = '';
+    try {
+      this.sources = await this.executor.getAvailableSources();
+      this.extractAvailableLanguages();
+      // 预加载图源图标缓存
+      this.cacheSourceIcons();
+      this.showToast('刷新成功');
+    } catch (error) {
+      logger.error(TAG, `刷新图源失败: ${error}`);
+      this.errorMessage = `刷新失败: ${error}`;
+    }
+    this.isRefreshing = false;
+  }
+
+  /**
+   * 缓存漫画封面图片
+   */
+  private async cacheMangaCovers(): Promise<void> {
+    if (!DownloadDirManager.isReady()) {
+      return;
+    }
+    const headers = this.executor.getImageHeaders();
+    for (const manga of this.mangas) {
+      if (manga.coverUrl && !this.coverCachePaths.has(manga.id)) {
+        // 检查是否已缓存
+        const cachedPath = SuwayomiCacheManager.getCachedCoverPath(manga.id, manga.coverUrl);
+        if (cachedPath) {
+          this.coverCachePaths.set(manga.id, cachedPath);
+        } else {
+          // 异步缓存
+          SuwayomiCacheManager.cacheCover(manga.id, manga.coverUrl, headers).then((path) => {
+            if (path) {
+              this.coverCachePaths.set(manga.id, path);
+              this.coverCachePaths = new Map(this.coverCachePaths); // 触发UI更新
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * 缓存图源图标
+   */
+  private async cacheSourceIcons(): Promise<void> {
+    if (!DownloadDirManager.isReady()) {
+      return;
+    }
+    const serverUrl = this.executor.getServerUrl();
+    const headers = this.executor.getImageHeaders();
+    for (const source of this.sources) {
+      if (source.iconUrl && !this.sourceIconCachePaths.has(source.id)) {
+        const fullIconUrl = `${serverUrl}${source.iconUrl}`;
+        // 检查是否已缓存
+        const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
+        if (cachedPath) {
+          this.sourceIconCachePaths.set(source.id, cachedPath);
+        } else {
+          // 异步缓存
+          SuwayomiCacheManager.cacheSourceIcon(source.id, fullIconUrl, headers).then((path) => {
+            if (path) {
+              this.sourceIconCachePaths.set(source.id, path);
+              this.sourceIconCachePaths = new Map(this.sourceIconCachePaths); // 触发UI更新
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * 获取漫画封面显示路径（优先使用缓存）
+   */
+  private getMangaCoverUrl(manga: ComicInfo): string {
+    const cachedPath = this.coverCachePaths.get(manga.id);
+    if (cachedPath) {
+      return `file://${cachedPath}`;
+    }
+    return manga.coverUrl || '';
+  }
+
+  /**
+   * 获取图源图标显示路径（优先使用缓存）
+   */
+  private getSourceIconUrl(source: SuwayomiExtensionSource): string {
+    const cachedPath = this.sourceIconCachePaths.get(source.id);
+    if (cachedPath) {
+      return `file://${cachedPath}`;
+    }
+    if (source.iconUrl) {
+      return `${this.executor.getServerUrl()}${source.iconUrl}`;
+    }
+    return '';
   }
 
   private async loadLibraryPaginated(reset: boolean = false): Promise<void> {
@@ -174,6 +348,8 @@ export struct SuwayomiBrowsePage {
       this.currentOffset += result.items.length;
 
       logger.info(TAG, `加载库漫画: ${this.mangas.length}/${this.totalCount} 本`);
+      // 缓存封面图片
+      this.cacheMangaCovers();
     } catch (error) {
       logger.error(TAG, `加载库失败: ${error}`);
       this.errorMessage = `加载失败: ${error}`;
@@ -190,6 +366,8 @@ export struct SuwayomiBrowsePage {
       this.sources = await this.executor.getAvailableSources();
       // 提取可用语言
       this.extractAvailableLanguages();
+      // 缓存图源图标
+      this.cacheSourceIcons();
       logger.info(TAG, `加载源: ${this.sources.length} 个, 语言: ${this.availableLanguages.length} 种`);
     } catch (error) {
       logger.error(TAG, `加载源失败: ${error}`);
@@ -311,7 +489,7 @@ export struct SuwayomiBrowsePage {
   buildSourceItem(source: SuwayomiExtensionSource) {
     Row({ space: 12 }) {
       if (source.iconUrl) {
-        Image(`${this.executor.getServerUrl()}${source.iconUrl}`)
+        Image(this.getSourceIconUrl(source))
           .width(40)
           .height(40)
           .borderRadius(8)
@@ -390,7 +568,7 @@ export struct SuwayomiBrowsePage {
     Column({ space: 8 }) {
       Stack() {
         if (source.iconUrl) {
-          Image(`${this.executor.getServerUrl()}${source.iconUrl}`)
+          Image(this.getSourceIconUrl(source))
             .width(60)
             .height(60)
             .borderRadius(12)
@@ -452,7 +630,7 @@ export struct SuwayomiBrowsePage {
   buildMangaItem(manga: ComicInfo) {
     Row({ space: 12 }) {
       if (manga.coverUrl) {
-        Image(manga.coverUrl)
+        Image(this.getMangaCoverUrl(manga))
           .width(60)
           .height(80)
           .borderRadius(8)
@@ -513,7 +691,7 @@ export struct SuwayomiBrowsePage {
   buildMangaGridItem(manga: ComicInfo) {
     Column({ space: 6 }) {
       if (manga.coverUrl) {
-        Image(manga.coverUrl)
+        Image(this.getMangaCoverUrl(manga))
           .width('100%')
           .aspectRatio(0.7)
           .borderRadius(8)
@@ -739,6 +917,7 @@ export struct SuwayomiBrowsePage {
           .onClick(() => {
             if (this.selectedSortIndex !== index) {
               this.selectedSortIndex = index;
+              this.savePreferences();
               this.loadLibraryPaginated(true);
             }
           })
@@ -763,6 +942,7 @@ export struct SuwayomiBrowsePage {
             .borderRadius(16)
             .onClick(() => {
               this.selectedCategoryId = -1;
+              this.savePreferences();
               this.loadLibraryPaginated(true);
             })
             .fontFamily(this.appFontFamily)
@@ -780,6 +960,7 @@ export struct SuwayomiBrowsePage {
               .borderRadius(16)
               .onClick(() => {
                 this.selectedCategoryId = category.id;
+                this.savePreferences();
                 this.loadLibraryPaginated(true);
               })
               .fontFamily(this.appFontFamily)
@@ -882,39 +1063,53 @@ export struct SuwayomiBrowsePage {
               .justifyContent(FlexAlign.Center)
             } else if (this.displayMode === 'grid') {
               // Grid模式
-              Scroll() {
-                Column() {
-                  Grid() {
-                    ForEach(this.getFilteredSources(), (source: SuwayomiExtensionSource) => {
-                      GridItem() {
-                        this.buildSourceGridItem(source)
-                      }
-                    })
-                  }
-                  .columnsTemplate('1fr 1fr 1fr 1fr')
-                  .columnsGap(8)
-                  .rowsGap(8)
-                  .width('100%')
+              Refresh({ refreshing: this.isRefreshing }) {
+                Scroll() {
+                  Column() {
+                    Grid() {
+                      ForEach(this.getFilteredSources(), (source: SuwayomiExtensionSource) => {
+                        GridItem() {
+                          this.buildSourceGridItem(source)
+                        }
+                      })
+                    }
+                    .columnsTemplate('1fr 1fr 1fr 1fr')
+                    .columnsGap(8)
+                    .rowsGap(8)
+                    .width('100%')
 
-                  Blank().height(80)
+                    Blank().height(80)
+                  }
+                  .width('100%')
+                  .padding(16)
                 }
                 .width('100%')
-                .padding(16)
+                .height('100%')
               }
+              .onRefreshing(() => {
+                this.refreshSources();
+              })
               .width('100%')
               .layoutWeight(1)
             } else {
               // List模式
-              Scroll() {
-                Column({ space: 8 }) {
-                  ForEach(this.getFilteredSources(), (source: SuwayomiExtensionSource) => {
-                    this.buildSourceItem(source)
-                  })
-                  Blank().height(80)
+              Refresh({ refreshing: this.isRefreshing }) {
+                Scroll() {
+                  Column({ space: 8 }) {
+                    ForEach(this.getFilteredSources(), (source: SuwayomiExtensionSource) => {
+                      this.buildSourceItem(source)
+                    })
+                    Blank().height(80)
+                  }
+                  .width('100%')
+                  .padding(16)
                 }
                 .width('100%')
-                .padding(16)
+                .height('100%')
               }
+              .onRefreshing(() => {
+                this.refreshSources();
+              })
               .width('100%')
               .layoutWeight(1)
             }
@@ -932,71 +1127,123 @@ export struct SuwayomiBrowsePage {
               .justifyContent(FlexAlign.Center)
             } else if (this.displayMode === 'grid') {
               // Grid模式
-              Scroll() {
-                Column() {
-                  Grid() {
-                    ForEach(this.mangas, (manga: ComicInfo) => {
-                      GridItem() {
-                        this.buildMangaGridItem(manga)
-                      }
-                    })
-                  }
-                  .columnsTemplate('1fr 1fr 1fr')
-                  .columnsGap(8)
-                  .rowsGap(8)
-                  .width('100%')
-
-                  // 加载更多按钮
-                  if (this.hasMore) {
-                    Button(this.isLoadingMore ? '加载中...' : '加载更多')
-                      .width('100%')
-                      .height(44)
-                      .margin({ top: 16 })
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                      .enabled(!this.isLoadingMore)
-                      .onClick(() => {
-                        this.loadLibraryPaginated(false);
+              Refresh({ refreshing: this.isRefreshing }) {
+                Scroll() {
+                  Column() {
+                    Grid() {
+                      ForEach(this.mangas, (manga: ComicInfo) => {
+                        GridItem() {
+                          this.buildMangaGridItem(manga)
+                        }
                       })
-                      .fontFamily(this.appFontFamily)
-                  }
+                    }
+                    .columnsTemplate('1fr 1fr 1fr')
+                    .columnsGap(8)
+                    .rowsGap(8)
+                    .width('100%')
 
-                  Blank().height(80)
+                    // 加载更多按钮
+                    if (this.hasMore) {
+                      Button(this.isLoadingMore ? '加载中...' : '加载更多')
+                        .width('100%')
+                        .height(44)
+                        .margin({ top: 16 })
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                        .enabled(!this.isLoadingMore)
+                        .onClick(() => {
+                          this.loadLibraryPaginated(false);
+                        })
+                        .fontFamily(this.appFontFamily)
+                    }
+
+                    Blank().height(80)
+                  }
+                  .width('100%')
+                  .padding(16)
                 }
                 .width('100%')
-                .padding(16)
+                .height('100%')
               }
+              .onRefreshing(() => {
+                this.refreshLibrary();
+              })
               .width('100%')
               .layoutWeight(1)
+              .gesture(
+                PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+                  .onActionStart((event: GestureEvent) => {
+                    this.swipeStartX = event.offsetX;
+                    this.swipeOffsetX = 0;
+                  })
+                  .onActionUpdate((event: GestureEvent) => {
+                    this.swipeOffsetX = event.offsetX - this.swipeStartX;
+                  })
+                  .onActionEnd((event: GestureEvent) => {
+                    const swipeThreshold = 80;
+                    if (this.swipeOffsetX < -swipeThreshold) {
+                      this.switchToNextCategory();
+                    } else if (this.swipeOffsetX > swipeThreshold) {
+                      this.switchToPrevCategory();
+                    }
+                    this.swipeOffsetX = 0;
+                  })
+              )
             } else {
               // List模式
-              Scroll() {
-                Column({ space: 8 }) {
-                  ForEach(this.mangas, (manga: ComicInfo) => {
-                    this.buildMangaItem(manga)
-                  })
+              Refresh({ refreshing: this.isRefreshing }) {
+                Scroll() {
+                  Column({ space: 8 }) {
+                    ForEach(this.mangas, (manga: ComicInfo) => {
+                      this.buildMangaItem(manga)
+                    })
 
-                  // 加载更多按钮
-                  if (this.hasMore) {
-                    Button(this.isLoadingMore ? '加载中...' : '加载更多')
-                      .width('100%')
-                      .height(44)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                      .enabled(!this.isLoadingMore)
-                      .onClick(() => {
-                        this.loadLibraryPaginated(false);
-                      })
-                      .fontFamily(this.appFontFamily)
+                    // 加载更多按钮
+                    if (this.hasMore) {
+                      Button(this.isLoadingMore ? '加载中...' : '加载更多')
+                        .width('100%')
+                        .height(44)
+                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                        .enabled(!this.isLoadingMore)
+                        .onClick(() => {
+                          this.loadLibraryPaginated(false);
+                        })
+                        .fontFamily(this.appFontFamily)
+                    }
+
+                    Blank().height(80)
                   }
-
-                  Blank().height(80)
+                  .width('100%')
+                  .padding(16)
                 }
                 .width('100%')
-                .padding(16)
+                .height('100%')
               }
+              .onRefreshing(() => {
+                this.refreshLibrary();
+              })
               .width('100%')
               .layoutWeight(1)
+              .gesture(
+                PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+                  .onActionStart((event: GestureEvent) => {
+                    this.swipeStartX = event.offsetX;
+                    this.swipeOffsetX = 0;
+                  })
+                  .onActionUpdate((event: GestureEvent) => {
+                    this.swipeOffsetX = event.offsetX - this.swipeStartX;
+                  })
+                  .onActionEnd((event: GestureEvent) => {
+                    const swipeThreshold = 80;
+                    if (this.swipeOffsetX < -swipeThreshold) {
+                      this.switchToNextCategory();
+                    } else if (this.swipeOffsetX > swipeThreshold) {
+                      this.switchToPrevCategory();
+                    }
+                    this.swipeOffsetX = 0;
+                  })
+              )
             }
           }
 

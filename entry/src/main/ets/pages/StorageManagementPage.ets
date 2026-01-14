@@ -58,6 +58,7 @@ export struct StorageManagementPage {
   @Local isLoading: boolean = true;
   @Local statistics: StorageStatistics | null = null;
   @Local selectedItems: Set<StorageType> = new Set();
+  @Local selectedCount: number = 0; // 用于触发UI更新
   @Local isClearing: boolean = false;
   @Local cacheDetails: CacheDetailInfo | null = null;
   @Local showCacheDetails: boolean = false;
@@ -241,20 +242,35 @@ export struct StorageManagementPage {
 
   /**
    * 显示清理确认对话框
+   * 显示即将清理的详细文件夹路径
    */
   private showClearConfirmDialog(): void {
     if (this.selectedItems.size === 0) {
       return;
     }
 
-    const itemNames = Array.from(this.selectedItems).map(type => {
+    // 构建详细的清理信息，包含文件夹路径
+    const detailLines: string[] = [];
+    let totalSize = 0;
+    let totalFiles = 0;
+
+    Array.from(this.selectedItems).forEach(type => {
       const item = this.statistics?.items.find(i => i.type === type);
-      return item ? item.name : type;
-    }).join('、');
+      if (item) {
+        const sizeFmt = this.storageAnalyzer.formatSize(item.size);
+        const pathInfo = item.path ? `\n   路径: ${item.path}` : '';
+        detailLines.push(`• ${item.name}\n   大小: ${sizeFmt}, ${item.fileCount} 个文件${pathInfo}`);
+        totalSize += item.size;
+        totalFiles += item.fileCount;
+      }
+    });
+
+    const totalSizeFmt = this.storageAnalyzer.formatSize(totalSize);
+    const summary = `\n\n【总计】${totalSizeFmt}, ${totalFiles} 个文件`;
 
     AlertDialog.show({
       title: '确认清理',
-      message: `确定要清理以下项目吗？\n\n${itemNames}\n\n此操作不可撤销！`,
+      message: `确定要清理以下项目吗？\n\n${detailLines.join('\n\n')}${summary}\n\n⚠️ 此操作不可撤销！`,
       autoCancel: true,
       alignment: DialogAlignment.Center,
       primaryButton: {
@@ -295,6 +311,7 @@ export struct StorageManagementPage {
           message: `清理完成: ${this.storageAnalyzer.formatSize(result.clearedSize)}`
         });
         this.selectedItems.clear();
+        this.selectedCount = 0;
         await this.loadStorageStatistics();
       } else {
         this.getUIContext().getPromptAction().showToast({ message: `清理失败: ${result.errors.join(', ')}` });
@@ -305,6 +322,15 @@ export struct StorageManagementPage {
     } finally {
       this.isClearing = false;
     }
+  }
+
+  /**
+   * 检查项目是否被选中（使用selectedCount触发UI更新）
+   */
+  private isItemSelected(type: StorageType): boolean {
+    // 引用selectedCount确保UI更新
+    const _ = this.selectedCount;
+    return this.selectedItems.has(type);
   }
 
   /**
@@ -321,6 +347,8 @@ export struct StorageManagementPage {
     } else {
       this.selectedItems.add(type);
     }
+    // 更新计数以触发UI刷新
+    this.selectedCount = this.selectedItems.size;
   }
 
   /**
@@ -380,15 +408,17 @@ export struct StorageManagementPage {
   @Builder
   buildStorageItemCard(item: StorageItem) {
     Row({ space: 12 }) {
-      // 选择框
-      Checkbox()
-        .select(this.selectedItems.has(item.type))
-        .enabled(item.canClear)
-        .onChange((value: boolean) => {
-          this.toggleSelection(item.type, item.canClear);
+      // 选择图标 - 使用SymbolGlyph组件显示Symbol图标
+      SymbolGlyph(this.isItemSelected(item.type) ? $r('sys.symbol.checkmark_square_fill') : $r('sys.symbol.square'))
+        .fontSize(24)
+        .fontColor([item.canClear 
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        .onClick(() => {
+          if (item.canClear) {
+            this.toggleSelection(item.type, item.canClear);
+          }
         })
-        .width(24)
-        .height(24)
 
       // 信息区域
       Column({ space: 4 }) {
@@ -420,8 +450,18 @@ export struct StorageManagementPage {
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(1)
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        // 显示文件夹路径（如果有）
+        if (item.path && item.path.length > 0) {
+          Text(`📁 ${item.path}`)
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
 
         Row({ space: 8 }) {
           Text(this.storageAnalyzer.formatSize(item.size))
@@ -469,22 +509,27 @@ export struct StorageManagementPage {
           this.refreshStatistics();
         })
 
-      Button(`清理选中 (${this.selectedItems.size})`)
+      Button(`清理选中 (${this.selectedCount})`)
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor(Color.White)
-        .backgroundColor(this.selectedItems.size > 0
+        .backgroundColor(this.selectedCount > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
         .borderRadius(8)
         .layoutWeight(1)
-        .enabled(this.selectedItems.size > 0 && !this.isClearing)
+        .enabled(this.selectedCount > 0 && !this.isClearing)
         .onClick(() => {
           this.showClearConfirmDialog();
         })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, bottom: 16 })
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
+      ? 'rgba(30, 30, 30, 0.85)' 
+      : 'rgba(245, 245, 245, 0.85)')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 
   build() {

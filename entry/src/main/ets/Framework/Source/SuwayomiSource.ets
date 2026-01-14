@@ -790,6 +790,8 @@ export class SuwayomiSource {
               isRead
               isDownloaded
               uploadDate
+              pageCount
+              lastPageRead
             }
           }
         }
@@ -813,6 +815,8 @@ export class SuwayomiSource {
       // 使用 extra 字段存储额外信息
       (chapterInfo as ESObject)['isRead'] = ch.isRead;
       (chapterInfo as ESObject)['isDownloaded'] = ch.isDownloaded;
+      (chapterInfo as ESObject)['pageCount'] = ch.pageCount || 0;
+      (chapterInfo as ESObject)['lastPageRead'] = ch.lastPageRead || 0;
       return chapterInfo;
     }) : [];
 

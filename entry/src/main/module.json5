@@ -57,12 +57,12 @@
             "uris": [
               {
                 "scheme": "file",
-                "type": "application/cbz",
+                "type": "application/x-cbz",
                 "linkFeature": "FileOpen"
               },
               {
                 "scheme": "file",
-                "type": "application/cbr",
+                "type": "application/x-cbr",
                 "linkFeature": "FileOpen"
               },
               {
@@ -72,7 +72,12 @@
               },
               {
                 "scheme": "file",
-                "type": "application/rar-compressed",
+                "type": "application/x-7z-compressed",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/x-rar-compressed",
                 "linkFeature": "FileOpen"
               },
               {
@@ -117,12 +122,12 @@
               },
               {
                 "scheme": "file",
-                "type": "application/mxbackup",
+                "type": "application/octet-stream",
                 "linkFeature": "FileOpen"
               },
               {
                 "scheme": "file",
-                "type": "application/mxbak",
+                "type": "application/x-mxbak",
                 "linkFeature": "FileOpen"
               }
             ]
@@ -139,6 +144,21 @@
                 "scheme": "manxia",
                 "host": "open",
                 "path": ""
+              }
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "type": "*/*",
+                "pathRegex": ".*\\.(7z|rar|mxbak|mxbackup|cbz|cbr)$"
               }
             ]
           }
@@ -180,12 +200,32 @@
               },
               {
                 "scheme": "file",
+                "utd": "general.file",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
                 "utd": "general.archive",
                 "maxFileSupported": 10
               },
               {
                 "scheme": "file",
                 "utd": "general.pdf",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.zip",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.7z",
+                "maxFileSupported": 10
+              },
+              {
+                "scheme": "file",
+                "utd": "general.rar",
                 "maxFileSupported": 10
               },
               {
@@ -204,7 +244,27 @@
                 "maxFileSupported": 100
               },
               {
+                "scheme": "file",
+                "type": "application/octet-stream",
+                "maxFileSupported": 100
+              },
+              {
                 "scheme": "content"
+              }
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "type": "*/*",
+                "pathRegex": ".*\\.(7z|rar|mxbak|mxbackup|cbz|cbr)$"
               }
             ]
           }

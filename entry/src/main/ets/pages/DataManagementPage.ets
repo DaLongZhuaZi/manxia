@@ -740,6 +740,13 @@ struct DataManagementPage {
   @State private primaryTab: 'file_select' | 'download_sync' = 'file_select';  // 一级标签
   @State private secondaryTab: 'manga' | 'ebook' | 'pdf' = 'manga';  // 二级标签（选择文件导入）
   @State private syncSecondaryTab: 'folder_status' | 'imported_content' = 'folder_status';  // 二级标签（Download同步）
+  
+  // 横向滑动切换标签页相关状态
+  private readonly primaryTabOrder: ('file_select' | 'download_sync')[] = ['file_select', 'download_sync'];
+  private readonly secondaryTabOrder: ('manga' | 'ebook' | 'pdf')[] = ['manga', 'ebook', 'pdf'];
+  private readonly syncSecondaryTabOrder: ('folder_status' | 'imported_content')[] = ['folder_status', 'imported_content'];
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
 
   // 应用专属文件夹名称
   private static readonly APP_FOLDER_NAME: string = '漫匣';
@@ -1950,8 +1957,55 @@ struct DataManagementPage {
       .map(tag => tag.trim())
       .filter(tag => tag.length > 0);
     
-    // 如果没有找到分隔符，返回原字符串作为单个标签
-    return tags.length > 0 ? tags : [trimmedGenre];
+    return tags;
+  }
+
+  /**
+   * 切换到下一个一级标签页（支持循环）
+   */
+  private switchToNextPrimaryTab(): void {
+    const currentIndex = this.primaryTabOrder.indexOf(this.primaryTab);
+    const nextIndex = (currentIndex + 1) % this.primaryTabOrder.length;
+    this.primaryTab = this.primaryTabOrder[nextIndex];
+  }
+  
+  /**
+   * 切换到上一个一级标签页（支持循环）
+   */
+  private switchToPrevPrimaryTab(): void {
+    const currentIndex = this.primaryTabOrder.indexOf(this.primaryTab);
+    const prevIndex = (currentIndex - 1 + this.primaryTabOrder.length) % this.primaryTabOrder.length;
+    this.primaryTab = this.primaryTabOrder[prevIndex];
+  }
+  
+  /**
+   * 切换到下一个二级标签页（支持循环）
+   */
+  private switchToNextSecondaryTab(): void {
+    if (this.primaryTab === 'file_select') {
+      const currentIndex = this.secondaryTabOrder.indexOf(this.secondaryTab);
+      const nextIndex = (currentIndex + 1) % this.secondaryTabOrder.length;
+      this.secondaryTab = this.secondaryTabOrder[nextIndex];
+    } else {
+      const currentIndex = this.syncSecondaryTabOrder.indexOf(this.syncSecondaryTab);
+      const nextIndex = (currentIndex + 1) % this.syncSecondaryTabOrder.length;
+      this.syncSecondaryTab = this.syncSecondaryTabOrder[nextIndex];
+    }
+  }
+  
+  /**
+   * 切换到上一个二级标签页（支持循环）
+   */
+  private switchToPrevSecondaryTab(): void {
+    if (this.primaryTab === 'file_select') {
+      const currentIndex = this.secondaryTabOrder.indexOf(this.secondaryTab);
+      const prevIndex = (currentIndex - 1 + this.secondaryTabOrder.length) % this.secondaryTabOrder.length;
+      this.secondaryTab = this.secondaryTabOrder[prevIndex];
+    } else {
+      const currentIndex = this.syncSecondaryTabOrder.indexOf(this.syncSecondaryTab);
+      const prevIndex = (currentIndex - 1 + this.syncSecondaryTabOrder.length) % this.syncSecondaryTabOrder.length;
+      this.syncSecondaryTab = this.syncSecondaryTabOrder[prevIndex];
+    }
   }
 
   /**
@@ -1962,9 +2016,13 @@ struct DataManagementPage {
     this.uiContext = this.getUIContext();
     
     // 使用ThemeAwareHelper统一管理主题
-    ThemeAwareHelper.initializeThemeAware(TAG, this.themeState, (theme: ThemeType) => {
-      logger.info(TAG, `主题已切换: ${theme}`);
-    });
+    ThemeAwareHelper.initializeThemeAware(
+      this.componentId,
+      this.themeState,
+      (theme: ThemeType) => {
+        logger.info(TAG, `主题已切换: ${theme}`);
+      }
+    );
     FontAwareHelper.initializeFontAware(
       TAG,
       this.fontState,
@@ -2008,22 +2066,57 @@ struct DataManagementPage {
         // 获取文件信息
         const pendingFileUri = AppStorage.get<string>('pendingFileUri');
         const pendingFileType = AppStorage.get<string>('pendingFileType');
+        const pendingFileCategory = AppStorage.get<string>('pendingFileCategory');
         
         if (pendingFileUri) {
-          logger.info(TAG, `准备处理文件: ${pendingFileUri}`);
+          logger.info(TAG, `准备处理文件: ${pendingFileUri}, 分类: ${pendingFileCategory}`);
           
           // 清除文件信息
           AppStorage.delete('pendingFileUri');
           AppStorage.delete('pendingFileType');
+          AppStorage.delete('pendingFileCategory');
           
           // 延迟处理，确保UI完全渲染
           setTimeout(() => {
-            this.handlePendingFile(pendingFileUri, pendingFileType || '');
+            this.handlePendingFileWithCategory(pendingFileUri, pendingFileType || '', pendingFileCategory || '');
           }, 800);
         }
       }
     } catch (error) {
       logger.error(TAG, '检查待导入文件失败', String(error));
+    }
+  }
+
+  /**
+   * 根据文件分类处理待导入的文件
+   */
+  private async handlePendingFileWithCategory(fileUri: string, fileType: string, category: string): Promise<void> {
+    try {
+      logger.info(TAG, `根据分类处理文件: ${fileUri}, 分类: ${category}`);
+      
+      switch (category) {
+        case 'comic':
+          // 漫画文件（cbz, cbr）
+          await this.handleExternalComicImport(fileUri);
+          break;
+          
+        case 'ebook':
+          // 电子书文件（epub, mobi, azw3）
+          await this.handleExternalEBookImport(fileUri);
+          break;
+          
+        case 'pdf':
+          // PDF文件
+          await this.handlePdfImportWithCategorySelection(fileUri);
+          break;
+          
+        default:
+          // 未知分类，使用原有逻辑根据扩展名判断
+          await this.handlePendingFile(fileUri, fileType);
+          break;
+      }
+    } catch (error) {
+      logger.error(TAG, '根据分类处理文件失败', String(error));
     }
   }
 
@@ -7667,6 +7760,25 @@ struct DataManagementPage {
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
+          .gesture(
+            PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+              .onActionStart((event: GestureEvent) => {
+                this.swipeStartX = event.offsetX;
+                this.swipeOffsetX = 0;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                this.swipeOffsetX = event.offsetX - this.swipeStartX;
+              })
+              .onActionEnd((event: GestureEvent) => {
+                const swipeThreshold = 80;
+                if (this.swipeOffsetX < -swipeThreshold) {
+                  this.switchToNextSecondaryTab();
+                } else if (this.swipeOffsetX > swipeThreshold) {
+                  this.switchToPrevSecondaryTab();
+                }
+                this.swipeOffsetX = 0;
+              })
+          )
         }
         .width('100%')
         .height('100%')

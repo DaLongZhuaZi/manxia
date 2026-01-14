@@ -931,7 +931,9 @@ export struct NovelSourceManagementPage {
     }
     .width('100%')
     .layoutWeight(1)
-    .padding({ top: 8 })
+    .padding({ left: 12, right: 12, top: 8 })
+    .edgeEffect(EdgeEffect.Spring)
+    .scrollBar(BarState.Auto)
     .onScrollIndex((start: number, end: number) => {
       // 检查是否需要预加载
       this.checkPreload(end);
@@ -1031,7 +1033,7 @@ export struct NovelSourceManagementPage {
     .width('100%')
     .padding({ left: 12, right: 16, top: 12, bottom: 12 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .margin({ left: 12, right: 12, bottom: 8 })
+    .margin({ bottom: 8 })
     .borderRadius(8)
     .onClick(() => {
       if (this.isMultiSelectMode) {
