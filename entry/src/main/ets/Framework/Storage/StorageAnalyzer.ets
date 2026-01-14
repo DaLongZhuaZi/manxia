@@ -5,13 +5,14 @@
  */
 
 import { fileIo, storageStatistics } from '@kit.CoreFileKit';
+import fs from '@ohos.file.fs';
 import { logger } from '../../Utils/Logger';
 import { SandboxManager } from './SandboxManager';
 import { ImageCacheManager } from '../Cache/ImageCacheManager';
-import { WebViewDataCacheManager } from '../Cache/WebViewDataCacheManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
 import { uiContextManager } from '../Managers/UIContextManager';
 import { BusinessError } from '@kit.BasicServicesKit';
+import DownloadDirManager from './DownloadDirManager';
 
 const TAG = 'StorageAnalyzer';
 
@@ -19,18 +20,23 @@ const TAG = 'StorageAnalyzer';
  * 存储项类型
  */
 export enum StorageType {
+  // === 应用沙箱目录 (context.filesDir) ===
   IMAGE_CACHE = 'IMAGE_CACHE',           // 图片内存缓存
-  WEBVIEW_CACHE = 'WEBVIEW_CACHE',       // WebView缓存
-  DATABASE = 'DATABASE',                  // 数据库
-  COMIC_FILES = 'COMIC_FILES',           // 漫画文件
-  COVER_FILES = 'COVER_FILES',           // 封面文件
-  CHAPTER_FILES = 'CHAPTER_FILES',       // 章节文件
-  TEMP_FILES = 'TEMP_FILES',             // 临时文件
-  PLUGIN_FILES = 'PLUGIN_FILES',         // 插件文件
-  PERMANENT_CACHE = 'PERMANENT_CACHE',   // 永久图片缓存
-  TEMP_IMAGE_CACHE = 'TEMP_IMAGE_CACHE', // 临时图片缓存
-  EBOOK_FILES = 'EBOOK_FILES',           // 电子书文件
-  SYSTEM_CACHE = 'SYSTEM_CACHE'          // 系统缓存目录
+  DATABASE = 'DATABASE',                  // 数据库 (context.databaseDir)
+  COMIC_FILES = 'COMIC_FILES',           // 本地漫画文件 (filesDir/comics)
+  COVER_FILES = 'COVER_FILES',           // 封面文件 (filesDir/covers)
+  CHAPTER_FILES = 'CHAPTER_FILES',       // 章节文件 (filesDir/chapters)
+  TEMP_FILES = 'TEMP_FILES',             // 临时文件 (filesDir/temp)
+  PLUGIN_FILES = 'PLUGIN_FILES',         // 插件文件 (filesDir/plugins)
+  PERMANENT_CACHE = 'PERMANENT_CACHE',   // 永久图片缓存 (filesDir/permanent_cache)
+  EBOOK_FILES = 'EBOOK_FILES',           // 电子书文件 (filesDir/ebooks)
+  SYSTEM_CACHE = 'SYSTEM_CACHE',         // 系统缓存目录 (context.cacheDir)
+  
+  // === Download文件夹目录 (/Download/com.dlzz.manxia/) ===
+  SUWAYOMI_COVERS = 'SUWAYOMI_COVERS',           // Suwayomi封面缓存 (suwayomi/covers)
+  SUWAYOMI_SOURCE_ICONS = 'SUWAYOMI_SOURCE_ICONS', // Suwayomi图源图标 (suwayomi/source_icons)
+  SUWAYOMI_CHAPTERS = 'SUWAYOMI_CHAPTERS',       // Suwayomi章节页面 (suwayomi/chapters)
+  DOWNLOAD_MANGA = 'DOWNLOAD_MANGA'              // 下载的漫画 (manga/)
 }
 
 /**
@@ -100,7 +106,6 @@ export class StorageAnalyzer {
   private static instance: StorageAnalyzer | null = null;
   private sandboxManager: SandboxManager;
   private imageCacheManager: ImageCacheManager;
-  private webViewCacheManager: WebViewDataCacheManager;
   private databaseManager: DatabaseManager;
   private cachedStatistics: StorageStatistics | null = null;
   private lastAnalysisTime: number = 0;
@@ -109,7 +114,6 @@ export class StorageAnalyzer {
   private constructor() {
     this.sandboxManager = SandboxManager.getInstance();
     this.imageCacheManager = ImageCacheManager.getInstance();
-    this.webViewCacheManager = WebViewDataCacheManager.getInstance();
     this.databaseManager = DatabaseManager.getInstance();
   }
 
@@ -140,15 +144,13 @@ export class StorageAnalyzer {
       
       const items: StorageItem[] = [];
       
-      // 1. 分析图片缓存
+      // === 应用沙箱目录 ===
+      
+      // 1. 分析图片内存缓存
       const imageCacheItem = await this.analyzeImageCache();
       items.push(imageCacheItem);
       
-      // 2. 分析WebView缓存
-      const webViewCacheItem = await this.analyzeWebViewCache();
-      items.push(webViewCacheItem);
-      
-      // 3. 分析数据库
+      // 2. 分析数据库
       const databaseItem = await this.analyzeDatabase();
       items.push(databaseItem);
       
@@ -176,17 +178,31 @@ export class StorageAnalyzer {
       const permanentCacheItem = await this.analyzePermanentCache();
       items.push(permanentCacheItem);
       
-      // 10. 分析临时图片缓存
-      const tempImageCacheItem = await this.analyzeTempImageCache();
-      items.push(tempImageCacheItem);
-      
-      // 11. 分析电子书文件
+      // 10. 分析电子书文件
       const ebookFilesItem = await this.analyzeEbookFiles();
       items.push(ebookFilesItem);
       
-      // 12. 分析系统缓存目录
+      // 11. 分析系统缓存目录
       const systemCacheItem = await this.analyzeSystemCache();
       items.push(systemCacheItem);
+      
+      // === Download文件夹目录 ===
+      
+      // 12. 分析Suwayomi封面缓存
+      const suwayomiCoversItem = await this.analyzeSuwayomiCovers();
+      items.push(suwayomiCoversItem);
+      
+      // 13. 分析Suwayomi图源图标缓存
+      const suwayomiIconsItem = await this.analyzeSuwayomiSourceIcons();
+      items.push(suwayomiIconsItem);
+      
+      // 14. 分析Suwayomi章节页面缓存
+      const suwayomiChaptersItem = await this.analyzeSuwayomiChapters();
+      items.push(suwayomiChaptersItem);
+      
+      // 15. 分析Download漫画文件
+      const downloadMangaItem = await this.analyzeDownloadManga();
+      items.push(downloadMangaItem);
       
       // 计算总大小
       const usedSize = items.reduce((sum, item) => sum + item.size, 0);
@@ -236,29 +252,6 @@ export class StorageAnalyzer {
     }
   }
 
-  /**
-   * 分析WebView缓存
-   */
-  private async analyzeWebViewCache(): Promise<StorageItem> {
-    try {
-      // WebView缓存在内存中，估算大小
-      const estimatedSize = 10 * 1024 * 1024; // 估算10MB
-      
-      return {
-        type: StorageType.WEBVIEW_CACHE,
-        name: 'WebView缓存',
-        description: '漫画详情和章节列表缓存',
-        size: estimatedSize,
-        fileCount: 0, // WebView缓存在内存中
-        path: '',
-        canClear: true,
-        lastModified: Date.now()
-      };
-    } catch (error) {
-      logger.error(TAG, `分析WebView缓存失败: ${error}`);
-      return this.createEmptyItem(StorageType.WEBVIEW_CACHE, 'WebView缓存');
-    }
-  }
 
   /**
    * 分析数据库
@@ -459,38 +452,6 @@ export class StorageAnalyzer {
   }
 
   /**
-   * 分析临时图片缓存
-   */
-  private async analyzeTempImageCache(): Promise<StorageItem> {
-    try {
-      const context = uiContextManager.getAbilityContext();
-      if (!context) {
-        logger.warn(TAG, 'Context未初始化，无法分析临时图片缓存');
-        return this.createEmptyItem(StorageType.TEMP_IMAGE_CACHE, '临时图片缓存');
-      }
-      
-      const tempImageCachePath = context.cacheDir + '/temp_image_cache';
-      const dirInfo = await this.getDirectoryInfo(tempImageCachePath);
-      const size = dirInfo.size;
-      const count = dirInfo.count;
-      
-      return {
-        type: StorageType.TEMP_IMAGE_CACHE,
-        name: '临时图片缓存',
-        description: '在线阅读的临时图片缓存',
-        size: size,
-        fileCount: count,
-        path: tempImageCachePath,
-        canClear: true,
-        lastModified: Date.now()
-      };
-    } catch (error) {
-      logger.error(TAG, `分析临时图片缓存失败: ${error}`);
-      return this.createEmptyItem(StorageType.TEMP_IMAGE_CACHE, '临时图片缓存');
-    }
-  }
-
-  /**
    * 分析电子书文件
    */
   private async analyzeEbookFiles(): Promise<StorageItem> {
@@ -548,6 +509,164 @@ export class StorageAnalyzer {
     } catch (error) {
       logger.error(TAG, `分析系统缓存失败: ${error}`);
       return this.createEmptyItem(StorageType.SYSTEM_CACHE, '系统缓存');
+    }
+  }
+
+  // ==================== Download文件夹分析方法 ====================
+
+  /**
+   * 获取Download目录下的子目录信息
+   */
+  private async getDownloadSubdirInfo(subPath: string): Promise<DirectoryInfo> {
+    try {
+      if (!DownloadDirManager.isReady()) {
+        return { size: 0, count: 0 };
+      }
+      const basePath = DownloadDirManager.getPath();
+      const fullPath = `${basePath}/${subPath}`;
+      
+      try {
+        fs.accessSync(fullPath);
+      } catch {
+        return { size: 0, count: 0 };
+      }
+      
+      return await this.calculateDirSize(fullPath);
+    } catch (error) {
+      logger.debug(TAG, `获取Download子目录信息失败: ${subPath}, ${error}`);
+      return { size: 0, count: 0 };
+    }
+  }
+
+  /**
+   * 递归计算目录大小
+   */
+  private async calculateDirSize(dirPath: string): Promise<DirectoryInfo> {
+    let totalSize = 0;
+    let totalCount = 0;
+    
+    try {
+      const entries = fs.listFileSync(dirPath);
+      for (const entry of entries) {
+        const fullPath = `${dirPath}/${entry}`;
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            const subInfo = await this.calculateDirSize(fullPath);
+            totalSize += subInfo.size;
+            totalCount += subInfo.count;
+          } else {
+            totalSize += stat.size;
+            totalCount++;
+          }
+        } catch {
+          // 忽略无法访问的文件
+        }
+      }
+    } catch {
+      // 目录不存在或无法访问
+    }
+    
+    return { size: totalSize, count: totalCount };
+  }
+
+  /**
+   * 分析Suwayomi封面缓存
+   * 路径: /Download/com.dlzz.manxia/suwayomi/covers/
+   */
+  private async analyzeSuwayomiCovers(): Promise<StorageItem> {
+    try {
+      const dirInfo = await this.getDownloadSubdirInfo('suwayomi/covers');
+      const basePath = DownloadDirManager.isReady() ? `${DownloadDirManager.getPath()}/suwayomi/covers` : '';
+      
+      return {
+        type: StorageType.SUWAYOMI_COVERS,
+        name: 'Suwayomi封面缓存',
+        description: 'Suwayomi漫画封面图片缓存 (suwayomi/covers/)',
+        size: dirInfo.size,
+        fileCount: dirInfo.count,
+        path: basePath,
+        canClear: true,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析Suwayomi封面缓存失败: ${error}`);
+      return this.createEmptyItem(StorageType.SUWAYOMI_COVERS, 'Suwayomi封面缓存');
+    }
+  }
+
+  /**
+   * 分析Suwayomi图源图标缓存
+   * 路径: /Download/com.dlzz.manxia/suwayomi/source_icons/
+   */
+  private async analyzeSuwayomiSourceIcons(): Promise<StorageItem> {
+    try {
+      const dirInfo = await this.getDownloadSubdirInfo('suwayomi/source_icons');
+      const basePath = DownloadDirManager.isReady() ? `${DownloadDirManager.getPath()}/suwayomi/source_icons` : '';
+      
+      return {
+        type: StorageType.SUWAYOMI_SOURCE_ICONS,
+        name: 'Suwayomi图源图标',
+        description: 'Suwayomi图源插件图标缓存 (suwayomi/source_icons/)',
+        size: dirInfo.size,
+        fileCount: dirInfo.count,
+        path: basePath,
+        canClear: true,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析Suwayomi图源图标失败: ${error}`);
+      return this.createEmptyItem(StorageType.SUWAYOMI_SOURCE_ICONS, 'Suwayomi图源图标');
+    }
+  }
+
+  /**
+   * 分析Suwayomi章节页面缓存
+   * 路径: /Download/com.dlzz.manxia/suwayomi/chapters/
+   */
+  private async analyzeSuwayomiChapters(): Promise<StorageItem> {
+    try {
+      const dirInfo = await this.getDownloadSubdirInfo('suwayomi/chapters');
+      const basePath = DownloadDirManager.isReady() ? `${DownloadDirManager.getPath()}/suwayomi/chapters` : '';
+      
+      return {
+        type: StorageType.SUWAYOMI_CHAPTERS,
+        name: 'Suwayomi章节缓存',
+        description: 'Suwayomi漫画章节页面缓存 (suwayomi/chapters/)',
+        size: dirInfo.size,
+        fileCount: dirInfo.count,
+        path: basePath,
+        canClear: true,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析Suwayomi章节缓存失败: ${error}`);
+      return this.createEmptyItem(StorageType.SUWAYOMI_CHAPTERS, 'Suwayomi章节缓存');
+    }
+  }
+
+  /**
+   * 分析Download漫画文件
+   * 路径: /Download/com.dlzz.manxia/manga/
+   */
+  private async analyzeDownloadManga(): Promise<StorageItem> {
+    try {
+      const dirInfo = await this.getDownloadSubdirInfo('manga');
+      const basePath = DownloadDirManager.isReady() ? `${DownloadDirManager.getPath()}/manga` : '';
+      
+      return {
+        type: StorageType.DOWNLOAD_MANGA,
+        name: '下载的漫画',
+        description: '下载到Download文件夹的漫画 (manga/)',
+        size: dirInfo.size,
+        fileCount: dirInfo.count,
+        path: basePath,
+        canClear: false, // 用户下载的内容，不能自动清理
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析Download漫画失败: ${error}`);
+      return this.createEmptyItem(StorageType.DOWNLOAD_MANGA, '下载的漫画');
     }
   }
 
@@ -686,11 +805,6 @@ export class StorageAnalyzer {
         logger.info(TAG, `已清理内存缓存: ${this.formatSize(result.clearedSize)}`);
         break;
 
-      case StorageType.WEBVIEW_CACHE:
-        // WebView缓存暂时无法清理
-        logger.info(TAG, 'WebView缓存暂不支持清理');
-        break;
-
       case StorageType.COVER_FILES:
         const coversPath = this.sandboxManager.getDirectory('covers');
         const coverResult = await this.clearDirectory(coversPath, options);
@@ -715,23 +829,41 @@ export class StorageAnalyzer {
         }
         break;
 
-      case StorageType.TEMP_IMAGE_CACHE:
+      case StorageType.SYSTEM_CACHE:
         const context2 = uiContextManager.getAbilityContext();
         if (context2) {
-          const tempImageCachePath = context2.cacheDir + '/temp_image_cache';
-          const tempImageResult = await this.clearDirectory(tempImageCachePath, options);
-          result.clearedSize = tempImageResult.clearedSize;
-          result.clearedCount = tempImageResult.clearedCount;
-        }
-        break;
-
-      case StorageType.SYSTEM_CACHE:
-        const context3 = uiContextManager.getAbilityContext();
-        if (context3) {
-          const systemCachePath = context3.cacheDir;
+          const systemCachePath = context2.cacheDir;
           const systemCacheResult = await this.clearDirectory(systemCachePath, options);
           result.clearedSize = systemCacheResult.clearedSize;
           result.clearedCount = systemCacheResult.clearedCount;
+        }
+        break;
+
+      // === Download文件夹清理 ===
+      case StorageType.SUWAYOMI_COVERS:
+        if (DownloadDirManager.isReady()) {
+          const suwayomiCoversPath = `${DownloadDirManager.getPath()}/suwayomi/covers`;
+          const coversResult = await this.clearDownloadDirectory(suwayomiCoversPath);
+          result.clearedSize = coversResult.clearedSize;
+          result.clearedCount = coversResult.clearedCount;
+        }
+        break;
+
+      case StorageType.SUWAYOMI_SOURCE_ICONS:
+        if (DownloadDirManager.isReady()) {
+          const suwayomiIconsPath = `${DownloadDirManager.getPath()}/suwayomi/source_icons`;
+          const iconsResult = await this.clearDownloadDirectory(suwayomiIconsPath);
+          result.clearedSize = iconsResult.clearedSize;
+          result.clearedCount = iconsResult.clearedCount;
+        }
+        break;
+
+      case StorageType.SUWAYOMI_CHAPTERS:
+        if (DownloadDirManager.isReady()) {
+          const suwayomiChaptersPath = `${DownloadDirManager.getPath()}/suwayomi/chapters`;
+          const chaptersResult = await this.clearDownloadDirectory(suwayomiChaptersPath);
+          result.clearedSize = chaptersResult.clearedSize;
+          result.clearedCount = chaptersResult.clearedCount;
         }
         break;
 
@@ -823,6 +955,87 @@ export class StorageAnalyzer {
 
     const result: DeleteRecursiveResult = { size: totalSize, count: totalCount };
     return result;
+  }
+
+  /**
+   * 清理Download文件夹中的目录
+   */
+  private async clearDownloadDirectory(dirPath: string): Promise<ClearResult> {
+    const result: ClearResult = {
+      success: true,
+      clearedSize: 0,
+      clearedCount: 0,
+      errors: []
+    };
+
+    try {
+      try {
+        fs.accessSync(dirPath);
+      } catch {
+        // 目录不存在，直接返回
+        return result;
+      }
+
+      const entries = fs.listFileSync(dirPath);
+      for (const entry of entries) {
+        const fullPath = `${dirPath}/${entry}`;
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            const subResult = await this.deleteDownloadDirRecursive(fullPath);
+            result.clearedSize += subResult.size;
+            result.clearedCount += subResult.count;
+          } else {
+            result.clearedSize += stat.size;
+            fs.unlinkSync(fullPath);
+            result.clearedCount++;
+          }
+        } catch (error) {
+          result.errors.push(`删除失败: ${entry}, ${error}`);
+        }
+      }
+    } catch (error) {
+      result.success = false;
+      result.errors.push(`清理Download目录失败: ${dirPath}, ${error}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * 递归删除Download文件夹中的目录
+   */
+  private async deleteDownloadDirRecursive(dirPath: string): Promise<DeleteRecursiveResult> {
+    let totalSize = 0;
+    let totalCount = 0;
+
+    try {
+      const entries = fs.listFileSync(dirPath);
+      for (const entry of entries) {
+        const fullPath = `${dirPath}/${entry}`;
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            const subResult = await this.deleteDownloadDirRecursive(fullPath);
+            totalSize += subResult.size;
+            totalCount += subResult.count;
+          } else {
+            totalSize += stat.size;
+            fs.unlinkSync(fullPath);
+            totalCount++;
+          }
+        } catch {
+          // 忽略无法删除的文件
+        }
+      }
+      // 删除空目录
+      fs.rmdirSync(dirPath);
+      totalCount++;
+    } catch {
+      // 忽略错误
+    }
+
+    return { size: totalSize, count: totalCount };
   }
 
   /**

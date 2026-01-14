@@ -152,6 +152,11 @@ struct DownloadSyncPage {
 
   // 标签页状态
   @State private currentTabIndex: number = 0;
+  
+  // 横向滑动切换标签页相关状态
+  private readonly tabCount: number = 2;
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
   // 已导入文件记录 (文件名 -> 导入状态)
   @State private importedFilesMap: Map<string, boolean> = new Map();
   // 文件树结构
@@ -207,6 +212,26 @@ struct DownloadSyncPage {
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, '响应式布局初始化失败', String(error));
+    }
+  }
+
+  /**
+   * 切换到下一个标签页（支持循环）
+   */
+  private switchToNextTab(): void {
+    this.currentTabIndex = (this.currentTabIndex + 1) % this.tabCount;
+    if (this.currentTabIndex === 1) {
+      this.loadImportedFilesStatus();
+    }
+  }
+  
+  /**
+   * 切换到上一个标签页（支持循环）
+   */
+  private switchToPrevTab(): void {
+    this.currentTabIndex = (this.currentTabIndex - 1 + this.tabCount) % this.tabCount;
+    if (this.currentTabIndex === 1) {
+      this.loadImportedFilesStatus();
     }
   }
 
@@ -685,6 +710,25 @@ A: 不会，原文件保持不变。`;
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
+            .gesture(
+              PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+                .onActionStart((event: GestureEvent) => {
+                  this.swipeStartX = event.offsetX;
+                  this.swipeOffsetX = 0;
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  this.swipeOffsetX = event.offsetX - this.swipeStartX;
+                })
+                .onActionEnd((event: GestureEvent) => {
+                  const swipeThreshold = 80;
+                  if (this.swipeOffsetX < -swipeThreshold) {
+                    this.switchToNextTab();
+                  } else if (this.swipeOffsetX > swipeThreshold) {
+                    this.switchToPrevTab();
+                  }
+                  this.swipeOffsetX = 0;
+                })
+            )
           } else {
             Scroll(this.scroller) {
               Column({ space: 16 }) {
@@ -697,6 +741,25 @@ A: 不会，原文件保持不变。`;
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
+            .gesture(
+              PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+                .onActionStart((event: GestureEvent) => {
+                  this.swipeStartX = event.offsetX;
+                  this.swipeOffsetX = 0;
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  this.swipeOffsetX = event.offsetX - this.swipeStartX;
+                })
+                .onActionEnd((event: GestureEvent) => {
+                  const swipeThreshold = 80;
+                  if (this.swipeOffsetX < -swipeThreshold) {
+                    this.switchToNextTab();
+                  } else if (this.swipeOffsetX > swipeThreshold) {
+                    this.switchToPrevTab();
+                  }
+                  this.swipeOffsetX = 0;
+                })
+            )
           }
         }
         .width('100%')

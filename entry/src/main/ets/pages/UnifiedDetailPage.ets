@@ -42,15 +42,19 @@ import { DataService } from '../Framework/Services/DataService';
 import { MangaDetailLoader, MangaDetailLoadParams, MangaDetailLoadResult, MangaLoadProgressCallback, ChapterProgressInfo } from '../Framework/Loaders/MangaDetailLoader';
 import webview from '@ohos.web.webview';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
+import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
+import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
+import { ZLibraryReaderParams } from './ZLibraryReaderPage';
 import { AvifImage } from '../components/AvifImage';
 
 // 模型导入
 import { Manga, MangaChapter, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
 import { DownloadStatus, MangaStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
-import { EBook, EBookChapter } from '../Models/EBookModels';
+import { EBook, EBookChapter, EBookFormat, EBookStatus, EBookMetadata } from '../Models/EBookModels';
 import { LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 
@@ -128,6 +132,13 @@ export struct UnifiedDetailPage {
   // 漫画详情加载器
   private mangaDetailLoader: MangaDetailLoader = MangaDetailLoader.getInstance();
   private webViewController: webview.WebviewController = new webview.WebviewController();
+  
+  // 在线电子书相关
+  private sourceManager: SourceManager = SourceManager.getInstance();
+  private ebookSourceEngine: MangaSourceEngine | null = null;
+  @State private ebookWebViewReady: boolean = false;
+  @State private ebookSourceInfo: SourceInfo | null = null;
+  @State private onlineReaderUrl: string = '';
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -631,8 +642,23 @@ export struct UnifiedDetailPage {
     if (!this.pageParams) return;
 
     const bookId = this.pageParams.contentId;
-    logger.info(TAG, `加载电子书内容: ${bookId}`);
+    const sourceId = this.pageParams.sourceId;
+    logger.info(TAG, `加载电子书内容: bookId=${bookId}, sourceId=${sourceId}`);
 
+    // 判断是在线电子书还是本地电子书
+    if (sourceId && sourceId.length > 0) {
+      // 在线电子书 - 使用WebView引擎加载
+      await this.loadOnlineEBookContent(bookId, sourceId);
+    } else {
+      // 本地电子书 - 从数据库加载
+      await this.loadLocalEBookContent(bookId);
+    }
+  }
+
+  /**
+   * 加载本地电子书内容
+   */
+  private async loadLocalEBookContent(bookId: string): Promise<void> {
     // 获取电子书数据
     const ebook = await this.ebookDataManager.getEBookById(bookId);
     if (!ebook) {
@@ -649,6 +675,230 @@ export struct UnifiedDetailPage {
     // 转换为统一模型
     this.content = EBookAdapter.toUnifiedContent(ebook, this.isFavorite);
     logger.info(TAG, `统一模型转换完成: 章节数=${this.content.totalChapters}`);
+
+    // 检测是否为在线电子书（filePath是JSON格式的扩展数据且id是URL）
+    const isOnlineEbook = bookId.startsWith('http://') || bookId.startsWith('https://');
+    if (isOnlineEbook && ebook.filePath) {
+      try {
+        // 尝试从filePath解析扩展数据
+        const extendedData = JSON.parse(ebook.filePath) as Record<string, string>;
+        const sourceId = extendedData['sourceId'] || '';
+        const onlineReaderUrl = extendedData['onlineReaderUrl'] || '';
+        
+        logger.info(TAG, `检测到在线电子书，sourceId=${sourceId}, onlineReaderUrl=${onlineReaderUrl.substring(0, 50)}...`);
+        
+        if (onlineReaderUrl) {
+          // 直接使用存储的onlineReaderUrl
+          this.onlineReaderUrl = onlineReaderUrl;
+          logger.info(TAG, `从存储中恢复在线阅读器URL`);
+        } else if (sourceId) {
+          // 如果没有存储onlineReaderUrl，则重新获取
+          this.loadOnlineReaderUrl(bookId, sourceId);
+        }
+      } catch (e) {
+        logger.warn(TAG, `解析在线电子书扩展数据失败: ${e}`);
+      }
+    }
+  }
+
+  /**
+   * 加载在线电子书内容
+   */
+  private async loadOnlineEBookContent(bookId: string, sourceId: string): Promise<void> {
+    logger.info(TAG, `加载在线电子书: bookId=${bookId}, sourceId=${sourceId}`);
+    
+    // 重置加载状态
+    this.isBasicInfoLoaded = false;
+    this.isCoverLoading = true;
+    this.isChaptersLoading = true;
+    
+    try {
+      // 加载图源信息
+      const sources = await this.sourceManager.getAllSources();
+      this.ebookSourceInfo = sources.find((s: SourceInfo) => s.id === Number(sourceId)) || null;
+      
+      if (!this.ebookSourceInfo) {
+        this.errorMessage = '图源不存在';
+        logger.error(TAG, `图源不存在: ${sourceId}`);
+        return;
+      }
+      
+      logger.info(TAG, `图源信息加载完成: ${this.ebookSourceInfo.name}`);
+      
+      // 先设置缓存的基本信息
+      const cachedTitle = this.pageParams?.cachedTitle || '未知书名';
+      const cachedCover = this.pageParams?.cachedCover || '';
+      
+      // 创建初始的UnifiedContent
+      const emptyGenres: string[] = [];
+      const emptyTags: string[] = [];
+      const emptyChapters: UnifiedChapter[] = [];
+      const emptyOriginalData: Object = new Object();
+      const initialContent: UnifiedContent = {
+        id: bookId,
+        title: cachedTitle,
+        coverUrl: cachedCover,
+        author: '',
+        description: '',
+        contentType: UnifiedContentType.EBOOK,
+        genres: emptyGenres,
+        tags: emptyTags,
+        readStatus: UnifiedReadStatus.UNREAD,
+        isFavorite: false,
+        isNSFW: false,
+        totalChapters: 0,
+        readChapters: 0,
+        lastReadChapterIndex: -1,
+        lastReadChapterTitle: '',
+        readProgress: 0,
+        sourceId: sourceId,
+        sourceName: this.ebookSourceInfo.name,
+        isLocal: false,
+        chapters: emptyChapters,
+        originalData: emptyOriginalData,
+        originalType: UnifiedContentType.EBOOK
+      };
+      this.content = initialContent;
+      
+      this.isBasicInfoLoaded = true;
+      this.isCoverLoading = false;
+      this.isLoading = false;
+      
+      // 初始化WebView引擎并获取详情
+      await this.initializeEBookWebViewEngine(Number(sourceId));
+      
+      if (this.ebookSourceEngine && this.ebookWebViewReady) {
+        // 使用WebView获取详情
+        // 构建完整的URL：如果bookId不是完整路径，需要添加baseUrl
+        let fullUrl = bookId;
+        if (!bookId.startsWith('http')) {
+          // bookId可能是/book/xxx格式或者只是文件名
+          if (bookId.startsWith('/')) {
+            fullUrl = `${this.ebookSourceInfo?.baseUrl || 'https://zh.chris101.ru'}${bookId}`;
+          } else {
+            // 尝试从缓存的URL构建
+            fullUrl = `${this.ebookSourceInfo?.baseUrl || 'https://zh.chris101.ru'}/${bookId}`;
+          }
+        }
+        logger.info(TAG, `使用WebView获取电子书详情: bookId=${bookId}, fullUrl=${fullUrl}`);
+        const result = await this.ebookSourceEngine.getBookDetail(fullUrl);
+        
+        if (result.success && result.data) {
+          const detail = result.data as Record<string, ESObject>;
+          logger.info(TAG, `电子书详情获取成功: ${JSON.stringify(detail).substring(0, 200)}`);
+          
+          // 更新内容
+          if (this.content) {
+            this.content.title = String(detail['title'] || cachedTitle);
+            this.content.author = String(detail['author'] || '');
+            this.content.description = String(detail['description'] || '');
+            this.content.coverUrl = String(detail['cover'] || cachedCover);
+            if (detail['categories']) {
+              this.content.genres = [String(detail['categories'])];
+            }
+            if (detail['tags']) {
+              this.content.tags = [String(detail['tags'])];
+            }
+          }
+          
+          // 保存在线阅读器URL
+          const readerUrlValue: string = String(detail['readerUrl'] || '');
+          logger.info(TAG, `readerUrl字段值: ${readerUrlValue.substring(0, 80)}`);
+          if (readerUrlValue && readerUrlValue.length > 0) {
+            this.onlineReaderUrl = readerUrlValue;
+            logger.info(TAG, `获取到在线阅读器URL: ${this.onlineReaderUrl.substring(0, 80)}...`);
+          } else {
+            logger.warn(TAG, '未获取到在线阅读器URL');
+          }
+          
+          logger.info(TAG, `在线电子书详情加载成功: ${this.content?.title}`);
+        } else {
+          logger.warn(TAG, `获取电子书详情失败: ${result.error}`);
+        }
+      } else {
+        logger.warn(TAG, 'WebView引擎未就绪，使用缓存数据');
+      }
+      
+      this.isChaptersLoading = false;
+      
+    } catch (error) {
+      logger.error(TAG, `加载在线电子书失败: ${String(error)}`);
+      this.errorMessage = `加载失败: ${String(error)}`;
+    }
+  }
+
+  /**
+   * 加载在线阅读器URL（用于已收藏的在线电子书）
+   */
+  private async loadOnlineReaderUrl(bookId: string, sourceId: string): Promise<void> {
+    try {
+      // 加载图源信息
+      const sources = await this.sourceManager.getAllSources();
+      const sourceInfo = sources.find((s: SourceInfo) => s.id === Number(sourceId)) || null;
+      
+      if (!sourceInfo) {
+        logger.warn(TAG, `图源不存在: ${sourceId}`);
+        return;
+      }
+
+      // 初始化WebView引擎
+      await this.initializeEBookWebViewEngine(Number(sourceId));
+      
+      if (this.ebookWebViewReady && this.ebookSourceEngine) {
+        // 获取电子书详情
+        const result = await this.ebookSourceEngine.getBookDetail(bookId);
+        
+        if (result.success && result.data) {
+          const detail = result.data as Record<string, ESObject>;
+          const readerUrlValue: string = String(detail['readerUrl'] || '');
+          if (readerUrlValue && readerUrlValue.length > 0) {
+            this.onlineReaderUrl = readerUrlValue;
+            logger.info(TAG, `获取到在线阅读器URL: ${this.onlineReaderUrl.substring(0, 80)}...`);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `加载在线阅读器URL失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 初始化电子书WebView引擎
+   */
+  private async initializeEBookWebViewEngine(sourceId: number): Promise<void> {
+    try {
+      // 获取图源配置
+      const sourceConfig = await this.dataManager.getSourceConfig(sourceId) as Record<string, Object> | null;
+      if (!sourceConfig) {
+        logger.warn(TAG, '无法获取图源配置');
+        return;
+      }
+      
+      // 将配置对象序列化为JSON字符串
+      const configJson = JSON.stringify(sourceConfig);
+      
+      // 初始化WebView引擎
+      const engineConfig: EngineConfig = {
+        webViewController: this.webViewController,
+        antiCrawlerConfig: {} as AntiCrawlerConfig,
+        debug: false,
+        timeout: 30000,
+        caseSensitive: false,
+        sourceId: sourceId
+      };
+      this.ebookSourceEngine = new MangaSourceEngine(engineConfig);
+      
+      const loadResult = await this.ebookSourceEngine.loadConfig(configJson, true);
+      if (!loadResult.success) {
+        logger.error(TAG, `加载图源配置失败: ${loadResult.error}`);
+        return;
+      }
+      
+      this.ebookWebViewReady = true;
+      logger.info(TAG, '电子书WebView引擎初始化成功（跳过initialize工作流）');
+    } catch (error) {
+      logger.error(TAG, `初始化电子书WebView引擎失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -791,8 +1041,18 @@ export struct UnifiedDetailPage {
   private continueReading(): void {
     if (!this.content) return;
 
-    // 电子书特殊处理：直接打开阅读器，不依赖章节列表
+    logger.info(TAG, `continueReading: contentType=${this.content.contentType}, onlineReaderUrl=${this.onlineReaderUrl ? this.onlineReaderUrl.substring(0, 50) + '...' : 'null'}, sourceId=${this.content.sourceId}`);
+
+    // 电子书特殊处理
     if (this.content.contentType === UnifiedContentType.EBOOK) {
+      // 在线电子书：如果有在线阅读器URL，跳转到ZLibraryReaderPage
+      if (this.onlineReaderUrl) {
+        logger.info(TAG, '使用在线阅读器');
+        this.openOnlineEBookReader();
+        return;
+      }
+      // 本地电子书：直接打开阅读器
+      logger.info(TAG, '使用本地电子书阅读器');
       this.openEBookReader(0);
       return;
     }
@@ -804,6 +1064,23 @@ export struct UnifiedDetailPage {
       // 从第一章开始
       this.startReading(0);
     }
+  }
+
+  /**
+   * 打开在线电子书阅读器（ZLibrary等）
+   */
+  private openOnlineEBookReader(): void {
+    if (!this.content || !this.onlineReaderUrl) return;
+
+    logger.info(TAG, `打开在线电子书阅读器: ${this.content.title}, URL: ${this.onlineReaderUrl.substring(0, 50)}...`);
+
+    const params: ZLibraryReaderParams = {
+      readerUrl: this.onlineReaderUrl,
+      bookTitle: this.content.title,
+      sourceId: this.content.sourceId || ''
+    };
+
+    this.pathStack.pushPathByName('ZLibraryReaderPage', params);
   }
 
   /**
@@ -973,9 +1250,58 @@ export struct UnifiedDetailPage {
         case UnifiedContentType.EBOOK:
           // 电子书收藏需要重新保存整个对象
           const ebook = EBookAdapter.getOriginalEBook(this.content);
-          if (ebook) {
+          // 检查是否是有效的本地电子书（有metadata属性）
+          if (ebook && ebook.metadata) {
             ebook.isFavorite = this.isFavorite;
             await this.ebookDataManager.saveEBook(ebook);
+          } else if (this.isFavorite && this.content.sourceId) {
+            // 在线电子书：创建新的EBook对象并保存
+            const now = Date.now();
+            const metadata: EBookMetadata = {
+              title: this.content.title,
+              author: this.content.author,
+              publisher: '',
+              publishDate: '',
+              isbn: '',
+              language: '',
+              description: this.content.description,
+              coverImagePath: this.content.coverUrl,
+              tags: this.content.tags || [],
+              rating: 0
+            };
+            const emptyChapters: EBookChapter[] = [];
+            logger.info(TAG, `创建在线电子书: id=${this.content.id}, title=${metadata.title}`);
+            // 将sourceId和onlineReaderUrl存储在filePath字段中（JSON格式）
+            const extendedDataMap = new Map<string, string>();
+            extendedDataMap.set('sourceId', this.content.sourceId || '');
+            extendedDataMap.set('sourceName', this.content.sourceName || '');
+            extendedDataMap.set('onlineReaderUrl', this.onlineReaderUrl || '');
+            const extendedDataObj: Record<string, string> = {};
+            extendedDataMap.forEach((value: string, key: string) => {
+              extendedDataObj[key] = value;
+            });
+            const extendedDataJson = JSON.stringify(extendedDataObj);
+            // 直接创建EBook对象并手动设置所有属性
+            const onlineEbook = new EBook(
+              this.content.id,
+              EBookFormat.EPUB,
+              extendedDataJson,  // 使用filePath存储扩展数据
+              0,
+              metadata,
+              emptyChapters
+            );
+            // 手动设置所有属性确保正确
+            onlineEbook.metadata = metadata;
+            onlineEbook.status = EBookStatus.UNREAD;
+            onlineEbook.addTime = now;
+            onlineEbook.lastUpdateTime = now;
+            onlineEbook.isFavorite = true;
+            onlineEbook.totalWordCount = 0;
+            onlineEbook.isPrivate = false;
+            onlineEbook.isNSFW = this.content.isNSFW || false;
+            logger.info(TAG, `保存前检查: metadata.title=${onlineEbook.metadata?.title}`);
+            await this.ebookDataManager.saveEBook(onlineEbook);
+            logger.info(TAG, `在线电子书已添加到书库: ${this.content.title}`);
           }
           break;
         case UnifiedContentType.NOVEL:
@@ -1611,8 +1937,12 @@ export struct UnifiedDetailPage {
   private getEBookFormat(): string {
     if (!this.content) return '未知';
     const originalEBook = EBookAdapter.getOriginalEBook(this.content);
-    if (originalEBook) {
+    if (originalEBook && originalEBook.format) {
       return originalEBook.format.toUpperCase();
+    }
+    // 对于在线电子书，尝试从content.format获取
+    if (this.content.format) {
+      return this.content.format.toUpperCase();
     }
     return '未知';
   }
@@ -1954,6 +2284,14 @@ export struct UnifiedDetailPage {
   build() {
     NavDestination() {
       Stack() {
+        // 隐藏的WebView用于执行在线电子书脚本
+        Web({ src: 'about:blank', controller: this.webViewController })
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .position({ x: 0, y: 0 })
+          .zIndex(-1)
+        
         // 背景层：封面图片毛玻璃效果
         Stack() {
           // 默认背景色（防止闪烁）

@@ -497,6 +497,10 @@ export struct ContentPanelOverlay {
   @State private contentOpacity: number = 1;
   @State private styleConfig: PanelStyleConfig = DEFAULT_STYLE_CONFIG;
   
+  // 横向滑动切换标签页相关状态
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
+  
   private panelManager: ContentPanelManager = getContentPanelManager();
   private dragStartX: number = 0;
   private dragStartY: number = 0;
@@ -589,6 +593,26 @@ export struct ContentPanelOverlay {
     await fileIo.read(file.fd, buffer);
     await fileIo.close(file.fd);
     return new util.TextDecoder('utf-8').decodeToString(new Uint8Array(buffer));
+  }
+
+  /**
+   * 切换到下一个标签页（支持循环）
+   */
+  private switchToNextTab(): void {
+    if (this.tabs.length <= 1) return;
+    const currentIndex = this.tabs.findIndex(t => t.id === this.activeTabId);
+    const nextIndex = (currentIndex + 1) % this.tabs.length;
+    this.panelManager.setActiveTab(this.tabs[nextIndex].id);
+  }
+  
+  /**
+   * 切换到上一个标签页（支持循环）
+   */
+  private switchToPrevTab(): void {
+    if (this.tabs.length <= 1) return;
+    const currentIndex = this.tabs.findIndex(t => t.id === this.activeTabId);
+    const prevIndex = (currentIndex - 1 + this.tabs.length) % this.tabs.length;
+    this.panelManager.setActiveTab(this.tabs[prevIndex].id);
   }
 
   private getActiveTabIcon(): Resource {
@@ -843,9 +867,32 @@ export struct ContentPanelOverlay {
 
           // 内容区域
           if (this.tabs.length > 0) {
-            ForEach(this.tabs.filter(t => t.id === this.activeTabId), (tab: ContentTab) => {
-              this.buildContent(tab)
-            }, (tab: ContentTab) => `${tab.id}_${this.fontSize}_${tab.isLoading}_${tab.markdownContent?.length || 0}`)
+            Column() {
+              ForEach(this.tabs.filter(t => t.id === this.activeTabId), (tab: ContentTab) => {
+                this.buildContent(tab)
+              }, (tab: ContentTab) => `${tab.id}_${this.fontSize}_${tab.isLoading}_${tab.markdownContent?.length || 0}`)
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .gesture(
+              PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+                .onActionStart((event: GestureEvent) => {
+                  this.swipeStartX = event.offsetX;
+                  this.swipeOffsetX = 0;
+                })
+                .onActionUpdate((event: GestureEvent) => {
+                  this.swipeOffsetX = event.offsetX - this.swipeStartX;
+                })
+                .onActionEnd((event: GestureEvent) => {
+                  const swipeThreshold = 80;
+                  if (this.swipeOffsetX < -swipeThreshold) {
+                    this.switchToNextTab();
+                  } else if (this.swipeOffsetX > swipeThreshold) {
+                    this.switchToPrevTab();
+                  }
+                  this.swipeOffsetX = 0;
+                })
+            )
           }
         }
         .width(this.styleConfig.width)

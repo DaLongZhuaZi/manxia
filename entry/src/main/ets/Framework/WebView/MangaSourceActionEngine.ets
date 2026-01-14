@@ -243,9 +243,9 @@ export class MangaSourceActionEngine {
     const url = this.replaceVariables(action.url, context.variables);
     // 注意：timeout是最大超时时间，不是固定等待时间
     // 使用waitAfterLoad作为导航后的固定等待时间，默认1秒
-    const waitAfterLoad = (action as ESObject)['waitAfterLoad'] as number || 1000;
+    const waitAfterLoad = action.waitAfterLoad !== undefined ? action.waitAfterLoad : 1000;
     
-    logger.info(TAG, `导航到: ${url}`);
+    logger.info(TAG, `导航到: ${url}, waitAfterLoad=${waitAfterLoad}ms`);
 
     try {
       // 开始导航

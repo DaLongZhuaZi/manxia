@@ -63,7 +63,8 @@ export class EBookDataManager {
    */
   public async saveEBook(ebook: EBook): Promise<void> {
     try {
-      logger.info(TAG, `开始保存电子书: ${ebook.metadata.title}`);
+      const title = ebook.metadata?.title || ebook.id || '未知书籍';
+      logger.info(TAG, `开始保存电子书: ${title}`);
 
       // 1. 保存电子书基本信息
       await this.saveEBookInfo(ebook);
@@ -98,21 +99,35 @@ export class EBookDataManager {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
+    // 安全访问metadata，防止undefined
+    const metadata = ebook.metadata || {
+      title: '',
+      author: '',
+      publisher: '',
+      publishDate: '',
+      isbn: '',
+      language: '',
+      description: '',
+      coverImagePath: '',
+      tags: [] as string[],
+      rating: 0
+    };
+
     const params = [
       ebook.id,
       ebook.format,
       ebook.filePath,
       ebook.fileSize,
-      ebook.metadata.title,
-      ebook.metadata.author,
-      ebook.metadata.publisher,
-      ebook.metadata.publishDate,
-      ebook.metadata.isbn,
-      ebook.metadata.language,
-      ebook.metadata.description,
-      ebook.metadata.coverImagePath,
-      JSON.stringify(ebook.metadata.tags),
-      ebook.metadata.rating,
+      metadata.title,
+      metadata.author,
+      metadata.publisher,
+      metadata.publishDate,
+      metadata.isbn,
+      metadata.language,
+      metadata.description,
+      metadata.coverImagePath,
+      JSON.stringify(metadata.tags || []),
+      metadata.rating,
       ebook.status,
       ebook.isFavorite ? 1 : 0,
       ebook.totalWordCount,

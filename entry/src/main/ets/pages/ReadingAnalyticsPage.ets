@@ -1539,6 +1539,58 @@ struct ReadingAnalyticsPage {
   }
 
   /**
+   * 循环切换时间范围（7天 -> 30天 -> 全部 -> 7天）
+   */
+  private cycleTimeRange(): void {
+    if (this.selectedTimeRange === 7) {
+      this.changeTimeRange(30);
+    } else if (this.selectedTimeRange === 30) {
+      this.changeTimeRange(365);
+    } else {
+      this.changeTimeRange(7);
+    }
+  }
+
+  /**
+   * 获取当前时间范围对应的图标
+   */
+  private getTimeRangeIcon(): Resource {
+    if (this.selectedTimeRange === 7) {
+      return $r('sys.symbol.calendar_07_a');
+    } else if (this.selectedTimeRange === 30) {
+      return $r('sys.symbol.calendar_30_a');
+    } else {
+      return $r('sys.symbol.calendar_1');
+    }
+  }
+
+  /**
+   * 获取当前时间范围对应的标题
+   */
+  private getTimeRangeTitle(): string {
+    if (this.selectedTimeRange === 7) {
+      return '最近7天阅读统计';
+    } else if (this.selectedTimeRange === 30) {
+      return '最近30天阅读统计';
+    } else {
+      return '全部阅读统计';
+    }
+  }
+
+  /**
+   * 获取时间范围切换按钮的文本
+   */
+  private getTimeRangeButtonText(): string {
+    if (this.selectedTimeRange === 7) {
+      return '7天';
+    } else if (this.selectedTimeRange === 30) {
+      return '30天';
+    } else {
+      return '全部';
+    }
+  }
+
+  /**
    * 显示保留天数选择器
    */
   private showRetentionDaysPicker(): void {
@@ -1658,64 +1710,6 @@ struct ReadingAnalyticsPage {
     } else {
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     }
-  }
-
-  /**
-   * 构建时间范围选择器（长期视图）
-   */
-  @Builder
-  buildTimeRangeSelector() {
-    Row({ space: 8 }) {
-      Button({ stateEffect: true }) {
-        Text('7天')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
-      }
-      .width('33%')
-      .height(32)
-      .backgroundColor(
-        (this.selectedTimeRange === 7
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)) as ResourceColor
-      )
-      .borderRadius(8)
-      .onClick(() => this.changeTimeRange(7))
-
-      Button({ stateEffect: true }) {
-        Text('30天')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
-      }
-      .width('33%')
-      .height(32)
-      .backgroundColor(
-        (this.selectedTimeRange === 30
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)) as ResourceColor
-      )
-      .borderRadius(8)
-      .onClick(() => this.changeTimeRange(30))
-
-      Button({ stateEffect: true }) {
-        Text('全部')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
-      }
-      .width('33%')
-      .height(32)
-      .backgroundColor(
-        (this.selectedTimeRange === 365
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)) as ResourceColor
-      )
-      .borderRadius(8)
-      .onClick(() => this.changeTimeRange(365))
-    }
-    .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
   }
 
   /**
@@ -2316,15 +2310,38 @@ struct ReadingAnalyticsPage {
   @Builder
   buildStatisticsOverview() {
     Column({ space: 16 }) {
-      Row({ space: 6 }) {
-        SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-        Text('阅读统计')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Row() {
+        Row({ space: 6 }) {
+          SymbolGlyph(this.getTimeRangeIcon()).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text(this.getTimeRangeTitle())
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        
+        Blank()
+        
+        // 时间范围切换按钮
+        Button({ stateEffect: true }) {
+          Row({ space: 4 }) {
+            SymbolGlyph(this.getTimeRangeIcon())
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text(this.getTimeRangeButtonText())
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(28)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+        .borderRadius(14)
+        .onClick(() => this.cycleTimeRange())
       }
-      .alignSelf(ItemAlign.Start)
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       // 使用Grid布局实现2列磁贴效果
       Grid() {
@@ -3229,15 +3246,38 @@ struct ReadingAnalyticsPage {
         Column({ space: 16 }) {
           // 第一行：统计概览（使用网格布局）
           Column({ space: 12 }) {
-            Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.doc_plaintext')).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-              Text('阅读统计')
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Row() {
+              Row({ space: 6 }) {
+                SymbolGlyph(this.getTimeRangeIcon()).fontSize(18).fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                Text(this.getTimeRangeTitle())
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              }
+              
+              Blank()
+              
+              // 时间范围切换按钮
+              Button({ stateEffect: true }) {
+                Row({ space: 4 }) {
+                  SymbolGlyph(this.getTimeRangeIcon())
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                  Text(this.getTimeRangeButtonText())
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                }
+              }
+              .height(28)
+              .padding({ left: 10, right: 10 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+              .borderRadius(14)
+              .onClick(() => this.cycleTimeRange())
             }
-            .alignSelf(ItemAlign.Start)
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
 
             Grid() {
               GridItem() {
@@ -3329,71 +3369,68 @@ struct ReadingAnalyticsPage {
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
-        // 内容层
-        Column() {
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
-
-          // 如果未询问过权限或功能未启用，显示权限请求界面
-          if ((!this.hasAskedPermission || !this.analyticsEnabled) && !this.isLoading) {
+        // 如果未询问过权限或功能未启用，显示权限请求界面
+        if ((!this.hasAskedPermission || !this.analyticsEnabled) && !this.isLoading) {
+          Column() {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
             this.buildPermissionRequest()
-          } else if (this.isLongTermView) {
-            // 长期视图
-            // 时间范围选择器
-            Row() {
-              this.buildTimeRangeSelector()
-            }
-            .width('100%')
-            .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
-
-            Scroll(this.scroller) {
+          }
+          .width('100%')
+          .height('100%')
+        } else if (this.isLongTermView) {
+          // 长期视图
+          Scroll(this.scroller) {
+            Column({ space: 0 }) {
+              Blank().height(TITLE_BAR_HEIGHT_MINI)
               if (this.responsive_isLandscape) {
                 // 横屏模式：使用更紧凑的布局
                 this.buildLandscapeContent()
               } else {
                 // 竖屏模式：使用原有布局
-                Column({ space: 0 }) {
-                  if (this.isLoading) {
-                    this.buildLoadingState()
-                  } else if (this.statistics.totalReadingTime === 0) {
-                    this.buildEmptyState()
-                  } else {
-                    this.buildStatisticsOverview()
-                    this.buildReadingHabits()
-                    this.buildInterestAnalysis()
-                    this.buildReadingRank()
-                    this.buildDailyTrend()
-                    this.buildSettingsSection()
-                    
-                    Blank().height(40)
-                  }
-                }
-                .width('100%')
-              }
-            }
-            .edgeEffect(EdgeEffect.Spring)
-            .scrollBar(BarState.Auto)
-            .layoutWeight(1)
-          } else {
-            // 日视图
-            Scroll(this.scroller) {
-              Column({ space: 0 }) {
                 if (this.isLoading) {
                   this.buildLoadingState()
+                } else if (this.statistics.totalReadingTime === 0) {
+                  this.buildEmptyState()
                 } else {
-                  this.buildDailyViewContent()
+                  this.buildStatisticsOverview()
+                  this.buildReadingHabits()
+                  this.buildInterestAnalysis()
+                  this.buildReadingRank()
+                  this.buildDailyTrend()
+                  this.buildSettingsSection()
+                  
                   Blank().height(40)
                 }
               }
-              .width('100%')
             }
-            .edgeEffect(EdgeEffect.Spring)
-            .scrollBar(BarState.Auto)
-            .layoutWeight(1)
+            .width('100%')
+            .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
           }
+          .width('100%')
+          .height('100%')
+          .align(Alignment.TopStart)
+          .edgeEffect(EdgeEffect.Spring)
+          .scrollBar(BarState.Auto)
+        } else {
+          // 日视图
+          Scroll(this.scroller) {
+            Column({ space: 0 }) {
+              Blank().height(TITLE_BAR_HEIGHT_MINI)
+              if (this.isLoading) {
+                this.buildLoadingState()
+              } else {
+                this.buildDailyViewContent()
+                Blank().height(40)
+              }
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .height('100%')
+          .align(Alignment.TopStart)
+          .edgeEffect(EdgeEffect.Spring)
+          .scrollBar(BarState.Auto)
         }
-        .width('100%')
-        .height('100%')
-        .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
 
         // 保留天数选择器弹窗
         if (this.showRetentionPicker) {

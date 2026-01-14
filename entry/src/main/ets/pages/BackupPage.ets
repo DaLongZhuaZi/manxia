@@ -76,6 +76,11 @@ struct BackupPage {
   // Tab状态
   @Local currentTab: 'local' | 'cloud' | 'native_test' | 'ftp' = 'local';
   
+  // 横向滑动切换标签页相关状态
+  private readonly tabOrder: ('local' | 'cloud' | 'native_test' | 'ftp')[] = ['local', 'cloud', 'native_test', 'ftp'];
+  @Local private swipeStartX: number = 0;
+  @Local private swipeOffsetX: number = 0;
+  
   // 本地备份状态
   @Local isCreatingBackup: boolean = false;
   @Local isRestoringBackup: boolean = false;
@@ -152,6 +157,35 @@ struct BackupPage {
   
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   
+  /**
+   * 切换到下一个标签页（支持循环）
+   */
+  private switchToNextTab(): void {
+    const currentIndex = this.tabOrder.indexOf(this.currentTab);
+    const nextIndex = (currentIndex + 1) % this.tabOrder.length;
+    this.currentTab = this.tabOrder[nextIndex];
+    this.onTabChanged();
+  }
+  
+  /**
+   * 切换到上一个标签页（支持循环）
+   */
+  private switchToPrevTab(): void {
+    const currentIndex = this.tabOrder.indexOf(this.currentTab);
+    const prevIndex = (currentIndex - 1 + this.tabOrder.length) % this.tabOrder.length;
+    this.currentTab = this.tabOrder[prevIndex];
+    this.onTabChanged();
+  }
+  
+  /**
+   * 标签页切换后的回调
+   */
+  private onTabChanged(): void {
+    if (this.currentTab === 'cloud' && this.webdavSettings.enabled && this.cloudBackups.length === 0) {
+      this.loadCloudBackups();
+    }
+  }
+  
   aboutToAppear(): void {
     logger.info(TAG, '备份页面初始化');
     
@@ -182,6 +216,123 @@ struct BackupPage {
     this.loadFTPConnections();
     
     this.loadBackupFiles();
+    
+    // 检查是否有外部导入的备份文件
+    this.checkPendingBackupImport();
+  }
+  
+  /**
+   * 检查并处理外部导入的备份文件
+   */
+  private async checkPendingBackupImport(): Promise<void> {
+    try {
+      const pendingBackupUri = AppStorage.get<string>('pendingBackupUri');
+      const backupImportPending = AppStorage.get<boolean>('backupImportPending');
+      
+      if (pendingBackupUri && backupImportPending) {
+        logger.info(TAG, `💾 检测到外部导入的备份文件: ${pendingBackupUri}`);
+        
+        // 清除标记
+        AppStorage.delete('pendingBackupUri');
+        AppStorage.delete('backupImportPending');
+        AppStorage.delete('pendingFileCategory');
+        
+        // 延迟执行导入，确保页面已完全加载
+        setTimeout(() => {
+          this.importBackupFromUri(pendingBackupUri);
+        }, 500);
+      }
+    } catch (error) {
+      logger.error(TAG, `检查外部备份文件失败: ${error}`);
+    }
+  }
+  
+  /**
+   * 从URI导入备份文件
+   * 备份文件是tar格式，需要先复制到沙箱目录再恢复
+   */
+  private async importBackupFromUri(uri: string): Promise<void> {
+    try {
+      logger.info(TAG, `开始从URI导入备份: ${uri}`);
+      
+      // 从URI中提取文件名
+      const decodedUri = decodeURIComponent(uri);
+      const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
+      
+      // 显示确认对话框
+      AlertDialog.show({
+        title: '确认导入备份',
+        message: `确定要导入备份文件吗？\n\n文件名: ${fileName}\n\n⚠️ 恢复备份将覆盖当前数据！`,
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        primaryButton: {
+          value: '取消',
+          action: () => {
+            logger.info(TAG, '用户取消导入备份');
+          }
+        },
+        secondaryButton: {
+          value: '确认导入',
+          fontColor: Color.Red,
+          action: () => {
+            this.executeRestoreFromExternalUri(uri);
+          }
+        }
+      });
+      
+    } catch (error) {
+      logger.error(TAG, `从URI导入备份失败: ${error}`);
+      promptAction.showToast({ message: `导入失败: ${error}` });
+    }
+  }
+  
+  /**
+   * 执行从外部URI导入的备份恢复操作
+   */
+  private async executeRestoreFromExternalUri(uri: string): Promise<void> {
+    try {
+      this.isRestoringBackup = true;
+      logger.info(TAG, `开始执行备份恢复: ${uri}`);
+      
+      // 将外部文件复制到沙箱临时目录
+      const sandboxManager = SandboxManager.getInstance();
+      const tempPath = sandboxManager.getDirectory('temp') + '/temp_restore_' + Date.now() + '.mxbak';
+      
+      // 复制文件
+      const srcFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const stat = fileIo.statSync(srcFile.fd);
+      const buffer = new ArrayBuffer(stat.size);
+      fileIo.readSync(srcFile.fd, buffer);
+      fileIo.closeSync(srcFile);
+      
+      const dstFile = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(dstFile.fd, buffer);
+      fileIo.closeSync(dstFile);
+      
+      logger.info(TAG, `备份文件已复制到: ${tempPath}, 大小: ${stat.size} 字节`);
+      
+      // 使用EnhancedBackupManager恢复备份（它会解压tar文件）
+      await this.enhancedBackupManager.restoreBackup(tempPath);
+      
+      // 删除临时文件
+      try {
+        fileIo.unlinkSync(tempPath);
+      } catch (e) {
+        logger.warn(TAG, `删除临时文件失败: ${e}`);
+      }
+      
+      promptAction.showToast({ message: '备份恢复成功！' });
+      logger.info(TAG, '备份恢复成功');
+      
+      // 刷新备份列表
+      this.loadBackupFiles();
+      
+    } catch (error) {
+      logger.error(TAG, `执行恢复失败: ${error}`);
+      promptAction.showToast({ message: `恢复失败: ${error}` });
+    } finally {
+      this.isRestoringBackup = false;
+    }
   }
   
   aboutToDisappear(): void {
@@ -1504,6 +1655,25 @@ struct BackupPage {
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
+          .gesture(
+            PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+              .onActionStart((event: GestureEvent) => {
+                this.swipeStartX = event.offsetX;
+                this.swipeOffsetX = 0;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                this.swipeOffsetX = event.offsetX - this.swipeStartX;
+              })
+              .onActionEnd((event: GestureEvent) => {
+                const swipeThreshold = 80;
+                if (this.swipeOffsetX < -swipeThreshold) {
+                  this.switchToNextTab();
+                } else if (this.swipeOffsetX > swipeThreshold) {
+                  this.switchToPrevTab();
+                }
+                this.swipeOffsetX = 0;
+              })
+          )
         }
         .width('100%')
         .height('100%')

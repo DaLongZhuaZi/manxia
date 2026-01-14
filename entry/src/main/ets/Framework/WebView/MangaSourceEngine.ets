@@ -184,9 +184,11 @@ export class MangaSourceEngine {
 
   /**
    * 加载配置文件
+   * @param jsonContent JSON配置内容
+   * @param skipInitialize 是否跳过初始化工作流（默认false）
    */
-  async loadConfig(jsonContent: string): Promise<ParseResult> {
-    logger.info(TAG, '加载漫画图源配置');
+  async loadConfig(jsonContent: string, skipInitialize: boolean = false): Promise<ParseResult> {
+    logger.info(TAG, `加载漫画图源配置, skipInitialize=${skipInitialize}`);
     logger.debug(TAG, `接收到的JSON长度: ${jsonContent.length}`);
     
     // 保存原始JSON用于提取API配置
@@ -204,11 +206,15 @@ export class MangaSourceEngine {
         logger.warn(TAG, `配置警告: ${parseResult.warnings.join('; ')}`);
       }
 
-      // 自动执行初始化工作流（用于登录/Cookie预热）
-      try {
-        await this.runInitializeWorkflowIfPresent();
-      } catch (e) {
-        logger.warn(TAG, `初始化工作流执行失败: ${e instanceof Error ? e.message : String(e)}`);
+      // 自动执行初始化工作流（用于登录/Cookie预热），除非明确跳过
+      if (!skipInitialize) {
+        try {
+          await this.runInitializeWorkflowIfPresent();
+        } catch (e) {
+          logger.warn(TAG, `初始化工作流执行失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } else {
+        logger.info(TAG, '跳过初始化工作流');
       }
     } else {
       logger.error(TAG, `配置加载失败: ${parseResult.error || '未知错误'}`);
@@ -1404,6 +1410,7 @@ export class MangaSourceEngine {
       const context = this.createActionContext();
       context.variables['useCookies'] = 'false';
       context.variables['bookId'] = bookId;
+      context.variables['mangaUrl'] = bookId;  // 兼容使用{{mangaUrl}}的工作流
       logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
       
       let bookDetail: Record<string, Object> = {};

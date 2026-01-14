@@ -49,6 +49,7 @@ import { SuwayomiSourceBrowsePage } from './SuwayomiSourceBrowsePage';
 import { getSuwayomiTracker } from '../Framework/Tracking/trackers/SuwayomiTracker';
 import { SuwayomiMangaDetailPage } from './SuwayomiMangaDetailPage';
 import { SuwayomiReaderPage } from './SuwayomiReaderPage';
+import { ZLibraryReaderPage } from './ZLibraryReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
 import { ReadingAnalyticsPage } from './ReadingAnalyticsPage';
@@ -141,6 +142,9 @@ import { EBookSettingsPage } from './EBookSettingsPage';
 // 导入小说相关模型
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
+import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
+import { LegadoSourceImportResult } from '../Framework/Novel/LegadoSourceTypes';
+import { FontManager } from '../Framework/Managers/FontManager';
 
 // 导入事件总线
 import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload } from '../Framework/EventBus';
@@ -419,7 +423,7 @@ struct MainMenuPage {
   // 书库筛选和视图相关状态
   @State libraryContentType: LibraryContentType = LibraryContentType.MANGA; // 书库内容类型（漫画/电子书）
   @State libraryFilterType: LibraryFilterType = LibraryFilterType.ALL; // 默认选择"全部"
-  @State libraryViewMode: LibraryViewMode = LibraryViewMode.GRID;
+  @State libraryViewMode: LibraryViewMode = LibraryViewMode.GRID; // 默认网格视图，会在loadLibraryViewMode中从持久化存储加载
   @State showLibraryFilterDialog: boolean = false;
   @State showLibraryFilterPopup: boolean = false;
   @State filteredMangaList: Manga[] = [];
@@ -2085,13 +2089,18 @@ struct MainMenuPage {
       const viewMode: string | null = await this.dataManager.getUserSetting('default_user', 'library_view_mode');
       if (viewMode === LibraryViewMode.GRID) {
         this.libraryViewMode = LibraryViewMode.GRID;
-      } else {
+      } else if (viewMode === LibraryViewMode.CATEGORY) {
+        this.libraryViewMode = LibraryViewMode.CATEGORY;
+      } else if (viewMode === LibraryViewMode.LIST) {
         this.libraryViewMode = LibraryViewMode.LIST;
+      } else {
+        // 默认使用网格视图
+        this.libraryViewMode = LibraryViewMode.GRID;
       }
       logger.info(TAG, `加载书库视图模式: ${this.libraryViewMode}`);
     } catch (error) {
       logger.warn(TAG, `加载书库视图模式失败，使用默认值: ${String(error)}`);
-      this.libraryViewMode = LibraryViewMode.LIST;
+      this.libraryViewMode = LibraryViewMode.GRID;
     }
   }
 
@@ -3387,6 +3396,63 @@ struct MainMenuPage {
         return;
       }
 
+      // 检查备份文件导入
+      const pendingBackupUri = AppStorage.get<string>('pendingBackupUri');
+      if (pendingBackupUri) {
+        logger.info(TAG, `💾 检测到待导入的备份文件: ${pendingBackupUri}`);
+        // 不清除标记，让BackupPage读取
+        AppStorage.setOrCreate('backupImportPending', true);
+        // 导航到备份恢复页面
+        setTimeout(() => {
+          this.navigateToBackupPage();
+        }, 500);
+        return;
+      }
+
+      // 检查JSON文件导入
+      const pendingJsonUri = AppStorage.get<string>('pendingJsonUri');
+      if (pendingJsonUri) {
+        logger.info(TAG, `📋 检测到待导入的JSON文件: ${pendingJsonUri}`);
+        // 清除标记
+        AppStorage.delete('pendingJsonUri');
+        AppStorage.delete('pendingFileCategory');
+        // 显示JSON导入选项对话框
+        setTimeout(() => {
+          this.showJsonImportDialog(pendingJsonUri);
+        }, 500);
+        return;
+      }
+
+      // 检查字体文件导入
+      const pendingFontUri = AppStorage.get<string>('pendingFontUri');
+      if (pendingFontUri) {
+        logger.info(TAG, `🔤 检测到待导入的字体文件: ${pendingFontUri}`);
+        // 清除标记
+        AppStorage.delete('pendingFontUri');
+        AppStorage.delete('pendingFileCategory');
+        // 导入字体文件
+        setTimeout(() => {
+          this.importFontFile(pendingFontUri);
+        }, 500);
+        return;
+      }
+
+      // 检查代码文件导入
+      const pendingCodeUri = AppStorage.get<string>('pendingCodeUri');
+      if (pendingCodeUri) {
+        const pendingCodeLanguage = AppStorage.get<string>('pendingCodeLanguage') || 'plaintext';
+        logger.info(TAG, `💻 检测到待打开的代码文件: ${pendingCodeUri}, 语言: ${pendingCodeLanguage}`);
+        // 清除标记
+        AppStorage.delete('pendingCodeUri');
+        AppStorage.delete('pendingCodeLanguage');
+        AppStorage.delete('pendingFileCategory');
+        // 使用文件编辑器打开
+        setTimeout(() => {
+          this.openCodeFileInEditor(pendingCodeUri, pendingCodeLanguage);
+        }, 500);
+        return;
+      }
+
       // 优先检查系统分享导入（注意：可能是JSON字符串或数组）
       const rawShareFiles = AppStorage.get<string | string[]>('pendingShareFiles');
       if (rawShareFiles) {
@@ -3405,12 +3471,13 @@ struct MainMenuPage {
         }
       }
 
-      // 检查普通文件导入
+      // 检查普通文件导入（漫画、电子书、PDF等）
       const pendingFileUri = AppStorage.get<string>('pendingFileUri');
       const pendingFileType = AppStorage.get<string>('pendingFileType');
+      const pendingFileCategory = AppStorage.get<string>('pendingFileCategory');
 
       if (pendingFileUri) {
-        logger.info(TAG, `📁 检测到待导入文件: ${pendingFileUri}, 类型: ${pendingFileType}`);
+        logger.info(TAG, `📁 检测到待导入文件: ${pendingFileUri}, 类型: ${pendingFileType}, 分类: ${pendingFileCategory}`);
 
         // 不清除标记，让DataManagementPage读取
         // 使用新的key存储已经处理的标记
@@ -3423,6 +3490,277 @@ struct MainMenuPage {
       }
     } catch (error) {
       logger.error(TAG, '检查待导入文件失败', String(error));
+    }
+  }
+
+  /**
+   * 导航到备份恢复页面
+   */
+  private navigateToBackupPage(): void {
+    try {
+      logger.info(TAG, '导航到备份恢复页面');
+      // 切换到设置标签页
+      this.currentTabIndex = 3;
+      // 延迟导航到备份页面
+      setTimeout(() => {
+        this.pathStack.pushPathByName('BackupPage', undefined);
+      }, 300);
+    } catch (error) {
+      logger.error(TAG, '导航到备份恢复页面失败', String(error));
+    }
+  }
+
+  /**
+   * 显示JSON文件导入选项对话框
+   */
+  private showJsonImportDialog(jsonUri: string): void {
+    try {
+      // 从URI中提取文件名
+      const decodedUri = decodeURIComponent(jsonUri);
+      const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
+      
+      logger.info(TAG, `显示JSON导入对话框: ${fileName}`);
+      
+      promptAction.showActionMenu({
+        title: `导入JSON文件\n${fileName}`,
+        buttons: [
+          { text: '导入为书源', color: $r('sys.color.ohos_id_color_text_primary') },
+          { text: '导入为图源', color: $r('sys.color.ohos_id_color_text_primary') },
+          { text: '使用文件编辑器打开', color: $r('sys.color.ohos_id_color_text_primary') }
+        ]
+      }).then((result: promptAction.ActionMenuSuccessResponse) => {
+        if (result.index === 0) {
+          // 导入为书源
+          this.importJsonAsNovelSource(jsonUri);
+        } else if (result.index === 1) {
+          // 导入为图源
+          this.importJsonAsMangaSource(jsonUri);
+        } else if (result.index === 2) {
+          // 使用文件编辑器打开
+          this.openJsonInEditor(jsonUri);
+        }
+      }).catch((err: Error) => {
+        logger.info(TAG, '用户取消JSON导入选择');
+      });
+    } catch (error) {
+      logger.error(TAG, '显示JSON导入对话框失败', String(error));
+      this.showToast('显示导入选项失败');
+    }
+  }
+
+  /**
+   * 将JSON文件导入为书源
+   */
+  private async importJsonAsNovelSource(jsonUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `导入JSON为书源: ${jsonUri}`);
+      
+      // 读取JSON文件内容
+      const file = fs.openSync(jsonUri, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(file.fd);
+      const buffer = new ArrayBuffer(stat.size);
+      fs.readSync(file.fd, buffer);
+      fs.closeSync(file);
+      
+      // 转换为字符串
+      const textDecoder = util.TextDecoder.create('utf-8');
+      const jsonContent = textDecoder.decodeToString(new Uint8Array(buffer));
+      
+      // 使用NovelSourceManager导入
+      const novelSourceManager = getNovelSourceManager();
+      const results = await novelSourceManager.importFromJSON(jsonContent);
+      
+      const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
+      const failCount = results.length - successCount;
+      
+      if (successCount > 0) {
+        this.showToast(`成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`);
+        logger.info(TAG, `书源导入完成: 成功=${successCount}, 失败=${failCount}`);
+        // 跳转到书源管理页面
+        setTimeout(() => {
+          this.pathStack.pushPathByName('NovelSourceManagementPage', null);
+        }, 500);
+      } else {
+        this.showToast('导入失败：没有有效的书源数据');
+        logger.warn(TAG, '书源导入失败：没有有效的书源数据');
+      }
+    } catch (error) {
+      logger.error(TAG, `导入书源失败: ${String(error)}`);
+      this.showToast(`导入失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 将JSON文件导入为图源
+   */
+  private async importJsonAsMangaSource(jsonUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `导入JSON为图源: ${jsonUri}`);
+      
+      // 读取JSON文件内容
+      const file = fs.openSync(jsonUri, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(file.fd);
+      const buffer = new ArrayBuffer(stat.size);
+      fs.readSync(file.fd, buffer);
+      fs.closeSync(file);
+      
+      // 转换为字符串
+      const textDecoder = util.TextDecoder.create('utf-8');
+      const jsonContent = textDecoder.decodeToString(new Uint8Array(buffer));
+      
+      // 使用SourceManager导入
+      const mangaSourceManager = SourceManager.getInstance();
+      const result = await mangaSourceManager.importFromJSON(jsonContent);
+      
+      if (result.success) {
+        this.showToast(`成功导入图源: ${result.sourceName || '未知'}`);
+        logger.info(TAG, `图源导入成功: ${result.sourceName}`);
+        // 跳转到图源管理页面
+        setTimeout(() => {
+          this.pathStack.pushPathByName('SourceManagementPage', null);
+        }, 500);
+      } else {
+        this.showToast(`导入失败: ${result.error || '未知错误'}`);
+        logger.warn(TAG, `图源导入失败: ${result.error}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `导入图源失败: ${String(error)}`);
+      this.showToast(`导入失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 使用文件编辑器打开JSON文件
+   */
+  private async openJsonInEditor(jsonUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `使用文件编辑器打开: ${jsonUri}`);
+      
+      // 从URI中提取文件名
+      const decodedUri = decodeURIComponent(jsonUri);
+      const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
+      
+      // 读取文件内容（外部URI无法直接被编辑器访问）
+      const file = fs.openSync(jsonUri, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(file.fd);
+      const buffer = new ArrayBuffer(stat.size);
+      fs.readSync(file.fd, buffer);
+      fs.closeSync(file);
+      
+      // 转换为字符串
+      const textDecoder = util.TextDecoder.create('utf-8');
+      const content = textDecoder.decodeToString(new Uint8Array(buffer));
+      
+      // 使用content参数传递内容，而不是filePath
+      const params: FileEditorParams = {
+        content: content,
+        language: 'json',
+        readOnly: false,
+        title: fileName
+      };
+      
+      this.pathStack.pushPathByName('FileEditorPage', params);
+    } catch (error) {
+      logger.error(TAG, `打开文件编辑器失败: ${String(error)}`);
+      this.showToast('打开文件编辑器失败');
+    }
+  }
+
+  /**
+   * 导入字体文件为自定义字体
+   */
+  private async importFontFile(fontUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `导入字体文件: ${fontUri}`);
+      
+      // 从URI中提取文件名
+      const decodedUri = decodeURIComponent(fontUri);
+      const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
+      const fontName = fileName.replace(/\.(ttf|otf|ttc)$/i, '');
+      
+      // 显示确认对话框
+      AlertDialog.show({
+        title: '导入字体',
+        message: `确定要导入字体文件吗？\n\n文件名: ${fileName}`,
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        primaryButton: {
+          value: '取消',
+          action: () => {
+            logger.info(TAG, '用户取消导入字体');
+          }
+        },
+        secondaryButton: {
+          value: '确认导入',
+          action: async () => {
+            await this.executeImportFont(fontUri, fontName);
+          }
+        }
+      });
+    } catch (error) {
+      logger.error(TAG, `导入字体文件失败: ${String(error)}`);
+      this.showToast(`导入失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 执行字体导入
+   */
+  private async executeImportFont(fontUri: string, displayName: string): Promise<void> {
+    try {
+      logger.info(TAG, `执行字体导入: ${fontUri}, 名称: ${displayName}`);
+      
+      // 使用FontManager导入字体
+      const fontManager = FontManager.getInstance();
+      const customFont = await fontManager.addCustomFont(displayName, fontUri);
+      
+      this.showToast(`成功导入字体: ${customFont.displayName}`);
+      logger.info(TAG, `字体导入成功: ${customFont.displayName}, familyName=${customFont.familyName}`);
+      
+      // 跳转到字体设置页面
+      setTimeout(() => {
+        this.pathStack.pushPathByName('FontSettingsSubPage', null);
+      }, 500);
+    } catch (error) {
+      logger.error(TAG, `执行字体导入失败: ${String(error)}`);
+      this.showToast(`导入失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 使用文件编辑器打开代码文件
+   */
+  private async openCodeFileInEditor(codeUri: string, language: string): Promise<void> {
+    try {
+      logger.info(TAG, `使用文件编辑器打开代码文件: ${codeUri}, 语言: ${language}`);
+      
+      // 从URI中提取文件名
+      const decodedUri = decodeURIComponent(codeUri);
+      const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
+      
+      // 读取文件内容（外部URI无法直接被编辑器访问）
+      const file = fs.openSync(codeUri, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(file.fd);
+      const buffer = new ArrayBuffer(stat.size);
+      fs.readSync(file.fd, buffer);
+      fs.closeSync(file);
+      
+      // 转换为字符串
+      const textDecoder = util.TextDecoder.create('utf-8');
+      const content = textDecoder.decodeToString(new Uint8Array(buffer));
+      
+      // 使用content参数传递内容
+      const params: FileEditorParams = {
+        content: content,
+        language: language,
+        readOnly: false,
+        title: fileName
+      };
+      
+      this.pathStack.pushPathByName('FileEditorPage', params);
+    } catch (error) {
+      logger.error(TAG, `打开代码文件失败: ${String(error)}`);
+      this.showToast(`打开失败: ${String(error)}`);
     }
   }
 
@@ -4283,62 +4621,6 @@ struct MainMenuPage {
   }
 
   /**
-   * 显示删除小说确认对话框
-   */
-  private showDeleteNovelDialog(novelId: string): void {
-    const novel = this.novelList.find(n => n.id === novelId);
-    if (!novel) {
-      logger.error(TAG, `未找到小说ID为 ${novelId} 的小说`);
-      return;
-    }
-
-    logger.info(TAG, `显示删除小说确认对话框: ${novel.name} (ID: ${novelId})`);
-
-    this.getUIContext().showAlertDialog({
-      title: '删除小说',
-      message: `确定要删除小说“${novel.name}”吗？\n\n此操作将删除该小说的所有数据，且不可恢复。`,
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      primaryButton: {
-        value: '取消',
-        action: () => {
-          logger.info(TAG, '用户取消删除小说');
-        }
-      },
-      secondaryButton: {
-        value: '删除',
-        fontColor: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
-        action: async () => {
-          try {
-            logger.info(TAG, `开始删除小说: ${novelId}`);
-            
-            // 直接从数据库删除小说
-            const dbManager = DatabaseManager.getInstance();
-            await dbManager.executeSql('DELETE FROM novel_book WHERE id = ?', [novelId]);
-            await dbManager.executeSql('DELETE FROM novel_chapter WHERE bookId = ?', [novelId]);
-            
-            // 更新本地列表
-            const newNovelList: NovelBook[] = [];
-            for (let i: number = 0; i < this.novelList.length; i++) {
-              const n: NovelBook = this.novelList[i];
-              if (n.id !== novelId) { newNovelList.push(n); }
-            }
-            this.novelList = newNovelList;
-
-            await this.applyNovelFilter();
-
-            this.showToast('小说已删除');
-            logger.info(TAG, `小说删除成功: ${novelId}`);
-          } catch (error) {
-            logger.error(TAG, '删除小说失败', String(error));
-            this.showToast('删除失败');
-          }
-        }
-      }
-    });
-  }
-
-  /**
    * 全选电子书
    */
   private selectAllEBooks(): void {
@@ -4425,6 +4707,95 @@ struct MainMenuPage {
       this.showToast('删除失败，请稍后重试');
     } finally {
       this.isDeletingEBook = false;
+    }
+  }
+
+  /**
+   * 全选小说
+   */
+  private selectAllNovels(): void {
+    for (const novel of this.filteredNovelList) {
+      this.selectedNovelIds.add(novel.id);
+    }
+    this.selectedNovelIds = new Set(this.selectedNovelIds);
+    logger.info(TAG, `全选小说: ${this.selectedNovelIds.size}个`);
+  }
+
+  /**
+   * 显示小说批量删除确认
+   */
+  private showNovelBatchDeleteConfirm(): void {
+    if (this.selectedNovelIds.size === 0) {
+      this.showToast('请选择要删除的小说');
+      return;
+    }
+    AlertDialog.show({
+      title: '确认删除',
+      message: `确定要删除选中的 ${this.selectedNovelIds.size} 本小说吗？此操作不可恢复。`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消小说批量删除');
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: Color.Red,
+        action: () => {
+          this.batchDeleteNovels();
+        }
+      }
+    });
+  }
+
+  /**
+   * 批量删除小说
+   */
+  private async batchDeleteNovels(): Promise<void> {
+    if (this.selectedNovelIds.size === 0) {
+      return;
+    }
+
+    this.isDeletingNovel = true;
+    try {
+      const novelIds = Array.from(this.selectedNovelIds);
+      logger.info(TAG, `开始批量删除小说: ${novelIds.length}个`);
+
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (const novelId of novelIds) {
+        try {
+          await this.novelDataManager?.deleteBook(novelId);
+          successCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error(TAG, `删除小说失败: ${novelId}, ${String(error)}`);
+        }
+      }
+
+      logger.info(TAG, `批量删除完成: 成功=${successCount}, 失败=${failedCount}`);
+
+      if (failedCount > 0) {
+        this.showToast(`删除完成，成功${successCount}个，失败${failedCount}个`);
+      } else {
+        this.showToast(`成功删除${successCount}本小说`);
+      }
+
+      // 退出多选模式
+      this.exitNovelMultiSelectMode();
+
+      // 刷新小说列表
+      await this.loadNovelList();
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `批量删除小说失败: ${errorMessage}`);
+      this.showToast('删除失败，请稍后重试');
+    } finally {
+      this.isDeletingNovel = false;
     }
   }
 
@@ -5223,16 +5594,20 @@ struct MainMenuPage {
         })
 
       // 删除按钮
-      Button('删除')
-        .fontSize(14)
-        .height(36)
-        .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-        .onClick(() => {
-          this.showBatchDeleteConfirm();
-        })
-        .enabled(this.selectedMangaIds.size > 0)
+      Button() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(40)
+      .height(40)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .onClick(() => {
+        this.showBatchDeleteConfirm();
+      })
+      .enabled(this.selectedMangaIds.size > 0)
+      .opacity(this.selectedMangaIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -5280,16 +5655,81 @@ struct MainMenuPage {
         })
 
       // 删除按钮
-      Button('删除')
+      Button() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(40)
+      .height(40)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .onClick(() => {
+        this.showEBookBatchDeleteConfirm();
+      })
+      .enabled(this.selectedEBookIds.size > 0)
+      .opacity(this.selectedEBookIds.size > 0 ? 1.0 : 0.5)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  /**
+   * 构建小说多选工具栏
+   */
+  @Builder
+  buildNovelMultiSelectToolbar() {
+    Row({ space: 12 }) {
+      // 退出多选模式按钮
+      Button() {
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(20)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.exitNovelMultiSelectMode();
+      })
+
+      // 选中数量显示
+      Text(`已选择 ${this.selectedNovelIds.size} 项`)
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .layoutWeight(1)
+
+      // 全选按钮
+      Button('全选')
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .onClick(() => {
-          this.showEBookBatchDeleteConfirm();
+          this.selectAllNovels();
         })
-        .enabled(this.selectedEBookIds.size > 0)
+
+      // 删除按钮
+      Button() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(40)
+      .height(40)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .onClick(() => {
+        this.showNovelBatchDeleteConfirm();
+      })
+      .enabled(this.selectedNovelIds.size > 0)
+      .opacity(this.selectedNovelIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -5421,6 +5861,11 @@ struct MainMenuPage {
       // 电子书多选工具栏
       if (this.isEBookMultiSelectMode && this.libraryContentType === LibraryContentType.EBOOK) {
         this.buildEBookMultiSelectToolbar()
+      }
+
+      // 小说多选工具栏
+      if (this.isNovelMultiSelectMode && this.libraryContentType === LibraryContentType.NOVEL) {
+        this.buildNovelMultiSelectToolbar()
       }
 
       // 内容类型切换栏
@@ -5899,17 +6344,24 @@ struct MainMenuPage {
 
       // 卡片内容层
       Row({ space: 12 }) {
-        Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
-          .width(80)
-          .height(120)
-          .objectFit(ImageFit.Contain)
-          .backgroundColor(Color.Transparent)
-          .borderRadius(8)
-          .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
-          .onError(() => {
-            logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
-          })
-          .id(`cover_manga_lib_${manga.id}`)
+        // 封面图片
+        Column() {
+          Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .onError(() => {
+              logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
+            })
+        }
+        .width(80)
+        .height(120)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .clip(true)
+        .justifyContent(FlexAlign.Center)
+        .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
+        .id(`cover_manga_lib_${manga.id}`)
 
         Column({ space: 8 }) {
           // 漫画标题
@@ -7085,37 +7537,53 @@ struct MainMenuPage {
           })
           .id(`library_manga_${manga.id}`)
 
-        // 选中状态遮罩
-        if (this.isMultiSelectMode && this.selectedMangaIds.has(manga.id)) {
+        // 多选模式蒙版层
+        if (this.isMultiSelectMode) {
+          // 半透明蒙版（未选中时较浅，选中时较深）
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor(AppColors.withAlpha(ColorRole.PRIMARY, 0.5))
+            .backgroundColor(this.selectedMangaIds.has(manga.id) 
+              ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
+              : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
             .borderRadius(8)
-        }
-
-        // 选中图标
-        if (this.isMultiSelectMode) {
+            .animation({ duration: 200, curve: Curve.EaseOut })
+          
+          // 选中/未选中指示器（右上角圆形勾选框）
           Column() {
-            Image($r('sys.symbol.checkmark'))
-              .width(24)
-              .height(24)
-              .fillColor(this.selectedMangaIds.has(manga.id)
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : AppColors.withAlpha(ColorRole.ON_SURFACE, 0.5))
-              .backgroundColor(this.selectedMangaIds.has(manga.id)
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-                : AppColors.withAlpha(ColorRole.SHADOW, 0.25))
-              .borderRadius(12)
-              .padding(4)
+            Stack() {
+              // 圆形背景
+              Circle()
+                .width(28)
+                .height(28)
+                .fill(this.selectedMangaIds.has(manga.id)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : AppColors.withAlpha(ColorRole.SHADOW, 0.5))
+                .stroke(this.selectedMangaIds.has(manga.id)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : '#FFFFFF')
+                .strokeWidth(2)
+                .animation({ duration: 200, curve: Curve.EaseOut })
+              
+              // 勾选图标（仅选中时显示）
+              if (this.selectedMangaIds.has(manga.id)) {
+                SymbolGlyph($r('sys.symbol.checkmark'))
+                  .fontSize(16)
+                  .fontColor(['#FFFFFF'])
+              }
+            }
+            .scale({ x: this.selectedMangaIds.has(manga.id) ? 1.0 : 0.9, y: this.selectedMangaIds.has(manga.id) ? 1.0 : 0.9 })
+            .animation({ duration: 200, curve: Curve.EaseOut })
           }
           .width('100%')
           .height('100%')
-          .justifyContent(FlexAlign.End)
+          .justifyContent(FlexAlign.Start)
           .alignItems(HorizontalAlign.End)
-          .padding(8)
+          .padding(6)
         }
       }
+      .width('100%')
+      .aspectRatio(0.7)
 
       // 漫画标题
       Text(manga.title)
@@ -7142,10 +7610,6 @@ struct MainMenuPage {
     .backgroundBlurStyle(this.getGlassBlur())
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
-    .border({
-      width: this.isMultiSelectMode && this.selectedMangaIds.has(manga.id) ? 2 : 0,
-      color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-    })
     .onClick(() => {
       if (this.isMultiSelectMode) {
         // 多选模式：切换选中状态
@@ -8158,6 +8622,108 @@ struct MainMenuPage {
     });
   }
 
+  // ==================== 小说左滑删除：辅助方法与确认弹窗 ====================
+  private activateNovelSwipeFor(novelId: string): void {
+    if (this.isNovelMultiSelectMode) { return; }
+    this.activeNovelSwipeId = novelId;
+    this.isNovelSwipeActive = true;
+    this.novelSwipeOffset = 0;
+    logger.info(TAG, `长按激活小说左滑删除: ${novelId}`);
+  }
+
+  private updateNovelSwipeOffset(novelId: string, event: GestureEvent): void {
+    if (!this.isNovelSwipeActive || this.activeNovelSwipeId !== novelId) { return; }
+    const deltaX: number = -event.offsetX;
+    const maxHintWidth: number = 120;
+    const newOffset: number = Math.max(0, deltaX);
+    this.novelSwipeOffset = Math.min(newOffset, maxHintWidth);
+  }
+
+  private endNovelSwipe(novelId: string): void {
+    if (!this.isNovelSwipeActive || this.activeNovelSwipeId !== novelId) { return; }
+    const reached: boolean = this.novelSwipeOffset >= this.swipeThreshold;
+    this.isNovelSwipeActive = false;
+    if (reached) {
+      this.showDeleteNovelDialog(novelId);
+    } else {
+      this.resetNovelSwipeState();
+    }
+  }
+
+  private resetNovelSwipeState(): void {
+    this.activeNovelSwipeId = '';
+    this.isNovelSwipeActive = false;
+    this.novelSwipeOffset = 0;
+  }
+
+  private getNovelSwipeOffset(novelId: string): number {
+    return (this.activeNovelSwipeId === novelId && this.isNovelSwipeActive) ? this.novelSwipeOffset : 0;
+  }
+
+  private getNovelById(novelId: string): NovelBook | null {
+    for (let i: number = 0; i < this.filteredNovelList.length; i++) {
+      const n: NovelBook = this.filteredNovelList[i];
+      if (n.id === novelId) { return n; }
+    }
+    return null;
+  }
+
+  /**
+   * 显示删除小说确认对话框
+   */
+  private showDeleteNovelDialog(novelId: string): void {
+    const novel = this.getNovelById(novelId);
+    if (!novel) {
+      logger.error(TAG, `未找到小说ID为 ${novelId} 的小说`);
+      this.resetNovelSwipeState();
+      return;
+    }
+
+    logger.info(TAG, `显示删除小说确认对话框: ${novel.name} (ID: ${novelId})`);
+
+    this.getUIContext().showAlertDialog({
+      title: '删除小说',
+      message: `确定要删除小说"${novel.name}"吗？\n\n此操作将删除该小说的所有数据和文件，且不可恢复。`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消删除小说');
+          this.resetNovelSwipeState();
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme),
+        action: async () => {
+          try {
+            logger.info(TAG, `开始删除小说: ${novelId}`);
+            await this.novelDataManager?.deleteBook(novelId);
+
+            const newNovelList: NovelBook[] = [];
+            for (let i: number = 0; i < this.novelList.length; i++) {
+              const nv: NovelBook = this.novelList[i];
+              if (nv.id !== novelId) { newNovelList.push(nv); }
+            }
+            this.novelList = newNovelList;
+
+            // 触发动画
+            await this.applyNovelFilter();
+
+            this.showToast('小说已删除');
+            logger.info(TAG, `小说删除成功: ${novelId}`);
+            this.resetNovelSwipeState();
+          } catch (error) {
+            logger.error(TAG, '删除小说失败', String(error));
+            this.showToast('删除失败');
+            this.resetNovelSwipeState();
+          }
+        }
+      }
+    });
+  }
+
   /**
    * 构建电子书Grid卡片
    */
@@ -8185,6 +8751,7 @@ struct MainMenuPage {
           .height(140)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           .borderRadius(8)
+          .clip(true)
           .justifyContent(FlexAlign.Center)
           .shadow({
             radius: 8,
@@ -8192,37 +8759,53 @@ struct MainMenuPage {
             offsetY: 4
           })
 
-          // 选中状态遮罩
-          if (this.isEBookMultiSelectMode && this.selectedEBookIds.has(ebook.id)) {
+          // 多选模式蒙版层
+          if (this.isEBookMultiSelectMode) {
+            // 半透明蒙版（未选中时较浅，选中时较深）
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor(AppColors.withAlpha(ColorRole.PRIMARY, 0.5))
+              .backgroundColor(this.selectedEBookIds.has(ebook.id) 
+                ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
+                : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
               .borderRadius(8)
-          }
-
-          // 选中图标
-          if (this.isEBookMultiSelectMode) {
+              .animation({ duration: 200, curve: Curve.EaseOut })
+            
+            // 选中/未选中指示器（右上角圆形勾选框）
             Column() {
-              Image($r('sys.symbol.checkmark'))
-                .width(24)
-                .height(24)
-                .fillColor(this.selectedEBookIds.has(ebook.id)
-                  ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                  : AppColors.withAlpha(ColorRole.ON_SURFACE, 0.5))
-                .backgroundColor(this.selectedEBookIds.has(ebook.id)
-                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-                  : AppColors.withAlpha(ColorRole.SHADOW, 0.25))
-                .borderRadius(12)
-                .padding(4)
+              Stack() {
+                // 圆形背景
+                Circle()
+                  .width(28)
+                  .height(28)
+                  .fill(this.selectedEBookIds.has(ebook.id)
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                    : AppColors.withAlpha(ColorRole.SHADOW, 0.5))
+                  .stroke(this.selectedEBookIds.has(ebook.id)
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                    : '#FFFFFF')
+                  .strokeWidth(2)
+                  .animation({ duration: 200, curve: Curve.EaseOut })
+                
+                // 勾选图标（仅选中时显示）
+                if (this.selectedEBookIds.has(ebook.id)) {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(16)
+                    .fontColor(['#FFFFFF'])
+                }
+              }
+              .scale({ x: this.selectedEBookIds.has(ebook.id) ? 1.0 : 0.9, y: this.selectedEBookIds.has(ebook.id) ? 1.0 : 0.9 })
+              .animation({ duration: 200, curve: Curve.EaseOut })
             }
             .width('100%')
             .height('100%')
-            .justifyContent(FlexAlign.End)
+            .justifyContent(FlexAlign.Start)
             .alignItems(HorizontalAlign.End)
-            .padding(8)
+            .padding(6)
           }
         }
+        .width('100%')
+        .height(140)
 
         // 书籍信息
         Column({ space: 4 }) {
@@ -8273,10 +8856,6 @@ struct MainMenuPage {
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
       .opacity(this.getCardOpacity())
-      .border({
-        width: this.isEBookMultiSelectMode && this.selectedEBookIds.has(ebook.id) ? 2 : 0,
-        color: ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
-      })
     }
     .onClick(() => {
       if (this.isEBookMultiSelectMode) {
@@ -8295,83 +8874,109 @@ struct MainMenuPage {
    */
   @Builder
   buildNovelCard(novel: NovelBook) {
-    Row({ space: 12 }) {
-      // 封面图片
-      Column() {
-        if (novel.coverUrl || novel.coverLocalPath) {
-          Image(novel.coverLocalPath || novel.coverUrl || '')
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-        } else {
-          Image($r('app.media.ic_source_novel'))
-            .width(50)
-            .height(50)
-            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        }
+    Stack({ alignContent: Alignment.End }) {
+      // 删除提示背景
+      Row() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
       }
       .width(80)
-      .height(120)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
+      .height('100%')
       .justifyContent(FlexAlign.Center)
-      .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .borderRadius({ topRight: this.getGlassRadius(), bottomRight: this.getGlassRadius() })
 
-      // 小说信息
-      Column({ space: 6 }) {
-        Text(novel.name)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Row({ space: 12 }) {
+        // 封面图片
+        Column() {
+          if (novel.coverUrl || novel.coverLocalPath) {
+            Image(novel.coverLocalPath || novel.coverUrl || '')
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+          } else {
+            Image($r('app.media.ic_source_novel'))
+              .width(50)
+              .height(50)
+              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .width(80)
+        .height(120)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .clip(true)
+        .justifyContent(FlexAlign.Center)
+        .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
-        Text(novel.author || '未知作者')
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Text(novel.sourceName || '未知来源')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .maxLines(1)
-
-        Blank()
-
-        // 阅读状态和章节数
-        Row({ space: 8 }) {
-          Text(this.getNovelReadStatusText(novel.readStatus))
-            .fontSize(11)
+        // 小说信息
+        Column({ space: 6 }) {
+          Text(novel.name)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-            .borderRadius(4)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          Text(`${novel.chapterCount}章`)
-            .fontSize(11)
+          Text(novel.author || '未知作者')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(novel.sourceName || '未知来源')
+            .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+
+          Blank()
+
+          // 阅读状态和章节数
+          Row({ space: 8 }) {
+            Text(this.getNovelReadStatusText(novel.readStatus))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+              .borderRadius(4)
+
+            Text(`${novel.chapterCount}章`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
         }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .height(120)
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .height(120)
+      .translate({ x: -this.getNovelSwipeOffset(novel.id), y: 0 })
+      .onClick(() => { this.openNovelDetail(novel); })
+      .width('100%')
+      .height(144)
+      .padding(12)
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .opacity(this.getCardOpacity())
+      .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
+      .gesture(
+        GestureGroup(GestureMode.Parallel,
+          LongPressGesture({ repeat: false })
+            .onAction(() => { this.activateNovelSwipeFor(novel.id); }),
+          PanGesture({ fingers: 1, direction: PanDirection.Left, distance: 1 })
+            .onActionUpdate((event: GestureEvent) => { this.updateNovelSwipeOffset(novel.id, event); })
+            .onActionEnd((event: GestureEvent) => { this.endNovelSwipe(novel.id); })
+        )
+      )
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor(this.getGlassBackground())
-    .backgroundBlurStyle(this.getGlassBlur())
-    .borderRadius(this.getGlassRadius())
-    .opacity(this.getCardOpacity())
-    .onClick(() => {
-      this.openNovelDetail(novel);
-    })
-    .bindContextMenu(this.buildNovelContextMenu(novel), ResponseType.LongPress)
+    .height(144)
   }
 
   /**
@@ -8399,20 +9004,70 @@ struct MainMenuPage {
         .height(140)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(8)
+        .clip(true)
         .justifyContent(FlexAlign.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
 
-        // 阅读状态标签
-        Text(this.getNovelReadStatusText(novel.readStatus))
-          .fontSize(10)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .borderRadius(4)
-          .position({ x: 4, y: 4 })
+        // 阅读状态标签（非多选模式时显示）
+        if (!this.isNovelMultiSelectMode) {
+          Text(this.getNovelReadStatusText(novel.readStatus))
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .borderRadius(4)
+            .position({ x: 4, y: 4 })
+        }
+
+        // 多选模式蒙版层
+        if (this.isNovelMultiSelectMode) {
+          // 半透明蒙版（未选中时较浅，选中时较深）
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor(this.selectedNovelIds.has(novel.id) 
+              ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
+              : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
+            .borderRadius(8)
+            .animation({ duration: 200, curve: Curve.EaseOut })
+          
+          // 选中/未选中指示器（右上角圆形勾选框）
+          Column() {
+            Stack() {
+              // 圆形背景
+              Circle()
+                .width(28)
+                .height(28)
+                .fill(this.selectedNovelIds.has(novel.id)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : AppColors.withAlpha(ColorRole.SHADOW, 0.5))
+                .stroke(this.selectedNovelIds.has(novel.id)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+                  : '#FFFFFF')
+                .strokeWidth(2)
+                .animation({ duration: 200, curve: Curve.EaseOut })
+              
+              // 勾选图标（仅选中时显示）
+              if (this.selectedNovelIds.has(novel.id)) {
+                SymbolGlyph($r('sys.symbol.checkmark'))
+                  .fontSize(16)
+                  .fontColor(['#FFFFFF'])
+              }
+            }
+            .scale({ x: this.selectedNovelIds.has(novel.id) ? 1.0 : 0.9, y: this.selectedNovelIds.has(novel.id) ? 1.0 : 0.9 })
+            .animation({ duration: 200, curve: Curve.EaseOut })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Start)
+          .alignItems(HorizontalAlign.End)
+          .padding(6)
+        }
       }
       .width('100%')
+      .height(140)
+      .clip(true)
 
       // 小说标题
       Text(novel.name)
@@ -8440,7 +9095,13 @@ struct MainMenuPage {
     .borderRadius(this.getGlassRadius())
     .opacity(this.getCardOpacity())
     .onClick(() => {
-      this.openNovelDetail(novel);
+      if (this.isNovelMultiSelectMode) {
+        // 多选模式：切换选中状态
+        this.toggleNovelSelection(novel.id);
+      } else {
+        // 普通模式：打开详情页
+        this.openNovelDetail(novel);
+      }
     })
     .bindContextMenu(this.buildNovelContextMenu(novel), ResponseType.LongPress)
   }
@@ -10424,13 +11085,13 @@ struct MainMenuPage {
       .constraintSize({ maxWidth: 450, maxHeight: 550 })
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(this.userThemeCornerRadius)
-      .opacity(AppColors.getTransparency('dialog'))
+      // .opacity(AppColors.getTransparency('dialog'))
       .padding(20)
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.1)')
+    // .backgroundColor('rgba(0,0,0,0.1)')
     .onClick(() => {
       // 点击遮罩关闭
     })
@@ -11707,6 +12368,8 @@ struct MainMenuPage {
       SuwayomiMangaDetailPage()
     } else if (name === 'SuwayomiReaderPage') {
       SuwayomiReaderPage()
+    } else if (name === 'ZLibraryReaderPage') {
+      ZLibraryReaderPage()
     } else if (name === 'DownloadManagerPage') {
       DownloadManagerPage()
     } else if (name === 'AboutPage') {

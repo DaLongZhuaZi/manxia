@@ -179,6 +179,20 @@ export struct SuwayomiMangaDetailPage {
     return chapters;
   }
 
+  /**
+   * 获取章节页数
+   */
+  private getChapterPageCount(chapter: ChapterInfo): number {
+    return (chapter as ESObject)['pageCount'] || 0;
+  }
+
+  /**
+   * 获取章节最后阅读页码
+   */
+  private getChapterLastPageRead(chapter: ChapterInfo): number {
+    return (chapter as ESObject)['lastPageRead'] || 0;
+  }
+
   private openChapter(chapter: ChapterInfo, index: number): void {
     // 保存阅读进度
     this.saveReadingProgress(chapter.id, index);
@@ -462,7 +476,7 @@ export struct SuwayomiMangaDetailPage {
                 : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
               .justifyContent(FlexAlign.Center)
 
-              // 中间：章节标题和下载状态
+              // 中间：章节标题、页数和下载状态
               Column({ space: 2 }) {
                 Text(chapter.title)
                   .fontSize(14)
@@ -474,16 +488,35 @@ export struct SuwayomiMangaDetailPage {
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .fontFamily(this.appFontFamily)
 
-                // 下载状态
-                if (this.isChapterDownloaded(chapter.id)) {
-                  Row({ space: 4 }) {
-                    SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+                // 页数和阅读进度信息
+                Row({ space: 8 }) {
+                  // 页数信息
+                  if (this.getChapterPageCount(chapter) > 0) {
+                    Text(`${this.getChapterPageCount(chapter)} 页`)
                       .fontSize(10)
-                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
-                    Text('已缓存')
-                      .fontSize(10)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                       .fontFamily(this.appFontFamily)
+                  }
+
+                  // 阅读进度（如果有）
+                  if (this.getChapterLastPageRead(chapter) > 0 && !this.isChapterRead(chapter.id)) {
+                    Text(`已读 ${this.getChapterLastPageRead(chapter)}/${this.getChapterPageCount(chapter)}`)
+                      .fontSize(10)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                      .fontFamily(this.appFontFamily)
+                  }
+
+                  // 下载状态
+                  if (this.isChapterDownloaded(chapter.id)) {
+                    Row({ space: 4 }) {
+                      SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+                        .fontSize(10)
+                        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+                      Text('已缓存')
+                        .fontSize(10)
+                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                        .fontFamily(this.appFontFamily)
+                    }
                   }
                 }
               }

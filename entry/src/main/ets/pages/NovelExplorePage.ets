@@ -63,8 +63,31 @@ export struct NovelExplorePage {
   @State showSourcePicker: boolean = false;
   @State showSearchBar: boolean = false;
   @State searchKeyword: string = '';
+  
+  // 横向滑动切换分类相关状态
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
+  
   private sourceManager: NovelSourceManager = getNovelSourceManager();
   private sourceListScroller: Scroller = new Scroller();
+
+  /**
+   * 切换到下一个分类（支持循环）
+   */
+  private switchToNextKind(): void {
+    if (this.exploreKinds.length === 0) return;
+    const nextIndex = (this.selectedKindIndex + 1) % this.exploreKinds.length;
+    this.selectKind(nextIndex);
+  }
+  
+  /**
+   * 切换到上一个分类（支持循环）
+   */
+  private switchToPrevKind(): void {
+    if (this.exploreKinds.length === 0) return;
+    const prevIndex = (this.selectedKindIndex - 1 + this.exploreKinds.length) % this.exploreKinds.length;
+    this.selectKind(prevIndex);
+  }
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -528,34 +551,37 @@ export struct NovelExplorePage {
   @Builder
   buildKindSelector() {
     Scroll() {
-      Row() {
+      Row({ space: 0 }) {
         ForEach(this.exploreKinds, (kind: ExploreKind, index: number) => {
-          Column() {
+          Row() {
             Text(kind.title)
-              .fontSize(14)
+              .fontSize(13)
               .fontFamily(this.appFontFamily)
               .fontColor(this.selectedKindIndex === index ? 
-                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) : 
                 ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
               .fontWeight(this.selectedKindIndex === index ? FontWeight.Medium : FontWeight.Normal)
-            
-            if (this.selectedKindIndex === index) {
-              Divider()
-                .width(24)
-                .height(2)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .margin({ top: 4 })
-            }
           }
-          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+          .height(35)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor(this.selectedKindIndex === index
+            ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
+            : Color.Transparent)
+          .border({
+            width: { top: this.selectedKindIndex === index ? 2 : 0, bottom: 0, left: 0, right: 0 },
+            color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          })
           .onClick(() => this.selectKind(index))
+          .animation({ duration: 150 })
         })
       }
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
     .width('100%')
-    .height(44)
+    .height(38)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
   }
 
   @Builder
@@ -625,8 +651,27 @@ export struct NovelExplorePage {
       }
       .width('100%')
       .layoutWeight(1)
-      .padding({ top: 8 })
+      .padding({ left: 12, right: 12, top: 8 })
       .onReachEnd(() => this.loadMore())
+      .gesture(
+        PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+          .onActionStart((event: GestureEvent) => {
+            this.swipeStartX = event.offsetX;
+            this.swipeOffsetX = 0;
+          })
+          .onActionUpdate((event: GestureEvent) => {
+            this.swipeOffsetX = event.offsetX - this.swipeStartX;
+          })
+          .onActionEnd((event: GestureEvent) => {
+            const swipeThreshold = 80;
+            if (this.swipeOffsetX < -swipeThreshold) {
+              this.switchToNextKind();
+            } else if (this.swipeOffsetX > swipeThreshold) {
+              this.switchToPrevKind();
+            }
+            this.swipeOffsetX = 0;
+          })
+      )
     }
   }
 
@@ -698,7 +743,7 @@ export struct NovelExplorePage {
     .padding(12)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .borderRadius(8)
-    .margin({ left: 12, right: 12, bottom: 8 })
+    .margin({ bottom: 8 })
     .onClick(() => this.openBookDetail(book))
   }
 }

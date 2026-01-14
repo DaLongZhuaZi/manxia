@@ -274,6 +274,7 @@ export interface NavigateAction extends BaseAction {
   url: string;
   waitFor?: WaitCondition;
   timeout?: number;
+  waitAfterLoad?: number;
 }
 
 /**
