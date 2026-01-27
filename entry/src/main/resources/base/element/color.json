@@ -421,10 +421,6 @@
       "value": "#000000"
     },
     {
-      "name": "settings_panel_background",
-      "value": "#0D0D0D"
-    },
-    {
       "name": "settings_panel_border",
       "value": "#1A1A1A"
     },
@@ -1271,6 +1267,10 @@
     {
       "name": "transparent",
       "value": "#00000000"
+    },
+    {
+      "name": "settings_panel_background",
+      "value": "#F5F5F5"
     }
   ]
 }

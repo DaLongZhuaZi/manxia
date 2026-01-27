@@ -549,6 +549,7 @@ export struct NovelReplaceRulePage {
           this.showAddDialog = false;
           this.resetForm();
         })
+        .transition(TransitionEffect.opacity(0).animation({ duration: 250, curve: Curve.EaseOut }))
       
       Column() {
         Text(this.editingRule ? '编辑规则' : '添加规则')
@@ -641,6 +642,7 @@ export struct NovelReplaceRulePage {
       .width('100%')
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
       .borderRadius({ topLeft: 16, topRight: 16 })
+      .transition(TransitionEffect.translate({ y: 300 }).animation({ duration: 300, curve: Curve.EaseOut }))
     }
     .width('100%')
     .height('100%')

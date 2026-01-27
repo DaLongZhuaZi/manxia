@@ -322,17 +322,35 @@ export class LegadoRuleAnalyzer {
     const putMap: Record<string, string> = {};
 
     // 处理@put规则
+    // Legado的@put格式是 @put:{key:value,key2:value2}，不是标准JSON
     const putPattern = /@put:\{([^}]+)\}/gi;
     let putMatch = putPattern.exec(rule);
     while (putMatch !== null) {
       rule = rule.replace(putMatch[0], '');
       try {
+        // 尝试标准JSON解析
         const putJson = JSON.parse(`{${putMatch[1]}}`) as Record<string, string>;
         Object.keys(putJson).forEach(key => {
           putMap[key] = putJson[key];
         });
       } catch (e) {
-        logger.warn(TAG, `解析@put规则失败: ${putMatch[1]}`);
+        // [修复] 如果JSON解析失败，尝试解析Legado的key:value格式
+        // 格式: id:id,name:name,author:author
+        try {
+          const pairs = putMatch[1].split(',');
+          for (const pair of pairs) {
+            const colonIndex = pair.indexOf(':');
+            if (colonIndex > 0) {
+              const key = pair.substring(0, colonIndex).trim();
+              const value = pair.substring(colonIndex + 1).trim();
+              if (key && value) {
+                putMap[key] = value;
+              }
+            }
+          }
+        } catch (e2) {
+          logger.warn(TAG, `解析@put规则失败: ${putMatch[1]}`);
+        }
       }
       putMatch = putPattern.exec(rule);
     }

@@ -225,7 +225,7 @@ export const DEFAULT_BACKGROUND: CustomBackground = {
 export const DEFAULT_TEXT_READER_SETTINGS: TextReaderSettings = {
   readingMode: TextReadingMode.PAGE,
   readingDirection: TextReadingDirection.HORIZONTAL,
-  pageTurnAnimation: TextPageTurnAnimation.SLIDE,
+  pageTurnAnimation: TextPageTurnAnimation.CURL,
   background: DEFAULT_BACKGROUND,
   savedBackgroundImages: [],
   textStyle: DEFAULT_TEXT_STYLE,

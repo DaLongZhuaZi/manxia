@@ -573,6 +573,7 @@ export struct NovelTxtTocRulePage {
           this.showAddDialog = false;
           this.resetForm();
         })
+        .transition(TransitionEffect.opacity(0).animation({ duration: 250, curve: Curve.EaseOut }))
       
       // 对话框
       Column() {
@@ -685,6 +686,7 @@ export struct NovelTxtTocRulePage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
       .borderRadius(16)
       .padding({ left: 20, right: 20 })
+      .transition(TransitionEffect.scale({ x: 0.9, y: 0.9 }).combine(TransitionEffect.opacity(0)).animation({ duration: 250, curve: Curve.EaseOut }))
     }
     .width('100%')
     .height('100%')

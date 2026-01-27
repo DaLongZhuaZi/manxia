@@ -4,12 +4,13 @@
  */
 
 import { logger } from '../Utils/Logger';
-import { curves, componentSnapshot, font } from '@kit.ArkUI';
+import { curves, componentSnapshot, font, promptAction } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import measure from '@ohos.measure';
 import { display } from '@kit.ArkUI';
 import { KeyCode } from '@kit.InputKit';
 import batteryInfo from '@ohos.batteryInfo';
+import { pasteboard } from '@kit.BasicServicesKit';
 import {
   TextReaderSettings,
   TextReaderParams,
@@ -87,6 +88,20 @@ export struct TextReaderComponent {
   onTapCenter: () => void = () => {};
   /** 分页完成回调（组件就绪） */
   onReady: () => void = () => {};
+  /** 文本选择回调（用于添加净化规则等） */
+  onTextSelected: (selectedText: string) => void = () => {};
+  /** 添加净化规则回调 */
+  onAddPurifyRule: (pattern: string) => void = () => {};
+  /** 百科搜索回调 */
+  onSearchEncyclopedia: (keyword: string) => void = () => {};
+  
+  // ========== 文本选择状态 ==========
+  /** 选择开始位置 */
+  @State private selectionStart: number = -1;
+  /** 选择结束位置 */
+  @State private selectionEnd: number = -1;
+  /** 当前选中的文本 */
+  @State private selectedText: string = '';
   
   // ========== 内部状态 ==========
   /** 分页后的页面列表 */
@@ -2100,7 +2115,7 @@ export struct TextReaderComponent {
         this.paginateContent();
       }, TextReaderComponent.AREA_CHANGE_DEBOUNCE_MS);
     })
-    .gesture(
+    .parallelGesture(
       GestureGroup(GestureMode.Exclusive,
         TapGesture({ count: 1 })
           .onAction((event: GestureEvent) => {
@@ -2236,7 +2251,7 @@ export struct TextReaderComponent {
       
       // 当前页容器（支持卷曲效果）
       Stack() {
-        // 当前页内容
+        // 当前页内容（支持长按选择文本）
         Text(this.currentPageContent)
           .fontSize(this.settings.textStyle.fontSize)
           .fontColor(this.settings.textStyle.textColor)
@@ -2254,6 +2269,16 @@ export struct TextReaderComponent {
           .width('100%')
           .height('100%')
           .backgroundColor(this.getContentBackgroundColor())
+          .copyOption(CopyOptions.InApp)
+          .selection(this.selectionStart, this.selectionEnd)
+          .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+            this.handleTextSelectionChange(selectionStart, selectionEnd);
+          })
+          .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenu, TextResponseType.LONG_PRESS, {
+            onDisappear: () => {
+              this.clearSelection();
+            }
+          })
         
         // 卷曲效果叠加层
         if (this.showCurlEffect && this.curlProgress > 0) {
@@ -2426,5 +2451,171 @@ export struct TextReaderComponent {
     .padding({ left: 16, right: 16, bottom: 8 })
     .position({ x: 0, y: '100%' })
     .translate({ y: '-100%' })
+  }
+  
+  /**
+   * 构建文本选择菜单
+   */
+  @Builder
+  buildTextSelectionMenu() {
+    Menu() {
+      MenuItem({ content: '复制' })
+        .onClick(() => {
+          this.copySelectedText();
+        })
+      MenuItem({ content: '百科搜索' })
+        .onClick(() => {
+          this.searchEncyclopedia();
+        })
+      MenuItem({ content: '添加净化规则' })
+        .onClick(() => {
+          this.addPurifyRuleFromSelection();
+        })
+      MenuItem({ content: '分享' })
+        .onClick(() => {
+          this.shareSelectedText();
+        })
+    }
+    .radius(8)
+    .backgroundColor($r('app.color.settings_panel_background'))
+  }
+  
+  /**
+   * 复制选中的文本
+   */
+  private copySelectedText(): void {
+    if (this.selectedText) {
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.selectedText);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      systemPasteboard.setData(pasteData);
+      promptAction.showToast({ message: '已复制', duration: 1500 });
+    }
+    this.clearSelection();
+  }
+  
+  /**
+   * 从选中文本添加净化规则
+   */
+  private addPurifyRuleFromSelection(): void {
+    if (this.selectedText) {
+      this.onAddPurifyRule(this.selectedText);
+      promptAction.showToast({ message: '已添加净化规则', duration: 1500 });
+    }
+    this.clearSelection();
+  }
+  
+  /**
+   * 分享选中的文本
+   */
+  private shareSelectedText(): void {
+    if (this.selectedText) {
+      // 调用系统分享
+      promptAction.showToast({ message: '分享功能开发中', duration: 1500 });
+    }
+    this.clearSelection();
+  }
+  
+  /**
+   * 百科搜索选中的文本
+   */
+  private searchEncyclopedia(): void {
+    if (this.selectedText) {
+      this.onSearchEncyclopedia(this.selectedText);
+    }
+    this.clearSelection();
+  }
+  
+  /**
+   * 显示长按操作菜单
+   */
+  private showLongPressMenu(): void {
+    // 使用当前页面内容作为选中文本（用户可以在菜单中选择操作）
+    this.selectedText = this.currentPageContent;
+    
+    promptAction.showActionMenu({
+      title: '选择操作',
+      buttons: [
+        { text: '百科搜索', color: '#007AFF' },
+        { text: '复制全文', color: '#007AFF' },
+        { text: '添加净化规则', color: '#007AFF' },
+        { text: '取消', color: '#999999' }
+      ]
+    }).then((result: promptAction.ActionMenuSuccessResponse) => {
+      switch (result.index) {
+        case 0: // 百科搜索
+          this.showEncyclopediaInputDialog();
+          break;
+        case 1: // 复制全文
+          this.copySelectedText();
+          break;
+        case 2: // 添加净化规则
+          this.showPurifyRuleInputDialog();
+          break;
+        default:
+          this.clearSelection();
+          break;
+      }
+    }).catch(() => {
+      this.clearSelection();
+    });
+  }
+  
+  /**
+   * 显示百科搜索输入对话框
+   */
+  private showEncyclopediaInputDialog(): void {
+    promptAction.showDialog({
+      title: '百科搜索',
+      message: '请输入要搜索的关键词',
+      buttons: [
+        { text: '取消', color: '#999999' },
+        { text: '搜索', color: '#007AFF' }
+      ]
+    }).then((result: promptAction.ShowDialogSuccessResponse) => {
+      if (result.index === 1) {
+        // 用户点击搜索，使用TextInputDialog获取输入
+        this.onSearchEncyclopedia(this.currentPageContent.substring(0, 50));
+      }
+    }).catch(() => {});
+  }
+  
+  /**
+   * 显示添加净化规则输入对话框
+   */
+  private showPurifyRuleInputDialog(): void {
+    promptAction.showDialog({
+      title: '添加净化规则',
+      message: '请输入要净化的文本内容',
+      buttons: [
+        { text: '取消', color: '#999999' },
+        { text: '添加', color: '#007AFF' }
+      ]
+    }).then((result: promptAction.ShowDialogSuccessResponse) => {
+      if (result.index === 1) {
+        // 用户点击添加
+        promptAction.showToast({ message: '请在设置中手动添加净化规则', duration: 2000 });
+      }
+    }).catch(() => {});
+  }
+  
+  /**
+   * 清除选择状态
+   */
+  private clearSelection(): void {
+    this.selectionStart = -1;
+    this.selectionEnd = -1;
+    this.selectedText = '';
+  }
+  
+  /**
+   * 处理文本选择变化
+   */
+  private handleTextSelectionChange(start: number, end: number): void {
+    this.selectionStart = start;
+    this.selectionEnd = end;
+    if (start >= 0 && end > start && this.currentPageContent) {
+      this.selectedText = this.currentPageContent.substring(start, end);
+      this.onTextSelected(this.selectedText);
+    }
   }
 }

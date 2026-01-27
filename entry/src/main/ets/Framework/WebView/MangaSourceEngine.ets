@@ -2150,16 +2150,11 @@ export class MangaSourceEngine {
         }
       }
 
-      // [修复] 根据 order 字段对章节进行升序排序（第一章在前）
-      // PicaComic 等 API 返回的章节可能是降序排列的
+      // [修复] 智能章节排序：支持多种排序依据
+      // 优先级：number字段 > externalId数字 > 标题中提取的数字 > 原始顺序
       if (chapters.length > 0) {
-        chapters.sort((a: ChapterInfo, b: ChapterInfo) => {
-          // 优先使用 externalId 进行排序（对于 PicaComic，externalId 就是 order）
-          const orderA = Number(a.externalId) || 0;
-          const orderB = Number(b.externalId) || 0;
-          return orderA - orderB;  // 升序排列
-        });
-        logger.debug(TAG, `章节已按 order 升序排序，第一章: ${chapters[0].title}, 最后一章: ${chapters[chapters.length - 1].title}`);
+        chapters = this.sortChaptersIntelligently(chapters);
+        logger.debug(TAG, `章节已智能排序，第一章: ${chapters[0].title}, 最后一章: ${chapters[chapters.length - 1].title}`);
       }
 
       const duration = Date.now() - startTime;
@@ -3539,5 +3534,262 @@ export class MangaSourceEngine {
    */
   getTaskExecutor(): TaskExecutor | null {
     return this.taskExecutor;
+  }
+
+  /**
+   * 智能章节排序
+   * 优先级：number字段 > externalId数字 > 标题中提取的数字 > 原始顺序
+   * @param chapters 待排序的章节列表
+   * @returns 排序后的章节列表
+   */
+  private sortChaptersIntelligently(chapters: ChapterInfo[]): ChapterInfo[] {
+    if (chapters.length <= 1) {
+      return chapters;
+    }
+
+    // 为每个章节计算排序权重
+    interface ChapterWithWeight {
+      chapter: ChapterInfo;
+      weight: number;
+      originalIndex: number;
+    }
+
+    const chaptersWithWeight: ChapterWithWeight[] = chapters.map((ch, index) => {
+      let weight = this.extractChapterSortWeight(ch, index);
+      return { chapter: ch, weight: weight, originalIndex: index } as ChapterWithWeight;
+    });
+
+    // 按权重升序排序
+    chaptersWithWeight.sort((a: ChapterWithWeight, b: ChapterWithWeight) => {
+      return a.weight - b.weight;
+    });
+
+    // 检查排序是否有效（权重是否有差异）
+    const hasValidWeights = chaptersWithWeight.some((item, idx) => {
+      if (idx === 0) return false;
+      return item.weight !== chaptersWithWeight[idx - 1].weight;
+    });
+
+    if (!hasValidWeights) {
+      // 所有权重相同，保持原始顺序
+      logger.warn(TAG, '章节排序：无法提取有效排序信息，保持原始顺序');
+      return chapters;
+    }
+
+    // 返回排序后的章节
+    return chaptersWithWeight.map(item => item.chapter);
+  }
+
+  /**
+   * 提取章节的排序权重
+   * @param chapter 章节信息
+   * @param originalIndex 原始索引
+   * @returns 排序权重（数字越小越靠前）
+   * 
+   * [优化] 排序优先级调整：
+   * 1. number字段（API明确提供的章节号，最可靠）
+   * 2. 标题提取（大多数图源的章节标题都包含章节号）
+   * 3. externalId数字（降低优先级，因为混合显示时externalId可能无效）
+   * 4. 原始顺序（最后手段）
+   */
+  private extractChapterSortWeight(chapter: ChapterInfo, originalIndex: number): number {
+    // 1. 优先使用 number 字段（API明确提供的章节号）
+    if (chapter.number !== undefined && chapter.number !== null && !isNaN(chapter.number)) {
+      return chapter.number;
+    }
+
+    // 2. [优化] 优先从标题中提取章节号（比externalId更可靠）
+    const titleNum = this.extractNumberFromTitle(chapter.title);
+    if (titleNum !== null) {
+      return titleNum;
+    }
+
+    // 3. [降级] 尝试从 externalId 提取数字（仅作为备选）
+    // 注意：很多图源的externalId是混合格式或无序的，不可靠
+    if (chapter.externalId) {
+      // 只有当externalId是纯数字时才使用
+      const trimmedId = chapter.externalId.trim();
+      if (/^\d+$/.test(trimmedId)) {
+        const externalNum = Number(trimmedId);
+        if (!isNaN(externalNum) && externalNum > 0 && externalNum < 10000) {
+          return externalNum;
+        }
+      }
+    }
+
+    // 4. 使用原始索引作为最后手段（加大偏移避免与提取的数字冲突）
+    return 100000 + originalIndex;
+  }
+
+  /**
+   * 从章节标题中提取章节号
+   * [增强] 支持多种语言、符号格式，提高准确性和兼容性
+   * @param title 章节标题
+   * @returns 提取的章节号，无法提取返回null
+   */
+  private extractNumberFromTitle(title: string): number | null {
+    if (!title) return null;
+
+    // 预处理：去除首尾空格
+    const cleanTitle = title.trim();
+
+    // 中文数字映射（扩展支持）
+    const chineseNumMap: Record<string, number> = {
+      '零': 0, '〇': 0,
+      '一': 1, '壹': 1,
+      '二': 2, '贰': 2, '两': 2,
+      '三': 3, '叁': 3,
+      '四': 4, '肆': 4,
+      '五': 5, '伍': 5,
+      '六': 6, '陆': 6,
+      '七': 7, '柒': 7,
+      '八': 8, '捌': 8,
+      '九': 9, '玖': 9,
+      '十': 10, '拾': 10,
+      '百': 100, '佰': 100,
+      '千': 1000, '仟': 1000
+    };
+
+    // ========== 高优先级：明确的章节标识格式 ==========
+
+    // 格式1: 中文格式 - 第X章/话/回/集/卷/篇/幕/节 (阿拉伯数字)
+    let match = cleanTitle.match(/第\s*(\d+(?:\.\d+)?)\s*[章话回集卷篇幕节]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式2: 中文格式 - 第X章/话/回/集 (中文数字)
+    match = cleanTitle.match(/第\s*([零〇一二三四五六七八九十百千壹贰叁肆伍陆柒捌玖拾佰仟两]+)\s*[章话回集卷篇幕节]/);
+    if (match) {
+      const chineseNum = this.parseChineseNumber(match[1], chineseNumMap);
+      if (chineseNum !== null) return chineseNum;
+    }
+
+    // 格式3: 英文格式 - Chapter/Ch./Ch/Chap/Chpt X
+    match = cleanTitle.match(/(?:Chapter|Chap(?:ter)?|Chpt|Ch\.?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式4: 英文格式 - Episode/EP./Ep X
+    match = cleanTitle.match(/(?:Episode|Ep\.?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式5: 日文格式 - 第X話/回/巻
+    match = cleanTitle.match(/第\s*(\d+(?:\.\d+)?)\s*[話巻]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式6: 韩文格式 - X화/회/장
+    match = cleanTitle.match(/(\d+(?:\.\d+)?)\s*[화회장]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式7: 符号格式 - #X, No.X, No X, Vol.X, Volume X
+    match = cleanTitle.match(/(?:#|No\.?|Vol(?:ume)?\.?)\s*(\d+(?:\.\d+)?)/i);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式8: 括号格式 - (X), [X], 【X】, 「X」
+    match = cleanTitle.match(/[(\[【「]\s*(\d+(?:\.\d+)?)\s*[)\]】」]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式9: 连字符/冒号格式 - X - Title, X: Title, X. Title
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)\s*[:\-\.]\s*\S/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式10: 数字+单位格式 - X话/章/回/集 (数字在前，无"第"字)
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)\s*[话章回集卷篇話巻]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // ========== 中优先级：数字开头格式 ==========
+
+    // 格式11: 纯数字开头 (如 "001", "1", "1.5", "001 标题")
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)\s/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式12: 纯数字标题 (如 "001", "1", "1.5")
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)$/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // ========== 低优先级：标题中的数字 ==========
+
+    // 格式13: 标题末尾的数字 (如 "番外1", "特别篇2")
+    match = cleanTitle.match(/[^\d](\d+(?:\.\d+)?)$/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式14: 标题中包含的第一个数字（最后手段）
+    // 排除年份格式（4位数字且在1900-2100范围）
+    const allNumbers = cleanTitle.match(/\d+(?:\.\d+)?/g);
+    if (allNumbers) {
+      for (const numStr of allNumbers) {
+        const num = parseFloat(numStr);
+        // 排除可能是年份的数字
+        if (num >= 1900 && num <= 2100 && numStr.length === 4) {
+          continue;
+        }
+        // 排除过大的数字（可能是日期、ID等）
+        if (num < 10000) {
+          return num;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 解析中文数字
+   * @param chineseStr 中文数字字符串
+   * @param numMap 中文数字映射表
+   * @returns 解析后的数字，无法解析返回null
+   */
+  private parseChineseNumber(chineseStr: string, numMap: Record<string, number>): number | null {
+    if (!chineseStr) return null;
+
+    let result = 0;
+    let temp = 0;
+    let prevUnit = 1;
+
+    for (let i = 0; i < chineseStr.length; i++) {
+      const char = chineseStr[i];
+      const num = numMap[char];
+
+      if (num === undefined) {
+        return null; // 包含无法识别的字符
+      }
+
+      if (num >= 10) {
+        // 是单位（十、百、千）
+        if (temp === 0) temp = 1;
+        temp *= num;
+        result += temp;
+        temp = 0;
+        prevUnit = num;
+      } else {
+        // 是数字
+        temp = num;
+      }
+    }
+
+    result += temp;
+    return result > 0 ? result : null;
   }
 }

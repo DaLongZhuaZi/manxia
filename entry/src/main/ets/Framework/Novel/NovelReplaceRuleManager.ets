@@ -99,6 +99,18 @@ export class NovelReplaceRuleManager {
       logger.error(TAG, `初始化失败: ${String(error)}`);
     }
   }
+  
+  /**
+   * 刷新规则（从数据库重新加载）
+   */
+  async refreshRules(): Promise<void> {
+    try {
+      await this.loadRulesFromStorage();
+      logger.info(TAG, `刷新替换规则完成，共 ${this.rules.size} 条规则`);
+    } catch (error) {
+      logger.error(TAG, `刷新规则失败: ${String(error)}`);
+    }
+  }
 
   /**
    * 加载默认替换净化规则
