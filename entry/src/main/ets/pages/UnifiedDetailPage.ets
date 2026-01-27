@@ -7,6 +7,7 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction, curves } from '@kit.ArkUI';
+import { common, Want } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -44,6 +45,7 @@ import webview from '@ohos.web.webview';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { SourceManager, SourceInfo } from '../Framework/Source/SourceManager';
 import { MangaSourceEngine, EngineConfig } from '../Framework/WebView/MangaSourceEngine';
+import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
 import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
@@ -111,6 +113,13 @@ export struct UnifiedDetailPage {
   @State isRefreshing: boolean = false;       // 是否正在刷新
   @State refreshProgress: string = '';        // 刷新进度文本
   
+  // 重新获取状态（在线漫画）
+  @State isRefetchingManga: boolean = false;  // 是否正在重新获取漫画信息
+  @State isRefetchingCover: boolean = false;  // 是否正在重新获取封面
+  
+  // 封面预览状态
+  @State showCoverPreview: boolean = false;   // 是否显示封面全屏预览
+  
   // 漫画章节进度数据
   @State chapterProgressMap: Map<string, ChapterProgressInfo> = new Map();
 
@@ -132,6 +141,7 @@ export struct UnifiedDetailPage {
   // 漫画详情加载器
   private mangaDetailLoader: MangaDetailLoader = MangaDetailLoader.getInstance();
   private webViewController: webview.WebviewController = new webview.WebviewController();
+  private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
   
   // 在线电子书相关
   private sourceManager: SourceManager = SourceManager.getInstance();
@@ -154,6 +164,14 @@ export struct UnifiedDetailPage {
     );
 
     this.initializeResponsiveLayout();
+    
+    // 初始化WebView控制器（用于在线漫画重新获取）
+    try {
+      this.webViewManager.setGlobalWebViewController(this.webViewController);
+      logger.info(TAG, 'WebView控制器已初始化');
+    } catch (error) {
+      logger.warn(TAG, `WebView控制器初始化失败: ${String(error)}`);
+    }
   }
 
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
@@ -1379,19 +1397,36 @@ export struct UnifiedDetailPage {
 
   /**
    * 获取内容类型显示名称
+   * 对于在线漫画显示"在线漫画"，本地漫画显示"本地漫画"
    */
   private getContentTypeName(): string {
     if (!this.content) return '';
     switch (this.content.contentType) {
       case UnifiedContentType.MANGA:
-        return '漫画';
+        // 判断是否为在线漫画
+        if (this.isOnlineManga()) {
+          return '在线漫画';
+        }
+        return '本地漫画';
       case UnifiedContentType.EBOOK:
-        return '电子书';
+        return this.content.isLocal ? '本地电子书' : '在线电子书';
       case UnifiedContentType.NOVEL:
         return '小说';
       default:
         return '';
     }
+  }
+  
+  /**
+   * 判断当前内容是否为在线漫画
+   */
+  private isOnlineManga(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.MANGA) {
+      return false;
+    }
+    // 有sourceId且大于0表示在线漫画
+    const sourceId = this.pageParams?.sourceId;
+    return sourceId !== undefined && sourceId !== '' && Number(sourceId) > 0;
   }
 
   /**
@@ -1439,6 +1474,55 @@ export struct UnifiedDetailPage {
     
     return coverUrl;
   }
+  
+  /**
+   * 清理章节标题，移除"第X话"等前缀，只保留真实标题
+   * 支持多种语言格式
+   * @returns [prefix, cleanTitle] 数组
+   */
+  private cleanChapterTitle(title: string, chapterIndex: number): string[] {
+    const defaultPrefix = `第${chapterIndex + 1}话`;
+    
+    if (!title) {
+      return [defaultPrefix, ''];
+    }
+    
+    // 匹配各种章节前缀格式
+    const prefixPatterns: RegExp[] = [
+      // 中文格式
+      /^第\s*(\d+(?:\.\d+)?)\s*[话話章回集卷]/,
+      /^第\s*([零一二三四五六七八九十百千万]+)\s*[话話章回集卷]/,
+      // 日文格式
+      /^第\s*(\d+(?:\.\d+)?)\s*話/,
+      // 英文格式
+      /^(?:Chapter|Ch\.?|Episode|Ep\.?|Vol\.?|Part)\s*(\d+(?:\.\d+)?)/i,
+      // 韩文格式
+      /^(\d+)\s*화/,
+      // 纯数字格式
+      /^(\d+(?:\.\d+)?)\s*[\.:\-\s]/,
+    ];
+    
+    for (const pattern of prefixPatterns) {
+      const match = title.match(pattern);
+      if (match) {
+        const matchedPrefix = match[0];
+        let cleanTitle = title.substring(matchedPrefix.length).trim();
+        
+        // 移除可能的分隔符
+        cleanTitle = cleanTitle.replace(/^[\s\-:：\.\|]+/, '').trim();
+        
+        // 如果清理后的标题为空，使用原标题
+        if (!cleanTitle) {
+          return [defaultPrefix, title];
+        }
+        
+        return [defaultPrefix, cleanTitle];
+      }
+    }
+    
+    // 没有匹配到前缀，返回原标题
+    return [defaultPrefix, title];
+  }
 
   @Builder
   buildHeader() {
@@ -1474,8 +1558,32 @@ export struct UnifiedDetailPage {
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .borderRadius(4)
           .position({ x: 4, y: 4 })
+        
+        // 在线漫画封面刷新按钮（右下角）
+        if (this.isOnlineManga()) {
+          Button() {
+            if (this.isRefetchingCover) {
+              LoadingProgress()
+                .width(16)
+                .height(16)
+                .color(Color.White)
+            } else {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(14)
+                .fontColor([Color.White])
+            }
+          }
+          .width(28)
+          .height(28)
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .borderRadius(14)
+          .position({ x: COVER_WIDTH - 32, y: COVER_HEIGHT - 32 })
+          .enabled(!this.isRefetchingCover)
+          .onClick(() => this.refetchCoverImage())
+        }
       }
       .id(`cover_${this.componentId}`)
+      .onClick(() => this.showCoverPreview = true)
 
       // 信息区域
       Column({ space: 8 }) {
@@ -1558,7 +1666,7 @@ export struct UnifiedDetailPage {
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           
-          Flex({ wrap: FlexWrap.Wrap }) {
+          Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
             // 显示genres
             ForEach(this.content.genres || [], (genre: string) => {
               Text(genre)
@@ -1566,9 +1674,10 @@ export struct UnifiedDetailPage {
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .borderRadius(4)
-                .margin({ right: 6, bottom: 6 })
+                .padding({ left: 10, right: 10 })
+                .height(26)
+                .borderRadius(13)
+                .margin({ right: 8, bottom: 8 })
             }, (genre: string, index: number) => `genre_${index}_${genre}`)
             
             // 显示tags
@@ -1578,9 +1687,10 @@ export struct UnifiedDetailPage {
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .borderRadius(4)
-                .margin({ right: 6, bottom: 6 })
+                .padding({ left: 10, right: 10 })
+                .height(26)
+                .borderRadius(13)
+                .margin({ right: 8, bottom: 8 })
             }, (tag: string, index: number) => `tag_${index}_${tag}`)
           }
         }
@@ -1646,6 +1756,49 @@ export struct UnifiedDetailPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(18)
         .onClick(() => this.openMangaSettings())
+        
+        // 在线漫画显示"重新获取"按钮
+        if (this.isOnlineManga()) {
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(16)
+                .fontColor([this.isRefetchingManga 
+                  ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              Text(this.isRefetchingManga ? '获取中...' : '重新获取')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.isRefetchingManga 
+                  ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+          }
+          .height(36)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+          .enabled(!this.isRefetchingManga)
+          .onClick(() => this.refetchOnlineMangaInfo())
+          
+          // 在浏览器中打开
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.worldclock_fill_1'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+              Text('浏览器')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            }
+          }
+          .height(36)
+          .padding({ left: 16, right: 16 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+          .onClick(() => this.openInBrowser())
+        }
       } else if (this.content?.contentType === UnifiedContentType.EBOOK) {
         Button() {
           Row({ space: 6 }) {
@@ -1716,7 +1869,263 @@ export struct UnifiedDetailPage {
     };
     this.pathStack.pushPathByName('MangaSettingsPage', params);
   }
+  
+  /**
+   * 重新获取在线漫画信息（增量更新）
+   * 通过WebView重新获取漫画详情和章节列表，更新缺失或默认占位的信息
+   */
+  private async refetchOnlineMangaInfo(): Promise<void> {
+    if (!this.content || !this.pageParams || !this.isOnlineManga()) {
+      return;
+    }
+    
+    const mangaId = this.pageParams.contentId;
+    const sourceId = this.pageParams.sourceId;
+    
+    if (!sourceId || Number(sourceId) <= 0) {
+      promptAction.showToast({ message: '缺少图源信息', duration: 2000 });
+      return;
+    }
+    
+    logger.info(TAG, `开始重新获取在线漫画信息: mangaId=${mangaId}, sourceId=${sourceId}`);
+    this.isRefetchingManga = true;
+    
+    try {
+      // 设置WebView控制器
+      this.mangaDetailLoader.setWebViewController(this.webViewController);
+      
+      // 保存当前已有的阅读进度和状态
+      const currentReadChapterIds = new Set<string>();
+      const currentDownloadedChapterIds = new Set<string>();
+      const currentBookmarkedChapterIds = new Set<string>();
+      const currentLastReadChapterIndex = this.content.lastReadChapterIndex;
+      
+      this.content.chapters.forEach(ch => {
+        if (ch.isRead) currentReadChapterIds.add(ch.id);
+        if (ch.isDownloaded) currentDownloadedChapterIds.add(ch.id);
+        if (ch.isBookmarked) currentBookmarkedChapterIds.add(ch.id);
+      });
+      
+      // 构建加载参数，强制刷新
+      const loadParams: MangaDetailLoadParams = {
+        mangaId: mangaId,
+        sourceId: Number(sourceId),
+        forceRefresh: true
+      };
+      
+      // 分阶段加载回调
+      const progressCallback: MangaLoadProgressCallback = {
+        onBasicInfoLoaded: (manga: Manga, isFavorite: boolean) => {
+          logger.info(TAG, `[重新获取] 基本信息已更新: ${manga.title}, 封面=${manga.coverImagePath}, 简介长度=${manga.description?.length || 0}`);
+          
+          // 增量更新：用新获取的数据更新UI（如果新数据有效）
+          if (this.content) {
+            // 更新标题（如果新标题有效）
+            if (manga.title && manga.title.trim() !== '') {
+              this.content.title = manga.title;
+            }
+            // 更新简介（如果新简介有效）
+            if (manga.description && manga.description.trim() !== '') {
+              this.content.description = manga.description;
+            }
+            // 更新作者（如果新作者有效）
+            if (manga.metadata?.authors?.[0]) {
+              this.content.author = manga.metadata.authors[0];
+            }
+            // 更新标签（如果新标签有效）
+            if (manga.metadata?.genres && manga.metadata.genres.length > 0) {
+              this.content.genres = manga.metadata.genres;
+            }
+            // 更新封面（如果新封面有效）
+            if (manga.coverImagePath && manga.coverImagePath.trim() !== '') {
+              this.content.coverUrl = manga.coverImagePath;
+            }
+            
+            logger.info(TAG, `[重新获取] UI已更新: 标题=${this.content.title}, 封面=${this.content.coverUrl}`);
+          }
+        },
+        
+        onChaptersLoaded: (chapters: MangaChapter[]) => {
+          logger.info(TAG, `[重新获取] 章节已更新: ${chapters.length}章`);
+          
+          const currentChapterCount = this.content?.chapters.length || 0;
+          const newChapterCount = chapters.length;
+          const addedCount = newChapterCount - currentChapterCount;
+          
+          if (addedCount > 0) {
+            promptAction.showToast({ message: `发现 ${addedCount} 个新章节`, duration: 2000 });
+          } else {
+            promptAction.showToast({ message: '信息已更新', duration: 1500 });
+          }
+          
+          // 更新章节列表，保留已有的阅读/下载/书签状态
+          if (this.content) {
+            const originalManga = MangaAdapter.getOriginalManga(this.content);
+            if (originalManga) {
+              originalManga.chapters = chapters;
+              
+              this.content = MangaAdapter.toUnifiedContent(
+                originalManga,
+                chapters,
+                this.isFavorite,
+                currentReadChapterIds,
+                currentDownloadedChapterIds,
+                currentBookmarkedChapterIds,
+                currentLastReadChapterIndex,
+                sourceId
+              );
+            }
+          }
+        },
+        
+        onError: (error: string) => {
+          logger.error(TAG, `[重新获取] 失败: ${error}`);
+          promptAction.showToast({ message: `获取失败: ${error}`, duration: 2000 });
+        }
+      };
+      
+      await this.mangaDetailLoader.loadMangaDetailWithProgress(loadParams, progressCallback);
+      
+      logger.info(TAG, `重新获取在线漫画信息完成`);
+    } catch (error) {
+      logger.error(TAG, `重新获取在线漫画信息异常: ${String(error)}`);
+      promptAction.showToast({ message: `获取失败: ${String(error)}`, duration: 2000 });
+    } finally {
+      this.isRefetchingManga = false;
+    }
+  }
 
+  /**
+   * 重新获取封面图片
+   */
+  private async refetchCoverImage(): Promise<void> {
+    if (!this.isOnlineManga() || !this.pageParams) {
+      return;
+    }
+    
+    this.isRefetchingCover = true;
+    
+    try {
+      const sourceId = Number(this.pageParams.sourceId);
+      const mangaId = this.pageParams.contentId;
+      
+      // 从数据库获取externalId
+      const comicInfo = await this.dataManager.getComicById(mangaId);
+      const externalId = comicInfo?.externalId || mangaId;
+      
+      logger.info(TAG, `重新获取封面: sourceId=${sourceId}, externalId=${externalId}`);
+      
+      // 初始化MangaEngine获取封面
+      await this.loadSourceName(sourceId);
+      const mangaEngine = await this.webViewManager.getMangaEngine(sourceId, this.currentSourceName);
+      
+      if (mangaEngine) {
+        const detailResult = await mangaEngine.getMangaDetail(externalId);
+        if (detailResult.success && detailResult.data?.cover) {
+          const newCoverUrl = detailResult.data.cover;
+          logger.info(TAG, `获取到新封面: ${newCoverUrl}`);
+          
+          // 更新UI
+          if (this.content) {
+            this.content.coverUrl = newCoverUrl;
+          }
+          
+          // 更新数据库
+          await this.dataManager.updateComicCoverUrl(mangaId, newCoverUrl);
+          
+          promptAction.showToast({ message: '封面已更新', duration: 1500 });
+        } else {
+          promptAction.showToast({ message: '获取封面失败', duration: 2000 });
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `重新获取封面失败: ${String(error)}`);
+      promptAction.showToast({ message: `获取失败: ${String(error)}`, duration: 2000 });
+    } finally {
+      this.isRefetchingCover = false;
+    }
+  }
+  
+  // 当前图源名称（用于封面刷新）
+  private currentSourceName: string = '';
+  
+  /**
+   * 加载图源名称
+   */
+  private async loadSourceName(sourceId: number): Promise<void> {
+    try {
+      const sources: SourceInfo[] = await this.sourceManager.getAllSources();
+      const sourceInfo: SourceInfo | undefined = sources.find((s: SourceInfo) => s.id === sourceId);
+      if (sourceInfo) {
+        this.currentSourceName = sourceInfo.name;
+      }
+    } catch (error) {
+      logger.warn(TAG, `加载图源名称失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 根据ID获取图源信息
+   */
+  private async getSourceInfoById(sourceId: number): Promise<SourceInfo | null> {
+    try {
+      const sources: SourceInfo[] = await this.sourceManager.getAllSources();
+      const sourceInfo: SourceInfo | undefined = sources.find((s: SourceInfo) => s.id === sourceId);
+      return sourceInfo || null;
+    } catch (error) {
+      logger.warn(TAG, `获取图源信息失败: ${String(error)}`);
+      return null;
+    }
+  }
+  
+  /**
+   * 在浏览器中打开在线漫画网页
+   */
+  private async openInBrowser(): Promise<void> {
+    if (!this.isOnlineManga() || !this.pageParams) {
+      promptAction.showToast({ message: '无法获取网页地址', duration: 2000 });
+      return;
+    }
+    
+    try {
+      // 获取图源信息以构建URL
+      const sourceId = Number(this.pageParams.sourceId);
+      const mangaId = this.pageParams.contentId;
+      
+      // 从数据库获取externalId
+      const comicInfo = await this.dataManager.getComicById(mangaId);
+      const externalId = comicInfo?.externalId || mangaId;
+      
+      // 获取图源配置
+      const sourceInfo: SourceInfo | null = await this.getSourceInfoById(sourceId);
+      if (!sourceInfo || !sourceInfo.baseUrl) {
+        promptAction.showToast({ message: '无法获取图源信息', duration: 2000 });
+        return;
+      }
+      
+      // 构建漫画详情页URL
+      let mangaUrl: string = sourceInfo.baseUrl;
+      if (!mangaUrl.endsWith('/')) {
+        mangaUrl += '/';
+      }
+      mangaUrl += externalId;
+      
+      logger.info(TAG, `在浏览器中打开: ${mangaUrl}`);
+      
+      // 使用系统API打开浏览器
+      const context = getContext(this) as common.UIAbilityContext;
+      const want: Want = {
+        action: 'ohos.want.action.viewData',
+        uri: mangaUrl
+      };
+      
+      await context.startAbility(want);
+    } catch (error) {
+      logger.error(TAG, `打开浏览器失败: ${String(error)}`);
+      promptAction.showToast({ message: `打开失败: ${String(error)}`, duration: 2000 });
+    }
+  }
+  
   /**
    * 打开电子书设置
    */
@@ -1785,9 +2194,81 @@ export struct UnifiedDetailPage {
    * 缓存全部小说章节
    */
   private async cacheAllNovelChapters(): Promise<void> {
-    if (!this.content) return;
-    promptAction.showToast({ message: '开始缓存章节...' });
-    // TODO: 实现批量缓存逻辑
+    if (!this.content || !this.content.originalData) return;
+    
+    const sourceId = this.pageParams?.sourceId;
+    if (!sourceId) {
+      promptAction.showToast({ message: '缺少书源信息' });
+      return;
+    }
+    
+    const chapters = this.content.originalData as LegadoChapter[];
+    if (!chapters || chapters.length === 0) {
+      promptAction.showToast({ message: '没有可缓存的章节' });
+      return;
+    }
+    
+    // 获取未缓存的章节
+    const uncachedChapters: LegadoChapter[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+      const isCached = await this.novelCacheManager.isChapterCached(this.content.id, i);
+      if (!isCached) {
+        uncachedChapters.push(chapters[i]);
+      }
+    }
+    
+    if (uncachedChapters.length === 0) {
+      promptAction.showToast({ message: '所有章节已缓存' });
+      return;
+    }
+    
+    // 创建下载任务
+    const taskId = this.novelCacheManager.createDownloadTask(
+      this.content.id,
+      this.content.title,
+      0,
+      chapters.length - 1
+    );
+    
+    promptAction.showToast({ message: `开始缓存 ${uncachedChapters.length} 章...` });
+    
+    // 开始下载
+    await this.novelCacheManager.startDownload(taskId, sourceId, chapters, {
+      onProgress: (current: number, total: number, chapterTitle: string) => {
+        logger.debug(TAG, `缓存进度: ${current}/${total} - ${chapterTitle}`);
+      },
+      onComplete: () => {
+        promptAction.showToast({ message: '缓存完成' });
+        // 刷新章节列表以更新缓存状态
+        this.refreshNovelChapterCacheStatus();
+      },
+      onError: (error: string) => {
+        promptAction.showToast({ message: `缓存失败: ${error}` });
+      }
+    });
+  }
+  
+  /**
+   * 刷新小说章节缓存状态
+   */
+  private async refreshNovelChapterCacheStatus(): Promise<void> {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) return;
+    
+    const chapters = this.content.originalData as LegadoChapter[];
+    if (!chapters) return;
+    
+    const cachedIndexes = new Set<number>();
+    for (let i = 0; i < chapters.length; i++) {
+      const isCached = await this.novelCacheManager.isChapterCached(this.content.id, i);
+      if (isCached) {
+        cachedIndexes.add(i);
+      }
+    }
+    
+    // 更新章节的缓存状态
+    this.content.chapters.forEach((ch, index) => {
+      ch.isDownloaded = cachedIndexes.has(index);
+    });
   }
 
   /**
@@ -1795,15 +2276,105 @@ export struct UnifiedDetailPage {
    */
   private async clearNovelCache(): Promise<void> {
     if (!this.content) return;
-    promptAction.showToast({ message: '缓存已清除' });
-    // TODO: 实现清除缓存逻辑
+    
+    try {
+      await this.novelCacheManager.clearBookCache(this.content.id);
+      promptAction.showToast({ message: '缓存已清除' });
+      
+      // 更新章节的缓存状态
+      this.content.chapters.forEach(ch => {
+        ch.isDownloaded = false;
+      });
+    } catch (error) {
+      promptAction.showToast({ message: `清除缓存失败: ${String(error)}` });
+    }
   }
 
   /**
    * 显示下载选项
    */
   private showDownloadOptions(): void {
-    promptAction.showToast({ message: '下载功能开发中' });
+    if (!this.content) return;
+    
+    if (this.content.contentType === UnifiedContentType.NOVEL) {
+      // 小说：显示缓存选项
+      promptAction.showActionMenu({
+        title: '缓存选项',
+        buttons: [
+          { text: '缓存全部章节', color: '#007AFF' },
+          { text: '缓存未读章节', color: '#007AFF' },
+          { text: '清除缓存', color: '#FF3B30' },
+          { text: '取消', color: '#999999' }
+        ]
+      }).then((result: promptAction.ActionMenuSuccessResponse) => {
+        switch (result.index) {
+          case 0:
+            this.cacheAllNovelChapters();
+            break;
+          case 1:
+            this.cacheUnreadNovelChapters();
+            break;
+          case 2:
+            this.clearNovelCache();
+            break;
+        }
+      }).catch(() => {});
+    } else if (this.content.contentType === UnifiedContentType.MANGA) {
+      // 漫画：显示下载选项
+      promptAction.showToast({ message: '漫画下载功能开发中' });
+    }
+  }
+  
+  /**
+   * 缓存未读小说章节
+   */
+  private async cacheUnreadNovelChapters(): Promise<void> {
+    if (!this.content || !this.content.originalData) return;
+    
+    const sourceId = this.pageParams?.sourceId;
+    if (!sourceId) {
+      promptAction.showToast({ message: '缺少书源信息' });
+      return;
+    }
+    
+    const chapters = this.content.originalData as LegadoChapter[];
+    const lastReadIndex = this.content.lastReadChapterIndex || 0;
+    
+    // 获取未读且未缓存的章节
+    const uncachedChapters: LegadoChapter[] = [];
+    for (let i = lastReadIndex; i < chapters.length; i++) {
+      const isCached = await this.novelCacheManager.isChapterCached(this.content.id, i);
+      if (!isCached) {
+        uncachedChapters.push(chapters[i]);
+      }
+    }
+    
+    if (uncachedChapters.length === 0) {
+      promptAction.showToast({ message: '未读章节已全部缓存' });
+      return;
+    }
+    
+    const taskId = this.novelCacheManager.createDownloadTask(
+      this.content.id,
+      this.content.title,
+      lastReadIndex,
+      chapters.length - 1
+    );
+    
+    promptAction.showToast({ message: `开始缓存 ${uncachedChapters.length} 章未读内容...` });
+    
+    await this.novelCacheManager.startDownload(taskId, sourceId, chapters.slice(lastReadIndex), {
+      onProgress: (current: number, total: number, chapterTitle: string) => {
+        logger.debug(TAG, `缓存进度: ${current}/${total} - ${chapterTitle}`);
+      },
+      onComplete: () => {
+        promptAction.showToast({ message: '缓存完成' });
+        this.refreshNovelChapterCacheStatus();
+      },
+      onError: (error: string) => {
+        promptAction.showToast({ message: `缓存失败: ${error}` });
+      }
+    });
   }
 
   @Builder
@@ -1977,15 +2548,31 @@ export struct UnifiedDetailPage {
 
             // 中间：章节信息
             Column({ space: 4 }) {
-              Text(chapter.title)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontWeight(chapter.isRead ? FontWeight.Normal : FontWeight.Medium)
-                .fontColor(chapter.isRead 
-                  ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
-                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              // 章节号 + 清理后的标题
+              Row({ space: 6 }) {
+                // 固定的章节号前缀
+                Text(this.cleanChapterTitle(chapter.title, chapter.index)[0])
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(chapter.isRead 
+                    ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .flexShrink(0)
+                
+                // 清理后的真实标题
+                Text(this.cleanChapterTitle(chapter.title, chapter.index)[1])
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(chapter.isRead ? FontWeight.Normal : FontWeight.Medium)
+                  .fontColor(chapter.isRead 
+                    ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+              }
+              .width('100%')
 
               Row({ space: 12 }) {
                 // 章节进度信息（从chapterProgressMap获取）
@@ -2027,8 +2614,9 @@ export struct UnifiedDetailPage {
       }, (chapter: UnifiedChapter) => chapter.id)
     }
     .width('100%')
-    .height(350)
-    .scrollBar(BarState.Off)
+    .layoutWeight(1)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
     .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
   }
 
@@ -2121,8 +2709,9 @@ export struct UnifiedDetailPage {
       }, (chapter: UnifiedChapter) => chapter.id)
     }
     .width('100%')
-    .height(350)
-    .scrollBar(BarState.Off)
+    .layoutWeight(1)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   /**
@@ -2184,8 +2773,9 @@ export struct UnifiedDetailPage {
       }, (chapter: UnifiedChapter) => chapter.id)
     }
     .width('100%')
-    .height(350)
-    .scrollBar(BarState.Off)
+    .layoutWeight(1)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
     .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
   }
 
@@ -2281,6 +2871,143 @@ export struct UnifiedDetailPage {
     .justifyContent(FlexAlign.Center)
   }
 
+  /**
+   * 封面预览弹窗
+   */
+  @Builder
+  buildCoverPreviewOverlay() {
+    Column() {
+      // 全屏背景
+      Stack() {
+        // 半透明黑色背景
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0,0,0,0.9)')
+          .onClick(() => this.showCoverPreview = false)
+        
+        // 封面图片（居中显示）
+        Column() {
+          AvifImage({
+            src: this.getCoverImageSource() as string,
+            imageWidth: '90%',
+            imageHeight: '70%',
+            objectFit: ImageFit.Contain
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        
+        // 顶部关闭按钮
+        Row() {
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(20)
+              .fontColor([Color.White])
+          }
+          .width(40)
+          .height(40)
+          .backgroundColor('rgba(255,255,255,0.2)')
+          .borderRadius(20)
+          .onClick(() => this.showCoverPreview = false)
+        }
+        .width('100%')
+        .padding({ top: this.statusBarHeight + 16, left: 16, right: 16 })
+        .justifyContent(FlexAlign.End)
+        
+        // 底部操作按钮
+        Row({ space: 20 }) {
+          // 保存到相册
+          Button() {
+            Column({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+                .fontSize(24)
+                .fontColor([Color.White])
+              Text('保存')
+                .fontSize(12)
+                .fontColor(Color.White)
+            }
+          }
+          .width(70)
+          .height(70)
+          .backgroundColor('rgba(255,255,255,0.2)')
+          .borderRadius(35)
+          .onClick(() => this.saveCoverToGallery())
+          
+          // 分享
+          Button() {
+            Column({ space: 4 }) {
+              SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+                .fontSize(24)
+                .fontColor([Color.White])
+              Text('分享')
+                .fontSize(12)
+                .fontColor(Color.White)
+            }
+          }
+          .width(70)
+          .height(70)
+          .backgroundColor('rgba(255,255,255,0.2)')
+          .borderRadius(35)
+          .onClick(() => this.shareCover())
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .position({ x: 0, y: '85%' })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    .zIndex(100)
+    .transition({ type: TransitionType.Insert, opacity: 0 })
+    .animation({ duration: 200, curve: Curve.EaseOut })
+  }
+  
+  /**
+   * 保存封面到相册
+   */
+  private async saveCoverToGallery(): Promise<void> {
+    try {
+      const coverUrl = this.content?.coverUrl || '';
+      if (!coverUrl) {
+        promptAction.showToast({ message: '无封面图片', duration: 2000 });
+        return;
+      }
+      
+      // TODO: 实现保存到相册功能
+      // 需要使用 @ohos.file.photoAccessHelper 或 @ohos.multimedia.mediaLibrary
+      promptAction.showToast({ message: '保存功能开发中', duration: 2000 });
+    } catch (error) {
+      logger.error(TAG, `保存封面失败: ${String(error)}`);
+      promptAction.showToast({ message: `保存失败: ${String(error)}`, duration: 2000 });
+    }
+  }
+  
+  /**
+   * 分享封面
+   */
+  private async shareCover(): Promise<void> {
+    try {
+      const coverUrl = this.content?.coverUrl || '';
+      if (!coverUrl) {
+        promptAction.showToast({ message: '无封面图片', duration: 2000 });
+        return;
+      }
+      
+      // TODO: 实现分享功能
+      // 需要使用 @ohos.app.ability.wantAgent 或系统分享API
+      promptAction.showToast({ message: '分享功能开发中', duration: 2000 });
+    } catch (error) {
+      logger.error(TAG, `分享封面失败: ${String(error)}`);
+      promptAction.showToast({ message: `分享失败: ${String(error)}`, duration: 2000 });
+    }
+  }
+
   build() {
     NavDestination() {
       Stack() {
@@ -2371,6 +3098,11 @@ export struct UnifiedDetailPage {
           })
           .width('100%')
           .height('100%')
+        }
+        
+        // 封面预览弹窗
+        if (this.showCoverPreview && this.content?.coverUrl) {
+          this.buildCoverPreviewOverlay()
         }
       }
     }

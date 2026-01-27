@@ -139,7 +139,11 @@ export class JinmantiantangDescrambler {
       const remainder = height % rows;
 
       // 3. 创建源PixelMap并读取所有像素
-      const sourcePixelMap = await imageSource.createPixelMap();
+      // [修复] 指定解码选项，确保像素格式一致
+      const decodingOptions: image.DecodingOptions = {
+        desiredPixelFormat: image.PixelMapFormat.BGRA_8888  // 使用BGRA格式避免反色
+      };
+      const sourcePixelMap = await imageSource.createPixelMap(decodingOptions);
       const sourceBuffer = new ArrayBuffer(width * height * 4);
       await sourcePixelMap.readPixelsToBuffer(sourceBuffer);
       const sourcePixels = new Uint8Array(sourceBuffer);
@@ -173,9 +177,10 @@ export class JinmantiantangDescrambler {
       }
 
       // 6. 创建结果PixelMap
+      // [修复] 使用与源图片相同的BGRA格式
       const initOptions: image.InitializationOptions = {
         size: { width: width, height: height },
-        pixelFormat: image.PixelMapFormat.RGBA_8888,
+        pixelFormat: image.PixelMapFormat.BGRA_8888,
         editable: true
       };
       const resultPixelMap = await image.createPixelMap(resultBuffer, initOptions);

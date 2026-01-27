@@ -46,6 +46,7 @@ export interface MangaDetailLoadParams {
   cachedCover?: string;
   cachedCoverPath?: string;
   forceRefresh?: boolean;
+  externalMangaId?: string;  // 外部漫画ID（用于强制刷新时从网络获取）
 }
 
 /**
@@ -179,6 +180,20 @@ export class MangaDetailLoader {
       
       // 第一阶段：获取基本信息
       const comicInfo = await this.dataManager.getComicById(params.mangaId);
+      
+      // [修复] 如果forceRefresh=true且有sourceId，强制从网络重新获取
+      if (params.forceRefresh && params.sourceId && params.sourceId > 0) {
+        logger.info(TAG, `[分阶段] forceRefresh=true，强制从网络重新获取`);
+        
+        // 如果没有提供externalMangaId，尝试从数据库获取
+        if (!params.externalMangaId && comicInfo) {
+          params.externalMangaId = comicInfo.externalId || params.mangaId;
+          logger.info(TAG, `[分阶段] 从数据库获取externalMangaId: ${params.externalMangaId}`);
+        }
+        
+        const onlineResult = await this.loadNewOnlineMangaFromNetwork(params, callback);
+        return onlineResult;
+      }
       
       if (comicInfo) {
         const sourceIdStr = String(comicInfo.sourceId || '');
@@ -592,7 +607,8 @@ export class MangaDetailLoader {
       }
       
       // 从网络获取漫画详情和章节
-      const externalMangaId = params.mangaId;
+      // 优先使用externalMangaId，否则使用mangaId
+      const externalMangaId = params.externalMangaId || params.mangaId;
       logger.info(TAG, `[网络加载] 获取漫画详情: ${externalMangaId}`);
       
       const combinedResult = await this.mangaEngine.getMangaDetailWithChapters(externalMangaId);
@@ -621,24 +637,26 @@ export class MangaDetailLoader {
       // 构建基本Manga对象
       const basicManga = this.buildMangaFromMangaInfo(mangaInfo, chapters, externalMangaId);
       
-      // 立即保存到数据库（确保数据在跳转前已保存）
-      await this.saveOnlineMangaToDatabase(basicManga, chapters, externalMangaId);
+      // [修复] 先同步保存漫画和章节到数据库，确保manga.id和chapter.id被正确更新
+      // 这样回调时UI可以使用正确的ID进行后续操作（如阅读）
+      await this.saveOnlineMangaToDatabaseFast(basicManga, chapters, externalMangaId);
+      logger.info(TAG, `[网络加载] 漫画已保存到数据库，内部ID: ${basicManga.id}`);
       
-      // 检查收藏状态（保存后再检查，因为可能之前已收藏过）
+      // 检查收藏状态（使用更新后的内部ID）
       const isFavorite = await this.checkFavoriteStatus(basicManga.id);
       result.isFavorite = isFavorite;
       
-      // 回调：基本信息已加载
+      // 回调：基本信息已加载（manga.id已经是正确的内部ID）
       if (callback.onBasicInfoLoaded) {
         callback.onBasicInfoLoaded(basicManga, isFavorite);
       }
       
-      // 回调：章节已加载
+      // 回调：章节已加载（chapter.id已经是正确的内部ID）
       if (callback.onChaptersLoaded) {
         callback.onChaptersLoaded(chapters);
       }
       
-      // 后台预加载页面信息（不阻塞）
+      // 异步预加载页面（不阻塞UI）
       this.preloadChapterPagesInBackground(basicManga.id, chapters, callback);
       
       result.success = true;
@@ -659,6 +677,7 @@ export class MangaDetailLoader {
   
   /**
    * 异步保存漫画到数据库（不阻塞UI）
+   * [修复] 先快速保存基本信息，不预取页面，让UI立即响应
    */
   private async saveOnlineMangaToDatabaseAsync(
     manga: Manga,
@@ -668,14 +687,74 @@ export class MangaDetailLoader {
   ): Promise<void> {
     setTimeout(async () => {
       try {
-        await this.saveOnlineMangaToDatabase(manga, chapters, externalId);
+        // 快速保存漫画和章节基本信息（不预取页面）
+        await this.saveOnlineMangaToDatabaseFast(manga, chapters, externalId);
         
-        // 保存完成后，开始预加载页面
+        // 保存完成后，开始后台预加载页面
         this.preloadChapterPagesInBackground(manga.id, chapters, callback);
       } catch (error) {
         logger.error(TAG, `[异步] 保存漫画到数据库失败: ${String(error)}`);
       }
     }, 100);
+  }
+  
+  /**
+   * 快速保存在线漫画到数据库（不预取页面信息）
+   * 用于首次加载时快速响应UI
+   */
+  private async saveOnlineMangaToDatabaseFast(manga: Manga, chapters: MangaChapter[], externalId: string): Promise<void> {
+    try {
+      // 获取作者信息
+      let authorStr = '';
+      if (manga.metadata && manga.metadata.authors && manga.metadata.authors.length > 0) {
+        authorStr = manga.metadata.authors[0];
+      }
+      
+      // 保存漫画信息到online_comic_info表
+      const comicData: ESObject = {
+        id: externalId,
+        title: manga.title,
+        author: authorStr,
+        description: manga.description || '',
+        coverUrl: manga.coverImagePath || '',
+        tags: manga.metadata.genres || [],
+        rating: 0,
+        updateTime: Date.now(),
+        sourceName: this.currentSourceName
+      };
+      
+      const internalComicId = await this.dataManager.saveComicFromSource(this.currentSourceId, comicData, externalId);
+      logger.info(TAG, `[快速保存] 漫画信息已保存: ${manga.title}, 内部ID: ${internalComicId}`);
+      
+      // 更新manga的ID为内部ID
+      manga.id = internalComicId;
+      
+      // 快速保存章节信息（不获取页面）
+      for (let i = 0; i < chapters.length; i++) {
+        const ch = chapters[i];
+        const chapterExternalId = ch.externalId || ch.id;
+        
+        const chapterInput: OnlineChapterInfoInput = {
+          comicId: internalComicId,
+          externalId: chapterExternalId,
+          title: ch.title,
+          chapterNumber: ch.chapterNumber || i,
+          url: '',
+          pageCount: 0,  // 页面数稍后预取
+          publishTime: typeof ch.publishDate === 'number' ? ch.publishDate : Date.now(),
+          isDownloaded: false,
+          downloadPath: undefined,
+          index: ch.chapterNumber || i
+        };
+        
+        const chapterId = await this.dataManager.addOnlineChapterInfo(chapterInput);
+        ch.id = chapterId;
+      }
+      
+      logger.info(TAG, `[快速保存] 章节信息已保存: ${chapters.length}章`);
+    } catch (error) {
+      logger.error(TAG, `[快速保存] 保存漫画到数据库失败: ${String(error)}`);
+    }
   }
   
   /**
@@ -1071,6 +1150,7 @@ export class MangaDetailLoader {
   
   /**
    * 加载图源名称
+   * 优先使用name字段，如果为空则使用pkg字段
    */
   private async loadSourceName(sourceId: number): Promise<void> {
     if (sourceId <= 0) {
@@ -1083,11 +1163,21 @@ export class MangaDetailLoader {
       for (let i = 0; i < sources.length; i++) {
         const s: ESObject = sources[i] as ESObject;
         if (Number(s.id) === sourceId) {
-          this.currentSourceName = String(s.name);
-          logger.info(TAG, `获取图源名称: ${this.currentSourceName}`);
+          // 优先使用name，如果为空则使用pkg
+          const name = String(s.name || '');
+          const pkg = String(s.pkg || '');
+          if (name && name.trim() !== '') {
+            this.currentSourceName = name;
+          } else if (pkg && pkg.trim() !== '') {
+            this.currentSourceName = pkg;
+          } else {
+            this.currentSourceName = `WebView Source ${sourceId}`;
+          }
+          logger.info(TAG, `获取图源名称: ${this.currentSourceName} (name="${name}", pkg="${pkg}")`);
           return;
         }
       }
+      logger.warn(TAG, `未找到sourceId=${sourceId}对应的图源记录`);
       this.currentSourceName = `WebView Source ${sourceId}`;
     } catch (error) {
       logger.warn(TAG, `获取图源名称失败: ${String(error)}`);
@@ -1176,18 +1266,31 @@ export class MangaDetailLoader {
   
   /**
    * 转换WebView章节为MangaChapter格式
+   * [修复] 使用原始章节的number字段，并进行智能排序
    */
   private convertWebViewChaptersToMangaChapters(chapters: WebViewChapterInfo[]): MangaChapter[] {
     const mangaChapters: MangaChapter[] = [];
     
     for (let i = 0; i < chapters.length; i++) {
       const ch = chapters[i];
+      // [修复] 使用原始章节的number字段，如果没有则从标题提取或使用索引
+      let chapterNumber = i;
+      if (ch.number !== undefined && ch.number !== null && !isNaN(ch.number)) {
+        chapterNumber = ch.number;
+      } else {
+        // 尝试从标题中提取章节号
+        const extractedNum = this.extractChapterNumberFromTitle(ch.title);
+        if (extractedNum !== null) {
+          chapterNumber = extractedNum;
+        }
+      }
+      
       const chapter: MangaChapter = {
         id: ch.id || `chapter_${i}`,
         title: ch.title || `第${i + 1}章`,
-        chapterNumber: i,
+        chapterNumber: chapterNumber,
         pages: [],
-        publishDate: Date.now(),
+        publishDate: ch.publishTime ? new Date(ch.publishTime).getTime() : Date.now(),
         language: 'zh-CN',
         scanlationGroup: '',
         isDownloaded: false,
@@ -1198,7 +1301,177 @@ export class MangaDetailLoader {
       mangaChapters.push(chapter);
     }
     
+    // [修复] 对章节进行智能排序（按chapterNumber升序）
+    mangaChapters.sort((a: MangaChapter, b: MangaChapter) => {
+      return a.chapterNumber - b.chapterNumber;
+    });
+    
+    logger.info(TAG, `章节转换完成并排序: ${mangaChapters.length}章, 第一章: ${mangaChapters[0]?.title || 'N/A'}, 最后一章: ${mangaChapters[mangaChapters.length - 1]?.title || 'N/A'}`);
+    
     return mangaChapters;
+  }
+  
+  /**
+   * 从章节标题中提取章节号
+   * [增强] 支持多种语言、符号格式，提高准确性和兼容性
+   */
+  private extractChapterNumberFromTitle(title: string): number | null {
+    if (!title) return null;
+
+    // 预处理：去除首尾空格
+    const cleanTitle = title.trim();
+
+    // 中文数字映射（扩展支持）
+    const chineseNumMap: Record<string, number> = {
+      '零': 0, '〇': 0,
+      '一': 1, '壹': 1,
+      '二': 2, '贰': 2, '两': 2,
+      '三': 3, '叁': 3,
+      '四': 4, '肆': 4,
+      '五': 5, '伍': 5,
+      '六': 6, '陆': 6,
+      '七': 7, '柒': 7,
+      '八': 8, '捌': 8,
+      '九': 9, '玖': 9,
+      '十': 10, '拾': 10,
+      '百': 100, '佰': 100,
+      '千': 1000, '仟': 1000
+    };
+
+    // ========== 高优先级：明确的章节标识格式 ==========
+
+    // 格式1: 中文格式 - 第X章/话/回/集/卷/篇/幕/节 (阿拉伯数字)
+    let match = cleanTitle.match(/第\s*(\d+(?:\.\d+)?)\s*[章话回集卷篇幕节]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式2: 中文格式 - 第X章/话/回/集 (中文数字)
+    match = cleanTitle.match(/第\s*([零〇一二三四五六七八九十百千壹贰叁肆伍陆柒捌玖拾佰仟两]+)\s*[章话回集卷篇幕节]/);
+    if (match) {
+      const chineseNum = this.parseChineseNumber(match[1], chineseNumMap);
+      if (chineseNum !== null) return chineseNum;
+    }
+
+    // 格式3: 英文格式 - Chapter/Ch./Ch/Chap/Chpt X
+    match = cleanTitle.match(/(?:Chapter|Chap(?:ter)?|Chpt|Ch\.?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式4: 英文格式 - Episode/EP./Ep X
+    match = cleanTitle.match(/(?:Episode|Ep\.?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式5: 日文格式 - 第X話/回/巻
+    match = cleanTitle.match(/第\s*(\d+(?:\.\d+)?)\s*[話巻]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式6: 韩文格式 - X화/회/장
+    match = cleanTitle.match(/(\d+(?:\.\d+)?)\s*[화회장]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式7: 符号格式 - #X, No.X, No X, Vol.X, Volume X
+    match = cleanTitle.match(/(?:#|No\.?|Vol(?:ume)?\.?)\s*(\d+(?:\.\d+)?)/i);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式8: 括号格式 - (X), [X], 【X】, 「X」
+    match = cleanTitle.match(/[(\[【「]\s*(\d+(?:\.\d+)?)\s*[)\]】」]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式9: 连字符/冒号格式 - X - Title, X: Title, X. Title
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)\s*[:\-\.]\s*\S/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式10: 数字+单位格式 - X话/章/回/集 (数字在前，无"第"字)
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)\s*[话章回集卷篇話巻]/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // ========== 中优先级：数字开头格式 ==========
+
+    // 格式11: 纯数字开头 (如 "001", "1", "1.5", "001 标题")
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)\s/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式12: 纯数字标题 (如 "001", "1", "1.5")
+    match = cleanTitle.match(/^(\d+(?:\.\d+)?)$/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // ========== 低优先级：标题中的数字 ==========
+
+    // 格式13: 标题末尾的数字 (如 "番外1", "特别篇2")
+    match = cleanTitle.match(/[^\d](\d+(?:\.\d+)?)$/);
+    if (match) {
+      return parseFloat(match[1]);
+    }
+
+    // 格式14: 标题中包含的第一个数字（最后手段）
+    // 排除年份格式（4位数字且在1900-2100范围）
+    const allNumbers = cleanTitle.match(/\d+(?:\.\d+)?/g);
+    if (allNumbers) {
+      for (const numStr of allNumbers) {
+        const num = parseFloat(numStr);
+        // 排除可能是年份的数字
+        if (num >= 1900 && num <= 2100 && numStr.length === 4) {
+          continue;
+        }
+        // 排除过大的数字（可能是日期、ID等）
+        if (num < 10000) {
+          return num;
+        }
+      }
+    }
+
+    return null;
+  }
+  
+  /**
+   * 解析中文数字
+   */
+  private parseChineseNumber(chineseStr: string, numMap: Record<string, number>): number | null {
+    if (!chineseStr) return null;
+
+    let result = 0;
+    let temp = 0;
+
+    for (let i = 0; i < chineseStr.length; i++) {
+      const char = chineseStr[i];
+      const num = numMap[char];
+
+      if (num === undefined) {
+        return null;
+      }
+
+      if (num >= 10) {
+        if (temp === 0) temp = 1;
+        temp *= num;
+        result += temp;
+        temp = 0;
+      } else {
+        temp = num;
+      }
+    }
+
+    result += temp;
+    return result > 0 ? result : null;
   }
   
   /**
@@ -1467,12 +1740,24 @@ export class MangaDetailLoader {
   
   /**
    * 更新章节到数据库
+   * [修复] 使用原始章节的number字段或从标题提取章节号
    */
   private async updateChaptersToDatabase(comicId: string, newChapters: WebViewChapterInfo[]): Promise<void> {
     try {
       for (let i = 0; i < newChapters.length; i++) {
         const ch = newChapters[i];
         const chapterExternalId = ch.id || `chapter_${i}`;
+        
+        // [修复] 使用原始章节的number字段，如果没有则从标题提取
+        let chapterNumber = i;
+        if (ch.number !== undefined && ch.number !== null && !isNaN(ch.number)) {
+          chapterNumber = ch.number;
+        } else {
+          const extractedNum = this.extractChapterNumberFromTitle(ch.title);
+          if (extractedNum !== null) {
+            chapterNumber = extractedNum;
+          }
+        }
         
         // 检查是否已存在
         const existing = await this.dataManager.getOnlineChapterByExternalId(comicId, chapterExternalId);
@@ -1481,13 +1766,13 @@ export class MangaDetailLoader {
             comicId: comicId,
             externalId: chapterExternalId,
             title: ch.title || `第${i + 1}章`,
-            chapterNumber: i,
+            chapterNumber: chapterNumber,
             url: '',
             pageCount: 0,
-            publishTime: Date.now(),
+            publishTime: ch.publishTime ? new Date(ch.publishTime).getTime() : Date.now(),
             isDownloaded: false,
             downloadPath: undefined,
-            index: i
+            index: chapterNumber  // [修复] 使用章节号作为index
           };
           await this.dataManager.addOnlineChapterInfo(chapterInput);
         }

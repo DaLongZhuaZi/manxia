@@ -12,9 +12,10 @@ import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
 import { getNovelContentProcessor, ContentProcessConfig } from '../Framework/Novel/NovelContentProcessor';
-import { ReplaceScope } from '../Framework/Novel/NovelReplaceRuleManager';
+import { ReplaceScope, NovelReplaceRuleManager, AddRuleParams } from '../Framework/Novel/NovelReplaceRuleManager';
 import { LegadoChapter, LegadoBook, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
+import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import { 
@@ -34,8 +35,10 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
-import { curves } from '@kit.ArkUI';
+import { curves, promptAction } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
+import { NovelDictRuleManager, DictRule } from '../Framework/Novel/NovelDictRuleManager';
 
 const TAG = 'NovelReaderPage';
 
@@ -74,9 +77,16 @@ export struct NovelReaderPage {
   @State settingsPanelOpacity: number = 0;
   @State settingsPanelScale: number = 0.95;
   @State chapterListOpacity: number = 0;
+  
+  // 百科搜索对话框状态
+  @State showEncyclopediaDialog: boolean = false;
+  @State encyclopediaKeyword: string = '';
+  @State encyclopediaUrl: string = '';
 
   // 章节列表滚动控制器
   private chapterListScroller: Scroller = new Scroller();
+  // 百科搜索WebView控制器
+  private encyclopediaWebController: webview.WebviewController = new webview.WebviewController();
 
   private sourceId: string = '';
   private bookUrl: string = '';
@@ -383,6 +393,11 @@ export struct NovelReaderPage {
       // 设置沉浸式模式
       this.setupFullscreenMode();
       
+      // [优化] 确保净化规则管理器已初始化并加载最新规则
+      const ruleManager = NovelReplaceRuleManager.getInstance();
+      await ruleManager.initialize();
+      await ruleManager.refreshRules();
+      
       // 加载章节列表（如果还没有加载）
       if (this.chapterList.length === 0) {
         await this.loadChapterList();
@@ -509,6 +524,39 @@ export struct NovelReaderPage {
     // 异步保存设置（不阻塞UI）
     this.saveSettings();
     logger.debug(TAG, `设置已更新并保存`);
+  }
+  
+  /**
+   * 添加净化规则（从选中文本）
+   */
+  async addPurifyRule(pattern: string): Promise<void> {
+    if (!pattern || pattern.trim().length === 0) {
+      return;
+    }
+    
+    try {
+      const ruleManager = NovelReplaceRuleManager.getInstance();
+      await ruleManager.initialize();
+      
+      // 创建新规则
+      const ruleParams: AddRuleParams = {
+        name: `用户添加: ${pattern.substring(0, 20)}${pattern.length > 20 ? '...' : ''}`,
+        pattern: pattern,
+        replacement: '',
+        isRegex: false,
+        scope: ReplaceScope.CONTENT,
+        enabled: true,
+        order: 100
+      };
+      
+      await ruleManager.addRule(ruleParams);
+      logger.info(TAG, `已添加净化规则: ${pattern.substring(0, 50)}`);
+      
+      // 重新加载当前章节内容以应用新规则
+      this.loadContent();
+    } catch (error) {
+      logger.error(TAG, `添加净化规则失败: ${String(error)}`);
+    }
   }
 
   onPageChange(pageIndex: number, totalPages: number): void {
@@ -652,6 +700,55 @@ export struct NovelReaderPage {
       logger.warn(TAG, `记录浏览历史失败: ${String(error)}`);
     }
   }
+  
+  /**
+   * [修复] 确保书籍存在于数据库中（用于首页最近阅读显示）
+   */
+  private async ensureBookInDatabase(param: NovelReaderPageParams): Promise<void> {
+    try {
+      // 检查书籍是否已存在
+      const existingBook = await this.dataManager.getBook(this.bookId);
+      if (existingBook) {
+        logger.debug(TAG, `书籍已存在于数据库: ${param.bookName}`);
+        return;
+      }
+      
+      // 书籍不存在，创建新记录
+      const newBook: NovelBook = {
+        id: this.bookId,
+        sourceId: param.sourceId,
+        sourceName: param.sourceName || '',
+        bookUrl: param.bookUrl,
+        name: param.bookName,
+        author: param.author || '',
+        kind: '',
+        intro: '',
+        coverUrl: param.coverUrl || '',
+        coverLocalPath: '',
+        tocUrl: param.tocUrl || param.bookUrl,
+        latestChapterTitle: '',
+        wordCount: '',
+        chapterCount: param.totalChapters || 0,
+        readStatus: NovelReadStatus.READING,
+        lastReadChapterId: this.chapterId,
+        lastReadChapterIndex: param.chapterIndex,
+        lastReadPosition: 0,
+        lastReadTime: Date.now(),
+        totalReadingTime: 0,
+        isFavorite: false,
+        isPrivate: false,
+        isNSFW: false,
+        createTime: Date.now(),
+        updateTime: Date.now(),
+        updateDbTime: Date.now()
+      };
+      
+      await this.dataManager.saveBook(newBook);
+      logger.info(TAG, `已将书籍保存到数据库: ${param.bookName}`);
+    } catch (error) {
+      logger.warn(TAG, `保存书籍到数据库失败: ${String(error)}`);
+    }
+  }
 
   /**
    * 点击中间区域回调 - 显示/隐藏工具栏
@@ -659,6 +756,118 @@ export struct NovelReaderPage {
    */
   onTapCenter(): void {
     this.toggleToolbar();
+  }
+  
+  /**
+   * 显示百科搜索对话框（使用字典规则）
+   */
+  async showEncyclopediaSearch(keyword: string): Promise<void> {
+    this.encyclopediaKeyword = keyword;
+    
+    // 获取启用的字典规则
+    const dictManager = NovelDictRuleManager.getInstance();
+    await dictManager.initialize();
+    const enabledRules = dictManager.getEnabledRules();
+    
+    if (enabledRules.length === 0) {
+      promptAction.showToast({ message: '没有启用的字典规则，请在设置中添加', duration: 2000 });
+      return;
+    }
+    
+    if (enabledRules.length === 1) {
+      // 只有一个规则，直接使用
+      this.openDictSearch(enabledRules[0], keyword);
+    } else {
+      // 多个规则，让用户选择（最多显示5个规则+取消按钮）
+      const ruleCount = Math.min(enabledRules.length, 5);
+      this.showDictSelectionMenu(enabledRules, ruleCount, keyword);
+    }
+  }
+  
+  /**
+   * 显示字典选择菜单
+   */
+  private showDictSelectionMenu(rules: DictRule[], count: number, keyword: string): void {
+    // 根据规则数量构建按钮
+    if (count === 2) {
+      promptAction.showActionMenu({
+        title: `搜索: ${keyword}`,
+        buttons: [
+          { text: rules[0].name, color: '#007AFF' },
+          { text: rules[1].name, color: '#007AFF' },
+          { text: '取消', color: '#999999' }
+        ]
+      }).then((result: promptAction.ActionMenuSuccessResponse) => {
+        if (result.index < 2) {
+          this.openDictSearch(rules[result.index], keyword);
+        }
+      }).catch(() => {});
+    } else if (count === 3) {
+      promptAction.showActionMenu({
+        title: `搜索: ${keyword}`,
+        buttons: [
+          { text: rules[0].name, color: '#007AFF' },
+          { text: rules[1].name, color: '#007AFF' },
+          { text: rules[2].name, color: '#007AFF' },
+          { text: '取消', color: '#999999' }
+        ]
+      }).then((result: promptAction.ActionMenuSuccessResponse) => {
+        if (result.index < 3) {
+          this.openDictSearch(rules[result.index], keyword);
+        }
+      }).catch(() => {});
+    } else if (count === 4) {
+      promptAction.showActionMenu({
+        title: `搜索: ${keyword}`,
+        buttons: [
+          { text: rules[0].name, color: '#007AFF' },
+          { text: rules[1].name, color: '#007AFF' },
+          { text: rules[2].name, color: '#007AFF' },
+          { text: rules[3].name, color: '#007AFF' },
+          { text: '取消', color: '#999999' }
+        ]
+      }).then((result: promptAction.ActionMenuSuccessResponse) => {
+        if (result.index < 4) {
+          this.openDictSearch(rules[result.index], keyword);
+        }
+      }).catch(() => {});
+    } else {
+      // 5个或更多
+      promptAction.showActionMenu({
+        title: `搜索: ${keyword}`,
+        buttons: [
+          { text: rules[0].name, color: '#007AFF' },
+          { text: rules[1].name, color: '#007AFF' },
+          { text: rules[2].name, color: '#007AFF' },
+          { text: rules[3].name, color: '#007AFF' },
+          { text: rules[4].name, color: '#007AFF' },
+          { text: '取消', color: '#999999' }
+        ]
+      }).then((result: promptAction.ActionMenuSuccessResponse) => {
+        if (result.index < 5) {
+          this.openDictSearch(rules[result.index], keyword);
+        }
+      }).catch(() => {});
+    }
+  }
+  
+  /**
+   * 使用指定字典规则打开搜索
+   */
+  private openDictSearch(rule: DictRule, keyword: string): void {
+    const dictManager = NovelDictRuleManager.getInstance();
+    this.encyclopediaUrl = dictManager.buildSearchUrl(rule, keyword);
+    this.showEncyclopediaDialog = true;
+    logger.info(TAG, `字典搜索: ${rule.name} - ${keyword} -> ${this.encyclopediaUrl}`);
+  }
+  
+  /**
+   * 关闭百科搜索对话框
+   */
+  closeEncyclopediaDialog(): void {
+    this.showEncyclopediaDialog = false;
+    this.encyclopediaKeyword = '';
+    this.encyclopediaUrl = '';
   }
 
   getBackgroundColor(): string {
@@ -722,6 +931,11 @@ export struct NovelReaderPage {
         if (this.showSettingsPanel) {
           this.buildSettingsPanel()
         }
+        
+        // 百科搜索对话框
+        if (this.showEncyclopediaDialog) {
+          this.buildEncyclopediaDialog()
+        }
       }
       .width('100%')
       .height('100%')
@@ -749,6 +963,9 @@ export struct NovelReaderPage {
         
         // [修复] 记录浏览历史，确保阅读过的小说出现在历史浏览中
         this.recordBrowseHistory(param);
+        
+        // [修复] 确保书籍存在于数据库中，用于首页最近阅读显示
+        this.ensureBookInDatabase(param);
       }
     })
     .hideTitleBar(true)
@@ -800,7 +1017,9 @@ export struct NovelReaderPage {
         // 文本阅读器分页完成，通知过渡动画阅读器就绪
         logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
         setReaderReady();
-      }
+      },
+      onAddPurifyRule: (pattern: string) => this.addPurifyRule(pattern),
+      onSearchEncyclopedia: (keyword: string) => this.showEncyclopediaSearch(keyword)
     })
       .width('100%')
       .height('100%')
@@ -1035,7 +1254,7 @@ export struct NovelReaderPage {
       .width('95%')
       .height('80%')
       .constraintSize({ maxWidth: 450, minWidth: 320 })
-      .backgroundColor('rgba(255,255,255,0.95)')
+      .backgroundColor($r('app.color.settings_panel_background'))
       .backdropBlur(20)
       .borderRadius(16)
       .opacity(this.settingsPanelOpacity)
@@ -1069,5 +1288,90 @@ export struct NovelReaderPage {
       this.settings.textStyle.textColor = '#D4D4D4';
     }
     this.saveSettings();
+  }
+  
+  /**
+   * 构建百科搜索对话框
+   */
+  @Builder
+  buildEncyclopediaDialog() {
+    Stack() {
+      // 遮罩层
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0,0,0,0.5)')
+        .onClick(() => {
+          this.closeEncyclopediaDialog();
+        })
+        .transition(TransitionEffect.opacity(0).animation({ duration: 250, curve: Curve.EaseOut }))
+      
+      // 对话框内容
+      Column() {
+        // 标题栏
+        Row() {
+          Text(`百科搜索: ${this.encyclopediaKeyword}`)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(20)
+              .fontColor([$r('app.color.text_secondary')])
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.closeEncyclopediaDialog();
+          })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 8, top: 12, bottom: 8 })
+        
+        Divider()
+          .color($r('app.color.divider_primary'))
+        
+        // WebView内容区
+        Web({ src: this.encyclopediaUrl, controller: this.encyclopediaWebController })
+          .width('100%')
+          .layoutWeight(1)
+          .javaScriptAccess(true)
+          .domStorageAccess(true)
+          .mixedMode(MixedMode.All)
+          .onPageBegin(() => {
+            logger.debug(TAG, `百科页面开始加载: ${this.encyclopediaUrl}`);
+          })
+          .onPageEnd(() => {
+            logger.debug(TAG, '百科页面加载完成');
+          })
+          .onErrorReceive((event) => {
+            if (event && event.error) {
+              logger.warn(TAG, `百科页面加载错误: ${event.error.getErrorInfo()}`);
+            }
+          })
+      }
+      .width('90%')
+      .height('80%')
+      .backgroundColor($r('app.color.background'))
+      .borderRadius(16)
+      .clip(true)
+      .shadow({
+        radius: 20,
+        color: 'rgba(0,0,0,0.2)',
+        offsetX: 0,
+        offsetY: 4
+      })
+      .transition(TransitionEffect.scale({ x: 0.9, y: 0.9 }).combine(TransitionEffect.opacity(0)).animation({ duration: 250, curve: Curve.EaseOut }))
+    }
+    .width('100%')
+    .height('100%')
+    .alignContent(Alignment.Center)
+    .zIndex(200)
   }
 }

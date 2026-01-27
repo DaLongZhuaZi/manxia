@@ -198,11 +198,12 @@ export class LegadoUrlAnalyzer {
     // 步骤6: 处理<,page>页码模板
     ruleUrl = this.replacePageTemplate(ruleUrl, this.page);
 
+    // 步骤6.5: 清理URL（去除换行符等无效字符）- 必须在resolveUrl之前
+    // 否则以换行符开头的URL会被错误地识别为相对URL
+    ruleUrl = this.cleanUrl(ruleUrl);
+
     // 步骤7: 解析相对URL
     let url = this.resolveUrl(ruleUrl);
-    
-    // 步骤8: 清理URL（去除换行符等无效字符）
-    url = this.cleanUrl(url);
 
     return {
       url,
@@ -301,11 +302,12 @@ export class LegadoUrlAnalyzer {
     // 步骤6: 处理<,page>页码模板
     ruleUrl = this.replacePageTemplate(ruleUrl, this.page);
 
+    // 步骤6.5: 清理URL（去除换行符等无效字符）- 必须在resolveUrl之前
+    // 否则以换行符开头的URL会被错误地识别为相对URL
+    ruleUrl = this.cleanUrl(ruleUrl);
+
     // 步骤7: 解析相对URL
     let url = this.resolveUrl(ruleUrl);
-    
-    // 步骤8: 清理URL（去除换行符等无效字符）
-    url = this.cleanUrl(url);
 
     return {
       url,
