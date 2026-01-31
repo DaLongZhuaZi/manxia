@@ -1558,10 +1558,23 @@ export class CompressionUtils {
 
   /**
    * 对章节进行自然排序
+   * 将外传章节放到最末尾，然后在外传部分内部按名称排序
    */
   private sortChaptersNaturally(chapters: DetectedChapterInfo[]): void {
     chapters.sort((a, b) => {
-      // 首先按章节编号排序
+      const aIsExtra = this.isExtraChapter(a.title);
+      const bIsExtra = this.isExtraChapter(b.title);
+      
+      // 如果一个是外传，一个不是，外传排在后面
+      if (aIsExtra && !bIsExtra) return 1;
+      if (!aIsExtra && bIsExtra) return -1;
+      
+      // 如果都是外传，按标题自然排序
+      if (aIsExtra && bIsExtra) {
+        return this.naturalCompare(a.title, b.title);
+      }
+      
+      // 如果都不是外传，按章节编号排序
       if (a.number !== b.number) {
         return a.number - b.number;
       }
@@ -1573,6 +1586,21 @@ export class CompressionUtils {
     for (let i = 0; i < chapters.length; i++) {
       chapters[i].index = i + 1;
     }
+  }
+
+  /**
+   * 判断是否为外传章节
+   * 支持多语言：外传、番外、特别篇、Extra、Side Story、Omake、Special等
+   */
+  private isExtraChapter(title: string): boolean {
+    const extraKeywords = [
+      '外传', '番外', '特别篇', '特典', '附录',
+      'extra', 'side story', 'omake', 'special', 'bonus',
+      'gaiden', 'bangai', 'tokubetsu'
+    ];
+    
+    const lowerTitle = title.toLowerCase();
+    return extraKeywords.some(keyword => lowerTitle.includes(keyword));
   }
 
   /**

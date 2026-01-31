@@ -684,7 +684,8 @@ export struct TextReaderComponent {
   
   /**
    * 计算并分页文本内容
-   * 使用精确测量确保分页结果与实际渲染一致
+   * ONLINE模式：使用按字符数分页，让Text组件自然换行，确保JUSTIFY正确生效
+   * LOCAL模式：使用按行分页，精确控制每行内容
    */
   private paginateContent(): void {
     if (!this.content || this.contentAreaWidth <= 0 || this.contentAreaHeight <= 0) {
@@ -705,7 +706,184 @@ export struct TextReaderComponent {
       return;
     }
     
-    // 分段处理
+    // 根据分页模式选择不同的策略
+    if (this.paginationMode === PaginationMode.ONLINE) {
+      this.paginateContentOnlineMode(linesPerPage);
+    } else {
+      this.paginateContentLocalMode(linesPerPage);
+    }
+    
+    // 更新当前页面内容
+    this.updatePageContents();
+    
+    // 分页完成后预加载相邻页面的 PixelMap（用于卷页动画）
+    this.preloadAdjacentPagePixelMaps();
+    
+    logger.info(TAG, `分页完成: 总页数=${this.totalPages}, 每页行数=${linesPerPage}`);
+    
+    // 触发就绪回调
+    this.onReady();
+  }
+  
+  /**
+   * ONLINE模式分页：按段落分页，让Text组件自然换行
+   * 这样JUSTIFY会正确生效，避免右边空白问题
+   */
+  private paginateContentOnlineMode(linesPerPage: number): void {
+    const avgCharWidth = this.getAvgCharWidth();
+    const letterSpacing = this.settings.textStyle.letterSpacing;
+    const firstLineIndent = this.settings.textStyle.firstLineIndent;
+    
+    // 计算每行大约能容纳的字符数
+    const charsPerLine = Math.max(1, Math.floor((this.contentAreaWidth + letterSpacing) / (avgCharWidth + letterSpacing)));
+    // 每页大约能容纳的字符数（考虑首行缩进占用的字符数）
+    const charsPerPage = charsPerLine * linesPerPage;
+    
+    logger.info(TAG, `[ONLINE分页] charsPerLine=${charsPerLine}, charsPerPage=${charsPerPage}`);
+    
+    // 分段处理，保留原始段落结构
+    const paragraphs = this.content.split(/\n/);
+    const pages: TextPage[] = [];
+    let currentPageParagraphs: string[] = [];
+    let currentPageCharCount = 0;
+    let charIndex = 0;
+    let pageStartCharIndex = 0;
+    
+    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+      const paragraph = paragraphs[pIdx];
+      
+      // 空段落也要处理（保留换行）
+      if (!paragraph.trim()) {
+        // 空行占用一行的空间
+        const emptyLineChars = charsPerLine;
+        if (currentPageCharCount + emptyLineChars > charsPerPage && currentPageParagraphs.length > 0) {
+          // 当前页已满，创建新页
+          pages.push({
+            index: pages.length,
+            content: currentPageParagraphs.join('\n'),
+            startCharIndex: pageStartCharIndex,
+            endCharIndex: charIndex
+          });
+          pageStartCharIndex = charIndex;
+          currentPageParagraphs = [];
+          currentPageCharCount = 0;
+        }
+        currentPageParagraphs.push('');
+        currentPageCharCount += emptyLineChars;
+        charIndex += paragraph.length + 1;
+        continue;
+      }
+      
+      // 计算段落占用的行数（考虑首行缩进）
+      const indentChars = Math.floor(firstLineIndent);
+      const paragraphCharsWithIndent = paragraph.length + indentChars;
+      const paragraphLines = Math.ceil(paragraphCharsWithIndent / charsPerLine);
+      const paragraphCharCost = paragraphLines * charsPerLine;
+      
+      // 检查是否能放入当前页
+      if (currentPageCharCount + paragraphCharCost > charsPerPage && currentPageParagraphs.length > 0) {
+        // 当前页放不下整个段落
+        // 计算当前页还能容纳多少行
+        const remainingLines = Math.floor((charsPerPage - currentPageCharCount) / charsPerLine);
+        
+        if (remainingLines >= 2) {
+          // 至少能放2行，尝试分割段落
+          const remainingChars = remainingLines * charsPerLine - indentChars;
+          if (remainingChars > charsPerLine / 2) {
+            // 能放下足够的内容，分割段落
+            const splitPoint = this.findParagraphSplitPoint(paragraph, remainingChars);
+            if (splitPoint > 0 && splitPoint < paragraph.length - charsPerLine / 2) {
+              // 分割段落
+              const firstPart = paragraph.substring(0, splitPoint);
+              const secondPart = paragraph.substring(splitPoint);
+              
+              // 首部分添加到当前页（带首行缩进）
+              currentPageParagraphs.push('　'.repeat(indentChars) + firstPart);
+              pages.push({
+                index: pages.length,
+                content: currentPageParagraphs.join('\n'),
+                startCharIndex: pageStartCharIndex,
+                endCharIndex: charIndex + splitPoint
+              });
+              
+              // 开始新页，放剩余部分（不需要首行缩进，因为是段落中间）
+              pageStartCharIndex = charIndex + splitPoint;
+              currentPageParagraphs = [secondPart];
+              const secondPartLines = Math.ceil(secondPart.length / charsPerLine);
+              currentPageCharCount = secondPartLines * charsPerLine;
+              charIndex += paragraph.length + 1;
+              continue;
+            }
+          }
+        }
+        
+        // 无法分割或不值得分割，直接换页
+        pages.push({
+          index: pages.length,
+          content: currentPageParagraphs.join('\n'),
+          startCharIndex: pageStartCharIndex,
+          endCharIndex: charIndex
+        });
+        pageStartCharIndex = charIndex;
+        currentPageParagraphs = [];
+        currentPageCharCount = 0;
+      }
+      
+      // 添加段落到当前页（带首行缩进）
+      currentPageParagraphs.push('　'.repeat(indentChars) + paragraph);
+      currentPageCharCount += paragraphCharCost;
+      charIndex += paragraph.length + 1;
+    }
+    
+    // 处理最后一页
+    if (currentPageParagraphs.length > 0) {
+      pages.push({
+        index: pages.length,
+        content: currentPageParagraphs.join('\n'),
+        startCharIndex: pageStartCharIndex,
+        endCharIndex: charIndex
+      });
+    }
+    
+    this.pages = pages;
+    this.totalPages = pages.length;
+  }
+  
+  /**
+   * 找到段落的合适分割点（尽量在标点符号后分割）
+   */
+  private findParagraphSplitPoint(text: string, targetChars: number): number {
+    if (targetChars >= text.length) return text.length;
+    
+    // 在目标位置附近找标点符号
+    const searchRange = Math.min(20, targetChars / 4);
+    const startSearch = Math.max(0, targetChars - searchRange);
+    const endSearch = Math.min(text.length, targetChars + searchRange / 2);
+    
+    // 优先在句号、问号、感叹号后分割
+    const sentenceEnders = ['。', '！', '？', '…', '.', '!', '?'];
+    for (let i = endSearch - 1; i >= startSearch; i--) {
+      if (sentenceEnders.includes(text[i])) {
+        return i + 1;
+      }
+    }
+    
+    // 其次在逗号、分号后分割
+    const clauseEnders = ['，', '；', '：', ',', ';', ':'];
+    for (let i = endSearch - 1; i >= startSearch; i--) {
+      if (clauseEnders.includes(text[i])) {
+        return i + 1;
+      }
+    }
+    
+    // 找不到合适的标点，直接在目标位置分割
+    return targetChars;
+  }
+  
+  /**
+   * LOCAL模式分页：按行分页，精确控制每行内容
+   */
+  private paginateContentLocalMode(linesPerPage: number): void {
     const paragraphs = this.content.split(/\n+/);
     const pages: TextPage[] = [];
     let currentPageLines: string[] = [];
@@ -750,9 +928,8 @@ export struct TextReaderComponent {
       }
       
       // 段落结束后添加段落间距（如果还有空间）
-      // 注意：段落间距通过空行实现，需要同时添加到 currentPageLines 和 currentLineCount
       if (currentLineCount > 0 && currentLineCount < linesPerPage) {
-        currentPageLines.push('');  // 添加空行作为段落间距
+        currentPageLines.push('');
         currentLineCount++;
       }
       
@@ -771,17 +948,6 @@ export struct TextReaderComponent {
     
     this.pages = pages;
     this.totalPages = pages.length;
-    
-    // 更新当前页面内容
-    this.updatePageContents();
-    
-    // 分页完成后预加载相邻页面的 PixelMap（用于卷页动画）
-    this.preloadAdjacentPagePixelMaps();
-    
-    logger.info(TAG, `分页完成: 总页数=${this.totalPages}, 每页行数=${linesPerPage}`);
-    
-    // 触发就绪回调
-    this.onReady();
   }
   
   /**

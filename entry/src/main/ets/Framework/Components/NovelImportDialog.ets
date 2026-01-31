@@ -118,6 +118,7 @@ export struct NovelImportDialog {
   @State customCoverPath: string = '';
   @State isGeneratingCover: boolean = false;
   @State coverRefreshKey: number = 0;
+  @State coverFontScale: number = 1.0;
   
   // 当前Tab
   @State currentTab: number = 0;
@@ -271,13 +272,15 @@ export struct NovelImportDialog {
    */
   private calculateCoverFontSize(title: string): number {
     const length = title.length;
-    if (length <= 2) return 70;
-    else if (length <= 4) return 56;
-    else if (length <= 6) return 48;
-    else if (length <= 8) return 36;
-    else if (length <= 12) return 32;
-    else if (length <= 16) return 28;
-    else return 24;
+    let baseSize = 24;
+    if (length <= 2) baseSize = 70;
+    else if (length <= 4) baseSize = 56;
+    else if (length <= 6) baseSize = 48;
+    else if (length <= 8) baseSize = 36;
+    else if (length <= 12) baseSize = 32;
+    else if (length <= 16) baseSize = 28;
+    
+    return baseSize * this.coverFontScale;
   }
 
   /**

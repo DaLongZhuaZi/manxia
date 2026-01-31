@@ -18,6 +18,14 @@ export interface GameState {
 export interface IEventPayload {}
 
 /**
+ * 封面更新事件的payload
+ */
+export interface CoverChangedPayload extends IEventPayload {
+  bookId: string;
+  coverPath: string;
+}
+
+/**
  * 定义一个通用的实体ID类型，它就是一个数字。
  */
 export type EntityId = number;
@@ -201,6 +209,10 @@ interface GameEventConstants {
   EBOOK_UPDATED: string;
   EBOOK_COVER_CHANGED: string;
   EBOOK_LIST_REFRESH_NEEDED: string;
+  // 小说数据
+  NOVEL_UPDATED: string;
+  NOVEL_COVER_CHANGED: string;
+  NOVEL_LIST_REFRESH_NEEDED: string;
   // 文件导入
   FILE_IMPORT_REQUESTED: string;
   // 封面选择
@@ -250,6 +262,11 @@ export const GameEvent: GameEventConstants = {
   EBOOK_UPDATED: 'ebookUpdated',
   EBOOK_COVER_CHANGED: 'ebookCoverChanged',
   EBOOK_LIST_REFRESH_NEEDED: 'ebookListRefreshNeeded',
+
+  // --- 小说数据事件 ---
+  NOVEL_UPDATED: 'novelUpdated',
+  NOVEL_COVER_CHANGED: 'novelCoverChanged',
+  NOVEL_LIST_REFRESH_NEEDED: 'novelListRefreshNeeded',
 
   // --- 文件导入事件 ---
   FILE_IMPORT_REQUESTED: 'fileImportRequested',

@@ -14,7 +14,7 @@ export interface WebDAVSettings {
   password: string;           // 密码（加密存储）
   basePath: string;           // 基础路径
   autoBackup: boolean;        // 是否自动备份
-  autoBackupInterval: 'daily' | 'weekly' | 'manual';  // 自动备份间隔
+  autoBackupInterval: 'daily' | 'weekly';  // 自动备份间隔
   keepBackupCount: number;    // 保留备份数量
   lastSyncTime: number;       // 最后同步时间
   // 新增字段
@@ -31,7 +31,7 @@ export const DEFAULT_WEBDAV_SETTINGS: WebDAVSettings = {
   password: '',
   basePath: '/manxia',
   autoBackup: false,
-  autoBackupInterval: 'manual',
+  autoBackupInterval: 'daily',
   keepBackupCount: 5,
   lastSyncTime: 0,
   connectionStatus: 'untested',

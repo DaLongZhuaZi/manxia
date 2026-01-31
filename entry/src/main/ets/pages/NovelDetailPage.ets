@@ -80,6 +80,8 @@ export struct NovelDetailPage {
   private fallbackBookInfo: NovelDetailPageParams | null = null;
   // 生成的本地封面路径
   @State generatedCoverPath: string = '';
+  // 封面字体倍率
+  @State coverFontScale: number = 1.0;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -102,6 +104,22 @@ export struct NovelDetailPage {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+  }
+
+  /**
+   * 规范化封面路径：本地文件添加file://前缀
+   */
+  private normalizeCoverPath(path: string): string {
+    if (!path || path.length === 0) {
+      return '';
+    }
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('file://')) {
+      return path;
+    }
+    if (path.startsWith('/')) {
+      return `file://${path}`;
+    }
+    return path;
   }
 
   async loadBookInfo(): Promise<void> {
@@ -501,7 +519,7 @@ export struct NovelDetailPage {
     Row() {
       // 封面 - 添加id用于翻开动画
       if (this.book?.coverUrl) {
-        Image(this.book.coverUrl)
+        Image(this.normalizeCoverPath(this.book.coverUrl))
           .width(100)
           .height(140)
           .borderRadius(6)
@@ -1607,13 +1625,15 @@ export struct NovelDetailPage {
    */
   private calculateCoverFontSize(title: string): number {
     const length = title.length;
-    if (length <= 2) return 70;
-    if (length <= 4) return 56;
-    if (length <= 6) return 48;
-    if (length <= 8) return 36;
-    if (length <= 12) return 32;
-    if (length <= 16) return 28;
-    return 24;
+    let baseSize = 24;
+    if (length <= 2) baseSize = 70;
+    else if (length <= 4) baseSize = 56;
+    else if (length <= 6) baseSize = 48;
+    else if (length <= 8) baseSize = 36;
+    else if (length <= 12) baseSize = 32;
+    else if (length <= 16) baseSize = 28;
+    
+    return baseSize * this.coverFontScale;
   }
 
   /**

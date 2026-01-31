@@ -6,12 +6,19 @@
  */
 
 #include "ftp_client.h"
+#include "curl_global.h"
 #include <curl/curl.h>
 #include <fstream>
 #include <sstream>
 #include <cstring>
 #include <algorithm>
 #include <regex>
+#include <hilog/log.h>
+
+#undef LOG_DOMAIN
+#undef LOG_TAG
+#define LOG_DOMAIN 0x3201
+#define LOG_TAG "FTPClient"
 
 namespace ftp {
 
@@ -65,16 +72,28 @@ public:
     CURL* curl = nullptr;
 
     Impl(const Config& cfg) : config(cfg) {
+        // 先初始化curl全局状态
+        curl_ref_init();
         curl = curl_easy_init();
+        if (!curl) {
+            OH_LOG_ERROR(LOG_APP, "curl_easy_init failed");
+        }
     }
 
     ~Impl() {
         if (curl) {
             curl_easy_cleanup(curl);
+            curl = nullptr;
         }
+        // 释放curl全局引用
+        curl_ref_cleanup();
     }
 
     void setupCurl(const std::string& url) {
+        if (!curl) {
+            OH_LOG_ERROR(LOG_APP, "setupCurl: curl handle is null");
+            return;
+        }
         curl_easy_reset(curl);
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         

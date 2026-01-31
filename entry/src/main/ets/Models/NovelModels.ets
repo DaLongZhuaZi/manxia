@@ -131,6 +131,8 @@ export interface NovelSourceInfo {
   group?: string;
   enabled: boolean;
   weight: number;
+  /** 用户自定义排序顺序（越小越靠前） */
+  customOrder: number;
   lastUpdateTime: number;
   respondTime: number;
   searchable: boolean;

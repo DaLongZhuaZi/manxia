@@ -218,6 +218,22 @@ export struct NovelExplorePage {
     }
   }
 
+  /**
+   * 规范化封面路径：本地文件添加file://前缀
+   */
+  private normalizeCoverPath(path: string): string {
+    if (!path || path.length === 0) {
+      return '';
+    }
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('file://')) {
+      return path;
+    }
+    if (path.startsWith('/')) {
+      return `file://${path}`;
+    }
+    return path;
+  }
+
   openBookDetail(book: NovelSearchResult): void {
     // 根据页面设置决定使用哪个详情页
     const pageType = PageSettingsHelper.getNovelDetailPageType();
@@ -680,7 +696,7 @@ export struct NovelExplorePage {
     Row() {
       // 封面
       if (book.coverUrl) {
-        Image(book.coverUrl)
+        Image(this.normalizeCoverPath(book.coverUrl))
           .width(70)
           .height(95)
           .borderRadius(4)

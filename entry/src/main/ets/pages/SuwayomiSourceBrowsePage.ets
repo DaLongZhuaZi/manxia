@@ -18,6 +18,7 @@ const TITLE_BAR_HEIGHT: number = 56;
 // 页面参数接口
 export interface SuwayomiSourceBrowseParams {
   source: SuwayomiExtensionSource;
+  keyword?: string; // 可选的搜索关键词，传入后自动搜索
 }
 
 // 漫画详情页参数
@@ -522,7 +523,17 @@ export struct SuwayomiSourceBrowsePage {
       const params = context.pathInfo.param as SuwayomiSourceBrowseParams;
       if (params?.source) {
         this.source = params.source;
-        this.initialize();
+        // 如果传入了搜索关键词，设置并自动搜索
+        if (params.keyword) {
+          this.searchQuery = params.keyword;
+          this.isSearchMode = true;
+        }
+        this.initialize().then(() => {
+          // 初始化完成后，如果有搜索关键词则执行搜索
+          if (params.keyword) {
+            this.performSearch();
+          }
+        });
       }
     })
   }

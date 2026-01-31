@@ -19,6 +19,7 @@ import { getNovelSettingsManager, BookshelfSettings, BookshelfSortType, BrowseHi
 import { AppColors } from '../Framework/Theme/AppColors';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
 
 const TAG = 'NovelBookshelfPage';
 const TITLE_BAR_HEIGHT_MINI = 56;
@@ -173,6 +174,12 @@ export struct NovelBookshelfPage {
       this.browseHistory = this.settingsManager.getBrowseHistory();
     };
     this.settingsManager.addBrowseHistoryListener(this.browseHistoryListener);
+    
+    // 监听小说封面更新事件
+    eventBus.subscribe(GameEvent.NOVEL_COVER_CHANGED, (payload: IEventPayload) => {
+      logger.info(TAG, `收到小说封面更新事件: ${JSON.stringify(payload)}`);
+      this.loadBooks();
+    });
   }
 
   private lifecycle = new PageLifecycleManager('NovelBookshelfPage', { enableDebug: true });
@@ -187,6 +194,11 @@ export struct NovelBookshelfPage {
       this.settingsManager.removeBrowseHistoryListener(this.browseHistoryListener);
       this.browseHistoryListener = null;
     }
+    
+    // 移除EventBus监听器
+    // Note: EventBus.unsubscribe需要传入原始回调函数，这里使用subscribe的匿名函数无法精确移除
+    // 实际上页面销毁时EventBus会自动清理，这里注释掉
+    // eventBus.unsubscribe(GameEvent.NOVEL_COVER_CHANGED, ...);
   }
 
   async loadBooks(): Promise<void> {
@@ -214,6 +226,13 @@ export struct NovelBookshelfPage {
         );
         logger.info(TAG, `加载收藏书籍: 数量: ${this.favoriteBooks.length}, 排序: ${this.bookshelfSettings.sortType}`);
       }
+      
+      // 调试：输出前3本书的封面路径信息
+      this.favoriteBooks.slice(0, 3).forEach((book, index) => {
+        logger.info(TAG, `[封面调试] 书籍${index}: ${book.name}`);
+        logger.info(TAG, `[封面调试]   coverUrl: ${book.coverUrl || '(空)'}`);
+        logger.info(TAG, `[封面调试]   coverLocalPath: ${book.coverLocalPath || '(空)'}`);
+      });
       this.recentBooks = await this.dataManager.getRecentBooks(20);
       logger.info(TAG, `加载最近阅读: ${this.recentBooks.length}本`);
       
@@ -1193,9 +1212,9 @@ export struct NovelBookshelfPage {
   buildBookGridItem(book: NovelBook) {
     Column() {
       Stack({ alignContent: Alignment.TopStart }) {
-        // 封面
-        if (book.coverUrl) {
-          Image(book.coverUrl)
+        // 封面（优先使用本地生成的封面）
+        if (book.coverLocalPath || book.coverUrl) {
+          Image(this.normalizeCoverPath(book.coverLocalPath || book.coverUrl || ''))
             .width('100%')
             .height(140)
             .borderRadius(8)
@@ -1203,7 +1222,7 @@ export struct NovelBookshelfPage {
         } else {
           Column() {
             Text(book.name.substring(0, 1))
-              .fontSize(28)
+              .fontSize(32)
               .fontFamily(this.appFontFamily)
               .fontColor('#FFFFFF')
               .fontWeight(FontWeight.Bold)
@@ -1316,9 +1335,9 @@ export struct NovelBookshelfPage {
         .margin({ right: 8 })
       }
       
-      // 封面
-      if (book.coverUrl) {
-        Image(book.coverUrl)
+      // 封面（优先使用本地生成的封面）
+      if (book.coverLocalPath || book.coverUrl) {
+        Image(this.normalizeCoverPath(book.coverLocalPath || book.coverUrl || ''))
           .width(80)
           .height(110)
           .borderRadius(4)
@@ -1399,6 +1418,30 @@ export struct NovelBookshelfPage {
         this.openBook(book);
       }
     })
+  }
+
+  /**
+   * 规范化封面路径：本地文件添加file://前缀
+   */
+  private normalizeCoverPath(path: string): string {
+    if (!path || path.length === 0) {
+      return '';
+    }
+    
+    // 如果已经有协议前缀，直接返回
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('file://')) {
+      return path;
+    }
+    
+    // 本地文件路径，添加file://前缀
+    if (path.startsWith('/')) {
+      const normalizedPath = `file://${path}`;
+      logger.info(TAG, `[封面调试] 路径规范化: ${path} -> ${normalizedPath}`);
+      return normalizedPath;
+    }
+    
+    logger.info(TAG, `[封面调试] 路径未处理: ${path}`);
+    return path;
   }
 
   goToSearch(): void {

@@ -414,7 +414,7 @@ export class EnhancedBackupManager {
             password: config.password || '',
             basePath: config.basePath || '/manxia',
             autoBackup: config.autoBackup || false,
-            autoBackupInterval: config.autoBackupInterval || 'manual',
+            autoBackupInterval: config.autoBackupInterval || 'daily',
             keepBackupCount: config.keepBackupCount || 5
           }
         };

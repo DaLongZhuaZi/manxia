@@ -37,6 +37,7 @@ set_target_properties(curl PROPERTIES
 
 # 添加WebDAV库（包含FTP支持）
 add_library(webdav_native SHARED
+    curl_global.cpp
     webdav_client.cpp
     webdav_napi.cpp
     ftp_client.cpp

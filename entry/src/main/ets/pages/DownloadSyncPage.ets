@@ -163,6 +163,8 @@ struct DownloadSyncPage {
   @State private fileTree: FileTreeNode[] = [];
   // 展开的节点路径集合
   @State private expandedPaths: Set<string> = new Set();
+  // 封面字体倍率
+  @State private coverFontScale: number = 1.0;
 
   private static readonly APP_FOLDER_NAME: string = '漫匹';
   private static readonly MANGA_EXTENSIONS: string[] = ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz'];
@@ -2817,13 +2819,15 @@ A: 不会，原文件保持不变。`;
    */
   private calculateCoverFontSize(title: string): number {
     const length = title.length;
-    if (length <= 2) return 70;
-    else if (length <= 4) return 56;
-    else if (length <= 6) return 48;
-    else if (length <= 8) return 36;
-    else if (length <= 12) return 32;
-    else if (length <= 16) return 28;
-    else return 24;
+    let baseSize = 24;
+    if (length <= 2) baseSize = 70;
+    else if (length <= 4) baseSize = 56;
+    else if (length <= 6) baseSize = 48;
+    else if (length <= 8) baseSize = 36;
+    else if (length <= 12) baseSize = 32;
+    else if (length <= 16) baseSize = 28;
+    
+    return baseSize * this.coverFontScale;
   }
 
   /**

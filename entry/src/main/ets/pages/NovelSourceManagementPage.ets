@@ -111,6 +111,9 @@ export struct NovelSourceManagementPage {
   // 书源长按菜单状态
   @State showSourceContextMenu: boolean = false;
   @State contextMenuSource: NovelSourceInfo | null = null;
+  // 排序模式状态
+  @State isSortMode: boolean = false;
+  @State isSavingOrder: boolean = false;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -135,10 +138,10 @@ export struct NovelSourceManagementPage {
 
   loadSources(): void {
     this.isLoading = true;
-    // 获取所有书源，按置顶和权重排序
+    // 获取所有书源（已按 customOrder 排序，未启用的在末尾）
     const sources = this.sourceManager.getAllSources();
-    // 置顶的书源排在前面（weight越高越靠前）
-    this.allSources = sources.sort((a, b) => b.weight - a.weight);
+    // getAllSources 已经按 customOrder 排序，直接使用
+    this.allSources = sources;
     
     // 更新统计数据
     this.totalSourceCount = this.allSources.length;
@@ -331,8 +334,15 @@ export struct NovelSourceManagementPage {
             this.buildMultiSelectBar()
           }
           
-          // 统计信息和分组筛选
-          this.buildStats()
+          // 排序模式操作栏
+          if (this.isSortMode) {
+            this.buildSortModeBar()
+          }
+          
+          // 统计信息和分组筛选（排序模式下隐藏）
+          if (!this.isSortMode) {
+            this.buildStats()
+          }
           
           // 书源列表
           if (this.isLoading) {
@@ -682,6 +692,90 @@ export struct NovelSourceManagementPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
+      
+      // 排序模式按钮
+      Row() {
+        Button() {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.line_3_horizontal_circle'))
+              .fontSize(16)
+              .fontColor(['#FFFFFF'])
+            Text('进入排序模式')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#FFFFFF')
+          }
+        }
+        .width('100%')
+        .height(36)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .onClick(() => {
+          this.isMultiSelectMode = false;
+          this.selectedSourceIds.clear();
+          this.enterSortMode();
+        })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 12 })
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+  }
+
+  /**
+   * 构建排序模式操作栏
+   */
+  @Builder
+  buildSortModeBar() {
+    Column() {
+      // 提示文字
+      Row() {
+        SymbolGlyph($r('sys.symbol.line_3_horizontal_circle'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('排序模式')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .margin({ left: 8 })
+        Text(`（共 ${this.filteredSources.length} 个启用的书源）`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12 })
+      
+      // 操作按钮
+      Row() {
+        // 取消按钮
+        Button('取消')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderRadius(20)
+          .height(36)
+          .layoutWeight(1)
+          .margin({ right: 12 })
+          .onClick(() => this.exitSortMode())
+        
+        // 保存排序按钮
+        Button('保存排序')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor('#FFFFFF')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(20)
+          .height(36)
+          .layoutWeight(1)
+          .onClick(() => this.saveSourceOrder())
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
     }
     .width('100%')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
@@ -713,19 +807,133 @@ export struct NovelSourceManagementPage {
     promptAction.showActionMenu({
       title: '更多操作',
       buttons: [
+        { text: '排序书源', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '替换规则', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '批量启用', color: $r('sys.color.ohos_id_color_text_primary') },
         { text: '批量禁用', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
       if (result.index === 0) {
-        this.goToReplaceRules();
+        this.enterSortMode();
       } else if (result.index === 1) {
-        this.batchEnableSources(true);
+        this.goToReplaceRules();
       } else if (result.index === 2) {
+        this.batchEnableSources(true);
+      } else if (result.index === 3) {
         this.batchEnableSources(false);
       }
     }).catch(() => {});
+  }
+
+  /**
+   * 进入排序模式
+   */
+  enterSortMode(): void {
+    // 清除筛选和搜索，显示所有启用的书源
+    this.selectedGroup = '';
+    this.searchKeyword = '';
+    this.showSearchBar = false;
+    this.isMultiSelectMode = false;
+    this.selectedSourceIds.clear();
+    // 重新加载并应用筛选（只显示启用的书源）
+    this.applyFilterForSortMode();
+    this.isSortMode = true;
+    promptAction.showToast({ message: '已进入排序模式，点击上下箭头调整顺序' });
+  }
+
+  /**
+   * 退出排序模式
+   */
+  exitSortMode(): void {
+    this.isSortMode = false;
+    this.loadSources();
+  }
+
+  /**
+   * 应用排序模式下的筛选（只显示启用的书源）
+   */
+  applyFilterForSortMode(): void {
+    // 只显示启用的书源用于排序
+    this.filteredSources = this.allSources.filter(s => s.enabled);
+    this.currentPage = 0;
+    this.hasMoreData = true;
+    this.loadMoreSources(true);
+  }
+
+  /**
+   * 保存书源排序
+   */
+  async saveSourceOrder(): Promise<void> {
+    if (this.isSavingOrder) return;
+    
+    this.isSavingOrder = true;
+    this.isOperating = true;
+    this.operatingMessage = '正在保存排序...';
+    
+    try {
+      // 获取当前显示的启用书源ID列表（按当前顺序）
+      const enabledSourceIds = this.filteredSources.map(s => s.id);
+      const count = await this.sourceManager.batchUpdateSourceOrder(enabledSourceIds);
+      
+      promptAction.showToast({ message: `已保存 ${count} 个书源的排序` });
+      this.exitSortMode();
+    } catch (error) {
+      logger.error(TAG, `保存排序失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存排序失败' });
+    } finally {
+      this.isSavingOrder = false;
+      this.isOperating = false;
+      this.operatingMessage = '';
+    }
+  }
+
+  /**
+   * 移动书源到指定位置
+   * @param fromIndex 当前位置索引
+   * @param toIndex 目标位置索引
+   */
+  moveSourceInList(fromIndex: number, toIndex: number): void {
+    if (fromIndex < 0 || fromIndex >= this.filteredSources.length) return;
+    if (toIndex < 0 || toIndex >= this.filteredSources.length) return;
+    if (fromIndex === toIndex) return;
+    
+    // 交换位置
+    const temp = this.filteredSources[fromIndex];
+    this.filteredSources[fromIndex] = this.filteredSources[toIndex];
+    this.filteredSources[toIndex] = temp;
+    
+    // 刷新显示列表
+    this.loadMoreSources(true);
+  }
+
+  /**
+   * 置顶书源
+   * @param currentIndex 当前位置索引
+   */
+  moveSourceToTop(currentIndex: number): void {
+    if (currentIndex <= 0 || currentIndex >= this.filteredSources.length) return;
+    
+    // 移除并插入到开头
+    const source = this.filteredSources.splice(currentIndex, 1)[0];
+    this.filteredSources.unshift(source);
+    
+    // 刷新显示列表
+    this.loadMoreSources(true);
+  }
+
+  /**
+   * 置底书源
+   * @param currentIndex 当前位置索引
+   */
+  moveSourceToBottom(currentIndex: number): void {
+    if (currentIndex < 0 || currentIndex >= this.filteredSources.length - 1) return;
+    
+    // 移除并插入到末尾
+    const source = this.filteredSources.splice(currentIndex, 1)[0];
+    this.filteredSources.push(source);
+    
+    // 刷新显示列表
+    this.loadMoreSources(true);
   }
 
   /**
@@ -900,17 +1108,18 @@ export struct NovelSourceManagementPage {
   @Builder
   buildSourceList() {
     List({ scroller: this.listScroller }) {
-      ForEach(this.displayedSources, (source: NovelSourceInfo, index: number) => {
+      // 排序模式下使用完整的 filteredSources，否则使用分页的 displayedSources
+      ForEach(this.isSortMode ? this.filteredSources : this.displayedSources, (source: NovelSourceInfo, index: number) => {
         ListItem() {
           this.buildSourceItem(source, index)
         }
-        .swipeAction({
+        .swipeAction(this.isSortMode ? undefined : {
           end: this.buildSwipeActions(source)
         })
       })
       
-      // 加载更多指示器
-      if (this.hasMoreData) {
+      // 加载更多指示器（排序模式下不显示）
+      if (this.hasMoreData && !this.isSortMode) {
         ListItem() {
           Row() {
             LoadingProgress()
@@ -1023,12 +1232,73 @@ export struct NovelSourceManagementPage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 })
       
-      // 开关
-      Toggle({ type: ToggleType.Switch, isOn: source.enabled })
-        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .onChange((isOn: boolean) => {
-          this.toggleSource(source, isOn);
-        })
+      // 排序模式下显示移动按钮，否则显示开关
+      if (this.isSortMode) {
+        Row({ space: 8 }) {
+          // 置顶按钮
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.chevron_up_circle'))
+              .fontSize(16)
+              .fontColor([index === 0 ?
+                ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .enabled(index > 0)
+          .onClick(() => this.moveSourceToTop(index))
+
+          // 上移按钮
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.chevron_up'))
+              .fontSize(18)
+              .fontColor([index === 0 ?
+                ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .enabled(index > 0)
+          .onClick(() => this.moveSourceInList(index, index - 1))
+
+          // 下移按钮
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.chevron_down'))
+              .fontSize(18)
+              .fontColor([index === this.filteredSources.length - 1 ?
+                ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .enabled(index < this.filteredSources.length - 1)
+          .onClick(() => this.moveSourceInList(index, index + 1))
+
+          // 置底按钮
+          Button({ type: ButtonType.Circle }) {
+            SymbolGlyph($r('sys.symbol.chevron_down_circle'))
+              .fontSize(16)
+              .fontColor([index === this.filteredSources.length - 1 ?
+                ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .enabled(index < this.filteredSources.length - 1)
+          .onClick(() => this.moveSourceToBottom(index))
+        }
+      } else {
+        // 开关
+        Toggle({ type: ToggleType.Switch, isOn: source.enabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.toggleSource(source, isOn);
+          })
+      }
     }
     .width('100%')
     .padding({ left: 12, right: 16, top: 12, bottom: 12 })
@@ -1036,6 +1306,10 @@ export struct NovelSourceManagementPage {
     .margin({ bottom: 8 })
     .borderRadius(8)
     .onClick(() => {
+      // 排序模式下不响应点击
+      if (this.isSortMode) {
+        return;
+      }
       if (this.isMultiSelectMode) {
         // 多选模式下点击切换选中状态
         this.toggleSourceSelection(source.id, !this.selectedSourceIds.has(source.id));
@@ -1047,7 +1321,8 @@ export struct NovelSourceManagementPage {
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction(() => {
-          if (!this.isMultiSelectMode) {
+          // 排序模式下不响应长按
+          if (!this.isMultiSelectMode && !this.isSortMode) {
             this.showSourceActionMenu(source);
           }
         })

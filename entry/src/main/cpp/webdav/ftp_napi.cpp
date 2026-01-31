@@ -19,10 +19,24 @@
 // 全局FTP客户端实例
 static std::unique_ptr<ftp::FTPClient> g_ftpClient = nullptr;
 
-// 辅助函数：从napi_value获取字符串
+// 辅助函数：从napi_value获取字符串（带类型检查）
 static std::string GetStringFromNapi(napi_env env, napi_value value) {
+    if (value == nullptr) {
+        return "";
+    }
+    
+    napi_valuetype valueType;
+    napi_typeof(env, value, &valueType);
+    if (valueType != napi_string) {
+        return "";
+    }
+    
     size_t len = 0;
-    napi_get_value_string_utf8(env, value, nullptr, 0, &len);
+    napi_status status = napi_get_value_string_utf8(env, value, nullptr, 0, &len);
+    if (status != napi_ok || len == 0) {
+        return "";
+    }
+    
     std::string str(len, '\0');
     napi_get_value_string_utf8(env, value, &str[0], len + 1, &len);
     return str;
