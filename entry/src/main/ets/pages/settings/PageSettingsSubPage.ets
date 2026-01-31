@@ -6,6 +6,7 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { common, Want } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
@@ -52,6 +53,28 @@ interface DetailPageOption {
 }
 
 /**
+ * 底栏标签配置接口
+ */
+interface TabConfig {
+  title: string;
+  index: number;
+  required: boolean;
+}
+
+/**
+ * 底栏标签索引枚举
+ */
+enum TabIndex {
+  HOME = 0,
+  LIBRARY = 1,
+  DISCOVER = 2,
+  SOURCE = 3,
+  BOOK_SOURCE = 4,
+  SUWAYOMI = 5,
+  SETTINGS = 6
+}
+
+/**
  * 设置键常量
  */
 export class PageSettingKeys {
@@ -90,6 +113,21 @@ export struct PageSettingsSubPage {
     { type: DetailPageType.UNIFIED, name: '统一详情页', description: '使用新的统一详情页（推荐，支持所有内容类型）' }
   ];
 
+  // 底栏标签配置列表
+  private tabConfigs: TabConfig[] = [
+    { title: '首页', index: TabIndex.HOME, required: false },
+    { title: '书库', index: TabIndex.LIBRARY, required: true },
+    { title: '发现', index: TabIndex.DISCOVER, required: false },
+    { title: '图源', index: TabIndex.SOURCE, required: false },
+    { title: '书源', index: TabIndex.BOOK_SOURCE, required: false },
+    { title: 'Suwayomi', index: TabIndex.SUWAYOMI, required: false },
+    { title: '设置', index: TabIndex.SETTINGS, required: true }
+  ];
+
+  // 底栏自定义状态
+  @State visibleTabIndices: number[] = [];
+  @State tempVisibleTabIndices: number[] = [];
+
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -105,6 +143,7 @@ export struct PageSettingsSubPage {
 
     this.initializeResponsiveLayout();
     this.loadSettings();
+    this.loadVisibleTabs();
   }
 
   private lifecycle = new PageLifecycleManager('PageSettingsSubPage', { enableDebug: true });
@@ -193,36 +232,220 @@ export struct PageSettingsSubPage {
     return option ? option.name : '默认';
   }
 
+  /**
+   * 加载可见标签配置
+   */
+  private async loadVisibleTabs(): Promise<void> {
+    try {
+      // 从持久化存储读取
+      const savedTabs = await this.settingsManager.getVisibleTabs();
+      if (savedTabs && savedTabs.length > 0) {
+        this.visibleTabIndices = savedTabs;
+        logger.info(TAG, `已加载自定义标签配置: ${JSON.stringify(savedTabs)}`);
+      } else {
+        // 默认显示所有标签
+        this.visibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+        logger.info(TAG, '使用默认标签配置');
+      }
+      // 同步到临时状态
+      this.tempVisibleTabIndices = [...this.visibleTabIndices];
+      // 同步到 AppStorage 以便 UI 响应
+      AppStorage.setOrCreate('visible_tabs', this.visibleTabIndices);
+    } catch (error) {
+      logger.error(TAG, '加载可见标签配置失败', String(error));
+      this.visibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+      this.tempVisibleTabIndices = [...this.visibleTabIndices];
+    }
+  }
+
+  /**
+   * 保存可见标签配置
+   */
+  private async saveVisibleTabs(): Promise<void> {
+    try {
+      // 确保必须显示的标签（书库、设置）始终存在
+      const requiredIndices = this.tabConfigs
+        .filter(cfg => cfg.required)
+        .map(cfg => cfg.index);
+
+      // 合并索引并去重
+      const combined: number[] = [];
+      for (const idx of this.tempVisibleTabIndices) {
+        if (!combined.includes(idx)) {
+          combined.push(idx);
+        }
+      }
+      for (const idx of requiredIndices) {
+        if (!combined.includes(idx)) {
+          combined.push(idx);
+        }
+      }
+
+      const finalIndices = combined;
+      // 不再排序，保持用户自定义顺序
+
+      // 保存到持久化存储
+      await this.settingsManager.setVisibleTabs(finalIndices);
+      // 同步到 AppStorage 以便 UI 响应
+      AppStorage.setOrCreate('visible_tabs', finalIndices);
+      
+      this.visibleTabIndices = finalIndices;
+      this.tempVisibleTabIndices = [...finalIndices];
+
+      logger.info(TAG, `已保存标签配置: ${JSON.stringify(finalIndices)}`);
+      
+      // 显示重启提示对话框
+      promptAction.showDialog({
+        title: '配置已保存',
+        message: '底栏配置已保存，需要重启APP才能生效。\n\n是否立即重启？',
+        buttons: [
+          { text: '稍后重启', color: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) },
+          { text: '立即重启', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+        ]
+      }).then((result) => {
+        if (result.index === 1) {
+          // 用户选择立即重启
+          this.restartApp();
+        }
+      });
+    } catch (error) {
+      logger.error(TAG, '保存可见标签配置失败', String(error));
+    }
+  }
+
+  /**
+   * 切换标签可见性
+   */
+  private toggleTabVisibility(index: number): void {
+    const newIndices: number[] = [];
+    const idx = this.tempVisibleTabIndices.indexOf(index);
+
+    if (idx > -1) {
+      // 移除该索引
+      for (let i = 0; i < this.tempVisibleTabIndices.length; i++) {
+        if (this.tempVisibleTabIndices[i] !== index) {
+          newIndices.push(this.tempVisibleTabIndices[i]);
+        }
+      }
+      this.tempVisibleTabIndices = newIndices;
+    } else {
+      // 添加到末尾
+      for (let i = 0; i < this.tempVisibleTabIndices.length; i++) {
+        newIndices.push(this.tempVisibleTabIndices[i]);
+      }
+      newIndices.push(index);
+      this.tempVisibleTabIndices = newIndices;
+    }
+  }
+
+  /**
+   * 移动标签位置（拖拽排序）
+   */
+  private moveTab(fromIndex: number, toIndex: number): void {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) {
+      return;
+    }
+    const newIndices = [...this.tempVisibleTabIndices];
+    const removedArr = newIndices.splice(fromIndex, 1);
+    const removed = removedArr[0];
+    newIndices.splice(toIndex, 0, removed);
+    this.tempVisibleTabIndices = newIndices;
+    logger.info(TAG, `移动标签: ${fromIndex} -> ${toIndex}`);
+  }
+
+  /**
+   * 重置底栏配置为默认
+   */
+  private async resetTabsToDefault(): Promise<void> {
+    this.tempVisibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+    await this.saveVisibleTabs();
+  }
+
+  /**
+   * 重启APP
+   */
+  private async restartApp(): Promise<void> {
+    try {
+      const uiCtx = this.getUIContext();
+      if (!uiCtx) {
+        logger.error(TAG, '获取UIContext失败，无法重启应用');
+        return;
+      }
+      const context = uiCtx.getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        logger.error(TAG, '无法获取UIAbilityContext，无法重启应用');
+        return;
+      }
+
+      const want: Want = {
+        bundleName: 'com.dlzz.manxia',
+        abilityName: 'EntryAbility'
+      };
+
+      await context.startAbility(want);
+      await context.terminateSelf();
+      logger.info(TAG, 'APP已重启');
+    } catch (error) {
+      logger.error(TAG, '重启APP失败', String(error));
+      promptAction.showToast({
+        message: '重启失败，请手动重启APP',
+        duration: 2000
+      });
+    }
+  }
+
   @Builder
   buildSceneSettings(title: string, description: string, currentType: DetailPageType, onSelect: (type: DetailPageType) => void) {
-    Column({ space: 12 }) {
+    Column({ space: 0 }) {
+      // 标题行
       Row() {
-        Column({ space: 4 }) {
-          Text(title)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-          Text(description)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
+        Blank()
 
         Text(this.getDetailPageTypeName(currentType))
-          .fontSize(14)
+          .fontSize(13)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       }
       .width('100%')
+      .padding({ top: 14, bottom: 8 })
+
+      // 描述
+      Text(description)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .width('100%')
+        .padding({ bottom: 12 })
 
       // 选项列表
-      Column({ space: 8 }) {
+      Column({ space: 4 }) {
         ForEach(this.detailPageOptions, (option: DetailPageOption) => {
-          Row() {
+          Row({ space: 12 }) {
+            // 自定义单选框
+            Stack() {
+              Circle()
+                .width(20)
+                .height(20)
+                .fill(Color.Transparent)
+                .stroke(currentType === option.type ?
+                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                  ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .strokeWidth(currentType === option.type ? 2 : 1.5)
+
+              if (currentType === option.type) {
+                Circle()
+                  .width(10)
+                  .height(10)
+                  .fill(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              }
+            }
+
             Column({ space: 2 }) {
               Text(option.name)
                 .fontSize(14)
@@ -233,51 +456,243 @@ export struct PageSettingsSubPage {
                 .fontSize(11)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
             }
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
-
-            Radio({ value: option.type, group: title })
-              .checked(currentType === option.type)
-              .onChange((isChecked: boolean) => {
-                if (isChecked) {
-                  onSelect(option.type);
-                }
-              })
           }
           .width('100%')
-          .padding({ top: 8, bottom: 8 })
+          .height(52)
+          .padding({ left: 8, right: 8 })
+          .borderRadius(10)
+          .backgroundColor(currentType === option.type ?
+            (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)') :
+            Color.Transparent)
           .onClick(() => {
             onSelect(option.type);
           })
-        })
+        }, (option: DetailPageOption) => `${option.type}_${currentType}`)
       }
       .width('100%')
     }
     .width('100%')
-    .padding(16)
+    .padding({ left: 16, right: 16, top: 4, bottom: 12 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
   }
 
   @Builder
   buildResetButton() {
-    Button('恢复默认设置')
+    Button('恢复所有默认设置')
       .fontSize(14)
       .fontFamily(this.appFontFamily)
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
       .backgroundColor(Color.Transparent)
       .borderWidth(1)
       .borderColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
-      .borderRadius(8)
-      .height(40)
+      .borderRadius(12)
+      .height(44)
       .width('100%')
       .onClick(() => {
-        this.mangaDetailPageType = DetailPageType.DEFAULT;
-        this.ebookDetailPageType = DetailPageType.DEFAULT;
-        this.novelDetailPageType = DetailPageType.DEFAULT;
-        this.saveSettings();
+        promptAction.showDialog({
+          title: '确认重置',
+          message: '这将重置所有页面设置和底栏配置为默认值，是否继续？',
+          buttons: [
+            { text: '取消', color: '#888888' },
+            { text: '确认重置', color: '#FF4444' }
+          ]
+        }).then((result) => {
+          if (result.index === 1) {
+            this.mangaDetailPageType = DetailPageType.DEFAULT;
+            this.ebookDetailPageType = DetailPageType.DEFAULT;
+            this.novelDetailPageType = DetailPageType.DEFAULT;
+            this.saveSettings();
+            this.resetTabsToDefault();
+          }
+        });
       })
+  }
+
+  /**
+   * 获取标签配置
+   */
+  private getTabConfig(tabIndex: number): TabConfig | undefined {
+    return this.tabConfigs.find(cfg => cfg.index === tabIndex);
+  }
+
+  @Builder
+  buildTabItem(tabIndex: number, arrayIndex: number, isEnabled: boolean) {
+    Row({ space: 8 }) {
+      // 上下移动按钮（仅启用的标签显示）
+      if (isEnabled && arrayIndex >= 0) {
+        Column({ space: 2 }) {
+          // 上移按钮
+          SymbolGlyph($r('sys.symbol.chevron_up'))
+            .fontSize(16)
+            .fontColor([arrayIndex > 0 ?
+              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .onClick(() => {
+              if (arrayIndex > 0) {
+                this.moveTab(arrayIndex, arrayIndex - 1);
+              }
+            })
+          // 下移按钮
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(16)
+            .fontColor([arrayIndex < this.tempVisibleTabIndices.length - 1 ?
+              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            .onClick(() => {
+              if (arrayIndex < this.tempVisibleTabIndices.length - 1) {
+                this.moveTab(arrayIndex, arrayIndex + 1);
+              }
+            })
+        }
+        .width(24)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Blank().width(24)
+      }
+
+      // 标题和描述
+      Column({ space: 2 }) {
+        Text(this.getTabConfig(tabIndex)?.title ?? '')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(isEnabled ?
+            ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+        if (this.getTabConfig(tabIndex)?.required) {
+          Text('必须显示')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      // 开关
+      Toggle({ type: ToggleType.Switch, isOn: isEnabled })
+        .selectedColor('#6200EE')
+        .switchPointColor(Color.White)
+        .enabled(!(this.getTabConfig(tabIndex)?.required ?? false))
+        .onChange((isOn: boolean) => {
+          if (!(this.getTabConfig(tabIndex)?.required ?? false)) {
+            this.toggleTabVisibility(tabIndex);
+          }
+        })
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 8, right: 16 })
+    .borderRadius(10)
+    .backgroundColor(Color.Transparent)
+    .onClick(() => {
+      if (!(this.getTabConfig(tabIndex)?.required ?? false)) {
+        this.toggleTabVisibility(tabIndex);
+      }
+    })
+  }
+
+  @Builder
+  buildTabCustomization() {
+    Column({ space: 12 }) {
+      // 操作提示
+      Text('点击上下箭头调整标签顺序，开关控制是否显示')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .padding({ left: 4, bottom: 4 })
+
+      // 已启用的标签（按顺序显示，可拖抽排序）
+      if (this.tempVisibleTabIndices.length > 0) {
+        Column({ space: 4 }) {
+          Text('已启用')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .padding({ left: 4, bottom: 4 })
+
+          Column({ space: 2 }) {
+            ForEach(this.tempVisibleTabIndices, (tabIndex: number, index: number) => {
+              this.buildTabItem(tabIndex, index, true)
+            }, (tabIndex: number) => `enabled_${tabIndex}_${this.tempVisibleTabIndices.indexOf(tabIndex)}`)
+          }
+          .width('100%')
+          .padding(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderRadius(12)
+        }
+        .width('100%')
+      }
+
+      // 未启用的标签
+      Column({ space: 4 }) {
+        // 筛选未启用的标签
+        if (this.tabConfigs.filter(cfg => !this.tempVisibleTabIndices.includes(cfg.index) && !cfg.required).length > 0) {
+          Text('未启用')
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .padding({ left: 4, bottom: 4 })
+
+          Column({ space: 2 }) {
+            ForEach(this.tabConfigs.filter(cfg => !this.tempVisibleTabIndices.includes(cfg.index) && !cfg.required),
+              (cfg: TabConfig) => {
+                this.buildTabItem(cfg.index, -1, false)
+              }, (cfg: TabConfig) => `disabled_${cfg.index}`)
+          }
+          .width('100%')
+          .padding(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderRadius(12)
+        }
+      }
+      .width('100%')
+
+      // 操作按钮
+      Row({ space: 12 }) {
+        // 重置按钮
+        Button('重置')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)')
+          .borderRadius(10)
+          .height(44)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.tempVisibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+          })
+
+        // 保存按钮
+        Button('保存配置')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(Color.White)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(10)
+          .height(44)
+          .layoutWeight(2)
+          .onClick(() => {
+            this.saveVisibleTabs();
+          })
+      }
+      .width('100%')
+      .padding({ top: 8 })
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(Color.Transparent)
+    .borderRadius(12)
   }
 
   build() {
@@ -290,18 +705,27 @@ export struct PageSettingsSubPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll(this.scroller) {
-          Column({ space: 16 }) {
+          Column({ space: 20 }) {
             Blank().height(TITLE_BAR_HEIGHT)
 
-            // 说明文字
-            Text('选择在不同场景下使用的详情页类型。选择"默认"将使用原有的详情页，选择其他选项将统一使用指定的详情页样式。')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .padding({ left: 16, right: 16 })
+            // 详情页设置部分
+            Column({ space: 8 }) {
+              // 分段标题
+              Text('详情页设置')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .padding({ left: 4 })
 
-            // 漫画场景设置
-            this.buildSceneSettings(
+              Text('选择在不同场景下使用的详情页类型')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .padding({ left: 4, bottom: 8 })
+
+              // 漫画场景设置
+              this.buildSceneSettings(
               '漫画详情页',
               '打开漫画时使用的详情页类型',
               this.mangaDetailPageType,
@@ -322,16 +746,41 @@ export struct PageSettingsSubPage {
               }
             )
 
-            // 小说场景设置
-            this.buildSceneSettings(
-              '小说详情页',
-              '打开小说时使用的详情页类型',
-              this.novelDetailPageType,
-              (type: DetailPageType) => {
-                this.novelDetailPageType = type;
-                this.saveSettings();
-              }
-            )
+              // 小说场景设置
+              this.buildSceneSettings(
+                '小说详情页',
+                '打开小说时使用的详情页类型',
+                this.novelDetailPageType,
+                (type: DetailPageType) => {
+                  this.novelDetailPageType = type;
+                  this.saveSettings();
+                }
+              )
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+
+            // 底栏自定义部分
+            Column({ space: 8 }) {
+              // 分段标题
+              Text('底栏自定义')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .padding({ left: 4 })
+
+              Text('自定义底部导航栏显示的标签及顺序')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .padding({ left: 4, bottom: 8 })
+
+              // 底栏标签自定义
+              this.buildTabCustomization()
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
 
             // 恢复默认按钮
             this.buildResetButton()

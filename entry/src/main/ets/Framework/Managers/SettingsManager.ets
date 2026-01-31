@@ -252,9 +252,11 @@ export class SettingsManager {
 
   /**
    * 获取底部导航栏可见标签
+   * 默认显示基本标签: 首页(0), 书库(1), 发现(2), 图源(3), 设置(6)
+   * 新增的书源(4)和Suwayomi(5)默认不显示，用户可在设置中启用
    */
   async getVisibleTabs(): Promise<number[]> {
-    const defaultTabs = [0, 1, 2, 3];
+    const defaultTabs = [0, 1, 2, 3, 6];
     return this.getJSON<number[]>(SettingKeys.VISIBLE_TABS, defaultTabs);
   }
 

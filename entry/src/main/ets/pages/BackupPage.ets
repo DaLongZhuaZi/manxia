@@ -29,6 +29,7 @@ import { WebDAVSettings, DEFAULT_WEBDAV_SETTINGS } from '../Models/WebDAVModels'
 import { WebDAVClient, WebDAVConfig, WebDAVTestResult } from '../Framework/WebDAV/WebDAVClient';
 import { quickTestWebDAVNative } from '../Framework/WebDAV/WebDAVNativeTest';
 import { WebDAVNativeConfig, WebDAVNativeClient, isNativeModuleAvailable } from '../Framework/WebDAV/WebDAVNativeClient';
+import { WebDAVErrorAnalyzer, analyzeWebDAVError } from '../Framework/WebDAV/WebDAVErrorAnalyzer';
 import { FTPConfig, FTPNativeClient, FTPFileInfo, isFTPNativeAvailable } from '../Framework/FTP/FTPNativeClient';
 import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from '../Models/FTPModels';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
@@ -106,7 +107,7 @@ struct BackupPage {
     password: '',
     basePath: '/manxia',
     autoBackup: false,
-    autoBackupInterval: 'manual',
+    autoBackupInterval: 'daily',
     keepBackupCount: 5,
     lastSyncTime: 0,
     connectionStatus: 'untested',
@@ -476,7 +477,7 @@ struct BackupPage {
         password: '',
         basePath: '/manxia',
         autoBackup: false,
-        autoBackupInterval: 'manual',
+        autoBackupInterval: 'daily',
         keepBackupCount: 5,
         lastSyncTime: 0,
         connectionStatus: 'untested',
@@ -708,7 +709,7 @@ struct BackupPage {
         basePath: dataPreferences.getSync('basePath', '/manxia') as string,
         enabled: dataPreferences.getSync('enabled', false) as boolean,
         autoBackup: dataPreferences.getSync('autoBackup', false) as boolean,
-        autoBackupInterval: dataPreferences.getSync('autoBackupInterval', 'manual') as 'daily' | 'weekly' | 'manual',
+        autoBackupInterval: dataPreferences.getSync('autoBackupInterval', 'daily') as 'daily' | 'weekly',
         keepBackupCount: dataPreferences.getSync('keepBackupCount', 5) as number,
         lastSyncTime: dataPreferences.getSync('lastSyncTime', 0) as number,
         connectionStatus: dataPreferences.getSync('connectionStatus', 'untested') as 'untested' | 'testing' | 'success' | 'failed',
@@ -778,47 +779,37 @@ struct BackupPage {
   }
   
   /**
-   * 增强WebDAV错误提示信息
+   * 增强WebDAV错误提示信息（使用智能错误分析器）
    */
   private enhanceWebDAVErrorMessage(originalMessage: string, basePath: string): string {
-    const msg = originalMessage.toLowerCase();
+    // 使用智能错误分析器
+    const analysis = WebDAVErrorAnalyzer.analyze(originalMessage, undefined, basePath);
+    return WebDAVErrorAnalyzer.formatErrorForUser(analysis);
+  }
+  
+  /**
+   * 显示WebDAV错误详情对话框
+   */
+  private showWebDAVErrorDialog(error: string, basePath: string): void {
+    const analysis = WebDAVErrorAnalyzer.analyze(error, undefined, basePath);
     
-    // SSL证书错误
-    if (msg.includes('ssl') || msg.includes('certificate')) {
-      return `SSL证书验证失败。如果使用自签名证书，请确保Native模块已正确加载。原始错误: ${originalMessage}`;
-    }
-    
-    // 403 Forbidden - 权限问题
-    if (msg.includes('403') || msg.includes('forbidden')) {
-      return `权限被拒绝(403)。可能原因：\n1. 用户名或密码错误\n2. 服务器不允许在根目录创建文件\n3. 目录 "${basePath}" 不存在且无法自动创建\n\n建议：请在WebDAV服务器上手动创建 "${basePath}" 目录后重试`;
-    }
-    
-    // 404 Not Found - 目录不存在
-    if (msg.includes('404') || msg.includes('not found')) {
-      return `目录不存在(404)。目录 "${basePath}" 在服务器上不存在。\n\n建议：请在WebDAV服务器上手动创建此目录后重试，或更改为已存在的目录路径`;
-    }
-    
-    // 405 Method Not Allowed - 方法不支持
-    if (msg.includes('405') || msg.includes('method not allowed')) {
-      return `操作不支持(405)。服务器不支持此WebDAV操作。\n\n建议：请确认服务器已启用完整的WebDAV支持`;
-    }
-    
-    // 401 Unauthorized - 认证失败
-    if (msg.includes('401') || msg.includes('unauthorized')) {
-      return `认证失败(401)。用户名或密码错误，请检查后重试`;
-    }
-    
-    // 连接超时
-    if (msg.includes('timeout') || msg.includes('超时')) {
-      return `连接超时。请检查：\n1. 服务器地址是否正确\n2. 网络连接是否正常\n3. 服务器是否在线`;
-    }
-    
-    // 无法连接
-    if (msg.includes('connect') || msg.includes('连接')) {
-      return `无法连接到服务器。请检查：\n1. 服务器地址格式是否正确（如 https://example.com:5006）\n2. 网络连接是否正常\n3. 服务器是否在线`;
-    }
-    
-    return originalMessage;
+    AlertDialog.show({
+      title: `❌ ${analysis.title}`,
+      message: `${analysis.description}\n\n💡 建议：\n${analysis.suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '知道了',
+        action: () => {}
+      },
+      secondaryButton: analysis.canAutoFix ? {
+        value: '重试',
+        action: () => {
+          // 可以触发重试操作
+          this.testWebDAVConnection(this.webdavSettings);
+        }
+      } : undefined
+    });
   }
 
   async runNativeWebDAVTest(): Promise<void> {
@@ -2254,7 +2245,7 @@ struct BackupPage {
                   password: '',
                   basePath: '/manxia',
                   autoBackup: false,
-                  autoBackupInterval: 'manual',
+                  autoBackupInterval: 'daily',
                   keepBackupCount: 5,
                   lastSyncTime: 0,
                   connectionStatus: 'untested',

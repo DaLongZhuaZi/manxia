@@ -309,45 +309,33 @@ export struct NovelReaderPage {
     try {
       // 优先加载书籍专属设置，如果不存在则使用全局设置
       let bookSettings: TextReaderSettings | undefined = undefined;
-
-      // 为在线小说使用更小的页边距，提高屏幕利用率
-      const onlineNovelMargins: PageMargins = {
-        top: 32,
-        bottom: 0,
-        left: 8,
-        right: 8
-      };
+      let hasBookSpecificSettings = false;
       
       if (this.bookId) {
         const settingsKey = `${SettingKeys.NOVEL_READER_SETTINGS}_${this.bookId}`;
         try {
-          bookSettings = this.settingsManager.getJSON<TextReaderSettings>(settingsKey, DEFAULT_TEXT_READER_SETTINGS);
-          // 检查是否真的有书籍专属设置（通过检查key是否存在）
+          // 检查是否有书籍专属设置
           const hasBookSettings = this.settingsManager.getString(settingsKey, '');
-          if (!hasBookSettings) {
-            bookSettings = undefined;
+          if (hasBookSettings) {
+            bookSettings = this.settingsManager.getJSON<TextReaderSettings>(settingsKey, DEFAULT_TEXT_READER_SETTINGS);
+            hasBookSpecificSettings = true;
           }
         } catch (e) {
           bookSettings = undefined;
         }
       }
       
-      if (bookSettings) {
+      if (bookSettings && hasBookSpecificSettings) {
+        // 使用书籍专属设置（用户已经设置过，尊重用户选择）
         logger.info(TAG, `加载书籍专属设置: ${this.bookId}`);
-        // 为在线小说调整页边距
-        bookSettings.pageMargins = onlineNovelMargins;
-        // 兼容性处理：确保所有子对象完整
         this.ensureSettingsComplete(bookSettings);
         this.settings = bookSettings;
       } else {
         // 使用全局设置
         const globalSettings = this.settingsManager.getJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, DEFAULT_TEXT_READER_SETTINGS);
-        // 为在线小说调整页边距
-        globalSettings.pageMargins = onlineNovelMargins;
-        // 兼容性处理：确保所有子对象完整
         this.ensureSettingsComplete(globalSettings);
         this.settings = globalSettings;
-        logger.info(TAG, `使用全局小说阅读器设置，已调整为在线小说页边距`);
+        logger.info(TAG, `使用全局小说阅读器设置`);
       }
     } catch (e) {
       logger.warn(TAG, `加载设置失败: ${String(e)}`);
@@ -381,9 +369,15 @@ export struct NovelReaderPage {
       if (settings.textStyle.textAlignment === undefined) settings.textStyle.textAlignment = TextAlignment.JUSTIFY;
     }
     
-    // 确保pageMargins对象完整
+    // 确保pageMargins对象完整，包括各个属性
     if (!settings.pageMargins) {
       settings.pageMargins = { top: 48, bottom: 48, left: 24, right: 24 };
+    } else {
+      // 确保pageMargins的所有属性都有合理的默认值
+      if (settings.pageMargins.top === undefined || settings.pageMargins.top < 0) settings.pageMargins.top = 48;
+      if (settings.pageMargins.bottom === undefined || settings.pageMargins.bottom < 0) settings.pageMargins.bottom = 48;
+      if (settings.pageMargins.left === undefined || settings.pageMargins.left < 0) settings.pageMargins.left = 24;
+      if (settings.pageMargins.right === undefined || settings.pageMargins.right < 0) settings.pageMargins.right = 24;
     }
   }
 

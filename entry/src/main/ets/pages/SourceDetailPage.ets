@@ -37,9 +37,19 @@ import { SourceCredentials } from '../Framework/Data/DataManager';
 import { ProxyManager } from '../Framework/Network/ProxyManager';
 import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { SourceContentCache } from '../Framework/Cache/SourceContentCache';
 
 const TAG = 'SourceDetailPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
+
+/**
+ * 显示模式枚举
+ */
+export enum DisplayMode {
+  GRID = 'grid',           // 网格模式（默认）
+  LIST = 'list',           // 列表模式
+  LARGE_COVER = 'large'    // 大封面模式（一行两个）
+}
 
 /**
  * 导航参数接口
@@ -150,6 +160,10 @@ export struct SourceDetailPage {
   @State searchPlaceholder: string = '搜索漫画名称、粘贴URL、或输入 id:作品ID'; // 搜索框占位符
   @State sourceUserAgent: string = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'; // 图源UA配置
   
+  // 显示模式相关状态
+  @State displayMode: DisplayMode = DisplayMode.GRID; // 当前显示模式
+  @State showDisplayModeMenu: boolean = false; // 显示模式选择菜单
+  
   // 横向滑动切换标签页相关状态
   @State private swipeStartX: number = 0;
   @State private swipeOffsetX: number = 0;
@@ -159,6 +173,7 @@ export struct SourceDetailPage {
   private sourceManager: SourceManager = SourceManager.getInstance();
   private dataManager: DataManager = DataManager.getInstance();
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private contentCache: SourceContentCache = SourceContentCache.getInstance();
   private componentId: string = `SourceDetailPage_${Date.now()}`;
   private scroller: Scroller = new Scroller();
   @State comicDataSource: ComicListDataSource = new ComicListDataSource([]);
@@ -372,16 +387,38 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 加载漫画列表
+   * 加载漫画列表（带缓存支持）
    */
   private async loadComics(): Promise<void> {
     if (this.isLoading) return;
 
     try {
       this.isLoading = true;
+      
+      // 生成缓存键
+      const workflowKey = this.generateWorkflowKey();
+      
+      // 1. 优先从缓存加载（仅第一页）
+      if (this.currentPage === 1) {
+        const cached = this.contentCache.get(this.sourceId, workflowKey);
+        if (cached) {
+          logger.info(TAG, `从缓存加载数据: ${cached.comics.length} 条`);
+          this.comicList = cached.comics;
+          this.hasMore = cached.hasMore;
+          this.comicDataSource.updateItems(this.comicList);
+          
+          // 检查是否需要刷新
+          if (!this.contentCache.needsRefresh(this.sourceId, workflowKey)) {
+            this.isLoading = false;
+            return;
+          }
+          
+          logger.info(TAG, '缓存数据已显示，后台刷新中...');
+        }
+      }
+      
+      // 2. 从网络加载
       let comics: ComicInfo[] = [];
-
-      // 根据图源类型选择加载方式
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
         logger.info(TAG, '使用WebView系统加载漫画列表');
         comics = await this.loadComicsWithWebView();
@@ -390,7 +427,27 @@ export struct SourceDetailPage {
         comics = await this.loadComicsWithHTTP();
       }
 
-      // [核心修改] 先更新数据，立即显示列表
+      // 3. 更新缓存
+      if (this.currentPage === 1) {
+        this.contentCache.set(
+          this.sourceId,
+          this.currentTabId,
+          workflowKey,
+          comics,
+          this.currentPage,
+          comics.length >= 20
+        );
+      } else {
+        this.contentCache.append(
+          this.sourceId,
+          workflowKey,
+          comics,
+          this.currentPage,
+          comics.length >= 20
+        );
+      }
+
+      // 4. 更新UI
       if (this.currentPage === 1) {
         this.comicList = comics;
       } else {
@@ -407,6 +464,22 @@ export struct SourceDetailPage {
       logger.error(TAG, '加载漫画列表失败', String(error));
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  /**
+   * 生成工作流缓存键
+   */
+  private generateWorkflowKey(): string {
+    const tab = this.currentTabId;
+    
+    // 根据不同标签生成不同的缓存键
+    if (tab === 'search') {
+      return `search:${this.searchKeyword}:${this.selectedSearchType}`;
+    } else if (tab === 'filter') {
+      return `filter:${this.filterOrdering}:${this.filterRegion}:${this.filterTheme}`;
+    } else {
+      return tab; // popular, latest, favorites等
     }
   }
 
@@ -2972,22 +3045,98 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 构建标签栏 - VSCode风格
+   * 构建标签栏 - VSCode风格（带模式切换按钮）
    */
   @Builder
   buildTabBar() {
-    Scroll() {
-      Row({ space: 0 }) {
-        ForEach(this.tabsConfig, (tab: TabConfig) => {
-          this.buildTabItem(tab)
-        })
+    Row({ space: 0 }) {
+      // 左侧固定：模式切换按钮
+      this.buildDisplayModeButton()
+      
+      // 右侧：可滚动的标签列表
+      Scroll() {
+        Row({ space: 0 }) {
+          ForEach(this.tabsConfig, (tab: TabConfig) => {
+            this.buildTabItem(tab)
+          })
+        }
       }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .layoutWeight(1)
     }
-    .scrollable(ScrollDirection.Horizontal)
-    .scrollBar(BarState.Off)
     .width('100%')
     .height(38)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+  }
+
+  /**
+   * 构建显示模式切换按钮
+   */
+  @Builder
+  buildDisplayModeButton() {
+    Button({ type: ButtonType.Normal }) {
+      SymbolGlyph(this.getDisplayModeIcon())
+        .fontSize(16)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+    }
+    .width(38)
+    .height(38)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(0)
+    .border({
+      width: { right: 1 },
+      color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme)
+    })
+    .onClick(() => {
+      this.showDisplayModeMenu = true;
+    })
+    .bindMenu(this.showDisplayModeMenu, this.buildDisplayModeMenu())
+  }
+
+  /**
+   * 获取当前显示模式的图标
+   */
+  private getDisplayModeIcon(): Resource {
+    switch (this.displayMode) {
+      case DisplayMode.GRID:
+        return $r('sys.symbol.square_grid_2x2');
+      case DisplayMode.LIST:
+        return $r('sys.symbol.list_bullet');
+      case DisplayMode.LARGE_COVER:
+        return $r('sys.symbol.heart_square_stack_fill');
+      default:
+        return $r('sys.symbol.square_grid_2x2');
+    }
+  }
+
+  /**
+   * 构建显示模式选择菜单
+   */
+  @Builder
+  buildDisplayModeMenu() {
+    Menu() {
+      MenuItem({ content: '网格模式' })
+        .selected(this.displayMode === DisplayMode.GRID)
+        .onClick(() => {
+          this.displayMode = DisplayMode.GRID;
+          this.showDisplayModeMenu = false;
+        })
+      
+      MenuItem({ content: '列表模式' })
+        .selected(this.displayMode === DisplayMode.LIST)
+        .onClick(() => {
+          this.displayMode = DisplayMode.LIST;
+          this.showDisplayModeMenu = false;
+        })
+      
+      MenuItem({ content: '大封面模式' })
+        .selected(this.displayMode === DisplayMode.LARGE_COVER)
+        .onClick(() => {
+          this.displayMode = DisplayMode.LARGE_COVER;
+          this.showDisplayModeMenu = false;
+        })
+    }
   }
 
   /**
@@ -3252,26 +3401,46 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 构建漫画网格
+   * 构建漫画网格/列表
    */
   @Builder
   buildComicGrid() {
     Refresh({ refreshing: $$this.isRefreshing }) {
       Scroll(this.scroller) {
         Column() {
-          Grid() {
-            LazyForEach(this.comicDataSource, (comic: ComicInfo, index: number) => {
-              GridItem() {
-                this.buildComicCard(comic)
-              }
-            }, (comic: ComicInfo) => comic.id)
+          // 根据显示模式选择不同的布局
+          if (this.displayMode === DisplayMode.LIST) {
+            // 列表模式
+            List() {
+              LazyForEach(this.comicDataSource, (comic: ComicInfo, index: number) => {
+                ListItem() {
+                  this.buildComicListItem(comic)
+                }
+              }, (comic: ComicInfo) => comic.id)
+            }
+            .width('100%')
+            .divider({ strokeWidth: 1, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
+            .padding(this.isLandscape ? { left: 24, right: 24, top: 8, bottom: 8 } : { left: 16, right: 16, top: 8, bottom: 8 })
+          } else {
+            // 网格模式和大封面模式
+            Grid() {
+              LazyForEach(this.comicDataSource, (comic: ComicInfo, index: number) => {
+                GridItem() {
+                  if (this.displayMode === DisplayMode.LARGE_COVER) {
+                    this.buildComicLargeCoverCard(comic)
+                  } else {
+                    this.buildComicCard(comic)
+                  }
+                }
+              }, (comic: ComicInfo) => comic.id)
+            }
+            .columnsTemplate(this.getGridColumnsTemplate())
+            .columnsGap(this.isLandscape ? 16 : 12)
+            .rowsGap(this.isLandscape ? 16 : 12)
+            .width('100%')
+            .layoutDirection(GridDirection.Row)
+            .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
           }
-          .columnsTemplate(this.getGridColumnsTemplate())
-          .columnsGap(this.isLandscape ? 16 : 12)
-          .rowsGap(this.isLandscape ? 16 : 12)
-          .width('100%')
-          .layoutDirection(GridDirection.Row)  // 确保从左到右、从上到下的顺序
-          .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
 
           if (this.isLoading && this.currentPage > 1) {
             Row() {
@@ -3410,6 +3579,120 @@ export struct SourceDetailPage {
   }
   
   /**
+   * 构建列表模式的漫画项
+   */
+  @Builder
+  buildComicListItem(comic: ComicInfo) {
+    Row({ space: 12 }) {
+      // 封面
+      Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+        .width(80)
+        .aspectRatio(0.7)
+        .borderRadius(8)
+        .objectFit(ImageFit.Cover)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .onAppear(() => {
+          this.loadCoverPixelMap(comic);
+        })
+
+      // 信息区域
+      Column({ space: 6 }) {
+        // 标题
+        Text(comic.title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        // 作者
+        if (comic.author) {
+          Text(comic.author)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+
+        // 状态/更新时间等额外信息
+        if (comic.status || comic.updateTime) {
+          Text(String(comic.status || comic.updateTime))
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .onClick(() => {
+      this.openComicDetail(comic);
+    })
+  }
+
+  /**
+   * 构建大封面模式的漫画卡片
+   */
+  @Builder
+  buildComicLargeCoverCard(comic: ComicInfo) {
+    Column({ space: 10 }) {
+      // 大封面
+      Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+        .width('100%')
+        .aspectRatio(0.7)
+        .borderRadius(12)
+        .objectFit(ImageFit.Cover)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .onAppear(() => {
+          this.loadCoverPixelMap(comic);
+        })
+
+      // 标题
+      Text(comic.title)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .lineHeight(22)
+
+      // 作者
+      Text(comic.author || ' ')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(16)
+    .shadow({
+      radius: 12,
+      color: '#15000000',
+      offsetX: 0,
+      offsetY: 4
+    })
+    .onClick(() => {
+      this.openComicDetail(comic);
+    })
+  }
+
+  /**
    * 更新设备方向状态
    */
   private updateDeviceOrientation(): void {
@@ -3420,14 +3703,17 @@ export struct SourceDetailPage {
   }
   
   /**
-   * 获取Grid列模板（根据横竖屏自适应）
+   * 获取Grid列模板（根据显示模式和横竖屏自适应）
    */
   private getGridColumnsTemplate(): string {
-    if (this.isLandscape) {
-      // 横屏：5列
+    if (this.displayMode === DisplayMode.LARGE_COVER) {
+      // 大封面模式：一行两个
+      return '1fr 1fr';
+    } else if (this.isLandscape) {
+      // 网格模式 - 横屏：5列
       return '1fr 1fr 1fr 1fr 1fr';
     } else {
-      // 竖屏：3列
+      // 网格模式 - 竖屏：3列
       return '1fr 1fr 1fr';
     }
   }

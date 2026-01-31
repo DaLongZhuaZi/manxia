@@ -6,6 +6,7 @@
  */
 
 #include "webdav_client.h"
+#include "curl_global.h"
 #include <curl/curl.h>
 #include <sstream>
 #include <fstream>
@@ -135,11 +136,11 @@ public:
     Config config;
     
     Impl(const Config& cfg) : config(cfg) {
-        curl_global_init(CURL_GLOBAL_ALL);
+        curl_ref_init();
     }
     
     ~Impl() {
-        curl_global_cleanup();
+        curl_ref_cleanup();
     }
     
     CURL* createCurl() {

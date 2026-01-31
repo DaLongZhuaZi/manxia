@@ -344,9 +344,40 @@ export struct MangaImportDialog {
 
   /**
    * 排序章节
+   * 将外传章节放到最末尾，然后在外传部分内部按名称排序
    */
   private sortChapters(): void {
-    this.chapters.sort((a, b) => a.index - b.index);
+    this.chapters.sort((a, b) => {
+      const aIsExtra = this.isExtraChapter(a.title);
+      const bIsExtra = this.isExtraChapter(b.title);
+      
+      // 如果一个是外传，一个不是，外传排在后面
+      if (aIsExtra && !bIsExtra) return 1;
+      if (!aIsExtra && bIsExtra) return -1;
+      
+      // 如果都是外传，按标题排序
+      if (aIsExtra && bIsExtra) {
+        return a.title.localeCompare(b.title, 'zh-CN');
+      }
+      
+      // 如果都不是外传，按索引排序
+      return a.index - b.index;
+    });
+  }
+
+  /**
+   * 判断是否为外传章节
+   * 支持多语言：外传、番外、特别篇、Extra、Side Story、Omake、Special等
+   */
+  private isExtraChapter(title: string): boolean {
+    const extraKeywords = [
+      '外传', '番外', '特别篇', '特典', '附录',
+      'extra', 'side story', 'omake', 'special', 'bonus',
+      'gaiden', 'bangai', 'tokubetsu'
+    ];
+    
+    const lowerTitle = title.toLowerCase();
+    return extraKeywords.some(keyword => lowerTitle.includes(keyword));
   }
 
   /**

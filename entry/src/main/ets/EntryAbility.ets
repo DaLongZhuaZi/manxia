@@ -22,6 +22,7 @@ import { ProxyManager } from './Framework/Network/ProxyManager';
 import { getFontManager } from './Framework/Managers/FontManager';
 import { getDownloadSyncManager } from './Framework/Managers/DownloadSyncManager';
 import { getChangelogManager } from './Framework/Managers/ChangelogManager';
+import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 
 export default class EntryAbility extends UIAbility {
 
@@ -230,6 +231,21 @@ export default class EntryAbility extends UIAbility {
       logger.error('EntryAbility', `❌ 下载管理器初始化失败: ${errorMessage}`);
     }
   }
+  
+  /**
+   * 初始化WebDAV自动备份调度器
+   */
+  private async initializeAutoBackupScheduler(): Promise<void> {
+    try {
+      logger.info('EntryAbility', '📦 开始初始化WebDAV自动备份调度器');
+      const scheduler = getAutoBackupScheduler();
+      await scheduler.initialize(this.context);
+      logger.info('EntryAbility', '✅ WebDAV自动备份调度器初始化成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ WebDAV自动备份调度器初始化失败: ${errorMessage}`);
+    }
+  }
 
   /**
    * 初始化数据管理系统
@@ -267,6 +283,9 @@ export default class EntryAbility extends UIAbility {
         
         // 初始化下载管理器（不请求通知权限，在MainMenuPage首次显示时请求）
         await this.initializeDownloadManager();
+        
+        // 初始化WebDAV自动备份调度器
+        await this.initializeAutoBackupScheduler();
       } else {
         logger.error('EntryAbility', `❌ 数据管理系统初始化失败: ${result.errors.join(', ')}`);
         // 可以考虑是否要继续启动应用或进入安全模式

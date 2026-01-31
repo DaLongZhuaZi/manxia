@@ -50,8 +50,10 @@ import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
+import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
 import { ZLibraryReaderParams } from './ZLibraryReaderPage';
 import { AvifImage } from '../components/AvifImage';
+import { eventBus, GameEvent, IEventPayload, CoverChangedPayload } from '../Framework/EventBus';
 
 // 模型导入
 import { Manga, MangaChapter, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
@@ -137,6 +139,24 @@ export struct UnifiedDetailPage {
   private novelSourceManager = getNovelSourceManager();
   private novelDataManager = getNovelDataManager();
   private novelCacheManager = getNovelChapterCacheManager();
+  private coverGenerator = getNovelCoverGenerator();
+  
+  // 生成封面状态
+  @State isGeneratingCover: boolean = false;
+  @State showGenerateCoverDialog: boolean = false;
+  @State coverTitleInput: string = '';
+  @State coverFontScale: number = 1.0;
+  @State dialogOpacity: number = 0;
+  @State dialogScale: number = 0.8;
+  @State coverRefreshKey: number = 0;
+
+  // 封面生成器常量
+  static readonly COVER_WIDTH = 400;
+  static readonly COVER_HEIGHT = 600;
+  static readonly TITLE_AREA_TOP_PERCENT = 0.130;
+  static readonly TITLE_AREA_BOTTOM_PERCENT = 0.345;
+  static readonly TITLE_AREA_LEFT_PERCENT = 0.110;
+  static readonly TITLE_AREA_RIGHT_PERCENT = 0.895;
   
   // 漫画详情加载器
   private mangaDetailLoader: MangaDetailLoader = MangaDetailLoader.getInstance();
@@ -1587,7 +1607,7 @@ export struct UnifiedDetailPage {
 
       // 信息区域
       Column({ space: 8 }) {
-        Text(this.content?.title || '加载中...')
+        Text(this.stripHtmlTags(this.content?.title || '加载中...'))
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontFamily(this.appFontFamily)
@@ -1595,7 +1615,7 @@ export struct UnifiedDetailPage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(this.content?.author || '')
+        Text(this.stripHtmlTags(this.content?.author || ''))
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1669,7 +1689,7 @@ export struct UnifiedDetailPage {
           Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
             // 显示genres
             ForEach(this.content.genres || [], (genre: string) => {
-              Text(genre)
+              Text(this.stripHtmlTags(genre))
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -1682,7 +1702,7 @@ export struct UnifiedDetailPage {
             
             // 显示tags
             ForEach(this.content.tags || [], (tag: string) => {
-              Text(tag)
+              Text(this.stripHtmlTags(tag))
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1706,7 +1726,7 @@ export struct UnifiedDetailPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
 
-        Text(this.content?.description || '暂无简介')
+        Text(this.stripHtmlTags(this.content?.description || '暂无简介'))
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1816,6 +1836,28 @@ export struct UnifiedDetailPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(18)
         .onClick(() => this.openEBookSettings())
+        
+        Button() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.wand_and_stars'))
+              .fontSize(16)
+              .fontColor([this.isGeneratingCover 
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text(this.isGeneratingCover ? '生成中...' : '生成封面')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.isGeneratingCover 
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(36)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .enabled(!this.isGeneratingCover)
+        .onClick(() => this.showGenerateCoverPrompt())
       } else if (this.content?.contentType === UnifiedContentType.NOVEL) {
         Button() {
           Row({ space: 6 }) {
@@ -1833,6 +1875,28 @@ export struct UnifiedDetailPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(18)
         .onClick(() => this.openNovelSettings())
+        
+        Button() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.wand_and_stars'))
+              .fontSize(16)
+              .fontColor([this.isGeneratingCover 
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text(this.isGeneratingCover ? '生成中...' : '生成封面')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.isGeneratingCover 
+                ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(36)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .enabled(!this.isGeneratingCover)
+        .onClick(() => this.showGenerateCoverPrompt())
       }
 
       Blank()
@@ -2795,8 +2859,32 @@ export struct UnifiedDetailPage {
       timestamp = dateValue;
     }
     
-    if (isNaN(timestamp) || timestamp <= 0) return '';
-    
+    return this.formatRelativeTime(timestamp);
+  }
+
+  /**
+   * 移除HTML标签和实体
+   */
+  private stripHtmlTags(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/<br\s*\/?>/gi, '\n')  // 将<br>转换为换行
+      .replace(/<\/p>/gi, '\n')       // 将</p>转换为换行
+      .replace(/<[^>]*>/g, '')        // 移除所有HTML标签
+      .replace(/&nbsp;/g, ' ')        // 转换空格实体
+      .replace(/&amp;/g, '&')         // 转换&实体
+      .replace(/&lt;/g, '<')          // 转换<实体
+      .replace(/&gt;/g, '>')          // 转换>实体
+      .replace(/&quot;/g, '"')        // 转换"实体
+      .replace(/&#39;/g, "'")         // 转换'实体
+      .replace(/\n\s*\n/g, '\n')      // 移除多余空行
+      .trim();
+  }
+
+  /**
+   * 格式化时间戳为相对时间
+   */
+  private formatRelativeTime(timestamp: number): string {
     const date = new Date(timestamp);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
@@ -3104,6 +3192,9 @@ export struct UnifiedDetailPage {
         if (this.showCoverPreview && this.content?.coverUrl) {
           this.buildCoverPreviewOverlay()
         }
+        
+        // 生成封面对话框
+        this.buildGenerateCoverDialog()
       }
     }
     .hideTitleBar(true)
@@ -3255,6 +3346,291 @@ export struct UnifiedDetailPage {
       }
     } catch (error) {
       logger.error(TAG, `刷新小说阅读进度失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 显示生成封面提示对话框
+   */
+  private showGenerateCoverPrompt(): void {
+    this.coverTitleInput = this.content?.title || '';
+    this.coverFontScale = 1.0;
+    this.showGenerateCoverDialog = true;
+    
+    // 触发入场动画
+    this.dialogOpacity = 0;
+    this.dialogScale = 0.8;
+    animateTo({
+      duration: 200,
+      curve: Curve.FastOutSlowIn
+    }, () => {
+      this.dialogOpacity = 1;
+      this.dialogScale = 1;
+    });
+  }
+  
+  /**
+   * 生成封面
+   */
+  private async generateCoverForContent(): Promise<void> {
+    if (!this.content || !this.coverTitleInput.trim()) {
+      promptAction.showToast({ message: '请输入标题', duration: 2000 });
+      return;
+    }
+    
+    this.isGeneratingCover = true;
+    this.showGenerateCoverDialog = false;
+    
+    try {
+      logger.info(TAG, `开始生成封面: ${this.coverTitleInput}`);
+      
+      const coverPath = await this.coverGenerator.generateCover(
+        this.content.id,
+        this.coverTitleInput,
+        () => { this.buildCoverForSnapshot(this.coverTitleInput); }
+      );
+      
+      if (coverPath) {
+        await this.updateContentCover(coverPath);
+        // 强制刷新封面显示
+        this.coverRefreshKey = Date.now();
+        promptAction.showToast({ message: '封面生成成功', duration: 2000 });
+        logger.info(TAG, `封面生成成功: ${coverPath}`);
+      } else {
+        promptAction.showToast({ message: '封面生成失败', duration: 2000 });
+        logger.warn(TAG, '封面生成失败');
+      }
+    } catch (error) {
+      logger.error(TAG, `生成封面异常: ${String(error)}`);
+      promptAction.showToast({ message: `生成失败: ${String(error)}`, duration: 2000 });
+    } finally {
+      this.isGeneratingCover = false;
+    }
+  }
+  
+  /**
+   * 更新内容封面
+   */
+  private async updateContentCover(coverPath: string): Promise<void> {
+    if (!this.content) return;
+    
+    try {
+      if (this.content.contentType === UnifiedContentType.EBOOK) {
+        await this.ebookDataManager.updateEBookCover(this.content.id, coverPath);
+        this.content.coverUrl = coverPath;
+        logger.info(TAG, '电子书封面已更新');
+        // 发送事件通知书库页面刷新
+        const ebookPayload: CoverChangedPayload = { 
+          bookId: this.content.id, 
+          coverPath: coverPath 
+        };
+        eventBus.publish(GameEvent.EBOOK_COVER_CHANGED, ebookPayload);
+      } else if (this.content.contentType === UnifiedContentType.NOVEL) {
+        const novel = await this.novelDataManager.getBookByUrl(
+          this.content.sourceId || '',
+          this.content.id
+        );
+        if (novel) {
+          // 本地生成的封面应该存储在coverLocalPath字段
+          novel.coverLocalPath = coverPath;
+          await this.novelDataManager.saveBook(novel);
+          this.content.coverUrl = coverPath;
+          logger.info(TAG, '小说封面已更新');
+          // 发送事件通知书库页面刷新
+          const novelPayload: CoverChangedPayload = { 
+            bookId: this.content.id, 
+            coverPath: coverPath 
+          };
+          eventBus.publish(GameEvent.NOVEL_COVER_CHANGED, novelPayload);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `更新封面失败: ${String(error)}`);
+      throw error as Error;
+    }
+  }
+  
+  /**
+   * 构建封面组件（用于componentSnapshot）
+   */
+  @Builder
+  buildCoverForSnapshot(title: string) {
+    Stack() {
+      Image($r('app.media.ebook'))
+        .width(COVER_WIDTH)
+        .height(COVER_HEIGHT)
+        .objectFit(ImageFit.Cover)
+      
+      Text(this.formatCoverTitle(title))
+        .fontFamily(this.appFontFamily)
+        .fontSize(this.calculateCoverFontSize(title))
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#1a1a1a')
+        .textAlign(TextAlign.Center)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .lineHeight(this.calculateCoverFontSize(title) * 1.3)
+        .width(COVER_WIDTH * (UnifiedDetailPage.TITLE_AREA_RIGHT_PERCENT - UnifiedDetailPage.TITLE_AREA_LEFT_PERCENT) - 24)
+        .constraintSize({
+          maxHeight: COVER_HEIGHT * (UnifiedDetailPage.TITLE_AREA_BOTTOM_PERCENT - UnifiedDetailPage.TITLE_AREA_TOP_PERCENT) - 20
+        })
+        .position({
+          x: COVER_WIDTH * UnifiedDetailPage.TITLE_AREA_LEFT_PERCENT + 12,
+          y: COVER_HEIGHT * (UnifiedDetailPage.TITLE_AREA_TOP_PERCENT + UnifiedDetailPage.TITLE_AREA_BOTTOM_PERCENT) / 2 - this.calculateCoverFontSize(title) * 0.65
+        })
+    }
+    .width(COVER_WIDTH)
+    .height(COVER_HEIGHT)
+  }
+  
+  /**
+   * 格式化封面标题
+   */
+  private formatCoverTitle(title: string): string {
+    let cleanTitle = title.replace(/\.(txt|epub|pdf|mobi|azw3?)$/i, '');
+    if (cleanTitle.length > 20) {
+      cleanTitle = cleanTitle.substring(0, 17) + '...';
+    }
+    return cleanTitle;
+  }
+  
+  /**
+   * 计算封面字体大小
+   */
+  private calculateCoverFontSize(title: string): number {
+    const length = title.length;
+    let baseSize = 24;
+    if (length <= 2) baseSize = 70;
+    else if (length <= 4) baseSize = 56;
+    else if (length <= 6) baseSize = 48;
+    else if (length <= 8) baseSize = 36;
+    else if (length <= 12) baseSize = 32;
+    else if (length <= 16) baseSize = 28;
+    
+    return baseSize * this.coverFontScale;
+  }
+  
+  /**
+   * 关闭生成封面对话框（带动画）
+   */
+  private closeGenerateCoverDialog(): void {
+    animateTo({
+      duration: 150,
+      curve: Curve.FastOutSlowIn
+    }, () => {
+      this.dialogOpacity = 0;
+      this.dialogScale = 0.8;
+    });
+    
+    setTimeout(() => {
+      this.showGenerateCoverDialog = false;
+    }, 150);
+  }
+  
+  /**
+   * 生成封面对话框
+   */
+  @Builder
+  buildGenerateCoverDialog() {
+    if (this.showGenerateCoverDialog) {
+      Column() {
+        Column({ space: 20 }) {
+          Text('生成封面')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          
+          Column({ space: 8 }) {
+            Text('请输入要显示在封面上的标题：')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            
+            TextInput({ text: this.coverTitleInput })
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .onChange((value: string) => {
+                this.coverTitleInput = value;
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          
+          Column({ space: 8 }) {
+            Row() {
+              Text('字体倍率：')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              
+              Text(this.coverFontScale.toFixed(1) + 'x')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+            
+            Slider({
+              value: this.coverFontScale,
+              min: 0.1,
+              max: 2.0,
+              step: 0.1,
+              style: SliderStyle.OutSet
+            })
+              .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .showSteps(false)
+              .showTips(false)
+              .onChange((value: number) => {
+                this.coverFontScale = value;
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          
+          Row({ space: 12 }) {
+            Button('取消')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .layoutWeight(1)
+              .onClick(() => {
+                this.closeGenerateCoverDialog();
+              })
+            
+            Button('确定')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .onClick(() => {
+                this.generateCoverForContent();
+              })
+          }
+          .width('100%')
+        }
+        .width('80%')
+        .padding(24)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+        .scale({ x: this.dialogScale, y: this.dialogScale })
+        .opacity(this.dialogOpacity)
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.5)')
+      .justifyContent(FlexAlign.Center)
+      .opacity(this.dialogOpacity)
+      .onClick(() => {
+        this.closeGenerateCoverDialog();
+      })
     }
   }
 }

@@ -170,6 +170,7 @@ export class NovelSourceManager {
 
   /**
    * 获取所有书源
+   * 排序规则：启用的书源按 customOrder 排序，未启用的书源放在末尾
    */
   getAllSources(): NovelSourceInfo[] {
     const infos: NovelSourceInfo[] = [];
@@ -182,6 +183,7 @@ export class NovelSourceManager {
         group: source.bookSourceGroup,
         enabled: source.enabled !== false,
         weight: source.weight || 0,
+        customOrder: source.customOrder ?? 0,
         lastUpdateTime: source.lastUpdateTime || 0,
         respondTime: source.respondTime || 180000,
         searchable: !!source.searchUrl,
@@ -189,8 +191,15 @@ export class NovelSourceManager {
       });
     });
 
-    // 按权重排序
-    infos.sort((a, b) => b.weight - a.weight);
+    // 排序规则：启用的书源按 customOrder 升序（越小越靠前），未启用的放在末尾
+    infos.sort((a, b) => {
+      // 启用状态不同：启用的在前，未启用的在后
+      if (a.enabled !== b.enabled) {
+        return a.enabled ? -1 : 1;
+      }
+      // 同为启用或同为未启用：按 customOrder 升序
+      return a.customOrder - b.customOrder;
+    });
     return infos;
   }
 
@@ -721,21 +730,76 @@ export class NovelSourceManager {
   }
 
   /**
+   * 设置书源自定义排序
+   * @param sourceId 书源ID
+   * @param order 排序顺序（越小越靠前）
+   */
+  async setSourceCustomOrder(sourceId: string, order: number): Promise<boolean> {
+    const source = this.sources.get(sourceId);
+    if (!source) {
+      return false;
+    }
+    
+    source.customOrder = order;
+    
+    try {
+      const dataManager = getNovelDataManager();
+      await dataManager.saveSource(source);
+      logger.debug(TAG, `设置书源排序: ${source.bookSourceName} -> ${order}`);
+      return true;
+    } catch (error) {
+      logger.warn(TAG, `设置书源排序失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 批量更新书源排序
+   * 将传入的书源ID列表按顺序设置 customOrder
+   * @param sourceIds 按顺序排列的书源ID列表
+   */
+  async batchUpdateSourceOrder(sourceIds: string[]): Promise<number> {
+    let successCount = 0;
+    
+    for (let i = 0; i < sourceIds.length; i++) {
+      const sourceId = sourceIds[i];
+      const source = this.sources.get(sourceId);
+      if (!source) continue;
+      
+      // 只为启用的书源设置排序
+      if (source.enabled !== false) {
+        source.customOrder = i;
+        try {
+          const dataManager = getNovelDataManager();
+          await dataManager.saveSource(source);
+          successCount++;
+        } catch (error) {
+          logger.warn(TAG, `更新书源排序失败: ${source.bookSourceName}, ${String(error)}`);
+        }
+      }
+    }
+    
+    logger.info(TAG, `批量更新书源排序完成: ${successCount}/${sourceIds.length}`);
+    return successCount;
+  }
+
+  /**
    * 批量置顶书源
    */
   async topSources(sourceIds: string[]): Promise<number> {
-    // 获取当前最大权重
-    let maxWeight = 0;
+    // 获取当前最小的 customOrder
+    let minOrder = 0;
     this.sources.forEach(source => {
-      if (source.weight && source.weight > maxWeight) {
-        maxWeight = source.weight;
+      if (source.enabled !== false && source.customOrder !== undefined && source.customOrder < minOrder) {
+        minOrder = source.customOrder;
       }
     });
     
     let successCount = 0;
+    // 从最小值开始向前分配
     for (let i = 0; i < sourceIds.length; i++) {
-      const newWeight = maxWeight + sourceIds.length - i;
-      if (await this.setSourceWeight(sourceIds[i], newWeight)) {
+      const newOrder = minOrder - sourceIds.length + i;
+      if (await this.setSourceCustomOrder(sourceIds[i], newOrder)) {
         successCount++;
       }
     }
@@ -748,24 +812,57 @@ export class NovelSourceManager {
    * 批量置底书源
    */
   async bottomSources(sourceIds: string[]): Promise<number> {
-    // 获取当前最小权重
-    let minWeight = 0;
+    // 获取当前最大的 customOrder
+    let maxOrder = 0;
     this.sources.forEach(source => {
-      if (source.weight && source.weight < minWeight) {
-        minWeight = source.weight;
+      if (source.enabled !== false && source.customOrder !== undefined && source.customOrder > maxOrder) {
+        maxOrder = source.customOrder;
       }
     });
     
     let successCount = 0;
+    // 从最大值开始向后分配
     for (let i = 0; i < sourceIds.length; i++) {
-      const newWeight = minWeight - sourceIds.length + i;
-      if (await this.setSourceWeight(sourceIds[i], newWeight)) {
+      const newOrder = maxOrder + i + 1;
+      if (await this.setSourceCustomOrder(sourceIds[i], newOrder)) {
         successCount++;
       }
     }
     
     logger.info(TAG, `批量置底: ${successCount}/${sourceIds.length}`);
     return successCount;
+  }
+
+  /**
+   * 移动书源到指定位置
+   * @param sourceId 要移动的书源ID
+   * @param targetIndex 目标位置索引
+   */
+  async moveSource(sourceId: string, targetIndex: number): Promise<boolean> {
+    const source = this.sources.get(sourceId);
+    if (!source || source.enabled === false) {
+      return false;
+    }
+    
+    // 获取当前启用的书源列表（按 customOrder 排序）
+    const enabledSources = this.getAllSources().filter(s => s.enabled);
+    const currentIndex = enabledSources.findIndex(s => s.id === sourceId);
+    
+    if (currentIndex === -1 || targetIndex < 0 || targetIndex >= enabledSources.length) {
+      return false;
+    }
+    
+    // 从当前位置移除
+    enabledSources.splice(currentIndex, 1);
+    // 插入到目标位置
+    const movedSource = this.getAllSources().find(s => s.id === sourceId)!;
+    enabledSources.splice(targetIndex, 0, movedSource);
+    
+    // 更新所有书源的 customOrder
+    const sourceIdsInOrder = enabledSources.map(s => s.id);
+    await this.batchUpdateSourceOrder(sourceIdsInOrder);
+    
+    return true;
   }
 }
 

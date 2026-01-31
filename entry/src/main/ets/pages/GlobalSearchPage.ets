@@ -1046,7 +1046,7 @@ export struct GlobalSearchPage {
           .alt($r('app.media.ic_ebook'))
       } else if (item.itemType === 'novel' && item.novel) {
         if (item.novel.coverUrl) {
-          Image(item.novel.coverUrl)
+          Image(this.normalizeCoverPath(item.novel.coverUrl))
             .width(100)
             .height(140)
             .borderRadius(8)
