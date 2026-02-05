@@ -19,6 +19,16 @@ export interface ReadingAnalyticsSettings {
   retentionDays: number;      // 数据保留天数
   lastCleanupTime: number;    // 上次清理时间
   hasAskedPermission: boolean; // 是否已询问过用户权限
+  isLongTermView: boolean;    // 视图模式：true=长期视图, false=日视图
+}
+
+/**
+ * 阅读目标设置接口
+ */
+export interface ReadingGoalsSettings {
+  mangaGoalMinutes: number;   // 漫画阅读目标（分钟），0表示未设置
+  ebookGoalMinutes: number;   // 电子书阅读目标（分钟），0表示未设置
+  novelGoalMinutes: number;   // 小说阅读目标（分钟），0表示未设置
 }
 
 /**
@@ -39,13 +49,25 @@ export class ReadingAnalyticsManager {
   private readonly KEY_RETENTION_DAYS = 'retention_days';
   private readonly KEY_LAST_CLEANUP = 'last_cleanup_time';
   private readonly KEY_HAS_ASKED = 'has_asked_permission';
+  private readonly KEY_IS_LONG_TERM_VIEW = 'is_long_term_view';
+  private readonly KEY_MANGA_GOAL = 'manga_goal_minutes';
+  private readonly KEY_EBOOK_GOAL = 'ebook_goal_minutes';
+  private readonly KEY_NOVEL_GOAL = 'novel_goal_minutes';
   
   // 默认设置
   private settings: ReadingAnalyticsSettings = {
     enabled: false,           // 默认关闭
-    retentionDays: 30,        // 默认保留30天
+    retentionDays: 30,        // 默认保田30天
     lastCleanupTime: 0,
-    hasAskedPermission: false
+    hasAskedPermission: false,
+    isLongTermView: true      // 默认长期视图
+  };
+  
+  // 阅读目标设置
+  private goalsSettings: ReadingGoalsSettings = {
+    mangaGoalMinutes: 0,
+    ebookGoalMinutes: 0,
+    novelGoalMinutes: 0
   };
   
   private isInitialized: boolean = false;
@@ -105,8 +127,14 @@ export class ReadingAnalyticsManager {
       this.settings.retentionDays = await this.preferencesStore.get(this.KEY_RETENTION_DAYS, 30) as number;
       this.settings.lastCleanupTime = await this.preferencesStore.get(this.KEY_LAST_CLEANUP, 0) as number;
       this.settings.hasAskedPermission = await this.preferencesStore.get(this.KEY_HAS_ASKED, false) as boolean;
+      this.settings.isLongTermView = await this.preferencesStore.get(this.KEY_IS_LONG_TERM_VIEW, true) as boolean;
       
-      logger.debug(TAG, `加载设置: enabled=${this.settings.enabled}, retentionDays=${this.settings.retentionDays}`);
+      // 加载阅读目标
+      this.goalsSettings.mangaGoalMinutes = await this.preferencesStore.get(this.KEY_MANGA_GOAL, 0) as number;
+      this.goalsSettings.ebookGoalMinutes = await this.preferencesStore.get(this.KEY_EBOOK_GOAL, 0) as number;
+      this.goalsSettings.novelGoalMinutes = await this.preferencesStore.get(this.KEY_NOVEL_GOAL, 0) as number;
+      
+      logger.debug(TAG, `加载设置: enabled=${this.settings.enabled}, retentionDays=${this.settings.retentionDays}, isLongTermView=${this.settings.isLongTermView}`);
     } catch (error) {
       logger.error(TAG, `加载设置失败: ${String(error)}`);
     }
@@ -123,11 +151,30 @@ export class ReadingAnalyticsManager {
       await this.preferencesStore.put(this.KEY_RETENTION_DAYS, this.settings.retentionDays);
       await this.preferencesStore.put(this.KEY_LAST_CLEANUP, this.settings.lastCleanupTime);
       await this.preferencesStore.put(this.KEY_HAS_ASKED, this.settings.hasAskedPermission);
+      await this.preferencesStore.put(this.KEY_IS_LONG_TERM_VIEW, this.settings.isLongTermView);
       await this.preferencesStore.flush();
       
       logger.debug(TAG, '设置已保存');
     } catch (error) {
       logger.error(TAG, `保存设置失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 保存阅读目标设置
+   */
+  private async saveGoalsSettings(): Promise<void> {
+    if (!this.preferencesStore) return;
+
+    try {
+      await this.preferencesStore.put(this.KEY_MANGA_GOAL, this.goalsSettings.mangaGoalMinutes);
+      await this.preferencesStore.put(this.KEY_EBOOK_GOAL, this.goalsSettings.ebookGoalMinutes);
+      await this.preferencesStore.put(this.KEY_NOVEL_GOAL, this.goalsSettings.novelGoalMinutes);
+      await this.preferencesStore.flush();
+      
+      logger.debug(TAG, '阅读目标已保存');
+    } catch (error) {
+      logger.error(TAG, `保存阅读目标失败: ${String(error)}`);
     }
   }
 
@@ -139,7 +186,8 @@ export class ReadingAnalyticsManager {
       enabled: this.settings.enabled,
       retentionDays: this.settings.retentionDays,
       lastCleanupTime: this.settings.lastCleanupTime,
-      hasAskedPermission: this.settings.hasAskedPermission
+      hasAskedPermission: this.settings.hasAskedPermission,
+      isLongTermView: this.settings.isLongTermView
     };
     return result;
   }
@@ -228,5 +276,83 @@ export class ReadingAnalyticsManager {
     if (index >= 0 && index < RETENTION_DAYS_OPTIONS.length) {
       await this.setRetentionDays(RETENTION_DAYS_OPTIONS[index]);
     }
+  }
+  
+  // ==================== 视图模式管理 ====================
+  
+  /**
+   * 获取视图模式
+   */
+  public isLongTermView(): boolean {
+    return this.settings.isLongTermView;
+  }
+  
+  /**
+   * 设置视图模式
+   */
+  public async setLongTermView(isLongTerm: boolean): Promise<void> {
+    this.settings.isLongTermView = isLongTerm;
+    await this.saveSettings();
+    logger.info(TAG, `视图模式已设置为: ${isLongTerm ? '长期视图' : '日视图'}`);
+  }
+  
+  // ==================== 阅读目标管理 ====================
+  
+  /**
+   * 获取阅读目标设置
+   */
+  public getReadingGoals(): ReadingGoalsSettings {
+    const result: ReadingGoalsSettings = {
+      mangaGoalMinutes: this.goalsSettings.mangaGoalMinutes,
+      ebookGoalMinutes: this.goalsSettings.ebookGoalMinutes,
+      novelGoalMinutes: this.goalsSettings.novelGoalMinutes
+    };
+    return result;
+  }
+  
+  /**
+   * 设置漫画阅读目标
+   */
+  public async setMangaGoal(minutes: number): Promise<void> {
+    this.goalsSettings.mangaGoalMinutes = Math.max(0, minutes);
+    await this.saveGoalsSettings();
+    logger.info(TAG, `漫画阅读目标已设置为: ${minutes}分钟`);
+  }
+  
+  /**
+   * 设置电子书阅读目标
+   */
+  public async setEbookGoal(minutes: number): Promise<void> {
+    this.goalsSettings.ebookGoalMinutes = Math.max(0, minutes);
+    await this.saveGoalsSettings();
+    logger.info(TAG, `电子书阅读目标已设置为: ${minutes}分钟`);
+  }
+  
+  /**
+   * 设置小说阅读目标
+   */
+  public async setNovelGoal(minutes: number): Promise<void> {
+    this.goalsSettings.novelGoalMinutes = Math.max(0, minutes);
+    await this.saveGoalsSettings();
+    logger.info(TAG, `小说阅读目标已设置为: ${minutes}分钟`);
+  }
+  
+  /**
+   * 清除某类型的阅读目标
+   */
+  public async clearGoal(type: 'manga' | 'ebook' | 'novel'): Promise<void> {
+    switch (type) {
+      case 'manga':
+        this.goalsSettings.mangaGoalMinutes = 0;
+        break;
+      case 'ebook':
+        this.goalsSettings.ebookGoalMinutes = 0;
+        break;
+      case 'novel':
+        this.goalsSettings.novelGoalMinutes = 0;
+        break;
+    }
+    await this.saveGoalsSettings();
+    logger.info(TAG, `已清除${type}阅读目标`);
   }
 }

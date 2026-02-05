@@ -285,6 +285,44 @@ struct AboutPage {
   }
 
   /**
+   * 打开爱发电页面
+   */
+  private async openAfdianPage(): Promise<void> {
+    const afdianUrl = 'https://afdian.com/a/dalongzz';
+    
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      await context.openLink(afdianUrl, { appLinkingOnly: false });
+      logger.info(TAG, '已打开爱发电页面');
+    } catch (error) {
+      logger.error(TAG, '打开爱发电页面失败', String(error));
+      promptAction.showToast({
+        message: '无法打开浏览器，请手动访问 afdian.com/a/dalongzz',
+        duration: 3000
+      });
+    }
+  }
+
+  /**
+   * 打开 GitHub Release 页面检查更新
+   */
+  private async openReleasePage(): Promise<void> {
+    const releaseUrl = 'https://github.com/DaLongZhuaZi/manxia/releases';
+    
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      await context.openLink(releaseUrl, { appLinkingOnly: false });
+      logger.info(TAG, '已打开 Release 页面');
+    } catch (error) {
+      logger.error(TAG, '打开 Release 页面失败', String(error));
+      promptAction.showToast({
+        message: '无法打开浏览器，请手动访问 GitHub 查看更新',
+        duration: 3000
+      });
+    }
+  }
+
+  /**
    * 复制QQ群号并尝试打开QQ
    */
   private async copyQQGroupAndOpen(): Promise<void> {
@@ -342,7 +380,7 @@ struct AboutPage {
 
       this.buildButtonItem('检查更新', () => {
         logger.info(TAG, '检查更新');
-        // TODO: 实现检查更新功能
+        this.openReleasePage();
       })
 
       this.buildButtonItem('问题反馈', () => {
@@ -374,6 +412,20 @@ struct AboutPage {
           this.pathStack.pushPath({ name: 'OpenSourceLicensePage' });
         } catch (error) {
           logger.error(TAG, '导航到开源许可页面失败', String(error));
+        }
+      })
+
+      this.buildButtonItem('支持本项目', () => {
+        logger.info(TAG, '打开爱发电页面');
+        this.openAfdianPage();
+      })
+
+      this.buildButtonItem('支持者鸣谢', () => {
+        try {
+          logger.info(TAG, '导航到支持者鸣谢页面');
+          this.pathStack.pushPath({ name: 'SupportersPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到支持者鸣谢页面失败', String(error));
         }
       })
     }

@@ -18,6 +18,8 @@ export interface AnimationSettings {
   bookCloseEnabled: boolean;      // 书籍关闭动画开关
   bookOpenDuration: number;       // 书籍打开动画时长(ms)
   bookCloseDuration: number;      // 书籍关闭动画时长(ms)
+  // 主页面底栏动画
+  mainPageBottomBarAnimationEnabled: boolean; // 主页面底栏动画开关（关闭后底栏常驻）
 }
 
 /**
@@ -27,7 +29,8 @@ export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
   bookOpenEnabled: true,
   bookCloseEnabled: true,
   bookOpenDuration: 400,
-  bookCloseDuration: 350
+  bookCloseDuration: 350,
+  mainPageBottomBarAnimationEnabled: true // 默认开启底栏动画
 };
 
 /**
@@ -101,10 +104,14 @@ export class AnimationSettingsManager {
       bookCloseDuration: this.settingsManager.getNumber(
         SettingKeys.ANIMATION_BOOK_CLOSE_DURATION,
         DEFAULT_ANIMATION_SETTINGS.bookCloseDuration
+      ),
+      mainPageBottomBarAnimationEnabled: this.settingsManager.getBoolean(
+        SettingKeys.ANIMATION_MAIN_PAGE_BOTTOM_BAR_ENABLED,
+        DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled
       )
     };
 
-    logger.info(TAG, `📦 动画设置已加载: 打开动画=${this.currentSettings.bookOpenEnabled}, 关闭动画=${this.currentSettings.bookCloseEnabled}`);
+    logger.info(TAG, `📦 动画设置已加载: 打开动画=${this.currentSettings.bookOpenEnabled}, 关闭动画=${this.currentSettings.bookCloseEnabled}, 底栏动画=${this.currentSettings.mainPageBottomBarAnimationEnabled}`);
   }
 
   /**
@@ -115,7 +122,8 @@ export class AnimationSettingsManager {
       bookOpenEnabled: settings.bookOpenEnabled,
       bookCloseEnabled: settings.bookCloseEnabled,
       bookOpenDuration: settings.bookOpenDuration,
-      bookCloseDuration: settings.bookCloseDuration
+      bookCloseDuration: settings.bookCloseDuration,
+      mainPageBottomBarAnimationEnabled: settings.mainPageBottomBarAnimationEnabled
     };
   }
 
@@ -152,6 +160,13 @@ export class AnimationSettingsManager {
    */
   public getBookCloseDuration(): number {
     return this.currentSettings.bookCloseDuration;
+  }
+
+  /**
+   * 检查主页面底栏动画是否启用
+   */
+  public isMainPageBottomBarAnimationEnabled(): boolean {
+    return this.currentSettings.mainPageBottomBarAnimationEnabled;
   }
 
   /**
@@ -215,6 +230,20 @@ export class AnimationSettingsManager {
   }
 
   /**
+   * 设置主页面底栏动画开关
+   */
+  public async setMainPageBottomBarAnimationEnabled(enabled: boolean): Promise<void> {
+    if (this.currentSettings.mainPageBottomBarAnimationEnabled === enabled) {
+      return;
+    }
+
+    this.currentSettings.mainPageBottomBarAnimationEnabled = enabled;
+    await this.settingsManager.setBoolean(SettingKeys.ANIMATION_MAIN_PAGE_BOTTOM_BAR_ENABLED, enabled);
+    this.notifyListeners();
+    logger.info(TAG, `📝 主页面底栏动画设置已更新: ${enabled}`);
+  }
+
+  /**
    * 批量更新动画设置
    */
   public async updateSettings(settings: Partial<AnimationSettings>): Promise<void> {
@@ -248,6 +277,12 @@ export class AnimationSettingsManager {
         await this.settingsManager.setNumber(SettingKeys.ANIMATION_BOOK_CLOSE_DURATION, clampedDuration);
         changed = true;
       }
+    }
+
+    if (settings.mainPageBottomBarAnimationEnabled !== undefined && settings.mainPageBottomBarAnimationEnabled !== this.currentSettings.mainPageBottomBarAnimationEnabled) {
+      this.currentSettings.mainPageBottomBarAnimationEnabled = settings.mainPageBottomBarAnimationEnabled;
+      await this.settingsManager.setBoolean(SettingKeys.ANIMATION_MAIN_PAGE_BOTTOM_BAR_ENABLED, settings.mainPageBottomBarAnimationEnabled);
+      changed = true;
     }
 
     if (changed) {
@@ -312,4 +347,8 @@ export function isBookOpenAnimationEnabled(): boolean {
 
 export function isBookCloseAnimationEnabled(): boolean {
   return AnimationSettingsManager.getInstance().isBookCloseAnimationEnabled();
+}
+
+export function isMainPageBottomBarAnimationEnabled(): boolean {
+  return AnimationSettingsManager.getInstance().isMainPageBottomBarAnimationEnabled();
 }

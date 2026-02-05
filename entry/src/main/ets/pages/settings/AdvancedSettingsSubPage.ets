@@ -13,7 +13,7 @@ import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsM
 import { ContentFilterManager } from '../../Framework/Managers/ContentFilterManager';
 import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
 import { common, Want } from '@kit.AbilityKit';
-import { logger } from '../../Utils/Logger';
+import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
@@ -65,6 +65,9 @@ export struct AdvancedSettingsSubPage {
   @State backgroundBlurBgType: string = 'solid'; // 'solid' | 'custom'
   @State backgroundBlurBgImage: string = '';
   @State backgroundBlurIconType: string = 'shield'; // 'shield' | 'logo'
+  
+  // 日志等级设置
+  @State logOutputLevelIndex: number = 0; // 默认关闭 (0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL)
 
   onPageShow(): void {
     try {
@@ -199,6 +202,14 @@ export struct AdvancedSettingsSubPage {
         SettingKeys.BACKGROUND_BLUR_ICON_TYPE,
         'shield'
       );
+      
+      // 加载日志等级设置
+      this.logOutputLevelIndex = this.settingsManager.getNumber(
+        SettingKeys.LOG_OUTPUT_LEVEL,
+        0  // 默认关闭
+      );
+      // 同步到logger
+      logger.initializeHilogLevelFromIndex(this.logOutputLevelIndex);
 
       logger.info(TAG, '高级设置加载完成');
     } catch (error) {
@@ -486,6 +497,50 @@ export struct AdvancedSettingsSubPage {
           .width('100%')
           .justifyContent(FlexAlign.SpaceBetween)
         }
+        
+        // 日志等级设置
+        Row() {
+          Column({ space: 4 }) {
+            Text('日志等级')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('控制hilog日志输出等级，关闭后不输出任何日志')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Select([
+            { value: '关闭' },
+            { value: 'DEBUG' },
+            { value: 'INFO' },
+            { value: 'WARN' },
+            { value: 'ERROR' },
+            { value: 'FATAL' }
+          ])
+            .selected(this.logOutputLevelIndex)
+            .value(LOG_LEVEL_NAMES[this.logOutputLevelIndex])
+            .font({ size: 14 })
+            .selectedOptionFont({ size: 14 })
+            .optionFont({ size: 14 })
+            .onSelect(async (index: number) => {
+              this.logOutputLevelIndex = index;
+              // 保存到设置
+              await this.settingsManager.setNumber(SettingKeys.LOG_OUTPUT_LEVEL, index);
+              this.settingsManager.syncToAppStorage();
+              // 立即应用到logger
+              logger.initializeHilogLevelFromIndex(index);
+              promptAction.showToast({
+                message: `日志等级已设置为: ${LOG_LEVEL_NAMES[index]}`,
+                duration: 2000
+              });
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
       }
     }
     .width('100%')

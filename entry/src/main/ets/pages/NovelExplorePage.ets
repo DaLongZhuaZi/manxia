@@ -22,6 +22,10 @@ import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedCo
 
 const TAG = 'NovelExplorePage';
 
+// 书源选择列表分页常量
+const SOURCE_PAGE_SIZE = 100;
+const SOURCE_PRELOAD_THRESHOLD = 60;
+
 /**
  * 发现分类
  */
@@ -51,7 +55,11 @@ export struct NovelExplorePage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   
   @State exploreSources: NovelSourceInfo[] = [];
-  @State filteredSources: NovelSourceInfo[] = [];
+  private allFilteredSources: NovelSourceInfo[] = [];  // 筛选后的所有书源
+  @State displayedSources: NovelSourceInfo[] = [];  // 当前显示的书源（分页）
+  private sourcePage: number = 0;
+  private sourceHasMore: boolean = true;
+  private sourceIsLoading: boolean = false;
   @State selectedSourceId: string = '';
   @State selectedSourceName: string = '';
   @State exploreKinds: ExploreKind[] = [];
@@ -112,7 +120,7 @@ export struct NovelExplorePage {
 
   loadExploreSources(): void {
     this.exploreSources = this.sourceManager.getExploreSources();
-    this.filteredSources = this.exploreSources;
+    this.filterSources();  // 应用筛选并初始化分页
     if (this.exploreSources.length > 0 && !this.selectedSourceId) {
       this.selectedSourceId = this.exploreSources[0].id;
       this.selectedSourceName = this.exploreSources[0].name;
@@ -133,12 +141,55 @@ export struct NovelExplorePage {
 
   filterSources(): void {
     if (!this.searchKeyword.trim()) {
-      this.filteredSources = this.exploreSources;
+      this.allFilteredSources = this.exploreSources;
     } else {
       const keyword = this.searchKeyword.toLowerCase();
-      this.filteredSources = this.exploreSources.filter(source => 
+      this.allFilteredSources = this.exploreSources.filter(source => 
         source.name.toLowerCase().includes(keyword)
       );
+    }
+    // 重置分页状态并加载第一页
+    this.sourcePage = 0;
+    this.sourceHasMore = true;
+    this.loadMoreSources(true);
+  }
+  
+  /**
+   * 加载更多书源（分页）
+   */
+  private loadMoreSources(reset: boolean = false): void {
+    if (this.sourceIsLoading && !reset) return;
+    if (!this.sourceHasMore && !reset) return;
+    
+    this.sourceIsLoading = true;
+    
+    const startIndex = reset ? 0 : this.sourcePage * SOURCE_PAGE_SIZE;
+    const endIndex = startIndex + SOURCE_PAGE_SIZE;
+    const newSources = this.allFilteredSources.slice(startIndex, endIndex);
+    
+    if (reset) {
+      this.displayedSources = newSources;
+      this.sourcePage = 1;
+    } else {
+      for (const source of newSources) {
+        this.displayedSources.push(source);
+      }
+      this.sourcePage++;
+    }
+    
+    this.sourceHasMore = endIndex < this.allFilteredSources.length;
+    this.sourceIsLoading = false;
+    
+    logger.debug(TAG, `加载书源: 显示${this.displayedSources.length}/${this.allFilteredSources.length}`);
+  }
+  
+  /**
+   * 检查是否需要预加载
+   */
+  private checkSourcePreload(index: number): void {
+    const threshold = (this.sourcePage - 1) * SOURCE_PAGE_SIZE + SOURCE_PRELOAD_THRESHOLD;
+    if (index >= threshold && this.sourceHasMore && !this.sourceIsLoading) {
+      this.loadMoreSources();
     }
   }
 
@@ -466,7 +517,7 @@ export struct NovelExplorePage {
           
           Blank()
           
-          Text(`共 ${this.filteredSources.length} 个`)
+          Text(`${this.displayedSources.length}/${this.allFilteredSources.length} 个`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
@@ -515,7 +566,7 @@ export struct NovelExplorePage {
         
         // 书源列表
         List({ scroller: this.sourceListScroller }) {
-          ForEach(this.filteredSources, (source: NovelSourceInfo, index: number) => {
+          ForEach(this.displayedSources, (source: NovelSourceInfo, index: number) => {
             ListItem() {
               Row() {
                 Text(source.name)
@@ -539,13 +590,35 @@ export struct NovelExplorePage {
               .onClick(() => this.selectSource(source))
             }
           })
+          
+          // 加载更多指示器
+          if (this.sourceHasMore) {
+            ListItem() {
+              Row() {
+                LoadingProgress()
+                  .width(20)
+                  .height(20)
+                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                Text('加载更多...')
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                  .margin({ left: 8 })
+              }
+              .width('100%')
+              .height(40)
+              .justifyContent(FlexAlign.Center)
+            }
+          }
         }
         .width('100%')
         .layoutWeight(1)
         .divider({ strokeWidth: 0.5, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
+        .onScrollIndex((start: number, end: number) => {
+          this.checkSourcePreload(end);
+        })
         .onAppear(() => {
           // 滚动到当前选中的书源
-          const selectedIndex = this.filteredSources.findIndex(s => s.id === this.selectedSourceId);
+          const selectedIndex = this.displayedSources.findIndex(s => s.id === this.selectedSourceId);
           if (selectedIndex > 0) {
             // 延迟滚动，确保List已渲染
             setTimeout(() => {

@@ -51,7 +51,11 @@ import {
   CloudConfigBackupSection,
   ProxyConfigBackup,
   FontSettingsBackup,
-  CustomFontBackup
+  CustomFontBackup,
+  SettingItemBackup,
+  SuwayomiConfigBackup,
+  FTPConnectionsBackup,
+  FTPConnectionBackup
 } from '../../Models/BackupModels';
 import { MetadataXmlGenerator, MangaMetadata, EBookMetadata, NovelMetadata } from '../../Utils/MetadataXmlGenerator';
 
@@ -355,6 +359,9 @@ export class EnhancedBackupManager {
       privateLibraryEnabled: this.settingsManager.getBoolean('private_library_enabled', false)
     };
     
+    // 导出整个设置表
+    const allSettings = options.includeSettings ? await this.exportAllSettings() : [];
+    
     const data: BackupData = {
       version: BACKUP_VERSION,
       appVersion: appVersion,
@@ -385,7 +392,8 @@ export class EnhancedBackupManager {
       settings: {
         reader: readerSettings,
         general: generalSettings,
-        privacy: privacySettings
+        privacy: privacySettings,
+        allSettings: allSettings
       },
       
       history: {
@@ -400,31 +408,92 @@ export class EnhancedBackupManager {
   }
   
   /**
-   * 导出云存储配置
+   * 导出云存储配置（包含WebDAV、Suwayomi、FTP）
    */
   private async exportCloudConfig(): Promise<CloudConfigBackupSection> {
+    const result: CloudConfigBackupSection = {};
+    
+    // 1. 导出WebDAV配置
     try {
-      const webdavConfig = this.settingsManager.getString('webdav_settings', '');
-      if (webdavConfig) {
-        const config = JSON.parse(webdavConfig) as WebDAVSettingsConfig;
-        const result: CloudConfigBackupSection = {
-          webdav: {
-            serverUrl: config.serverUrl || '',
-            username: config.username || '',
-            password: config.password || '',
-            basePath: config.basePath || '/manxia',
-            autoBackup: config.autoBackup || false,
-            autoBackupInterval: config.autoBackupInterval || 'daily',
-            keepBackupCount: config.keepBackupCount || 5
-          }
+      const context = getGlobalContext();
+      const webdavPrefs = await preferences.getPreferences(context, 'webdav_settings');
+      const serverUrl = await webdavPrefs.get('serverUrl', '') as string;
+      if (serverUrl) {
+        result.webdav = {
+          serverUrl: serverUrl,
+          username: await webdavPrefs.get('username', '') as string,
+          password: await webdavPrefs.get('password', '') as string,
+          basePath: await webdavPrefs.get('basePath', '/manxia') as string,
+          autoBackup: await webdavPrefs.get('autoBackup', false) as boolean,
+          autoBackupInterval: await webdavPrefs.get('autoBackupInterval', 'daily') as 'manual' | 'daily' | 'weekly',
+          keepBackupCount: await webdavPrefs.get('keepBackupCount', 5) as number
         };
-        return result;
+        logger.info(TAG, `导出WebDAV配置: ${serverUrl}`);
       }
     } catch (error) {
-      logger.warn(TAG, `导出云配置失败: ${error}`);
+      logger.warn(TAG, `导出WebDAV配置失败: ${error}`);
     }
-    const emptyResult: CloudConfigBackupSection = {};
-    return emptyResult;
+    
+    // 2. 导出Suwayomi配置
+    try {
+      const context = getGlobalContext();
+      const suwayomiPrefs = await preferences.getPreferences(context, 'suwayomi_config');
+      const serverUrl = await suwayomiPrefs.get('serverUrl', '') as string;
+      if (serverUrl) {
+        result.suwayomi = {
+          serverUrl: serverUrl,
+          username: await suwayomiPrefs.get('username', '') as string,
+          password: await suwayomiPrefs.get('password', '') as string,
+          useAuth: await suwayomiPrefs.get('useAuth', false) as boolean,
+          useBrowsePageAsEntry: await suwayomiPrefs.get('useBrowsePageAsEntry', false) as boolean
+        };
+        logger.info(TAG, `导出Suwayomi配置: ${serverUrl}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `导出Suwayomi配置失败: ${error}`);
+    }
+    
+    // 3. 导出FTP连接配置
+    try {
+      const context = getGlobalContext();
+      const ftpPrefs = await preferences.getPreferences(context, 'ftp_connections');
+      const connectionsJson = await ftpPrefs.get('connections', '[]') as string;
+      const connections = JSON.parse(connectionsJson) as FTPConnectionBackup[];
+      if (connections.length > 0) {
+        result.ftp = { connections: connections };
+        logger.info(TAG, `导出FTP连接: ${connections.length}个`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `导出FTP配置失败: ${error}`);
+    }
+    
+    return result;
+  }
+  
+  /**
+   * 导出整个设置表
+   */
+  private async exportAllSettings(): Promise<SettingItemBackup[]> {
+    try {
+      const dataManager = (await import('../Data/DataManager')).DataManager.getInstance();
+      const allSettings = await dataManager.getAllSettings();
+      
+      const result: SettingItemBackup[] = [];
+      for (const setting of allSettings) {
+        const item: SettingItemBackup = {
+          settingKey: setting.settingKey,
+          settingValue: setting.settingValue,
+          settingType: setting.settingType
+        };
+        result.push(item);
+      }
+      
+      logger.info(TAG, `导出设置表: ${result.length}个设置项`);
+      return result;
+    } catch (error) {
+      logger.error(TAG, `导出设置表失败: ${error}`);
+      return [];
+    }
   }
 
   /**
@@ -491,6 +560,10 @@ export class EnhancedBackupManager {
     
     if (options.restoreSettings && backupData.settings) {
       await this.restoreSettings(backupData.settings);
+      // 恢复整个设置表
+      if (backupData.settings.allSettings) {
+        await this.restoreAllSettings(backupData.settings.allSettings);
+      }
     }
     
     if (options.restoreHistory && backupData.history) {
@@ -521,32 +594,91 @@ export class EnhancedBackupManager {
   }
   
   /**
-   * 恢复云存储配置
+   * 恢复云存储配置（包含WebDAV、Suwayomi、FTP）
    */
   private async restoreCloudConfig(cloudConfig: CloudConfigBackupSection): Promise<void> {
-    try {
-      if (cloudConfig.webdav) {
-        const webdavSettings: WebDAVSettingsForRestore = {
-          enabled: false,
-          serverUrl: cloudConfig.webdav.serverUrl,
-          username: cloudConfig.webdav.username,
-          password: cloudConfig.webdav.password,
-          basePath: cloudConfig.webdav.basePath,
-          autoBackup: cloudConfig.webdav.autoBackup,
-          autoBackupInterval: cloudConfig.webdav.autoBackupInterval,
-          keepBackupCount: cloudConfig.webdav.keepBackupCount,
-          lastSyncTime: 0,
-          connectionStatus: 'untested',
-          lastTestTime: 0,
-          lastTestMessage: '',
-          needCreateDir: false
-        };
-        
-        this.settingsManager.setString('webdav_settings', JSON.stringify(webdavSettings));
-        logger.info(TAG, '云配置恢复成功');
+    const context = getGlobalContext();
+    
+    // 1. 恢复WebDAV配置
+    if (cloudConfig.webdav) {
+      try {
+        const webdavPrefs = await preferences.getPreferences(context, 'webdav_settings');
+        await webdavPrefs.put('serverUrl', cloudConfig.webdav.serverUrl);
+        await webdavPrefs.put('username', cloudConfig.webdav.username);
+        await webdavPrefs.put('password', cloudConfig.webdav.password);
+        await webdavPrefs.put('basePath', cloudConfig.webdav.basePath);
+        await webdavPrefs.put('autoBackup', cloudConfig.webdav.autoBackup);
+        await webdavPrefs.put('autoBackupInterval', cloudConfig.webdav.autoBackupInterval);
+        await webdavPrefs.put('keepBackupCount', cloudConfig.webdav.keepBackupCount);
+        await webdavPrefs.put('enabled', false); // 恢复后需要用户手动启用
+        await webdavPrefs.put('connectionStatus', 'untested');
+        await webdavPrefs.flush();
+        logger.info(TAG, `WebDAV配置恢复成功: ${cloudConfig.webdav.serverUrl}`);
+      } catch (error) {
+        logger.error(TAG, `恢复WebDAV配置失败: ${error}`);
       }
+    }
+    
+    // 2. 恢复Suwayomi配置
+    if (cloudConfig.suwayomi) {
+      try {
+        const suwayomiPrefs = await preferences.getPreferences(context, 'suwayomi_config');
+        await suwayomiPrefs.put('serverUrl', cloudConfig.suwayomi.serverUrl);
+        await suwayomiPrefs.put('username', cloudConfig.suwayomi.username);
+        await suwayomiPrefs.put('password', cloudConfig.suwayomi.password);
+        await suwayomiPrefs.put('useAuth', cloudConfig.suwayomi.useAuth);
+        await suwayomiPrefs.put('useBrowsePageAsEntry', cloudConfig.suwayomi.useBrowsePageAsEntry);
+        await suwayomiPrefs.flush();
+        logger.info(TAG, `Suwayomi配置恢复成功: ${cloudConfig.suwayomi.serverUrl}`);
+      } catch (error) {
+        logger.error(TAG, `恢复Suwayomi配置失败: ${error}`);
+      }
+    }
+    
+    // 3. 恢复FTP连接配置
+    if (cloudConfig.ftp && cloudConfig.ftp.connections.length > 0) {
+      try {
+        const ftpPrefs = await preferences.getPreferences(context, 'ftp_connections');
+        await ftpPrefs.put('connections', JSON.stringify(cloudConfig.ftp.connections));
+        await ftpPrefs.flush();
+        logger.info(TAG, `FTP连接配置恢复成功: ${cloudConfig.ftp.connections.length}个`);
+      } catch (error) {
+        logger.error(TAG, `恢复FTP配置失败: ${error}`);
+      }
+    }
+  }
+  
+  /**
+   * 恢复整个设置表
+   */
+  private async restoreAllSettings(allSettings: SettingItemBackup[]): Promise<void> {
+    if (!allSettings || allSettings.length === 0) {
+      logger.info(TAG, '没有设置表数据需要恢复');
+      return;
+    }
+    
+    try {
+      const dataManager = (await import('../Data/DataManager')).DataManager.getInstance();
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const setting of allSettings) {
+        try {
+          await dataManager.saveSetting(setting.settingKey, setting.settingValue, setting.settingType);
+          successCount++;
+        } catch (e) {
+          failCount++;
+          logger.warn(TAG, `恢复设置失败: ${setting.settingKey}`);
+        }
+      }
+      
+      // 重新加载设置到缓存
+      await this.settingsManager.initialize();
+      this.settingsManager.syncToAppStorage();
+      
+      logger.info(TAG, `设置表恢复完成: 成功=${successCount}, 失败=${failCount}`);
     } catch (error) {
-      logger.error(TAG, `恢复云配置失败: ${error}`);
+      logger.error(TAG, `恢复设置表失败: ${error}`);
     }
   }
 

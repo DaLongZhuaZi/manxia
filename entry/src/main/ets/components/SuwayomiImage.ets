@@ -1,0 +1,228 @@
+/**
+ * Suwayomi 图片组件
+ * 支持 AVIF 格式和认证头的图片加载组件
+ * 可在所有 Suwayomi 相关页面中复用
+ */
+
+import { image } from '@kit.ImageKit';
+import { http } from '@kit.NetworkKit';
+import { logger } from '../Utils/Logger';
+import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
+import { getSuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
+
+const TAG = 'SuwayomiImage';
+
+@Component
+export struct SuwayomiImage {
+  @Prop src: string = '';
+  @Prop imageWidth: Length = '100%';
+  @Prop imageHeight: Length = '100%';
+  @Prop imgAspectRatio: number = 0; // 0 表示不使用宽高比
+  @Prop objectFit: ImageFit = ImageFit.Cover;
+  @Prop imgBorderRadius: Length = 0;
+  @Prop placeholderColor: ResourceColor = '#333333';
+
+  @State private pixelMap: image.PixelMap | null = null;
+  @State private isLoading: boolean = false;
+  @State private loadError: boolean = false;
+  @State private useDirectImage: boolean = false;
+
+  private currentSrc: string = '';
+  private loadingAborted: boolean = false;
+
+  aboutToAppear() {
+    if (this.src) {
+      this.loadImage();
+    }
+  }
+
+  aboutToDisappear() {
+    this.loadingAborted = true;
+    this.releasePixelMap();
+  }
+
+  private releasePixelMap(): void {
+    if (this.pixelMap) {
+      try {
+        this.pixelMap.release();
+      } catch (e) {
+        // 忽略释放错误
+      }
+      this.pixelMap = null;
+    }
+  }
+
+  private async loadImage(): Promise<void> {
+    if (!this.src || this.src === this.currentSrc || this.isLoading) {
+      return;
+    }
+
+    this.currentSrc = this.src;
+    this.isLoading = true;
+    this.loadError = false;
+    this.useDirectImage = false;
+    this.releasePixelMap();
+    this.loadingAborted = false;
+
+    try {
+      // 非 HTTP URL 直接使用 Image 组件
+      if (!this.src.startsWith('http://') && !this.src.startsWith('https://')) {
+        this.useDirectImage = true;
+        this.isLoading = false;
+        return;
+      }
+
+      // 下载图片数据
+      const buffer = await this.downloadImage(this.src);
+      
+      if (this.loadingAborted) {
+        return;
+      }
+
+      if (!buffer) {
+        // 下载失败，尝试直接使用 Image 组件
+        this.useDirectImage = true;
+        this.isLoading = false;
+        return;
+      }
+
+      let pixelMap: image.PixelMap | null = null;
+
+      // 检查是否为 AVIF 格式
+      if (isAvifFormat(buffer)) {
+        logger.debug(TAG, `检测到 AVIF 格式: ${this.src.substring(0, 60)}...`);
+        const avifDecoder = AvifDecoder.getInstance();
+        if (avifDecoder.isSupported()) {
+          pixelMap = await avifDecoder.decode(buffer);
+          if (pixelMap) {
+            logger.debug(TAG, `AVIF 解码成功`);
+          }
+        }
+      }
+
+      // 如果 AVIF 解码失败或不是 AVIF，尝试系统解码
+      if (!pixelMap) {
+        try {
+          const imageSource = image.createImageSource(buffer);
+          pixelMap = await imageSource.createPixelMap();
+          imageSource.release();
+        } catch (decodeError) {
+          logger.warn(TAG, `系统解码失败，回退到直接加载: ${decodeError}`);
+          this.useDirectImage = true;
+          this.isLoading = false;
+          return;
+        }
+      }
+
+      if (this.loadingAborted) {
+        if (pixelMap) {
+          pixelMap.release();
+        }
+        return;
+      }
+
+      if (pixelMap) {
+        this.pixelMap = pixelMap;
+      } else {
+        // 解码失败，尝试直接使用 Image 组件
+        this.useDirectImage = true;
+      }
+    } catch (e) {
+      logger.warn(TAG, `加载图片失败: ${e}`);
+      // 出错时回退到直接使用 Image 组件
+      this.useDirectImage = true;
+    } finally {
+      if (!this.loadingAborted) {
+        this.isLoading = false;
+      }
+    }
+  }
+
+  private async downloadImage(url: string): Promise<ArrayBuffer | null> {
+    try {
+      const httpRequest = http.createHttp();
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
+      };
+
+      // 添加 Suwayomi 认证头
+      try {
+        const executor = getSuwayomiSourceExecutor();
+        const authHeaders = executor.getImageHeaders();
+        if (authHeaders['Authorization']) {
+          headers['Authorization'] = authHeaders['Authorization'];
+        }
+      } catch (e) {
+        // 忽略获取认证头失败
+      }
+
+      const response = await httpRequest.request(url, {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        connectTimeout: 15000,
+        readTimeout: 30000,
+        header: headers
+      });
+
+      httpRequest.destroy();
+
+      if (response.responseCode === 200 && response.result) {
+        return response.result as ArrayBuffer;
+      }
+
+      return null;
+    } catch (e) {
+      logger.debug(TAG, `下载图片失败: ${e}`);
+      return null;
+    }
+  }
+
+  build() {
+    Stack() {
+      // 加载中或占位
+      if (this.isLoading || (!this.pixelMap && !this.useDirectImage && !this.loadError)) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.placeholderColor)
+      }
+
+      // 使用 PixelMap 显示（AVIF 或手动解码的图片）
+      if (this.pixelMap) {
+        Image(this.pixelMap)
+          .width(this.imageWidth)
+          .height(this.imgAspectRatio > 0 ? undefined : this.imageHeight)
+          .aspectRatio(this.imgAspectRatio > 0 ? this.imgAspectRatio : undefined)
+          .objectFit(this.objectFit)
+          .borderRadius(this.imgBorderRadius)
+      }
+
+      // 直接使用 Image 组件加载（非 AVIF 或回退模式）
+      if (this.useDirectImage && this.src) {
+        Image(this.src)
+          .width(this.imageWidth)
+          .height(this.imgAspectRatio > 0 ? undefined : this.imageHeight)
+          .aspectRatio(this.imgAspectRatio > 0 ? this.imgAspectRatio : undefined)
+          .objectFit(this.objectFit)
+          .borderRadius(this.imgBorderRadius)
+          .onError(() => {
+            this.loadError = true;
+          })
+      }
+
+      // 加载失败占位
+      if (this.loadError) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.placeholderColor)
+      }
+    }
+    .width(this.imageWidth)
+    .height(this.imgAspectRatio > 0 ? undefined : this.imageHeight)
+    .aspectRatio(this.imgAspectRatio > 0 ? this.imgAspectRatio : undefined)
+    .borderRadius(this.imgBorderRadius)
+    .clip(true)
+  }
+}

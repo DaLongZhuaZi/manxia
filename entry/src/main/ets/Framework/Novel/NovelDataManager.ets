@@ -677,3 +677,5 @@ export class NovelDataManager {
 export function getNovelDataManager(): NovelDataManager {
   return NovelDataManager.getInstance();
 }
+
+export { NovelBook };

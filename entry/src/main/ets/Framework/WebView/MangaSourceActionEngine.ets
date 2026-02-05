@@ -742,7 +742,10 @@ export class MangaSourceActionEngine {
    */
   private async executeScript(action: ScriptAction, context: ActionContext): Promise<string> {
     const code = this.replaceVariables(action.code, context.variables);
-    logger.info(TAG, `执行脚本: ${code.substring(0, 100)}...`);
+    // 输出更详细的日志，帮助调试变量替换问题
+    logger.info(TAG, `执行脚本: ${code.substring(0, 200)}...`);
+    // 输出关键筛选变量
+    logger.debug(TAG, `脚本变量: category=${context.variables['category']}, sort=${context.variables['sort']}, time=${context.variables['time']}, timeType=${context.variables['timeType']}, page=${context.variables['page']}`);
 
     return await this.executeJavaScript<string>(code);
   }
@@ -1145,7 +1148,23 @@ export class MangaSourceActionEngine {
       
       let headers: Record<string, string> = {};
       
-      // 1. 如果配置中有 headers，先进行处理和合并
+      // [修复] 0. 先应用 network.headers 配置（全局默认headers）
+      const networkHeadersStr: string | undefined = context.variables['__networkHeaders__'];
+      if (networkHeadersStr && networkHeadersStr.length > 0) {
+        try {
+          const networkHeaders: Record<string, string> = JSON.parse(networkHeadersStr) as Record<string, string>;
+          const netHeaderKeys: string[] = Object.keys(networkHeaders);
+          for (let ni = 0; ni < netHeaderKeys.length; ni++) {
+            const nKey: string = netHeaderKeys[ni];
+            headers[nKey] = networkHeaders[nKey];
+          }
+          logger.debug(TAG, `应用 network.headers: ${netHeaderKeys.join(', ')}`);
+        } catch (parseErr) {
+          logger.warn(TAG, `解析 network.headers 失败: ${parseErr}`);
+        }
+      }
+      
+      // 1. 如果配置中有 headers，先进行处理和合并（会覆盖network.headers）
       if (action.headers) {
         const configHeaders = action.headers;
         const headerKeys = Object.keys(configHeaders);
@@ -1192,42 +1211,23 @@ export class MangaSourceActionEngine {
       }
       
       if (!configHasUserAgent) {
-        // 优先使用UserAgentManager获取自定义UA（支持图源级别和全局设置）
-        const sidStr: string | undefined = context.variables['sourceId'];
-        if (sidStr && sidStr.length > 0) {
-          try {
-            const customUA = await UserAgentManager.getInstance().getUserAgent(Number(sidStr));
-            headers['User-Agent'] = customUA;
-            logger.info(TAG, `使用UserAgentManager获取的UA: sourceId=${sidStr}`);
-          } catch (_e) {
-            // 回退到WebView UA
+        // [修复] 优先使用 network.userAgent 配置
+        const networkUA: string | undefined = context.variables['__networkUserAgent__'];
+        if (networkUA && networkUA.length > 0) {
+          headers['User-Agent'] = networkUA;
+          logger.info(TAG, `使用 network.userAgent: ${networkUA.substring(0, 50)}...`);
+        } else {
+          // 回退到 UserAgentManager
+          const sidStr: string | undefined = context.variables['sourceId'];
+          if (sidStr && sidStr.length > 0) {
             try {
-              const uaCode: string = 'navigator.userAgent';
-              const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
-              headers['User-Agent'] = ua;
-              let cleanedUA: string = String(headers['User-Agent']).trim();
-              const lenUA: number = cleanedUA.length;
-              if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
-                cleanedUA = cleanedUA.substring(1, lenUA - 1);
-              }
-              headers['User-Agent'] = cleanedUA;
-            } catch (_e2) {
+              const customUA = await UserAgentManager.getInstance().getUserAgent(Number(sidStr));
+              headers['User-Agent'] = customUA;
+              logger.info(TAG, `使用UserAgentManager获取的UA: sourceId=${sidStr}`);
+            } catch (_e) {
               headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
             }
-          }
-        } else {
-          // 无sourceId时使用WebView UA
-          try {
-            const uaCode: string = 'navigator.userAgent';
-            const ua: string = await this.executeJavaScriptWithTimeout<string>(uaCode, 1200);
-            headers['User-Agent'] = ua;
-            let cleanedUA: string = String(headers['User-Agent']).trim();
-            const lenUA: number = cleanedUA.length;
-            if (lenUA >= 2 && cleanedUA.charAt(0) === '"' && cleanedUA.charAt(lenUA - 1) === '"') {
-              cleanedUA = cleanedUA.substring(1, lenUA - 1);
-            }
-            headers['User-Agent'] = cleanedUA;
-          } catch (_e) {
+          } else {
             headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
           }
         }
@@ -1235,11 +1235,10 @@ export class MangaSourceActionEngine {
         logger.info(TAG, `使用配置中指定的 User-Agent: ${headers['User-Agent']}`);
       }
 
-      const baseUrlVar: string | undefined = context.variables['baseUrl'];
-      if (baseUrlVar && baseUrlVar.length > 0) {
-        headers['Referer'] = baseUrlVar;
-        headers['Origin'] = baseUrlVar;
-      }
+      // [修复] 不再强制覆盖Referer和Origin
+      // CopyManga等API对这些头敏感，需要使用配置中的值
+      // 只在后面的检查中自动注入缺失的Referer（如果配置中没有指定）
+      // Origin头完全由配置控制，不自动添加
 
       // 始终尝试获取Cookie，不再依赖useCookies变量
       const sidStr: string | undefined = context.variables['sourceId'];

@@ -11,8 +11,64 @@ import { LegadoSourceParser } from './LegadoSourceParser';
 import { NovelSourceExecutor } from './NovelSourceExecutor';
 import { NovelSourceInfo, NovelSearchResult } from '../../Models/NovelModels';
 import { getNovelDataManager } from './NovelDataManager';
+import { LargeFileJSONParser, ParseProgressCallback, ParseConfig, ParseResult } from './LargeFileJSONParser';
+import { fileIo as fs } from '@kit.CoreFileKit';
 
 const TAG = 'NovelSourceManager';
+
+/**
+ * 大文件导入进度回调接口
+ */
+export interface LargeFileImportProgress {
+  /**
+   * 文件读取阶段
+   * @param percent 读取百分比 0-100
+   * @param bytesRead 已读取字节数
+   * @param totalBytes 总字节数
+   */
+  onFileReadProgress?: (percent: number, bytesRead: number, totalBytes: number) => void;
+  
+  /**
+   * 解析阶段
+   * @param parsedCount 已解析书源数
+   * @param currentSourceName 当前解析的书源名称
+   */
+  onParseProgress?: (parsedCount: number, currentSourceName: string) => void;
+  
+  /**
+   * 导入阶段（保存到数据库）
+   * @param importedCount 已导入数量
+   * @param totalCount 总数量
+   * @param currentSourceName 当前导入的书源名称
+   */
+  onImportProgress?: (importedCount: number, totalCount: number, currentSourceName: string) => void;
+  
+  /**
+   * 阶段变化
+   * @param stage 当前阶段: 'reading' | 'parsing' | 'importing' | 'complete'
+   */
+  onStageChange?: (stage: string) => void;
+  
+  /**
+   * 错误（可恢复）
+   * @param error 错误信息
+   * @param sourceName 相关书源名称（如果有）
+   */
+  onError?: (error: string, sourceName?: string) => void;
+}
+
+/**
+ * 大文件导入结果
+ */
+export interface LargeFileImportResult {
+  success: boolean;
+  totalParsed: number;
+  successCount: number;
+  failedCount: number;
+  skippedCount: number;
+  errors: string[];
+  elapsedMs: number;
+}
 
 /**
  * 小说源管理器类
@@ -511,6 +567,238 @@ export class NovelSourceManager {
    */
   loadSourceToMemory(source: LegadoBookSource): void {
     this.sources.set(source.bookSourceUrl, source);
+  }
+
+  // ==================== 大文件流式导入 ====================
+
+  /**
+   * 从大文件流式导入书源
+   * 适用于50M~100M+的大型书源JSON文件
+   * 
+   * @param filePath 文件路径
+   * @param progress 进度回调
+   * @returns 导入结果
+   */
+  async importFromLargeFile(
+    filePath: string,
+    progress?: LargeFileImportProgress
+  ): Promise<LargeFileImportResult> {
+    const startTime = Date.now();
+    const result: LargeFileImportResult = {
+      success: false,
+      totalParsed: 0,
+      successCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      errors: [],
+      elapsedMs: 0
+    };
+
+    try {
+      logger.info(TAG, `开始大文件流式导入: ${filePath}`);
+      progress?.onStageChange?.('reading');
+
+      // 配置解析器
+      const parseConfig: ParseConfig = {
+        chunkSize: 512 * 1024,    // 512KB 每次读取
+        batchSize: 100,            // 每批100个对象
+        batchDelayMs: 5,           // 5ms 让出主线程
+        maxObjectSize: 2 * 1024 * 1024  // 单个书源最大2MB
+      };
+
+      // 待导入的书源列表
+      const parsedSources: LegadoBookSource[] = [];
+      const parser = new LegadoSourceParser();
+
+      // 解析回调
+      const parseCallback: ParseProgressCallback = {
+        onFileProgress: (bytesRead, totalBytes) => {
+          const percent = Math.round((bytesRead / totalBytes) * 100);
+          progress?.onFileReadProgress?.(percent, bytesRead, totalBytes);
+        },
+        onObjectParsed: (parsedCount, currentObject) => {
+          // 验证并转换为书源对象
+          const rawSource = currentObject as Record<string, ESObject>;
+          if (rawSource && rawSource['bookSourceUrl'] && rawSource['bookSourceName']) {
+            const source = this.convertRawToSource(rawSource);
+            if (source && parser.validate(source)) {
+              parsedSources.push(source);
+              progress?.onParseProgress?.(parsedSources.length, source.bookSourceName);
+            } else {
+              result.skippedCount++;
+            }
+          } else {
+            result.skippedCount++;
+          }
+        },
+        onBatchComplete: (batchIndex, batchSize, totalParsed) => {
+          logger.debug(TAG, `解析批次 ${batchIndex} 完成, 批次大小: ${batchSize}, 总计: ${totalParsed}`);
+        },
+        onError: (error, recoverable) => {
+          if (recoverable) {
+            result.errors.push(error);
+            progress?.onError?.(error);
+          } else {
+            throw new Error(error);
+          }
+        }
+      };
+
+      // 流式解析文件
+      progress?.onStageChange?.('parsing');
+      const parseResult = await LargeFileJSONParser.parseFile<Record<string, ESObject>>(
+        filePath,
+        parseConfig,
+        parseCallback
+      );
+
+      result.totalParsed = parseResult.totalParsed;
+      logger.info(TAG, `解析完成: 有效书源 ${parsedSources.length}, 跳过 ${result.skippedCount}`);
+
+      // 批量导入到数据库
+      progress?.onStageChange?.('importing');
+      const importBatchSize = 50;  // 每批导入50个
+      const dataManager = getNovelDataManager();
+
+      for (let i = 0; i < parsedSources.length; i += importBatchSize) {
+        const batch = parsedSources.slice(i, Math.min(i + importBatchSize, parsedSources.length));
+        
+        for (const source of batch) {
+          try {
+            // 添加到内存
+            this.sources.set(source.bookSourceUrl, source);
+            this.executors.delete(source.bookSourceUrl);
+            
+            // 保存到数据库
+            await dataManager.saveSource(source);
+            
+            result.successCount++;
+            progress?.onImportProgress?.(result.successCount, parsedSources.length, source.bookSourceName);
+          } catch (error) {
+            result.failedCount++;
+            const errorMsg = `导入失败: ${source.bookSourceName} - ${String(error)}`;
+            result.errors.push(errorMsg);
+            progress?.onError?.(errorMsg, source.bookSourceName);
+          }
+        }
+        
+        // 每批之间让出主线程
+        await this.sleep(10);
+      }
+
+      result.success = result.successCount > 0;
+      progress?.onStageChange?.('complete');
+      
+      logger.info(TAG, `大文件导入完成: 成功 ${result.successCount}, 失败 ${result.failedCount}, 跳过 ${result.skippedCount}`);
+
+    } catch (error) {
+      const errorMsg = `大文件导入失败: ${String(error)}`;
+      logger.error(TAG, errorMsg);
+      result.errors.push(errorMsg);
+      progress?.onError?.(errorMsg);
+    }
+
+    result.elapsedMs = Date.now() - startTime;
+    return result;
+  }
+
+  /**
+   * 将原始对象转换为书源对象
+   */
+  private convertRawToSource(obj: Record<string, ESObject>): LegadoBookSource | null {
+    try {
+      if (!obj['bookSourceUrl'] || !obj['bookSourceName']) {
+        return null;
+      }
+
+      const source: LegadoBookSource = {
+        bookSourceUrl: String(obj['bookSourceUrl']),
+        bookSourceName: String(obj['bookSourceName']),
+        bookSourceType: typeof obj['bookSourceType'] === 'number' ? obj['bookSourceType'] : 0,
+        bookSourceGroup: obj['bookSourceGroup'] ? String(obj['bookSourceGroup']) : undefined,
+        bookUrlPattern: obj['bookUrlPattern'] ? String(obj['bookUrlPattern']) : undefined,
+        customOrder: typeof obj['customOrder'] === 'number' ? obj['customOrder'] : 0,
+        enabled: obj['enabled'] !== false,
+        enabledExplore: obj['enabledExplore'] !== false,
+        jsLib: obj['jsLib'] ? String(obj['jsLib']) : undefined,
+        enabledCookieJar: obj['enabledCookieJar'] === true,
+        concurrentRate: obj['concurrentRate'] ? String(obj['concurrentRate']) : undefined,
+        header: obj['header'] ? String(obj['header']) : undefined,
+        loginUrl: obj['loginUrl'] ? String(obj['loginUrl']) : undefined,
+        loginUi: obj['loginUi'] ? String(obj['loginUi']) : undefined,
+        loginCheckJs: obj['loginCheckJs'] ? String(obj['loginCheckJs']) : undefined,
+        coverDecodeJs: obj['coverDecodeJs'] ? String(obj['coverDecodeJs']) : undefined,
+        bookSourceComment: obj['bookSourceComment'] ? String(obj['bookSourceComment']) : undefined,
+        variableComment: obj['variableComment'] ? String(obj['variableComment']) : undefined,
+        lastUpdateTime: typeof obj['lastUpdateTime'] === 'number' ? obj['lastUpdateTime'] : Date.now(),
+        respondTime: typeof obj['respondTime'] === 'number' ? obj['respondTime'] : 180000,
+        weight: 0,
+        exploreUrl: obj['exploreUrl'] ? String(obj['exploreUrl']) : undefined,
+        exploreScreen: obj['exploreScreen'] ? String(obj['exploreScreen']) : undefined,
+        searchUrl: obj['searchUrl'] ? String(obj['searchUrl']) : undefined,
+        ruleExplore: obj['ruleExplore'] as ESObject,
+        ruleSearch: obj['ruleSearch'] as ESObject,
+        ruleBookInfo: obj['ruleBookInfo'] as ESObject,
+        ruleToc: obj['ruleToc'] as ESObject,
+        ruleContent: obj['ruleContent'] as ESObject
+      };
+
+      return source;
+    } catch (error) {
+      logger.warn(TAG, `转换书源对象失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * 休眠指定毫秒
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 检查文件是否为大文件（超过阈值则建议使用流式导入）
+   * @param filePath 文件路径
+   * @param thresholdMB 阈值（MB），默认5MB
+   * @returns 是否为大文件
+   */
+  static isLargeFile(filePath: string, thresholdMB: number = 5): boolean {
+    try {
+      const stat = fs.statSync(filePath);
+      return stat.size > thresholdMB * 1024 * 1024;
+    } catch (error) {
+      logger.warn(TAG, `检查文件大小失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 获取文件大小（字节）
+   */
+  static getFileSize(filePath: string): number {
+    try {
+      const stat = fs.statSync(filePath);
+      return stat.size;
+    } catch (error) {
+      logger.warn(TAG, `获取文件大小失败: ${String(error)}`);
+      return 0;
+    }
+  }
+
+  /**
+   * 格式化文件大小
+   */
+  static formatFileSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes}B`;
+    } else if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)}KB`;
+    } else if (bytes < 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+    } else {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(2)}GB`;
+    }
   }
 
   /**

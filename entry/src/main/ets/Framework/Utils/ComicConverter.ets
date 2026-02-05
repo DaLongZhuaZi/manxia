@@ -314,7 +314,10 @@ export class ComicConverter {
       doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
       volumeKeyNavigation: globalVolumeKeyNav,
-      curlBackOpacity: 0
+      curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
     };
     return fallbackSettings;
   }

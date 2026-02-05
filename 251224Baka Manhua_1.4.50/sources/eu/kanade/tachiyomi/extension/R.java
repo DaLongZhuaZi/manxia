@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.extension;
 
-/* loaded from: classes2.dex */
+/* loaded from: classes.dex */
 public final class R {
 
     public static final class mipmap {

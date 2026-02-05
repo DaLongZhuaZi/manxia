@@ -9,6 +9,7 @@
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { promptAction } from '@kit.ArkUI';
 import { AppColors } from '../Theme/AppColors';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
@@ -425,7 +426,7 @@ export struct MangaImportDialog {
    */
   private showToast(message: string): void {
     logger.info(TAG, `Toast: ${message}`);
-    // TODO: 实现实际的Toast显示
+    promptAction.showToast({ message: message, duration: 2000 });
   }
 
   /**

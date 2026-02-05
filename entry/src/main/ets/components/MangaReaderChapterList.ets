@@ -188,7 +188,8 @@ export struct MangaReaderChapterList {
               .margin({ right: 8 })
           }
           
-          Text(`${chapter.pages.length}页`)
+          // [懒加载优化] 优先使用totalPages（骨架模式），其次使用pages.length（已加载模式）
+          Text(`${chapter.totalPages || chapter.pages.length}页`)
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
         }

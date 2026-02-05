@@ -76,6 +76,12 @@ export interface MangaViewerParams {
   onScrollPositionChange?: (position: number) => void;
   /** 条漫检测回调 - 当检测到图片是条漫格式时触发 */
   onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;
+  /** 前一章节（条漫模式连续滚动用） */
+  prevChapter?: MangaChapter;
+  /** 后一章节（条漫模式连续滚动用） */
+  nextChapter?: MangaChapter;
+  /** 请求加载相邻章节的回调 */
+  onRequestAdjacentChapter?: (direction: 'prev' | 'next') => void;
 }
 
 /**
@@ -199,6 +205,32 @@ interface MangaViewerCallbacks {
   onScrollPositionChange?: (position: number) => void;
   onComponentReady?: (component: MangaViewer) => void;
   onWebtoonDetected?: (isWebtoon: boolean, avgAspectRatio: number) => void;  // 条漫检测回调
+  // [新增] 条漫模式章节切换回调 - 当滚动到其他章节时通知父组件
+  onWebtoonChapterSwitch?: (chapterId: string, chapterTitle: string, pageIndex: number) => void;
+}
+
+/**
+ * 条漫多章节数据项类型
+ * 用于区分普通页面和章节分隔项
+ */
+interface WebtoonDataItem {
+  type: 'page' | 'chapter_divider';
+  page?: MangaPage;
+  chapterId?: string;
+  chapterTitle?: string;
+  direction?: 'prev' | 'next'; // 分隔指向的方向
+  pageIndex?: number; // 在当前章节中的索引
+  globalIndex?: number; // 在合并列表中的全局索引
+}
+
+/**
+ * 章节边界信息
+ */
+interface ChapterBoundary {
+  chapterId: string;
+  startIndex: number; // 在合并列表中的起始索引
+  endIndex: number;   // 在合并列表中的结束索引
+  pageCount: number;
 }
 
 @Component
@@ -215,6 +247,23 @@ export struct MangaViewer {
   @Prop @Watch('onChapterChange') chapterTick: number = 0; // [新增] 章节切换计数器
   @Prop sourceId?: number;
   @Prop mangaId?: string;
+
+  // [新增] 条漫模式多章节支持
+  @Prop @Watch('onAdjacentChapterChange') prevChapter?: MangaChapter; // 前一章节
+  @Prop @Watch('onAdjacentChapterChange') nextChapter?: MangaChapter; // 后一章节
+  @Prop isFirstChapter: boolean = false; // 是否是第一章（没有上一章）
+  @Prop isLastChapter: boolean = false;  // 是否是最后一章（没有下一章）
+  // 注意：回调函数不能使用@Prop装饰器，直接作为普通属性传递
+  onRequestAdjacentChapter?: (direction: 'prev' | 'next') => void; // 请求加载相邻章节
+
+  // [新增] 条漫多章节状态
+  @State private webtoonDataItems: WebtoonDataItem[] = []; // 合并的多章节数据项
+  @State private chapterBoundaries: ChapterBoundary[] = []; // 章节边界信息
+  @State private currentChapterId: string = ''; // 当前显示的章节ID
+  @State private isPrevChapterLoading: boolean = false; // 前一章节加载中
+  @State private isNextChapterLoading: boolean = false; // 后一章节加载中
+  @State private prevChapterRequested: boolean = false; // 是否已请求加载前一章节
+  @State private nextChapterRequested: boolean = false; // 是否已请求加载后一章节
 
   // 新增：预加载调试信息（用于传递给MangaReaderPage）
   @Link preloadDebugInfo: PreloadDebugInfo;
@@ -308,6 +357,11 @@ export struct MangaViewer {
   private scrollTimer: number = -1;
   private lastUpdateTime: number = 0;
   private scrollPositionKey: string = ''; // 滚动位置存储键
+  private lastHeavyUpdateTime: number = 0; // [性能优化] 重型操作的上次执行时间
+  private readonly HEAVY_UPDATE_THROTTLE_MS: number = 200; // [性能优化] 重型操作节流间隔
+  // [性能优化] 条漫项位置缓存，避免每次滚动都重新计算
+  private webtoonItemPositionCache: number[] = [];
+  private webtoonPositionCacheValid: boolean = false;
 
   // 图片缓存管理
   private imageCache: Map<string, PixelMapMeta> = new Map();
@@ -452,6 +506,9 @@ export struct MangaViewer {
       this.pageDataSource.setPages(this.chapter.pages);
     }
 
+    // 初始化条漫多章节数据
+    this.initWebtoonMultiChapterData();
+
     // 通知父组件组件已准备就绪
     if (this.callbacks.onComponentReady) {
       this.callbacks.onComponentReady(this);
@@ -492,6 +549,14 @@ export struct MangaViewer {
     this.imageLoadStates.clear();
     this.pixelMapEpochByPage.clear();
 
+    // 重置条漫多章节状态
+    this.webtoonDataItems = [];
+    this.chapterBoundaries = [];
+    this.prevChapterRequested = false;
+    this.nextChapterRequested = false;
+    this.isPrevChapterLoading = false;
+    this.isNextChapterLoading = false;
+
     // 重新加载当前页和相邻页
     if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
       logger.info(TAG, `🔄 重新加载章节: ${this.chapter.title}，页面数: ${this.chapter.pages.length}`);
@@ -508,6 +573,28 @@ export struct MangaViewer {
       // Image组件会从缓存中快速读取
       this.loadCurrentAndNeighborPages();
     }
+  }
+
+  /**
+   * 监听相邻章节变化
+   * 当prevChapter或nextChapter变化时重新初始化多章节数据
+   */
+  private onAdjacentChapterChange(): void {
+    if (!this.isWebtoonMode()) {
+      return;
+    }
+    
+    logger.info(TAG, `🔔 [相邻章节变化] prevChapter=${this.prevChapter?.title || '无'}, nextChapter=${this.nextChapter?.title || '无'}`);
+    
+    // 重置加载状态和请求标记
+    this.isPrevChapterLoading = false;
+    this.isNextChapterLoading = false;
+    // [修复] 重置请求标记，允许后续章节边界检测再次触发加载
+    this.prevChapterRequested = false;
+    this.nextChapterRequested = false;
+    
+    // 重新初始化多章节数据
+    this.initWebtoonMultiChapterData();
   }
 
   /**
@@ -4137,14 +4224,6 @@ export struct MangaViewer {
   }
 
   /**
-   * 根据滚动位置更新当前页面索引
-   */
-  private updateCurrentPageFromScroll(): void {
-    // TODO: 实现根据滚动位置计算当前页面的逻辑
-    // 这需要知道每个页面的高度和位置
-  }
-
-  /**
    * 处理双页模式滑动手势：支持平滑单页翻页
    * 新逻辑：每次滑动翻一页，保持双页显示
    * 修复：TTB模式使用正确的上下翻页逻辑
@@ -4375,16 +4454,51 @@ export struct MangaViewer {
   }
 
   /**
-   * 构建优化的条漫视图
+   * 构建优化的条漫视图（支持多章节）
    */
   @Builder
   buildWebtoonView() {
     Scroll(this.scroller) {
       Column() {
-        LazyForEach(this.pageDataSource, (page: MangaPage, index: number) => {
-          this.buildOptimizedImage(page, index)
-        }, (page: MangaPage, index: number) => `${page.id}_${index}`)
+        // 顶部加载提示（加载上一章时显示，或显示已是第一章提示）
+        if (this.isPrevChapterLoading || this.isFirstChapter) {
+          this.buildWebtoonLoadingIndicator('prev')
+        }
+
+        // 使用多章节数据源（如果已初始化）
+        if (this.webtoonDataItems.length > 0) {
+          ForEach(this.webtoonDataItems, (item: WebtoonDataItem, index: number) => {
+            if (item.type === 'chapter_divider') {
+              // 章节分隔
+              this.buildChapterDivider(item)
+            } else if (item.type === 'page' && item.page) {
+              // 页面图片（使用章节ID+页面ID作为唯一标识）
+              this.buildOptimizedImageForWebtoon(item.page, item.chapterId || '', item.pageIndex || index)
+            }
+          }, (item: WebtoonDataItem, index: number) => {
+            // 生成唯一key：章节分隔用direction+chapterId，页面用chapterId+pageId
+            if (item.type === 'chapter_divider') {
+              return `divider_${item.direction}_${item.chapterId}_${index}`;
+            } else {
+              return `page_${item.chapterId}_${item.page?.id}_${index}`;
+            }
+          })
+        } else {
+          // 回退到单章节模式
+          LazyForEach(this.pageDataSource, (page: MangaPage, index: number) => {
+            this.buildOptimizedImage(page, index)
+          }, (page: MangaPage, index: number) => `${this.chapter.id}_${page.id}_${index}`)
+        }
+
+        // 底部加载提示（加载下一章时显示，或显示已是最后一章提示）
+        if (this.isNextChapterLoading || this.isLastChapter) {
+          this.buildWebtoonLoadingIndicator('next')
+        }
       }
+      .padding({
+        left: `${this.readingSettings.webtoonLeftMargin ?? 0}%`,
+        right: `${this.readingSettings.webtoonRightMargin ?? 0}%`
+      })
       .scale({ x: this.webtoonZoomScale, y: this.webtoonZoomScale })
       .translate({ x: this.webtoonOffsetX, y: this.webtoonOffsetY })
       // 修复：添加缩放过渡动画，使双指缩放更平滑
@@ -4399,6 +4513,8 @@ export struct MangaViewer {
     .height('100%')
     .onScroll((xOffset: number, yOffset: number) => {
       this.handleWebtoonScroll(yOffset);
+      // [性能优化] 对重型操作进行节流，避免滚动卡顿
+      this.throttledWebtoonHeavyOperations();
     })
     .onScrollStart(() => {
       this.isScrolling = true;
@@ -4444,17 +4560,220 @@ export struct MangaViewer {
   }
 
   /**
-   * 构建优化的带间隙条漫视图
+   * 为条漫多章节模式构建优化的图片组件
+   * 与buildOptimizedImage类似，但需要传入chapterId以正确关联PixelMap
+   * [性能优化] 避免重复加载，使用缓存检查
+   */
+  @Builder
+  buildOptimizedImageForWebtoon(page: MangaPage, chapterId: string, pageIndex: number) {
+    Stack() {
+      // 优先使用PixelMap
+      if (this.pagePixelMaps.has(page.id)) {
+        Image(this.pagePixelMaps.get(page.id))
+          .objectFit(ImageFit.Contain)
+          .width('100%')
+          .height(this.getEstimatedImageHeight(page))
+          .draggable(false)
+          .onComplete(() => {
+            this.handleWebtoonImageLoad(page, chapterId, pageIndex);
+          })
+          .onError((error: ImageError) => {
+            // PixelMap可能已被释放，尝试重新加载
+            logger.warn(TAG, `PixelMap渲染失败，尝试重新加载: ${page.id}`);
+            this.pagePixelMaps.delete(page.id);
+            this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
+          })
+      } else if (page.sourceType === ImageSourceType.LOCAL) {
+        // 本地图片：直接使用文件路径显示，同时触发PixelMap加载用于缓存
+        Image(this.getImageResource(page))
+          .objectFit(ImageFit.Contain)
+          .width('100%')
+          .height(this.getEstimatedImageHeight(page))
+          .draggable(false)
+          .onAppear(() => {
+            // 触发PixelMap加载用于缓存
+            this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
+          })
+          .onComplete(() => {
+            this.handleWebtoonImageLoad(page, chapterId, pageIndex);
+          })
+          .onError((error: ImageError) => {
+            this.handleWebtoonImageError(page, chapterId, pageIndex);
+          })
+      } else if (page.sourceType === ImageSourceType.NETWORK) {
+        // 网络图片：显示占位图，等待PixelMap加载
+        Image($r('app.media.ic_image'))
+          .objectFit(ImageFit.Contain)
+          .width('100%')
+          .height(this.getEstimatedImageHeight(page))
+          .draggable(false)
+          .onAppear(() => {
+            this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
+          })
+      } else {
+        // 其他类型：直接使用资源
+        Image(this.getImageResource(page))
+          .objectFit(ImageFit.Contain)
+          .width('100%')
+          .height(this.getEstimatedImageHeight(page))
+          .draggable(false)
+          .onAppear(() => {
+            this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
+          })
+          .onComplete(() => {
+            this.handleWebtoonImageLoad(page, chapterId, pageIndex);
+          })
+          .onError((error: ImageError) => {
+            this.handleWebtoonImageError(page, chapterId, pageIndex);
+          })
+      }
+
+      // 显示加载动画
+      if (this.shouldShowLoadingForPage(page)) {
+        Column() {
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            .color(colorMap.accent)
+          Text('加载中...')
+            .fontSize(14)
+            .fontColor(colorMap.textSecondary)
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .height(this.getEstimatedImageHeight(page))
+        .justifyContent(FlexAlign.Center)
+      }
+
+      // 显示加载失败提示
+      if (this.getPageLoadState(page)?.error) {
+        Column() {
+          Image($r('sys.symbol.exclamationmark_circle_fill'))
+            .width(48)
+            .height(48)
+            .fillColor(colorMap.error)
+          Text('加载失败')
+            .fontSize(14)
+            .fontColor(colorMap.textSecondary)
+            .margin({ top: 8 })
+          Text('点击重试')
+            .fontSize(12)
+            .fontColor(colorMap.accent)
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .height(this.getEstimatedImageHeight(page))
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.retryLoadPage(page);
+        })
+      }
+    }
+    .width('100%')
+  }
+
+  /**
+   * [性能优化] 条漫模式触发图片加载（带去重检查）
+   */
+  private triggerWebtoonImageLoadIfNeeded(page: MangaPage, chapterId: string, pageIndex: number): void {
+    // 检查是否已有PixelMap
+    if (this.pagePixelMaps.has(page.id)) {
+      return;
+    }
+    
+    // 检查是否已在加载中
+    const loadState = this.imageLoadStates.get(page.id);
+    if (loadState && loadState.isLoading) {
+      return;
+    }
+    
+    // 触发加载
+    this.loadImage(page);
+  }
+
+  /**
+   * [性能优化] 条漫模式图片加载完成处理
+   */
+  private handleWebtoonImageLoad(page: MangaPage, chapterId: string, pageIndex: number): void {
+    const loadState = this.imageLoadStates.get(page.id);
+    if (loadState) {
+      loadState.isLoading = false;
+      if (page.sourceType !== ImageSourceType.LOCAL) {
+        loadState.isLoaded = true;
+      }
+      loadState.error = undefined;
+      this.imageLoadStates.set(page.id, loadState);
+      // 不触发整个Map的响应式更新，减少不必要的重绘
+    }
+  }
+
+  /**
+   * [性能优化] 条漫模式图片加载失败处理
+   * 注意：对于本地图片，不设置错误状态，因为可能只是PixelMap被释放
+   */
+  private handleWebtoonImageError(page: MangaPage, chapterId: string, pageIndex: number): void {
+    // 本地图片的“加载失败”通常是PixelMap被清理导致，不是真正的错误
+    // 因为本地文件可以直接通过路径重新加载
+    if (page.sourceType === ImageSourceType.LOCAL) {
+      logger.debug(TAG, `本地图片渲染失败（可能PixelMap已释放）: ${page.id}`);
+      return;
+    }
+    
+    const loadState = this.imageLoadStates.get(page.id);
+    if (loadState) {
+      loadState.isLoading = false;
+      loadState.isLoaded = false;
+      loadState.error = '加载失败';
+      this.imageLoadStates.set(page.id, loadState);
+    }
+    logger.warn(TAG, `条漫图片加载失败: ${chapterId}_${page.id}`);
+  }
+
+  /**
+   * 构建优化的带间隙条漫视图（支持多章节）
    */
   @Builder
   buildWebtoonWithGapView() {
     Scroll(this.scroller) {
       Column({ space: this.readingSettings.pageSpacing || 16 }) {
-        LazyForEach(this.pageDataSource, (page: MangaPage, index: number) => {
-          this.buildOptimizedImage(page, index)
-        }, (page: MangaPage, index: number) => `${page.id}_${index}`)
+        // 顶部加载提示（或显示已是第一章提示）
+        if (this.isPrevChapterLoading || this.isFirstChapter) {
+          this.buildWebtoonLoadingIndicator('prev')
+        }
+
+        // 使用多章节数据源
+        if (this.webtoonDataItems.length > 0) {
+          ForEach(this.webtoonDataItems, (item: WebtoonDataItem, index: number) => {
+            if (item.type === 'chapter_divider') {
+              this.buildChapterDivider(item)
+            } else if (item.type === 'page' && item.page) {
+              this.buildOptimizedImageForWebtoon(item.page, item.chapterId || '', item.pageIndex || index)
+            }
+          }, (item: WebtoonDataItem, index: number) => {
+            if (item.type === 'chapter_divider') {
+              return `divider_${item.direction}_${item.chapterId}_${index}`;
+            } else {
+              return `page_${item.chapterId}_${item.page?.id}_${index}`;
+            }
+          })
+        } else {
+          // 回退到单章节模式
+          LazyForEach(this.pageDataSource, (page: MangaPage, index: number) => {
+            this.buildOptimizedImage(page, index)
+          }, (page: MangaPage, index: number) => `${this.chapter.id}_${page.id}_${index}`)
+        }
+
+        // 底部加载提示（或显示已是最后一章提示）
+        if (this.isNextChapterLoading || this.isLastChapter) {
+          this.buildWebtoonLoadingIndicator('next')
+        }
       }
-      .padding({ top: 8, bottom: 8 })
+      .padding({
+        top: 8,
+        bottom: 8,
+        left: `${this.readingSettings.webtoonLeftMargin ?? 0}%`,
+        right: `${this.readingSettings.webtoonRightMargin ?? 0}%`
+      })
     }
     .scrollable(ScrollDirection.Vertical)
     .scrollBar(BarState.Off)
@@ -4462,6 +4781,8 @@ export struct MangaViewer {
     .height('100%')
     .onScroll((xOffset: number, yOffset: number) => {
       this.handleWebtoonScroll(yOffset);
+      // [性能优化] 对重型操作进行节流，避免滚动卡顿
+      this.throttledWebtoonHeavyOperations();
     })
     .onScrollStart(() => {
       this.isScrolling = true;
@@ -4764,41 +5085,44 @@ export struct MangaViewer {
     if (page.sourceType === ImageSourceType.LOCAL) {
       const fsPath: string | undefined = this.getFsPathFromPage(page);
       if (!fsPath) {
-        // 本地路径缺失，尝试网络回退
-        if (page.imageUrl && page.imageUrl.length > 0) {
-          await this.loadNetworkPixelMapWithConcurrency(page);
+        logger.warn(TAG, `本地图片路径缺失: id=${page.id}, imagePath=${page.imagePath}, imageUrl=${page.imageUrl}`);
+        const st = this.imageLoadStates.get(page.id);
+        if (st) {
+          st.isLoading = false;
+          st.isLoaded = false;
+          st.error = '本地图片路径缺失';
+          this.imageLoadStates.set(page.id, st);
+          this.imageLoadStates = new Map(this.imageLoadStates);
         }
         return;
       }
       try {
-        const src: image.ImageSource = image.createImageSource(fsPath);
-        const decodingOptions: image.DecodingOptions = { desiredPixelFormat: image.PixelMapFormat.RGBA_8888 } as image.DecodingOptions;
-        const pm: image.PixelMap = await src.createPixelMap(decodingOptions);
-        this.pagePixelMaps.set(page.id, pm);
-        this.pagePixelMaps = new Map(this.pagePixelMaps);
-        try {
-          const statInfo = await fs.stat(fsPath);
-          const sizeNum: number = statInfo.size ? (statInfo.size as number) : 0;
-          this.pagePixelMapMeta.set(page.id, { path: fsPath, size: sizeNum } as PixelMapMeta);
-        } catch (_e) {}
-        this.incrementPixelMapEpoch(page.id);
-        const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
-        const newState: ImageLoadState = {
-          isLoading: false,
-          isLoaded: true,
-          dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
-          error: undefined
-        } as ImageLoadState;
-        this.imageLoadStates.set(page.id, newState);
-        this.imageLoadStates = new Map(this.imageLoadStates);
-        logger.debug(TAG, `PixelMap加载完成: id=${page.id}, path=${fsPath}, epoch=${this.getPixelMapEpoch(page.id)}`);
-
-        // PixelMap加载完成后，如果是当前可见页面，立即刷新UI
-        this.notifyPixelMapLoaded(page);
+        // [性能优化] 使用ImageCacheManager加载本地图片，利用内存缓存
+        const cacheManager: ImageCacheManager = ImageCacheManager.getInstance();
+        const pm: image.PixelMap | null = await cacheManager.loadImage(fsPath, {
+          contentType: this.contentType
+        });
+        
+        if (pm) {
+          this.pagePixelMaps.set(page.id, pm);
+          this.pagePixelMaps = new Map(this.pagePixelMaps);
+          this.incrementPixelMapEpoch(page.id);
+          const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
+          const newState: ImageLoadState = {
+            isLoading: false,
+            isLoaded: true,
+            dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+            error: undefined
+          } as ImageLoadState;
+          this.imageLoadStates.set(page.id, newState);
+          this.imageLoadStates = new Map(this.imageLoadStates);
+          logger.debug(TAG, `[本地] PixelMap加载完成: id=${page.id}, path=${fsPath}`);
+          this.notifyPixelMapLoaded(page);
+        } else {
+          throw new Error('ImageCacheManager返回null');
+        }
       } catch (err) {
         this.logDetailedLoadError(page, err as BusinessError);
-        
-        // [修复] 本地加载失败，先更新状态
         const st: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
         if (st) {
           st.isLoading = false;
@@ -4807,11 +5131,7 @@ export struct MangaViewer {
           this.imageLoadStates.set(page.id, st);
           this.imageLoadStates = new Map(this.imageLoadStates);
         }
-        
-        // 本地加载失败时进行网络回退
-        if (page.imageUrl && page.imageUrl.length > 0) {
-          await this.loadNetworkPixelMapWithConcurrency(page);
-        }
+        logger.warn(TAG, `本地图片加载失败: id=${page.id}, path=${fsPath}`);
       }
       return;
     }
@@ -4922,7 +5242,8 @@ export struct MangaViewer {
         sourceId: this.sourceId,
         mangaId: this.mangaId,
         chapterId: this.chapter.id,
-        pageIndex: page.index
+        pageIndex: page.index,
+        contentType: this.contentType  // [修复] 传递内容类型
       } as LoadOptions;
       const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
       if (pm) {
@@ -5182,7 +5503,16 @@ export struct MangaViewer {
     if (page.sourceType !== ImageSourceType.LOCAL) {
       return undefined;
     }
-    const candidate: string = (page.imageUrl && page.imageUrl.length > 0) ? page.imageUrl : page.imagePath;
+    // [修复] 优先使用localPath（已下载的页面），其次是imagePath，最后是imageUrl
+    let candidate: string = '';
+    if (page.localPath && page.localPath.length > 0) {
+      candidate = page.localPath;
+    } else if (page.imagePath && page.imagePath.length > 0) {
+      candidate = page.imagePath;
+    } else if (page.imageUrl && page.imageUrl.length > 0) {
+      candidate = page.imageUrl;
+    }
+    
     if (!candidate || candidate.length === 0) {
       return undefined;
     }
@@ -5192,6 +5522,11 @@ export struct MangaViewer {
     }
     if (candidate.startsWith('/')) {
       return candidate;
+    }
+    // [修复] 支持相对路径格式（如 storage/Users/... 或 data/...)
+    // 这些是有效的本地路径，需要转换为绝对路径
+    if (candidate.startsWith('storage/') || candidate.startsWith('data/')) {
+      return '/' + candidate;
     }
     return undefined;
   }
@@ -5546,7 +5881,28 @@ export struct MangaViewer {
   }
 
   /**
+   * [性能优化] 节流执行条漫重型操作
+   * 包括章节边界检测、章节切换检测、资源清理等耗时操作
+   * 避免在快速滚动时频繁执行导致卡顿
+   */
+  private throttledWebtoonHeavyOperations(): void {
+    const now = Date.now();
+    if (now - this.lastHeavyUpdateTime < this.HEAVY_UPDATE_THROTTLE_MS) {
+      return; // 还在节流间隔内，跳过
+    }
+    this.lastHeavyUpdateTime = now;
+    
+    // 检测章节边界，触发预加载
+    this.checkWebtoonChapterBoundary();
+    // 更新当前章节
+    this.updateCurrentChapterFromScroll();
+    // 清理远离可见区域的资源
+    this.cleanupDistantChapterResources();
+  }
+
+  /**
    * 更新可见页面索引
+   * [修复] 支持多章节模式，同时检测章节切换
    */
   private updateVisiblePages(): void {
     if (!this.scroller) return;
@@ -5576,14 +5932,48 @@ export struct MangaViewer {
 
     this.visiblePageIndices = visibleIndices;
 
+    // [性能优化] 章节检测和边界检查已经在 throttledWebtoonHeavyOperations 中节流执行
+    // 不再在这里重复调用，避免性能问题
+
     // 更新当前页面和滚动进度
     this.updateWebtoonProgress();
   }
 
   /**
    * 更新条漫进度信息
+   * [修复] 支持多章节模式，根据当前所在章节计算页码和进度
    */
   private updateWebtoonProgress(): void {
+    // [修复] 在多章节模式下，根据当前章节计算页码
+    if (this.chapterBoundaries.length > 0 && this.currentChapterId) {
+      // 查找当前章节的边界信息
+      const currentBoundary = this.chapterBoundaries.find(b => b.chapterId === this.currentChapterId);
+      if (currentBoundary) {
+        const containerHeight = this.screenHeight > 0 ? this.screenHeight : 800;
+        const pageIndex = this.calculateCurrentPageInChapter(currentBoundary, this.scrollPosition, containerHeight);
+        
+        // 更新当前页码
+        if (pageIndex !== this.currentWebtoonPage) {
+          this.currentWebtoonPage = pageIndex;
+          this.viewCurrentPageIndex = pageIndex;
+          
+          // [修复] 只有当前章节是主章节时才通知页面变化
+          // 其他章节的页码变化通过 onWebtoonChapterSwitch 通知
+          if (this.currentChapterId === this.chapter.id) {
+            this.currentPageIndex = pageIndex;
+            if (this.callbacks.onPageChange) {
+              this.callbacks.onPageChange(pageIndex);
+            }
+          }
+        }
+        
+        // 计算当前章节的滚动进度
+        this.webtoonScrollProgress = Math.min(1, Math.max(0, pageIndex / Math.max(1, currentBoundary.pageCount - 1)));
+        return;
+      }
+    }
+    
+    // 回退到单章节模式的计算方式
     if (this.visiblePageIndices.length > 0) {
       // 取可见页面的中间页作为当前页
       const middleIndex = Math.floor(this.visiblePageIndices.length / 2);
@@ -6008,7 +6398,11 @@ export struct MangaViewer {
 
       // 2. 【核心】从统一缓存系统加载PixelMap
       const cacheManager = ImageCacheManager.getInstance();
-      const cachedPixelMap = await cacheManager.loadImage(url, { headers: this.networkHeaders });
+      // [修复] 传递contentType，让本地文件不经过OnlineImageLoader
+      const cachedPixelMap = await cacheManager.loadImage(url, { 
+        headers: this.networkHeaders,
+        contentType: this.contentType  // 关键：传递内容类型
+      });
       
       if (cachedPixelMap) {
         // 判断缓存来源（用于统计）
@@ -6445,6 +6839,694 @@ export struct MangaViewer {
   }
 
   /**
+   * 构建章节分隔组件（条漫模式用）
+   * 在前一章结束和下一章开始之间显示
+   */
+  @Builder
+  buildChapterDivider(item: WebtoonDataItem) {
+    Column() {
+      // 分隔线
+      Divider()
+        .width('80%')
+        .height(1)
+        .color(colorMap.divider)
+        .margin({ bottom: 16 })
+
+      // 章节信息区域
+      Column() {
+        if (item.direction === 'prev') {
+          // 上一章结束提示
+          Text('— 上一章 —')
+            .fontSize(12)
+            .fontColor(colorMap.textSecondary)
+            .margin({ bottom: 8 })
+          Text(item.chapterTitle || '未知章节')
+            .fontSize(16)
+            .fontColor(colorMap.textPrimary)
+            .fontWeight(FontWeight.Medium)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.Center)
+        } else {
+          // 下一章开始提示
+          Text('— 下一章 —')
+            .fontSize(12)
+            .fontColor(colorMap.textSecondary)
+            .margin({ bottom: 8 })
+          Text(item.chapterTitle || '未知章节')
+            .fontSize(16)
+            .fontColor(colorMap.textPrimary)
+            .fontWeight(FontWeight.Medium)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.Center)
+        }
+      }
+      .padding({ left: 24, right: 24, top: 16, bottom: 16 })
+
+      // 分隔线
+      Divider()
+        .width('80%')
+        .height(1)
+        .color(colorMap.divider)
+        .margin({ top: 16 })
+    }
+    .width('100%')
+    .height(120)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor(colorMap.backgroundSecondary)
+  }
+
+  /**
+   * 构建条漫模式的加载中/边界提示
+   */
+  @Builder
+  buildWebtoonLoadingIndicator(direction: 'prev' | 'next') {
+    // 检查是否是边界章节
+    if ((direction === 'prev' && this.isFirstChapter) || (direction === 'next' && this.isLastChapter)) {
+      // 显示边界提示而不是加载中
+      Column() {
+        Text(direction === 'prev' ? '— 已是第一章 —' : '— 已是最后一章 —')
+          .fontSize(14)
+          .fontColor(colorMap.textSecondary)
+      }
+      .width('100%')
+      .height(60)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    } else {
+      // 显示加载中
+      Column() {
+        LoadingProgress()
+          .width(32)
+          .height(32)
+          .color(colorMap.accent)
+        Text(direction === 'prev' ? '正在加载上一章...' : '正在加载下一章...')
+          .fontSize(14)
+          .fontColor(colorMap.textSecondary)
+          .margin({ top: 12 })
+      }
+      .width('100%')
+      .height(100)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+  }
+
+  /**
+   * 初始化条漫多章节数据
+   * 将当前章节、前一章、后一章的页面合并成一个列表
+   * [性能优化] 使用增量更新策略，避免全量替换导致组件闪烁
+   */
+  private initWebtoonMultiChapterData(): void {
+    if (!this.isWebtoonMode()) {
+      return;
+    }
+
+    logger.info(TAG, `🔄 [初始化多章节数据] prevChapter=${this.prevChapter?.title || '无'}(页数:${this.prevChapter?.pages?.length || 0}), currentChapter=${this.chapter?.title || '无'}(页数:${this.chapter?.pages?.length || 0}), nextChapter=${this.nextChapter?.title || '无'}(页数:${this.nextChapter?.pages?.length || 0})`);
+
+    // [性能优化] 检查是否可以增量更新
+    const canIncrementalUpdate = this.canDoIncrementalWebtoonUpdate();
+    
+    if (canIncrementalUpdate) {
+      // 增量更新：只添加新章节的数据
+      this.doIncrementalWebtoonUpdate();
+    } else {
+      // 全量重建：第一次初始化或章节结构变化太大
+      this.doFullWebtoonRebuild();
+    }
+  }
+
+  /**
+   * [性能优化] 检查是否可以增量更新条漫数据
+   */
+  private canDoIncrementalWebtoonUpdate(): boolean {
+    // 如果没有现有数据，必须全量重建
+    if (this.webtoonDataItems.length === 0) {
+      return false;
+    }
+    
+    // 如果当前章节ID变了，必须全量重建
+    if (this.currentChapterId !== this.chapter.id) {
+      return false;
+    }
+    
+    // 检查现有数据中是否包含当前章节
+    const hasCurrentChapter = this.chapterBoundaries.some(b => b.chapterId === this.chapter.id);
+    if (!hasCurrentChapter) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * [性能优化] 增量更新条漫数据 - 只添加新章节
+   */
+  private doIncrementalWebtoonUpdate(): void {
+    const existingPrevChapterId = this.chapterBoundaries.find(b => 
+      this.chapterBoundaries.indexOf(b) === 0 && b.chapterId !== this.chapter.id
+    )?.chapterId;
+    const existingNextChapterId = this.chapterBoundaries.find(b => 
+      this.chapterBoundaries.indexOf(b) === this.chapterBoundaries.length - 1 && b.chapterId !== this.chapter.id
+    )?.chapterId;
+    
+    let itemsChanged = false;
+    
+    // 检查是否需要添加下一章
+    if (this.nextChapter && this.nextChapter.pages && this.nextChapter.pages.length > 0 &&
+        !this.chapterBoundaries.some(b => b.chapterId === this.nextChapter!.id)) {
+      logger.info(TAG, `[增量更新] 添加下一章: ${this.nextChapter.title}`);
+      this.appendNextChapterData();
+      itemsChanged = true;
+    }
+    
+    // 检查是否需要添加上一章（上一章需要前置，不常见，通常是全量重建）
+    if (this.prevChapter && this.prevChapter.pages && this.prevChapter.pages.length > 0 &&
+        !this.chapterBoundaries.some(b => b.chapterId === this.prevChapter!.id)) {
+      // 上一章需要前置，这种情况比较复杂，直接全量重建
+      logger.info(TAG, `[增量更新] 需要添加上一章，回退到全量重建`);
+      this.doFullWebtoonRebuild();
+      return;
+    }
+    
+    if (itemsChanged) {
+      // 触发响应式更新
+      this.webtoonDataItems = [...this.webtoonDataItems];
+      this.chapterBoundaries = [...this.chapterBoundaries];
+      // [性能优化] 重建位置缓存
+      this.rebuildWebtoonPositionCache();
+      logger.info(TAG, `✅ [增量更新完成] 总项数=${this.webtoonDataItems.length}, 章节数=${this.chapterBoundaries.length}`);
+    }
+  }
+
+  /**
+   * [性能优化] 追加下一章数据到列表末尾
+   */
+  private appendNextChapterData(): void {
+    if (!this.nextChapter || !this.nextChapter.pages || this.nextChapter.pages.length === 0) {
+      return;
+    }
+    
+    let globalIndex = this.webtoonDataItems.length;
+    
+    // 添加章节分隔
+    this.webtoonDataItems.push({
+      type: 'chapter_divider',
+      chapterId: this.nextChapter.id,
+      chapterTitle: this.nextChapter.title,
+      direction: 'next',
+      globalIndex: globalIndex
+    });
+    globalIndex++;
+    
+    // 添加下一章页面
+    const nextStartIndex = globalIndex;
+    for (let i = 0; i < this.nextChapter.pages.length; i++) {
+      const page = this.nextChapter.pages[i];
+      this.webtoonDataItems.push({
+        type: 'page',
+        page: page,
+        chapterId: this.nextChapter.id,
+        pageIndex: i,
+        globalIndex: globalIndex
+      });
+      globalIndex++;
+    }
+    
+    // 添加章节边界信息
+    this.chapterBoundaries.push({
+      chapterId: this.nextChapter.id,
+      startIndex: nextStartIndex,
+      endIndex: globalIndex - 1,
+      pageCount: this.nextChapter.pages.length
+    });
+  }
+
+  /**
+   * [性能优化] 全量重建条漫数据
+   */
+  private doFullWebtoonRebuild(): void {
+    const items: WebtoonDataItem[] = [];
+    const boundaries: ChapterBoundary[] = [];
+    let globalIndex = 0;
+
+    // 添加前一章分隔（如果有前一章）
+    if (this.prevChapter && this.prevChapter.pages && this.prevChapter.pages.length > 0) {
+      // 前一章页面
+      const prevStartIndex = globalIndex;
+      for (let i = 0; i < this.prevChapter.pages.length; i++) {
+        const page = this.prevChapter.pages[i];
+        items.push({
+          type: 'page',
+          page: page,
+          chapterId: this.prevChapter.id,
+          pageIndex: i,
+          globalIndex: globalIndex
+        });
+        globalIndex++;
+      }
+      boundaries.push({
+        chapterId: this.prevChapter.id,
+        startIndex: prevStartIndex,
+        endIndex: globalIndex - 1,
+        pageCount: this.prevChapter.pages.length
+      });
+
+      // 添加前一章结束/当前章开始的分隔
+      items.push({
+        type: 'chapter_divider',
+        chapterId: this.chapter.id,
+        chapterTitle: this.chapter.title,
+        direction: 'next',
+        globalIndex: globalIndex
+      });
+      globalIndex++;
+    }
+
+    // 当前章节页面
+    if (this.chapter && this.chapter.pages) {
+      const currentStartIndex = globalIndex;
+      for (let i = 0; i < this.chapter.pages.length; i++) {
+        const page = this.chapter.pages[i];
+        items.push({
+          type: 'page',
+          page: page,
+          chapterId: this.chapter.id,
+          pageIndex: i,
+          globalIndex: globalIndex
+        });
+        globalIndex++;
+      }
+      boundaries.push({
+        chapterId: this.chapter.id,
+        startIndex: currentStartIndex,
+        endIndex: globalIndex - 1,
+        pageCount: this.chapter.pages.length
+      });
+    }
+
+    // 添加下一章分隔（如果有下一章）
+    if (this.nextChapter && this.nextChapter.pages && this.nextChapter.pages.length > 0) {
+      // 添加当前章结束/下一章开始的分隔
+      items.push({
+        type: 'chapter_divider',
+        chapterId: this.nextChapter.id,
+        chapterTitle: this.nextChapter.title,
+        direction: 'next',
+        globalIndex: globalIndex
+      });
+      globalIndex++;
+
+      // 下一章页面
+      const nextStartIndex = globalIndex;
+      for (let i = 0; i < this.nextChapter.pages.length; i++) {
+        const page = this.nextChapter.pages[i];
+        items.push({
+          type: 'page',
+          page: page,
+          chapterId: this.nextChapter.id,
+          pageIndex: i,
+          globalIndex: globalIndex
+        });
+        globalIndex++;
+      }
+      boundaries.push({
+        chapterId: this.nextChapter.id,
+        startIndex: nextStartIndex,
+        endIndex: globalIndex - 1,
+        pageCount: this.nextChapter.pages.length
+      });
+    }
+
+    this.webtoonDataItems = items;
+    this.chapterBoundaries = boundaries;
+    this.currentChapterId = this.chapter.id;
+    
+    // [性能优化] 重建位置缓存
+    this.rebuildWebtoonPositionCache();
+
+    logger.info(TAG, `✅ [全量重建完成] 总项数=${items.length}, 章节数=${boundaries.length}`);
+    boundaries.forEach((b, idx) => {
+      logger.info(TAG, `  章节${idx}: id=${b.chapterId}, range=[${b.startIndex}, ${b.endIndex}], pages=${b.pageCount}`);
+    });
+  }
+
+  /**
+   * 检测条漫滚动是否接近章节边界
+   * 当接近顶部或底部时，触发加载相邻章节
+   */
+  private checkWebtoonChapterBoundary(): void {
+    if (!this.isWebtoonMode() || !this.chapter) {
+      return;
+    }
+
+    const currentScrollY = this.scrollPosition;
+    const containerHeight = this.screenHeight > 0 ? this.screenHeight : 800;
+    const preloadThreshold = containerHeight * 2; // 提前2屏开始预加载
+
+    // 计算总高度
+    const totalHeight = this.calculateTotalWebtoonHeight();
+    const maxScrollY = Math.max(0, totalHeight - containerHeight);
+
+    // 检查是否接近底部（需要加载下一章）
+    if (currentScrollY >= maxScrollY - preloadThreshold) {
+      // 如果是最后一章，不需要加载下一章
+      if (this.isLastChapter) {
+        this.isNextChapterLoading = false;
+        return;
+      }
+      // [修复] 只有当下一章未加载且未在请求中时才触发请求
+      // 条件改为：未请求过 && 未加载中 && 下一章未加载
+      if (!this.nextChapterRequested && !this.isNextChapterLoading && !this.nextChapter) {
+        this.nextChapterRequested = true;
+        this.isNextChapterLoading = true;
+        logger.info(TAG, `条漫模式：接近底部，请求加载下一章`);
+        if (this.onRequestAdjacentChapter) {
+          this.onRequestAdjacentChapter('next');
+        } else if (this.callbacks.onChapterChange) {
+          // 兼容旧的回调方式
+          this.callbacks.onChapterChange('next');
+        }
+      }
+    }
+
+    // 检查是否接近顶部（需要加载上一章）
+    if (currentScrollY <= preloadThreshold) {
+      // 如果是第一章，不需要加载上一章
+      if (this.isFirstChapter) {
+        this.isPrevChapterLoading = false;
+        return;
+      }
+      // [修复] 只有当前一章未加载且未在请求中时才触发请求
+      if (!this.prevChapterRequested && !this.isPrevChapterLoading && !this.prevChapter) {
+        this.prevChapterRequested = true;
+        this.isPrevChapterLoading = true;
+        logger.info(TAG, `条漫模式：接近顶部，请求加载上一章`);
+        if (this.onRequestAdjacentChapter) {
+          this.onRequestAdjacentChapter('prev');
+        } else if (this.callbacks.onChapterChange) {
+          // 兼容旧的回调方式
+          this.callbacks.onChapterChange('prev');
+        }
+      }
+    }
+  }
+
+  /**
+   * 计算条漫总高度
+   * [修复] 使用webtoonDataItems计算，包含所有已加载的章节
+   */
+  private calculateTotalWebtoonHeight(): number {
+    const spacing = this.readingSettings.pageSpacing || 16;
+    let totalHeight = 0;
+
+    // [修复] 如果有多章节数据，使用webtoonDataItems计算
+    if (this.webtoonDataItems.length > 0) {
+      for (let i = 0; i < this.webtoonDataItems.length; i++) {
+        const item = this.webtoonDataItems[i];
+        if (item.type === 'page' && item.page) {
+          totalHeight += this.getEstimatedImageHeight(item.page);
+        } else if (item.type === 'chapter_divider') {
+          totalHeight += 120; // 分隔组件高度
+        }
+        if (i < this.webtoonDataItems.length - 1) {
+          totalHeight += spacing;
+        }
+      }
+      return totalHeight;
+    }
+
+    // 回退到单章节计算
+    if (!this.chapter || !this.chapter.pages) {
+      return 0;
+    }
+
+    for (let i = 0; i < this.chapter.pages.length; i++) {
+      const page = this.chapter.pages[i];
+      totalHeight += this.getEstimatedImageHeight(page);
+      if (i < this.chapter.pages.length - 1) {
+        totalHeight += spacing;
+      }
+    }
+
+    return totalHeight;
+  }
+
+  /**
+   * 清理远离可见区域的章节图片资源
+   * 当章节完全离开可见区域时释放内存
+   */
+  private cleanupDistantChapterResources(): void {
+    if (!this.isWebtoonMode() || this.chapterBoundaries.length === 0) {
+      return;
+    }
+
+    const currentScrollY = this.scrollPosition;
+    const containerHeight = this.screenHeight > 0 ? this.screenHeight : 800;
+    const cleanupThreshold = containerHeight * 5; // 超过5屏距离才清理
+
+    // 计算每个章节的滚动范围并判断是否需要清理
+    for (const boundary of this.chapterBoundaries) {
+      if (boundary.chapterId === this.chapter.id) {
+        // 不清理当前章节
+        continue;
+      }
+
+      // 计算章节的滚动位置范围
+      const chapterStartY = this.calculateWebtoonItemScrollPosition(boundary.startIndex);
+      const chapterEndY = this.calculateWebtoonItemScrollPosition(boundary.endIndex + 1);
+
+      // 检查是否远离可见区域
+      const distanceToVisible = Math.min(
+        Math.abs(chapterStartY - (currentScrollY + containerHeight)),
+        Math.abs(chapterEndY - currentScrollY)
+      );
+
+      if (distanceToVisible > cleanupThreshold) {
+        // 清理该章节的PixelMap
+        this.cleanupChapterPixelMaps(boundary.chapterId);
+      }
+    }
+  }
+
+  /**
+   * 清理指定章节的PixelMap
+   */
+  private cleanupChapterPixelMaps(chapterId: string): void {
+    const keysToDelete: string[] = [];
+
+    // 找出属于该章节的页面
+    for (const item of this.webtoonDataItems) {
+      if (item.type === 'page' && item.chapterId === chapterId && item.page) {
+        const pageId = item.page.id;
+        if (this.pagePixelMaps.has(pageId)) {
+          keysToDelete.push(pageId);
+        }
+      }
+    }
+
+    // 释放PixelMap
+    for (const pageId of keysToDelete) {
+      const pm = this.pagePixelMaps.get(pageId);
+      if (pm) {
+        try {
+          pm.release();
+        } catch (e) {
+          logger.warn(TAG, `释放PixelMap失败: ${pageId}`);
+        }
+        this.pagePixelMaps.delete(pageId);
+        this.pagePixelMapMeta.delete(pageId);
+      }
+    }
+
+    if (keysToDelete.length > 0) {
+      this.pagePixelMaps = new Map(this.pagePixelMaps);
+      logger.info(TAG, `清理章节 ${chapterId} 的 ${keysToDelete.length} 个PixelMap`);
+    }
+  }
+
+  /**
+   * 计算条漫数据项的滚动位置
+   * [性能优化] 使用缓存避免重复计算
+   */
+  private calculateWebtoonItemScrollPosition(itemIndex: number): number {
+    if (itemIndex <= 0) {
+      return 0;
+    }
+    
+    // [性能优化] 使用缓存
+    if (this.webtoonPositionCacheValid && itemIndex < this.webtoonItemPositionCache.length) {
+      return this.webtoonItemPositionCache[itemIndex];
+    }
+
+    const spacing = this.readingSettings.pageSpacing || 16;
+    let position = 0;
+
+    for (let i = 0; i < Math.min(itemIndex, this.webtoonDataItems.length); i++) {
+      const item = this.webtoonDataItems[i];
+      if (item.type === 'page' && item.page) {
+        position += this.getEstimatedImageHeight(item.page);
+      } else if (item.type === 'chapter_divider') {
+        position += 120; // 分隔组件高度
+      }
+      position += spacing;
+    }
+
+    return position;
+  }
+  
+  /**
+   * [性能优化] 重建条漫项位置缓存
+   */
+  private rebuildWebtoonPositionCache(): void {
+    if (this.webtoonDataItems.length === 0) {
+      this.webtoonItemPositionCache = [];
+      this.webtoonPositionCacheValid = false;
+      return;
+    }
+    
+    const spacing = this.readingSettings.pageSpacing || 16;
+    const cache: number[] = [0]; // 第0项位置为0
+    let position = 0;
+    
+    for (let i = 0; i < this.webtoonDataItems.length; i++) {
+      const item = this.webtoonDataItems[i];
+      if (item.type === 'page' && item.page) {
+        position += this.getEstimatedImageHeight(item.page);
+      } else if (item.type === 'chapter_divider') {
+        position += 120;
+      }
+      position += spacing;
+      cache.push(position);
+    }
+    
+    this.webtoonItemPositionCache = cache;
+    this.webtoonPositionCacheValid = true;
+    logger.debug(TAG, `[性能优化] 条漫位置缓存重建完成，共${cache.length}项`);
+  }
+  
+  /**
+   * [性能优化] 失效条漫位置缓存
+   */
+  private invalidateWebtoonPositionCache(): void {
+    this.webtoonPositionCacheValid = false;
+  }
+
+  /**
+   * 更新当前显示的章节ID（根据滚动位置）
+   * [修复] 当滚动到其他章节时，通知父组件更新当前章节和页码
+   */
+  private updateCurrentChapterFromScroll(): void {
+    if (!this.isWebtoonMode() || this.chapterBoundaries.length === 0) {
+      return;
+    }
+
+    const currentScrollY = this.scrollPosition;
+    const containerHeight = this.screenHeight > 0 ? this.screenHeight : 800;
+    const viewCenter = currentScrollY + containerHeight / 2;
+
+    // 找到视图中心所在的章节
+    for (const boundary of this.chapterBoundaries) {
+      const chapterStartY = this.calculateWebtoonItemScrollPosition(boundary.startIndex);
+      const chapterEndY = this.calculateWebtoonItemScrollPosition(boundary.endIndex + 1);
+
+      if (viewCenter >= chapterStartY && viewCenter < chapterEndY) {
+        if (this.currentChapterId !== boundary.chapterId) {
+          const oldChapterId = this.currentChapterId;
+          this.currentChapterId = boundary.chapterId;
+          logger.info(TAG, `条漫章节切换: ${oldChapterId} -> ${boundary.chapterId}`);
+
+          // [修复] 当切换到其他章节时，通知父组件更新当前章节和页码
+          // 计算当前在新章节中的页码
+          const pageIndexInChapter = this.calculateCurrentPageInChapter(boundary, currentScrollY, containerHeight);
+          
+          // 获取章节标题
+          const chapterTitle = this.getChapterTitleById(boundary.chapterId);
+          
+          logger.info(TAG, `条漫章节切换通知: chapterId=${boundary.chapterId}, title=${chapterTitle}, pageIndex=${pageIndexInChapter}`);
+          
+          // 通知父组件
+          if (this.callbacks.onWebtoonChapterSwitch) {
+            this.callbacks.onWebtoonChapterSwitch(boundary.chapterId, chapterTitle, pageIndexInChapter);
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * 计算当前在指定章节中的页码
+   */
+  private calculateCurrentPageInChapter(boundary: ChapterBoundary, scrollY: number, containerHeight: number): number {
+    const viewCenter = scrollY + containerHeight / 2;
+    const spacing = this.readingSettings.pageSpacing || 16;
+    
+    // 遍历该章节的页面，找到视图中心所在的页面
+    let currentTop = this.calculateWebtoonItemScrollPosition(boundary.startIndex);
+    let pageIndex = 0;
+    
+    for (let i = boundary.startIndex; i <= boundary.endIndex; i++) {
+      const item = this.webtoonDataItems[i];
+      if (item.type === 'page' && item.page) {
+        const pageHeight = this.getEstimatedImageHeight(item.page);
+        const pageBottom = currentTop + pageHeight;
+        
+        if (viewCenter >= currentTop && viewCenter < pageBottom) {
+          return pageIndex;
+        }
+        
+        currentTop = pageBottom + spacing;
+        pageIndex++;
+      } else if (item.type === 'chapter_divider') {
+        currentTop += 120 + spacing; // 分隔组件高度
+      }
+    }
+    
+    return Math.max(0, pageIndex - 1);
+  }
+
+  /**
+   * 根据章节ID获取章节标题
+   */
+  private getChapterTitleById(chapterId: string): string {
+    if (this.chapter.id === chapterId) {
+      return this.chapter.title;
+    }
+    if (this.prevChapter && this.prevChapter.id === chapterId) {
+      return this.prevChapter.title;
+    }
+    if (this.nextChapter && this.nextChapter.id === chapterId) {
+      return this.nextChapter.title;
+    }
+    return '';
+  }
+
+  /**
+   * 获取当前章节的页数
+   */
+  private getCurrentChapterPageCount(): number {
+    if (!this.currentChapterId) {
+      return this.chapter.pages.length;
+    }
+    
+    if (this.currentChapterId === this.chapter.id) {
+      return this.chapter.pages.length;
+    }
+    if (this.prevChapter && this.currentChapterId === this.prevChapter.id) {
+      return this.prevChapter.pages.length;
+    }
+    if (this.nextChapter && this.currentChapterId === this.nextChapter.id) {
+      return this.nextChapter.pages.length;
+    }
+    
+    // 回退到主章节
+    return this.chapter.pages.length;
+  }
+
+  /**
    * 构建双页模式指示器
    */
   @Builder
@@ -6485,12 +7567,23 @@ export struct MangaViewer {
 
   /**
    * 构建条漫进度指示器
+   * [修复] 支持多章节模式，显示当前章节的页数
    */
   @Builder
   buildWebtoonProgressIndicator() {
     if (this.showWebtoonProgress && this.isWebtoonMode()) {
       Column() {
-        // 页面信息
+        // [修复] 多章节模式下显示章节标题
+        if (this.currentChapterId && this.currentChapterId !== this.chapter.id) {
+          Text(this.getChapterTitleById(this.currentChapterId))
+            .fontSize(10)
+            .fontColor(colorMap.accent)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ bottom: 4 })
+        }
+        
+        // 页面信息 - 使用当前章节的页数
         Row() {
           Text(`${this.currentWebtoonPage + 1}`)
             .fontSize(14)
@@ -6501,7 +7594,7 @@ export struct MangaViewer {
             .fontSize(12)
             .fontColor(colorMap.textSecondary)
 
-          Text(`${this.chapter.pages.length}`)
+          Text(`${this.getCurrentChapterPageCount()}`)
             .fontSize(12)
             .fontColor(colorMap.textSecondary)
         }

@@ -23,7 +23,7 @@ export enum BackgroundBlurIconType {
 @Component
 export struct BackgroundBlurOverlay {
   // 是否显示遮罩
-  @Prop isVisible: boolean = false;
+  @Prop @Watch('onVisibleChange') isVisible: boolean = false;
   // 背景类型
   @Prop bgType: string = BackgroundBlurBgType.SOLID;
   // 自定义背景图片路径
@@ -32,6 +32,11 @@ export struct BackgroundBlurOverlay {
   @Prop iconType: string = BackgroundBlurIconType.SHIELD;
   // 当前主题
   @Prop currentTheme: ThemeType = ThemeType.LIGHT;
+  
+  // 动画状态
+  @State private animatedOpacity: number = 0;
+  @State private iconScale: number = 0.8;
+  @State private shouldRender: boolean = false;
 
   // 获取背景颜色（根据主题）
   private getBackgroundColor(): ResourceColor {
@@ -43,8 +48,47 @@ export struct BackgroundBlurOverlay {
     return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme);
   }
 
-  build() {
+  // 监听isVisible变化，触发动画
+  onVisibleChange(): void {
     if (this.isVisible) {
+      // 进入动画：先显示组件，再播放淡入
+      this.shouldRender = true;
+      // 下一帧播放动画
+      setTimeout(() => {
+        animateTo({
+          duration: 250,
+          curve: Curve.EaseOut
+        }, () => {
+          this.animatedOpacity = 1;
+          this.iconScale = 1.0;
+        });
+      }, 16);
+    } else {
+      // 退出动画：先播放淡出，再隐藏组件
+      animateTo({
+        duration: 200,
+        curve: Curve.EaseIn,
+        onFinish: () => {
+          this.shouldRender = false;
+        }
+      }, () => {
+        this.animatedOpacity = 0;
+        this.iconScale = 0.8;
+      });
+    }
+  }
+
+  aboutToAppear(): void {
+    // 初始化时如果已可见，直接显示
+    if (this.isVisible) {
+      this.shouldRender = true;
+      this.animatedOpacity = 1;
+      this.iconScale = 1.0;
+    }
+  }
+
+  build() {
+    if (this.shouldRender || this.isVisible) {
       Stack() {
         // 背景层 - 扩展到系统栏区域实现完全沉浸式
         Column()
@@ -64,7 +108,7 @@ export struct BackgroundBlurOverlay {
           })
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        // 中央图标
+        // 中央图标（带缩放动画）
         Column() {
           if (this.iconType === BackgroundBlurIconType.LOGO) {
             // 应用Logo
@@ -72,21 +116,26 @@ export struct BackgroundBlurOverlay {
               .width(120)
               .height(120)
               .objectFit(ImageFit.Contain)
+              .scale({ x: this.iconScale, y: this.iconScale })
           } else {
             // 安全盾牌图标 - 使用lock图标代替shield
             SymbolGlyph($r('sys.symbol.lock_fill'))
               .fontSize(120)
               .fontColor([this.getIconColor()])
+              .effectStrategy(SymbolEffectStrategy.NONE)
+              .symbolEffect(new ScaleSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.iconScale)
           }
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
+        .scale({ x: this.iconScale, y: this.iconScale })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
       .width('100%')
       .height('100%')
+      .opacity(this.animatedOpacity)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
   }

@@ -916,6 +916,7 @@ export interface GenericQueryRecord {
   chapterId?: DatabaseValue;
   // online_chapter 表字段
   externalId?: DatabaseValue;
+  url?: DatabaseValue;  // 章节URL
   userId?: DatabaseValue;
   pageNumber?: DatabaseValue;
   readTime?: DatabaseValue;

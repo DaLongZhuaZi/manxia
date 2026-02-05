@@ -87,6 +87,10 @@ class ComicListDataSource implements IDataSource {
     return this.items[index];
   }
 
+  getItems(): ComicInfo[] {
+    return this.items;
+  }
+
   registerDataChangeListener(listener: DataChangeListener): void {
     if (this.listeners.indexOf(listener) < 0) {
       this.listeners.push(listener);
@@ -105,6 +109,36 @@ class ComicListDataSource implements IDataSource {
     this.notifyDataReload();
   }
 
+  /**
+   * 在列表顶部插入新项目（用于优雅刷新）
+   */
+  prependItems(newItems: ComicInfo[]): void {
+    if (newItems.length === 0) return;
+    this.items = [...newItems, ...this.items];
+    // 通知数据变化，触发UI更新
+    this.listeners.forEach(listener => {
+      listener.onDataAdd(0);
+    });
+  }
+
+  /**
+   * 更新已存在的项目信息（不改变位置）
+   */
+  updateExistingItems(updatedItems: Map<string, ComicInfo>): void {
+    let hasChanges = false;
+    this.items = this.items.map(item => {
+      const updated = updatedItems.get(item.id);
+      if (updated) {
+        hasChanges = true;
+        return updated;
+      }
+      return item;
+    });
+    if (hasChanges) {
+      this.notifyDataReload();
+    }
+  }
+
   notifyDataReload(): void {
     this.listeners.forEach(listener => {
       listener.onDataReloaded();
@@ -117,6 +151,17 @@ class ComicListDataSource implements IDataSource {
 interface ThemeOption {
   label: string;
   value: string;
+}
+
+/**
+ * 筛选历史记录项
+ */
+interface FilterHistoryItem {
+  id: string;               // 唯一标识
+  filterLabel: string;      // 筛选条件的标签名称（如"同人 / 最多点击 / 全部时间"）
+  results: ComicInfo[];     // 该筛选条件下的结果
+  expanded: boolean;        // 是否展开
+  timestamp: number;        // 创建时间
 }
 
 @Component
@@ -147,9 +192,10 @@ export struct SourceDetailPage {
   @State requiresCredentialLogin: boolean = false; // 是否需要凭据登录
   @State userAvatarUrl: string = ''; // 用户头像URL
   @State filterOrdering: string = '-datetime_updated'; // 筛选排序
-  @State filterRegion: string = 'all'; // 筛选地区
-  @State filterTheme: string = 'all'; // 筛选题材
+  @State filterRegion: string = ''; // 筛选地区（空字符串表示全部）
+  @State filterTheme: string = ''; // 筛选题材（空字符串表示全部）
   @State sourceFilterConfig: FilterConfig | null = null; // 图源筛选配置
+  @State dynamicFilterValues: Map<string, string> = new Map(); // 动态筛选值（支持不同图源的不同筛选组）
   @State searchResults: ComicInfo[] = []; // 搜索结果（独立存储）
   @State lastSearchKeyword: string = ''; // 上次搜索的关键词
   @State searchTabVisible: boolean = false; // 搜索标签是否可见
@@ -163,10 +209,27 @@ export struct SourceDetailPage {
   // 显示模式相关状态
   @State displayMode: DisplayMode = DisplayMode.GRID; // 当前显示模式
   @State showDisplayModeMenu: boolean = false; // 显示模式选择菜单
+  @State tabDisplayModes: Map<string, DisplayMode> = new Map(); // 每个标签的显示模式
+  
+  // 首次加载标记（用于控制空状态显示）
+  @State hasLoadedOnce: boolean = false; // 是否已完成首次加载
+  
+  // 筛选历史记录（可折叠显示上次筛选结果）
+  @State filterHistory: FilterHistoryItem[] = []; // 筛选历史列表
+  private readonly MAX_FILTER_HISTORY: number = 5; // 最多保留的历史记录数
+  private pendingFilterHistory: ComicInfo[] = []; // 等待保存到历史的旧数据
+  private pendingFilterLabel: string = ''; // 等待保存的筛选标签
+  private isDeleteButtonClicked: boolean = false; // 防止删除按钮事件冒泡的标志
   
   // 横向滑动切换标签页相关状态
   @State private swipeStartX: number = 0;
   @State private swipeOffsetX: number = 0;
+  
+  // 优雅刷新相关状态
+  @State private refreshHintVisible: boolean = false; // 刷新提示是否可见
+  @State private refreshHintMessage: string = ''; // 刷新提示消息
+  @State private refreshHintType: 'success' | 'info' | 'error' | 'loading' = 'info'; // 刷新提示类型
+  @State private refreshHintOpacity: number = 0; // 刷新提示透明度（用于动画）
 
   private sourceId: number = 0;
   private sourceName: string = '';
@@ -230,9 +293,10 @@ export struct SourceDetailPage {
         const initialTab = param.initialTab as string | undefined;
         const searchKeyword = param.searchKeyword as string | undefined;
         const searchType = param.searchType as string | undefined;
+        const fromGlobalSearch = param.fromGlobalSearch as boolean | undefined;  // 是否来自全局搜索
         
         // 异步初始化
-        this.initializeAsyncWithParams(initialTab, searchKeyword, searchType);
+        this.initializeAsyncWithParams(initialTab, searchKeyword, searchType, fromGlobalSearch);
       }
     }
     
@@ -249,13 +313,14 @@ export struct SourceDetailPage {
    * 异步初始化（无参数版本，向后兼容）
    */
   private async initializeAsync(): Promise<void> {
-    await this.initializeAsyncWithParams(undefined, undefined, undefined);
+    await this.initializeAsyncWithParams(undefined, undefined, undefined, undefined);
   }
 
   /**
    * 异步初始化（带参数版本）
+   * @param fromGlobalSearch 是否来自全局搜索，如果是则优先使用缓存结果
    */
-  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string): Promise<void> {
+  private async initializeAsyncWithParams(initialTab?: string, searchKeyword?: string, searchType?: string, fromGlobalSearch?: boolean): Promise<void> {
     try {
       // 首先加载 sourceName（用于页面跳转参数传递）
       await this.loadSourceName();
@@ -294,6 +359,9 @@ export struct SourceDetailPage {
         await this.loadBaseUrlAndCookieBootstrap();
       }
       
+      // 加载标签显示模式设置
+      await this.loadAllTabDisplayModes();
+      
       // 加载标签页配置
       await this.loadTabsConfig();
       
@@ -325,12 +393,17 @@ export struct SourceDetailPage {
         }
       }
       
-      // 加载筛选设置
-      await this.loadFilterSettings();
+      // 加载筛选设置（使用动态筛选加载，同时加载旧版筛选）
+      await this.loadDynamicFilterSettings();
       
       // 加载漫画列表（如果是搜索标签，执行搜索）
       if (this.currentTabId === 'search' && searchKeyword) {
-        await this.performSearch();
+        // 【关键】如果来自全局搜索，尝试使用缓存结果
+        if (fromGlobalSearch && this.tryLoadFromGlobalSearchCache(searchKeyword)) {
+          logger.info(TAG, '使用全局搜索缓存结果');
+        } else {
+          await this.performSearch();
+        }
       } else {
         await this.loadComics();
       }
@@ -385,6 +458,82 @@ export struct SourceDetailPage {
       logger.error(TAG, '加载图源信息失败', String(error));
     }
   }
+  
+  /**
+   * 尝试从全局搜索缓存加载结果
+   * @param keyword 搜索关键词
+   * @returns 是否成功加载
+   */
+  private tryLoadFromGlobalSearchCache(keyword: string): boolean {
+    try {
+      const cacheKey = `global_search_cache_${this.sourceId}`;
+      const cacheStr = AppStorage.get<string>(cacheKey);
+      
+      if (!cacheStr) {
+        logger.info(TAG, `未找到全局搜索缓存: ${cacheKey}`);
+        return false;
+      }
+      
+      interface CachedComicInfo {
+        id: string;
+        title: string;
+        author: string;
+        coverUrl: string;
+        description: string;
+        url: string;
+        status: string;
+      }
+      interface SearchCacheData {
+        keyword: string;
+        results: CachedComicInfo[];
+        timestamp: number;
+      }
+      
+      const cacheData: SearchCacheData = JSON.parse(cacheStr) as SearchCacheData;
+      
+      // 检查关键词是否匹配
+      if (cacheData.keyword !== keyword) {
+        logger.info(TAG, `缓存关键词不匹配: 缓存="${cacheData.keyword}", 当前="${keyword}"`);
+        return false;
+      }
+      
+      // 检查缓存是否过期（5分钟）
+      const cacheAge = Date.now() - cacheData.timestamp;
+      if (cacheAge > 5 * 60 * 1000) {
+        logger.info(TAG, `全局搜索缓存已过期: ${cacheAge}ms`);
+        AppStorage.delete(cacheKey);
+        return false;
+      }
+      
+      // 转换为 ComicInfo 格式
+      const comics: ComicInfo[] = cacheData.results.map((item: CachedComicInfo): ComicInfo => ({
+        id: item.id,
+        title: item.title,
+        author: item.author,
+        coverUrl: item.coverUrl,
+        description: item.description,
+        url: item.url,
+        status: item.status
+      }));
+      
+      // 更新 UI
+      this.searchResults = comics;
+      this.comicList = comics;
+      this.comicDataSource.updateItems(comics);
+      this.hasMore = false;  // 全局搜索缓存不支持分页
+      this.lastSearchKeyword = keyword;
+      
+      logger.info(TAG, `成功加载全局搜索缓存: ${comics.length} 条结果`);
+      
+      // 清除缓存（一次性使用）
+      AppStorage.delete(cacheKey);
+      
+      return true;
+    } catch (error) {
+      logger.error(TAG, `加载全局搜索缓存失败: ${error}`);
+      return false;
+    }
+  }
 
   /**
    * 加载漫画列表（带缓存支持）
@@ -427,8 +576,8 @@ export struct SourceDetailPage {
         comics = await this.loadComicsWithHTTP();
       }
 
-      // 3. 更新缓存
-      if (this.currentPage === 1) {
+      // 3. 更新缓存（不缓存空结果，避免加载失败后重试无效）
+      if (this.currentPage === 1 && comics.length > 0) {
         this.contentCache.set(
           this.sourceId,
           this.currentTabId,
@@ -437,7 +586,7 @@ export struct SourceDetailPage {
           this.currentPage,
           comics.length >= 20
         );
-      } else {
+      } else if (this.currentPage > 1) {
         this.contentCache.append(
           this.sourceId,
           workflowKey,
@@ -447,14 +596,21 @@ export struct SourceDetailPage {
         );
       }
 
-      // 4. 更新UI
+      // 4. 处理筛选历史（新数据加载完成后，把旧数据折叠到历史）
+      if (this.currentPage === 1 && this.pendingFilterHistory.length > 0 && comics.length > 0) {
+        this.saveToFilterHistory(this.pendingFilterHistory, this.pendingFilterLabel);
+        this.pendingFilterHistory = [];
+        this.pendingFilterLabel = '';
+      }
+
+      // 5. 更新UI
       if (this.currentPage === 1) {
         this.comicList = comics;
       } else {
-        this.comicList = [...this.comicList, ...comics];
+        this.comicList = this.comicList.concat(comics);
       }
 
-      // 后台异步处理封面缓存（不阻塞UI）
+      // 后台异步处理封面缓存（不阻塞 UI）
       this.processCoverCacheAsync(comics);
       this.hasMore = comics.length >= 20;
       this.comicDataSource.updateItems(this.comicList);
@@ -464,11 +620,16 @@ export struct SourceDetailPage {
       logger.error(TAG, '加载漫画列表失败', String(error));
     } finally {
       this.isLoading = false;
+      // 标记首次加载已完成
+      if (!this.hasLoadedOnce) {
+        this.hasLoadedOnce = true;
+      }
     }
   }
 
   /**
    * 生成工作流缓存键
+   * 注意：缓存键需要包含所有影响结果的参数，包括动态筛选参数
    */
   private generateWorkflowKey(): string {
     const tab = this.currentTabId;
@@ -477,7 +638,20 @@ export struct SourceDetailPage {
     if (tab === 'search') {
       return `search:${this.searchKeyword}:${this.selectedSearchType}`;
     } else if (tab === 'filter') {
-      return `filter:${this.filterOrdering}:${this.filterRegion}:${this.filterTheme}`;
+      // 筛选标签需要包含所有动态筛选参数
+      const filterParts: string[] = ['filter'];
+      const groups = this.getDynamicFilterGroups();
+      for (const group of groups) {
+        const value = this.dynamicFilterValues.get(group.id) || group.defaultValue || '';
+        filterParts.push(`${group.id}=${value}`);
+      }
+      return filterParts.join(':');
+    } else if (tab === 'leaderboard') {
+      // 排行榜标签需要包含 timeType 参数
+      const groups = this.getDynamicFilterGroups();
+      const timeTypeGroup = groups.find(g => g.id === 'timeType');
+      const timeType = this.dynamicFilterValues.get('timeType') || (timeTypeGroup?.defaultValue) || 'a';
+      return `leaderboard:timeType=${timeType}`;
     } else {
       return tab; // popular, latest, favorites等
     }
@@ -795,8 +969,8 @@ export struct SourceDetailPage {
       // 加载标签页配置
       await this.loadTabsConfig();
       
-      // 加载筛选设置
-      await this.loadFilterSettings();
+      // 加载筛选设置（使用动态筛选加载）
+      await this.loadDynamicFilterSettings();
       
       // 加载漫画列表
       await this.loadComics();
@@ -1066,11 +1240,19 @@ export struct SourceDetailPage {
           case TabType.CUSTOM:
             logger.info(TAG, `开始筛选: 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
             const params = currentTab.filterParams || {};
+            // 输出 dynamicFilterValues 的内容用于调试
+            const filterEntries: string[] = [];
+            this.dynamicFilterValues.forEach((value: string, key: string) => {
+              filterEntries.push(`${key}=${value}`);
+            });
+            logger.info(TAG, `动态筛选参数: [${filterEntries.join(', ')}]`);
+            // 传递动态筛选参数，支持不同图源的不同筛选组
             result = await this.mangaSourceEngine.getFiltered(
               this.currentPage,
               params.ordering || this.filterOrdering,
               params.region || this.filterRegion,
-              params.theme || this.filterTheme
+              params.theme || this.filterTheme,
+              this.dynamicFilterValues  // 传递动态筛选参数
             );
             break;
           
@@ -1086,7 +1268,7 @@ export struct SourceDetailPage {
           
           case TabType.LEADERBOARD:
             logger.info(TAG, `开始获取排行榜: 页码=${this.currentPage}, 尝试=${attempt + 1}/${MAX_RETRIES + 1}`);
-            result = await this.mangaSourceEngine.getLeaderboard(this.currentPage);
+            result = await this.mangaSourceEngine.getLeaderboard(this.currentPage, this.dynamicFilterValues);
             break;
           
           case TabType.SEARCH:
@@ -1272,9 +1454,28 @@ export struct SourceDetailPage {
   private async switchToTab(tabId: string): Promise<void> {
     if (this.currentTabId === tabId) return;
 
+    // 检查是否从筛选标签切换到非筛选标签，如果是则清空筛选历史
+    const currentTab = this.tabsConfig.find(t => t.id === this.currentTabId);
+    const targetTab = this.tabsConfig.find(t => t.id === tabId);
+    const isCurrentFilterTab = currentTab && (currentTab.type === TabType.FILTER || currentTab.type === TabType.LEADERBOARD || currentTab.type === TabType.CUSTOM);
+    const isTargetFilterTab = targetTab && (targetTab.type === TabType.FILTER || targetTab.type === TabType.LEADERBOARD || targetTab.type === TabType.CUSTOM);
+    
+    // 如果从筛选类型标签切换到非筛选类型标签，清空筛选历史
+    if (isCurrentFilterTab && !isTargetFilterTab) {
+      this.clearFilterHistory();
+    }
+
     this.currentTabId = tabId;
     this.currentPage = 1;
     this.hasMore = true;
+    
+    // 加载该标签的显示模式
+    this.loadTabDisplayMode(tabId);
+    
+    // 保存上次访问的标签（搜索标签除外）
+    if (tabId !== 'search') {
+      this.saveLastVisitedTab(tabId);
+    }
     
     // 如果切换到搜索标签，使用缓存的搜索结果
     if (tabId === 'search') {
@@ -1294,7 +1495,15 @@ export struct SourceDetailPage {
   private shouldShowFilterOptions(): boolean {
     const currentTab = this.tabsConfig.find(t => t.id === this.currentTabId);
     if (!currentTab) return false;
-    return currentTab.type === TabType.FILTER || currentTab.type === TabType.CUSTOM;
+    // 筛选和自定义标签页始终显示筛选选项
+    if (currentTab.type === TabType.FILTER || currentTab.type === TabType.CUSTOM) {
+      return true;
+    }
+    // 排行榜标签页如果有filterConfig也显示筛选选项
+    if (currentTab.type === TabType.LEADERBOARD && currentTab.filterConfig && currentTab.filterConfig.groups.length > 0) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -1345,9 +1554,16 @@ export struct SourceDetailPage {
 
       logger.info(TAG, `最终标签列表: ${this.tabsConfig.map(t => t.name).join(', ')}`);
 
-      // 设置默认标签
+      // 设置默认标签（优先使用上次访问的标签）
       if (this.tabsConfig.length > 0 && !this.currentTabId) {
-        this.currentTabId = this.tabsConfig[0].id;
+        const lastTabId = await this.loadLastVisitedTab();
+        if (lastTabId && this.tabsConfig.find(t => t.id === lastTabId)) {
+          this.currentTabId = lastTabId;
+        } else {
+          this.currentTabId = this.tabsConfig[0].id;
+        }
+        // 加载该标签的显示模式
+        this.loadTabDisplayMode(this.currentTabId);
       }
     } catch (error) {
       logger.error(TAG, '加载标签配置失败', String(error));
@@ -1356,16 +1572,24 @@ export struct SourceDetailPage {
       this.tabsConfig = sortTabs(defaultConfig.tabs);
       if (this.tabsConfig.length > 0) {
         this.currentTabId = this.tabsConfig[0].id;
+        this.loadTabDisplayMode(this.currentTabId);
       }
     }
   }
 
   /**
    * 为筛选标签添加筛选配置
+   * 注意：只有当标签本身没有定义 filterConfig 时，才从顶级 filters 配置中添加
    */
   private enrichFilterTabsWithConfig(tabs: TabConfig[], filtersConfig: Record<string, Object>): void {
     const filterTab = tabs.find(t => t.type === TabType.FILTER);
     if (!filterTab) {
+      return;
+    }
+
+    // 如果标签已经有 filterConfig，不覆盖
+    if (filterTab.filterConfig && filterTab.filterConfig.groups && filterTab.filterConfig.groups.length > 0) {
+      logger.info(TAG, `筛选标签已有 filterConfig，保留原有配置（${filterTab.filterConfig.groups.length} 个筛选组）`);
       return;
     }
 
@@ -1414,7 +1638,7 @@ export struct SourceDetailPage {
         title: '筛选',
         description: '选择筛选条件'
       };
-      logger.info(TAG, `为筛选标签添加了 ${groups.length} 个筛选组`);
+      logger.info(TAG, `为筛选标签添加了 ${groups.length} 个筛选组（从顶级 filters 配置）`);
     }
   }
 
@@ -2164,8 +2388,9 @@ export struct SourceDetailPage {
             this.buildComicGrid()
 
             // 2. 中层：空状态视图
-            // 仅在非加载中且数据为空时覆盖显示
-            if (!this.isLoading && this.comicList.length === 0) {
+            // 仅在首次加载完成后、非加载中且数据为空时覆盖显示
+            // 初次进入页面时不显示"暂无内容"，等待自动加载
+            if (this.hasLoadedOnce && !this.isLoading && this.comicList.length === 0) {
               // 包裹一层背景色，防止透视到底层的 Grid（虽然此时 Grid 应该是空的）
               Column() {
                 this.buildEmptyView()
@@ -2173,6 +2398,7 @@ export struct SourceDetailPage {
               .width('100%')
               .height('100%')
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
+              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
             }
 
             // 3. 顶层：加载视图
@@ -2367,41 +2593,221 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 构建筛选选项
+   * 构建筛选选项（动态生成，根据图源配置自动适配）
    */
   @Builder
   buildFilterOptions() {
-    Row({ space: 12 }) {
-      Button(this.getOrderingLabel())
-        .fontSize(14)
-        .layoutWeight(1)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .onClick(() => {
-          this.showOrderingPicker();
-        })
+    // 获取当前标签的筛选配置
+    if (this.getDynamicFilterGroups().length > 0) {
+      // 使用图源配置的动态筛选组
+      Row({ space: 8 }) {
+        ForEach(this.getDynamicFilterGroups(), (group: FilterGroup) => {
+          Button(this.getDynamicFilterLabel(group))
+            .fontSize(13)
+            .height(32)
+            .layoutWeight(1)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.showDynamicFilterPicker(group);
+            })
+        }, (group: FilterGroup) => group.id)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    } else {
+      // 回退到默认的三个筛选按钮
+      Row({ space: 12 }) {
+        Button(this.getOrderingLabel())
+          .fontSize(14)
+          .layoutWeight(1)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.showOrderingPicker();
+          })
 
-      Button(this.getRegionLabel())
-        .fontSize(14)
-        .layoutWeight(1)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .onClick(() => {
-          this.showRegionPicker();
-        })
+        Button(this.getRegionLabel())
+          .fontSize(14)
+          .layoutWeight(1)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.showRegionPicker();
+          })
 
-      Button(this.getThemeLabel())
-        .fontSize(14)
-        .layoutWeight(1)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .onClick(() => {
-          this.showThemePicker();
-        })
+        Button(this.getThemeLabel())
+          .fontSize(14)
+          .layoutWeight(1)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.showThemePicker();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
     }
-    .width('100%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+  }
+
+  /**
+   * 获取动态筛选组列表
+   */
+  private getDynamicFilterGroups(): FilterGroup[] {
+    // 优先从当前标签页的filterConfig获取
+    const currentTab = this.tabsConfig.find(t => t.id === this.currentTabId);
+    if (currentTab && currentTab.filterConfig && currentTab.filterConfig.groups.length > 0) {
+      return currentTab.filterConfig.groups;
+    }
+    // 其次从图源级别的sourceFilterConfig获取
+    if (this.sourceFilterConfig && this.sourceFilterConfig.groups.length > 0) {
+      return this.sourceFilterConfig.groups;
+    }
+    return [];
+  }
+
+  /**
+   * 获取动态筛选组的当前值标签
+   */
+  private getDynamicFilterLabel(group: FilterGroup): string {
+    const currentValue = this.dynamicFilterValues.get(group.id) || group.defaultValue || '';
+    const option = group.options.find(o => o.value === currentValue);
+    if (option) {
+      return option.label;
+    }
+    // 如果没找到匹配的选项，返回组标题
+    return group.title || group.id;
+  }
+
+  /**
+   * 显示动态筛选选择器
+   */
+  private showDynamicFilterPicker(group: FilterGroup): void {
+    if (!group.options || group.options.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: `${group.title}暂无可选项` });
+      return;
+    }
+
+    const labels = group.options.map(o => o.label);
+    const values = group.options.map(o => o.value);
+    const currentValue = this.dynamicFilterValues.get(group.id) || group.defaultValue || '';
+    const currentIndex = values.indexOf(currentValue);
+    
+    // [修复] 在用户选择新值之前，先保存当前的筛选标签
+    this.prepareFilterHistoryBeforeChange();
+
+    this.getUIContext().showTextPickerDialog({
+      range: labels,
+      selected: currentIndex >= 0 ? currentIndex : 0,
+      defaultPickerItemHeight: 36,
+      canLoop: false,
+      onAccept: (value: TextPickerResult) => {
+        const selectedValue = values[value.index as number];
+        
+        // 更新动态筛选值
+        const newMap = new Map(this.dynamicFilterValues);
+        newMap.set(group.id, selectedValue);
+        this.dynamicFilterValues = newMap;
+        
+        // 同时更新传统的筛选参数（保持向后兼容）
+        this.syncLegacyFilterValues(group.id, selectedValue);
+        
+        // 保存筛选设置并刷新
+        this.saveDynamicFilterSettings();
+        this.refreshFilterAfterChange();
+      }
+    });
+  }
+
+  /**
+   * 同步旧版筛选参数（保持向后兼容）
+   */
+  private syncLegacyFilterValues(groupId: string, value: string): void {
+    // 根据组ID同步到对应的旧版筛选变量
+    if (groupId === 'filterOrdering' || groupId === 'sort') {
+      this.filterOrdering = value;
+    } else if (groupId === 'filterRegion' || groupId === 'region') {
+      this.filterRegion = value;
+    } else if (groupId === 'filterTheme' || groupId === 'category' || groupId === 'type' || groupId === 'filter_category') {
+      this.filterTheme = value;
+    }
+  }
+
+  /**
+   * 保存动态筛选设置
+   */
+  private async saveDynamicFilterSettings(): Promise<void> {
+    try {
+      // 保存动态筛选值
+      const filterJson = JSON.stringify(Array.from(this.dynamicFilterValues.entries()));
+      await this.dataManager.saveUserSetting(String(this.sourceId), 'dynamicFilterValues', filterJson);
+      
+      // 同时保存旧版筛选参数
+      await this.saveFilterSettings();
+      
+      logger.info(TAG, `动态筛选设置已保存: ${filterJson}`);
+    } catch (error) {
+      logger.error(TAG, '保存动态筛选设置失败', String(error));
+    }
+  }
+
+  /**
+   * 加载动态筛选设置
+   */
+  private async loadDynamicFilterSettings(): Promise<void> {
+    try {
+      const filterJson = await this.dataManager.getUserSetting(String(this.sourceId), 'dynamicFilterValues');
+      if (filterJson) {
+        const entries = JSON.parse(filterJson) as [string, string][];
+        const loadedMap = new Map<string, string>(entries);
+        
+        // [修复] 验证并清理无效的缓存值
+        const cleanedMap = new Map<string, string>();
+        let hasInvalidValues = false;
+        
+        loadedMap.forEach((value: string, key: string) => {
+          // 检查 filterRegion 的无效值
+          if (key === 'filterRegion' || key === 'region') {
+            const validRegions = ['', 'japan', 'korea', 'west', 'finish'];
+            if (validRegions.includes(value)) {
+              cleanedMap.set(key, value);
+            } else {
+              logger.warn(TAG, `动态筛选无效值: ${key}=${value}，重置为空`);
+              cleanedMap.set(key, '');
+              hasInvalidValues = true;
+            }
+          }
+          // 检查 filterTheme 的无效值
+          else if (key === 'filterTheme' || key === 'category' || key === 'type') {
+            if (value === 'all') {
+              logger.warn(TAG, `动态筛选无效值: ${key}=${value}，重置为空`);
+              cleanedMap.set(key, '');
+              hasInvalidValues = true;
+            } else {
+              cleanedMap.set(key, value);
+            }
+          } else {
+            cleanedMap.set(key, value);
+          }
+        });
+        
+        this.dynamicFilterValues = cleanedMap;
+        logger.info(TAG, `动态筛选设置已加载: ${this.dynamicFilterValues.size}个项`);
+        
+        // 如果有无效值被清理，保存正确的值
+        if (hasInvalidValues) {
+          const cleanedJson = JSON.stringify(Array.from(cleanedMap.entries()));
+          await this.dataManager.saveUserSetting(String(this.sourceId), 'dynamicFilterValues', cleanedJson);
+        }
+      }
+      
+      // 同时加载旧版筛选设置
+      await this.loadFilterSettings();
+    } catch (error) {
+      logger.warn(TAG, '加载动态筛选设置失败，使用默认值', String(error));
+    }
   }
 
   /**
@@ -2434,12 +2840,13 @@ export struct SourceDetailPage {
       const option = regionGroup.options.find(o => o.value === this.filterRegion);
       if (option) return option.label;
     }
-    // 回退到默认标签
+      // 回退到默认标签
     const labels: Record<string, string> = {
-      'all': '全部地区',
-      '0': '日漫',
-      '1': '韩漫',
-      '2': '美漫'
+      '': '全部地区',
+      'japan': '日漫',
+      'korea': '韩漫',
+      'west': '美漫',
+      'finish': '已完结'
     };
     return labels[this.filterRegion] || '地区';
   }
@@ -2456,7 +2863,7 @@ export struct SourceDetailPage {
     }
     // 回退到默认标签
     const labels: Record<string, string> = {
-      'all': '全部题材',
+      '': '全部题材',
       'aiqing': '愛情',
       'huanlexiang': '歡樂向',
       'maoxian': '冒險',
@@ -2474,6 +2881,9 @@ export struct SourceDetailPage {
    * 显示排序选择器（动态从图源配置加载）
    */
   private showOrderingPicker(): void {
+    // [修复] 在打开选择器前保存当前标签
+    this.prepareFilterHistoryBeforeChange();
+    
     // 从图源配置获取排序选项
     const orderingGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterOrdering' || g.id === 'sort');
     
@@ -2490,7 +2900,7 @@ export struct SourceDetailPage {
         onAccept: (value: TextPickerResult) => {
           this.filterOrdering = values[value.index as number];
           this.saveFilterSettings();
-          this.refreshFilter();
+          this.refreshFilterAfterChange();
         }
       });
     } else {
@@ -2504,7 +2914,7 @@ export struct SourceDetailPage {
           const values = ['-datetime_updated', 'datetime_updated', '-popular', 'popular'];
           this.filterOrdering = values[value.index as number];
           this.saveFilterSettings();
-          this.refreshFilter();
+          this.refreshFilterAfterChange();
         }
       });
     }
@@ -2514,6 +2924,9 @@ export struct SourceDetailPage {
    * 显示地区选择器（动态从图源配置加载）
    */
   private showRegionPicker(): void {
+    // [修复] 在打开选择器前保存当前标签
+    this.prepareFilterHistoryBeforeChange();
+    
     // 从图源配置获取地区选项
     const regionGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterRegion');
     
@@ -2530,21 +2943,21 @@ export struct SourceDetailPage {
         onAccept: (value: TextPickerResult) => {
           this.filterRegion = values[value.index as number];
           this.saveFilterSettings();
-          this.refreshFilter();
+          this.refreshFilterAfterChange();
         }
       });
     } else {
-      // 回退到默认选项
+      // 回退到默认选项（使用新的空字符串和字符串值）
       this.getUIContext().showTextPickerDialog({
-        range: ['全部', '日漫', '韩漫', '美漫'],
-        selected: ['all', '0', '1', '2'].indexOf(this.filterRegion),
+        range: ['全部', '日漫', '韩漫', '美漫', '已完结'],
+        selected: ['', 'japan', 'korea', 'west', 'finish'].indexOf(this.filterRegion),
         defaultPickerItemHeight: 36,
         canLoop: false,
         onAccept: (value: TextPickerResult) => {
-          const values = ['all', '0', '1', '2'];
+          const values = ['', 'japan', 'korea', 'west', 'finish'];
           this.filterRegion = values[value.index as number];
           this.saveFilterSettings();
-          this.refreshFilter();
+          this.refreshFilterAfterChange();
         }
       });
     }
@@ -2554,6 +2967,9 @@ export struct SourceDetailPage {
    * 显示题材选择器（动态从图源配置加载）
    */
   private showThemePicker(): void {
+    // [修复] 在打开选择器前保存当前标签
+    this.prepareFilterHistoryBeforeChange();
+    
     // 从图源配置获取题材选项
     const themeGroup = this.sourceFilterConfig?.groups.find(g => g.id === 'filterTheme' || g.id === 'category');
     
@@ -2570,15 +2986,15 @@ export struct SourceDetailPage {
         onAccept: (value: TextPickerResult) => {
           this.filterTheme = values[value.index as number];
           this.saveFilterSettings();
-          this.refreshFilter();
+          this.refreshFilterAfterChange();
         }
       });
       return;
     }
     
-    // 回退到默认选项
+    // 回退到默认选项（使用新的空字符串表示全部）
     const themes: ThemeOption[] = [
-      { label: '全部', value: 'all' },
+      { label: '全部', value: '' },
       { label: '愛情', value: 'aiqing' },
       { label: '歡樂向', value: 'huanlexiang' },
       { label: '冒險', value: 'maoxian' },
@@ -2624,7 +3040,7 @@ export struct SourceDetailPage {
       onAccept: (value: TextPickerResult) => {
         this.filterTheme = themes[value.index as number].value;
         this.saveFilterSettings();
-        this.refreshFilter();
+        this.refreshFilterAfterChange();
       }
     });
   }
@@ -2653,8 +3069,33 @@ export struct SourceDetailPage {
       const theme = await this.dataManager.getUserSetting(String(this.sourceId), 'filterTheme');
       
       if (ordering) this.filterOrdering = ordering;
-      if (region) this.filterRegion = region;
-      if (theme) this.filterTheme = theme;
+      
+      // [修复] 验证缓存的筛选值是否有效，无效则重置为空字符串
+      if (region !== null && region !== undefined) {
+        // 检查是否是旧的无效值（如 'all', '0', '1', '2' 等）
+        const validRegions = ['', 'japan', 'korea', 'west', 'finish'];
+        if (validRegions.includes(region)) {
+          this.filterRegion = region;
+        } else {
+          // 旧值无效，重置为空字符串（表示"全部"）
+          logger.warn(TAG, `无效的地区筛选值: ${region}，重置为空`);
+          this.filterRegion = '';
+          // 保存正确的值
+          await this.dataManager.saveUserSetting(String(this.sourceId), 'filterRegion', '');
+        }
+      }
+      
+      if (theme !== null && theme !== undefined) {
+        // 检查是否是旧的 'all' 值
+        if (theme === 'all') {
+          // 'all' 是旧的无效值，重置为空字符串
+          logger.warn(TAG, `无效的题材筛选值: ${theme}，重置为空`);
+          this.filterTheme = '';
+          await this.dataManager.saveUserSetting(String(this.sourceId), 'filterTheme', '');
+        } else {
+          this.filterTheme = theme;
+        }
+      }
       
       logger.info(TAG, `筛选设置已加载: ordering=${this.filterOrdering}, region=${this.filterRegion}, theme=${this.filterTheme}`);
     } catch (error) {
@@ -2663,12 +3104,155 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 刷新筛选结果
+   * [修复] 在筛选条件变更前保存当前状态（在用户选择新值之前调用）
+   */
+  private prepareFilterHistoryBeforeChange(): void {
+    if (this.comicList.length > 0) {
+      this.pendingFilterHistory = this.comicList.slice(); // 浅拷贝当前结果
+      this.pendingFilterLabel = this.getCurrentFilterLabel(); // 在参数变更前获取标签
+    }
+  }
+
+  /**
+   * [修复] 在筛选条件变更后刷新（在用户选择新值之后调用）
+   */
+  private refreshFilterAfterChange(): void {
+    // pendingFilterHistory 和 pendingFilterLabel 已在 prepareFilterHistoryBeforeChange 中保存
+    
+    // [修复] 清除缓存，确保使用新的筛选参数发起请求
+    // 必须清除缓存，否则切换回之前用过的筛选条件时会返回旧的缓存数据
+    const newWorkflowKey = this.generateWorkflowKey();
+    this.contentCache.clearWorkflow(this.sourceId, newWorkflowKey);
+    logger.info(TAG, `刷新筛选，已清除缓存: ${newWorkflowKey}`);
+    
+    // 显示加载提示
+    this.showRefreshHint('正在获取内容...', 'loading');
+    
+    this.currentPage = 1;
+    // 不清空列表，继续显示旧数据直到新数据加载完成
+    this.loadComicsWithFilterHint();
+  }
+
+  /**
+   * 刷新筛选结果（兼容旧调用）
    */
   private refreshFilter(): void {
-    this.currentPage = 1;
-    this.comicList = [];
-    this.loadComics();
+    // 保存当前结果到待处理队列
+    this.prepareFilterHistoryBeforeChange();
+    this.refreshFilterAfterChange();
+  }
+
+  /**
+   * 加载漫画并显示筛选结果提示
+   */
+  private async loadComicsWithFilterHint(): Promise<void> {
+    try {
+      await this.loadComics();
+      // 加载完成后显示结果提示
+      if (this.comicList.length > 0) {
+        this.showRefreshHint(`已加载 ${this.comicList.length} 条结果`, 'success');
+      } else {
+        this.showRefreshHint('未找到匹配内容', 'info');
+      }
+    } catch (error) {
+      logger.error(TAG, '筛选加载失败', String(error));
+      this.showRefreshHint('加载失败，请重试', 'error');
+    }
+  }
+
+  /**
+   * 保存指定数据到筛选历史记录
+   */
+  private saveToFilterHistory(results: ComicInfo[], filterLabel: string): void {
+    if (results.length === 0) return;
+    
+    const historyItem: FilterHistoryItem = {
+      id: `history_${Date.now()}`,
+      filterLabel: filterLabel || '筛选结果',
+      results: results,
+      expanded: false,  // 默认折叠
+      timestamp: Date.now()
+    };
+    
+    // 添加到历史列表开头
+    const newHistory: FilterHistoryItem[] = [historyItem];
+    for (let i = 0; i < this.filterHistory.length && newHistory.length < this.MAX_FILTER_HISTORY; i++) {
+      newHistory.push(this.filterHistory[i]);
+    }
+    
+    this.filterHistory = newHistory;
+    logger.info(TAG, `已保存筛选历史: ${filterLabel}, 共 ${results.length} 条结果`);
+  }
+
+  /**
+   * 获取当前筛选条件的标签名称
+   */
+  private getCurrentFilterLabel(): string {
+    const labels: string[] = [];
+    const filterGroups = this.getDynamicFilterGroups();
+    
+    if (filterGroups.length > 0) {
+      // 使用动态筛选组
+      for (const group of filterGroups) {
+        const label = this.getDynamicFilterLabel(group);
+        if (label && label !== group.title) {
+          labels.push(label);
+        }
+      }
+    } else {
+      // 使用默认筛选
+      const orderingLabel = this.getOrderingLabel();
+      const regionLabel = this.getRegionLabel();
+      const themeLabel = this.getThemeLabel();
+      
+      if (orderingLabel !== '排序') labels.push(orderingLabel);
+      if (regionLabel !== '地区' && regionLabel !== '全部地区') labels.push(regionLabel);
+      if (themeLabel !== '题材' && themeLabel !== '全部题材') labels.push(themeLabel);
+    }
+    
+    return labels.length > 0 ? labels.join(' / ') : '筛选结果';
+  }
+
+  /**
+   * 切换筛选历史项的展开/折叠状态
+   */
+  private toggleFilterHistoryExpanded(historyId: string): void {
+    logger.info(TAG, `切换筛选历史展开状态: historyId=${historyId}`);
+    const newHistory: FilterHistoryItem[] = [];
+    for (let i = 0; i < this.filterHistory.length; i++) {
+      const item = this.filterHistory[i];
+      if (item.id === historyId) {
+        const newExpanded = !item.expanded;
+        logger.info(TAG, `历史记录 ${historyId} 展开状态: ${item.expanded} -> ${newExpanded}`);
+        const updatedItem: FilterHistoryItem = {
+          id: item.id,
+          filterLabel: item.filterLabel,
+          results: item.results,
+          expanded: newExpanded,
+          timestamp: item.timestamp
+        };
+        newHistory.push(updatedItem);
+      } else {
+        newHistory.push(item);
+      }
+    }
+    this.filterHistory = newHistory;
+  }
+
+  /**
+   * 移除指定的筛选历史记录（带动画）
+   */
+  private removeFilterHistory(historyId: string): void {
+    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.filterHistory = this.filterHistory.filter(item => item.id !== historyId);
+    });
+  }
+
+  /**
+   * 清空所有筛选历史记录
+   */
+  private clearFilterHistory(): void {
+    this.filterHistory = [];
   }
 
   /**
@@ -2676,6 +3260,12 @@ export struct SourceDetailPage {
    */
   private retryLoadContent(): void {
     logger.info(TAG, `用户点击重试按钮，当前标签: ${this.currentTabId}`);
+    
+    // 清除当前工作流的缓存，强制从网络重新加载
+    const workflowKey = this.generateWorkflowKey();
+    this.contentCache.clearWorkflow(this.sourceId, workflowKey);
+    logger.info(TAG, `已清除缓存: ${workflowKey}`);
+    
     this.currentPage = 1;
     this.comicList = [];
     this.comicDataSource.updateItems([]);
@@ -2689,33 +3279,139 @@ export struct SourceDetailPage {
   }
 
   /**
-   * 下拉刷新
+   * 下拉刷新 - 优雅的增量刷新逻辑
+   * 1. 保留当前内容，后台获取新数据
+   * 2. 比对新旧数据，找出新增项
+   * 3. 在顶部插入新增项，带动画效果
+   * 4. 显示轻量级提示
    */
   private async onRefresh(): Promise<void> {
-    if (this.isRefreshing) {
-      return;
-    }
+    logger.info(TAG, '开始下拉刷新 (优雅模式)');
     
-    logger.info(TAG, '开始下拉刷新');
-    this.isRefreshing = true;
+    // 保存当前内容的ID集合，用于比对
+    const existingIds = new Set(this.comicList.map(comic => comic.id));
+    const existingCount = this.comicList.length;
     
     try {
-      // 重置到第一页
-      this.currentPage = 1;
-      this.comicList = [];
-      this.comicDataSource.updateItems([]);
+      // 清除缓存，强制从网络获取最新数据
+      const workflowKey = this.generateWorkflowKey();
+      this.contentCache.clearWorkflow(this.sourceId, workflowKey);
+      logger.info(TAG, `下拉刷新，已清除缓存: ${workflowKey}`);
       
-      // 重新加载内容
-      await this.loadComics();
+      // 后台获取第一页数据（不清空当前列表）
+      let newComics: ComicInfo[] = [];
+      if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
+        newComics = await this.loadComicsWithWebView();
+      } else {
+        newComics = await this.loadComicsWithHTTP();
+      }
+      
+      if (newComics.length === 0) {
+        // 获取失败或无数据
+        this.showRefreshHint('刷新失败，请稍后重试', 'error');
+        return;
+      }
+      
+      // 找出新增的漫画（在新数据中存在但不在旧数据中）
+      const newItems: ComicInfo[] = [];
+      const updatedItems: Map<string, ComicInfo> = new Map();
+      
+      for (const comic of newComics) {
+        if (!existingIds.has(comic.id)) {
+          newItems.push(comic);
+        } else {
+          // 已存在的项，检查是否有更新
+          updatedItems.set(comic.id, comic);
+        }
+      }
+      
+      logger.info(TAG, `刷新结果: 新增 ${newItems.length} 项, 更新 ${updatedItems.size} 项`);
+      
+      // 更新缓存
+      this.contentCache.set(
+        this.sourceId,
+        this.currentTabId,
+        workflowKey,
+        newComics,
+        1,
+        newComics.length >= 20
+      );
+      
+      if (newItems.length > 0) {
+        // 有新内容：使用动画在顶部插入
+        animateTo({
+          duration: 300,
+          curve: Curve.EaseOut
+        }, () => {
+          // 在顶部插入新项
+          this.comicList = [...newItems, ...this.comicList];
+          this.comicDataSource.updateItems(this.comicList);
+          
+          // 后台异步处理封面缓存
+          this.processCoverCacheAsync(newItems);
+        });
+        
+        // 显示新增提示
+        this.showRefreshHint(`发现 ${newItems.length} 部新漫画`, 'success');
+        
+        // 滚动到顶部显示新内容
+        this.scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: { duration: 300 } });
+      } else if (updatedItems.size > 0) {
+        // 无新内容但有更新：更新现有项
+        this.comicDataSource.updateExistingItems(updatedItems);
+        this.showRefreshHint('内容已是最新', 'info');
+      } else {
+        // 完全无变化
+        this.showRefreshHint('内容已是最新', 'info');
+      }
+      
+      // 重置页码和hasMore状态
+      this.currentPage = 1;
+      this.hasMore = newComics.length >= 20;
       
       logger.info(TAG, '下拉刷新完成');
     } catch (error) {
       logger.error(TAG, '下拉刷新失败', String(error));
+      this.showRefreshHint('刷新失败', 'error');
     } finally {
-      // 延迟一点时间再关闭刷新状态，让用户看到刷新动画
+      // 延迟关闭刷新状态，让用户看到刷新动画
       setTimeout(() => {
         this.isRefreshing = false;
-      }, 500);
+      }, 300);
+    }
+  }
+  
+  /**
+   * 显示刷新提示（轻量级Toast样式）
+   */
+  private showRefreshHint(message: string, type: 'success' | 'info' | 'error' | 'loading'): void {
+    this.refreshHintMessage = message;
+    this.refreshHintType = type;
+    this.refreshHintVisible = true;
+    
+    // 淡入动画
+    animateTo({
+      duration: 200,
+      curve: Curve.EaseOut
+    }, () => {
+      this.refreshHintOpacity = 1;
+    });
+    
+    // loading 类型不自动隐藏，需要手动调用其他类型的提示来替换
+    if (type !== 'loading') {
+      // 2秒后自动淡出并隐藏
+      setTimeout(() => {
+        animateTo({
+          duration: 300,
+          curve: Curve.EaseIn
+        }, () => {
+          this.refreshHintOpacity = 0;
+        });
+        
+        setTimeout(() => {
+          this.refreshHintVisible = false;
+        }, 300);
+      }, 2000);
     }
   }
 
@@ -3119,23 +3815,132 @@ export struct SourceDetailPage {
       MenuItem({ content: '网格模式' })
         .selected(this.displayMode === DisplayMode.GRID)
         .onClick(() => {
-          this.displayMode = DisplayMode.GRID;
+          this.setTabDisplayMode(DisplayMode.GRID);
           this.showDisplayModeMenu = false;
         })
       
       MenuItem({ content: '列表模式' })
         .selected(this.displayMode === DisplayMode.LIST)
         .onClick(() => {
-          this.displayMode = DisplayMode.LIST;
+          this.setTabDisplayMode(DisplayMode.LIST);
           this.showDisplayModeMenu = false;
         })
       
       MenuItem({ content: '大封面模式' })
         .selected(this.displayMode === DisplayMode.LARGE_COVER)
         .onClick(() => {
-          this.displayMode = DisplayMode.LARGE_COVER;
+          this.setTabDisplayMode(DisplayMode.LARGE_COVER);
           this.showDisplayModeMenu = false;
         })
+    }
+  }
+
+  /**
+   * 设置当前标签的显示模式并保存
+   */
+  private setTabDisplayMode(mode: DisplayMode): void {
+    this.displayMode = mode;
+    // 保存到Map
+    const newMap = new Map(this.tabDisplayModes);
+    newMap.set(this.currentTabId, mode);
+    this.tabDisplayModes = newMap;
+    // 异步保存到持久化存储
+    this.saveTabDisplayModes();
+  }
+
+  /**
+   * 加载指定标签的显示模式
+   */
+  private loadTabDisplayMode(tabId: string): void {
+    const savedMode = this.tabDisplayModes.get(tabId);
+    if (savedMode !== undefined) {
+      this.displayMode = savedMode;
+    } else {
+      // 默认使用网格模式
+      this.displayMode = DisplayMode.GRID;
+    }
+  }
+
+  /**
+   * 保存所有标签的显示模式
+   */
+  private async saveTabDisplayModes(): Promise<void> {
+    try {
+      const modesObj: Record<string, number> = {};
+      this.tabDisplayModes.forEach((mode, tabId) => {
+        modesObj[tabId] = Number(mode);
+      });
+      await this.dataManager.saveUserSetting(
+        String(this.sourceId),
+        'tabDisplayModes',
+        JSON.stringify(modesObj)
+      );
+      logger.debug(TAG, `已保存标签显示模式: ${JSON.stringify(modesObj)}`);
+    } catch (error) {
+      logger.warn(TAG, '保存标签显示模式失败', String(error));
+    }
+  }
+
+  /**
+   * 加载所有标签的显示模式
+   */
+  private async loadAllTabDisplayModes(): Promise<void> {
+    try {
+      const modesJson = await this.dataManager.getUserSetting(
+        String(this.sourceId),
+        'tabDisplayModes'
+      );
+      if (modesJson) {
+        const modesObj = JSON.parse(modesJson) as Record<string, number>;
+        const newMap = new Map<string, DisplayMode>();
+        Object.keys(modesObj).forEach(tabId => {
+          const modeValue = modesObj[tabId];
+          // 根据数字值转换为DisplayMode枚举
+          if (modeValue === 0) {
+            newMap.set(tabId, DisplayMode.GRID);
+          } else if (modeValue === 1) {
+            newMap.set(tabId, DisplayMode.LIST);
+          } else if (modeValue === 2) {
+            newMap.set(tabId, DisplayMode.LARGE_COVER);
+          } else {
+            newMap.set(tabId, DisplayMode.GRID); // 默认网格模式
+          }
+        });
+        this.tabDisplayModes = newMap;
+        logger.debug(TAG, `已加载标签显示模式: ${this.tabDisplayModes.size}个`);
+      }
+    } catch (error) {
+      logger.warn(TAG, '加载标签显示模式失败', String(error));
+    }
+  }
+
+  /**
+   * 保存上次访问的标签
+   */
+  private async saveLastVisitedTab(tabId: string): Promise<void> {
+    try {
+      await this.dataManager.saveUserSetting(
+        String(this.sourceId),
+        'lastVisitedTab',
+        tabId
+      );
+    } catch (error) {
+      logger.warn(TAG, '保存上次访问标签失败', String(error));
+    }
+  }
+
+  /**
+   * 加载上次访问的标签
+   */
+  private async loadLastVisitedTab(): Promise<string | null> {
+    try {
+      return await this.dataManager.getUserSetting(
+        String(this.sourceId),
+        'lastVisitedTab'
+      );
+    } catch (error) {
+      logger.warn(TAG, '加载上次访问标签失败', String(error));
+      return null;
     }
   }
 
@@ -3297,10 +4102,11 @@ export struct SourceDetailPage {
   @Builder
   buildEmptyView() {
     Column({ space: 16 }) {
-      Image($r('app.media.ic_empty'))
-        .width(80)
-        .height(80)
+      SymbolGlyph($r('sys.symbol.telescope_fill'))
+        .fontSize(50)
         .opacity(0.3)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+
 
       Text('暂无内容')
         .fontSize(15)
@@ -3320,6 +4126,146 @@ export struct SourceDetailPage {
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+  }
+
+  /**
+   * 构建筛选历史记录项（可折叠）
+   */
+  @Builder
+  buildFilterHistoryItem(historyItem: FilterHistoryItem) {
+    Column() {
+      // 折叠头部 - 显示筛选条件和结果数量
+      Row() {
+        // 展开/折叠图标
+        SymbolGlyph(historyItem.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          .animation({ duration: 200, curve: Curve.EaseInOut })
+        
+        // 历史图标
+        SymbolGlyph($r('sys.symbol.clock_arrow_2_circlepath'))
+          .fontSize(14)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          .margin({ left: 8 })
+        
+        // 筛选条件标签
+        Text(historyItem.filterLabel)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+          .margin({ left: 8 })
+        
+        // 结果数量标签
+        Text(`${historyItem.results.length}条`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .margin({ left: 8 })
+        
+        // 删除按钮
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(12)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+        }
+        .width(24)
+        .height(24)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(12)
+        .margin({ left: 8 })
+        .onClick(() => {
+          // 设置标志防止事件冒泡到Row的onClick
+          this.isDeleteButtonClicked = true;
+          this.removeFilterHistory(historyItem.id);
+        })
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 12 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(historyItem.expanded ? { topLeft: 12, topRight: 12 } : 12)
+      .onClick(() => {
+        // 检查是否是删除按钮触发的事件冒泡
+        if (this.isDeleteButtonClicked) {
+          this.isDeleteButtonClicked = false;
+          return;
+        }
+        this.toggleFilterHistoryExpanded(historyItem.id);
+      })
+      
+      // 展开的内容 - 显示历史结果列表
+      if (historyItem.expanded) {
+        Column() {
+          // 根据显示模式选择不同的布局
+          if (this.displayMode === DisplayMode.LIST) {
+            // 列表模式
+            ForEach(historyItem.results, (comic: ComicInfo) => {
+              this.buildComicListItem(comic)
+            }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
+          } else {
+            // 网格模式
+            Grid() {
+              ForEach(historyItem.results, (comic: ComicInfo) => {
+                GridItem() {
+                  if (this.displayMode === DisplayMode.LARGE_COVER) {
+                    this.buildComicLargeCoverCard(comic)
+                  } else {
+                    this.buildComicCard(comic)
+                  }
+                }
+              }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
+            }
+            .columnsTemplate(this.getGridColumnsTemplate())
+            .columnsGap(this.isLandscape ? 16 : 12)
+            .rowsGap(this.isLandscape ? 16 : 12)
+            .width('100%')
+            .layoutDirection(GridDirection.Row)
+            .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
+          }
+        }
+        .width('100%')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius({ bottomLeft: 12, bottomRight: 12 })
+        .padding({ top: 8, bottom: 8 })
+        // [修复] 展开和收起都有动画
+        .transition(
+          TransitionEffect.asymmetric(
+            // 展开动画：淡入 + 从上向下滑入
+            TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+              .combine(TransitionEffect.translate({ y: -20 }).animation({ duration: 200, curve: Curve.EaseOut })),
+            // 收起动画：淡出 + 向上滑出
+            TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+              .combine(TransitionEffect.translate({ y: -10 }).animation({ duration: 150, curve: Curve.EaseIn }))
+          )
+        )
+      }
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+    // [修复] 整个卡片的动画（用于删除时）
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+  }
+
+  /**
+   * 构建筛选历史列表
+   */
+  @Builder
+  buildFilterHistoryList() {
+    if (this.filterHistory.length > 0 && this.shouldShowFilterOptions()) {
+      Column() {
+        // 历史记录列表
+        // 注意：key 函数包含 expanded 状态，确保展开/折叠时触发重新渲染
+        ForEach(this.filterHistory, (item: FilterHistoryItem) => {
+          this.buildFilterHistoryItem(item)
+        }, (item: FilterHistoryItem) => `${item.id}_${item.expanded}`)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 8 })
+    }
   }
 
   /**
@@ -3405,13 +4351,17 @@ export struct SourceDetailPage {
    */
   @Builder
   buildComicGrid() {
-    Refresh({ refreshing: $$this.isRefreshing }) {
-      Scroll(this.scroller) {
-        Column() {
+    Stack({ alignContent: Alignment.Top }) {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        Scroll(this.scroller) {
+          Column() {
+          // 筛选历史记录（可折叠）
+          this.buildFilterHistoryList()
+          
           // 根据显示模式选择不同的布局
           if (this.displayMode === DisplayMode.LIST) {
             // 列表模式
-            List() {
+            List({ space: 0 }) {
               LazyForEach(this.comicDataSource, (comic: ComicInfo, index: number) => {
                 ListItem() {
                   this.buildComicListItem(comic)
@@ -3419,8 +4369,7 @@ export struct SourceDetailPage {
               }, (comic: ComicInfo) => comic.id)
             }
             .width('100%')
-            .divider({ strokeWidth: 1, color: ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme) })
-            .padding(this.isLandscape ? { left: 24, right: 24, top: 8, bottom: 8 } : { left: 16, right: 16, top: 8, bottom: 8 })
+            .padding(this.isLandscape ? { left: 24, right: 24, top: 12, bottom: 12 } : { left: 12, right: 12, top: 8, bottom: 8 })
           } else {
             // 网格模式和大封面模式
             Grid() {
@@ -3487,6 +4436,51 @@ export struct SourceDetailPage {
     })
     .width('100%')
     .height('100%')
+
+      // 刷新提示浮层
+      if (this.refreshHintVisible) {
+        Row() {
+          if (this.refreshHintType === 'loading') {
+            LoadingProgress()
+              .width(18)
+              .height(18)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          } else if (this.refreshHintType === 'success') {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          } else if (this.refreshHintType === 'error') {
+            SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+              .fontSize(18)
+              .fontColor(['#FF4444'])
+          } else {
+            SymbolGlyph($r('sys.symbol.info_circle_fill'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+          }
+
+          Text(this.refreshHintMessage)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .margin({ left: 8 })
+        }
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
+        .borderRadius(20)
+        .shadow({
+          radius: 8,
+          color: 'rgba(0,0,0,0.15)',
+          offsetX: 0,
+          offsetY: 2
+        })
+        .margin({ top: 16 })
+        .opacity(this.refreshHintOpacity)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   /**
@@ -3517,29 +4511,35 @@ export struct SourceDetailPage {
   @Builder
   buildComicCard(comic: ComicInfo) {
     Column({ space: 8 }) {
-      // 封面 - 横屏时高度为屏幕高度的一半，宽度自适应
-      if (this.isLandscape && this.screenHeight > 0) {
-        Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-          .height(this.screenHeight * 0.5)
-          .aspectRatio(0.7)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .onAppear(() => {
-            this.loadCoverPixelMap(comic);
-          })
-      } else {
-        // 竖屏时使用原有样式
-        Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-          .width('100%')
-          .aspectRatio(0.7)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .onAppear(() => {
-            this.loadCoverPixelMap(comic);
-          })
+      // 封面容器 - 使用Stack实现加载动画效果
+      Stack() {
+        // 封面 - 横屏时高度为屏幕高度的一半，宽度自适应
+        if (this.isLandscape && this.screenHeight > 0) {
+          Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+            .height(this.screenHeight * 0.5)
+            .aspectRatio(0.7)
+            .borderRadius(8)
+            .objectFit(ImageFit.Contain)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .onAppear(() => {
+              this.loadCoverPixelMap(comic);
+            })
+            .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+        } else {
+          // 竖屏时使用原有样式
+          Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+            .width('100%')
+            .aspectRatio(0.7)
+            .borderRadius(8)
+            .objectFit(ImageFit.Contain)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .onAppear(() => {
+              this.loadCoverPixelMap(comic);
+            })
+            .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+        }
       }
+      .width('100%')
 
       // 标题 - 固定高度确保卡片一致
       Text(comic.title)
@@ -3573,6 +4573,11 @@ export struct SourceDetailPage {
       offsetX: 0,
       offsetY: 2
     })
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 250, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+    ))
     .onClick(() => {
       this.openComicDetail(comic);
     })
@@ -3584,19 +4589,28 @@ export struct SourceDetailPage {
   @Builder
   buildComicListItem(comic: ComicInfo) {
     Row({ space: 12 }) {
-      // 封面
-      Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-        .width(80)
-        .aspectRatio(0.7)
-        .borderRadius(8)
-        .objectFit(ImageFit.Cover)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .onAppear(() => {
-          this.loadCoverPixelMap(comic);
-        })
+      // 封面 - 精致的封面卡片
+      Stack() {
+        Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+          .width(72)
+          .aspectRatio(0.72)
+          .borderRadius(10)
+          .objectFit(ImageFit.Contain)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .onAppear(() => {
+            this.loadCoverPixelMap(comic);
+          })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+      }
+      .shadow({
+        radius: 6,
+        color: '#15000000',
+        offsetX: 0,
+        offsetY: 2
+      })
 
       // 信息区域
-      Column({ space: 6 }) {
+      Column({ space: 4 }) {
         // 标题
         Text(comic.title)
           .fontSize(15)
@@ -3606,35 +4620,57 @@ export struct SourceDetailPage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
+          .lineHeight(21)
 
         // 作者
         if (comic.author) {
-          Text(comic.author)
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.person_crop_circle_dashed'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(comic.author)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
         }
 
-        // 状态/更新时间等额外信息
-        if (comic.status || comic.updateTime) {
-          Text(String(comic.status || comic.updateTime))
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
+        // 状态标签
+        if (comic.status) {
+          Row() {
+            Text(String(comic.status))
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15')
+              .borderRadius(4)
+          }
         }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Center)
+
+      // 右侧箭头
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
     }
     .width('100%')
-    .padding(12)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .margin({ top: 4, bottom: 4 })
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ x: -20 }).animation({ duration: 250, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+    ))
     .onClick(() => {
       this.openComicDetail(comic);
     })
@@ -3646,16 +4682,20 @@ export struct SourceDetailPage {
   @Builder
   buildComicLargeCoverCard(comic: ComicInfo) {
     Column({ space: 10 }) {
-      // 大封面
-      Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-        .width('100%')
-        .aspectRatio(0.7)
-        .borderRadius(12)
-        .objectFit(ImageFit.Cover)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .onAppear(() => {
-          this.loadCoverPixelMap(comic);
-        })
+      // 大封面 - 添加加载动画
+      Stack() {
+        Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
+          .width('100%')
+          .aspectRatio(0.7)
+          .borderRadius(12)
+          .objectFit(ImageFit.Contain)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .onAppear(() => {
+            this.loadCoverPixelMap(comic);
+          })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
+      }
+      .width('100%')
 
       // 标题
       Text(comic.title)
@@ -3687,6 +4727,11 @@ export struct SourceDetailPage {
       offsetX: 0,
       offsetY: 4
     })
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 250, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+    ))
     .onClick(() => {
       this.openComicDetail(comic);
     })

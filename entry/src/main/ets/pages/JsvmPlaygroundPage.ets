@@ -7,6 +7,7 @@
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
 import { logger } from '../Utils/Logger';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
@@ -1193,6 +1194,21 @@ result`,
     return `${hours}:${minutes}:${seconds}`;
   }
 
+  /**
+   * 复制内容到剪贴板
+   */
+  private async copyToClipboard(text: string): Promise<void> {
+    try {
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      await systemPasteboard.setData(pasteData);
+      promptAction.showToast({ message: '已复制到剪贴板' });
+    } catch (error) {
+      logger.error(TAG, `复制失败: ${String(error)}`);
+      promptAction.showToast({ message: '复制失败' });
+    }
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -1860,8 +1876,7 @@ result`,
             .backgroundColor(Color.Transparent)
             .margin({ left: 8 })
             .onClick(() => {
-              // TODO: 实现复制功能
-              promptAction.showToast({ message: '已复制到剪贴板' });
+              this.copyToClipboard(this.outputText);
             })
         }
       }

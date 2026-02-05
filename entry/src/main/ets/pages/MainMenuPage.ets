@@ -40,6 +40,7 @@ import { NotificationSettingsSubPage } from './settings/NotificationSettingsSubP
 import { AdvancedSettingsSubPage } from './settings/AdvancedSettingsSubPage';
 import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
 import { AnimationSettingsSubPage } from './settings/AnimationSettingsSubPage';
+import { isMainPageBottomBarAnimationEnabled } from '../Framework/Animation/AnimationSettingsManager';
 import { TrackingSettingsSubPage } from './settings/TrackingSettingsSubPage';
 import { AniListLoginPage } from './settings/AniListLoginPage';
 import { SuwayomiSettingsPage } from './settings/SuwayomiSettingsPage';
@@ -56,6 +57,7 @@ import { ReadingAnalyticsPage } from './ReadingAnalyticsPage';
 import { MangaFeedbackPage } from './MangaFeedbackPage';
 import { LogManagerPage } from './LogManagerPage';
 import { OpenSourceLicensePage } from './OpenSourceLicensePage';
+import { SupportersPage } from './SupportersPage';
 import { UserAgreementPage } from './UserAgreementPage';
 import { PrivacyPolicyPage } from './PrivacyPolicyPage';
 import { SourceGuidePage } from './SourceGuidePage';
@@ -73,6 +75,7 @@ import { HelpPanelOverlayV2 } from '../Framework/Components/HelpPanelV2';
 import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
 import { BookSourceManagementPage } from './BookSourceManagementPage';
+import { SourceManagementPage } from './SourceManagementPage';
 import { BackupPage } from './BackupPage';
 
 // 小说页面导入
@@ -153,17 +156,20 @@ import { SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaS
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
 import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
 import { ComicInfo as SuwayomiComicInfo } from '../Framework/Source/SourceExecutor';
+import { SuwayomiImage } from '../components/SuwayomiImage';
 
 // 导入事件总线
-import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload } from '../Framework/EventBus';
+import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileImportRequestedPayload, MangaDeletedPayload, BasePayload } from '../Framework/EventBus';
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
+import { PrivacyAuthDialog } from '../components/PrivacyAuthDialog';
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
 import { SettingsManager } from '../Framework/Managers/SettingsManager';
+import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfParams, SHELF_COLORS, SHELF_ICONS, getTypeShelfManager } from '../Framework/Data/TypeShelfManager';
 
 // 导入响应式布局
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener,
@@ -389,6 +395,18 @@ interface ActionMenuResult {
   index: number;
 }
 
+/**
+ * 书架混合内容项接口（用于自定义书架混合显示）
+ */
+interface ShelfMixedItem {
+  id: string;
+  type: 'manga' | 'ebook' | 'pdfebook' | 'novel';
+  name: string;
+  lastReadTime: number;
+  addTime: number;
+  data: Manga | EBook | NovelBook;
+}
+
 @Entry
 @Component
 struct MainMenuPage {
@@ -472,6 +490,39 @@ struct MainMenuPage {
   @State movingContentType: string = 'manga'; // 正在移动的内容类型
   @State isCategoryEditMode: boolean = false; // 是否处于分类编辑模式（用于拖动排序）
   @State draggingCategoryId: string = ''; // 正在拖动的分类ID
+  // 类型书架相关状态（漫画书架、电子书书架、小说书架）
+  @State selectedShelfType: LibraryContentType = LibraryContentType.MANGA; // 当前选中的书架类型
+  @State shelfContentFilter: LibraryContentType | 'all' = 'all'; // 书架内部内容筛选：'all'表示显示所有类型，其他表示只显示特定类型
+  // 自定义书架管理相关状态
+  private typeShelfManager: TypeShelfManager = getTypeShelfManager();
+  @State typeShelves: TypeShelf[] = []; // 所有书架列表
+  @State selectedShelf: TypeShelf | null = null; // 当前选中的书架
+  @State showAddShelfDialog: boolean = false; // 是否显示新增书架对话框
+  @State showDeleteShelfDialog: boolean = false; // 是否显示删除书架对话框
+  @State shelfToDelete: TypeShelf | null = null; // 待删除的书架
+  @State newShelfName: string = ''; // 新书架名称
+  @State newShelfType: ShelfType = ShelfType.SINGLE; // 新书架类型
+  @State newShelfContentTypes: ShelfContentType[] = [ShelfContentType.MANGA]; // 新书架内容类型
+  @State newShelfIcon: string = '📚'; // 新书架图标
+  @State newShelfColor: string = '#FF6B6B'; // 新书架颜色
+  @State addShelfDialogStep: number = 1; // 新增书架对话框步骤（1=基本信息，2=选择内容类型）
+  @State isShelfEditMode: boolean = false; // 是否处于书架编辑模式
+  @State shelfCardAnimationScale: number = 1; // 书架卡片动画缩放
+  @State deletingShelfId: string = ''; // 正在删除的书架ID（用于动画）
+  // 移动到书架相关状态
+  @State showMoveToShelfDialog: boolean = false; // 是否显示移动到书架对话框
+  @State movingToShelfItemId: string = ''; // 正在移动的内容ID
+  @State movingToShelfContentType: ContentType = ContentType.MANGA; // 正在移动的内容类型
+  @State availableShelvesForMove: TypeShelf[] = []; // 可用于移动的书架列表
+  // 自定义书架排序和筛选相关状态
+  @State customShelfSortType: 'name_asc' | 'name_desc' | 'recent' | 'add_asc' | 'add_desc' = 'add_desc'; // 排序方式
+  @State customShelfTags: string[] = []; // 当前书架内容的标签
+  @State customShelfAuthors: string[] = []; // 当前书架内容的作者
+  @State customShelfSelectedTags: Set<string> = new Set(); // 选中的标签
+  @State customShelfSelectedAuthors: Set<string> = new Set(); // 选中的作者
+  @State showCustomShelfSortPopup: boolean = false; // 是否显示排序弹窗
+  @State showCustomShelfTagPopup: boolean = false; // 是否显示标签筛选弹窗
+  @State showCustomShelfAuthorPopup: boolean = false; // 是否显示作者筛选弹窗
 
   // 多选模式相关状态
   @State isMultiSelectMode: boolean = false;
@@ -606,6 +657,7 @@ struct MainMenuPage {
   @State showBookSourcePicker: boolean = false; // 是否显示书源选择器
   @State bookSourceSearchInput: string = ''; // 书源搜索输入框
   @State isBookSourceSearchMode: boolean = false; // 是否处于搜索模式
+  @State bookSourceKindsExpanded: boolean = false; // 书源发现分类是否展开
   private bookSourceListScroller: Scroller = new Scroller();
 
   // Suwayomi Tab相关状态
@@ -628,6 +680,7 @@ struct MainMenuPage {
   @State suwayomiAvailableLanguages: string[] = []; // 可用语言列表
   @State suwayomiPinnedSourceIds: string[] = []; // 置顶的图源ID列表
   @State suwayomiSourceIconCachePaths: Map<string, string> = new Map(); // 图源图标缓存路径
+  @State suwayomiCategoriesExpanded: boolean = false; // Suwayomi书架分类是否展开
   private suwayomiInitialized: boolean = false; // Suwayomi是否已初始化
   private suwayomiExecutor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly SUWAYOMI_PAGE_SIZE: number = 50;
@@ -760,12 +813,12 @@ struct MainMenuPage {
       required: true // 必须显示
     },
     {
-      title: '发现',
+      title: '历史',
       icon: $r('app.media.ic_discover_selected'),
       selectedIcon: $r('app.media.ic_discover_selected'),
-      systemIcon: $r('sys.symbol.crown'),
+      systemIcon: $r('sys.symbol.clock_arrow_2_circlepath'),
       useSystemIcon: true,
-      hasMultiColor: true, // 发现图标支持多色效果
+      hasMultiColor: true, // 历史图标支持多色效果
       index: TabIndex.DISCOVER,
       required: false
     },
@@ -839,6 +892,12 @@ struct MainMenuPage {
       logger.info(TAG, `分类书架初始化完成，共 ${this.bookshelfCategories.length} 个分类`);
     });
 
+    // 初始化类型书架管理器
+    this.typeShelfManager.initialize().then(() => {
+      this.typeShelves = this.typeShelfManager.getShelves();
+      logger.info(TAG, `类型书架初始化完成，共 ${this.typeShelves.length} 个书架`);
+    });
+
     // 加载可见标签配置
     this.loadVisibleTabs();
 
@@ -889,6 +948,12 @@ struct MainMenuPage {
       this.silentRefreshLibrary();
       this.currentTabIndex = TabIndex.LIBRARY;
       this.tabsController.changeIndex(TabIndex.LIBRARY);
+    });
+
+    // 订阅小说列表刷新事件（换源后触发）
+    eventBus.subscribe(GameEvent.NOVEL_LIST_REFRESH_NEEDED, (payload: IEventPayload) => {
+      logger.info(TAG, `收到小说列表刷新事件，重新加载小说列表`);
+      this.loadNovelList();
     });
 
     // 注册隐私模式监听器
@@ -944,6 +1009,41 @@ struct MainMenuPage {
 
     // 处理 Deep Link
     this.handleDeepLinkIfPresent();
+    
+    // 处理卡片跳转
+    this.handleWidgetNavigationIfPresent();
+  }
+
+  /**
+   * 处理卡片跳转（如果存在）
+   */
+  private handleWidgetNavigationIfPresent(): void {
+    try {
+      const targetPage = AppStorage.get<string>('widgetTargetPage');
+      if (!targetPage) {
+        return;
+      }
+
+      logger.info(TAG, `📱 处理卡片跳转: targetPage=${targetPage}`);
+
+      // 清除标记
+      AppStorage.setOrCreate('widgetTargetPage', '');
+
+      if (targetPage === 'readingAnalytics') {
+        const targetView = AppStorage.get<string>('widgetTargetView') || 'daily';
+        
+        // 延迟跳转，确保页面已加载完成
+        setTimeout(() => {
+          // 设置参数标记用于阅读报告页面读取
+          AppStorage.setOrCreate('analyticsViewMode', targetView);
+          // 跳转到阅读报告页面
+          this.pathStack.pushPathByName('ReadingAnalyticsPage', undefined);
+          logger.info(TAG, `✅ 已跳转到阅读报告页面: viewMode=${targetView}`);
+        }, 300);
+      }
+    } catch (error) {
+      logger.error(TAG, `❌ 处理卡片跳转失败: ${error}`);
+    }
   }
 
   /**
@@ -1213,16 +1313,18 @@ struct MainMenuPage {
 
   /**
    * 加载图源列表
+   * 只加载启用的图源，并按置顶状态排序
    */
   private async loadSources(): Promise<void> {
     try {
       this.isLoadingSourceList = true;
       logger.info(TAG, '开始加载图源列表...');
 
-      this.sourceList = await this.sourceManager.getAllSources();
+      // 只加载启用的图源，并按置顶状态排序
+      this.sourceList = await this.sourceManager.getEnabledSourcesSortedByPinned();
       this.applySourceFilters(); // 应用当前筛选条件
 
-      logger.info(TAG, `加载了 ${this.sourceList.length} 个图源`);
+      logger.info(TAG, `加载了 ${this.sourceList.length} 个启用的图源（置顶${this.sourceList.filter(s => s.isPinned).length}个）`);
     } catch (error) {
       logger.error(TAG, '加载图源列表失败', String(error));
       this.showToast('加载图源列表失败');
@@ -1278,13 +1380,21 @@ struct MainMenuPage {
 
   /**
    * 切换图源类型筛选
+   * 优化：使用动画过渡，避免UI闪烁
    */
   private cycleSourceTypeFilter(): void {
     const types: Array<'all' | 'manga' | 'ebook' | 'novel'> = ['all', 'manga', 'ebook', 'novel'];
     const currentIndex = types.indexOf(this.sourceTypeFilter);
     const nextIndex = (currentIndex + 1) % types.length;
-    this.sourceTypeFilter = types[nextIndex];
-    this.applySourceFilters();
+    
+    // 使用动画过渡切换类型筛选
+    animateTo({
+      duration: 250,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.sourceTypeFilter = types[nextIndex];
+      this.applySourceFilters();
+    });
     
     const typeNames: Record<string, string> = {
       'all': '全部',
@@ -1292,7 +1402,7 @@ struct MainMenuPage {
       'ebook': '电子书源',
       'novel': '小说源'
     };
-    this.showToast(`显示: ${typeNames[this.sourceTypeFilter]}`);
+    this.showToast(`显示: ${typeNames[types[nextIndex]]}`);
   }
 
   /**
@@ -2201,6 +2311,66 @@ struct MainMenuPage {
   }
 
   // ==================== 图源相关方法结束 ====================
+
+  // ==================== 书库长按菜单状态 ====================
+  @State showMangaContextMenu: boolean = false;
+  @State contextMenuManga: Manga | null = null;
+  @State showEBookContextMenu: boolean = false;
+  @State contextMenuEBook: EBook | null = null;
+  @State showNovelContextMenu: boolean = false;
+  @State contextMenuNovel: NovelBook | null = null;
+
+  /**
+   * 显示漫画操作菜单（长按触发）
+   */
+  private showMangaActionMenu(manga: Manga): void {
+    logger.info(TAG, `显示漫画操作菜单: ${manga.title}`);
+    this.contextMenuManga = manga;
+    this.showMangaContextMenu = true;
+  }
+
+  /**
+   * 隐藏漫画操作菜单
+   */
+  private hideMangaContextMenu(): void {
+    this.showMangaContextMenu = false;
+    this.contextMenuManga = null;
+  }
+
+  /**
+   * 显示电子书操作菜单（长按触发）
+   */
+  private showEBookActionMenu(ebook: EBook): void {
+    logger.info(TAG, `显示电子书操作菜单: ${ebook.metadata.title}`);
+    this.contextMenuEBook = ebook;
+    this.showEBookContextMenu = true;
+  }
+
+  /**
+   * 隐藏电子书操作菜单
+   */
+  private hideEBookContextMenu(): void {
+    this.showEBookContextMenu = false;
+    this.contextMenuEBook = null;
+  }
+
+  /**
+   * 显示小说操作菜单（长按触发）
+   */
+  private showNovelActionMenu(novel: NovelBook): void {
+    logger.info(TAG, `显示小说操作菜单: ${novel.name}`);
+    this.contextMenuNovel = novel;
+    this.showNovelContextMenu = true;
+  }
+
+  /**
+   * 隐藏小说操作菜单
+   */
+  private hideNovelContextMenu(): void {
+    this.showNovelContextMenu = false;
+    this.contextMenuNovel = null;
+  }
+  // ==================== 书库长按菜单状态结束 ====================
 
   /**
    * 加载书库视图模式设置
@@ -3131,10 +3301,47 @@ struct MainMenuPage {
 
       // 数据加载完成后提取标签和作者
       await this.extractTagsAndAuthors();
+      
+      // 清理孤立的书架映射记录（那些指向不存在内容的映射）
+      await this.cleanupOrphanedShelfMappings();
 
       logger.info(TAG, '内容数据初始化完成');
     } catch (error) {
       logger.error(TAG, `初始化内容数据失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 清理孤立的书架映射记录
+   * 删除那些在书架映射中存在但实际内容已不存在的记录
+   */
+  private async cleanupOrphanedShelfMappings(): Promise<void> {
+    try {
+      // 收集所有有效的内容ID（包括隐私和非隐私）
+      const validMangaIds = this.mangaList.map((m: Manga) => m.id);
+      const validEbookIds = this.ebookList.map((e: EBook) => e.id);
+      
+      // 对于小说，需要获取所有收藏的小说（包括隐私的），而不只是当前模式下的
+      let allNovelIds: string[] = [];
+      if (this.novelDataManager) {
+        const allNovels = await this.novelDataManager.getFavoriteBooks();
+        allNovelIds = allNovels.map((n: NovelBook) => n.id);
+      }
+      
+      // 调用清理方法
+      const cleanedCount = await this.categoryManager.cleanupOrphanedMappings(
+        validMangaIds,
+        validEbookIds,
+        allNovelIds
+      );
+      
+      if (cleanedCount > 0) {
+        logger.info(TAG, `清理了 ${cleanedCount} 个孤立的书架映射记录`);
+        // 刷新分类列表以更新显示
+        await this.refreshCategories();
+      }
+    } catch (error) {
+      logger.error(TAG, `清理孤立映射失败: ${String(error)}`);
     }
   }
 
@@ -3574,6 +3781,90 @@ struct MainMenuPage {
   }
 
   /**
+   * 增量更新小说列表（避免闪屏）
+   */
+  private incrementalUpdateNovelList(currentList: NovelBook[], newList: NovelBook[]): void {
+    const currentIds = new Set(currentList.map(n => n.id));
+    const newIds = new Set(newList.map(n => n.id));
+    const newNovelMap = new Map(newList.map(n => [n.id, n]));
+
+    // 找出需要删除的项目（在当前列表中但不在新列表中）
+    const toRemoveIndices: number[] = [];
+    for (let i = 0; i < currentList.length; i++) {
+      if (!newIds.has(currentList[i].id)) {
+        toRemoveIndices.push(i);
+      }
+    }
+
+    // 从后向前删除，避免索引变化
+    for (let i = toRemoveIndices.length - 1; i >= 0; i--) {
+      currentList.splice(toRemoveIndices[i], 1);
+    }
+
+    // 更新现有项目的属性（不替换整个对象，保持引用稳定）
+    for (const existing of currentList) {
+      const newNovel = newNovelMap.get(existing.id);
+      if (newNovel) {
+        // 只更新真正变化的属性，避免不必要的渲染
+        if (existing.readStatus !== newNovel.readStatus) {
+          existing.readStatus = newNovel.readStatus;
+        }
+        if (existing.lastReadChapterId !== newNovel.lastReadChapterId) {
+          existing.lastReadChapterId = newNovel.lastReadChapterId;
+        }
+        if (existing.lastReadChapterIndex !== newNovel.lastReadChapterIndex) {
+          existing.lastReadChapterIndex = newNovel.lastReadChapterIndex;
+        }
+        if (existing.lastReadPosition !== newNovel.lastReadPosition) {
+          existing.lastReadPosition = newNovel.lastReadPosition;
+        }
+        if (existing.lastReadTime !== newNovel.lastReadTime) {
+          existing.lastReadTime = newNovel.lastReadTime;
+        }
+        if (existing.totalReadingTime !== newNovel.totalReadingTime) {
+          existing.totalReadingTime = newNovel.totalReadingTime;
+        }
+        if (existing.isFavorite !== newNovel.isFavorite) {
+          existing.isFavorite = newNovel.isFavorite;
+        }
+        if (existing.isPrivate !== newNovel.isPrivate) {
+          existing.isPrivate = newNovel.isPrivate;
+        }
+        if (existing.chapterCount !== newNovel.chapterCount) {
+          existing.chapterCount = newNovel.chapterCount;
+        }
+        if (existing.latestChapterTitle !== newNovel.latestChapterTitle) {
+          existing.latestChapterTitle = newNovel.latestChapterTitle;
+        }
+        // 只有封面路径真正变化时才更新（避免图片闪烁）
+        if (existing.coverLocalPath !== newNovel.coverLocalPath) {
+          existing.coverLocalPath = newNovel.coverLocalPath;
+        }
+        if (existing.coverUrl !== newNovel.coverUrl) {
+          existing.coverUrl = newNovel.coverUrl;
+        }
+        // 更新元数据（标题、作者等可能会被编辑）
+        if (existing.name !== newNovel.name) {
+          existing.name = newNovel.name;
+        }
+        if (existing.author !== newNovel.author) {
+          existing.author = newNovel.author;
+        }
+        if (existing.intro !== newNovel.intro) {
+          existing.intro = newNovel.intro;
+        }
+      }
+    }
+
+    // 添加新项目（在新列表中但不在当前列表中）
+    for (const newNovel of newList) {
+      if (!currentIds.has(newNovel.id)) {
+        currentList.push(newNovel);
+      }
+    }
+  }
+
+  /**
    * 静默刷新书库（增量更新，避免闪屏）
    * 优化：不加载章节信息，书库只需要基本信息，章节在进入详情页时再加载
    */
@@ -3600,7 +3891,30 @@ struct MainMenuPage {
         logger.warn(TAG, `静默刷新电子书列表失败: ${ebookErr instanceof Error ? ebookErr.message : String(ebookErr)}`);
       }
 
-      logger.debug(TAG, `静默刷新书库完成：漫画 ${this.mangaList.length} 部`);
+      // 增量更新小说列表
+      try {
+        // 确保 novelDataManager 已初始化
+        if (!this.novelDataManager) {
+          const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          this.novelDataManager = getNovelDataManager();
+          await this.novelDataManager.initialize(context);
+          logger.debug(TAG, '静默刷新时初始化 novelDataManager');
+        }
+        // 根据隐私模式选择查询方法
+        let newNovelList: NovelBook[] = [];
+        if (this.isPrivacyMode) {
+          newNovelList = await this.novelDataManager.getPrivateBooks();
+        } else {
+          newNovelList = await this.novelDataManager.getNonPrivateBooks();
+        }
+        this.incrementalUpdateNovelList(this.novelList, newNovelList);
+        this.applyNovelFilter();
+        logger.debug(TAG, `静默刷新小说列表完成: ${newNovelList.length} 本`);
+      } catch (novelErr) {
+        logger.warn(TAG, `静默刷新小说列表失败: ${novelErr instanceof Error ? novelErr.message : String(novelErr)}`);
+      }
+
+      logger.debug(TAG, `静默刷新书库完成：漫画 ${this.mangaList.length} 部，电子书 ${this.ebookList.length} 本，小说 ${this.novelList.length} 本`);
     } catch (error) {
       logger.warn(TAG, `静默刷新书库失败: ${String(error)}`);
     }
@@ -4329,6 +4643,9 @@ struct MainMenuPage {
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
     this.checkPendingFileImport();
+    
+    // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
+    this.handleWidgetNavigationIfPresent();
 
     // 根据当前标签页静默刷新对应数据（不显示加载状态，避免闪屏）
     switch (this.currentTabIndex) {
@@ -4347,6 +4664,31 @@ struct MainMenuPage {
       default:
         break;
     }
+  }
+
+  /**
+   * 拦截系统返回键事件
+   * 当处于书架详情视图时，返回书架列表而不是退出应用
+   */
+  onBackPress(): boolean {
+    // 检查是否处于书架详情视图（书架视图模式且详情展开）
+    if (this.currentTabIndex === TabIndex.LIBRARY && 
+        this.libraryViewMode === LibraryViewMode.CATEGORY && 
+        this.showCategoryDetail) {
+      logger.info(TAG, '书架详情视图中，拦截返回事件，返回书架列表');
+      // 用动画关闭详情
+      animateTo({
+        duration: 300,
+        curve: Curve.EaseIn
+      }, () => {
+        this.categoryDetailAnimationProgress = 0;
+        this.showCategoryDetail = false;
+      });
+      return true; // 返回true表示已处理，不继续传递
+    }
+    
+    // 其他情况不拦截，让系统处理默认返回行为
+    return false;
   }
 
   /**
@@ -5173,13 +5515,32 @@ struct MainMenuPage {
     }
   }
   
+  // 隐私密码对话框控制器
+  private privacyAuthDialogController: CustomDialogController | null = null;
+
   /**
    * 显示隐私密码输入对话框
    */
   private showPrivacyPasswordDialog(): void {
-    // TODO: 实现密码输入对话框
-    // 由于需要使用CustomDialog，这里暂时使用Toast提示
-    this.showToast('请再次验证');
+    this.privacyAuthDialogController = new CustomDialogController({
+      builder: PrivacyAuthDialog({
+        onConfirm: async (password: string): Promise<void> => {
+          const success = await this.privacyModeManager.enterPrivacyModeWithPassword(password);
+          if (success) {
+            this.showToast('已进入隐私书库');
+          } else {
+            this.showToast('密码错误');
+          }
+        },
+        onCancel: () => {
+          logger.info(TAG, '用户取消隐私密码验证');
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+    this.privacyAuthDialogController.open();
   }
 
   /**
@@ -5545,14 +5906,26 @@ struct MainMenuPage {
 
   /**
    * 获取当前页面标题
+   * 根据 currentTabIndex 查找对应的标签配置获取标题
    */
   private getPageTitle(): string {
     // 如果在书库页面且处于隐私模式，显示"隐私书架"
     if (this.currentTabIndex === TabIndex.LIBRARY && this.isPrivacyMode) {
       return '隐私书架';
     }
-    const titles = ['漫匣', '我的书库', '发现', '图源', '设置'];
-    return titles[this.currentTabIndex] || '漫画阅读器';
+    
+    // 首页显示应用名称
+    if (this.currentTabIndex === TabIndex.HOME) {
+      return '漫匣';
+    }
+    
+    // 根据 TabIndex 查找对应的标签配置
+    const config = this.tabConfigs.find((cfg: TabConfig) => cfg.index === this.currentTabIndex);
+    if (config) {
+      return config.title;
+    }
+    
+    return '漫匣';
   }
 
 
@@ -6121,7 +6494,7 @@ struct MainMenuPage {
         // 顶部栏：返回按钮（详情模式）或切换按钮（卡片模式）
         Row() {
           if (this.showCategoryDetail) {
-            // 详情模式：显示返回按钮和分类名称
+            // 详情模式：显示返回按钮和书架类型名称
             Button() {
               SymbolGlyph($r('sys.symbol.arrow_left'))
                 .fontSize(24)
@@ -6139,12 +6512,17 @@ struct MainMenuPage {
                 this.categoryDetailAnimationProgress = 0;
                 this.showCategoryDetail = false;
               });
-              setTimeout(() => {
-                this.selectedCategoryId = '';
-              }, 300);
+              // 清除自定义书架筛选状态
+              this.selectedShelf = null;
+              this.customShelfSelectedTags.clear();
+              this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+              this.customShelfSelectedAuthors.clear();
+              this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+              this.customShelfSortType = 'add_desc';
             })
 
-            Text(this.categoryManager.getCategory(this.selectedCategoryId)?.name || '分类详情')
+            // 显示书架名称：自定义书架显示其名称，系统书架显示类型名称
+            Text(this.selectedShelf !== null ? this.selectedShelf.name : this.getShelfTypeName(this.selectedShelfType))
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontFamily(this.appFontFamily)
@@ -6152,7 +6530,7 @@ struct MainMenuPage {
               .layoutWeight(1)
           } else {
             // 卡片模式：显示标题
-            Text('书架视图')
+            Text('我的书架')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontFamily(this.appFontFamily)
@@ -6799,51 +7177,92 @@ struct MainMenuPage {
   }
 
   /**
-   * 构建分类视图（类似iOS App Library）
+   * 构建书架视图（类型书架：漫画书架、电子书书架、小说书架 + 自定义书架）
+   * 根据内容自动显示对应书架，没有内容则不显示，至少保留一个默认书架
    */
   @Builder
   buildCategoryView() {
     Column({ space: 16 }) {
-      // 编辑模式切换栏
+      // 标题栏
       Row() {
-        Text(this.isCategoryEditMode ? '拖动分类进行排序' : '分类书架')
+        Text('我的书架')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         Blank()
-        
-        Button(this.isCategoryEditMode ? '完成' : '编辑')
-          .fontSize(14)
-          .height(32)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(this.isCategoryEditMode
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.isCategoryEditMode
-            ? Color.White
-            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.isCategoryEditMode = !this.isCategoryEditMode;
-          })
+
+        // 管理按钮（进入/退出编辑模式）
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph(this.isShelfEditMode ? $r('sys.symbol.checkmark') : $r('sys.symbol.square_and_pencil'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text(this.isShelfEditMode ? '完成' : '管理')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(28)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+        .borderRadius(14)
+        .onClick(() => {
+          animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+            this.isShelfEditMode = !this.isShelfEditMode;
+          });
+        })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8 })
 
-      // 分类网格（使用Scroll包裹实现丝滑滚动和回弹）
+      // 类型书架网格（使用Scroll包裹实现丝滑滚动和回弹）
       Scroll() {
         Grid() {
-          ForEach(this.bookshelfCategories, (category: BookshelfCategory, index: number) => {
+          // 漫画书架（有漫画内容时显示）
+          if (this.mangaList.length > 0) {
             GridItem() {
-              this.buildCategoryCard(category)
+              this.buildTypeShelfCard(LibraryContentType.MANGA, '漫画书架', this.mangaList.length, this.getMangaShelfCovers())
             }
-          }, (category: BookshelfCategory) => category.id)
+          }
           
-          // 添加新分类按钮（非编辑模式时显示）
-          if (!this.isCategoryEditMode) {
+          // 电子书书架（有电子书内容时显示）
+          if (this.ebookList.length > 0 || this.pdfEbookList.length > 0) {
             GridItem() {
-              this.buildAddCategoryCard()
+              this.buildTypeShelfCard(LibraryContentType.EBOOK, '电子书书架', this.ebookList.length + this.pdfEbookList.length, this.getEBookShelfCovers())
+            }
+          }
+          
+          // 小说书架（有小说内容时显示）
+          if (this.novelList.length > 0) {
+            GridItem() {
+              this.buildTypeShelfCard(LibraryContentType.NOVEL, '小说书架', this.novelList.length, this.getNovelShelfCovers())
+            }
+          }
+          
+          // 自定义书架（从 TypeShelfManager 获取）
+          ForEach(this.typeShelves.filter((shelf: TypeShelf) => !shelf.isSystem), (shelf: TypeShelf) => {
+            GridItem() {
+              this.buildCustomShelfCard(shelf)
+            }
+            .scale({ x: this.deletingShelfId === shelf.id ? 0 : 1, y: this.deletingShelfId === shelf.id ? 0 : 1 })
+            .opacity(this.deletingShelfId === shelf.id ? 0 : 1)
+            .animation({ duration: 300, curve: Curve.EaseIn })
+          }, (shelf: TypeShelf) => shelf.id)
+          
+          // 新增书架卡片
+          GridItem() {
+            this.buildAddShelfCard()
+          }
+          .scale({ x: this.shelfCardAnimationScale, y: this.shelfCardAnimationScale })
+          .animation({ duration: 300, curve: Curve.EaseOut })
+          
+          // 如果所有书架都没有内容且没有自定义书架，显示一个默认的空书架
+          if (this.mangaList.length === 0 && this.ebookList.length === 0 && this.pdfEbookList.length === 0 && this.novelList.length === 0 && this.typeShelves.filter((s: TypeShelf) => !s.isSystem).length === 0) {
+            GridItem() {
+              this.buildTypeShelfCard(LibraryContentType.MANGA, '默认书架', 0, [])
             }
           }
         }
@@ -6852,27 +7271,6 @@ struct MainMenuPage {
         .columnsGap(16)
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: 16 })
-        .editMode(this.isCategoryEditMode)
-        .onItemDragStart((event: ItemDragInfo, itemIndex: number) => {
-          if (itemIndex < this.bookshelfCategories.length) {
-            this.draggingCategoryId = this.bookshelfCategories[itemIndex].id;
-          }
-          return this.buildDraggingCategoryCard();
-        })
-        .onItemDrop((event: ItemDragInfo, itemIndex: number, insertIndex: number, isSuccess: boolean) => {
-          if (isSuccess && itemIndex !== insertIndex && itemIndex < this.bookshelfCategories.length) {
-            // 直接在数组中移动元素
-            const temp = this.bookshelfCategories.splice(itemIndex, 1);
-            this.bookshelfCategories.splice(insertIndex, 0, temp[0]);
-            // 更新所有分类的order属性
-            this.bookshelfCategories.forEach((cat, idx) => {
-              cat.order = idx;
-            });
-            // 保存到持久化存储
-            this.categoryManager.reorderCategories(this.bookshelfCategories);
-          }
-          this.draggingCategoryId = '';
-        })
       }
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
@@ -6882,6 +7280,422 @@ struct MainMenuPage {
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  /**
+   * 构建自定义书架卡片
+   */
+  @Builder
+  buildCustomShelfCard(shelf: TypeShelf) {
+    Column({ space: 4 }) {
+      // 书架容器
+      Stack({ alignContent: Alignment.Bottom }) {
+        // 书架背景图片
+        Image($r('app.media.bookshelf'))
+          .width('100%')
+          .height(40)
+          .objectFit(ImageFit.Fill)
+        
+        // 书本封面排列（在书架上方）
+        if (this.getCustomShelfItemCount(shelf) > 0) {
+          Row({ space: 2 }) {
+            ForEach(this.getCustomShelfCovers(shelf).slice(0, 3), (coverPath: string, index: number) => {
+              Image(coverPath)
+                .width(index === 0 ? 40 : 30)
+                .height(index === 0 ? 56 : 42)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(2)
+                .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
+                .zIndex(index === 0 ? 10 : 5)
+            }, (cover: string, index: number) => `${shelf.id}_cover_${index}`)
+          }
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Bottom)
+          .width('100%')
+          .offset({ y: -28 })
+        } else {
+          // 空状态：显示图标
+          Text(shelf.icon)
+            .fontSize(32)
+            .offset({ y: -30 })
+        }
+        
+        // 编辑模式下显示删除按钮
+        if (this.isShelfEditMode && !shelf.isSystem) {
+          Button() {
+            SymbolGlyph($r('sys.symbol.minus_circle_fill'))
+              .fontSize(24)
+              .fontColor([AppColors.error])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .position({ x: '100%', y: 0 })
+          .translate({ x: -36, y: 4 })
+          .onClick(() => {
+            this.shelfToDelete = shelf;
+            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.showDeleteShelfDialog = true;
+            });
+          })
+        }
+      }
+      .width('100%')
+      .height(70)
+      
+      // 书架名称和数量
+      Column({ space: 2 }) {
+        Row({ space: 4 }) {
+          Text(shelf.icon)
+            .fontSize(14)
+          Text(shelf.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        
+        Text(`${this.getCustomShelfItemCount(shelf)} 项`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .onClick(() => {
+      if (!this.isShelfEditMode) {
+        // 设置选中的自定义书架
+        this.selectedShelf = shelf;
+        this.shelfContentFilter = 'all';
+        // 重置排序和筛选状态
+        this.customShelfSelectedTags.clear();
+        this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+        this.customShelfSelectedAuthors.clear();
+        this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+        this.customShelfSortType = 'add_desc';
+        // 根据书架类型设置selectedShelfType
+        if (shelf.shelfType === ShelfType.SINGLE && shelf.contentTypes.length > 0) {
+          // 单一书架：设置为其内容类型
+          const contentType = shelf.contentTypes[0];
+          if (contentType === ShelfContentType.MANGA) {
+            this.selectedShelfType = LibraryContentType.MANGA;
+          } else if (contentType === ShelfContentType.EBOOK) {
+            this.selectedShelfType = LibraryContentType.EBOOK;
+          } else {
+            this.selectedShelfType = LibraryContentType.NOVEL;
+          }
+        }
+        // 混合书架会在buildCategoryDetailContent中显示所有类型
+        animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+          this.showCategoryDetail = true;
+          this.categoryDetailAnimationProgress = 1;
+        });
+      }
+    })
+  }
+
+  /**
+   * 构建新增书架卡片
+   */
+  @Builder
+  buildAddShelfCard() {
+    Column({ space: 4 }) {
+      // 书架容器
+      Stack({ alignContent: Alignment.Bottom }) {
+        // 书架背景图片
+        Image($r('app.media.bookshelf'))
+          .width('100%')
+          .height(40)
+          .objectFit(ImageFit.Fill)
+          .opacity(0.5)
+        
+        // 添加图标
+        Column({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.plus_circle'))
+            .fontSize(32)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        }
+        .offset({ y: -28 })
+      }
+      .width('100%')
+      .height(70)
+      
+      // 文字
+      Column({ space: 2 }) {
+        Text('新建书架')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 2, color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme), style: BorderStyle.Dashed })
+    .onClick(() => {
+      animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+        this.showAddShelfDialog = true;
+      });
+    })
+  }
+
+  /**
+   * 获取自定义书架的内容数量（使用真实映射数据）
+   */
+  private getCustomShelfItemCount(shelf: TypeShelf): number {
+    return this.typeShelfManager.getShelfRealItemCount(shelf.id);
+  }
+
+  /**
+   * 获取自定义书架的封面列表（使用真实映射数据）
+   */
+  private getCustomShelfCovers(shelf: TypeShelf): string[] {
+    const covers: string[] = [];
+    const items = this.typeShelfManager.getShelfItems(shelf.id);
+    
+    for (const item of items) {
+      if (covers.length >= 3) break;
+      
+      switch (item.contentType) {
+        case ContentType.MANGA:
+          const manga = this.mangaList.find(m => m.id === item.itemId);
+          if (manga) {
+            const path = this.normalizeDisplayPathForManga(manga);
+            if (path) covers.push(path);
+          }
+          break;
+        case ContentType.EBOOK:
+          const ebook = this.ebookList.find(e => e.id === item.itemId);
+          if (ebook) {
+            const path = this.getValidEBookCoverPath(ebook);
+            if (path) covers.push(path);
+          }
+          break;
+        case ContentType.NOVEL:
+          const novel = this.novelList.find(n => n.id === item.itemId);
+          if (novel) {
+            const coverPath = novel.coverLocalPath || novel.coverUrl;
+            if (coverPath) covers.push(this.normalizeCoverPath(coverPath));
+          }
+          break;
+      }
+    }
+    return covers;
+  }
+
+  /**
+   * 获取漫画书架封面列表（取前3个）
+   */
+  private getMangaShelfCovers(): string[] {
+    const covers: string[] = [];
+    for (const manga of this.mangaList) {
+      if (covers.length >= 3) break;
+      const normalizedPath = this.normalizeDisplayPathForManga(manga);
+      if (normalizedPath) {
+        covers.push(normalizedPath);
+      }
+    }
+    return covers;
+  }
+
+  /**
+   * 获取电子书书架封面列表（取前3个）
+   * [修复] 改进封面获取逻辑，支持多种图片来源
+   */
+  private getEBookShelfCovers(): string[] {
+    const covers: string[] = [];
+    // 从电子书获取封面
+    for (const ebook of this.ebookList) {
+      if (covers.length >= 3) break;
+      const coverPath = this.getValidEBookCoverPath(ebook);
+      if (coverPath) {
+        covers.push(coverPath);
+      }
+    }
+    // 从PDF电子书获取封面
+    for (const pdfEbook of this.pdfEbookList) {
+      if (covers.length >= 3) break;
+      const normalizedPath = this.normalizeDisplayPathForManga(pdfEbook);
+      if (normalizedPath) {
+        covers.push(normalizedPath);
+      }
+    }
+    return covers;
+  }
+
+  /**
+   * 获取有效的电子书封面路径
+   * 支持：APP沙箱目录、Download目录、网络URL等多种来源
+   * [新增] 专门处理电子书封面路径的多种情况
+   */
+  private getValidEBookCoverPath(ebook: EBook): string {
+    const raw = ebook?.metadata?.coverImagePath || '';
+    if (!raw || raw.length === 0) {
+      return '';
+    }
+    
+    // 1. 检查是否为网络URL
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return raw;
+    }
+    
+    // 2. 检查是否已有file://前缀
+    if (raw.startsWith('file://')) {
+      return raw;
+    }
+    
+    // 3. 检查是否为应用资源引用（app.media.xxx），跳过这些
+    if (raw.startsWith('app.media.') || raw.startsWith('$r(')) {
+      logger.debug('MainMenuPage', `电子书封面为资源引用，跳过: ${raw}`);
+      return '';
+    }
+    
+    // 4. 本地文件路径：检查是否存在，然后添加file://前缀
+    // 支持：APP沙箱目录（/data/storage/...）、Download目录等
+    try {
+      // 使用 fs.accessSync 检查文件是否存在（不抛出异常则表示存在）
+      fs.accessSync(raw);
+      return `file://${raw}`;
+    } catch (e) {
+      // 文件不存在或访问失败，仍然尝试返回路径（让Image组件处理加载失败）
+      logger.debug('MainMenuPage', `检查电子书封面文件存在性失败: ${raw}`);
+      // 回退：直接添加file://前缀（可能是权限问题，让Image组件处理）
+      return `file://${raw}`;
+    }
+  }
+
+  /**
+   * 获取小说书架封面列表（取前3个）
+   */
+  private getNovelShelfCovers(): string[] {
+    const covers: string[] = [];
+    for (const novel of this.novelList) {
+      if (covers.length >= 3) break;
+      const coverPath = novel.coverLocalPath || novel.coverUrl;
+      if (coverPath) {
+        covers.push(this.normalizeCoverPath(coverPath));
+      }
+    }
+    return covers;
+  }
+
+  /**
+   * 获取书架类型名称
+   */
+  private getShelfTypeName(shelfType: LibraryContentType): string {
+    switch (shelfType) {
+      case LibraryContentType.MANGA:
+        return '漫画书架';
+      case LibraryContentType.EBOOK:
+        return '电子书书架';
+      case LibraryContentType.NOVEL:
+        return '小说书架';
+      default:
+        return '默认书架';
+    }
+  }
+
+  /**
+   * 构建类型书架卡片
+   */
+  @Builder
+  buildTypeShelfCard(shelfType: LibraryContentType, shelfName: string, itemCount: number, coverImages: string[]) {
+    Column({ space: 4 }) {
+      // 书架容器
+      Stack({ alignContent: Alignment.Bottom }) {
+        // 书架背景图片
+        Image($r('app.media.bookshelf'))
+          .width('100%')
+          .height(40)
+          .objectFit(ImageFit.Fill)
+        
+        // 书本封面排列（在书架上方，向上偏移）
+        if (itemCount > 0 && coverImages.length > 0) {
+          // 有内容且有有效封面：中间大两边小的布局
+          Row({ space: 2 }) {
+            ForEach(coverImages, (coverPath: string, index: number) => {
+              Image(coverPath)
+                .width(index === 0 ? 40 : 30)
+                .height(index === 0 ? 56 : 42)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(2)
+                .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
+                .zIndex(index === 0 ? 10 : 5)
+            }, (cover: string, index: number) => `${shelfType}_cover_${index}`)
+          }
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Bottom)
+          .width('100%')
+          .offset({ y: -28 })
+        } else if (itemCount > 0) {
+          // 有内容但无有效封面：显示默认书本图标和数量提示
+          Column({ space: 4 }) {
+            Image($r('app.media.mangabook'))
+              .width(40)
+              .height(56)
+              .objectFit(ImageFit.Cover)
+              .borderRadius(2)
+              .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
+          }
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .width('100%')
+          .offset({ y: -28 })
+        } else {
+          // 真正的空状态：显示"空无一物"提示（向上偏移）
+          Text('空无一物')
+            .fontSize(24)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .offset({ y: -30 })
+        }
+      }
+      .width('100%')
+      .height(70)
+      
+      // 书架名称和数量
+      Column({ space: 2 }) {
+        Text(shelfName)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        
+        Text(`${itemCount} 项`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .onClick(() => {
+      // 设置选中的书架类型，清除自定义书架选中状态
+      this.selectedShelfType = shelfType;
+      this.selectedShelf = null; // 系统书架不需要selectedShelf
+      this.shelfContentFilter = 'all'; // 重置内容筛选为"全部"
+      // 重置排序和筛选状态
+      this.customShelfSelectedTags.clear();
+      this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+      this.customShelfSelectedAuthors.clear();
+      this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+      this.customShelfSortType = 'add_desc';
+      // 用动画展开详情
+      animateTo({
+        duration: 300,
+        curve: Curve.EaseOut
+      }, () => {
+        this.showCategoryDetail = true;
+        this.categoryDetailAnimationProgress = 1;
+      });
+    })
   }
 
   /**
@@ -7086,7 +7900,7 @@ struct MainMenuPage {
       // 从电子书获取封面
       for (const ebook of this.ebookList) {
         if (covers.length >= 3) break;
-        const normalizedPath = this.normalizeDisplayPathForEBook(ebook);
+        const normalizedPath = this.getValidEBookCoverPath(ebook);
         if (normalizedPath) {
           covers.push(normalizedPath);
         }
@@ -7291,137 +8105,1531 @@ struct MainMenuPage {
   }
 
   /**
-   * 构建分类详情内容（在同一Column内显示，不使用覆盖层）
+   * 构建新增书架对话框（带动画效果）
+   */
+  @Builder
+  buildAddShelfDialog() {
+    Column() {
+      Column({ space: 16 }) {
+        // 标题
+        Row() {
+          Text(this.addShelfDialogStep === 1 ? '新建书架' : '选择内容类型')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(20)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+              this.showAddShelfDialog = false;
+              this.resetAddShelfDialog();
+            });
+          })
+        }
+        .width('100%')
+
+        if (this.addShelfDialogStep === 1) {
+          // 步骤1：基本信息
+          this.buildAddShelfStep1()
+        } else {
+          // 步骤2：选择内容类型
+          this.buildAddShelfStep2()
+        }
+      }
+      .width('90%')
+      .padding(24)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(20)
+      .shadow({ radius: 24, color: 'rgba(0, 0, 0, 0.25)', offsetY: 8 })
+      .scale({ x: this.showAddShelfDialog ? 1 : 0.8, y: this.showAddShelfDialog ? 1 : 0.8 })
+      .opacity(this.showAddShelfDialog ? 1 : 0)
+      .animation({ duration: 300, curve: Curve.EaseOut })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Transparent)
+  }
+
+  /**
+   * 新增书架步骤1：基本信息
+   */
+  @Builder
+  buildAddShelfStep1() {
+    Column({ space: 16 }) {
+      // 书架名称
+      Column({ space: 8 }) {
+        Text('书架名称')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        TextInput({ placeholder: '输入书架名称', text: this.newShelfName })
+          .width('100%')
+          .height(48)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onChange((value: string) => {
+            this.newShelfName = value;
+          })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+
+      // 书架类型选择
+      Column({ space: 8 }) {
+        Text('书架类型')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Row({ space: 12 }) {
+          // 单一书架
+          Column({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+              .fontSize(28)
+              .fontColor([this.newShelfType === ShelfType.SINGLE 
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text('单一书架')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.newShelfType === ShelfType.SINGLE 
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text('只显示一种内容')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .layoutWeight(1)
+          .padding(12)
+          .backgroundColor(this.newShelfType === ShelfType.SINGLE 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .border({ width: 2, color: this.newShelfType === ShelfType.SINGLE 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : Color.Transparent })
+          .onClick(() => {
+            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.newShelfType = ShelfType.SINGLE;
+              this.newShelfContentTypes = [ShelfContentType.MANGA];
+            });
+          })
+
+          // 混合书架
+          Column({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+              .fontSize(28)
+              .fontColor([this.newShelfType === ShelfType.MIXED 
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text('混合书架')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.newShelfType === ShelfType.MIXED 
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text('显示多种内容')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .layoutWeight(1)
+          .padding(12)
+          .backgroundColor(this.newShelfType === ShelfType.MIXED 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .border({ width: 2, color: this.newShelfType === ShelfType.MIXED 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : Color.Transparent })
+          .onClick(() => {
+            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.newShelfType = ShelfType.MIXED;
+              this.newShelfContentTypes = [ShelfContentType.MANGA, ShelfContentType.EBOOK, ShelfContentType.NOVEL];
+            });
+          })
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+
+      // 下一步/创建按钮（混合书架直接创建，单一书架进入下一步）
+      Button(this.newShelfType === ShelfType.MIXED ? '创建书架' : '下一步')
+        .width('100%')
+        .height(48)
+        .fontFamily(this.appFontFamily)
+        .fontSize(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .fontColor(Color.White)
+        .borderRadius(12)
+        .enabled(this.newShelfName.trim().length > 0)
+        .opacity(this.newShelfName.trim().length > 0 ? 1 : 0.5)
+        .onClick(() => {
+          if (this.newShelfType === ShelfType.MIXED) {
+            // 混合书架直接创建，已在选择混合类型时设置了所有内容类型
+            this.createNewShelf();
+          } else {
+            // 单一书架进入下一步选择内容类型
+            animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+              this.addShelfDialogStep = 2;
+            });
+          }
+        })
+    }
+    .width('100%')
+  }
+
+  /**
+   * 新增书架步骤2：选择内容类型
+   */
+  @Builder
+  buildAddShelfStep2() {
+    Column({ space: 16 }) {
+      // 内容类型选择
+      Column({ space: 12 }) {
+        // 漫画
+        this.buildContentTypeOption(ShelfContentType.MANGA, '漫画', '📚', '显示本地和在线漫画')
+        // 电子书
+        this.buildContentTypeOption(ShelfContentType.EBOOK, '电子书', '📖', '显示EPUB、PDF等格式')
+        // 小说
+        this.buildContentTypeOption(ShelfContentType.NOVEL, '小说', '📝', '显示在线小说内容')
+      }
+      .width('100%')
+
+      // 按钮组
+      Row({ space: 12 }) {
+        Button('上一步')
+          .layoutWeight(1)
+          .height(48)
+          .fontFamily(this.appFontFamily)
+          .fontSize(16)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => {
+            animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+              this.addShelfDialogStep = 1;
+            });
+          })
+
+        Button('创建书架')
+          .layoutWeight(1)
+          .height(48)
+          .fontFamily(this.appFontFamily)
+          .fontSize(16)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(Color.White)
+          .borderRadius(12)
+          .enabled(this.newShelfContentTypes.length > 0)
+          .opacity(this.newShelfContentTypes.length > 0 ? 1 : 0.5)
+          .onClick(() => {
+            this.createNewShelf();
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  /**
+   * 构建内容类型选项
+   */
+  @Builder
+  buildContentTypeOption(contentType: ShelfContentType, label: string, icon: string, description: string) {
+    Row({ space: 12 }) {
+      Text(icon)
+        .fontSize(28)
+      Column({ space: 2 }) {
+        Text(label)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(description)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      // 选中状态
+      if (this.newShelfType === ShelfType.SINGLE) {
+        // 单选
+        Radio({ value: contentType, group: 'contentType' })
+          .checked(this.newShelfContentTypes.includes(contentType))
+          .onChange((isChecked: boolean) => {
+            if (isChecked) {
+              this.newShelfContentTypes = [contentType];
+            }
+          })
+      } else {
+        // 多选
+        Checkbox()
+          .select(this.newShelfContentTypes.includes(contentType))
+          .onChange((isChecked: boolean) => {
+            if (isChecked) {
+              if (!this.newShelfContentTypes.includes(contentType)) {
+                this.newShelfContentTypes = this.newShelfContentTypes.concat([contentType]);
+              }
+            } else {
+              this.newShelfContentTypes = this.newShelfContentTypes.filter(t => t !== contentType);
+            }
+          })
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.newShelfContentTypes.includes(contentType)
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+      : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .onClick(() => {
+      if (this.newShelfType === ShelfType.SINGLE) {
+        this.newShelfContentTypes = [contentType];
+      } else {
+        if (this.newShelfContentTypes.includes(contentType)) {
+          this.newShelfContentTypes = this.newShelfContentTypes.filter(t => t !== contentType);
+        } else {
+          this.newShelfContentTypes = this.newShelfContentTypes.concat([contentType]);
+        }
+      }
+    })
+  }
+
+  /**
+   * 重置新增书架对话框状态
+   */
+  private resetAddShelfDialog(): void {
+    this.newShelfName = '';
+    this.newShelfType = ShelfType.SINGLE;
+    this.newShelfContentTypes = [ShelfContentType.MANGA];
+    this.newShelfIcon = '📚';
+    this.newShelfColor = '#FF6B6B';
+    this.addShelfDialogStep = 1;
+  }
+
+  /**
+   * 创建新书架
+   */
+  private async createNewShelf(): Promise<void> {
+    if (this.newShelfName.trim().length === 0 || this.newShelfContentTypes.length === 0) {
+      return;
+    }
+
+    const params: CreateShelfParams = {
+      name: this.newShelfName.trim(),
+      shelfType: this.newShelfType,
+      contentTypes: this.newShelfContentTypes,
+      icon: this.newShelfIcon,
+      color: this.newShelfColor
+    };
+
+    await this.typeShelfManager.createShelf(params);
+    this.typeShelves = this.typeShelfManager.getShelves();
+
+    animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+      this.showAddShelfDialog = false;
+      this.resetAddShelfDialog();
+    });
+
+    this.showToast('书架创建成功');
+  }
+
+  /**
+   * 构建删除书架确认对话框
+   */
+  @Builder
+  buildDeleteShelfDialog() {
+    Column() {
+      Column({ space: 16 }) {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(48)
+          .fontColor([AppColors.error])
+
+        Text('删除书架')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text(`确定要删除「${this.shelfToDelete?.name || ''}」吗？`)
+          .fontSize(16)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .textAlign(TextAlign.Center)
+
+        Text('删除后书架内容不会被删除，但不会在该书架中显示')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .textAlign(TextAlign.Center)
+
+        Row({ space: 12 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(44)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .borderRadius(12)
+            .onClick(() => {
+              animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+                this.showDeleteShelfDialog = false;
+                this.shelfToDelete = null;
+              });
+            })
+
+          Button('删除')
+            .layoutWeight(1)
+            .height(44)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(AppColors.error)
+            .fontColor(Color.White)
+            .borderRadius(12)
+            .onClick(() => {
+              this.confirmDeleteShelf();
+            })
+        }
+        .width('100%')
+      }
+      .width('85%')
+      .padding(24)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(20)
+      .shadow({ radius: 24, color: 'rgba(0, 0, 0, 0.25)', offsetY: 8 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Transparent)
+  }
+
+  /**
+   * 确认删除书架
+   */
+  private async confirmDeleteShelf(): Promise<void> {
+    if (!this.shelfToDelete) return;
+
+    const shelfId = this.shelfToDelete.id;
+    this.deletingShelfId = shelfId;
+
+    // 删除动画
+    animateTo({ duration: 300, curve: Curve.EaseIn }, () => {
+      this.showDeleteShelfDialog = false;
+    });
+
+    // 延迟执行实际删除
+    setTimeout(async () => {
+      await this.typeShelfManager.deleteShelf(shelfId);
+      this.typeShelves = this.typeShelfManager.getShelves();
+      this.deletingShelfId = '';
+      this.shelfToDelete = null;
+      this.showToast('书架已删除');
+    }, 300);
+  }
+
+  /**
+   * 构建移动到书架对话框
+   */
+  @Builder
+  buildMoveToShelfDialog() {
+    Column() {
+      Column({ space: 16 }) {
+        // 标题
+        Row() {
+          Text('移动到书架')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(28)
+          .height(28)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.showMoveToShelfDialog = false;
+            });
+          })
+        }
+        .width('100%')
+
+        // 书架列表
+        if (this.availableShelvesForMove.length > 0) {
+          Scroll() {
+            Column({ space: 8 }) {
+              ForEach(this.availableShelvesForMove, (shelf: TypeShelf) => {
+                Row({ space: 12 }) {
+                  Text(shelf.icon)
+                    .fontSize(24)
+                  Column({ space: 2 }) {
+                    Text(shelf.name)
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    Text(`${this.typeShelfManager.getShelfRealItemCount(shelf.id)} 项`)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+
+                  SymbolGlyph($r('sys.symbol.chevron_right'))
+                    .fontSize(16)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                }
+                .width('100%')
+                .height(56)
+                .padding({ left: 12, right: 12 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .borderRadius(12)
+                .onClick(() => {
+                  this.moveItemToShelf(shelf.id);
+                })
+              }, (shelf: TypeShelf) => shelf.id)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 300 })
+        } else {
+          // 没有可用书架
+          Column({ space: 12 }) {
+            SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+              .fontSize(48)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            Text('没有可用的书架')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Text('请先创建支持该内容类型的书架')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            Button('创建书架')
+              .height(36)
+              .fontFamily(this.appFontFamily)
+              .fontSize(14)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .fontColor(Color.White)
+              .borderRadius(8)
+              .onClick(() => {
+                animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+                  this.showMoveToShelfDialog = false;
+                });
+                setTimeout(() => {
+                  animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+                    this.showAddShelfDialog = true;
+                  });
+                }, 250);
+              })
+          }
+          .width('100%')
+          .padding(24)
+        }
+
+        // 取消按钮
+        Button('取消')
+          .width('100%')
+          .height(44)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onClick(() => {
+            animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+              this.showMoveToShelfDialog = false;
+            });
+          })
+      }
+      .width('85%')
+      .padding(20)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(16)
+      .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)', offsetY: 4 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(Color.Transparent)
+  }
+
+  /**
+   * 显示移动到书架对话框
+   */
+  private showMoveToShelf(itemId: string, contentType: ContentType): void {
+    this.movingToShelfItemId = itemId;
+    this.movingToShelfContentType = contentType;
+    // 获取可用于移动的书架列表（只显示支持该内容类型的自定义书架）
+    this.availableShelvesForMove = this.typeShelfManager.getShelvesForContentType(contentType);
+    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.showMoveToShelfDialog = true;
+    });
+  }
+
+  /**
+   * 执行移动到书架
+   */
+  private async moveItemToShelf(shelfId: string): Promise<void> {
+    if (!this.movingToShelfItemId) return;
+
+    await this.typeShelfManager.moveItemToShelf(
+      this.movingToShelfItemId,
+      this.movingToShelfContentType,
+      shelfId
+    );
+
+    // 刷新书架列表
+    this.typeShelves = this.typeShelfManager.getShelves();
+
+    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.showMoveToShelfDialog = false;
+    });
+
+    this.movingToShelfItemId = '';
+    const shelf = this.typeShelfManager.getShelf(shelfId);
+    this.showToast(`已移动到「${shelf?.name || '书架'}」`);
+  }
+
+  /**
+   * 构建书架详情内容（根据选中的书架类型显示对应内容）
    */
   @Builder
   buildCategoryDetailContent() {
     Column() {
-      // 筛选栏（全部 + 内容类型切换）
-      Row({ space: 8 }) {
-        Button('全部')
-          .fontSize(14)
-          .height(32)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(this.libraryFilterType === LibraryFilterType.ALL
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryFilterType === LibraryFilterType.ALL
-            ? Color.White
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.libraryFilterType = LibraryFilterType.ALL;
-          })
+      // 显示排序和筛选工具栏（自定义书架和系统书架都使用）
+      this.buildShelfToolbar()
 
-        Column()
-          .width(1)
-          .height(20)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-
-        Button('漫画')
-          .fontSize(14)
-          .height(32)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(this.libraryContentType === LibraryContentType.MANGA
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryContentType === LibraryContentType.MANGA
-            ? Color.White
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.libraryContentType = LibraryContentType.MANGA;
-          })
-
-        Button('电子书')
-          .fontSize(14)
-          .height(32)
-          .fontFamily(this.appFontFamily)
-          .backgroundColor(this.libraryContentType === LibraryContentType.EBOOK
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryContentType === LibraryContentType.EBOOK
-            ? Color.White
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.libraryContentType = LibraryContentType.EBOOK;
-          })
-
-        Button('小说')
-          .fontSize(14)
-          .height(32)
-          .backgroundColor(this.libraryContentType === LibraryContentType.NOVEL
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryContentType === LibraryContentType.NOVEL
-            ? Color.White
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            this.libraryContentType = LibraryContentType.NOVEL;
-          })
-
-        Blank()
+      // 内容列表
+      Scroll() {
+        Column() {
+          // 自定义书架：混合显示所有内容
+          if (this.selectedShelf !== null) {
+            this.buildCustomShelfMixedList()
+          } else if (this.selectedShelfType === LibraryContentType.MANGA) {
+            this.buildShelfMangaList()
+          } else if (this.selectedShelfType === LibraryContentType.EBOOK) {
+            this.buildShelfEBookList()
+          } else {
+            this.buildShelfNovelList()
+          }
+        }
+        .width('100%')
       }
       .width('100%')
-      .padding({ left: 16, right: 16, bottom: 8 })
-
-      // 内容列表（使用Swiper实现横向滑动切换内容类型）
-      Swiper() {
-        // 漫画内容
-        Scroll() {
-          Column() {
-            this.buildCategoryMangaList()
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .height('100%')
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .friction(0.6)
-
-        // 电子书内容
-        Scroll() {
-          Column() {
-            this.buildCategoryEBookList()
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .height('100%')
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .friction(0.6)
-
-        // 小说内容
-        Scroll() {
-          Column() {
-            this.buildCategoryNovelList()
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .height('100%')
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .friction(0.6)
-      }
-      .index(this.libraryContentType === LibraryContentType.MANGA ? 0 :
-        (this.libraryContentType === LibraryContentType.EBOOK ? 1 : 2))
-      .indicator(false)
-      .loop(false)
       .layoutWeight(1)
-      .onChange((index: number) => {
-        // 滑动切换内容类型
-        if (index === 0) {
-          this.libraryContentType = LibraryContentType.MANGA;
-        } else if (index === 1) {
-          this.libraryContentType = LibraryContentType.EBOOK;
-        } else {
-          this.libraryContentType = LibraryContentType.NOVEL;
-        }
-      })
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .friction(0.6)
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  /**
+   * 构建书架漫画列表（显示当前书架的所有漫画）
+   */
+  @Builder
+  buildShelfMangaList() {
+    if (this.getShelfFilteredMangaList().length > 0) {
+      Grid() {
+        ForEach(this.getShelfFilteredMangaList(), (manga: Manga) => {
+          GridItem() {
+            this.buildMangaGridCard(manga)
+          }
+        }, (manga: Manga) => manga.id)
+      }
+      .columnsTemplate(this.getLibraryGridColumnsTemplate())
+      .rowsGap(this.responsive_gridGap)
+      .columnsGap(this.responsive_gridGap)
+      .width('100%')
+      .padding(16)
+    } else {
+      this.buildShelfEmptyState('没有漫画')
+    }
+  }
+
+  /**
+   * 构建书架电子书列表（显示当前书架的所有电子书）
+   */
+  @Builder
+  buildShelfEBookList() {
+    if (this.getShelfFilteredEBookList().length > 0 || this.getShelfFilteredPdfEBookList().length > 0) {
+      Grid() {
+        ForEach(this.getShelfFilteredEBookList(), (ebook: EBook) => {
+          GridItem() {
+            this.buildEBookGridCard(ebook)
+          }
+        }, (ebook: EBook) => ebook.id)
+        ForEach(this.getShelfFilteredPdfEBookList(), (pdfEbook: Manga) => {
+          GridItem() {
+            this.buildMangaGridCard(pdfEbook)
+          }
+        }, (pdfEbook: Manga) => pdfEbook.id)
+      }
+      .columnsTemplate(this.getLibraryGridColumnsTemplate())
+      .rowsGap(this.responsive_gridGap)
+      .columnsGap(this.responsive_gridGap)
+      .width('100%')
+      .padding(16)
+    } else {
+      this.buildShelfEmptyState('没有电子书')
+    }
+  }
+
+  /**
+   * 构建书架小说列表（显示当前书架的所有小说）
+   */
+  @Builder
+  buildShelfNovelList() {
+    if (this.getShelfFilteredNovelList().length > 0) {
+      Grid() {
+        ForEach(this.getShelfFilteredNovelList(), (novel: NovelBook) => {
+          GridItem() {
+            this.buildNovelGridCard(novel)
+          }
+        }, (novel: NovelBook) => novel.id)
+      }
+      .columnsTemplate(this.getLibraryGridColumnsTemplate())
+      .rowsGap(this.responsive_gridGap)
+      .columnsGap(this.responsive_gridGap)
+      .width('100%')
+      .padding(16)
+    } else {
+      this.buildShelfEmptyState('没有小说')
+    }
+  }
+
+  /**
+   * 构建书架空状态
+   */
+  @Builder
+  buildShelfEmptyState(message: string) {
+    Column({ space: 16 }) {
+      SymbolGlyph($r('sys.symbol.doc_plaintext'))
+        .fontSize(48)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+      Text(message)
+        .fontSize(16)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding(32)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /**
+   * 构建书架工具栏（排序和筛选，同时用于自定义书架和系统书架）
+   */
+  @Builder
+  buildShelfToolbar() {
+    Column({ space: 8 }) {
+      // 第一行：排序按钮和筛选按钮
+      Row({ space: 8 }) {
+        // 排序按钮
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.arrow_left_arrow_right'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(this.getCustomShelfSortName())
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(16)
+        .bindMenu(this.buildCustomShelfSortMenu())
+
+        // 标签筛选按钮
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.bookmark'))
+              .fontSize(16)
+              .fontColor([this.customShelfSelectedTags.size > 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(this.customShelfSelectedTags.size > 0 ? `标签(${this.customShelfSelectedTags.size})` : '标签')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.customShelfSelectedTags.size > 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(this.customShelfSelectedTags.size > 0
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(16)
+        .onClick(() => {
+          this.extractShelfTagsAndAuthors();
+          this.showCustomShelfTagPopup = true;
+        })
+        .bindPopup(this.showCustomShelfTagPopup, {
+          builder: this.buildCustomShelfTagPopup(),
+          placement: Placement.Bottom,
+          onStateChange: (e: PopupStateChangeParam) => {
+            if (!e.isVisible) {
+              this.showCustomShelfTagPopup = false;
+            }
+          }
+        })
+
+        // 作者筛选按钮
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.person'))
+              .fontSize(16)
+              .fontColor([this.customShelfSelectedAuthors.size > 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(this.customShelfSelectedAuthors.size > 0 ? `作者(${this.customShelfSelectedAuthors.size})` : '作者')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.customShelfSelectedAuthors.size > 0
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(this.customShelfSelectedAuthors.size > 0
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .borderRadius(16)
+        .onClick(() => {
+          this.extractShelfTagsAndAuthors();
+          this.showCustomShelfAuthorPopup = true;
+        })
+        .bindPopup(this.showCustomShelfAuthorPopup, {
+          builder: this.buildCustomShelfAuthorPopup(),
+          placement: Placement.Bottom,
+          onStateChange: (e: PopupStateChangeParam) => {
+            if (!e.isVisible) {
+              this.showCustomShelfAuthorPopup = false;
+            }
+          }
+        })
+
+        Blank()
+
+        // 清除筛选按钮（有筛选时显示）
+        if (this.customShelfSelectedTags.size > 0 || this.customShelfSelectedAuthors.size > 0) {
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark_circle'))
+              .fontSize(18)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.customShelfSelectedTags.clear();
+            this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+            this.customShelfSelectedAuthors.clear();
+            this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+          })
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, bottom: 8 })
+  }
+
+  /**
+   * 构建自定义书架工具栏（排序和筛选）- 已废弃，使用buildShelfToolbar
+   */
+  @Builder
+  buildCustomShelfToolbar() {
+    this.buildShelfToolbar()
+  }
+
+  /**
+   * 构建自定义书架排序菜单
+   */
+  @Builder
+  buildCustomShelfSortMenu(): CustomBuilder {
+    Menu() {
+      MenuItem({ content: '按名称 A-Z' })
+        .onClick(() => { this.customShelfSortType = 'name_asc'; })
+      MenuItem({ content: '按名称 Z-A' })
+        .onClick(() => { this.customShelfSortType = 'name_desc'; })
+      MenuItem({ content: '最近阅读' })
+        .onClick(() => { this.customShelfSortType = 'recent'; })
+      MenuItem({ content: '添加时间 最新' })
+        .onClick(() => { this.customShelfSortType = 'add_desc'; })
+      MenuItem({ content: '添加时间 最旧' })
+        .onClick(() => { this.customShelfSortType = 'add_asc'; })
+    }
+  }
+
+  /**
+   * 获取排序方式名称
+   */
+  private getCustomShelfSortName(): string {
+    switch (this.customShelfSortType) {
+      case 'name_asc': return 'A-Z';
+      case 'name_desc': return 'Z-A';
+      case 'recent': return '最近阅读';
+      case 'add_asc': return '添加时间↑';
+      case 'add_desc': return '添加时间↓';
+      default: return '排序';
+    }
+  }
+
+  /**
+   * 构建自定义书架标签筛选弹窗
+   */
+  @Builder
+  buildCustomShelfTagPopup(): CustomBuilder {
+    Column({ space: 8 }) {
+      Text('选择标签')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      
+      if (this.customShelfTags.length > 0) {
+        Scroll() {
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(this.customShelfTags.slice(0, 20), (tag: string) => {
+              Button(tag)
+                .fontSize(12)
+                .height(28)
+                .margin(2)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.customShelfSelectedTags.has(tag)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .fontColor(this.customShelfSelectedTags.has(tag)
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .borderRadius(14)
+                .onClick(() => {
+                  if (this.customShelfSelectedTags.has(tag)) {
+                    this.customShelfSelectedTags.delete(tag);
+                  } else {
+                    this.customShelfSelectedTags.add(tag);
+                  }
+                  this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+                })
+            }, (tag: string) => tag)
+          }
+          .width('100%')
+        }
+        .constraintSize({ maxHeight: 200 })
+      } else {
+        Text('暂无标签')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+    }
+    .width(280)
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  /**
+   * 构建自定义书架作者筛选弹窗
+   */
+  @Builder
+  buildCustomShelfAuthorPopup(): CustomBuilder {
+    Column({ space: 8 }) {
+      Text('选择作者')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      
+      if (this.customShelfAuthors.length > 0) {
+        Scroll() {
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(this.customShelfAuthors.slice(0, 20), (author: string) => {
+              Button(author)
+                .fontSize(12)
+                .height(28)
+                .margin(2)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(this.customShelfSelectedAuthors.has(author)
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .fontColor(this.customShelfSelectedAuthors.has(author)
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .borderRadius(14)
+                .onClick(() => {
+                  if (this.customShelfSelectedAuthors.has(author)) {
+                    this.customShelfSelectedAuthors.delete(author);
+                  } else {
+                    this.customShelfSelectedAuthors.add(author);
+                  }
+                  this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+                })
+            }, (author: string) => author)
+          }
+          .width('100%')
+        }
+        .constraintSize({ maxHeight: 200 })
+      } else {
+        Text('暂无作者')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+    }
+    .width(280)
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  /**
+   * 构建自定义书架混合内容列表（所有类型混合在一起显示）
+   */
+  @Builder
+  buildCustomShelfMixedList() {
+    if (this.getCustomShelfMixedItems().length > 0) {
+      Grid() {
+        ForEach(this.getCustomShelfMixedItems(), (item: ShelfMixedItem) => {
+          GridItem() {
+            if (item.type === 'manga') {
+              this.buildMangaGridCard(item.data as Manga)
+            } else if (item.type === 'ebook') {
+              this.buildEBookGridCard(item.data as EBook)
+            } else if (item.type === 'pdfebook') {
+              this.buildMangaGridCard(item.data as Manga)
+            } else {
+              this.buildNovelGridCard(item.data as NovelBook)
+            }
+          }
+        }, (item: ShelfMixedItem) => `${item.type}_${item.id}`)
+      }
+      .columnsTemplate(this.getLibraryGridColumnsTemplate())
+      .rowsGap(this.responsive_gridGap)
+      .columnsGap(this.responsive_gridGap)
+      .width('100%')
+      .padding(16)
+    } else {
+      this.buildShelfEmptyState('书架为空')
+    }
+  }
+
+  /**
+   * 提取书架内容的标签和作者（同时支持自定义书架和系统书架）
+   */
+  private extractShelfTagsAndAuthors(): void {
+    const tagMap = new Map<string, number>();
+    const authorMap = new Map<string, number>();
+    
+    if (this.selectedShelf !== null) {
+      // 自定义书架：只提取书架内的内容
+      // 获取书架内的漫画
+      const mangaIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.MANGA);
+      for (const manga of this.mangaList) {
+        if (mangaIds.includes(manga.id)) {
+          const allTags = [...manga.metadata.genres, ...manga.metadata.themes];
+          for (const tag of allTags) {
+            tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+          }
+          for (const author of manga.metadata.authors) {
+            authorMap.set(author, (authorMap.get(author) || 0) + 1);
+          }
+        }
+      }
+      
+      // 获取书架内的电子书
+      const ebookIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.EBOOK);
+      for (const ebook of this.ebookList) {
+        if (ebookIds.includes(ebook.id)) {
+          const tags: string[] = ebook.metadata.tags || [];
+          for (const tag of tags) {
+            tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+          }
+          if (ebook.metadata.author) {
+            authorMap.set(ebook.metadata.author, (authorMap.get(ebook.metadata.author) || 0) + 1);
+          }
+        }
+      }
+      
+      // 获取书架内的小说
+      const novelIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.NOVEL);
+      for (const novel of this.novelList) {
+        if (novelIds.includes(novel.id)) {
+          if (novel.kind) {
+            const novelTags = novel.kind.split(/[,，、]/).map(t => t.trim()).filter(t => t !== '');
+            for (const tag of novelTags) {
+              tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+            }
+          }
+          if (novel.author) {
+            authorMap.set(novel.author, (authorMap.get(novel.author) || 0) + 1);
+          }
+        }
+      }
+    } else {
+      // 系统书架：根据当前选中的书架类型提取
+      if (this.selectedShelfType === LibraryContentType.MANGA) {
+        for (const manga of this.mangaList) {
+          const allTags = [...manga.metadata.genres, ...manga.metadata.themes];
+          for (const tag of allTags) {
+            tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+          }
+          for (const author of manga.metadata.authors) {
+            authorMap.set(author, (authorMap.get(author) || 0) + 1);
+          }
+        }
+      } else if (this.selectedShelfType === LibraryContentType.EBOOK) {
+        for (const ebook of this.ebookList) {
+          const tags: string[] = ebook.metadata.tags || [];
+          for (const tag of tags) {
+            tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+          }
+          if (ebook.metadata.author) {
+            authorMap.set(ebook.metadata.author, (authorMap.get(ebook.metadata.author) || 0) + 1);
+          }
+        }
+        // PDF电子书
+        for (const pdfEbook of this.pdfEbookList) {
+          const allTags = [...pdfEbook.metadata.genres, ...pdfEbook.metadata.themes];
+          for (const tag of allTags) {
+            tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+          }
+          for (const author of pdfEbook.metadata.authors) {
+            authorMap.set(author, (authorMap.get(author) || 0) + 1);
+          }
+        }
+      } else {
+        // 小说书架
+        for (const novel of this.novelList) {
+          if (novel.kind) {
+            const novelTags = novel.kind.split(/[,，、]/).map(t => t.trim()).filter(t => t !== '');
+            for (const tag of novelTags) {
+              tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+            }
+          }
+          if (novel.author) {
+            authorMap.set(novel.author, (authorMap.get(novel.author) || 0) + 1);
+          }
+        }
+      }
+    }
+    
+    // 按出现次数排序
+    this.customShelfTags = Array.from(tagMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(entry => entry[0]);
+    this.customShelfAuthors = Array.from(authorMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(entry => entry[0]);
+  }
+
+  /**
+   * 提取自定义书架内容的标签和作者 - 已废弃，使用extractShelfTagsAndAuthors
+   */
+  private extractCustomShelfTagsAndAuthors(): void {
+    this.extractShelfTagsAndAuthors();
+  }
+
+  /**
+   * 获取自定义书架混合内容列表（应用排序和筛选）
+   */
+  private getCustomShelfMixedItems(): ShelfMixedItem[] {
+    if (this.selectedShelf === null) return [];
+    
+    const items: ShelfMixedItem[] = [];
+    
+    // 获取漫画
+    const mangaIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.MANGA);
+    for (const manga of this.mangaList) {
+      if (mangaIds.includes(manga.id)) {
+        // 应用筛选
+        if (!this.matchesCustomShelfFilter(manga, 'manga')) continue;
+        items.push({
+          id: manga.id,
+          type: 'manga',
+          name: manga.title,
+          lastReadTime: manga.readingProgress?.lastReadAt || 0,
+          addTime: manga.addedToLibraryAt || 0,
+          data: manga
+        });
+      }
+    }
+    
+    // 获取电子书
+    const ebookIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.EBOOK);
+    for (const ebook of this.ebookList) {
+      if (ebookIds.includes(ebook.id)) {
+        if (!this.matchesCustomShelfFilter(ebook, 'ebook')) continue;
+        items.push({
+          id: ebook.id,
+          type: 'ebook',
+          name: ebook.metadata.title,
+          lastReadTime: ebook.readingProgress?.lastReadTime || 0,
+          addTime: ebook.addTime || 0,
+          data: ebook
+        });
+      }
+    }
+    
+    // 获取PDF电子书
+    for (const pdfEbook of this.pdfEbookList) {
+      if (ebookIds.includes(pdfEbook.id)) {
+        if (!this.matchesCustomShelfFilter(pdfEbook, 'pdfebook')) continue;
+        items.push({
+          id: pdfEbook.id,
+          type: 'pdfebook',
+          name: pdfEbook.title,
+          lastReadTime: pdfEbook.readingProgress?.lastReadAt || 0,
+          addTime: pdfEbook.addedToLibraryAt || 0,
+          data: pdfEbook
+        });
+      }
+    }
+    
+    // 获取小说
+    const novelIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.NOVEL);
+    for (const novel of this.novelList) {
+      if (novelIds.includes(novel.id)) {
+        if (!this.matchesCustomShelfFilter(novel, 'novel')) continue;
+        items.push({
+          id: novel.id,
+          type: 'novel',
+          name: novel.name,
+          lastReadTime: novel.lastReadTime || 0,
+          addTime: novel.createTime || 0,
+          data: novel
+        });
+      }
+    }
+    
+    // 应用排序
+    return this.sortCustomShelfItems(items);
+  }
+
+  /**
+   * 检查内容是否匹配自定义书架筛选条件
+   */
+  private matchesCustomShelfFilter(item: Manga | EBook | NovelBook, type: string): boolean {
+    // 标签筛选
+    if (this.customShelfSelectedTags.size > 0) {
+      let itemTags: string[] = [];
+      if (type === 'manga' || type === 'pdfebook') {
+        const manga = item as Manga;
+        itemTags = [...manga.metadata.genres, ...manga.metadata.themes];
+      } else if (type === 'ebook') {
+        const ebook = item as EBook;
+        itemTags = ebook.metadata.tags || [];
+      } else if (type === 'novel') {
+        const novel = item as NovelBook;
+        if (novel.kind) {
+          itemTags = novel.kind.split(/[,，、]/).map(t => t.trim()).filter(t => t !== '');
+        }
+      }
+      // 检查是否包含任一选中的标签
+      let hasMatchingTag = false;
+      for (const tag of this.customShelfSelectedTags) {
+        if (itemTags.includes(tag)) {
+          hasMatchingTag = true;
+          break;
+        }
+      }
+      if (!hasMatchingTag) return false;
+    }
+    
+    // 作者筛选
+    if (this.customShelfSelectedAuthors.size > 0) {
+      let itemAuthors: string[] = [];
+      if (type === 'manga' || type === 'pdfebook') {
+        const manga = item as Manga;
+        itemAuthors = manga.metadata.authors;
+      } else if (type === 'ebook') {
+        const ebook = item as EBook;
+        if (ebook.metadata.author) itemAuthors = [ebook.metadata.author];
+      } else if (type === 'novel') {
+        const novel = item as NovelBook;
+        if (novel.author) itemAuthors = [novel.author];
+      }
+      // 检查是否包含任一选中的作者
+      let hasMatchingAuthor = false;
+      for (const author of this.customShelfSelectedAuthors) {
+        if (itemAuthors.includes(author)) {
+          hasMatchingAuthor = true;
+          break;
+        }
+      }
+      if (!hasMatchingAuthor) return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * 对自定义书架内容进行排序
+   */
+  private sortCustomShelfItems(items: ShelfMixedItem[]): ShelfMixedItem[] {
+    switch (this.customShelfSortType) {
+      case 'name_asc':
+        return items.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      case 'name_desc':
+        return items.sort((a, b) => b.name.localeCompare(a.name, 'zh-CN'));
+      case 'recent':
+        return items.sort((a, b) => b.lastReadTime - a.lastReadTime);
+      case 'add_asc':
+        return items.sort((a, b) => a.addTime - b.addTime);
+      case 'add_desc':
+      default:
+        return items.sort((a, b) => b.addTime - a.addTime);
+    }
+  }
+
+  /**
+   * 获取书架筛选后的漫画列表（应用排序和标签/作者筛选）
+   */
+  private getShelfFilteredMangaList(): Manga[] {
+    let baseList: Manga[] = this.mangaList;
+    
+    // 如果是自定义书架，只显示用户明确添加的内容
+    if (this.selectedShelf !== null) {
+      const itemIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.MANGA);
+      baseList = this.mangaList.filter((manga: Manga) => itemIds.includes(manga.id));
+    }
+    
+    // 应用标签筛选
+    if (this.customShelfSelectedTags.size > 0) {
+      baseList = baseList.filter((manga: Manga) => {
+        const itemTags = [...manga.metadata.genres, ...manga.metadata.themes];
+        for (const tag of this.customShelfSelectedTags) {
+          if (itemTags.includes(tag)) return true;
+        }
+        return false;
+      });
+    }
+    
+    // 应用作者筛选
+    if (this.customShelfSelectedAuthors.size > 0) {
+      baseList = baseList.filter((manga: Manga) => {
+        for (const author of this.customShelfSelectedAuthors) {
+          if (manga.metadata.authors.includes(author)) return true;
+        }
+        return false;
+      });
+    }
+    
+    // 应用排序
+    baseList = this.sortMangaList(baseList);
+    
+    return baseList;
+  }
+
+  /**
+   * 获取书架筛选后的电子书列表（应用排序和标签/作者筛选）
+   */
+  private getShelfFilteredEBookList(): EBook[] {
+    let baseList: EBook[] = this.ebookList;
+    
+    // 如果是自定义书架，只显示用户明确添加的内容
+    if (this.selectedShelf !== null) {
+      const itemIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.EBOOK);
+      baseList = this.ebookList.filter((ebook: EBook) => itemIds.includes(ebook.id));
+    }
+    
+    // 应用标签筛选
+    if (this.customShelfSelectedTags.size > 0) {
+      baseList = baseList.filter((ebook: EBook) => {
+        const itemTags: string[] = ebook.metadata.tags || [];
+        for (const tag of this.customShelfSelectedTags) {
+          if (itemTags.includes(tag)) return true;
+        }
+        return false;
+      });
+    }
+    
+    // 应用作者筛选
+    if (this.customShelfSelectedAuthors.size > 0) {
+      baseList = baseList.filter((ebook: EBook) => {
+        if (ebook.metadata.author) {
+          for (const author of this.customShelfSelectedAuthors) {
+            if (ebook.metadata.author === author) return true;
+          }
+        }
+        return false;
+      });
+    }
+    
+    // 应用排序
+    baseList = this.sortEBookList(baseList);
+    
+    return baseList;
+  }
+
+  /**
+   * 获取书架筛选后的PDF电子书列表（应用排序和标签/作者筛选）
+   */
+  private getShelfFilteredPdfEBookList(): Manga[] {
+    let baseList: Manga[] = this.pdfEbookList;
+    
+    // 如果是自定义书架，pdfEbook也属于EBOOK类型
+    if (this.selectedShelf !== null) {
+      const itemIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.EBOOK);
+      baseList = this.pdfEbookList.filter((pdfEbook: Manga) => itemIds.includes(pdfEbook.id));
+    }
+    
+    // 应用标签筛选
+    if (this.customShelfSelectedTags.size > 0) {
+      baseList = baseList.filter((pdfEbook: Manga) => {
+        const itemTags = [...pdfEbook.metadata.genres, ...pdfEbook.metadata.themes];
+        for (const tag of this.customShelfSelectedTags) {
+          if (itemTags.includes(tag)) return true;
+        }
+        return false;
+      });
+    }
+    
+    // 应用作者筛选
+    if (this.customShelfSelectedAuthors.size > 0) {
+      baseList = baseList.filter((pdfEbook: Manga) => {
+        for (const author of this.customShelfSelectedAuthors) {
+          if (pdfEbook.metadata.authors.includes(author)) return true;
+        }
+        return false;
+      });
+    }
+    
+    // 应用排序
+    baseList = this.sortMangaList(baseList);
+    
+    return baseList;
+  }
+
+  /**
+   * 获取书架筛选后的小说列表（应用排序和标签/作者筛选）
+   */
+  private getShelfFilteredNovelList(): NovelBook[] {
+    let baseList: NovelBook[] = this.novelList;
+    
+    // 如果是自定义书架，只显示用户明确添加的内容
+    if (this.selectedShelf !== null) {
+      const itemIds = this.typeShelfManager.getShelfItemIdsByType(this.selectedShelf.id, ContentType.NOVEL);
+      baseList = this.novelList.filter((novel: NovelBook) => itemIds.includes(novel.id));
+    }
+    
+    // 应用标签筛选
+    if (this.customShelfSelectedTags.size > 0) {
+      baseList = baseList.filter((novel: NovelBook) => {
+        if (novel.kind) {
+          const itemTags = novel.kind.split(/[,，、]/).map(t => t.trim()).filter(t => t !== '');
+          for (const tag of this.customShelfSelectedTags) {
+            if (itemTags.includes(tag)) return true;
+          }
+        }
+        return false;
+      });
+    }
+    
+    // 应用作者筛选
+    if (this.customShelfSelectedAuthors.size > 0) {
+      baseList = baseList.filter((novel: NovelBook) => {
+        if (novel.author) {
+          for (const author of this.customShelfSelectedAuthors) {
+            if (novel.author === author) return true;
+          }
+        }
+        return false;
+      });
+    }
+    
+    // 应用排序
+    baseList = this.sortNovelList(baseList);
+    
+    return baseList;
+  }
+
+  /**
+   * 对漫画列表进行排序
+   */
+  private sortMangaList(list: Manga[]): Manga[] {
+    const sorted = list.slice();
+    switch (this.customShelfSortType) {
+      case 'name_asc':
+        return sorted.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+      case 'name_desc':
+        return sorted.sort((a, b) => b.title.localeCompare(a.title, 'zh-CN'));
+      case 'recent':
+        return sorted.sort((a, b) => (b.readingProgress?.lastReadAt || 0) - (a.readingProgress?.lastReadAt || 0));
+      case 'add_asc':
+        return sorted.sort((a, b) => (a.addedToLibraryAt || 0) - (b.addedToLibraryAt || 0));
+      case 'add_desc':
+      default:
+        return sorted.sort((a, b) => (b.addedToLibraryAt || 0) - (a.addedToLibraryAt || 0));
+    }
+  }
+
+  /**
+   * 对电子书列表进行排序
+   */
+  private sortEBookList(list: EBook[]): EBook[] {
+    const sorted = list.slice();
+    switch (this.customShelfSortType) {
+      case 'name_asc':
+        return sorted.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title, 'zh-CN'));
+      case 'name_desc':
+        return sorted.sort((a, b) => b.metadata.title.localeCompare(a.metadata.title, 'zh-CN'));
+      case 'recent':
+        return sorted.sort((a, b) => (b.readingProgress?.lastReadTime || 0) - (a.readingProgress?.lastReadTime || 0));
+      case 'add_asc':
+        return sorted.sort((a, b) => (a.addTime || 0) - (b.addTime || 0));
+      case 'add_desc':
+      default:
+        return sorted.sort((a, b) => (b.addTime || 0) - (a.addTime || 0));
+    }
+  }
+
+  /**
+   * 对小说列表进行排序
+   */
+  private sortNovelList(list: NovelBook[]): NovelBook[] {
+    const sorted = list.slice();
+    switch (this.customShelfSortType) {
+      case 'name_asc':
+        return sorted.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      case 'name_desc':
+        return sorted.sort((a, b) => b.name.localeCompare(a.name, 'zh-CN'));
+      case 'recent':
+        return sorted.sort((a, b) => (b.lastReadTime || 0) - (a.lastReadTime || 0));
+      case 'add_asc':
+        return sorted.sort((a, b) => (a.createTime || 0) - (b.createTime || 0));
+      case 'add_desc':
+      default:
+        return sorted.sort((a, b) => (b.createTime || 0) - (a.createTime || 0));
+    }
   }
 
   /**
@@ -7697,7 +9905,7 @@ struct MainMenuPage {
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                   .layoutWeight(1)
 
-                Text(`${category.itemCount} 项`)
+                Text(`${this.getCategoryItemCount(category)} 项`)
                   .fontSize(14)
                   .fontFamily(this.appFontFamily)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -7763,11 +9971,11 @@ struct MainMenuPage {
     
     // 强制刷新对应的内容列表以触发UI更新
     if (contentType === ContentType.MANGA) {
-      this.filteredMangaList = [...this.filteredMangaList];
+      this.filteredMangaList = this.filteredMangaList.slice();
     } else if (contentType === ContentType.EBOOK) {
-      this.filteredEbookList = [...this.filteredEbookList];
+      this.filteredEbookList = this.filteredEbookList.slice();
     } else if (contentType === ContentType.NOVEL) {
-      this.filteredNovelList = [...this.filteredNovelList];
+      this.filteredNovelList = this.filteredNovelList.slice();
     }
     
     animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
@@ -8002,11 +10210,154 @@ struct MainMenuPage {
         this.openMangaDetail(manga);
       }
     })
-    .bindContextMenu(this.buildMangaGridContextMenu(manga), ResponseType.LongPress)
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          if (!this.isMultiSelectMode) {
+            this.showMangaActionMenu(manga);
+          }
+        })
+    )
+    .bindPopup(this.showMangaContextMenu && this.contextMenuManga?.id === manga.id, {
+      builder: this.buildMangaCustomContextMenu(manga),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideMangaContextMenu();
+        }
+      }
+    })
   }
 
   /**
-   * 构建漫画网格右键菜单
+   * 构建漫画自定义上下文菜单
+   */
+  @Builder
+  buildMangaCustomContextMenu(manga: Manga) {
+    Column({ space: 0 }) {
+      // 移动到书架
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('移动到书架')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const mangaToMove = this.contextMenuManga;
+        this.hideMangaContextMenu();
+        if (mangaToMove) {
+          this.showMoveToShelf(mangaToMove.id, ContentType.MANGA);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 移动到隐私书库/移出隐私书库
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph(this.isPrivacyMode ? $r('sys.symbol.lock_open') : $r('sys.symbol.lock'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text(this.isPrivacyMode ? '移出隐私书库' : '移动到隐私书库')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const mangaToToggle = this.contextMenuManga;
+        this.hideMangaContextMenu();
+        if (mangaToToggle) {
+          this.toggleMangaPrivacy(mangaToToggle.id, !this.isPrivacyMode);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 进入多选模式
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('进入多选模式')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const mangaToSelect = this.contextMenuManga;
+        this.hideMangaContextMenu();
+        if (mangaToSelect && !this.isMultiSelectMode) {
+          this.enterMultiSelectMode();
+          this.toggleMangaSelection(mangaToSelect.id);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 删除
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+          Text('删除')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const mangaToDelete = this.contextMenuManga;
+        this.hideMangaContextMenu();
+        if (mangaToDelete) {
+          this.showDeleteMangaDialog(mangaToDelete.id);
+        }
+      })
+    }
+    .width(160)
+    .borderRadius(12)
+  }
+
+  /**
+   * 构建漫画网格右键菜单（已废弃，使用 buildMangaCustomContextMenu 代替）
    */
   @Builder
   buildMangaGridContextMenu(manga: Manga) {
@@ -8117,6 +10468,254 @@ struct MainMenuPage {
           this.showDeleteNovelDialog(novel.id);
         })
     }
+  }
+
+  /**
+   * 构建电子书自定义上下文菜单
+   */
+  @Builder
+  buildEBookCustomContextMenu(ebook: EBook) {
+    Column({ space: 0 }) {
+      // 移动到书架
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('移动到书架')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const ebookToMove = this.contextMenuEBook;
+        this.hideEBookContextMenu();
+        if (ebookToMove) {
+          this.showMoveToShelf(ebookToMove.id, ContentType.EBOOK);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 移动到隐私书库/移出隐私书库
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph(this.isPrivacyMode ? $r('sys.symbol.lock_open') : $r('sys.symbol.lock'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text(this.isPrivacyMode ? '移出隐私书库' : '移动到隐私书库')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const ebookToToggle = this.contextMenuEBook;
+        this.hideEBookContextMenu();
+        if (ebookToToggle) {
+          this.toggleEBookPrivacy(ebookToToggle.id, !this.isPrivacyMode);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 进入多选模式
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('进入多选模式')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const ebookToSelect = this.contextMenuEBook;
+        this.hideEBookContextMenu();
+        if (ebookToSelect && !this.isEBookMultiSelectMode) {
+          this.enterEBookMultiSelectMode();
+          this.toggleEBookSelection(ebookToSelect.id);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 删除
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+          Text('删除')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const ebookToDelete = this.contextMenuEBook;
+        this.hideEBookContextMenu();
+        if (ebookToDelete) {
+          this.showDeleteEBookDialog(ebookToDelete.id);
+        }
+      })
+    }
+    .width(160)
+    .borderRadius(12)
+  }
+
+  /**
+   * 构建小说自定义上下文菜单
+   */
+  @Builder
+  buildNovelCustomContextMenu(novel: NovelBook) {
+    Column({ space: 0 }) {
+      // 移动到书架
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('移动到书架')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const novelToMove = this.contextMenuNovel;
+        this.hideNovelContextMenu();
+        if (novelToMove) {
+          this.showMoveToShelf(novelToMove.id, ContentType.NOVEL);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 移动到隐私书库/移出隐私书库
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph(this.isPrivacyMode ? $r('sys.symbol.lock_open') : $r('sys.symbol.lock'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text(this.isPrivacyMode ? '移出隐私书库' : '移动到隐私书库')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const novelToToggle = this.contextMenuNovel;
+        this.hideNovelContextMenu();
+        if (novelToToggle) {
+          this.toggleNovelPrivacy(novelToToggle.id, !this.isPrivacyMode);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 进入多选模式
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('进入多选模式')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const novelToSelect = this.contextMenuNovel;
+        this.hideNovelContextMenu();
+        if (novelToSelect && !this.isNovelMultiSelectMode) {
+          this.enterNovelMultiSelectMode();
+          this.toggleNovelSelection(novelToSelect.id);
+        }
+      })
+
+      Divider()
+        .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+
+      // 删除
+      Button({ type: ButtonType.Normal }) {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)])
+          Text('删除')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        const novelToDelete = this.contextMenuNovel;
+        this.hideNovelContextMenu();
+        if (novelToDelete) {
+          this.showDeleteNovelDialog(novelToDelete.id);
+        }
+      })
+    }
+    .width(160)
+    .borderRadius(12)
   }
 
   /**
@@ -9249,7 +11848,26 @@ struct MainMenuPage {
         this.openEBookDetail(ebook);
       }
     })
-    .bindContextMenu(this.buildEBookGridContextMenu(ebook), ResponseType.LongPress)
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          if (!this.isEBookMultiSelectMode) {
+            this.showEBookActionMenu(ebook);
+          }
+        })
+    )
+    .bindPopup(this.showEBookContextMenu && this.contextMenuEBook?.id === ebook.id, {
+      builder: this.buildEBookCustomContextMenu(ebook),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideEBookContextMenu();
+        }
+      }
+    })
   }
 
   /**
@@ -9486,7 +12104,26 @@ struct MainMenuPage {
         this.openNovelDetail(novel);
       }
     })
-    .bindContextMenu(this.buildNovelContextMenu(novel), ResponseType.LongPress)
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          if (!this.isNovelMultiSelectMode) {
+            this.showNovelActionMenu(novel);
+          }
+        })
+    )
+    .bindPopup(this.showNovelContextMenu && this.contextMenuNovel?.id === novel.id, {
+      builder: this.buildNovelCustomContextMenu(novel),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideNovelContextMenu();
+        }
+      }
+    })
   }
 
   /**
@@ -10687,7 +13324,7 @@ struct MainMenuPage {
   @Builder
   buildSourceRepoDialog() {
     Column({ space: 20 }) {
-      Text('图源管理')
+      Text('图源导入')
         .fontSize(20)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
@@ -11113,7 +13750,16 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         // 图源管理按钮（带升级图标）
         Row({ space: 6 }) {
+          // 图源管理入口按钮
           Button('图源管理')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.pathStack.pushPathByName('SourceManagementPage', null);
+            })
+          
+          Button('图源导入')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -11159,9 +13805,15 @@ struct MainMenuPage {
           .height(36)
           .backgroundColor(Color.Transparent)
           .onClick(() => {
-            this.sourceViewMode = this.sourceViewMode === LibraryViewMode.LIST
-              ? LibraryViewMode.GRID
-              : LibraryViewMode.LIST;
+            // 使用动画过渡切换视图模式
+            animateTo({
+              duration: 250,
+              curve: Curve.EaseInOut
+            }, () => {
+              this.sourceViewMode = this.sourceViewMode === LibraryViewMode.LIST
+                ? LibraryViewMode.GRID
+                : LibraryViewMode.LIST;
+            });
           })
         }
         .layoutWeight(1)
@@ -11236,31 +13888,40 @@ struct MainMenuPage {
             .padding(40)
             .justifyContent(FlexAlign.Center)
           } else {
-            // 根据视图模式显示列表或网格
-            if (this.sourceViewMode === LibraryViewMode.LIST) {
-              // 图源卡片列表
-              Column({ space: 12 }) {
-                ForEach(this.filteredSourceList, (source: SourceInfo) => {
-                  this.buildSourceCard(source)
-                })
+            // 根据视图模式显示列表或网格 - 使用Stack实现平滑切换
+            Stack() {
+              // 列表视图
+              if (this.sourceViewMode === LibraryViewMode.LIST) {
+                // 图源卡片列表
+                Column({ space: 12 }) {
+                  ForEach(this.filteredSourceList, (source: SourceInfo) => {
+                    this.buildSourceCard(source)
+                  })
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16 })
+                .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
               }
-              .width('100%')
-              .padding({ left: 16, right: 16 })
-            } else {
-              // 图源网格视图
-              Grid() {
-                ForEach(this.filteredSourceList, (source: SourceInfo) => {
-                  GridItem() {
-                    this.buildSourceGridCard(source)
-                  }
-                }, (source: SourceInfo) => String(source.id))
+              
+              // 网格视图
+              if (this.sourceViewMode === LibraryViewMode.GRID) {
+                // 图源网格视图
+                Grid() {
+                  ForEach(this.filteredSourceList, (source: SourceInfo) => {
+                    GridItem() {
+                      this.buildSourceGridCard(source)
+                    }
+                  }, (source: SourceInfo) => String(source.id))
+                }
+                .columnsTemplate(this.getLibraryGridColumnsTemplate())
+                .columnsGap(this.responsive_gridGap)
+                .rowsGap(this.responsive_gridGap)
+                .width('100%')
+                .padding({ left: 16, right: 16 })
+                .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
               }
-              .columnsTemplate(this.getLibraryGridColumnsTemplate())
-              .columnsGap(this.responsive_gridGap)
-              .rowsGap(this.responsive_gridGap)
-              .width('100%')
-              .padding({ left: 16, right: 16 })
             }
+            .width('100%')
           }
         }
         .width('100%')
@@ -11657,29 +14318,95 @@ struct MainMenuPage {
 
       // 分类选择器（非搜索模式且有分类时显示）
       if (!this.isBookSourceSearchMode && this.bookSourceExploreKinds.length > 0) {
-        Scroll() {
-          Row({ space: 8 }) {
-            ForEach(this.bookSourceExploreKinds, (kind: ExploreKind, index: number) => {
-              Text(kind.title)
-                .fontSize(13)
+        Column() {
+          // 标题行（包含展开按钮）
+          Row() {
+            Text('发现分类')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            
+            Text(`(${this.bookSourceExploreKinds.length})`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .margin({ left: 4 })
+            
+            Blank()
+            
+            // 展开/收起按钮
+            Row({ space: 4 }) {
+              Text(this.bookSourceKindsExpanded ? '收起' : '展开')
+                .fontSize(12)
                 .fontFamily(this.appFontFamily)
-                .padding({ left: 16, right: 16, top: 6, bottom: 6 })
-                .backgroundColor(this.selectedBookSourceKindIndex === index ?
-                  ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                  ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .fontColor(this.selectedBookSourceKindIndex === index ?
-                  ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
-                  ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .borderRadius(16)
-                .onClick(() => this.selectBookSourceKind(index))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              SymbolGlyph(this.bookSourceKindsExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+            }
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+            .onClick(() => {
+              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                this.bookSourceKindsExpanded = !this.bookSourceKindsExpanded;
+              });
             })
           }
-          .padding({ left: 16, right: 16 })
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          
+          // 分类内容
+          if (this.bookSourceKindsExpanded) {
+            // 展开状态：网格布局
+            Flex({ wrap: FlexWrap.Wrap }) {
+              ForEach(this.bookSourceExploreKinds, (kind: ExploreKind, index: number) => {
+                Text(kind.title)
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+                  .backgroundColor(this.selectedBookSourceKindIndex === index ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  .fontColor(this.selectedBookSourceKindIndex === index ?
+                    ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .borderRadius(16)
+                  .margin({ right: 8, bottom: 8 })
+                  .onClick(() => this.selectBookSourceKind(index))
+              })
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 8 })
+          } else {
+            // 收起状态：水平滚动
+            Scroll() {
+              Row({ space: 8 }) {
+                ForEach(this.bookSourceExploreKinds, (kind: ExploreKind, index: number) => {
+                  Text(kind.title)
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+                    .backgroundColor(this.selectedBookSourceKindIndex === index ?
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                      ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                    .fontColor(this.selectedBookSourceKindIndex === index ?
+                      ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
+                      ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .borderRadius(16)
+                    .onClick(() => this.selectBookSourceKind(index))
+                })
+              }
+              .padding({ left: 16, right: 16 })
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+            .height(44)
+          }
         }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
         .width('100%')
-        .height(44)
       }
 
       // 内容区域
@@ -12330,20 +15057,7 @@ struct MainMenuPage {
           .onChange((value: string) => {
             this.suwayomiSearchQuery = value;
           })
-        
-        Button() {
-          SymbolGlyph(this.suwayomiDisplayMode === 'grid' ? $r('sys.symbol.list_bullet') : $r('sys.symbol.square_grid_2x2'))
-            .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-        }
-        .width(40)
-        .height(40)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(20)
-        .onClick(() => {
-          this.suwayomiDisplayMode = this.suwayomiDisplayMode === 'grid' ? 'list' : 'grid';
-        })
-        
+
         Button() {
           SymbolGlyph($r('sys.symbol.gearshape'))
             .fontSize(20)
@@ -12352,55 +15066,182 @@ struct MainMenuPage {
         .width(40)
         .height(40)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(20)
+        .borderRadius(8)
         .onClick(() => {
           this.pathStack.pushPathByName('SuwayomiSettingsPage', null);
         })
+
+        Button() {
+          SymbolGlyph(this.suwayomiDisplayMode === 'grid' ? $r('sys.symbol.list_bullet') : $r('sys.symbol.square_grid_2x2'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(8)
+        .onClick(() => {
+          // 使用动画过渡切换显示模式（与书库LIST/GRID切换动画保持一致）
+          animateTo({
+            duration: 250,
+            curve: Curve.EaseInOut
+          }, () => {
+            this.suwayomiDisplayMode = this.suwayomiDisplayMode === 'grid' ? 'list' : 'grid';
+          });
+        })
+
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
 
       // 分类选择器（库模式）
       if (this.suwayomiBrowseMode === 'library') {
-        Scroll() {
-          Row({ space: 8 }) {
-            Text('全部')
-              .fontSize(13)
-              .fontColor(this.suwayomiSelectedCategoryId === -1 ? Color.White :
-                ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .backgroundColor(this.suwayomiSelectedCategoryId === -1 ?
-                ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
-                ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .borderRadius(16)
+        Column() {
+          // 标题行（包含展开按钮）
+          Row() {
+            Text('书架')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
               .fontFamily(this.appFontFamily)
-              .onClick(() => {
-                this.suwayomiSelectedCategoryId = -1;
-                this.loadSuwayomiLibrary(true);
-              })
-            ForEach(this.suwayomiCategories, (category: SuwayomiCategory) => {
-              Text(`${category.name} (${category.mangaCount})`)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            
+            Text(`(${this.suwayomiCategories.length + 1})`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .margin({ left: 4 })
+            
+            Blank()
+            
+            // 展开/收起按钮
+            Row({ space: 4 }) {
+              Text(this.suwayomiCategoriesExpanded ? '收起' : '展开')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              SymbolGlyph(this.suwayomiCategoriesExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+            }
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .borderRadius(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+            .onClick(() => {
+              animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+                this.suwayomiCategoriesExpanded = !this.suwayomiCategoriesExpanded;
+              });
+            })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          
+          // 分类内容
+          if (this.suwayomiCategoriesExpanded) {
+            // 展开状态：网格布局
+            Flex({ wrap: FlexWrap.Wrap }) {
+              Text('全部')
                 .fontSize(13)
-                .fontColor(this.suwayomiSelectedCategoryId === category.id ? Color.White :
+                .fontColor(this.suwayomiSelectedCategoryId === -1 ? Color.White :
                   ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                .backgroundColor(this.suwayomiSelectedCategoryId === category.id ?
+                .backgroundColor(this.suwayomiSelectedCategoryId === -1 ?
                   ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
                   ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                 .borderRadius(16)
                 .fontFamily(this.appFontFamily)
+                .margin({ right: 8, bottom: 8 })
                 .onClick(() => {
-                  this.suwayomiSelectedCategoryId = category.id;
+                  // 使用动画过渡切换分类
+                  animateTo({
+                    duration: 200,
+                    curve: Curve.EaseInOut
+                  }, () => {
+                    this.suwayomiSelectedCategoryId = -1;
+                  });
                   this.loadSuwayomiLibrary(true);
                 })
-            })
+              ForEach(this.suwayomiCategories, (category: SuwayomiCategory) => {
+                Text(`${category.name} (${category.mangaCount})`)
+                  .fontSize(13)
+                  .fontColor(this.suwayomiSelectedCategoryId === category.id ? Color.White :
+                    ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .backgroundColor(this.suwayomiSelectedCategoryId === category.id ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .borderRadius(16)
+                  .fontFamily(this.appFontFamily)
+                  .margin({ right: 8, bottom: 8 })
+                  .onClick(() => {
+                    // 使用动画过渡切换分类
+                    animateTo({
+                      duration: 200,
+                      curve: Curve.EaseInOut
+                    }, () => {
+                      this.suwayomiSelectedCategoryId = category.id;
+                    });
+                    this.loadSuwayomiLibrary(true);
+                  })
+              })
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 8 })
+          } else {
+            // 收起状态：水平滚动
+            Scroll() {
+              Row({ space: 8 }) {
+                Text('全部')
+                  .fontSize(13)
+                  .fontColor(this.suwayomiSelectedCategoryId === -1 ? Color.White :
+                    ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .backgroundColor(this.suwayomiSelectedCategoryId === -1 ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .borderRadius(16)
+                  .fontFamily(this.appFontFamily)
+                  .onClick(() => {
+                    // 使用动画过渡切换分类
+                    animateTo({
+                      duration: 200,
+                      curve: Curve.EaseInOut
+                    }, () => {
+                      this.suwayomiSelectedCategoryId = -1;
+                    });
+                    this.loadSuwayomiLibrary(true);
+                  })
+                ForEach(this.suwayomiCategories, (category: SuwayomiCategory) => {
+                  Text(`${category.name} (${category.mangaCount})`)
+                    .fontSize(13)
+                    .fontColor(this.suwayomiSelectedCategoryId === category.id ? Color.White :
+                      ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .backgroundColor(this.suwayomiSelectedCategoryId === category.id ?
+                      ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) :
+                      ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .borderRadius(16)
+                    .fontFamily(this.appFontFamily)
+                    .onClick(() => {
+                      // 使用动画过渡切换分类
+                      animateTo({
+                        duration: 200,
+                        curve: Curve.EaseInOut
+                      }, () => {
+                        this.suwayomiSelectedCategoryId = category.id;
+                      });
+                      this.loadSuwayomiLibrary(true);
+                    })
+                })
+              }
+              .padding({ left: 16, right: 16 })
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+            .height(44)
           }
-          .padding({ left: 16, right: 16 })
         }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
         .width('100%')
-        .height(44)
       }
 
       // 语言筛选器（图源模式）
@@ -12419,7 +15260,13 @@ struct MainMenuPage {
               .borderRadius(16)
               .fontFamily(this.appFontFamily)
               .onClick(() => {
-                this.suwayomiSelectedLanguage = 'all';
+                // 使用动画过渡切换语言
+                animateTo({
+                  duration: 200,
+                  curve: Curve.EaseInOut
+                }, () => {
+                  this.suwayomiSelectedLanguage = 'all';
+                });
               })
             ForEach(this.suwayomiAvailableLanguages, (lang: string) => {
               Text(lang.toUpperCase())
@@ -12434,7 +15281,13 @@ struct MainMenuPage {
                 .borderRadius(16)
                 .fontFamily(this.appFontFamily)
                 .onClick(() => {
-                  this.suwayomiSelectedLanguage = lang;
+                  // 使用动画过渡切换语言
+                  animateTo({
+                    duration: 200,
+                    curve: Curve.EaseInOut
+                  }, () => {
+                    this.suwayomiSelectedLanguage = lang;
+                  });
                 })
             })
           }
@@ -12529,37 +15382,50 @@ struct MainMenuPage {
           .width('100%')
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
-        } else if (this.suwayomiDisplayMode === 'grid') {
-          Scroll() {
-            Column() {
-              Grid() {
-                ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
-                  GridItem() {
-                    this.buildSuwayomiSourceGridItem(source)
-                  }
-                })
-              }
-              .columnsTemplate('1fr 1fr 1fr 1fr')
-              .columnsGap(8)
-              .rowsGap(8)
-              .width('100%')
-              Blank().height(80)
-            }
-            .width('100%')
-            .padding(16)
-          }
-          .width('100%')
-          .layoutWeight(1)
         } else {
-          Scroll() {
-            Column({ space: 8 }) {
-              ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
-                this.buildSuwayomiSourceListItem(source)
-              })
-              Blank().height(80)
+          // 图源列表容器 - 使用Stack实现平滑切换
+          Stack() {
+            // 网格视图
+            if (this.suwayomiDisplayMode === 'grid') {
+              Scroll() {
+                Column() {
+                  Grid() {
+                    ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
+                      GridItem() {
+                        this.buildSuwayomiSourceGridItem(source)
+                      }
+                    })
+                  }
+                  .columnsTemplate('1fr 1fr 1fr 1fr')
+                  .columnsGap(8)
+                  .rowsGap(8)
+                  .width('100%')
+                  Blank().height(80)
+                }
+                .width('100%')
+                .padding(16)
+              }
+              .width('100%')
+              .height('100%')
+              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
             }
-            .width('100%')
-            .padding(16)
+
+            // 列表视图
+            if (this.suwayomiDisplayMode === 'list') {
+              Scroll() {
+                Column({ space: 8 }) {
+                  ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
+                    this.buildSuwayomiSourceListItem(source)
+                  })
+                  Blank().height(80)
+                }
+                .width('100%')
+                .padding(16)
+              }
+              .width('100%')
+              .height('100%')
+              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+            }
           }
           .width('100%')
           .layoutWeight(1)
@@ -12578,59 +15444,72 @@ struct MainMenuPage {
         .width('100%')
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
-      } else if (this.suwayomiDisplayMode === 'grid') {
-        Scroll() {
-          Column() {
-            Grid() {
-              ForEach(this.getFilteredSuwayomiMangas(), (manga: SuwayomiComicInfo) => {
-                GridItem() {
-                  this.buildSuwayomiMangaGridItem(manga)
-                }
-              })
-            }
-            .columnsTemplate('1fr 1fr 1fr')
-            .columnsGap(8)
-            .rowsGap(8)
-            .width('100%')
-            
-            if (this.suwayomiHasMore) {
-              Button('加载更多')
-                .width('100%')
-                .height(44)
-                .margin({ top: 16 })
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .onClick(() => {
-                  this.loadSuwayomiLibrary(false);
-                })
-            }
-            Blank().height(80)
-          }
-          .width('100%')
-          .padding(16)
-        }
-        .width('100%')
-        .layoutWeight(1)
       } else {
-        Scroll() {
-          Column({ space: 8 }) {
-            ForEach(this.getFilteredSuwayomiMangas(), (manga: SuwayomiComicInfo) => {
-              this.buildSuwayomiMangaListItem(manga)
-            })
-            if (this.suwayomiHasMore) {
-              Button('加载更多')
+        // 漫画列表容器 - 使用Stack实现平滑切换
+        Stack() {
+          // 网格视图
+          if (this.suwayomiDisplayMode === 'grid') {
+            Scroll() {
+              Column() {
+                Grid() {
+                  ForEach(this.getFilteredSuwayomiMangas(), (manga: SuwayomiComicInfo) => {
+                    GridItem() {
+                      this.buildSuwayomiMangaGridItem(manga)
+                    }
+                  })
+                }
+                .columnsTemplate('1fr 1fr 1fr')
+                .columnsGap(8)
+                .rowsGap(8)
                 .width('100%')
-                .height(44)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .onClick(() => {
-                  this.loadSuwayomiLibrary(false);
-                })
+                
+                if (this.suwayomiHasMore) {
+                  Button('加载更多')
+                    .width('100%')
+                    .height(44)
+                    .margin({ top: 16 })
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .onClick(() => {
+                      this.loadSuwayomiLibrary(false);
+                    })
+                }
+                Blank().height(80)
+              }
+              .width('100%')
+              .padding(16)
             }
-            Blank().height(80)
+            .width('100%')
+            .height('100%')
+            .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
           }
-          .width('100%')
-          .padding(16)
+
+          // 列表视图
+          if (this.suwayomiDisplayMode === 'list') {
+            Scroll() {
+              Column({ space: 8 }) {
+                ForEach(this.getFilteredSuwayomiMangas(), (manga: SuwayomiComicInfo) => {
+                  this.buildSuwayomiMangaListItem(manga)
+                })
+                if (this.suwayomiHasMore) {
+                  Button('加载更多')
+                    .width('100%')
+                    .height(44)
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .onClick(() => {
+                      this.loadSuwayomiLibrary(false);
+                    })
+                }
+                Blank().height(80)
+              }
+              .width('100%')
+              .padding(16)
+            }
+            .width('100%')
+            .height('100%')
+            .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
+          }
         }
         .width('100%')
         .layoutWeight(1)
@@ -12654,11 +15533,13 @@ struct MainMenuPage {
   buildSuwayomiMangaGridItem(manga: SuwayomiComicInfo) {
     Column({ space: 6 }) {
       if (manga.coverUrl) {
-        Image(this.getSuwayomiCoverUrl(manga))
-          .width('100%')
-          .aspectRatio(0.7)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
+        SuwayomiImage({
+          src: this.getSuwayomiCoverUrl(manga),
+          imageWidth: '100%',
+          imgAspectRatio: 0.7,
+          imgBorderRadius: 8,
+          objectFit: ImageFit.Cover
+        })
       } else {
         Column() {
           Text(manga.title.charAt(0))
@@ -12690,11 +15571,13 @@ struct MainMenuPage {
   buildSuwayomiMangaListItem(manga: SuwayomiComicInfo) {
     Row({ space: 12 }) {
       if (manga.coverUrl) {
-        Image(this.getSuwayomiCoverUrl(manga))
-          .width(60)
-          .height(80)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
+        SuwayomiImage({
+          src: this.getSuwayomiCoverUrl(manga),
+          imageWidth: 60,
+          imageHeight: 80,
+          imgBorderRadius: 8,
+          objectFit: ImageFit.Cover
+        })
       } else {
         Column() {
           Text(manga.title.charAt(0))
@@ -12747,11 +15630,13 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       Stack() {
         if (source.iconUrl) {
-          Image(this.getSuwayomiSourceIconUrl(source))
-            .width(60)
-            .height(60)
-            .borderRadius(12)
-            .objectFit(ImageFit.Cover)
+          SuwayomiImage({
+            src: this.getSuwayomiSourceIconUrl(source),
+            imageWidth: 60,
+            imageHeight: 60,
+            imgBorderRadius: 12,
+            objectFit: ImageFit.Cover
+          })
         } else {
           Column() {
             Text(source.name.charAt(0))
@@ -12809,11 +15694,13 @@ struct MainMenuPage {
   buildSuwayomiSourceListItem(source: SuwayomiExtensionSource) {
     Row({ space: 12 }) {
       if (source.iconUrl) {
-        Image(this.getSuwayomiSourceIconUrl(source))
-          .width(40)
-          .height(40)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
+        SuwayomiImage({
+          src: this.getSuwayomiSourceIconUrl(source),
+          imageWidth: 40,
+          imageHeight: 40,
+          imgBorderRadius: 8,
+          objectFit: ImageFit.Cover
+        })
       } else {
         Column() {
           Text(source.name.charAt(0))
@@ -12907,7 +15794,18 @@ struct MainMenuPage {
         .layoutWeight(1)
         .height(56)
         .justifyContent(FlexAlign.Center)
-        .onClick(() => this.loadSuwayomiLibrary(true))
+        .onClick(() => {
+          // 使用动画过渡切换到库模式
+          if (this.suwayomiBrowseMode !== 'library') {
+            animateTo({
+              duration: 250,
+              curve: Curve.EaseInOut
+            }, () => {
+              this.suwayomiBrowseMode = 'library';
+            });
+          }
+          this.loadSuwayomiLibrary(true);
+        })
 
         Column({ space: 4 }) {
           SymbolGlyph(this.suwayomiBrowseMode === 'sources' ? $r('sys.symbol.more') : $r('sys.symbol.square_grid_2x2'))
@@ -12925,7 +15823,18 @@ struct MainMenuPage {
         .layoutWeight(1)
         .height(56)
         .justifyContent(FlexAlign.Center)
-        .onClick(() => this.loadSuwayomiSources())
+        .onClick(() => {
+          // 使用动画过渡切换到源模式
+          if (this.suwayomiBrowseMode !== 'sources') {
+            animateTo({
+              duration: 250,
+              curve: Curve.EaseInOut
+            }, () => {
+              this.suwayomiBrowseMode = 'sources';
+            });
+          }
+          this.loadSuwayomiSources();
+        })
       }
       .width('100%')
     }
@@ -13676,7 +16585,7 @@ struct MainMenuPage {
           
           if (source.requireProxy) {
             Row({ space: 2 }) {
-              SymbolGlyph($r('sys.symbol.wifi'))
+              SymbolGlyph($r('sys.symbol.airplane_departure'))
                 .fontSize(11)
                 .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)])
               Text('需要代理')
@@ -13836,7 +16745,7 @@ struct MainMenuPage {
 
         // 需要代理标识（使用系统图标）
         if (source.requireProxy) {
-          SymbolGlyph($r('sys.symbol.wifi'))
+          SymbolGlyph($r('sys.symbol.airplane_departure'))
             .fontSize(14)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
             .position({ x: 4, y: 4 })
@@ -13869,7 +16778,7 @@ struct MainMenuPage {
       // 网络标识（如果需要代理）
       if (source.requireProxy) {
         Row({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.wifi'))
+          SymbolGlyph($r('sys.symbol.airplane_departure'))
             .fontSize(12)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           Text('需要代理')
@@ -14459,6 +17368,8 @@ struct MainMenuPage {
       LogManagerPage()
     } else if (name === 'OpenSourceLicensePage') {
       OpenSourceLicensePage()
+    } else if (name === 'SupportersPage') {
+      SupportersPage()
     } else if (name === 'UserAgreementPage') {
       UserAgreementPage()
     } else if (name === 'PrivacyPolicyPage') {
@@ -14525,6 +17436,8 @@ struct MainMenuPage {
       UnifiedDetailPage()
     } else if (name === 'AvifTestPage') {
       AvifTestPage()
+    } else if (name === 'SourceManagementPage') {
+      SourceManagementPage()
       // 测试页面导航已移除
       // } else if (name === 'ReaderKitTestPage') {
       //   ReaderKitTestPage()
@@ -14847,6 +17760,11 @@ struct MainMenuPage {
    * @param deltaY Y轴滚动偏移量变化值（正值=向下滚动，负值=向上滚动）
    */
   private handleScrollForBottomBar(deltaY: number): void {
+    // 如果底栏动画已关闭，不处理滚动隐藏逻辑，底栏常驻
+    if (!isMainPageBottomBarAnimationEnabled()) {
+      return;
+    }
+    
     // 忽略微小的滚动（避免抢动）
     if (Math.abs(deltaY) < 1) {
       return;
@@ -14866,6 +17784,11 @@ struct MainMenuPage {
    * 处理滚动结束事件，自动完成底栏的显示/隐藏
    */
   private handleScrollEndForBottomBar(): void {
+    // 如果底栏动画已关闭，不处理滚动结束逻辑
+    if (!isMainPageBottomBarAnimationEnabled()) {
+      return;
+    }
+    
     // 如果偏移量超过一半，则完全隐藏；否则完全显示
     if (this.bottomBarOffsetY > this.BOTTOM_BAR_HIDE_THRESHOLD / 2) {
       animateTo({
@@ -15040,6 +17963,16 @@ struct MainMenuPage {
           this.buildEditCategoryDialog()
         }
 
+        // 新增书架对话框
+        if (this.showAddShelfDialog) {
+          this.buildAddShelfDialog()
+        }
+
+        // 删除书架确认对话框
+        if (this.showDeleteShelfDialog) {
+          this.buildDeleteShelfDialog()
+        }
+
         // 移动到分类对话框
         if (this.showMoveToCategoryDialog) {
           Column() {
@@ -15048,6 +17981,17 @@ struct MainMenuPage {
           .width('100%')
           .height('100%')
           .zIndex(2000)
+          .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+        }
+
+        // 移动到书架对话框
+        if (this.showMoveToShelfDialog) {
+          Column() {
+            this.buildMoveToShelfDialog()
+          }
+          .width('100%')
+          .height('100%')
+          .zIndex(2001)
           .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
         }
 

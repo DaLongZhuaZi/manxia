@@ -201,6 +201,36 @@ export class BookshelfCategoryManager {
   }
 
   /**
+   * 使用指定ID创建新分类（用于TypeShelfManager集成）
+   */
+  async createCategoryWithId(id: string, name: string): Promise<BookshelfCategory> {
+    // 检查是否已存在
+    if (this.categories.some(c => c.id === id)) {
+      logger.warn(TAG, `分类已存在: ${id}`);
+      const existing = this.categories.find(c => c.id === id);
+      if (existing) {
+        return existing;
+      }
+    }
+    
+    const maxOrder = this.categories.reduce((max, c) => Math.max(max, c.order), 0);
+    const newCategory: BookshelfCategory = {
+      id: id,
+      name: name,
+      order: maxOrder + 1,
+      isDefault: false,
+      coverImages: [],
+      itemCount: 0,
+      createTime: Date.now(),
+      updateTime: Date.now()
+    };
+    this.categories.push(newCategory);
+    await this.saveCategories();
+    logger.info(TAG, `创建分类(ID: ${id}): ${name}`);
+    return newCategory;
+  }
+
+  /**
    * 更新分类名称
    */
   async updateCategoryName(categoryId: string, newName: string): Promise<boolean> {
@@ -474,5 +504,53 @@ export class BookshelfCategoryManager {
     this.categories = categories;
     await this.saveCategories();
     logger.info(TAG, `重新排序分类，共 ${categories.length} 个`);
+  }
+
+  /**
+   * 清理孤立的书架映射记录
+   * 删除那些在映射中存在但实际内容已不存在的记录
+   * @param validMangaIds 有效的漫画ID列表
+   * @param validEbookIds 有效的电子书ID列表
+   * @param validNovelIds 有效的小说ID列表
+   * @returns 清理的记录数
+   */
+  async cleanupOrphanedMappings(
+    validMangaIds: string[],
+    validEbookIds: string[],
+    validNovelIds: string[]
+  ): Promise<number> {
+    const keysToDelete: string[] = [];
+    
+    this.itemCategoryMap.forEach((item, key) => {
+      let isValid = false;
+      
+      switch (item.contentType) {
+        case ContentType.MANGA:
+          isValid = validMangaIds.includes(item.itemId);
+          break;
+        case ContentType.EBOOK:
+          isValid = validEbookIds.includes(item.itemId);
+          break;
+        case ContentType.NOVEL:
+          isValid = validNovelIds.includes(item.itemId);
+          break;
+      }
+      
+      if (!isValid) {
+        keysToDelete.push(key);
+        logger.info(TAG, `发现孤立映射: ${key}, contentType=${item.contentType}, itemId=${item.itemId}`);
+      }
+    });
+    
+    if (keysToDelete.length > 0) {
+      for (const key of keysToDelete) {
+        this.itemCategoryMap.delete(key);
+      }
+      await this.saveItemCategoryMap();
+      await this.updateCategoryCounts();
+      logger.info(TAG, `清理了 ${keysToDelete.length} 个孤立映射`);
+    }
+    
+    return keysToDelete.length;
   }
 }

@@ -22,6 +22,7 @@ import { NovelDownloadTask, NovelCacheInfo, BookMetadata } from '../../Models/No
 import { AppNotificationManager } from '../Managers/NotificationManager';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { fileIo } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
 
 const TAG = 'NovelChapterCacheManager';
 
@@ -37,6 +38,15 @@ export interface DownloadProgressCallback {
   onProgress: (current: number, total: number, chapterTitle: string) => void;
   onComplete: () => void;
   onError: (error: string) => void;
+}
+
+/**
+ * 章节列表缓存数据结构
+ */
+interface ChapterListCacheData {
+  updateTime: number;
+  totalCount: number;
+  chapters: LegadoChapter[];
 }
 
 /**
@@ -57,6 +67,8 @@ export class NovelChapterCacheManager {
   private novelsCacheDir: string = '';
   private isInitialized: boolean = false;
   private initPromise: Promise<void> | null = null;
+  // 标记是否使用Download目录
+  private useDownloadDir: boolean = false;
 
   private constructor() {
     // 启动初始化但不等待
@@ -65,18 +77,70 @@ export class NovelChapterCacheManager {
   
   /**
    * 初始化缓存目录
+   * [改进] 优先使用Download同步目录下的novel文件夹
+   * 当Download目录未配置时，回退到沙箱目录
    */
   private async initCacheDir(): Promise<void> {
     if (this.isInitialized) return;
     
     try {
+      // 优先检查Download同步目录是否已配置
+      const downloadDirPath = AppStorage.get<string>('downloadSyncDirPath');
+      
+      if (downloadDirPath) {
+        // 尝试使用Download目录下的novel文件夹
+        const novelDir = `${downloadDirPath}/novel`;
+        try {
+          // 确保目录存在
+          try {
+            fileIo.accessSync(novelDir);
+          } catch (e) {
+            // 目录不存在，创建它
+            fileIo.mkdirSync(novelDir);
+          }
+          
+          // 创建.nomedia文件防止媒体扫描
+          this.createNoMediaFile(novelDir);
+          
+          this.novelsCacheDir = novelDir;
+          this.useDownloadDir = true;
+          this.isInitialized = true;
+          logger.info(TAG, `小说缓存目录初始化(Download目录): ${this.novelsCacheDir}`);
+          return;
+        } catch (error) {
+          logger.warn(TAG, `无法使用Download目录，回退到沙箱目录: ${String(error)}`);
+        }
+      }
+      
+      // 回退到沙箱目录
       const filesDir = this.sandboxManager.getDirectory('files');
       this.novelsCacheDir = `${filesDir}/novels`;
       await this.sandboxManager.createDirectory(this.novelsCacheDir);
+      this.useDownloadDir = false;
       this.isInitialized = true;
-      logger.info(TAG, `小说缓存目录初始化: ${this.novelsCacheDir}`);
+      logger.info(TAG, `小说缓存目录初始化(沙箱目录): ${this.novelsCacheDir}`);
     } catch (error) {
       logger.error(TAG, `初始化缓存目录失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 创建.nomedia文件
+   * 防止系统媒体扫描器将目录识别为媒体文件夹
+   */
+  private createNoMediaFile(folderPath: string): void {
+    try {
+      const nomediaPath = `${folderPath}/.nomedia`;
+      try {
+        fileIo.accessSync(nomediaPath);
+      } catch (e) {
+        // 文件不存在，创建它
+        const file = fileIo.openSync(nomediaPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+        fileIo.closeSync(file);
+        logger.debug(TAG, `.nomedia文件已创建: ${nomediaPath}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `创建.nomedia文件失败: ${folderPath}, ${String(error)}`);
     }
   }
   
@@ -101,12 +165,19 @@ export class NovelChapterCacheManager {
 
   /**
    * 获取书籍缓存目录路径
-   * 格式: /files/novels/{safeBookId}/
+   * 格式: Download/novel/{safeBookId}/ 或 /files/novels/{safeBookId}/
    */
   private getBookCacheDir(bookId: string): string {
     // 将bookId转换为安全的目录名（移除特殊字符）
     const safeBookId = this.sanitizeFileName(bookId);
     return `${this.novelsCacheDir}/${safeBookId}`;
+  }
+  
+  /**
+   * [新增] 检查是否使用Download目录
+   */
+  isUsingDownloadDir(): boolean {
+    return this.useDownloadDir;
   }
   
   /**
@@ -326,6 +397,10 @@ export class NovelChapterCacheManager {
 
   /**
    * 开始下载任务
+   * @param taskId 任务ID
+   * @param sourceId 书源ID
+   * @param chapters 要下载的章节列表（已筛选的章节）
+   * @param callback 进度回调
    */
   async startDownload(
     taskId: string,
@@ -352,13 +427,12 @@ export class NovelChapterCacheManager {
     this.activeDownloads.add(taskId);
 
     try {
-      const startIdx = task.startChapterIndex;
-      const endIdx = Math.min(task.endChapterIndex, chapters.length - 1);
-      const total = endIdx - startIdx + 1;
+      // 直接使用传入的 chapters 数组，它已经是筛选后的章节列表
+      const total = chapters.length;
       let successCount = 0;
       let failCount = 0;
 
-      for (let i = startIdx; i <= endIdx; i++) {
+      for (let i = 0; i < chapters.length; i++) {
         // 检查任务是否被暂停或取消
         const currentTask = this.downloadTasks.get(taskId);
         if (!currentTask || currentTask.status === 'paused') {
@@ -372,8 +446,8 @@ export class NovelChapterCacheManager {
         // 下载章节
         const success = await this.cacheChapter(sourceId, task.bookId, chapter);
         
-        task.currentChapterIndex = i;
-        task.progress = ((i - startIdx + 1) / total) * 100;
+        task.currentChapterIndex = chapter.index; // 使用章节自身的索引
+        task.progress = ((i + 1) / total) * 100;
         task.updateTime = Date.now();
 
         if (success) {
@@ -381,7 +455,7 @@ export class NovelChapterCacheManager {
           // 回调进度
           const cb = this.downloadCallbacks.get(taskId);
           if (cb) {
-            cb.onProgress(i - startIdx + 1, total, chapter.title);
+            cb.onProgress(i + 1, total, chapter.title);
           }
         } else {
           failCount++;
@@ -399,11 +473,15 @@ export class NovelChapterCacheManager {
         task.errorMessage = `全部 ${failCount} 章下载失败`;
         logger.error(TAG, `下载任务失败: ${task.bookName}, 全部 ${failCount} 章下载失败`);
         
-        // 发送失败通知
-        this.notificationManager.sendDownloadFailedNotification(
+        // 发送详细失败通知
+        this.notificationManager.sendDetailedDownloadCompleteNotification(
           taskId, 
-          task.bookName, 
-          `全部 ${failCount} 章下载失败`
+          task.bookName,
+          'novel',
+          successCount,
+          failCount,
+          task.startChapterIndex,
+          task.endChapterIndex
         );
         
         const cb = this.downloadCallbacks.get(taskId);
@@ -417,10 +495,15 @@ export class NovelChapterCacheManager {
         task.errorMessage = `${failCount} 章下载失败`;
         logger.warn(TAG, `下载任务完成（部分失败）: ${task.bookName}, 成功 ${successCount}/${total}, 失败 ${failCount}`);
         
-        // 发送完成通知（带警告）
-        this.notificationManager.sendDownloadCompleteNotification(
+        // 发送详细完成通知（带警告）
+        this.notificationManager.sendDetailedDownloadCompleteNotification(
           taskId, 
-          `${task.bookName} (${failCount}章失败)`
+          task.bookName,
+          'novel',
+          successCount,
+          failCount,
+          task.startChapterIndex,
+          task.endChapterIndex
         );
         
         const cb = this.downloadCallbacks.get(taskId);
@@ -433,8 +516,16 @@ export class NovelChapterCacheManager {
         task.progress = 100;
         logger.info(TAG, `下载任务完成: ${task.bookName}, 成功 ${successCount}/${total}`);
         
-        // 发送完成通知
-        this.notificationManager.sendDownloadCompleteNotification(taskId, task.bookName);
+        // 发送详细完成通知
+        this.notificationManager.sendDetailedDownloadCompleteNotification(
+          taskId, 
+          task.bookName,
+          'novel',
+          successCount,
+          failCount,
+          task.startChapterIndex,
+          task.endChapterIndex
+        );
         
         const cb = this.downloadCallbacks.get(taskId);
         if (cb) {
@@ -651,6 +742,85 @@ export class NovelChapterCacheManager {
       logger.debug(TAG, `保存书籍元数据: ${metadataPath}`);
     } catch (error) {
       logger.error(TAG, `保存书籍元数据失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 保存章节列表到缓存
+   * 用于避免每次都从网络加载章节列表
+   */
+  async saveChapterList(bookId: string, chapters: LegadoChapter[]): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      
+      const bookDir = this.getBookCacheDir(bookId);
+      await this.sandboxManager.createDirectory(bookDir);
+      
+      const chapterListPath = `${bookDir}/chapters_list.json`;
+      
+      // 构建章节列表数据
+      const chaptersArray: LegadoChapter[] = [];
+      for (const ch of chapters) {
+        const chapterItem: LegadoChapter = {
+          id: ch.id || '',
+          bookUrl: ch.bookUrl || '',
+          url: ch.url || '',
+          title: ch.title || '',
+          index: ch.index,
+          isVip: ch.isVip || false,
+          isPay: ch.isPay || false
+        };
+        chaptersArray.push(chapterItem);
+      }
+      
+      const chapterData: ChapterListCacheData = {
+        updateTime: Date.now(),
+        totalCount: chapters.length,
+        chapters: chaptersArray
+      };
+      
+      await this.sandboxManager.writeFile(chapterListPath, JSON.stringify(chapterData));
+      logger.info(TAG, `保存章节列表缓存: ${bookId}, ${chapters.length}章`);
+    } catch (error) {
+      logger.error(TAG, `保存章节列表失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 从缓存获取章节列表
+   * @param bookId 书籍ID
+   * @param _maxAgeHours 已废弃，不再检查缓存过期（用户不需要会自己删除）
+   * @returns 章节列表，如果缓存不存在则返回null
+   */
+  async getCachedChapterList(bookId: string, _maxAgeHours: number = 24): Promise<LegadoChapter[] | null> {
+    try {
+      await this.ensureInitialized();
+      
+      const bookDir = this.getBookCacheDir(bookId);
+      const chapterListPath = `${bookDir}/chapters_list.json`;
+      
+      // 检查文件是否存在
+      if (!await this.sandboxManager.exists(chapterListPath)) {
+        return null;
+      }
+      
+      // 读取文件
+      const contentBuffer: string | ArrayBuffer = await this.sandboxManager.readFile(chapterListPath);
+      let contentStr: string;
+      if (typeof contentBuffer === 'string') {
+        contentStr = contentBuffer;
+      } else {
+        contentStr = new util.TextDecoder().decode(new Uint8Array(contentBuffer));
+      }
+      const chapterData = JSON.parse(contentStr) as ChapterListCacheData;
+      
+      // [移除] 不再检查缓存过期，用户不需要这本书会自己删除
+      
+      logger.info(TAG, `从缓存加载章节列表: ${bookId}, ${chapterData.totalCount}章`);
+      return chapterData.chapters;
+    } catch (error) {
+      logger.warn(TAG, `获取缓存章节列表失败: ${String(error)}`);
+      return null;
     }
   }
   

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    android:versionCode="50"
-    android:versionName="1.4.50"
+    android:versionCode="78"
+    android:versionName="1.4.78"
     android:compileSdkVersion="34"
     android:compileSdkVersionCodename="14"
-    package="eu.kanade.tachiyomi.extension.zh.bakamh"
+    package="eu.kanade.tachiyomi.extension.zh.copymanga"
     platformBuildVersionCode="34"
     platformBuildVersionName="14">
     <uses-sdk
@@ -12,29 +12,13 @@
         android:targetSdkVersion="34"/>
     <uses-feature android:name="tachiyomi.extension"/>
     <application
-        android:label="Tachiyomi: Baka Manhua"
+        android:label="Tachiyomi: CopyManga"
         android:icon="@mipmap/ic_launcher"
-        android:debuggable="true"
         android:allowBackup="false"
         android:extractNativeLibs="true">
-        <activity
-            android:theme="@android:style/Theme.NoDisplay"
-            android:name="eu.kanade.tachiyomi.multisrc.madara.MadaraUrlActivity"
-            android:exported="true"
-            android:excludeFromRecents="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <category android:name="android.intent.category.BROWSABLE"/>
-                <data
-                    android:scheme="https"
-                    android:host="bakamh.ru"
-                    android:pathPattern="/.*/..*"/>
-            </intent-filter>
-        </activity>
         <meta-data
             android:name="tachiyomi.extension.class"
-            android:value=".Bakamh"/>
+            android:value=".CopyManga"/>
         <meta-data
             android:name="tachiyomi.extension.nsfw"
             android:value="1"/>

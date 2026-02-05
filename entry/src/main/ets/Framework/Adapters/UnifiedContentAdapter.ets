@@ -38,48 +38,156 @@ export class MangaAdapter {
     sourceId?: string,
     sourceName?: string
   ): UnifiedContent {
-    const unifiedChapters = chapters.map((chapter, index) => 
-      MangaAdapter.toUnifiedChapter(chapter, index, readChapterIds, downloadedChapterIds, bookmarkedChapterIds)
-    );
+    logger.debug(TAG, `[toUnifiedContent-1] 开始, chapters.length=${chapters?.length}, lastReadChapterIndex=${lastReadChapterIndex}`);
     
-    const readCount = unifiedChapters.filter(c => c.isRead).length;
+    // [修复] 先验证 chapters 数组
+    if (!chapters || !Array.isArray(chapters)) {
+      logger.error(TAG, `[toUnifiedContent] chapters 不是有效数组`);
+      chapters = [];
+    }
+    
+    logger.debug(TAG, `[toUnifiedContent-2] 开始转换章节`);
+    const unifiedChapters: UnifiedChapter[] = [];
+    for (let i = 0; i < chapters.length; i++) {
+      try {
+        const chapter = chapters[i];
+        const unified = MangaAdapter.toUnifiedChapter(chapter, i, readChapterIds, downloadedChapterIds, bookmarkedChapterIds);
+        unifiedChapters.push(unified);
+      } catch (err) {
+        logger.error(TAG, `[toUnifiedContent] 转换章节${i}失败: ${String(err)}`);
+      }
+    }
+    logger.debug(TAG, `[toUnifiedContent-3] 章节转换完成, unifiedChapters.length=${unifiedChapters.length}`);
+    
+    logger.debug(TAG, `[toUnifiedContent-4] 计算已读数量`);
+    let readCount = 0;
+    for (let i = 0; i < unifiedChapters.length; i++) {
+      if (unifiedChapters[i].isRead) {
+        readCount++;
+      }
+    }
     const totalCount = unifiedChapters.length;
+    logger.debug(TAG, `[toUnifiedContent-5] readCount=${readCount}, totalCount=${totalCount}`);
     
-    // 从metadata中提取作者信息
-    const authorName = manga.metadata?.authors?.length > 0 ? manga.metadata.authors.join(', ') : '未知作者';
+    // 从 metadata中提取作者信息
+    logger.debug(TAG, `[toUnifiedContent-6] 提取作者信息`);
+    let authorName = '未知作者';
+    try {
+      if (manga && manga.metadata && manga.metadata.authors && manga.metadata.authors.length > 0) {
+        authorName = manga.metadata.authors.join(', ');
+      }
+    } catch (err) {
+      logger.error(TAG, `[toUnifiedContent] 提取作者失败: ${String(err)}`);
+    }
+    logger.debug(TAG, `[toUnifiedContent-7] authorName=${authorName}`);
     
-    return {
-      id: manga.id,
-      title: manga.title,
-      coverUrl: manga.coverImagePath || '',
+    // [修复] 显式验证 lastReadChapterIndex，避免 ArkTS 短路求值问题
+    logger.debug(TAG, `[toUnifiedContent-8] 验证 lastReadChapterIndex`);
+    let safeLastReadIndex = lastReadChapterIndex;
+    if (typeof safeLastReadIndex !== 'number' || isNaN(safeLastReadIndex) || safeLastReadIndex < 0 || safeLastReadIndex >= chapters.length) {
+      safeLastReadIndex = -1;
+    }
+    logger.debug(TAG, `[toUnifiedContent-9] safeLastReadIndex=${safeLastReadIndex}`);
+    
+    // [修复] 先计算 lastReadChapterTitle，避免在对象字面量中使用复杂条件表达式
+    logger.debug(TAG, `[toUnifiedContent-10] 计算 lastReadChapterTitle`);
+    let lastReadChapterTitle = '';
+    if (safeLastReadIndex >= 0 && safeLastReadIndex < chapters.length) {
+      lastReadChapterTitle = chapters[safeLastReadIndex].title;
+    }
+    logger.debug(TAG, `[toUnifiedContent-11] lastReadChapterTitle=${lastReadChapterTitle}`);
+    
+    // [修复] 逐个字段安全构建，避免 ArkTS 对象字面量中的潜在问题
+    logger.debug(TAG, `[toUnifiedContent-12] 开始构建返回对象`);
+    
+    // 安全提取各个字段
+    const safeId = manga.id || '';
+    const safeTitle = manga.title || '';
+    const safeCoverUrl = manga.coverImagePath || '';
+    const safeDescription = manga.description || '';
+    
+    logger.debug(TAG, `[toUnifiedContent-13] 基本字段提取完成`);
+    
+    // 安全提取 metadata 字段
+    let safeGenres: string[] = [];
+    let safeTags: string[] = [];
+    try {
+      if (manga && manga.metadata) {
+        if (manga.metadata.genres && Array.isArray(manga.metadata.genres)) {
+          safeGenres = manga.metadata.genres;
+        }
+        if (manga.metadata.themes && Array.isArray(manga.metadata.themes)) {
+          safeTags = manga.metadata.themes;
+        }
+      }
+    } catch (err) {
+      logger.error(TAG, `[toUnifiedContent] 提取 metadata 字段失败: ${String(err)}`);
+    }
+    logger.debug(TAG, `[toUnifiedContent-14] metadata 字段提取完成, genres=${safeGenres.length}, tags=${safeTags.length}`);
+    
+    // 安全获取阅读状态
+    logger.debug(TAG, `[toUnifiedContent-15] 计算阅读状态`);
+    const safeReadStatus = MangaAdapter.getReadStatus(readCount, totalCount);
+    logger.debug(TAG, `[toUnifiedContent-16] safeReadStatus=${safeReadStatus}`);
+    
+    // 安全计算进度
+    let safeReadProgress = 0;
+    if (totalCount > 0) {
+      safeReadProgress = Math.round((readCount / totalCount) * 100);
+    }
+    logger.debug(TAG, `[toUnifiedContent-17] safeReadProgress=${safeReadProgress}`);
+    
+    // 安全提取图源信息
+    let safeSourceName = sourceName || '';
+    let safeSourceUrl = '';
+    try {
+      if (!safeSourceName && manga && manga.sourceInfo && manga.sourceInfo.sourceName) {
+        safeSourceName = manga.sourceInfo.sourceName;
+      }
+      if (manga && manga.sourceInfo && manga.sourceInfo.sourceUrl) {
+        safeSourceUrl = manga.sourceInfo.sourceUrl;
+      }
+    } catch (err) {
+      logger.error(TAG, `[toUnifiedContent] 提取图源信息失败: ${String(err)}`);
+    }
+    logger.debug(TAG, `[toUnifiedContent-18] 图源信息提取完成`);
+    
+    // 构建最终对象
+    logger.debug(TAG, `[toUnifiedContent-19] 构建最终对象`);
+    const result: UnifiedContent = {
+      id: safeId,
+      title: safeTitle,
+      coverUrl: safeCoverUrl,
       author: authorName,
-      description: manga.description || '',
+      description: safeDescription,
       
       contentType: UnifiedContentType.MANGA,
-      genres: manga.metadata?.genres || [],
-      tags: manga.metadata?.themes || [],
+      genres: safeGenres,
+      tags: safeTags,
       
-      readStatus: MangaAdapter.getReadStatus(readCount, totalCount),
+      readStatus: safeReadStatus,
       isFavorite: isFavorite,
       isNSFW: manga.isNSFW || false,
       
       totalChapters: totalCount,
       readChapters: readCount,
-      lastReadChapterIndex: lastReadChapterIndex,
-      lastReadChapterTitle: lastReadChapterIndex >= 0 && lastReadChapterIndex < chapters.length 
-        ? chapters[lastReadChapterIndex].title : '',
+      lastReadChapterIndex: safeLastReadIndex,
+      lastReadChapterTitle: lastReadChapterTitle,
       lastReadTime: manga.lastUpdatedAt,
-      readProgress: totalCount > 0 ? Math.round((readCount / totalCount) * 100) : 0,
+      readProgress: safeReadProgress,
       
       sourceId: sourceId,
-      sourceName: sourceName || manga.sourceInfo?.sourceName,
-      sourceUrl: manga.sourceInfo?.sourceUrl,
+      sourceName: safeSourceName,
+      sourceUrl: safeSourceUrl,
       isLocal: !sourceId,
       
       chapters: unifiedChapters,
       originalData: manga,
       originalType: UnifiedContentType.MANGA
     };
+    
+    logger.debug(TAG, `[toUnifiedContent-20] 对象构建完成，准备返回`);
+    return result;
   }
   
   /**
@@ -92,15 +200,61 @@ export class MangaAdapter {
     downloadedChapterIds: Set<string>,
     bookmarkedChapterIds: Set<string>
   ): UnifiedChapter {
+    // [修复] 安全提取各个字段，避免 ArkTS 的潜在问题
+    const safeId = chapter.id || '';
+    const safeTitle = chapter.title || '';
+    
+    // 安全检查已读/已下载/书签状态
+    let isRead = false;
+    let isDownloaded = false;
+    let isBookmarked = false;
+    try {
+      if (readChapterIds && safeId) {
+        isRead = readChapterIds.has(safeId);
+      }
+      if (downloadedChapterIds && safeId) {
+        isDownloaded = downloadedChapterIds.has(safeId);
+      }
+      if (bookmarkedChapterIds && safeId) {
+        isBookmarked = bookmarkedChapterIds.has(safeId);
+      }
+    } catch (err) {
+      logger.warn(TAG, `[toUnifiedChapter] 检查状态失败: ${String(err)}`);
+    }
+    
+    // 安全获取页面数
+    let safePageCount = 0;
+    try {
+      if (chapter.pages && Array.isArray(chapter.pages) && chapter.pages.length > 0) {
+        safePageCount = chapter.pages.length;
+      } else if (typeof chapter.totalPages === 'number' && chapter.totalPages > 0) {
+        safePageCount = chapter.totalPages;
+      }
+    } catch (err) {
+      logger.warn(TAG, `[toUnifiedChapter] 获取页面数失败: ${String(err)}`);
+    }
+    
+    // 安全获取发布日期
+    let safePublishDate: string | undefined = undefined;
+    try {
+      if (typeof chapter.publishDate === 'number') {
+        safePublishDate = new Date(chapter.publishDate).toISOString();
+      } else if (chapter.publishDate) {
+        safePublishDate = String(chapter.publishDate);
+      }
+    } catch (err) {
+      logger.warn(TAG, `[toUnifiedChapter] 获取发布日期失败: ${String(err)}`);
+    }
+    
     return {
-      id: chapter.id,
-      title: chapter.title,
+      id: safeId,
+      title: safeTitle,
       index: index,
-      isRead: readChapterIds.has(chapter.id),
-      isDownloaded: downloadedChapterIds.has(chapter.id),
-      isBookmarked: bookmarkedChapterIds.has(chapter.id),
-      pageCount: chapter.pages?.length || chapter.totalPages,
-      publishDate: typeof chapter.publishDate === 'number' ? new Date(chapter.publishDate).toISOString() : chapter.publishDate?.toString(),
+      isRead: isRead,
+      isDownloaded: isDownloaded,
+      isBookmarked: isBookmarked,
+      pageCount: safePageCount,
+      publishDate: safePublishDate,
       originalData: chapter,
       originalType: UnifiedContentType.MANGA
     };
@@ -158,6 +312,18 @@ export class EBookAdapter {
     // 计算阅读进度
     const readProgress = ebook.readingProgress?.progress || 0;
     
+    // [修复] 显式验证 currentChapterIndex，避免 ArkTS 短路求值问题
+    let safeCurrentChapterIndex = currentChapterIndex;
+    if (typeof safeCurrentChapterIndex !== 'number' || isNaN(safeCurrentChapterIndex) || safeCurrentChapterIndex < 0 || safeCurrentChapterIndex >= chapters.length) {
+      safeCurrentChapterIndex = 0;  // 电子书默认从第0章开始
+    }
+    
+    // [修复] 先计算 lastReadChapterTitle，避免在对象字面量中使用复杂条件表达式
+    let lastReadChapterTitle = '';
+    if (safeCurrentChapterIndex >= 0 && safeCurrentChapterIndex < chapters.length) {
+      lastReadChapterTitle = chapters[safeCurrentChapterIndex].title;
+    }
+    
     return {
       id: ebook.id,
       title: ebook.metadata?.title || '未知书名',
@@ -175,9 +341,8 @@ export class EBookAdapter {
       
       totalChapters: totalCount,
       readChapters: readCount,
-      lastReadChapterIndex: currentChapterIndex,
-      lastReadChapterTitle: currentChapterIndex < chapters.length 
-        ? chapters[currentChapterIndex].title : '',
+      lastReadChapterIndex: safeCurrentChapterIndex,
+      lastReadChapterTitle: lastReadChapterTitle,
       lastReadTime: ebook.readingProgress?.lastReadTime,
       readProgress: readProgress,
       
@@ -271,6 +436,18 @@ export class NovelAdapter {
     const readCount = lastReadChapterIndex >= 0 ? lastReadChapterIndex + 1 : 0;
     const totalCount = unifiedChapters.length;
     
+    // [修复] 显式验证 lastReadChapterIndex，避免 ArkTS 短路求值问题
+    let safeLastReadIndex = lastReadChapterIndex;
+    if (typeof safeLastReadIndex !== 'number' || isNaN(safeLastReadIndex) || safeLastReadIndex < 0 || safeLastReadIndex >= chapters.length) {
+      safeLastReadIndex = -1;
+    }
+    
+    // [修复] 先计算 lastReadChapterTitle，避免在对象字面量中使用复杂条件表达式
+    let lastReadChapterTitle = '';
+    if (safeLastReadIndex >= 0 && safeLastReadIndex < chapters.length) {
+      lastReadChapterTitle = chapters[safeLastReadIndex].title;
+    }
+    
     return {
       id: book.bookUrl || '',
       title: book.name || '未知书名',
@@ -288,9 +465,8 @@ export class NovelAdapter {
       
       totalChapters: totalCount,
       readChapters: readCount,
-      lastReadChapterIndex: lastReadChapterIndex,
-      lastReadChapterTitle: lastReadChapterIndex >= 0 && lastReadChapterIndex < chapters.length 
-        ? chapters[lastReadChapterIndex].title : '',
+      lastReadChapterIndex: safeLastReadIndex,
+      lastReadChapterTitle: lastReadChapterTitle,
       lastReadTime: undefined,
       readProgress: totalCount > 0 ? Math.round((readCount / totalCount) * 100) : 0,
       

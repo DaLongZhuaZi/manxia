@@ -56,6 +56,8 @@ export interface MangaPage {
   imagePath: string;
   /** 图片URL（兼容性属性） */
   imageUrl: string;
+  /** 本地文件路径（已下载的页面） */
+  localPath?: string;
   /** 图片宽度 */
   width?: number;
   /** 图片高度 */
@@ -208,6 +210,12 @@ export interface ReadingSettings {
   volumeKeyNavigation: boolean;
   /** 卷页背面透明度（0-100，100为完全不透明） */
   curlBackOpacity: number;
+  /** 条漫模式左边距（0-50%） */
+  webtoonLeftMargin: number;
+  /** 条漫模式右边距（0-50%） */
+  webtoonRightMargin: number;
+  /** 条漫模式边距同步调整 */
+  webtoonMarginSync: boolean;
 }
 
 /**
@@ -397,7 +405,10 @@ export const DEFAULT_READING_SETTINGS: ReadingSettings = {
     brightness: 100
   },
   volumeKeyNavigation: false,
-  curlBackOpacity: 90  // 默认90%不透明
+  curlBackOpacity: 90,  // 默认90%不透明
+  webtoonLeftMargin: 0,  // 默认0，无边距
+  webtoonRightMargin: 0,  // 默认0，无边距
+  webtoonMarginSync: true  // 默认同步调整
 };
 
 /**

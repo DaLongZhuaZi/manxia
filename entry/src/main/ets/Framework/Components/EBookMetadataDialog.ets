@@ -9,6 +9,7 @@ import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
 import { logger } from '../../Utils/Logger';
+import { promptAction } from '@kit.ArkUI';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
 import { picker } from '@kit.CoreFileKit';
@@ -585,13 +586,13 @@ export struct EBookMetadataDialog {
   private validateForm(): boolean {
     if (this.title.trim().length === 0) {
       logger.warn(TAG, '书名不能为空');
-      // TODO: 显示错误提示
+      promptAction.showToast({ message: '请输入书名', duration: 2000 });
       return false;
     }
 
     if (this.author.trim().length === 0) {
       logger.warn(TAG, '作者不能为空');
-      // TODO: 显示错误提示
+      promptAction.showToast({ message: '请输入作者', duration: 2000 });
       return false;
     }
 

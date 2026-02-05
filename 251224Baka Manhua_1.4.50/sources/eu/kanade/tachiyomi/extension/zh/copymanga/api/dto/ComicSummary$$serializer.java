@@ -1,0 +1,216 @@
+package eu.kanade.tachiyomi.extension.zh.copymanga.api.dto;
+
+import java.util.List;
+import kotlin.Deprecated;
+import kotlin.DeprecationLevel;
+import kotlin.Metadata;
+import kotlin.ReplaceWith;
+import kotlin.jvm.internal.Intrinsics;
+import kotlin.jvm.internal.Reflection;
+import kotlinx.serialization.ContextualSerializer;
+import kotlinx.serialization.KSerializer;
+import kotlinx.serialization.UnknownFieldException;
+import kotlinx.serialization.builtins.BuiltinSerializersKt;
+import kotlinx.serialization.descriptors.SerialDescriptor;
+import kotlinx.serialization.encoding.CompositeDecoder;
+import kotlinx.serialization.encoding.CompositeEncoder;
+import kotlinx.serialization.encoding.Decoder;
+import kotlinx.serialization.encoding.Encoder;
+import kotlinx.serialization.internal.ArrayListSerializer;
+import kotlinx.serialization.internal.GeneratedSerializer;
+import kotlinx.serialization.internal.IntSerializer;
+import kotlinx.serialization.internal.PluginGeneratedSerialDescriptor;
+import kotlinx.serialization.internal.SerializationConstructorMarker;
+import kotlinx.serialization.internal.StringSerializer;
+import kotlinx.serialization.json.JsonElement;
+import kotlinx.serialization.json.JsonElementSerializer;
+
+/* compiled from: ComicsListResult.kt */
+@Metadata(d1 = {"\u00006\n\u0000\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0002\b\u0003\n\u0002\u0010\u0011\n\u0002\u0018\u0002\n\u0002\b\u0003\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010\u0002\n\u0000\n\u0002\u0018\u0002\n\u0002\b\u0002\bÇ\u0002\u0018\u00002\b\u0012\u0004\u0012\u00020\u00020\u0001B\u0007\b\u0002¢\u0006\u0002\u0010\u0003J\u0018\u0010\b\u001a\f\u0012\b\u0012\u0006\u0012\u0002\b\u00030\n0\tHÖ\u0001¢\u0006\u0002\u0010\u000bJ\u0011\u0010\f\u001a\u00020\u00022\u0006\u0010\r\u001a\u00020\u000eHÖ\u0001J\u0019\u0010\u000f\u001a\u00020\u00102\u0006\u0010\u0011\u001a\u00020\u00122\u0006\u0010\u0013\u001a\u00020\u0002HÖ\u0001R\u0014\u0010\u0004\u001a\u00020\u00058VXÖ\u0005¢\u0006\u0006\u001a\u0004\b\u0006\u0010\u0007¨\u0006\u0014"}, d2 = {"eu/kanade/tachiyomi/extension/zh/copymanga/api/dto/ComicSummary.$serializer", "Lkotlinx/serialization/internal/GeneratedSerializer;", "Leu/kanade/tachiyomi/extension/zh/copymanga/api/dto/ComicSummary;", "()V", "descriptor", "Lkotlinx/serialization/descriptors/SerialDescriptor;", "getDescriptor", "()Lkotlinx/serialization/descriptors/SerialDescriptor;", "childSerializers", "", "Lkotlinx/serialization/KSerializer;", "()[Lkotlinx/serialization/KSerializer;", "deserialize", "decoder", "Lkotlinx/serialization/encoding/Decoder;", "serialize", "", "encoder", "Lkotlinx/serialization/encoding/Encoder;", "value", "tachiyomi-zh.copymanga-v1.4.78_release"}, k = 1, mv = {1, 7, 1}, xi = 48)
+@Deprecated(level = DeprecationLevel.HIDDEN, message = "This synthesized declaration should not be used directly", replaceWith = @ReplaceWith(expression = "", imports = {}))
+/* loaded from: classes.dex */
+public final class ComicSummary$$serializer implements GeneratedSerializer<ComicSummary> {
+    public static final ComicSummary$$serializer INSTANCE;
+    public static final /* synthetic */ SerialDescriptor descriptor;
+
+    public SerialDescriptor getDescriptor() {
+        return descriptor;
+    }
+
+    static {
+        ComicSummary$$serializer comicSummary$$serializer = new ComicSummary$$serializer();
+        INSTANCE = comicSummary$$serializer;
+        SerialDescriptor pluginGeneratedSerialDescriptor = new PluginGeneratedSerialDescriptor("eu.kanade.tachiyomi.extension.zh.copymanga.api.dto.ComicSummary", comicSummary$$serializer, 10);
+        pluginGeneratedSerialDescriptor.addElement("name", false);
+        pluginGeneratedSerialDescriptor.addElement("path_word", false);
+        pluginGeneratedSerialDescriptor.addElement("free_type", true);
+        pluginGeneratedSerialDescriptor.addElement("females", true);
+        pluginGeneratedSerialDescriptor.addElement("males", true);
+        pluginGeneratedSerialDescriptor.addElement("author", false);
+        pluginGeneratedSerialDescriptor.addElement("theme", true);
+        pluginGeneratedSerialDescriptor.addElement("cover", false);
+        pluginGeneratedSerialDescriptor.addElement("popular", false);
+        pluginGeneratedSerialDescriptor.addElement("datetime_updated", true);
+        descriptor = pluginGeneratedSerialDescriptor;
+    }
+
+    private ComicSummary$$serializer() {
+    }
+
+    public KSerializer<?>[] childSerializers() {
+        return new KSerializer[]{(KSerializer) StringSerializer.INSTANCE, (KSerializer) StringSerializer.INSTANCE, BuiltinSerializersKt.getNullable(FreeType$$serializer.INSTANCE), (KSerializer) new ArrayListSerializer(new ContextualSerializer(Reflection.getOrCreateKotlinClass(JsonElement.class), JsonElementSerializer.INSTANCE, new KSerializer[0])), (KSerializer) new ArrayListSerializer(new ContextualSerializer(Reflection.getOrCreateKotlinClass(JsonElement.class), JsonElementSerializer.INSTANCE, new KSerializer[0])), (KSerializer) new ArrayListSerializer(AuthorInfo$$serializer.INSTANCE), (KSerializer) new ArrayListSerializer(ThemeInfo$$serializer.INSTANCE), (KSerializer) StringSerializer.INSTANCE, (KSerializer) IntSerializer.INSTANCE, BuiltinSerializersKt.getNullable(StringSerializer.INSTANCE)};
+    }
+
+    /* JADX INFO: Thrown type has an unknown type hierarchy: kotlinx.serialization.UnknownFieldException */
+    /* renamed from: deserialize, reason: merged with bridge method [inline-methods] */
+    public ComicSummary m22deserialize(Decoder decoder) throws UnknownFieldException {
+        Object objDecodeNullableSerializableElement;
+        int i;
+        int i2;
+        Object objDecodeSerializableElement;
+        Object objDecodeSerializableElement2;
+        String str;
+        String str2;
+        Object objDecodeSerializableElement3;
+        Object objDecodeNullableSerializableElement2;
+        Object objDecodeSerializableElement4;
+        String str3;
+        String str4;
+        Object obj;
+        Intrinsics.checkNotNullParameter(decoder, "decoder");
+        SerialDescriptor descriptor2 = getDescriptor();
+        CompositeDecoder compositeDecoderBeginStructure = decoder.beginStructure(descriptor2);
+        int i3 = 6;
+        int i4 = 5;
+        String strDecodeStringElement = null;
+        if (compositeDecoderBeginStructure.decodeSequentially()) {
+            String strDecodeStringElement2 = compositeDecoderBeginStructure.decodeStringElement(descriptor2, 0);
+            String strDecodeStringElement3 = compositeDecoderBeginStructure.decodeStringElement(descriptor2, 1);
+            objDecodeNullableSerializableElement2 = compositeDecoderBeginStructure.decodeNullableSerializableElement(descriptor2, 2, FreeType$$serializer.INSTANCE, (Object) null);
+            objDecodeSerializableElement2 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, 3, new ArrayListSerializer(new ContextualSerializer(Reflection.getOrCreateKotlinClass(JsonElement.class), JsonElementSerializer.INSTANCE, new KSerializer[0])), (Object) null);
+            objDecodeSerializableElement4 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, 4, new ArrayListSerializer(new ContextualSerializer(Reflection.getOrCreateKotlinClass(JsonElement.class), JsonElementSerializer.INSTANCE, new KSerializer[0])), (Object) null);
+            objDecodeSerializableElement = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, 5, new ArrayListSerializer(AuthorInfo$$serializer.INSTANCE), (Object) null);
+            objDecodeSerializableElement3 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, 6, new ArrayListSerializer(ThemeInfo$$serializer.INSTANCE), (Object) null);
+            String strDecodeStringElement4 = compositeDecoderBeginStructure.decodeStringElement(descriptor2, 7);
+            int iDecodeIntElement = compositeDecoderBeginStructure.decodeIntElement(descriptor2, 8);
+            objDecodeNullableSerializableElement = compositeDecoderBeginStructure.decodeNullableSerializableElement(descriptor2, 9, StringSerializer.INSTANCE, (Object) null);
+            str3 = strDecodeStringElement2;
+            str = strDecodeStringElement4;
+            i2 = iDecodeIntElement;
+            str2 = strDecodeStringElement3;
+            i = 1023;
+        } else {
+            int i5 = 9;
+            String strDecodeStringElement5 = null;
+            Object objDecodeNullableSerializableElement3 = null;
+            Object objDecodeSerializableElement5 = null;
+            objDecodeNullableSerializableElement = null;
+            Object objDecodeSerializableElement6 = null;
+            Object objDecodeSerializableElement7 = null;
+            Object objDecodeSerializableElement8 = null;
+            String strDecodeStringElement6 = null;
+            int i6 = 0;
+            int iDecodeIntElement2 = 0;
+            boolean z = true;
+            while (z) {
+                int iDecodeElementIndex = compositeDecoderBeginStructure.decodeElementIndex(descriptor2);
+                switch (iDecodeElementIndex) {
+                    case -1:
+                        objDecodeSerializableElement5 = objDecodeSerializableElement5;
+                        z = false;
+                    case 0:
+                        str4 = strDecodeStringElement5;
+                        obj = objDecodeSerializableElement5;
+                        strDecodeStringElement = compositeDecoderBeginStructure.decodeStringElement(descriptor2, 0);
+                        i6 |= 1;
+                        strDecodeStringElement5 = str4;
+                        objDecodeSerializableElement5 = obj;
+                        i3 = 6;
+                        i4 = 5;
+                        i5 = 9;
+                    case 1:
+                        obj = objDecodeSerializableElement5;
+                        i6 |= 2;
+                        strDecodeStringElement5 = compositeDecoderBeginStructure.decodeStringElement(descriptor2, 1);
+                        objDecodeSerializableElement5 = obj;
+                        i3 = 6;
+                        i4 = 5;
+                        i5 = 9;
+                    case 2:
+                        objDecodeNullableSerializableElement3 = compositeDecoderBeginStructure.decodeNullableSerializableElement(descriptor2, 2, FreeType$$serializer.INSTANCE, objDecodeNullableSerializableElement3);
+                        i6 |= 4;
+                        strDecodeStringElement5 = strDecodeStringElement5;
+                        i3 = 6;
+                        i4 = 5;
+                        i5 = 9;
+                    case 3:
+                        str4 = strDecodeStringElement5;
+                        obj = objDecodeSerializableElement5;
+                        objDecodeSerializableElement8 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, 3, new ArrayListSerializer(new ContextualSerializer(Reflection.getOrCreateKotlinClass(JsonElement.class), JsonElementSerializer.INSTANCE, new KSerializer[0])), objDecodeSerializableElement8);
+                        i6 |= 8;
+                        strDecodeStringElement5 = str4;
+                        objDecodeSerializableElement5 = obj;
+                        i3 = 6;
+                        i4 = 5;
+                        i5 = 9;
+                    case 4:
+                        str4 = strDecodeStringElement5;
+                        obj = objDecodeSerializableElement5;
+                        objDecodeSerializableElement7 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, 4, new ArrayListSerializer(new ContextualSerializer(Reflection.getOrCreateKotlinClass(JsonElement.class), JsonElementSerializer.INSTANCE, new KSerializer[0])), objDecodeSerializableElement7);
+                        i6 |= 16;
+                        strDecodeStringElement5 = str4;
+                        objDecodeSerializableElement5 = obj;
+                        i3 = 6;
+                        i4 = 5;
+                        i5 = 9;
+                    case 5:
+                        objDecodeSerializableElement6 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, i4, new ArrayListSerializer(AuthorInfo$$serializer.INSTANCE), objDecodeSerializableElement6);
+                        i6 |= 32;
+                        i5 = 9;
+                    case 6:
+                        objDecodeSerializableElement5 = compositeDecoderBeginStructure.decodeSerializableElement(descriptor2, i3, new ArrayListSerializer(ThemeInfo$$serializer.INSTANCE), objDecodeSerializableElement5);
+                        i6 |= 64;
+                        i5 = 9;
+                    case 7:
+                        strDecodeStringElement6 = compositeDecoderBeginStructure.decodeStringElement(descriptor2, 7);
+                        i6 |= 128;
+                        i5 = 9;
+                    case 8:
+                        iDecodeIntElement2 = compositeDecoderBeginStructure.decodeIntElement(descriptor2, 8);
+                        i6 |= 256;
+                    case 9:
+                        objDecodeNullableSerializableElement = compositeDecoderBeginStructure.decodeNullableSerializableElement(descriptor2, i5, StringSerializer.INSTANCE, objDecodeNullableSerializableElement);
+                        i6 |= 512;
+                    default:
+                        throw new UnknownFieldException(iDecodeElementIndex);
+                }
+            }
+            String str5 = strDecodeStringElement5;
+            i = i6;
+            i2 = iDecodeIntElement2;
+            objDecodeSerializableElement = objDecodeSerializableElement6;
+            objDecodeSerializableElement2 = objDecodeSerializableElement8;
+            str = strDecodeStringElement6;
+            str2 = str5;
+            objDecodeSerializableElement3 = objDecodeSerializableElement5;
+            objDecodeNullableSerializableElement2 = objDecodeNullableSerializableElement3;
+            objDecodeSerializableElement4 = objDecodeSerializableElement7;
+            str3 = strDecodeStringElement;
+        }
+        compositeDecoderBeginStructure.endStructure(descriptor2);
+        return new ComicSummary(i, str3, str2, (FreeType) objDecodeNullableSerializableElement2, (List) objDecodeSerializableElement2, (List) objDecodeSerializableElement4, (List) objDecodeSerializableElement, (List) objDecodeSerializableElement3, str, i2, (String) objDecodeNullableSerializableElement, (SerializationConstructorMarker) null);
+    }
+
+    public void serialize(Encoder encoder, ComicSummary value) {
+        Intrinsics.checkNotNullParameter(encoder, "encoder");
+        Intrinsics.checkNotNullParameter(value, "value");
+        SerialDescriptor descriptor2 = getDescriptor();
+        CompositeEncoder compositeEncoderBeginStructure = encoder.beginStructure(descriptor2);
+        ComicSummary.write$Self(value, compositeEncoderBeginStructure, descriptor2);
+        compositeEncoderBeginStructure.endStructure(descriptor2);
+    }
+
+    public KSerializer<?>[] typeParametersSerializers() {
+        return GeneratedSerializer.DefaultImpls.typeParametersSerializers(this);
+    }
+}

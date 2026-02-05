@@ -117,7 +117,7 @@ export struct PageSettingsSubPage {
   private tabConfigs: TabConfig[] = [
     { title: '首页', index: TabIndex.HOME, required: false },
     { title: '书库', index: TabIndex.LIBRARY, required: true },
-    { title: '发现', index: TabIndex.DISCOVER, required: false },
+    { title: '历史', index: TabIndex.DISCOVER, required: false },
     { title: '图源', index: TabIndex.SOURCE, required: false },
     { title: '书源', index: TabIndex.BOOK_SOURCE, required: false },
     { title: 'Suwayomi', index: TabIndex.SUWAYOMI, required: false },
@@ -826,14 +826,31 @@ export struct PageSettingsSubPage {
 /**
  * 页面设置工具类
  * 用于获取当前场景应该使用的详情页类型
+ * 
+ * 重要：如果全局强制模式启用，所有场景都将使用统一详情页
  */
 export class PageSettingsHelper {
   private static settingsManager: SettingsManager = SettingsManager.getInstance();
+  
+  // 强制模式设置键
+  private static readonly FORCE_UNIFIED_KEY = 'force_unified_detail_page_enabled';
+
+  /**
+   * 检查强制统一详情页模式是否启用
+   * 默认为 true（强制启用统一详情页）
+   */
+  static isForceUnifiedEnabled(): boolean {
+    return PageSettingsHelper.settingsManager.getBoolean(PageSettingsHelper.FORCE_UNIFIED_KEY, true);
+  }
 
   /**
    * 获取漫画场景的详情页类型
    */
   static getMangaDetailPageType(): DetailPageType {
+    // 强制模式下直接返回 UNIFIED
+    if (PageSettingsHelper.isForceUnifiedEnabled()) {
+      return DetailPageType.UNIFIED;
+    }
     const type = PageSettingsHelper.settingsManager.getString(PageSettingKeys.MANGA_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
     return type as DetailPageType;
   }
@@ -842,6 +859,10 @@ export class PageSettingsHelper {
    * 获取电子书场景的详情页类型
    */
   static getEBookDetailPageType(): DetailPageType {
+    // 强制模式下直接返回 UNIFIED
+    if (PageSettingsHelper.isForceUnifiedEnabled()) {
+      return DetailPageType.UNIFIED;
+    }
     const type = PageSettingsHelper.settingsManager.getString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
     return type as DetailPageType;
   }
@@ -850,14 +871,26 @@ export class PageSettingsHelper {
    * 获取小说场景的详情页类型
    */
   static getNovelDetailPageType(): DetailPageType {
+    // 强制模式下直接返回 UNIFIED
+    if (PageSettingsHelper.isForceUnifiedEnabled()) {
+      return DetailPageType.UNIFIED;
+    }
     const type = PageSettingsHelper.settingsManager.getString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
     return type as DetailPageType;
   }
 
   /**
    * 根据场景和设置获取应该跳转的详情页名称
+   * 
+   * 注意：如果强制模式启用，始终返回 'UnifiedDetailPage'
    */
   static getDetailPageName(scene: SceneType): string {
+    // 双重保障：强制模式下直接返回统一详情页
+    if (PageSettingsHelper.isForceUnifiedEnabled()) {
+      logger.debug('PageSettingsHelper', `强制模式启用，${scene}场景使用统一详情页`);
+      return 'UnifiedDetailPage';
+    }
+    
     let pageType: DetailPageType;
 
     switch (scene) {

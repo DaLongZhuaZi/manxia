@@ -148,7 +148,10 @@ export struct MangaQuickSettings {
       doublePagePortraitLayout: this.readingSettings.doublePagePortraitLayout,
       filterSettings: this.readingSettings.filterSettings,
       volumeKeyNavigation: this.readingSettings.volumeKeyNavigation,
-      curlBackOpacity: this.readingSettings.curlBackOpacity
+      curlBackOpacity: this.readingSettings.curlBackOpacity,
+      webtoonLeftMargin: this.readingSettings.webtoonLeftMargin ?? 0,
+      webtoonRightMargin: this.readingSettings.webtoonRightMargin ?? 0,
+      webtoonMarginSync: this.readingSettings.webtoonMarginSync ?? true
     };
   }
 
@@ -210,6 +213,65 @@ export struct MangaQuickSettings {
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
     }
+  }
+
+  /**
+   * 更新条漫左边距
+   */
+  private updateWebtoonLeftMargin(value: number): void {
+    const newSettings = this.createNewSettings();
+    newSettings.webtoonLeftMargin = value;
+    
+    // 如果同步调整开启，同时更新右边距
+    if (newSettings.webtoonMarginSync) {
+      newSettings.webtoonRightMargin = value;
+    }
+    
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  /**
+   * 更新条漫右边距
+   */
+  private updateWebtoonRightMargin(value: number): void {
+    const newSettings = this.createNewSettings();
+    newSettings.webtoonRightMargin = value;
+    
+    // 如果同步调整开启，同时更新左边距
+    if (newSettings.webtoonMarginSync) {
+      newSettings.webtoonLeftMargin = value;
+    }
+    
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  /**
+   * 更新条漫边距同步设置
+   */
+  private updateWebtoonMarginSync(enabled: boolean): void {
+    const newSettings = this.createNewSettings();
+    newSettings.webtoonMarginSync = enabled;
+    
+    // 如果开启同步，将右边距设置为与左边距相同
+    if (enabled) {
+      newSettings.webtoonRightMargin = newSettings.webtoonLeftMargin;
+    }
+    
+    if (this.callbacks.onSettingsChange) {
+      this.callbacks.onSettingsChange(newSettings);
+    }
+  }
+
+  /**
+   * 判断是否为条漫模式
+   */
+  private isWebtoonMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
+      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
   }
 
   /**
@@ -375,6 +437,97 @@ export struct MangaQuickSettings {
   }
 
   /**
+   * 构建条漫边距调整（竖屏版本）
+   */
+  @Builder
+  buildWebtoonMarginSelector() {
+    Column({ space: 8 }) {
+      Text('边距调整')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .width('100%')
+
+      // 同步调整开关
+      Row() {
+        Text('左右同步')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.webtoonMarginSync ?? true })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.updateWebtoonMarginSync(isOn);
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // 左边距滑块
+      Column({ space: 4 }) {
+        Row() {
+          Text('左边距')
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          Blank()
+          Text(`${Math.round(this.readingSettings.webtoonLeftMargin ?? 0)}%`)
+            .fontSize(12)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Slider({
+          value: this.readingSettings.webtoonLeftMargin ?? 0,
+          min: 0,
+          max: 40,
+          step: 1
+        })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .onChange((value: number) => {
+            this.updateWebtoonLeftMargin(value);
+          })
+      }
+      .width('100%')
+
+      // 右边距滑块（仅在非同步模式下显示）
+      if (!(this.readingSettings.webtoonMarginSync ?? true)) {
+        Column({ space: 4 }) {
+          Row() {
+            Text('右边距')
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            Blank()
+            Text(`${Math.round(this.readingSettings.webtoonRightMargin ?? 0)}%`)
+              .fontSize(12)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          Slider({
+            value: this.readingSettings.webtoonRightMargin ?? 0,
+            min: 0,
+            max: 40,
+            step: 1
+          })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .onChange((value: number) => {
+              this.updateWebtoonRightMargin(value);
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+    .borderRadius(8)
+    .margin({ bottom: 16 })
+  }
+
+  /**
    * 构建模式按钮
    */
   @Builder
@@ -463,6 +616,11 @@ export struct MangaQuickSettings {
           // 双页竖屏组合
           this.buildDoublePageLayoutSelector()
           
+          // 条漫边距调整（仅在条漫模式下显示）
+          if (this.isWebtoonMode()) {
+            this.buildWebtoonMarginSelector()
+          }
+          
           // 音量键翻页
           this.buildVolumeKeyToggle()
         }
@@ -543,6 +701,11 @@ export struct MangaQuickSettings {
             
             // 双页竖屏组合（紧凑版）
             this.buildLandscapeDoublePageLayout()
+            
+            // 条漫边距调整（仅在条漫模式下显示）
+            if (this.isWebtoonMode()) {
+              this.buildLandscapeWebtoonMarginSelector()
+            }
             
             // 音量键翻页
             this.buildLandscapeVolumeKeyToggle()
@@ -698,6 +861,97 @@ export struct MangaQuickSettings {
         })
     }
     .width('100%')
+    .margin({ bottom: 12 })
+  }
+
+  /**
+   * 构建横屏条漫边距调整
+   */
+  @Builder
+  buildLandscapeWebtoonMarginSelector() {
+    Column({ space: 6 }) {
+      Row() {
+        Text('边距调整')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+        
+        Text('同步')
+          .fontSize(10)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .margin({ right: 4 })
+        
+        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.webtoonMarginSync ?? true })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .onChange((isOn: boolean) => {
+            this.updateWebtoonMarginSync(isOn);
+          })
+      }
+      .width('100%')
+
+      // 左边距
+      Row() {
+        Text('左')
+          .fontSize(10)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width(20)
+        
+        Slider({
+          value: this.readingSettings.webtoonLeftMargin ?? 0,
+          min: 0,
+          max: 40,
+          step: 1
+        })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .onChange((value: number) => {
+            this.updateWebtoonLeftMargin(value);
+          })
+        
+        Text(`${Math.round(this.readingSettings.webtoonLeftMargin ?? 0)}%`)
+          .fontSize(10)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .width(30)
+          .textAlign(TextAlign.End)
+      }
+      .width('100%')
+
+      // 右边距（仅在非同步模式下显示）
+      if (!(this.readingSettings.webtoonMarginSync ?? true)) {
+        Row() {
+          Text('右')
+            .fontSize(10)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width(20)
+          
+          Slider({
+            value: this.readingSettings.webtoonRightMargin ?? 0,
+            min: 0,
+            max: 40,
+            step: 1
+          })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .layoutWeight(1)
+            .onChange((value: number) => {
+              this.updateWebtoonRightMargin(value);
+            })
+          
+          Text(`${Math.round(this.readingSettings.webtoonRightMargin ?? 0)}%`)
+            .fontSize(10)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .width(30)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+    .borderRadius(6)
     .margin({ bottom: 12 })
   }
 

@@ -257,6 +257,13 @@ export struct CacheManagementPanel {
         .margin({ left: 8 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(16)
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.9, y: 0.9 })
+            .opacity(0.7)
+          }
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
         .onClick(() => {
           if (this.onClose) {
             this.onClose();
@@ -343,6 +350,13 @@ export struct CacheManagementPanel {
       ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme) : 
       Color.Transparent)
     .borderRadius(8)
+    .animation({ duration: 200, curve: Curve.EaseInOut })
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.95, y: 0.95 })
+        .opacity(0.8)
+      }
+    })
     .onClick(() => {
       this.currentTab = tab;
     })
@@ -355,6 +369,7 @@ export struct CacheManagementPanel {
     }
     .width('100%')
     .padding(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.translate({ x: 10 })))
   }
   
   @Builder
@@ -364,6 +379,7 @@ export struct CacheManagementPanel {
     }
     .width('100%')
     .padding(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.translate({ x: 10 })))
   }
   
   @Builder
@@ -373,6 +389,7 @@ export struct CacheManagementPanel {
     }
     .width('100%')
     .padding(16)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.translate({ x: 10 })))
   }
   
   @Builder
@@ -389,9 +406,9 @@ export struct CacheManagementPanel {
         
         Button({ type: ButtonType.Normal }) {
           Row({ space: 4 }) {
-            Text('🗑️')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(14)
+              .fontColor([Color.White])
             Text('清空')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
@@ -402,6 +419,13 @@ export struct CacheManagementPanel {
         .padding({ left: 12, right: 12 })
         .backgroundColor('#FF5252')
         .borderRadius(14)
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.95, y: 0.95 })
+            .opacity(0.8)
+          }
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
         .onClick(() => {
             AlertDialog.show({
               title: '确认清空',
@@ -494,10 +518,15 @@ export struct CacheManagementPanel {
           // 内存缓存
           Column({ space: 10 }) {
             Row() {
-              Text('💾 内存缓存大小')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.memory_module'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                Text('内存缓存大小')
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              }
               Blank()
               Text(`${(this.cacheConfig.memoryCache.maxSize / 1024 / 1024).toFixed(0)} MB`)
                 .fontSize(14)
@@ -525,10 +554,15 @@ export struct CacheManagementPanel {
           // 磁盘缓存
           Column({ space: 10 }) {
             Row() {
-              Text('💿 磁盘缓存大小')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.externaldrive'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                Text('磁盘缓存大小')
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              }
               Blank()
               Text(`${(this.cacheConfig.diskCache.maxSize / 1024 / 1024).toFixed(0)} MB`)
                 .fontSize(14)
@@ -555,10 +589,15 @@ export struct CacheManagementPanel {
           
           // 预加载开关
           Row() {
-            Text('🚀 启用预加载')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.bolt'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text('启用预加载')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
             Blank()
             Toggle({ type: ToggleType.Switch, isOn: this.cacheConfig.preload.enabled })
               .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -572,10 +611,15 @@ export struct CacheManagementPanel {
           if (this.cacheConfig.preload.enabled) {
             Column({ space: 12 }) {
               Row() {
-                Text('📖 普通模式预加载')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.book'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                  Text('普通模式预加载')
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
                 Blank()
                 Text(`${this.cacheConfig.preload.rangeNormal} 页`)
                   .fontSize(13)
@@ -597,10 +641,15 @@ export struct CacheManagementPanel {
                 })
 
               Row() {
-                Text('📜 条漫模式预加载')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.scroll_vertical'))
+                    .fontSize(14)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                  Text('条漫模式预加载')
+                    .fontSize(13)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
                 Blank()
                 Text(`${this.cacheConfig.preload.rangeWebtoon} 页`)
                   .fontSize(13)
@@ -629,9 +678,9 @@ export struct CacheManagementPanel {
           // 重置按钮
           Button({ type: ButtonType.Normal }) {
             Row({ space: 6 }) {
-              Text('🔄')
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
+              SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
               Text('重置为默认配置')
                 .fontSize(14)
                 .fontFamily(this.appFontFamily)
@@ -642,6 +691,13 @@ export struct CacheManagementPanel {
           .height(40)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
           .borderRadius(8)
+          .stateStyles({
+            pressed: {
+              .scale({ x: 0.98, y: 0.98 })
+              .opacity(0.8)
+            }
+          })
+          .animation({ duration: 150, curve: Curve.EaseOut })
           .onClick(() => {
               AlertDialog.show({
                 title: '确认重置',
@@ -680,9 +736,9 @@ export struct CacheManagementPanel {
         
         Button({ type: ButtonType.Normal }) {
           Row({ space: 4 }) {
-            Text('🔄')
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
+            SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
             Text('重置')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
@@ -693,6 +749,13 @@ export struct CacheManagementPanel {
         .padding({ left: 12, right: 12 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(14)
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.95, y: 0.95 })
+            .opacity(0.8)
+          }
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
         .onClick(() => this.resetPreloadStats())
       }
       .width('100%')
@@ -701,11 +764,16 @@ export struct CacheManagementPanel {
         Column({ space: 16 }) {
           // 阅读统计
           Column({ space: 10 }) {
-            Text('📊 阅读统计')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.service_management'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text('阅读统计')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
 
             Row() {
               Text('总页数')
@@ -783,11 +851,16 @@ export struct CacheManagementPanel {
 
           // 当前策略
           Column({ space: 10 }) {
-            Text('🎯 当前策略')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.scope'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text('当前策略')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
 
             Row() {
               Text('向前预加载')

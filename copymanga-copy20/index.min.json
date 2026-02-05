@@ -2,10 +2,10 @@
   {
     "name": "Tachiyomi: CopyManga",
     "pkg": "eu.kanade.tachiyomi.extension.zh.copymanga",
-    "apk": "tachiyomi-zh.copymanga-v1.4.76.apk",
+    "apk": "tachiyomi-zh.copymanga-v1.4.78.apk",
     "lang": "zh",
-    "code": 76,
-    "version": "1.4.76",
+    "code": 78,
+    "version": "1.4.78",
     "nsfw": 1,
     "sources": [
       {
@@ -13,6 +13,40 @@
         "lang": "zh",
         "name": "拷贝漫画",
         "baseUrl": "https://www.mangacopy.com"
+      }
+    ]
+  },
+  {
+    "name": "Tachiyomi: VomicMHPlus",
+    "pkg": "eu.kanade.tachiyomi.extension.zh.vomicmh",
+    "apk": "tachiyomi-zh.vomicmh-v1.4.2.apk",
+    "lang": "zh",
+    "code": 2,
+    "version": "1.4.2",
+    "nsfw": 0,
+    "sources": [
+      {
+        "id": "3001986353",
+        "lang": "zh",
+        "name": "vomic漫+",
+        "baseUrl": "https://vomicmh.com/"
+      }
+    ]
+  },
+  {
+    "name": "Tachiyomi: BaoziManhuaPlus",
+    "pkg": "eu.kanade.tachiyomi.extension.zh.baozimanhuaplus",
+    "apk": "tachiyomi-zh.baozimanhuaplus-v1.4.1.apk",
+    "lang": "zh",
+    "code": 1,
+    "version": "1.4.1",
+    "nsfw": 0,
+    "sources": [
+      {
+        "id": "4654438345013653772",
+        "lang": "zh",
+        "name": "包子漫画+",
+        "baseUrl": "https://www.baozimh.com/"
       }
     ]
   }

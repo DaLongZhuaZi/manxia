@@ -205,6 +205,62 @@ export class AppNotificationManager {
     };
     return this.sendNotification(config);
   }
+  
+  /**
+   * 发送详细的下载完成通知
+   * 显示缓存内容的详细信息，包括书名、章节范围、成功/失败数量
+   */
+  public async sendDetailedDownloadCompleteNotification(
+    taskId: string,
+    contentTitle: string,
+    contentType: 'novel' | 'manga',
+    successCount: number,
+    failCount: number,
+    startChapter?: number,
+    endChapter?: number
+  ): Promise<boolean> {
+    const totalCount = successCount + failCount;
+    const typeName = contentType === 'novel' ? '小说' : '漫画';
+    
+    // 构建标题
+    let title: string;
+    if (failCount === 0) {
+      title = `${typeName}缓存完成`;
+    } else if (failCount === totalCount) {
+      title = `${typeName}缓存失败`;
+    } else {
+      title = `${typeName}缓存完成(部分失败)`;
+    }
+    
+    // 构建正文
+    let text = contentTitle;
+    if (startChapter !== undefined && endChapter !== undefined) {
+      if (startChapter === endChapter) {
+        text += ` 第${startChapter + 1}章`;
+      } else {
+        text += ` 第${startChapter + 1}-${endChapter + 1}章`;
+      }
+    }
+    
+    // 构建附加文本
+    let additionalText: string;
+    if (failCount === 0) {
+      additionalText = `成功缓存${successCount}章`;
+    } else if (failCount === totalCount) {
+      additionalText = `全部${totalCount}章缓存失败`;
+    } else {
+      additionalText = `成功${successCount}章，失败${failCount}章`;
+    }
+    
+    const config: NotificationConfig = {
+      id: this.getNotificationId(taskId),
+      title: title,
+      text: text,
+      additionalText: additionalText,
+      type: failCount === totalCount ? NotificationType.DOWNLOAD_FAILED : NotificationType.DOWNLOAD_COMPLETE
+    };
+    return this.sendNotification(config);
+  }
 
   /**
    * 发送下载失败通知

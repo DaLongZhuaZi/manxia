@@ -113,8 +113,30 @@ export class MangaSourceAPIEngine {
         const defaultHeaders: DefaultHeaders = new DefaultHeaders();
         const baseHeaders: Object = this.normalizeHeaders(config.headers || (defaultHeaders as Object));
         
-        // 使用规范化后的headers
-        const headers = baseHeaders;
+        // 使用规范化后的headers，但对于GET请求需要特殊处理
+        let headers: Record<string, string> = baseHeaders as Record<string, string>;
+        
+        // GET请求不应该有Content-Type头，移除它，并修改Accept头
+        if (config.method === 'GET') {
+          const newHeaders: Record<string, string> = {};
+          const keys = Object.keys(headers);
+          for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            const lowerKey = key.toLowerCase();
+            // 跳过Content-Type
+            if (lowerKey === 'content-type') {
+              continue;
+            }
+            // 将Accept从 application/json 改为 */*
+            if (lowerKey === 'accept' && headers[key] === 'application/json') {
+              newHeaders[key] = '*/*';
+              continue;
+            }
+            newHeaders[key] = headers[key];
+          }
+          headers = newHeaders;
+          logger.debug(TAG, 'GET请求：已移除Content-Type头，修改Accept为*/*');
+        }
       
       const headerKeys: string[] = Object.keys(headers as Object);
       logger.debug(TAG, `最终Headers键数量: ${String(headerKeys.length)}`);
@@ -124,7 +146,8 @@ export class MangaSourceAPIEngine {
         method: this.convertMethod(config.method),
         header: headers as Object,
         readTimeout: config.timeout || this.timeout,
-        connectTimeout: config.timeout || this.timeout
+        connectTimeout: config.timeout || this.timeout,
+        usingProxy: true
       };
 
       // 添加请求体
@@ -265,24 +288,9 @@ export class MangaSourceAPIEngine {
       }
     }
 
-    // 特殊处理：Origin
-    // 如果有Referer但没有Origin，自动设置Origin
-    let hasOrigin = false;
-    let refererValue = '';
-    
-    const headerKeys = Object.keys(headers);
-    for (let i = 0; i < headerKeys.length; i++) {
-      const k = headerKeys[i].toLowerCase();
-      if (k === 'origin') {
-        hasOrigin = true;
-      } else if (k === 'referer') {
-        refererValue = headers[headerKeys[i]];
-      }
-    }
-
-    if (!hasOrigin && refererValue) {
-      headers['Origin'] = refererValue;
-    }
+    // [修复] 不再自动添加Origin头
+    // CopyManga等API对Origin头敏感，添加会导致返回"error"
+    // Origin头完全由配置控制，不自动添加
 
     return headers;
   }

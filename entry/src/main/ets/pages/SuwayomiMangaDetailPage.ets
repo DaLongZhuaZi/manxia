@@ -13,6 +13,7 @@ import { FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicDetailInfo, ChapterInfo } from '../Framework/Source/SourceExecutor';
+import { SuwayomiImage } from '../components/SuwayomiImage';
 
 const TAG = 'SuwayomiMangaDetailPage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -215,13 +216,19 @@ export struct SuwayomiMangaDetailPage {
     const chapters = this.getSortedChapters();
     if (chapters.length === 0) return;
 
-    // 如果有阅读记录，从上次位置继续
-    if (this.lastReadChapterIndex >= 0 && this.lastReadChapterIndex < chapters.length) {
-      this.openChapter(chapters[this.lastReadChapterIndex], this.lastReadChapterIndex);
-    } else {
-      // 否则从第一章开始
-      this.openChapter(chapters[0], 0);
+    // 使用章节 ID 查找，而不是索引，因为排序可能改变了
+    if (this.lastReadChapterId) {
+      const chapterIndex = chapters.findIndex(
+        (ch: ChapterInfo) => ch.id === this.lastReadChapterId
+      );
+      if (chapterIndex >= 0) {
+        this.openChapter(chapters[chapterIndex], chapterIndex);
+        return;
+      }
     }
+
+    // 如果没有找到阅读记录，从第一章开始
+    this.openChapter(chapters[0], 0);
   }
 
   private async addToLibrary(): Promise<void> {
@@ -268,11 +275,13 @@ export struct SuwayomiMangaDetailPage {
       // 封面
       Stack() {
         if (this.mangaDetail?.coverUrl) {
-          Image(this.mangaDetail.coverUrl)
-            .width(COVER_WIDTH)
-            .height(COVER_HEIGHT)
-            .borderRadius(8)
-            .objectFit(ImageFit.Cover)
+          SuwayomiImage({
+            src: this.mangaDetail.coverUrl,
+            imageWidth: COVER_WIDTH,
+            imageHeight: COVER_HEIGHT,
+            imgBorderRadius: 8,
+            objectFit: ImageFit.Cover
+          })
         } else {
           Column() {
             SymbolGlyph($r('sys.symbol.text_book_closed'))

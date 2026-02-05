@@ -970,7 +970,7 @@ export class MangaSourceEngine {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
           }
-          // 检查是否是漫画列表格式的JSON（以 [ 开头）
+          // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
               const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
@@ -978,10 +978,23 @@ export class MangaSourceEngine {
               // 验证是否是漫画列表格式（包含 id 字段）
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
-                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据`);
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据(数组格式)`);
               }
             } catch (e) {
               logger.debug(TAG, `脚本结果JSON解析失败: ${e}`);
+            }
+          }
+          // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
+          else if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+              if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
+                results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据(对象格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是漫画对象格式: ${e}`);
             }
           }
         }
@@ -1043,9 +1056,11 @@ export class MangaSourceEngine {
       
       // 执行操作序列
       const context = this.createActionContext();
+      await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'false';
       context.variables['page'] = page.toString();
-      context.variables['offset'] = ((page - 1) * 30).toString();
+      const pageSize: number = Number(context.variables['pageSize'] || '21');
+      context.variables['offset'] = ((page - 1) * pageSize).toString();
       logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
       
       let results: MangaInfo[] = [];
@@ -1084,15 +1099,29 @@ export class MangaSourceEngine {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
           }
+          // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
               const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
-                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据`);
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据(数组格式)`);
               }
             } catch (e) {
               logger.debug(TAG, `脚本结果不是漫画列表格式: ${e}`);
+            }
+          }
+          // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
+          else if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+              if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
+                results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条漫画数据(对象格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是漫画对象格式: ${e}`);
             }
           }
         }
@@ -1133,8 +1162,13 @@ export class MangaSourceEngine {
 
   /**
    * 筛选漫画
+   * @param page 页码
+   * @param filterOrdering 排序方式（旧版参数）
+   * @param filterRegion 地区筛选（旧版参数）
+   * @param filterTheme 题材筛选（旧版参数）
+   * @param dynamicFilters 动态筛选参数Map（新版参数，支持任意筛选组）
    */
-  async getFiltered(page: number = 1, filterOrdering?: string, filterRegion?: string, filterTheme?: string): Promise<EngineResult<SearchResult>> {
+  async getFiltered(page: number = 1, filterOrdering?: string, filterRegion?: string, filterTheme?: string, dynamicFilters?: Map<string, string>): Promise<EngineResult<SearchResult>> {
     if (!this.config) {
       logger.error(TAG, '配置未加载，无法筛选漫画');
       throw new MangaSourceError(
@@ -1161,18 +1195,23 @@ export class MangaSourceEngine {
       
       // 设置筛选参数 - 支持多种参数名称
       // 通用参数名
-      context.variables['filterOrdering'] = filterOrdering || '-datetime_updated';
-      context.variables['filterRegion'] = filterRegion || 'all';
-      context.variables['filterTheme'] = filterTheme || 'all';
+      // [修复] 使用 ?? 运算符，空字符串不会被替换（空字符串表示"全部"，引擎会跳过该参数）
+      context.variables['filterOrdering'] = filterOrdering ?? '-datetime_updated';
+      context.variables['filterRegion'] = filterRegion ?? '';
+      context.variables['filterTheme'] = filterTheme ?? '';
       
-      // PicaComic 等图源使用的参数名 - 从工作流配置中读取默认值
+      // 从原始JSON配置中读取默认值和filters配置
       let defaultSort: string = 'dd';  // PicaComic 默认排序
       let defaultCategory: string = '';  // 默认为空（全部分类）
+      let filtersConfig: Record<string, Object> | undefined = undefined;
       
-      // 从原始JSON配置中读取默认值
       if (this.rawConfigJson) {
         try {
           const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+          
+          // 读取 filters 配置，用于变量映射
+          filtersConfig = rawConfig['filters'] as Record<string, Object> | undefined;
+          
           const workflows = rawConfig['workflows'] as Record<string, Object> | undefined;
           if (workflows) {
             const filterWorkflow = workflows['filter'] as Record<string, Object> | undefined;
@@ -1210,7 +1249,43 @@ export class MangaSourceEngine {
         context.variables['category'] = defaultCategory;
       }
       
-      logger.debug(TAG, `筛选参数: sort=${context.variables['sort']}, category=${context.variables['category']}`);
+      // 设置额外的变量名映射，支持不同图源使用的变量名
+      // 紳士漫畫 使用 filter_category 和 filter_tag
+      context.variables['filter_category'] = filterTheme || '';
+      context.variables['filter_tag'] = '';  // 标签筛选暂时为空，后续可扩展
+      
+      // 包子漫画 使用 type, region, state, filter
+      // [修复] 包子漫画需要 'all'，但拷贝漫画需要空字符串，这里保持原样
+      context.variables['type'] = filterTheme ?? 'all';
+      context.variables['region'] = filterRegion ?? 'all';
+      context.variables['state'] = 'all';  // 进度筛选
+      context.variables['filter'] = '*';   // 标题开头筛选
+      
+      // 从filters配置读取所有key，并设置对应的默认值
+      if (filtersConfig) {
+        const filterKeys = Object.keys(filtersConfig);
+        for (let i = 0; i < filterKeys.length; i++) {
+          const key = filterKeys[i];
+          const filterDef = filtersConfig[key] as Record<string, Object>;
+          if (filterDef) {
+            // 如果变量未设置，使用配置的默认值
+            if (!context.variables[key]) {
+              const defaultValue = filterDef['default'] as string | undefined;
+              context.variables[key] = defaultValue || '';
+            }
+          }
+        }
+      }
+      
+      // 应用动态筛选参数（优先级最高，会覆盖前面设置的值）
+      if (dynamicFilters && dynamicFilters.size > 0) {
+        dynamicFilters.forEach((value: string, key: string) => {
+          context.variables[key] = value;
+          logger.debug(TAG, `应用动态筛选参数: ${key}=${value}`);
+        });
+      }
+      
+      logger.debug(TAG, `筛选参数: sort=${context.variables['sort']}, category=${context.variables['category']}, filter_category=${context.variables['filter_category']}`);
       
       logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
       
@@ -1237,6 +1312,44 @@ export class MangaSourceEngine {
           const extractedData = Array.isArray(resultData) ? resultData : [resultData];
           results = extractedData.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
           logger.debug(TAG, `提取到 ${results.length} 条漫画数据`);
+        }
+        
+        // 支持 script 操作直接返回列表
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
+          if (scriptData.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
+                results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条筛选数据(数组格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是列表格式: ${e}`);
+            }
+          }
+          // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
+          else if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+              if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
+                results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条筛选数据(对象格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是对象格式: ${e}`);
+            }
+          }
         }
       }
 
@@ -1296,6 +1409,7 @@ export class MangaSourceEngine {
       
       // 执行操作序列
       const context = this.createActionContext();
+      await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'false';
       context.variables['page'] = page.toString();
       context.variables['offset'] = ((page - 1) * 30).toString();
@@ -1338,15 +1452,29 @@ export class MangaSourceEngine {
               logger.debug(TAG, `解除双重序列化失败: ${e}`);
             }
           }
+          // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
           if (scriptData.startsWith('[')) {
             try {
               const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
               if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
                 results = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
-                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条数据`);
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条数据(数组格式)`);
               }
             } catch (e) {
               logger.debug(TAG, `脚本结果不是列表格式: ${e}`);
+            }
+          }
+          // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
+          else if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+              if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
+                results = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${results.length} 条数据(对象格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是对象格式: ${e}`);
             }
           }
         }
@@ -1408,6 +1536,7 @@ export class MangaSourceEngine {
       
       // 执行操作序列
       const context = this.createActionContext();
+      await this.populateSourceSettings(context);
       context.variables['useCookies'] = 'false';
       context.variables['bookId'] = bookId;
       context.variables['mangaUrl'] = bookId;  // 兼容使用{{mangaUrl}}的工作流
@@ -1661,8 +1790,10 @@ export class MangaSourceEngine {
 
   /**
    * 获取排行榜
+   * @param page 页码
+   * @param dynamicFilters 动态筛选参数（如timeType）
    */
-  async getLeaderboard(page: number = 1): Promise<EngineResult<SearchResult>> {
+  async getLeaderboard(page: number = 1, dynamicFilters?: Map<string, string>): Promise<EngineResult<SearchResult>> {
     if (!this.config) {
       logger.error(TAG, '配置未加载，无法获取排行榜');
       throw new MangaSourceError(
@@ -1672,7 +1803,16 @@ export class MangaSourceEngine {
     }
 
     const startTime = Date.now();
-    logger.info(TAG, `开始获取排行榜: 页码=${page}`);
+    // 输出 dynamicFilters 的内容用于调试
+    if (dynamicFilters && dynamicFilters.size > 0) {
+      const entries: string[] = [];
+      dynamicFilters.forEach((value, key) => {
+        entries.push(`${key}=${value}`);
+      });
+      logger.info(TAG, `开始获取排行榜: 页码=${page}, 动态筛选参数=[${entries.join(', ')}]`);
+    } else {
+      logger.info(TAG, `开始获取排行榜: 页码=${page}, 动态筛选参数=[空]`);
+    }
 
     try {
       // 构建排行榜操作序列
@@ -1686,10 +1826,41 @@ export class MangaSourceEngine {
       context.variables['page'] = page.toString();
       const pageSize: number = Number(context.variables['pageSize'] || '30');
       context.variables['offset'] = ((page - 1) * pageSize).toString();
-      // 设置排行榜默认时间类型 (H24=24小时, D7=7天, D30=30天)
-      if (!context.variables['timeType']) {
-        context.variables['timeType'] = 'H24';
+      
+      // 设置排行榜时间类型
+      // 优先使用动态筛选参数，其次使用workflow默认值
+      if (dynamicFilters && dynamicFilters.has('timeType')) {
+        context.variables['timeType'] = dynamicFilters.get('timeType') || 'a';
+      } else if (!context.variables['timeType']) {
+        // 从workflow defaults中读取默认值
+        let defaultTimeType = 'a';
+        if (this.rawConfigJson) {
+          try {
+            const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+            const workflows = rawConfig['workflows'] as Record<string, Object> | undefined;
+            if (workflows) {
+              const leaderboardWorkflow = workflows['getLeaderboard'] as Record<string, Object> | undefined;
+              if (leaderboardWorkflow) {
+                const defaults = leaderboardWorkflow['defaults'] as Record<string, string> | undefined;
+                if (defaults && defaults['timeType']) {
+                  defaultTimeType = defaults['timeType'];
+                }
+              }
+            }
+          } catch (e) {
+            logger.warn(TAG, `解析排行榜默认值失败: ${e}`);
+          }
+        }
+        context.variables['timeType'] = defaultTimeType;
       }
+      
+      // 将所有动态筛选参数添加到上下文
+      if (dynamicFilters) {
+        dynamicFilters.forEach((value, key) => {
+          context.variables[key] = value;
+        });
+      }
+      
       logger.debug(TAG, `执行上下文变量: ${JSON.stringify(context.variables)}`);
       
       let leaderboardResults: MangaInfo[] = [];
@@ -1713,6 +1884,44 @@ export class MangaSourceEngine {
         if ((action.type === 'extract' || action.type === 'api') && result.data) {
           if (Array.isArray(result.data)) {
             leaderboardResults = result.data.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+          }
+        }
+        
+        // 支持 script 操作直接返回列表
+        if (action.type === 'script' && result.data) {
+          let scriptData = String(result.data).trim();
+          // WebView runJavaScript 会对返回值进行双重序列化，需要先解析一次
+          if (scriptData.startsWith('"') && scriptData.endsWith('"')) {
+            try {
+              scriptData = JSON.parse(scriptData) as string;
+            } catch (e) {
+              logger.debug(TAG, `解除双重序列化失败: ${e}`);
+            }
+          }
+          // 情况1: 脚本返回数组格式 [{id, title, ...}, ...]
+          if (scriptData.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Array<Record<string, Object>>;
+              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && (parsed[0] as Record<string, Object>)['id'] !== undefined) {
+                leaderboardResults = parsed.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${leaderboardResults.length} 条排行榜数据(数组格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是列表格式: ${e}`);
+            }
+          }
+          // 情况2: 脚本返回对象格式 {mangas: [...], hasNextPage: bool}
+          else if (scriptData.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(scriptData) as Record<string, Object>;
+              const mangasArray = parsed['mangas'] as Array<Record<string, Object>> | undefined;
+              if (mangasArray && Array.isArray(mangasArray) && mangasArray.length > 0) {
+                leaderboardResults = mangasArray.map((item: Record<string, Object>) => this.transformToMangaInfo(item));
+                logger.debug(TAG, `从脚本结果提取到 ${leaderboardResults.length} 条排行榜数据(对象格式)`);
+              }
+            } catch (e) {
+              logger.debug(TAG, `脚本结果不是对象格式: ${e}`);
+            }
           }
         }
       }
@@ -2074,6 +2283,9 @@ export class MangaSourceEngine {
       context.variables['useCookies'] = 'true';
       // 添加mangaId变量到上下文（规范化URL）
       context.variables['mangaId'] = this.normalizeUrl(mangaId);
+      // 设置分页参数（章节列表默认从offset=0开始获取全部）
+      context.variables['page'] = '1';
+      context.variables['offset'] = '0';
       
       let chapters: ChapterInfo[] = [];
       this.lastChapterAccessDenied = false;
@@ -2790,9 +3002,21 @@ export class MangaSourceEngine {
               variables['api.endpoint'] = apiConfig['endpoint'] as string;
               logger.debug(TAG, `初始化api.endpoint变量: ${variables['api.endpoint']}`);
             }
-            if (apiConfig['headers']) {
+          if (apiConfig['headers']) {
               variables['api.headers'] = JSON.stringify(apiConfig['headers']);
               logger.debug(TAG, `初始化api.headers变量`);
+            }
+          }
+          // [修复] 读取 network.headers 配置，传递给 ActionEngine
+          if (rawConfig['network']) {
+            const networkConfig = rawConfig['network'] as Record<string, Object>;
+            if (networkConfig['headers']) {
+              variables['__networkHeaders__'] = JSON.stringify(networkConfig['headers']);
+              logger.debug(TAG, `初始化network.headers变量: ${variables['__networkHeaders__']}`);
+            }
+            if (networkConfig['userAgent']) {
+              variables['__networkUserAgent__'] = networkConfig['userAgent'] as string;
+              logger.debug(TAG, `初始化network.userAgent变量`);
             }
           }
         } catch (e) {
@@ -3075,6 +3299,105 @@ export class MangaSourceEngine {
       context.variables['imageQuality'] = (imageQualitySetting && imageQualitySetting.settingValue) ? String(imageQualitySetting.settingValue) : 'high';
       
       logger.debug(TAG, `图源设置: appChannel=${context.variables['appChannel']}, imageQuality=${context.variables['imageQuality']}`);
+
+      // [修复] 加载图源自定义设置（如 domain、API选项等）
+      // 首先从 source.json 中加载设置的默认值
+      if (this.rawConfigJson) {
+        try {
+          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+          if (rawConfig['settings']) {
+            const settingsConfig = rawConfig['settings'] as Record<string, Object>;
+            const settingKeys = Object.keys(settingsConfig);
+            for (let i = 0; i < settingKeys.length; i++) {
+              const settingKey = settingKeys[i];
+              const settingDef = settingsConfig[settingKey] as Record<string, Object>;
+              if (settingDef && settingDef['default'] !== undefined) {
+                // 设置默认值，稍后会被用户保存的值覆盖
+                context.variables[settingKey] = String(settingDef['default']);
+                logger.debug(TAG, `设置默认值: ${settingKey}=${settingDef['default']}`);
+              }
+            }
+          }
+        } catch (e) {
+          logger.warn(TAG, `解析设置默认值失败: ${e}`);
+        }
+      }
+      
+      // 然后加载用户保存的自定义设置（覆盖默认值）
+      const customSettings = await this.dataManager.getSourceCustomSettings(sid);
+      if (customSettings.size > 0) {
+        customSettings.forEach((value: string, key: string) => {
+          context.variables[key] = value;
+          logger.debug(TAG, `注入自定义设置: ${key}=${value}`);
+        });
+        logger.info(TAG, `已加载 ${customSettings.size} 个自定义设置到上下文`);
+      }
+
+      // [修复] 解析 apiDomain 设置键到实际的 domain URL
+      // apiDomain 可能存储的是:
+      // 1. 键名如 "copy20", "mangacopy" - 需要从 alternativeUrls 查找
+      // 2. 直接的 URL 如 "https://api.manga2025.com" - 直接使用
+      if (this.rawConfigJson && context.variables['apiDomain']) {
+        try {
+          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+          const metadata = rawConfig['metadata'] as Record<string, Object>;
+          const apiDomainValue = context.variables['apiDomain'];
+          let resolvedDomain: string = '';
+          
+          // 首先检查是否已经是完整的 URL
+          if (apiDomainValue.startsWith('http://') || apiDomainValue.startsWith('https://')) {
+            resolvedDomain = apiDomainValue;
+            // 移除末尾的斜杠
+            if (resolvedDomain.endsWith('/')) {
+              resolvedDomain = resolvedDomain.slice(0, -1);
+            }
+            logger.info(TAG, `apiDomain 已是完整URL: ${resolvedDomain}`);
+          } else {
+            // 尝试从 alternativeUrls 查找
+            if (metadata && metadata['alternativeUrls']) {
+              const altUrls = metadata['alternativeUrls'] as Record<string, string>;
+              if (altUrls[apiDomainValue]) {
+                resolvedDomain = altUrls[apiDomainValue];
+                logger.info(TAG, `解析 apiDomain: ${apiDomainValue} -> ${resolvedDomain}`);
+              }
+            }
+          }
+          
+          // 如果没找到，使用 baseUrl 作为 fallback
+          if (!resolvedDomain && metadata && metadata['baseUrl']) {
+            resolvedDomain = String(metadata['baseUrl']);
+            // 移除末尾的斜杠
+            if (resolvedDomain.endsWith('/')) {
+              resolvedDomain = resolvedDomain.slice(0, -1);
+            }
+            logger.info(TAG, `apiDomain 未匹配，使用 baseUrl: ${resolvedDomain}`);
+          }
+          
+          // 设置 domain 变量（用于 URL 模板替换）
+          if (resolvedDomain) {
+            context.variables['domain'] = resolvedDomain;
+            logger.info(TAG, `设置 domain 变量: ${resolvedDomain}`);
+          }
+        } catch (e) {
+          logger.warn(TAG, `解析 apiDomain 失败: ${e}`);
+        }
+      } else if (this.rawConfigJson && !context.variables['domain']) {
+        // 如果没有 apiDomain 设置但也没有 domain，使用 baseUrl
+        try {
+          const rawConfig = JSON.parse(this.rawConfigJson) as Record<string, Object>;
+          const metadata = rawConfig['metadata'] as Record<string, Object>;
+          if (metadata && metadata['baseUrl']) {
+            let baseUrl = String(metadata['baseUrl']);
+            if (baseUrl.endsWith('/')) {
+              baseUrl = baseUrl.slice(0, -1);
+            }
+            context.variables['domain'] = baseUrl;
+            logger.info(TAG, `使用 baseUrl 作为 domain: ${baseUrl}`);
+          }
+        } catch (e) {
+          logger.warn(TAG, `解析 baseUrl 失败: ${e}`);
+        }
+      }
 
       // [修复] 优先使用当前会话的 Token（登录成功后立即可用）
       if (this.currentToken) {

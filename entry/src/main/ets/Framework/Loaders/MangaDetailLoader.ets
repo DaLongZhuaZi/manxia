@@ -97,12 +97,13 @@ interface ChapterPageCount {
 
 /**
  * 分阶段加载回调接口
+ * [修复] 支持异步回调（返回 void 或 Promise<void>）
  */
 export interface MangaLoadProgressCallback {
-  onBasicInfoLoaded?: (manga: Manga, isFavorite: boolean) => void;
-  onChaptersLoaded?: (chapters: MangaChapter[]) => void;
-  onChapterProgressLoaded?: (progressList: ChapterProgressInfo[], readChapterIds: Set<string>, lastReadChapterIndex: number) => void;
-  onChapterPagesLoaded?: (chapterId: string, pageCount: number) => void;
+  onBasicInfoLoaded?: (manga: Manga, isFavorite: boolean) => void | Promise<void>;
+  onChaptersLoaded?: (chapters: MangaChapter[]) => void | Promise<void>;
+  onChapterProgressLoaded?: (progressList: ChapterProgressInfo[], readChapterIds: Set<string>, lastReadChapterIndex: number) => void | Promise<void>;
+  onChapterPagesLoaded?: (chapterId: string, pageCount: number) => void | Promise<void>;
   onPagesPreloadProgress?: (current: number, total: number) => void;
   onPagesPreloadComplete?: () => void;
   onError?: (error: string) => void;
@@ -205,7 +206,7 @@ export class MangaDetailLoader {
         
         // 回调：基本信息已加载
         if (callback.onBasicInfoLoaded) {
-          callback.onBasicInfoLoaded(basicManga, isFavorite);
+          await callback.onBasicInfoLoaded(basicManga, isFavorite);
         }
         
         result.manga = basicManga;
@@ -221,7 +222,7 @@ export class MangaDetailLoader {
           result.manga.chapters = chapters;
           
           if (callback.onChaptersLoaded) {
-            callback.onChaptersLoaded(chapters);
+            await callback.onChaptersLoaded(chapters);
           }
         } else {
           // 在线漫画：从数据库加载已有章节
@@ -230,7 +231,7 @@ export class MangaDetailLoader {
           result.manga.chapters = chapters;
           
           if (callback.onChaptersLoaded) {
-            callback.onChaptersLoaded(chapters);
+            await callback.onChaptersLoaded(chapters);
           }
           
           // 第三阶段：后台预加载页面信息（不阻塞）
@@ -464,7 +465,7 @@ export class MangaDetailLoader {
         const isFavorite = await this.checkFavoriteStatus(comicInfo.id);
         
         if (callback.onBasicInfoLoaded) {
-          callback.onBasicInfoLoaded(basicManga, isFavorite);
+          await callback.onBasicInfoLoaded(basicManga, isFavorite);
         }
         
         const chapters = await this.loadOnlineChaptersFromDatabase(comicInfo.id);
@@ -472,7 +473,7 @@ export class MangaDetailLoader {
         basicManga.chapters = chapters;
         
         if (callback.onChaptersLoaded) {
-          callback.onChaptersLoaded(chapters);
+          await callback.onChaptersLoaded(chapters);
         }
         
         result.success = true;
@@ -534,14 +535,14 @@ export class MangaDetailLoader {
       const isFavorite = await this.checkFavoriteStatus(onlineComic.id);
       
       if (callback.onBasicInfoLoaded) {
-        callback.onBasicInfoLoaded(basicManga, isFavorite);
+        await callback.onBasicInfoLoaded(basicManga, isFavorite);
       }
       
       result.chapters = chapters;
       basicManga.chapters = chapters;
       
       if (callback.onChaptersLoaded) {
-        callback.onChaptersLoaded(chapters);
+        await callback.onChaptersLoaded(chapters);
       }
       
       result.success = true;
@@ -643,17 +644,34 @@ export class MangaDetailLoader {
       logger.info(TAG, `[网络加载] 漫画已保存到数据库，内部ID: ${basicManga.id}`);
       
       // 检查收藏状态（使用更新后的内部ID）
+      logger.debug(TAG, `[网络加载] 准备检查收藏状态: mangaId=${basicManga.id}`);
       const isFavorite = await this.checkFavoriteStatus(basicManga.id);
       result.isFavorite = isFavorite;
+      logger.debug(TAG, `[网络加载] 收藏状态检查完成: isFavorite=${isFavorite}`);
       
       // 回调：基本信息已加载（manga.id已经是正确的内部ID）
       if (callback.onBasicInfoLoaded) {
-        callback.onBasicInfoLoaded(basicManga, isFavorite);
+        try {
+          logger.debug(TAG, `[网络加载] 准备调用 onBasicInfoLoaded 回调`);
+          await callback.onBasicInfoLoaded(basicManga, isFavorite);
+          logger.debug(TAG, `[网络加载] onBasicInfoLoaded 回调执行完成`);
+        } catch (callbackError) {
+          logger.error(TAG, `[网络加载] onBasicInfoLoaded 回调抛出异常: ${String(callbackError)}`);
+          throw callbackError as Error;
+        }
       }
       
       // 回调：章节已加载（chapter.id已经是正确的内部ID）
+      // [修复] 使用 await 等待异步回调完成，确保章节进度数据加载和UI更新完成
       if (callback.onChaptersLoaded) {
-        callback.onChaptersLoaded(chapters);
+        try {
+          logger.debug(TAG, `[网络加载] 准备调用 onChaptersLoaded 回调, 章节数: ${chapters.length}`);
+          await callback.onChaptersLoaded(chapters);
+          logger.debug(TAG, `[网络加载] onChaptersLoaded 回调执行完成`);
+        } catch (callbackError) {
+          logger.error(TAG, `[网络加载] onChaptersLoaded 回调抛出异常: ${String(callbackError)}`);
+          throw callbackError as Error;
+        }
       }
       
       // 异步预加载页面（不阻塞UI）
