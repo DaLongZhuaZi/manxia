@@ -24,22 +24,32 @@ const Flag = 'wwssadad';
  * ERROR: ❌ 用于记录导致功能失败的错误
  */
 export enum LogLevel {
-  DEBUG,
-  INFO,
-  WARN,
-  ERROR
+  OFF = -1,  // 关闭所有日志输出
+  DEBUG = 0,
+  INFO = 1,
+  WARN = 2,
+  ERROR = 3,
+  FATAL = 4
 }
 
 // 🏷️ 默认的日志输出领域（Domain），一般固定为应用的一个标识
 const LOG_DOMAIN = 0x0000;
 
 // 🎨 日志级别对应的中文标识和特殊符号
-export const LOG_LEVEL_SYMBOLS: Record<LogLevel, string> = {
-  0: '🔍 调试',  // LogLevel.DEBUG
-  1: 'ℹ️ 信息',  // LogLevel.INFO
-  2: '⚠️ 警告',  // LogLevel.WARN
-  3: '❌ 错误'   // LogLevel.ERROR
-};
+export const LOG_LEVEL_SYMBOLS: Map<number, string> = new Map<number, string>([
+  [LogLevel.OFF, '🚫 关闭'],
+  [LogLevel.DEBUG, '🔍 调试'],
+  [LogLevel.INFO, 'ℹ️ 信息'],
+  [LogLevel.WARN, '⚠️ 警告'],
+  [LogLevel.ERROR, '❌ 错误'],
+  [LogLevel.FATAL, '💀 致命']
+]);
+
+// 日志级别名称映射（用于设置界面显示）
+export const LOG_LEVEL_NAMES: string[] = ['关闭', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
+
+// 日志级别值映射（从名称索引到LogLevel值）
+export const LOG_LEVEL_VALUES: LogLevel[] = [LogLevel.OFF, LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR, LogLevel.FATAL];
 
 // 🏷️ 常用标签的中文映射
 const TAG_MAPPING: Record<string, string> = {
@@ -67,6 +77,10 @@ class Logger {
   // 您可以在应用启动时根据环境（开发/生产）来设置它
   private currentLevel: LogLevel = LogLevel.DEBUG;
   
+  // hilog输出级别 - 控制是否将日志输出到系统hilog
+  // 设置为OFF时，不会输出任何日志到hilog（但仍会记录到日志收集器）
+  private hilogOutputLevel: LogLevel = LogLevel.DEBUG;
+  
   // 是否启用时间戳
   private enableTimestamp: boolean = true;
 
@@ -89,6 +103,36 @@ class Logger {
    */
   public setLevel(level: LogLevel): void {
     this.currentLevel = level;
+  }
+  
+  /**
+   * 设置hilog输出级别
+   * 此设置控制日志是否输出到系统的hilog
+   * @param level - hilog输出的最低日志级别，设置为OFF则完全关闭hilog输出
+   */
+  public setHilogOutputLevel(level: LogLevel): void {
+    this.hilogOutputLevel = level;
+    console.log(`[NGF] hilog输出级别已设置为: ${LOG_LEVEL_NAMES[LOG_LEVEL_VALUES.indexOf(level)]}`);
+  }
+  
+  /**
+   * 获取当前的hilog输出级别
+   */
+  public getHilogOutputLevel(): LogLevel {
+    return this.hilogOutputLevel;
+  }
+  
+  /**
+   * 检查指定级别的日志是否应该输出到hilog
+   * @param level - 要检查的日志级别
+   */
+  private shouldOutputToHilog(level: LogLevel): boolean {
+    // 如果hilog输出级别设置为OFF，则不输出任何日志
+    if (this.hilogOutputLevel === LogLevel.OFF) {
+      return false;
+    }
+    // 只有高于或等于hilog输出级别的日志才输出
+    return level >= this.hilogOutputLevel;
   }
   
   /**
@@ -117,7 +161,7 @@ class Logger {
   private formatMessage(level: LogLevel, tag: string, message: string): string {
     // [新增] 定义您需要的全局日志前缀
     const globalPrefix = '[NGF] ';
-    const levelSymbol = LOG_LEVEL_SYMBOLS[level];
+    const levelSymbol = LOG_LEVEL_SYMBOLS.get(level) || '❓ 未知';
     const chineseTag = TAG_MAPPING[tag] || tag;
     const timestamp = this.enableTimestamp ? this.getTimestamp() + ' ' : '';
     const formattedMessage = `${globalPrefix}${timestamp}${levelSymbol} [${chineseTag}] ${message}`;
@@ -137,7 +181,10 @@ class Logger {
   public debug(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.DEBUG) {
       const formattedMessage = this.formatMessage(LogLevel.DEBUG, tag, message);
-      hilog.debug(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      // 仅当hilog输出级别允许时才输出到hilog
+      if (this.shouldOutputToHilog(LogLevel.DEBUG)) {
+        hilog.debug(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      }
       // 同时发送到日志收集器
       logCollector.addLog(LogLevel.DEBUG, tag, message, args);
     }
@@ -152,7 +199,10 @@ class Logger {
   public info(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.INFO) {
       const formattedMessage = this.formatMessage(LogLevel.INFO, tag, message);
-      hilog.info(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      // 仅当hilog输出级别允许时才输出到hilog
+      if (this.shouldOutputToHilog(LogLevel.INFO)) {
+        hilog.info(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      }
       // 同时发送到日志收集器
       logCollector.addLog(LogLevel.INFO, tag, message, args);
     }
@@ -167,7 +217,10 @@ class Logger {
   public warn(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.WARN) {
       const formattedMessage = this.formatMessage(LogLevel.WARN, tag, message);
-      hilog.warn(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      // 仅当hilog输出级别允许时才输出到hilog
+      if (this.shouldOutputToHilog(LogLevel.WARN)) {
+        hilog.warn(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      }
       // 同时发送到日志收集器
       logCollector.addLog(LogLevel.WARN, tag, message, args);
     }
@@ -182,9 +235,30 @@ class Logger {
   public error(tag: string, message: string, ...args: (string | number | boolean)[]): void {
     if (this.currentLevel <= LogLevel.ERROR) {
       const formattedMessage = this.formatMessage(LogLevel.ERROR, tag, message);
-      hilog.error(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      // 仅当hilog输出级别允许时才输出到hilog
+      if (this.shouldOutputToHilog(LogLevel.ERROR)) {
+        hilog.error(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      }
       // 同时发送到日志收集器
       logCollector.addLog(LogLevel.ERROR, tag, message, args);
+    }
+  }
+  
+  /**
+   * 💀 致命级别的日志
+   * @param tag - 日志分类标签
+   * @param message - 要输出的日志信息
+   * @param args - 其他可选参数
+   */
+  public fatal(tag: string, message: string, ...args: (string | number | boolean)[]): void {
+    if (this.currentLevel <= LogLevel.FATAL) {
+      const formattedMessage = this.formatMessage(LogLevel.FATAL, tag, message);
+      // 仅当hilog输出级别允许时才输出到hilog
+      if (this.shouldOutputToHilog(LogLevel.FATAL)) {
+        hilog.fatal(LOG_DOMAIN, Flag, `%{public}s`, formattedMessage);
+      }
+      // 同时发送到日志收集器
+      logCollector.addLog(LogLevel.FATAL, tag, message, args);
     }
   }
   
@@ -231,6 +305,28 @@ class Logger {
    */
   public performance(tag: string, metric: string, value: number, unit: string): void {
     this.debug(tag, `📊 性能指标: ${metric} = ${value}${unit}`);
+  }
+  
+  /**
+   * 🛠️ 从LOG_LEVEL_VALUES索引初始化hilog输出等级
+   * 用于应用启动时从SettingsManager加载保存的设置
+   * @param levelIndex - 日志等级索引 (0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL)
+   */
+  public initializeHilogLevelFromIndex(levelIndex: number): void {
+    if (levelIndex >= 0 && levelIndex < LOG_LEVEL_VALUES.length) {
+      this.hilogOutputLevel = LOG_LEVEL_VALUES[levelIndex];
+      console.log(`[NGF] 从Settings初始化hilog输出等级: ${LOG_LEVEL_NAMES[levelIndex]}`);
+    } else {
+      console.log(`[NGF] 无效的日志等级索引: ${levelIndex}，使用默认值DEBUG`);
+    }
+  }
+  
+  /**
+   * 获取当前hilog输出等级的索引
+   * @returns 日志等级索引 (0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL)
+   */
+  public getHilogLevelIndex(): number {
+    return LOG_LEVEL_VALUES.indexOf(this.hilogOutputLevel);
   }
 }
 

@@ -61,11 +61,23 @@ export class ChangelogManager {
   }
 
   /**
+   * 检查是否是首次安装（从未记录过版本号）
+   */
+  isFirstInstall(): boolean {
+    return this.lastShownVersionCode === 0;
+  }
+
+  /**
    * 检查是否需要显示更新日志（新版本首次启动）
    * 使用 versionCode 进行比较，确保数字版本号变更也能触发
+   * 注意：首次安装时不显示更新日志，只在版本升级时显示
    */
   shouldShowChangelog(): boolean {
     if (!this.currentVersionCode) {
+      return false;
+    }
+    // 首次安装时不显示更新日志
+    if (this.isFirstInstall()) {
       return false;
     }
     // 使用 versionCode 比较，只要版本号增加就显示更新日志
@@ -122,14 +134,36 @@ export class ChangelogManager {
 
   /**
    * 检查并显示更新日志（如果是新版本）
+   * 首次安装时静默记录当前版本号，不显示更新日志
    */
   async checkAndShowChangelog(): Promise<boolean> {
+    // 首次安装时，静默记录当前版本号，不显示更新日志
+    if (this.isFirstInstall()) {
+      logger.info(TAG, `首次安装，静默记录版本 ${this.currentVersion} (${this.currentVersionCode})`);
+      await this.markCurrentVersionAsShown();
+      return false;
+    }
+    
     if (this.shouldShowChangelog()) {
       logger.info(TAG, `检测到新版本 ${this.currentVersion}，显示更新日志`);
       await this.showChangelog(true);
       return true;
     }
     return false;
+  }
+
+  /**
+   * 标记当前版本为已显示（不实际显示更新日志）
+   */
+  private async markCurrentVersionAsShown(): Promise<void> {
+    if (this.prefs) {
+      await this.prefs.put(KEY_LAST_SHOWN_VERSION, this.currentVersion);
+      await this.prefs.put(KEY_LAST_SHOWN_VERSION_CODE, this.currentVersionCode);
+      await this.prefs.flush();
+      this.lastShownVersion = this.currentVersion;
+      this.lastShownVersionCode = this.currentVersionCode;
+      logger.info(TAG, `已静默标记版本 ${this.currentVersion} (${this.currentVersionCode})`);
+    }
   }
 
   /**

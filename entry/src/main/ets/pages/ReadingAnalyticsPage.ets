@@ -15,16 +15,23 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DataService } from '../Framework/Services/DataService';
 import { ReadHistory, DataManager, ComicInfo } from '../Framework/Data/DataManager';
-import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS } from '../Framework/Managers/ReadingAnalyticsManager';
+import { ReadingAnalyticsManager, RETENTION_DAYS_OPTIONS, ReadingGoalsSettings } from '../Framework/Managers/ReadingAnalyticsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBook } from '../Models/EBookModels';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { NovelBook } from '../Models/NovelModels';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
+import { PageSettingsHelper, DetailPageType } from './settings/PageSettingsSubPage';
+import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
+import { MangaDetailPageParams } from './MangaDetailPage';
+import { EBookDetailPageParams } from './EBookDetailPage';
+import { NovelDetailPageParams } from './NovelBookshelfPage';
+import { widgetDataSync } from '../Utils/WidgetDataSync';
 
 const TAG = 'ReadingAnalyticsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
+const USER_MANUAL_TITLE = '漫匣使用手册'; // 需要过滤掉的使用手册标题
 
 // NavDestinationContext接口定义
 interface NavDestinationContext {
@@ -89,6 +96,30 @@ interface DailyEBookItem {
 }
 
 /**
+ * 日视图小说阅读项
+ */
+interface DailyNovelItem {
+  novelId: string;                // 小说ID（格式: sourceId_bookUrl）
+  bookUrl: string;                // 小说URL（用于导航到详情页）
+  sourceId: string;
+  title: string;
+  author: string;
+  coverPath: string;
+  readingTime: number;            // 阅读时长（秒）
+  chaptersRead: number;           // 阅读章节数
+  isOnline: boolean;              // 是否在线小说
+}
+
+/**
+ * 阅读目标设置
+ */
+interface ReadingGoals {
+  mangaGoalMinutes: number;       // 漫画阅读目标（分钟），0表示未设置
+  ebookGoalMinutes: number;       // 电子书阅读目标（分钟），0表示未设置
+  novelGoalMinutes: number;       // 小说阅读目标（分钟），0表示未设置
+}
+
+/**
  * 阅读时段分布数据
  */
 interface HourlyDistribution {
@@ -126,7 +157,7 @@ interface MangaReadingStatData {
 /**
  * 阅读时长排行项类型
  */
-type ReadingRankType = 'manga' | 'ebook';
+type ReadingRankType = 'manga' | 'ebook' | 'novel';
 
 /**
  * 阅读时长排行项
@@ -159,20 +190,6 @@ interface InterestItem {
 interface KeywordStatData {
   count: number;
   type: InterestType;
-}
-
-/**
- * 漫画详情页导航参数
- */
-interface MangaDetailParams {
-  mangaId: string;
-}
-
-/**
- * 电子书详情页导航参数
- */
-interface EBookDetailParams {
-  bookId: string;
 }
 
 @Component
@@ -246,13 +263,34 @@ struct ReadingAnalyticsPage {
   @State dailyViewData: DailyReadingData | null = null; // 日视图当天的阅读数据
   @State dailyMangaList: DailyMangaItem[] = []; // 日视图当天阅读的漫画列表
   @State dailyEBookList: DailyEBookItem[] = []; // 日视图当天阅读的电子书列表
+  @State dailyNovelList: DailyNovelItem[] = []; // 日视图当天阅读的小说列表
   @State isDailyLoading: boolean = false; // 日视图加载状态
+  
+  // 阅读目标
+  @State readingGoals: ReadingGoals = {
+    mangaGoalMinutes: 0,
+    ebookGoalMinutes: 0,
+    novelGoalMinutes: 0
+  };
+  @State showGoalSettingDialog: boolean = false; // 显示目标设置对话框
+  @State goalDialogVisible: boolean = false; // 目标对话框实际可见性（用于动画）
+  @State mangaGoalValue: number = 0; // 漫画目标值
+  @State ebookGoalValue: number = 0; // 电子书目标值
+  @State novelGoalValue: number = 0; // 小说目标值
+  
+  // 当日阅读分钟数（用于阅读目标进度显示）
+  @State dailyMangaReadingMinutes: number = 0;
+  @State dailyEbookReadingMinutes: number = 0;
+  @State dailyNovelReadingMinutes: number = 0;
   
   // 缓存原始阅读历史数据（用于日视图查询）
   private cachedReadHistory: ReadHistory[] = [];
   
   // 缓存所有日期的阅读数据（用于日历视图，不受时间范围限制）
   @State allDailyData: DailyReadingData[] = [];
+  
+  // 标记是否从卡片强制进入日视图
+  private forceShowDailyView: boolean = false;
 
   onPageShow(): void {
     try {
@@ -359,11 +397,35 @@ struct ReadingAnalyticsPage {
       this.retentionDaysIndex = this.analyticsManager.getRetentionDaysIndex();
       this.selectedTimeRange = this.analyticsManager.getRetentionDays();
       
-      logger.info(TAG, `初始化完成: analyticsEnabled=${this.analyticsEnabled}, hasAskedPermission=${this.hasAskedPermission}`);
+      // 加载视图模式（如果是从卡片进入，则强制显示日视图）
+      if (this.forceShowDailyView) {
+        this.isLongTermView = false;
+      } else {
+        this.isLongTermView = this.analyticsManager.isLongTermView();
+      }
+      
+      // 加载阅读目标
+      const goals = this.analyticsManager.getReadingGoals();
+      this.readingGoals = {
+        mangaGoalMinutes: goals.mangaGoalMinutes,
+        ebookGoalMinutes: goals.ebookGoalMinutes,
+        novelGoalMinutes: goals.novelGoalMinutes
+      };
+      // 同步到独立状态变量
+      this.mangaGoalValue = goals.mangaGoalMinutes;
+      this.ebookGoalValue = goals.ebookGoalMinutes;
+      this.novelGoalValue = goals.novelGoalMinutes;
+      
+      logger.info(TAG, `初始化完成: analyticsEnabled=${this.analyticsEnabled}, hasAskedPermission=${this.hasAskedPermission}, isLongTermView=${this.isLongTermView}`);
       
       // 如果已询问过权限，才加载数据
       if (this.hasAskedPermission) {
         await this.loadReadingData();
+        
+        // 如果是日视图模式，需要加载日视图数据
+        if (!this.isLongTermView) {
+          await this.loadDailyViewData(this.selectedDate);
+        }
       } else {
         this.isLoading = false;
         logger.info(TAG, '用户尚未同意阅读报告权限，显示权限请求界面');
@@ -514,6 +576,9 @@ struct ReadingAnalyticsPage {
     this.isLongTermView = !this.isLongTermView;
     logger.info(TAG, `切换到${this.isLongTermView ? '长期视图' : '日视图'}`);
     
+    // 持久化保存视图模式
+    this.analyticsManager.setLongTermView(this.isLongTermView);
+    
     if (!this.isLongTermView) {
       // 切换到日视图时，加载当天数据
       this.loadDailyViewData(this.selectedDate);
@@ -549,6 +614,9 @@ struct ReadingAnalyticsPage {
     // 加载当天阅读的电子书列表
     await this.loadDailyEBookList(date);
     
+    // 加载当天阅读的小说列表（包括在线小说）
+    await this.loadDailyNovelList(date);
+    
     // 从漫画列表计算阅读页数
     let mangaPagesRead = 0;
     let mangaChaptersRead = 0;
@@ -567,15 +635,29 @@ struct ReadingAnalyticsPage {
       ebookChapters += 1;  // 每本电子书算作一个阅读项
     });
     
+    // 从小说列表计算阅读时长和章节数
+    let novelReadingTime = 0;
+    let novelChapters = 0;
+    this.dailyNovelList.forEach(novel => {
+      novelReadingTime += novel.readingTime;
+      novelChapters += novel.chaptersRead;
+    });
+    
     // 更新日视图数据，使用从列表计算的数据
     this.dailyViewData = {
       date: dateKey,
-      readingTime: mangaReadingTime + ebookReadingTime,
-      chaptersRead: mangaChaptersRead + ebookChapters,
+      readingTime: mangaReadingTime + ebookReadingTime + novelReadingTime,
+      chaptersRead: mangaChaptersRead + ebookChapters + novelChapters,
       pagesRead: mangaPagesRead
     };
     
-    logger.debug(TAG, `日视图数据: ${dateKey}, 时长: ${this.dailyViewData?.readingTime || 0}秒, 漫画数: ${this.dailyMangaList.length}, 电子书数: ${this.dailyEBookList.length}`);
+    // 更新当日阅读分钟数状态变量（用于阅读目标进度显示）
+    this.dailyMangaReadingMinutes = Math.round(mangaReadingTime / 60);
+    this.dailyEbookReadingMinutes = Math.round(ebookReadingTime / 60);
+    this.dailyNovelReadingMinutes = Math.round(novelReadingTime / 60);
+    
+    logger.debug(TAG, `日视图数据: ${dateKey}, 时长: ${this.dailyViewData?.readingTime || 0}秒, 漫画数: ${this.dailyMangaList.length}, 电子书数: ${this.dailyEBookList.length}, 小说数: ${this.dailyNovelList.length}`);
+    logger.debug(TAG, `阅读目标进度: 漫画=${this.dailyMangaReadingMinutes}分钟, 电子书=${this.dailyEbookReadingMinutes}分钟, 小说=${this.dailyNovelReadingMinutes}分钟`);
     
     this.isDailyLoading = false;
   }
@@ -624,6 +706,10 @@ struct ReadingAnalyticsPage {
       try {
         const comic = await this.dataManager.getComicById(comicId);
         if (comic) {
+          // 过滤使用手册
+          if (comic.title === USER_MANUAL_TITLE) {
+            continue;
+          }
           mangaList.push({
             comicId: comicId,
             title: comic.title,
@@ -663,6 +749,10 @@ struct ReadingAnalyticsPage {
           
           // 检查是否是当天阅读的
           if (lastReadDateKey === dateKey) {
+            // 过滤使用手册
+            if (ebook.metadata.title === USER_MANUAL_TITLE) {
+              continue;
+            }
             const progressValue = ebook.readingProgress.progress || 0;
             logger.debug(TAG, `电子书 ${ebook.metadata.title} 进度: ${progressValue}%`);
             ebookList.push({
@@ -682,6 +772,63 @@ struct ReadingAnalyticsPage {
     } catch (error) {
       logger.warn(TAG, `加载当天电子书列表失败: ${String(error)}`);
       this.dailyEBookList = [];
+    }
+  }
+
+  /**
+   * 加载当天阅读的小说列表（包括本地和在线小说）
+   */
+  private async loadDailyNovelList(date: Date): Promise<void> {
+    const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    
+    try {
+      const novelDataManager = getNovelDataManager();
+      // 获取所有有阅读时长的小说
+      const novelsWithTime = await novelDataManager.getBooksWithReadingTime();
+      
+      // 筛选当天有阅读记录的小说
+      const novelList: DailyNovelItem[] = [];
+      
+      for (const novel of novelsWithTime) {
+        if (novel.lastReadTime && novel.lastReadTime > 0) {
+          const lastReadDate = new Date(novel.lastReadTime);
+          const lastReadDateKey = `${lastReadDate.getFullYear()}-${String(lastReadDate.getMonth() + 1).padStart(2, '0')}-${String(lastReadDate.getDate()).padStart(2, '0')}`;
+          
+          // 检查是否是当天阅读的
+          if (lastReadDateKey === dateKey) {
+            // 过滤使用手册
+            if (novel.name === USER_MANUAL_TITLE) {
+              continue;
+            }
+            // 判断是否是在线小说（有sourceId且非local）
+            const isOnline = novel.sourceId !== undefined && novel.sourceId !== '' && novel.sourceId !== 'local';
+            
+            // 添加调试日志，确认 bookUrl 和 id 的实际值
+            logger.debug(TAG, `小说数据: id=${novel.id}, bookUrl=${novel.bookUrl}, sourceId=${novel.sourceId}`);
+            
+            novelList.push({
+              novelId: novel.id,
+              bookUrl: novel.bookUrl,  // 用于导航到详情页
+              sourceId: novel.sourceId || '',
+              title: novel.name,
+              author: novel.author || '未知作者',
+              coverPath: novel.coverUrl || '',
+              readingTime: novel.totalReadingTime || 0,  // 小说的totalReadingTime是秒
+              chaptersRead: (novel.lastReadChapterIndex || 0) + 1,
+              isOnline: isOnline
+            });
+            
+            logger.debug(TAG, `小说 ${novel.name} (在线: ${isOnline}), 时长: ${novel.totalReadingTime}秒`);
+          }
+        }
+      }
+      
+      // 按阅读时长排序
+      novelList.sort((a, b) => b.readingTime - a.readingTime);
+      this.dailyNovelList = novelList;
+    } catch (error) {
+      logger.warn(TAG, `加载当天小说列表失败: ${String(error)}`);
+      this.dailyNovelList = [];
     }
   }
 
@@ -818,9 +965,13 @@ struct ReadingAnalyticsPage {
    */
   private analyzeEBookData(ebooks: EBook[], startTime: number): void {
     try {
-      // 过滤时间范围内有阅读记录的电子书
+      // 过滤时间范围内有阅读记录的电子书（排除使用手册）
       const filteredEbooks = ebooks.filter((ebook: EBook) => {
         if (!ebook.readingProgress || !ebook.readingProgress.lastReadTime) {
+          return false;
+        }
+        // 过滤使用手册
+        if (ebook.metadata.title === USER_MANUAL_TITLE) {
           return false;
         }
         return ebook.readingProgress.lastReadTime >= startTime;
@@ -876,9 +1027,13 @@ struct ReadingAnalyticsPage {
       const novelDataManager = getNovelDataManager();
       const novels = await novelDataManager.getBooksWithReadingTime();
       
-      // 过滤时间范围内有阅读记录的小说
+      // 过滤时间范围内有阅读记录的小说（排除使用手册）
       const filteredNovels = novels.filter((novel: NovelBook) => {
         if (!novel.lastReadTime) {
+          return false;
+        }
+        // 过滤使用手册
+        if (novel.name === USER_MANUAL_TITLE) {
           return false;
         }
         return novel.lastReadTime >= startTime;
@@ -1133,12 +1288,25 @@ struct ReadingAnalyticsPage {
 
     let maxCount = 0;
     let mostReadComicId = '';
-    comicCountMap.forEach((count, comicId) => {
+    
+    // 遍历找出阅读最多的漫画，排除使用手册
+    for (const entry of comicCountMap.entries()) {
+      const comicId = entry[0];
+      const count = entry[1];
+      
       if (count > maxCount) {
-        maxCount = count;
-        mostReadComicId = comicId;
+        // 检查是否是使用手册
+        try {
+          const comic = await this.dataManager.getComicById(comicId);
+          if (comic && comic.title !== USER_MANUAL_TITLE) {
+            maxCount = count;
+            mostReadComicId = comicId;
+          }
+        } catch (e) {
+          // 忽略错误，继续检查下一个
+        }
       }
-    });
+    }
 
     this.statistics.mostReadComicId = mostReadComicId;
     
@@ -1171,11 +1339,15 @@ struct ReadingAnalyticsPage {
         return;
       }
       
-      // 根据阅读时长找出阅读最多的电子书
+      // 根据阅读时长找出阅读最多的电子书（排除使用手册）
       let maxReadingTime = 0;
       let mostReadEBook: EBook | null = null;
       
       for (const ebook of allEBooks) {
+        // 过滤使用手册
+        if (ebook.metadata.title === USER_MANUAL_TITLE) {
+          continue;
+        }
         const readingTime: number = ebook.readingProgress?.totalReadingTime || 0;
         if (readingTime > maxReadingTime) {
           maxReadingTime = readingTime;
@@ -1400,6 +1572,10 @@ struct ReadingAnalyticsPage {
         try {
           const comic: ComicInfo | null = await this.dataManager.getComicById(comicId);
           if (comic) {
+            // 过滤使用手册
+            if (comic.title === USER_MANUAL_TITLE) {
+              continue;
+            }
             const coverPath: string = comic.coverLocalPath || comic.coverUrl || '';
             const rankItem: ReadingRankItem = {
               id: comicId,
@@ -1418,6 +1594,10 @@ struct ReadingAnalyticsPage {
       // 添加电子书到排行（电子书的 totalReadingTime 是分钟，需要转换为秒）
       for (const ebook of ebooks) {
         if (ebook.readingProgress && ebook.readingProgress.totalReadingTime > 0) {
+          // 过滤使用手册
+          if (ebook.metadata.title === USER_MANUAL_TITLE) {
+            continue;
+          }
           const rankItem: ReadingRankItem = {
             id: ebook.id,
             title: ebook.metadata.title,
@@ -1427,6 +1607,31 @@ struct ReadingAnalyticsPage {
           };
           rankList.push(rankItem);
         }
+      }
+      
+      // 添加小说到排行（包括在线小说）
+      try {
+        const novelDataManager = getNovelDataManager();
+        const novelsWithTime = await novelDataManager.getBooksWithReadingTime();
+        
+        for (const novel of novelsWithTime) {
+          if (novel.totalReadingTime && novel.totalReadingTime > 0) {
+            // 过滤使用手册
+            if (novel.name === USER_MANUAL_TITLE) {
+              continue;
+            }
+            const rankItem: ReadingRankItem = {
+              id: novel.id,
+              title: novel.name,
+              coverPath: novel.coverUrl || '',
+              readingTime: novel.totalReadingTime,  // 小说的totalReadingTime是秒
+              type: 'novel'
+            };
+            rankList.push(rankItem);
+          }
+        }
+      } catch (e) {
+        logger.warn(TAG, `加载小说排行数据失败: ${String(e)}`);
       }
 
       // 按阅读时长排序并取前10名
@@ -1611,19 +1816,108 @@ struct ReadingAnalyticsPage {
   }
 
   /**
-   * 导航到作品详情页
+   * 导航到作品详情页（根据设置选择详情页类型）
    */
   private navigateToDetail(item: ReadingRankItem): void {
     try {
       if (item.type === 'manga') {
-        const params: MangaDetailParams = { mangaId: item.id };
-        this.pathStack.pushPathByName('MangaDetailPage', params);
-      } else {
-        const params: EBookDetailParams = { bookId: item.id };
-        this.pathStack.pushPathByName('EBookDetailPage', params);
+        this.openMangaDetail(item.id, item.title, item.coverPath);
+      } else if (item.type === 'ebook') {
+        this.openEBookDetail(item.id, item.title, item.coverPath);
+      } else if (item.type === 'novel') {
+        // 小说需要sourceId，但排行榜中没有，使用空字符串
+        this.openNovelDetail(item.id, '', item.title, '', item.coverPath);
       }
     } catch (error) {
       logger.error(TAG, `导航到详情页失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 打开漫画详情页（根据设置选择详情页类型）
+   */
+  private openMangaDetail(mangaId: string, title: string, coverPath: string): void {
+    const pageType = PageSettingsHelper.getMangaDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.MANGA,
+        contentId: mangaId,
+        cachedTitle: title,
+        cachedCover: coverPath
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      logger.info(TAG, `打开统一详情页(漫画): ${title}`);
+    } else {
+      // 使用原有漫画详情页
+      const params: MangaDetailPageParams = { mangaId: mangaId };
+      this.pathStack.pushPathByName('MangaDetailPage', params);
+      logger.info(TAG, `打开漫画详情页: ${title}`);
+    }
+  }
+
+  /**
+   * 打开电子书详情页（根据设置选择详情页类型）
+   */
+  private openEBookDetail(ebookId: string, title: string, coverPath: string): void {
+    const pageType = PageSettingsHelper.getEBookDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.EBOOK,
+        contentId: ebookId,
+        cachedTitle: title,
+        cachedCover: coverPath
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      logger.info(TAG, `打开统一详情页(电子书): ${title}`);
+    } else {
+      // 使用原有电子书详情页
+      const params: EBookDetailPageParams = { bookId: ebookId };
+      this.pathStack.pushPathByName('EBookDetailPage', params);
+      logger.info(TAG, `打开电子书详情页: ${title}`);
+    }
+  }
+
+  /**
+   * 打开小说详情页（根据设置选择详情页类型）
+   * @param bookUrl 小说URL（用于 contentId）
+   * @param sourceId 书源ID
+   * @param title 小说标题
+   * @param author 作者
+   * @param coverPath 封面路径
+   */
+  private openNovelDetail(bookUrl: string, sourceId: string, title: string, author: string, coverPath: string): void {
+    // 添加调试日志
+    logger.debug(TAG, `openNovelDetail: bookUrl=${bookUrl}, sourceId=${sourceId}`);
+    
+    const pageType = PageSettingsHelper.getNovelDetailPageType();
+    
+    if (pageType === DetailPageType.UNIFIED) {
+      // 使用统一详情页
+      const unifiedParams: UnifiedDetailPageParams = {
+        contentType: UnifiedContentType.NOVEL,
+        contentId: bookUrl,
+        sourceId: sourceId,
+        cachedTitle: title,
+        cachedCover: coverPath,
+        cachedAuthor: author
+      };
+      this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
+      logger.info(TAG, `打开统一详情页(小说): ${title}`);
+    } else {
+      // 使用原有小说详情页
+      const params: NovelDetailPageParams = {
+        sourceId: sourceId,
+        bookUrl: bookUrl,
+        bookName: title,
+        author: author,
+        coverUrl: coverPath
+      };
+      this.pathStack.pushPathByName('NovelDetailPage', params);
+      logger.info(TAG, `打开小说详情页: ${title}`);
     }
   }
 
@@ -1721,10 +2015,9 @@ struct ReadingAnalyticsPage {
       // 月份导航
       Row() {
         Button({ stateEffect: true }) {
-          Text('◀')
-            .fontSize(16)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
         }
         .width(40)
         .height(40)
@@ -1740,10 +2033,9 @@ struct ReadingAnalyticsPage {
           .textAlign(TextAlign.Center)
 
         Button({ stateEffect: true }) {
-          Text('▶')
-            .fontSize(16)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
         }
         .width(40)
         .height(40)
@@ -1935,6 +2227,9 @@ struct ReadingAnalyticsPage {
       // 月历选择器
       this.buildMonthCalendar()
       
+      // 阅读目标进度
+      this.buildReadingGoalsProgress()
+      
       // 当天阅读统计
       Column({ space: 12 }) {
         Text(`${this.selectedDate.getMonth() + 1}月${this.selectedDate.getDate()}日 阅读情况`)
@@ -2087,6 +2382,30 @@ struct ReadingAnalyticsPage {
         .border({ width: 1, color: this.getBlurPanelBorder() })
         .margin({ left: 16, right: 16 })
       }
+      
+      // 当天阅读的小说列表（包括在线小说）
+      if (this.dailyNovelList.length > 0) {
+        Column({ space: 12 }) {
+          Text('阅读的小说')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .alignSelf(ItemAlign.Start)
+          
+          ForEach(this.dailyNovelList, (item: DailyNovelItem) => {
+            this.buildDailyNovelCard(item)
+          })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(this.getBlurPanelBackground())
+        .borderRadius(12)
+        .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+        .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+        .border({ width: 1, color: this.getBlurPanelBorder() })
+        .margin({ left: 16, right: 16 })
+      }
     }
     .width('100%')
   }
@@ -2139,9 +2458,8 @@ struct ReadingAnalyticsPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
     .borderRadius(8)
     .onClick(() => {
-      // 点击跳转到漫画详情页
-      const params: MangaDetailParams = { mangaId: item.comicId };
-      this.pathStack.pushPathByName('MangaDetailPage', params);
+      // 点击跳转到漫画详情页（根据设置选择详情页类型）
+      this.openMangaDetail(item.comicId, item.title, item.coverPath);
     })
   }
 
@@ -2189,9 +2507,420 @@ struct ReadingAnalyticsPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
     .borderRadius(8)
     .onClick(() => {
-      // 点击跳转到电子书详情页
-      const params: EBookDetailParams = { bookId: item.ebookId };
-      this.pathStack.pushPathByName('EBookDetailPage', params);
+      // 点击跳转到电子书详情页（根据设置选择详情页类型）
+      this.openEBookDetail(item.ebookId, item.title, item.coverPath);
+    })
+  }
+
+  /**
+   * 检查是否有设置任何阅读目标
+   */
+  private hasAnyReadingGoal(): boolean {
+    return this.readingGoals.mangaGoalMinutes > 0 || 
+           this.readingGoals.ebookGoalMinutes > 0 || 
+           this.readingGoals.novelGoalMinutes > 0;
+  }
+
+  /**
+   * 构建阅读目标进度卡片
+   */
+  @Builder
+  buildReadingGoalsProgress() {
+    Column({ space: 12 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.sentry_mode'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('今日阅读目标')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        // 设置按钮
+        Button({ stateEffect: true }) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.gearshape'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('设置')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(28)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+        .borderRadius(14)
+        .onClick(() => {
+          this.openGoalSettingDialog();
+        })
+      }
+      .width('100%')
+      
+      if (this.hasAnyReadingGoal()) {
+        // 有目标时显示进度
+        Column({ space: 12 }) {
+          // 漫画目标
+          if (this.readingGoals.mangaGoalMinutes > 0) {
+            this.buildMangaGoalProgress()
+          }
+          
+          // 电子书目标
+          if (this.readingGoals.ebookGoalMinutes > 0) {
+            this.buildEbookGoalProgress()
+          }
+          
+          // 小说目标
+          if (this.readingGoals.novelGoalMinutes > 0) {
+            this.buildNovelGoalProgress()
+          }
+        }
+        .width('100%')
+      } else {
+        // 无目标时显示提示
+        Column({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.plus_circle'))
+            .fontSize(32)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
+          Text('点击"设置"添加阅读目标')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .padding(24)
+        .alignItems(HorizontalAlign.Center)
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.getBlurPanelBackground())
+    .borderRadius(12)
+    .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+    .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+    .border({ width: 1, color: this.getBlurPanelBorder() })
+    .margin({ left: 16, right: 16 })
+  }
+  
+  /**
+   * 计算目标进度百分比
+   */
+  private calculateGoalProgress(currentMinutes: number, goalMinutes: number): number {
+    return Math.min(currentMinutes / goalMinutes, 1);
+  }
+  
+  /**
+   * 检查目标是否已完成
+   */
+  private isGoalCompleted(currentMinutes: number, goalMinutes: number): boolean {
+    return currentMinutes >= goalMinutes;
+  }
+
+  /**
+   * 构建漫画目标进度项（直接访问 @State 变量以支持响应式更新）
+   */
+  @Builder
+  buildMangaGoalProgress() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          .fontSize(16)
+          .fontColor([this.isGoalCompleted(this.dailyMangaReadingMinutes, this.readingGoals.mangaGoalMinutes) 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        
+        Text('漫画')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        if (this.isGoalCompleted(this.dailyMangaReadingMinutes, this.readingGoals.mangaGoalMinutes)) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+            Text('已完成')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          }
+        } else {
+          Text(`${this.dailyMangaReadingMinutes}/${this.readingGoals.mangaGoalMinutes}分钟`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .width('100%')
+      
+      // 进度条
+      Row() {
+        Row()
+          .width(`${this.calculateGoalProgress(this.dailyMangaReadingMinutes, this.readingGoals.mangaGoalMinutes) * 100}%`)
+          .height('100%')
+          .borderRadius(3)
+          .backgroundColor(this.isGoalCompleted(this.dailyMangaReadingMinutes, this.readingGoals.mangaGoalMinutes) 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .height(6)
+      .borderRadius(3)
+      .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
+        ? 'rgba(255, 255, 255, 0.1)' 
+        : 'rgba(0, 0, 0, 0.08)')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+  
+  /**
+   * 构建电子书目标进度项（直接访问 @State 变量以支持响应式更新）
+   */
+  @Builder
+  buildEbookGoalProgress() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.book'))
+          .fontSize(16)
+          .fontColor([this.isGoalCompleted(this.dailyEbookReadingMinutes, this.readingGoals.ebookGoalMinutes) 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        
+        Text('电子书')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        if (this.isGoalCompleted(this.dailyEbookReadingMinutes, this.readingGoals.ebookGoalMinutes)) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+            Text('已完成')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          }
+        } else {
+          Text(`${this.dailyEbookReadingMinutes}/${this.readingGoals.ebookGoalMinutes}分钟`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .width('100%')
+      
+      // 进度条
+      Row() {
+        Row()
+          .width(`${this.calculateGoalProgress(this.dailyEbookReadingMinutes, this.readingGoals.ebookGoalMinutes) * 100}%`)
+          .height('100%')
+          .borderRadius(3)
+          .backgroundColor(this.isGoalCompleted(this.dailyEbookReadingMinutes, this.readingGoals.ebookGoalMinutes) 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .height(6)
+      .borderRadius(3)
+      .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
+        ? 'rgba(255, 255, 255, 0.1)' 
+        : 'rgba(0, 0, 0, 0.08)')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+  
+  /**
+   * 构建小说目标进度项（直接访问 @State 变量以支持响应式更新）
+   */
+  @Builder
+  buildNovelGoalProgress() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.doc_text'))
+          .fontSize(16)
+          .fontColor([this.isGoalCompleted(this.dailyNovelReadingMinutes, this.readingGoals.novelGoalMinutes) 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        
+        Text('小说')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        if (this.isGoalCompleted(this.dailyNovelReadingMinutes, this.readingGoals.novelGoalMinutes)) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+            Text('已完成')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          }
+        } else {
+          Text(`${this.dailyNovelReadingMinutes}/${this.readingGoals.novelGoalMinutes}分钟`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+      }
+      .width('100%')
+      
+      // 进度条
+      Row() {
+        Row()
+          .width(`${this.calculateGoalProgress(this.dailyNovelReadingMinutes, this.readingGoals.novelGoalMinutes) * 100}%`)
+          .height('100%')
+          .borderRadius(3)
+          .backgroundColor(this.isGoalCompleted(this.dailyNovelReadingMinutes, this.readingGoals.novelGoalMinutes) 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .height(6)
+      .borderRadius(3)
+      .backgroundColor(this.themeState.currentTheme === ThemeType.DARK 
+        ? 'rgba(255, 255, 255, 0.1)' 
+        : 'rgba(0, 0, 0, 0.08)')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+  
+  /**
+   * 计算当天漫画阅读分钟数
+   */
+  private calculateMangaReadingMinutes(): number {
+    let totalSeconds = 0;
+    this.dailyMangaList.forEach(item => {
+      totalSeconds += item.readingTime;
+    });
+    return Math.round(totalSeconds / 60);
+  }
+  
+  /**
+   * 计算当天电子书阅读分钟数
+   */
+  private calculateEbookReadingMinutes(): number {
+    let totalSeconds = 0;
+    this.dailyEBookList.forEach(item => {
+      totalSeconds += item.readingTime;
+    });
+    return Math.round(totalSeconds / 60);
+  }
+  
+  /**
+   * 计算当天小说阅读分钟数
+   */
+  private calculateNovelReadingMinutes(): number {
+    let totalSeconds = 0;
+    this.dailyNovelList.forEach(item => {
+      totalSeconds += item.readingTime;
+    });
+    return Math.round(totalSeconds / 60);
+  }
+
+  /**
+   * 构建日视图小说卡片
+   */
+  @Builder
+  buildDailyNovelCard(item: DailyNovelItem) {
+    Row({ space: 12 }) {
+      // 封面图片
+      if (item.coverPath && item.coverPath.length > 0) {
+        Image(this.normalizeCoverPath(item.coverPath))
+          .width(60)
+          .height(80)
+          .borderRadius(6)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      } else {
+        // 无封面时显示默认图标
+        Column() {
+          SymbolGlyph($r('sys.symbol.doc_text'))
+            .fontSize(32)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
+        }
+        .width(60)
+        .height(80)
+        .borderRadius(6)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .justifyContent(FlexAlign.Center)
+      }
+      
+      // 小说信息
+      Column({ space: 4 }) {
+        Row({ space: 6 }) {
+          Text(item.title)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          
+          // 在线小说标记
+          if (item.isOnline) {
+            Text('在线')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme) + '15')
+              .borderRadius(4)
+          }
+        }
+        .width('100%')
+        
+        Text(item.author)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        
+        Row({ space: 8 }) {
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.clock')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(this.formatDuration(item.readingTime)).fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.book')).fontSize(12).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            Text(`${item.chaptersRead}章`).fontSize(12).fontFamily(this.appFontFamily).fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+    .onClick(() => {
+      // 点击跳转到小说详情页（根据设置选择详情页类型）
+      // 使用 bookUrl 作为 contentId，而不是 novelId
+      this.openNovelDetail(item.bookUrl, item.sourceId, item.title, item.author, item.coverPath);
     })
   }
 
@@ -3102,6 +3831,308 @@ struct ReadingAnalyticsPage {
   }
   
   /**
+   * 关闭目标设置对话框（带动画）
+   */
+  private closeGoalSettingDialog(): void {
+    this.goalDialogVisible = false;
+    setTimeout(() => {
+      this.showGoalSettingDialog = false;
+      // 刷新日视图数据以更新目标完成情况
+      if (!this.isLongTermView) {
+        this.loadDailyViewData(this.selectedDate);
+      }
+      // 同步更新桌面卡片数据
+      widgetDataSync.syncAllData().catch((e: Error) => {
+        logger.warn(TAG, `同步卡片数据失败: ${e.message}`);
+      });
+    }, 250);
+  }
+  
+  /**
+   * 打开目标设置对话框（带动画）
+   */
+  private openGoalSettingDialog(): void {
+    // 同步状态变量
+    this.mangaGoalValue = this.readingGoals.mangaGoalMinutes;
+    this.ebookGoalValue = this.readingGoals.ebookGoalMinutes;
+    this.novelGoalValue = this.readingGoals.novelGoalMinutes;
+    this.showGoalSettingDialog = true;
+    setTimeout(() => {
+      this.goalDialogVisible = true;
+    }, 16);
+  }
+
+  /**
+   * 构建阅读目标设置对话框
+   */
+  @Builder
+  buildGoalSettingDialog() {
+    Column() {
+      // 遮罩层
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.goalDialogVisible ? '#80000000' : '#00000000')
+        .animation({ duration: 250, curve: Curve.EaseOut })
+        .onClick(() => {
+          this.closeGoalSettingDialog();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    
+    // 对话框内容
+    Column({ space: 16 }) {
+      // 标题
+      Text('设置阅读目标')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      
+      Text('拖动滑块设置每日阅读时间目标')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      
+      // 漫画目标设置
+      this.buildMangaGoalSlider()
+      
+      // 电子书目标设置
+      this.buildEbookGoalSlider()
+      
+      // 小说目标设置
+      this.buildNovelGoalSlider()
+      
+      // 关闭按钮
+      Button('完成')
+        .fontSize(15)
+        .fontFamily(this.appFontFamily)
+        .fontColor('#FFFFFF')
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        .borderRadius(20)
+        .height(44)
+        .width('100%')
+        .margin({ top: 8 })
+        .onClick(() => {
+          this.closeGoalSettingDialog();
+        })
+    }
+    .width('85%')
+    .constraintSize({ maxWidth: 400 })
+    .padding(24)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(16)
+    .position({ x: '50%', y: '50%' })
+    .translate({ x: '-50%', y: '-50%' })
+    .scale({ x: this.goalDialogVisible ? 1 : 0.9, y: this.goalDialogVisible ? 1 : 0.9 })
+    .opacity(this.goalDialogVisible ? 1 : 0)
+    .animation({ duration: 250, curve: Curve.EaseOut })
+  }
+  
+  /**
+   * 构建漫画目标滑动条
+   */
+  @Builder
+  buildMangaGoalSlider() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.rectangle_stack'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        
+        Text('漫画')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        Text(this.mangaGoalValue > 0 ? `${this.mangaGoalValue}分钟/天` : '未设置')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.mangaGoalValue > 0 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      
+      Row({ space: 8 }) {
+        Text('0')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        
+        Slider({
+          value: this.mangaGoalValue,
+          min: 0,
+          max: 180,
+          step: 5
+        })
+          .layoutWeight(1)
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(this.themeState.currentTheme === ThemeType.DARK 
+            ? 'rgba(255, 255, 255, 0.15)' 
+            : 'rgba(0, 0, 0, 0.1)')
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .showSteps(false)
+          .showTips(false)
+          .onChange((value: number) => {
+            this.mangaGoalValue = Math.round(value);
+            this.readingGoals.mangaGoalMinutes = this.mangaGoalValue;
+            this.analyticsManager.setMangaGoal(this.mangaGoalValue);
+          })
+        
+        Text('180')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+  
+  /**
+   * 构建电子书目标滑动条
+   */
+  @Builder
+  buildEbookGoalSlider() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.book'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        
+        Text('电子书')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        Text(this.ebookGoalValue > 0 ? `${this.ebookGoalValue}分钟/天` : '未设置')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.ebookGoalValue > 0 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      
+      Row({ space: 8 }) {
+        Text('0')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        
+        Slider({
+          value: this.ebookGoalValue,
+          min: 0,
+          max: 180,
+          step: 5
+        })
+          .layoutWeight(1)
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(this.themeState.currentTheme === ThemeType.DARK 
+            ? 'rgba(255, 255, 255, 0.15)' 
+            : 'rgba(0, 0, 0, 0.1)')
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .showSteps(false)
+          .showTips(false)
+          .onChange((value: number) => {
+            this.ebookGoalValue = Math.round(value);
+            this.readingGoals.ebookGoalMinutes = this.ebookGoalValue;
+            this.analyticsManager.setEbookGoal(this.ebookGoalValue);
+          })
+        
+        Text('180')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+  
+  /**
+   * 构建小说目标滑动条
+   */
+  @Builder
+  buildNovelGoalSlider() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.doc_text'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        
+        Text('小说')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        Blank()
+        
+        Text(this.novelGoalValue > 0 ? `${this.novelGoalValue}分钟/天` : '未设置')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.novelGoalValue > 0 
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      
+      Row({ space: 8 }) {
+        Text('0')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        
+        Slider({
+          value: this.novelGoalValue,
+          min: 0,
+          max: 180,
+          step: 5
+        })
+          .layoutWeight(1)
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .trackColor(this.themeState.currentTheme === ThemeType.DARK 
+            ? 'rgba(255, 255, 255, 0.15)' 
+            : 'rgba(0, 0, 0, 0.1)')
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .showSteps(false)
+          .showTips(false)
+          .onChange((value: number) => {
+            this.novelGoalValue = Math.round(value);
+            this.readingGoals.novelGoalMinutes = this.novelGoalValue;
+            this.analyticsManager.setNovelGoal(this.novelGoalValue);
+          })
+        
+        Text('180')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(8)
+  }
+
+  /**
    * 构建清除数据确认对话框
    */
   @Builder
@@ -3500,6 +4531,11 @@ struct ReadingAnalyticsPage {
         if (this.showClearDataDialog) {
           this.buildClearDataDialog()
         }
+        
+        // 阅读目标设置对话框
+        if (this.showGoalSettingDialog) {
+          this.buildGoalSettingDialog()
+        }
       }
     }
     .titleBar({
@@ -3543,6 +4579,21 @@ struct ReadingAnalyticsPage {
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      
+      // 检查是否有从卡片传入的 viewMode 参数（通过 AppStorage 传递）
+      try {
+        const viewMode = AppStorage.get<string>('analyticsViewMode');
+        if (viewMode === 'daily') {
+          // 标记从卡片强制进入日视图
+          this.forceShowDailyView = true;
+          // 清除标记
+          AppStorage.setOrCreate('analyticsViewMode', '');
+          logger.info(TAG, '📱 从卡片进入，将切换到日视图');
+        }
+      } catch (e) {
+        logger.debug(TAG, '获取导航参数异常');
+      }
+      
       this.onPageShow();
       this.onReady();
     })

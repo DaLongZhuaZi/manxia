@@ -51,6 +51,7 @@ export struct AnimationSettingsSubPage {
   @State bookCloseEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.bookCloseEnabled;
   @State bookOpenDuration: number = DEFAULT_ANIMATION_SETTINGS.bookOpenDuration;
   @State bookCloseDuration: number = DEFAULT_ANIMATION_SETTINGS.bookCloseDuration;
+  @State mainPageBottomBarAnimationEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
 
   private lifecycle = new PageLifecycleManager('AnimationSettingsSubPage', { enableDebug: true });
 
@@ -171,6 +172,7 @@ export struct AnimationSettingsSubPage {
     this.bookCloseEnabled = settings.bookCloseEnabled;
     this.bookOpenDuration = settings.bookOpenDuration;
     this.bookCloseDuration = settings.bookCloseDuration;
+    this.mainPageBottomBarAnimationEnabled = settings.mainPageBottomBarAnimationEnabled;
   }
 
   /**
@@ -347,6 +349,56 @@ export struct AnimationSettingsSubPage {
   }
 
   /**
+   * 构建主页面动画设置区域
+   */
+  @Builder
+  buildMainPageAnimationSettings() {
+    Column({ space: 16 }) {
+      Text('主页面动画')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Text('控制主页面的动画效果，包括底部导航栏的滚动隐藏/显示动画。')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      // 底栏动画开关
+      Row() {
+        Column({ space: 4 }) {
+          Text('底栏动画效果')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('关闭后底部导航栏将常驻显示，不会自动隐藏')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.mainPageBottomBarAnimationEnabled })
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .onChange(async (isOn: boolean) => {
+            await this.animationSettingsManager.setMainPageBottomBarAnimationEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  /**
    * 构建重置按钮区域
    */
   @Builder
@@ -391,6 +443,9 @@ export struct AnimationSettingsSubPage {
 
             // 书籍动画设置
             this.buildBookAnimationSettings()
+            
+            // 主页面动画设置
+            this.buildMainPageAnimationSettings()
 
             // 重置按钮
             this.buildResetSection()

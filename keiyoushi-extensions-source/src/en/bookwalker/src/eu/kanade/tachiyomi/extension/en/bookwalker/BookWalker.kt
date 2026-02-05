@@ -1,18 +1,33 @@
 package eu.kanade.tachiyomi.extension.en.bookwalker
 
+import android.annotation.SuppressLint
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Base64
 import android.util.Log
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
+import eu.kanade.tachiyomi.extension.en.bookwalker.dto.AuthInfo
 import eu.kanade.tachiyomi.extension.en.bookwalker.dto.BookUpdateDto
-import eu.kanade.tachiyomi.extension.en.bookwalker.dto.HoldBookEntityDto
+import eu.kanade.tachiyomi.extension.en.bookwalker.dto.CPhpResponse
+import eu.kanade.tachiyomi.extension.en.bookwalker.dto.ConfigPack
 import eu.kanade.tachiyomi.extension.en.bookwalker.dto.HoldBooksInfoDto
+import eu.kanade.tachiyomi.extension.en.bookwalker.dto.PublusConfiguration
+import eu.kanade.tachiyomi.extension.en.bookwalker.dto.PublusPageConfig
 import eu.kanade.tachiyomi.extension.en.bookwalker.dto.SeriesDto
 import eu.kanade.tachiyomi.extension.en.bookwalker.dto.SingleDto
+import eu.kanade.tachiyomi.lib.publus.Publus.Decoder
+import eu.kanade.tachiyomi.lib.publus.Publus.PublusInterceptor
+import eu.kanade.tachiyomi.lib.publus.Publus.generatePages
+import eu.kanade.tachiyomi.lib.publus.PublusFragment
+import eu.kanade.tachiyomi.lib.publus.PublusPage
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
@@ -33,11 +48,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.modules.SerializersModule
-import kotlinx.serialization.modules.plus
-import kotlinx.serialization.modules.polymorphic
-import kotlinx.serialization.modules.subclass
+import kotlinx.serialization.json.JsonElement
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -48,8 +59,14 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import rx.Observable
 import rx.Single
-import uy.kohesive.injekt.injectLazy
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.regex.PatternSyntaxException
+import kotlin.collections.component1
 
 class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences {
 
@@ -65,8 +82,11 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
     private val rimgUrl = "https://rimg.$domain"
     private val cUrl = "https://c.$domain"
     private val memberApiUrl = "https://member-app.$domain/api"
+    private val viewerUrl = "https://viewer.$domain"
+    private val trialUrl = "https://viewer-trial.$domain"
 
-    override val client = network.client.newBuilder()
+    override val client = network.cloudflareClient.newBuilder()
+        .addInterceptor(PublusInterceptor())
         .addInterceptor(BookWalkerImageRequestInterceptor(this))
         .build()
 
@@ -78,18 +98,6 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
     val callHeaders = headers.newBuilder()
         .set("User-Agent", USER_AGENT_DESKTOP)
         .build()
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        serializersModule += SerializersModule {
-            polymorphic(HoldBookEntityDto::class) {
-                subclass(SingleDto::class)
-                subclass(SeriesDto::class)
-            }
-        }
-    }
-
-    val app by injectLazy<Application>()
 
     private val preferences by getPreferencesLazy()
 
@@ -114,6 +122,9 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
 
     override val attemptToReadPreviews
         get() = preferences.getBoolean(PREF_ATTEMPT_READ_PREVIEWS, false)
+
+    override val useEarliestThumbnail: Boolean
+        get() = preferences.getBoolean(PREF_USE_EARLIEST_THUMBNAIL, false)
 
     override val excludeCategoryFilters
         get() = Regex(
@@ -200,6 +211,15 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
             key = PREF_SHOW_LIBRARY_IN_POPULAR
             title = "Show My Library in Popular"
             summary = "Show your library instead of popular manga when browsing \"Popular\"."
+
+            setDefaultValue(false)
+        }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_USE_EARLIEST_THUMBNAIL
+            title = "Use First Volume Cover For Thumbnail"
+            summary = "This does not affect browsing, and may not work properly for chapter " +
+                "releases or for series with a very large number of volumes."
 
             setDefaultValue(false)
         }.also(screen::addPreference)
@@ -434,21 +454,42 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
                 .asJsoup()
                 .let { validateLogin(it) }
 
-            // It generally doesn't matter which chapter we take the description from, but for
-            // series that release in volumes we want the earliest one, which will _usually_ be the
-            // last one on the page. With that said, it's not worth it to paginate in order to find
-            // the earliest volume, and volume releases don't usually have 60+ volumes anyways.
-            val firstItem = seriesPage.selectFirst(".o-tile:not(:has(.a-ribbon-pre-order)) .a-tile-ttl a")
-            val uuid = firstItem!!.absUrl("href").substringAfter("/de").substringBefore("/")
-            val bookUpdate = fetchBookUpdate(uuid)
+            val validChapters = seriesPage.select(".o-tile:not(:has($TILE_PREORDER_SELECTOR)) .a-tile-ttl a")
+
+            suspend fun linkElementToBookUpdate(link: Element): BookUpdateDto {
+                return link
+                    .absUrl("href")
+                    .substringAfter("/de")
+                    .substringBefore("/")
+                    .let { fetchBookUpdate(it)!! }
+            }
+
+            // We want to get series descriptions from the earliest chapter/volume, but we want the
+            // thumbnail from the most recent release. Technically a series could have over 60
+            // entries causing the last tile on the page to not actually be the earliest entry, but
+            // most series don't have 60+ volumes, and chapter releases tend to have the same
+            // description for every chapter. For the very few exceptions, it's not worth the effort
+            // to address that edge case right now.
+            val (latestChapter, earliestChapter) =
+                if (validChapters.size == 1 || useEarliestThumbnail) {
+                    async { linkElementToBookUpdate(validChapters.last()!!) }
+                        .let { listOf(it, it) }
+                } else {
+                    listOf(
+                        async { linkElementToBookUpdate(validChapters.first()!!) },
+                        async { linkElementToBookUpdate(validChapters.last()!!) },
+                    )
+                }.awaitAll()
 
             SManga.create().apply {
-                title = bookUpdate!!.seriesName?.cleanTitle() ?: bookUpdate.productName.cleanTitle()
-                author = bookUpdate.authors.joinToString { it.authorName }
-                description = listOfNotNull(bookUpdate.productExplanationShort, bookUpdate.productExplanationDetails)
+                title = earliestChapter.seriesName?.cleanTitle() ?: earliestChapter.productName.cleanTitle()
+                // In some cases different chapters have different authors, so we grab this from the
+                // list of available author filters rather than from the BookUpdateDto.
+                author = getAvailableFilterNames(seriesPage, "side-author").joinToString()
+                description = listOfNotNull(earliestChapter.productExplanationShort, earliestChapter.productExplanationDetails)
                     .joinToString("\n\n")
                     .trim()
-                thumbnail_url = bookUpdate.coverImageUrl
+                thumbnail_url = latestChapter.coverImageUrl
                 genre = getAvailableFilterNames(seriesPage, "side-genre").joinToString()
                 val statusIndicators = seriesPage.select("ul.side-others > li > a").map { it.ownText() }
                 status = parseStatus(statusIndicators)
@@ -546,23 +587,23 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
     override fun chapterListSelector(): String {
         return when (filterChapters) {
             FilterChaptersPref.OWNED ->
-                ".book-list-area .o-tile:has(.a-read-btn-s, .a-free-btn-s)"
+                ".book-list-area .o-tile:has($TILE_READ_SELECTOR, $TILE_FREE_SELECTOR)"
             FilterChaptersPref.OBTAINABLE ->
-                ".book-list-area .o-tile:not(:has(.a-ribbon-bundle, .a-ribbon-pre-order))"
+                ".book-list-area .o-tile:not(:has($TILE_BUNDLE_SELECTOR, $TILE_PREORDER_SELECTOR))"
             else -> // preorders shown, still not showing bundles since those aren't chapters
-                ".book-list-area .o-tile:not(:has(.a-ribbon-bundle))"
+                ".book-list-area .o-tile:not(:has($TILE_BUNDLE_SELECTOR))"
         }
     }
 
     override fun chapterFromElement(element: Element): SChapter = SChapter.create().apply {
         val statusSuffix =
-            if (element.selectFirst("[data-action-label='Read']") != null) {
+            if (element.selectFirst(TILE_READ_SELECTOR) != null) {
                 "" // user is currently able to read the chapter
-            } else if (element.selectFirst(".a-label-free") != null) {
+            } else if (element.selectFirst(TILE_FREE_SELECTOR) != null) {
                 " $FREE_ICON" // it's free to read but the user technically doesn't "own" it
-            } else if (element.selectFirst(".a-cart-btn-s, .a-cart-btn-s--on") != null) {
+            } else if (element.selectFirst(TILE_BUY_SELECTOR) != null) {
                 " $PURCHASE_ICON"
-            } else if (element.selectFirst(".a-ribbon-pre-order") != null) {
+            } else if (element.selectFirst(TILE_PREORDER_SELECTOR) != null) {
                 " $PREORDER_ICON"
             } else {
                 // Some content does not fall into any of the above bins. It seems to mostly be
@@ -614,6 +655,8 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
         chapter_number = chapterNumber?.second ?: -1f
     }
 
+    private val authCache = ConcurrentHashMap<String, Pair<AuthInfo, Long>>()
+
     override fun fetchPageList(chapter: SChapter): Observable<List<Page>> {
         return rxSingle {
             val document = client.newCall(GET(baseUrl + chapter.url, callHeaders))
@@ -640,47 +683,275 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
                     throw Error("You don't own this chapter, or you aren't logged in")
                 }
 
-            // We need to use the full cooperative URL every time we try to load a chapter since
-            // the reader page relies on transient cookies set in the cooperative flow.
-            // This call is simply being used to ensure the user is logged in.
-            // Note that this is not fool-proof since the app may cache the page list, so sometimes
-            // the best we can do is detect that the user is not logged in when loading the page
-            // and fail to load the image at that point.
-            tryCooperativeRedirect(readerUrl, "You must log in again. Open in WebView and click the shopping cart.")
+            val chapterUrl = client.newCall(GET(readerUrl, callHeaders)).await().request.url
+            val cid = chapterUrl.queryParameter("cid")
+            val cty = chapterUrl.queryParameter("cty")?.toIntOrNull()
+            val isTrial = chapterUrl.host == "viewer-trial.$domain"
 
-            IntRange(0, pagesCount - 1).map {
-                // The page index query parameter exists only to prevent the app from trying to
-                // be smart about caching by page URLs, since the URL is the same for all the pages.
-                // It doesn't do anything, and in fact gets stripped back out in imageRequest.
-                Page(
-                    it,
-                    imageUrl = readerUrl.toHttpUrl().newBuilder()
-                        .setQueryParameter(PAGE_INDEX_QUERY_PARAM, it.toString())
-                        .build()
-                        .toString(),
-                )
+            val cookies = client.cookieJar.loadForRequest(chapterUrl)
+            val u1 = cookies.find { it.name == "u1" }?.value
+            val u2 = cookies.find { it.name == "u2" }?.value
+
+            if (cid != null) {
+                if (cty != null && cty != 1 && cty != 2) {
+                    return@rxSingle webViewViewer(readerUrl, pagesCount)
+                }
+
+                var cr: String? = null
+
+                if (!isTrial) {
+                    val loaderUrl = "$viewerUrl/browserWebApi/03/getLoader"
+                    val loaderScript =
+                        client.newCall(GET(loaderUrl, callHeaders)).awaitSuccess().body.string()
+                    cr = fetchCr(loaderScript, chapterUrl.toString())
+                }
+
+                val cApiBase = if (isTrial) "$trialUrl/trial-page/c" else "$viewerUrl/browserWebApi/c"
+                val cApiUrl = cApiBase.toHttpUrl().newBuilder().apply {
+                    addQueryParameter("cid", cid)
+                    if (!isTrial) {
+                        if (u1 != null) addQueryParameter("u1", u1)
+                        if (u2 != null) addQueryParameter("u2", u2)
+                        addQueryParameter("cr", cr)
+                    }
+                    addQueryParameter("BID", "0") // universal
+                }.build()
+
+                val cResponse = client.newCall(GET(cApiUrl, callHeaders)).awaitSuccess()
+                val content = cResponse.parseAs<CPhpResponse>()
+                if (content.cty != 1 && content.cty != 2) {
+                    return@rxSingle webViewViewer(readerUrl, pagesCount)
+                }
+
+                // For trial pages, auth data is valid for 1 hour.
+                // For normal pages, auth data is valid for 60 seconds.
+                if (!isTrial) {
+                    authCache[cid] = Pair(content.authInfo, System.currentTimeMillis())
+                }
+
+                val contentUrl = content.url
+                val configUrl = (contentUrl + "configuration_pack.json").toHttpUrl().newBuilder().apply {
+                    if (!isTrial) {
+                        addQueryParameter("hti", content.authInfo.hti)
+                        addQueryParameter("cfg", content.authInfo.cfg.toString())
+                        addQueryParameter("BID", "0")
+                        addQueryParameter("uuid", content.authInfo.uuid)
+                    }
+                    addQueryParameter("pfCd", content.authInfo.pfCd)
+                    addQueryParameter("Policy", content.authInfo.policy)
+                    addQueryParameter("Signature", content.authInfo.signature)
+                    addQueryParameter("Key-Pair-Id", content.authInfo.keyPairId)
+                }.build()
+
+                val keys: List<IntArray>
+                val rootJson: Map<String, JsonElement>
+
+                val configResponse = client.newCall(GET(configUrl, callHeaders)).awaitSuccess()
+                if (isTrial) {
+                    rootJson = configResponse.parseAs()
+                    keys = listOf(IntArray(0), IntArray(0), IntArray(0))
+                } else {
+                    val packData = configResponse.parseAs<ConfigPack>().data
+                    val result = Decoder(packData).decode()
+                    rootJson = result.json.parseAs()
+                    keys = result.keys
+                }
+
+                val configElement = rootJson["configuration"] ?: throw Exception("Configuration not found in decrypted JSON")
+                val container = configElement.parseAs<PublusConfiguration>()
+
+                val sessionData = mutableMapOf<String, String>().apply {
+                    put("cid", cid)
+                    put("isTrial", isTrial.toString())
+                    if (cr != null) put("cr", cr)
+                    if (u1 != null) put("u1", u1)
+                    if (u2 != null) put("u2", u2)
+                }
+
+                val pageContent = container.contents.map {
+                    val pageJson = rootJson[it.file]
+                        ?: throw Exception("Page config not found for ${it.file}")
+
+                    val pageConfig = pageJson.toString().parseAs<PublusPageConfig>()
+                    val details = pageConfig.fileLinkInfo.pageLinkInfoList[0].page
+                    val isScrambled = !isTrial && details.blockWidth > 0 && details.blockHeight > 0
+                    val bw = if (details.blockWidth == 0) 32 else details.blockWidth
+                    val bh = if (details.blockHeight == 0) 32 else details.blockHeight
+
+                    PublusPage(
+                        index = it.index,
+                        filename = it.file,
+                        no = details.no,
+                        ns = details.ns,
+                        ps = details.ps,
+                        rs = details.rs,
+                        blockWidth = bw,
+                        blockHeight = bh,
+                        width = details.size.width,
+                        height = details.size.height,
+                        hti = content.authInfo.hti,
+                        cfg = content.authInfo.cfg?.toString(),
+                        bid = "0",
+                        uuid = content.authInfo.uuid,
+                        pfCd = content.authInfo.pfCd,
+                        policy = content.authInfo.policy,
+                        signature = content.authInfo.signature,
+                        keyPairId = content.authInfo.keyPairId,
+                        extra = sessionData,
+                        scrambled = isScrambled,
+                    )
+                }
+
+                generatePages(pageContent, keys, contentUrl)
+            } else {
+                webViewViewer(readerUrl, pagesCount)
             }
         }.toObservable()
+    }
+
+    private suspend fun webViewViewer(url: String, pagesCount: Int): List<Page> {
+        // We need to use the full cooperative URL every time we try to load a chapter since
+        // the reader page relies on transient cookies set in the cooperative flow.
+        // This call is simply being used to ensure the user is logged in.
+        // Note that this is not fool-proof since the app may cache the page list, so sometimes
+        // the best we can do is detect that the user is not logged in when loading the page
+        // and fail to load the image at that point.
+        tryCooperativeRedirect(url, "You must log in again. Open in WebView and click the shopping cart.")
+        return IntRange(0, pagesCount - 1).map {
+            // The page index query parameter exists only to prevent the app from trying to
+            // be smart about caching by page URLs, since the URL is the same for all the pages.
+            // It doesn't do anything, and in fact gets stripped back out in imageRequest.
+            Page(
+                it,
+                imageUrl = url.toHttpUrl().newBuilder()
+                    .setQueryParameter(PAGE_INDEX_QUERY_PARAM, it.toString())
+                    .build()
+                    .toString(),
+            )
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun fetchCr(scriptContent: String, viewerUrl: String): String? {
+        val match = Regex("""^(\w+)=function\(\)\{[\s\S]*?\};""", RegexOption.MULTILINE).find(scriptContent)
+            ?: return null
+        val functionName = match.groupValues[1]
+
+        val latch = CountDownLatch(1)
+        var result: String? = null
+
+        Handler(Looper.getMainLooper()).post {
+            val webView = WebView(Injekt.get<Application>())
+            with(webView.settings) {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                databaseEnabled = true
+                blockNetworkImage = true
+            }
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String?) {
+                    view.evaluateJavascript(scriptContent) {
+                        view.evaluateJavascript("$functionName()") { // c9P = function()
+                            result = it?.trim('"')
+                            if (result == "null" || result.isNullOrBlank()) result = null
+                            latch.countDown()
+                        }
+                    }
+                }
+            }
+            webView.loadDataWithBaseURL(viewerUrl, " ", "text/html", "utf-8", null)
+        }
+
+        latch.await(10, TimeUnit.SECONDS)
+        return result
     }
 
     override fun pageListParse(document: Document): List<Page> =
         throw UnsupportedOperationException()
 
+    override fun imageUrlParse(response: Response): String {
+        return response.request.url.toString()
+    }
+
     override fun imageUrlParse(document: Document): String =
         throw UnsupportedOperationException()
 
     override fun imageRequest(page: Page): Request {
+        val imageUrl = page.imageUrl!!
+        if (imageUrl.contains("#")) {
+            val fragment = imageUrl.substringAfter("#")
+            val fragmentJson = String(Base64.decode(fragment, Base64.URL_SAFE), StandardCharsets.UTF_8)
+            val params = fragmentJson.parseAs<PublusFragment>()
+            val extra = params.extra
+            if (extra?.get("isTrial") == "true") {
+                return GET(imageUrl, callHeaders)
+            }
+
+            if (extra != null && extra.containsKey("cid")) {
+                val cid = extra["cid"]!!
+                val cached = authCache[cid]
+
+                var authInfo = cached?.first
+
+                // Auth data expires after 60 seconds
+                if (cached == null || System.currentTimeMillis() - cached.second > 45000) {
+                    synchronized(authCache) {
+                        val currentCache = authCache[cid]
+                        if (currentCache == null || System.currentTimeMillis() - currentCache.second > 45000) {
+                            try {
+                                val refreshUrl = "$viewerUrl/browserWebApi/c".toHttpUrl().newBuilder().apply {
+                                    addQueryParameter("cid", cid)
+                                    addQueryParameter("BID", "0")
+                                    addQueryParameter("cr", extra["cr"])
+                                    extra["u1"]?.let { addQueryParameter("u1", it) }
+                                    extra["u2"]?.let { addQueryParameter("u2", it) }
+                                }.build()
+
+                                val response = client.newCall(GET(refreshUrl, callHeaders)).execute()
+                                if (response.isSuccessful) {
+                                    val newCData = response.parseAs<CPhpResponse>()
+                                    authInfo = newCData.authInfo
+                                    authCache[cid] = Pair(newCData.authInfo, System.currentTimeMillis())
+                                }
+                                response.close()
+                            } catch (_: Exception) {
+                            }
+                        } else {
+                            authInfo = currentCache.first
+                        }
+                    }
+                }
+
+                authInfo?.let {
+                    val baseUrl = imageUrl.substringBefore("?")
+                    val newUrl = baseUrl.toHttpUrl().newBuilder().apply {
+                        addQueryParameter("hti", it.hti)
+                        addQueryParameter("cfg", it.cfg.toString())
+                        addQueryParameter("BID", "0")
+                        addQueryParameter("uuid", it.uuid)
+                        addQueryParameter("pfCd", it.pfCd)
+                        addQueryParameter("Policy", it.policy)
+                        addQueryParameter("Signature", it.signature)
+                        addQueryParameter("Key-Pair-Id", it.keyPairId)
+                    }.build().toString()
+
+                    return GET("$newUrl#$fragment", callHeaders)
+                }
+            }
+            return GET(imageUrl, callHeaders)
+        }
+
         // This URL doesn't actually contain the image. It will be intercepted, and the actual image
         // will be extracted from a webview of the URL being sent here.
-        val imageUrl = page.imageUrl!!.toHttpUrl()
+
         return GET(
-            imageUrl.newBuilder()
+            imageUrl.toHttpUrl().newBuilder()
                 .removeAllQueryParameters(PAGE_INDEX_QUERY_PARAM)
                 .build()
                 .toString(),
             callHeaders.newBuilder()
                 .set(HEADER_IS_REQUEST_FROM_EXTENSION, "true")
-                .set(HEADER_PAGE_INDEX, imageUrl.queryParameter(PAGE_INDEX_QUERY_PARAM)!!)
+                .set(HEADER_PAGE_INDEX, imageUrl.toHttpUrl().queryParameter(PAGE_INDEX_QUERY_PARAM)!!)
                 .build(),
         )
     }
@@ -769,12 +1040,12 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
                 else -> null
             }
             numericId?.let { "$cUrl/coverImage_${it - 1}.$extension" } ?: url
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             url
         }
     }
 
-    // Fetch manga details form api.
+    // Fetch manga details from api.
     private suspend fun fetchBookUpdate(uuid: String): BookUpdateDto? {
         val apiUrl = "$memberApiUrl/books/updates".toHttpUrl().newBuilder()
             .addQueryParameter("fileType", "EPUB")
@@ -834,6 +1105,12 @@ class BookWalker : ConfigurableSource, ParsedHttpSource(), BookWalkerPreferences
             ).joinToString("|", transform = Regex::escape),
             RegexOption.IGNORE_CASE,
         )
+
+        private const val TILE_READ_SELECTOR = ".a-read-btn-s"
+        private const val TILE_FREE_SELECTOR = ".a-label-free"
+        private const val TILE_BUY_SELECTOR = ".a-cart-btn-s, .a-cart-btn-s--on"
+        private const val TILE_PREORDER_SELECTOR = ".a-order-btn-s, .a-order-btn-s--on"
+        private const val TILE_BUNDLE_SELECTOR = ".a-ribbon-bundle"
 
         private val CHAPTER_NUMBER_PATTERNS = listOf(
             // All must have exactly one capture group for the chapter number

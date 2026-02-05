@@ -106,6 +106,10 @@ export class SettingKeys {
   static readonly ANIMATION_BOOK_CLOSE_ENABLED = 'animation_book_close_enabled'; // 书籍关闭动画开关
   static readonly ANIMATION_BOOK_OPEN_DURATION = 'animation_book_open_duration'; // 书籍打开动画时长(ms)
   static readonly ANIMATION_BOOK_CLOSE_DURATION = 'animation_book_close_duration'; // 书籍关闭动画时长(ms)
+  static readonly ANIMATION_MAIN_PAGE_BOTTOM_BAR_ENABLED = 'animation_main_page_bottom_bar_enabled'; // 主页面底栏动画开关
+  
+  // 日志设置
+  static readonly LOG_OUTPUT_LEVEL = 'log_output_level'; // hilog日志输出等级: 0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL
 }
 
 /**

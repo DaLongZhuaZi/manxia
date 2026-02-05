@@ -13,6 +13,10 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { DownloadStatus } from '../Framework/Types/StatusEnums';
 import { MangaDownloadManager, DownloadTaskInfo, TaskStatus } from '../Framework/Download/DownloadManager';
+import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
+import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadTask, UnifiedTaskStatus, UnifiedDownloadType } from '../Framework/Download/UnifiedDownloadManager';
+import { PermanentImageCacheManager } from '../Framework/Cache/PermanentImageCacheManager';
+import { DataManager } from '../Framework/Data/DataManager';
 
 const TAG = 'DownloadManagerPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -54,8 +58,20 @@ struct DownloadManagerPage {
   // 过滤选项
   @State filterStatus: string = 'all'; // 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
   
+  // 内容类型分类
+  @State contentTypeTab: string = 'downloads'; // 'downloads' | 'manga_cache' | 'novel_cache'
+  
+  // 缓存状态
+  @State mangaCacheList: ContentCacheStats[] = [];
+  @State novelCacheList: ContentCacheStats[] = [];
+  @State isCacheLoading: boolean = false;
+  
   // 下载管理器
   private downloadManager: MangaDownloadManager = MangaDownloadManager.getInstance();
+  private unifiedDownloadManager: UnifiedDownloadManager = getUnifiedDownloadManager();
+  private cacheStatusService: CacheStatusService = getCacheStatusService();
+  private permanentCacheManager: PermanentImageCacheManager = PermanentImageCacheManager.getInstance();
+  private dataManager: DataManager = DataManager.getInstance();
   private updateTimer: number = -1;
 
   onPageShow(): void {
@@ -108,6 +124,9 @@ struct DownloadManagerPage {
     try {
       // 从下载管理器获取所有任务
       const tasks = this.downloadManager.getAllTasks();
+      
+      // 同时加载缓存列表
+      this.loadCacheLists();
       
       // 转换为页面使用的格式
       this.downloadTasks = tasks.map((task: DownloadTaskInfo) => {
@@ -219,6 +238,67 @@ struct DownloadManagerPage {
     } else {
       const minutes = Math.floor(seconds / 60);
       return `${minutes}分钟`;
+    }
+  }
+  
+  /**
+   * 加载缓存列表
+   * [改进] 直接从数据库查询所有有缓存的漫画，不再依赖文件系统扫描
+   */
+  private async loadCacheLists(): Promise<void> {
+    this.isCacheLoading = true;
+    try {
+      // [改进] 直接从数据库获取所有有缓存的漫画
+      const cachedMangas = await this.dataManager.getAllCachedMangas();
+      const mangaCacheList: ContentCacheStats[] = [];
+      
+      logger.info(TAG, `数据库返回 ${cachedMangas.length} 部漫画，开始获取详细缓存状态...`);
+      
+      // 为每部漫画获取详细的缓存状态
+      for (const manga of cachedMangas) {
+        logger.info(TAG, `检查漫画: id=${manga.mangaId}, title=${manga.mangaTitle}, sourceId=${manga.sourceId}`);
+        
+        if (manga.mangaId) {
+          // 移除 sourceId > 0 的限制，因为某些漫画的sourceId可能为0或未设置
+          const cacheStatus = await this.cacheStatusService.getMangaCacheStatus(
+            manga.sourceId || 0,
+            manga.mangaId,
+            manga.mangaTitle
+          );
+          
+          logger.info(TAG, `漫画 [${manga.mangaTitle}] 缓存状态: cachedPages=${cacheStatus.cachedPageCount}, totalPages=${cacheStatus.totalPageCount}`);
+          
+          // 只添加有实际缓存的漫画
+          if (cacheStatus.cachedPageCount > 0) {
+            mangaCacheList.push(cacheStatus);
+          }
+        }
+      }
+      this.mangaCacheList = mangaCacheList;
+      
+      logger.info(TAG, `加载了 ${this.mangaCacheList.length} 个漫画缓存`);
+    } catch (error) {
+      logger.error(TAG, `加载缓存列表失败: ${String(error)}`);
+    } finally {
+      this.isCacheLoading = false;
+    }
+  }
+  
+  /**
+   * 清理指定缓存
+   */
+  private async clearCacheItem(stats: ContentCacheStats): Promise<void> {
+    try {
+      await this.cacheStatusService.clearContentCache(
+        stats.contentType,
+        stats.contentId,
+        stats.sourceId
+      );
+      // 重新加载缓存列表
+      await this.loadCacheLists();
+      logger.info(TAG, `已清理缓存: ${stats.title}`);
+    } catch (error) {
+      logger.error(TAG, `清理缓存失败: ${String(error)}`);
     }
   }
 
@@ -365,6 +445,249 @@ struct DownloadManagerPage {
         return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
       default:
         return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+    }
+  }
+
+  /**
+   * 构建内容类型标签栏
+   */
+  @Builder
+  buildContentTypeTabBar() {
+    Row({ space: 0 }) {
+      // 下载任务标签
+      Column() {
+        Text('下载任务')
+          .fontSize(14)
+          .fontWeight(this.contentTypeTab === 'downloads' ? FontWeight.Bold : FontWeight.Normal)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.contentTypeTab === 'downloads'
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        
+        if (this.contentTypeTab === 'downloads') {
+          Divider()
+            .width(40)
+            .height(3)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .margin({ top: 6 })
+        } else {
+          Blank().height(9)
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => { this.contentTypeTab = 'downloads'; })
+      
+      // 漫画缓存标签
+      Column() {
+        Row({ space: 4 }) {
+          Text('漫画缓存')
+            .fontSize(14)
+            .fontWeight(this.contentTypeTab === 'manga_cache' ? FontWeight.Bold : FontWeight.Normal)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.contentTypeTab === 'manga_cache'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          
+          if (this.mangaCacheList.length > 0) {
+            Text(`${this.mangaCacheList.length}`)
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(Color.White)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+              .borderRadius(8)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          }
+        }
+        
+        if (this.contentTypeTab === 'manga_cache') {
+          Divider()
+            .width(40)
+            .height(3)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .margin({ top: 6 })
+        } else {
+          Blank().height(9)
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => { 
+        this.contentTypeTab = 'manga_cache'; 
+        if (this.mangaCacheList.length === 0) {
+          this.loadCacheLists();
+        }
+      })
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 4 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+  }
+  
+  /**
+   * 构建缓存列表项
+   */
+  @Builder
+  buildCacheItem(stats: ContentCacheStats) {
+    Column({ space: 10 }) {
+      // 标题和缓存大小
+      Row() {
+        Column({ space: 4 }) {
+          Text(stats.title)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          
+          Text(`${stats.cachedChapterCount}/${stats.totalChapterCount} 章节已缓存`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        
+        // 缓存大小标签
+        Text(this.cacheStatusService.formatSize(stats.cacheSize))
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme) + '20')
+          .borderRadius(12)
+      }
+      .width('100%')
+      
+      // 进度条
+      Row({ space: 8 }) {
+        Progress({ value: this.cacheStatusService.calculateProgress(stats), total: 100, type: ProgressType.Linear })
+          .layoutWeight(1)
+          .height(4)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+        
+        Text(`${this.cacheStatusService.calculateProgress(stats)}%`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+      }
+      .width('100%')
+      
+      // 详细信息和操作按钮
+      Row() {
+        if (stats.contentType === CacheContentType.MANGA) {
+          Text(`${stats.cachedPageCount} 页已缓存`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        
+        Blank()
+        
+        Button({ stateEffect: true }) {
+          Text('清理')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(Color.White)
+        }
+        .width(60)
+        .height(28)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+        .borderRadius(6)
+        .onClick(() => { this.clearCacheItem(stats); })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(10)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .margin({ left: 16, right: 16, bottom: 10 })
+  }
+  
+  /**
+   * 构建缓存列表
+   */
+  @Builder
+  buildCacheList() {
+    if (this.isCacheLoading) {
+      Column({ space: 16 }) {
+        LoadingProgress()
+          .width(36)
+          .height(36)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        Text('加载缓存信息...')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .height(200)
+      .justifyContent(FlexAlign.Center)
+    } else if (this.mangaCacheList.length === 0) {
+      Column({ space: 16 }) {
+        SymbolGlyph($r('sys.symbol.archivebox'))
+          .fontSize(48)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        Text('暂无缓存数据')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        Text('开启"边看边下载"后阅读的漫画将在此显示')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .height(200)
+      .justifyContent(FlexAlign.Center)
+    } else {
+      // 缓存统计概览
+      Row({ space: 16 }) {
+        Column({ space: 4 }) {
+          Text(`${this.mangaCacheList.length}`)
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          Text('已缓存漫画')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Center)
+        
+        Column({ space: 4 }) {
+          Text(this.cacheStatusService.formatSize(
+            this.mangaCacheList.reduce((sum, s) => sum + s.cacheSize, 0)
+          ))
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+          Text('总缓存大小')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Center)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(10)
+      .margin({ left: 16, right: 16, bottom: 12 })
+      
+      // 缓存列表
+      ForEach(this.mangaCacheList, (stats: ContentCacheStats) => {
+        this.buildCacheItem(stats)
+      }, (stats: ContentCacheStats) => stats.contentId)
     }
   }
 
@@ -616,27 +939,45 @@ struct DownloadManagerPage {
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
           } else {
-            this.buildFilterBar()
-            this.buildBatchActionsBar()
+            // 内容类型标签栏
+            this.buildContentTypeTabBar()
+            
+            if (this.contentTypeTab === 'downloads') {
+              // 下载任务列表
+              this.buildFilterBar()
+              this.buildBatchActionsBar()
 
-            if (this.getFilteredTasks().length === 0) {
-              Column({ space: 20 }) {
-                Text('暂无下载任务')
-                  .fontSize(16)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              }
-              .width('100%')
-              .layoutWeight(1)
-              .justifyContent(FlexAlign.Center)
-            } else {
-              Scroll(this.scroller) {
-                Column() {
-                  ForEach(this.getFilteredTasks(), (task: DownloadTask) => {
-                    this.buildTaskItem(task)
-                  }, (task: DownloadTask) => task.id)
+              if (this.getFilteredTasks().length === 0) {
+                Column({ space: 20 }) {
+                  Text('暂无下载任务')
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 }
                 .width('100%')
+                .layoutWeight(1)
+                .justifyContent(FlexAlign.Center)
+              } else {
+                Scroll(this.scroller) {
+                  Column() {
+                    ForEach(this.getFilteredTasks(), (task: DownloadTask) => {
+                      this.buildTaskItem(task)
+                    }, (task: DownloadTask) => task.id)
+                  }
+                  .width('100%')
+                }
+                .layoutWeight(1)
+                .edgeEffect(EdgeEffect.Spring)
+                .scrollBar(BarState.Auto)
+              }
+            } else if (this.contentTypeTab === 'manga_cache') {
+              // 漫画缓存列表
+              Scroll(this.scroller) {
+                Column() {
+                  this.buildCacheList()
+                }
+                .width('100%')
+                .padding({ top: 8 })
               }
               .layoutWeight(1)
               .edgeEffect(EdgeEffect.Spring)

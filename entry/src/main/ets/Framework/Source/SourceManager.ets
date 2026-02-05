@@ -38,6 +38,7 @@ export interface SourceInfo {
   lastUpdateTime: number;
   iconPath?: string;  // 图源图标路径
   requireProxy?: boolean;  // 是否需要代理访问（对应 metadata.Internet）
+  isPinned?: boolean;  // 是否置顶
 }
 
 /**
@@ -254,6 +255,7 @@ export class SourceManager {
       const config: ESObject = JSON.parse(jsonContent) as ESObject;
       const metadata: ESObject = config.metadata as ESObject;
       const sourceName: string = metadata.name as string;
+      const pkg: string = metadata.id as string || '';  // [修复] 获取 pkg 字段
       const baseUrl: string = metadata.baseUrl as string || '';
       const version: string = metadata.version as string || '1.0.0';
       const description: string = metadata.description as string || '';
@@ -263,6 +265,7 @@ export class SourceManager {
       // 更新数据库中的图源配置
       await this.dataManager.updateComicSource(sourceId, {
         name: sourceName,
+        pkg: pkg,  // [修复] 确保更新时保存 pkg 字段
         baseUrl: baseUrl,
         version: version,
         description: description,
@@ -291,12 +294,18 @@ export class SourceManager {
   // ==================== 查询功能 ====================
 
   /**
-   * 获取所有图源
+   * 获取所有图源（包含置顶状态）
    */
   async getAllSources(): Promise<SourceInfo[]> {
     try {
       const sources = await this.dataManager.getAllComicSources();
-      return sources.map((source: ESObject) => this.mapToSourceInfo(source));
+      const pinnedIds = await this.dataManager.getSourcePinnedList();
+      
+      return sources.map((source: ESObject) => {
+        const info = this.mapToSourceInfo(source);
+        info.isPinned = pinnedIds.includes(info.id);
+        return info;
+      });
     } catch (error) {
       logger.error(TAG, '获取图源列表失败', String(error));
       return [];
@@ -304,16 +313,46 @@ export class SourceManager {
   }
 
   /**
-   * 获取启用的图源
+   * 获取所有图源（按置顶排序，置顶的在前面）
+   */
+  async getAllSourcesSortedByPinned(): Promise<SourceInfo[]> {
+    const sources = await this.getAllSources();
+    return this.sortSourcesByPinned(sources);
+  }
+
+  /**
+   * 获取启用的图源（包含置顶状态）
    */
   async getEnabledSources(): Promise<SourceInfo[]> {
     try {
       const sources = await this.dataManager.getEnabledComicSources();
-      return sources.map((source: ESObject) => this.mapToSourceInfo(source));
+      const pinnedIds = await this.dataManager.getSourcePinnedList();
+      
+      return sources.map((source: ESObject) => {
+        const info = this.mapToSourceInfo(source);
+        info.isPinned = pinnedIds.includes(info.id);
+        return info;
+      });
     } catch (error) {
       logger.error(TAG, '获取启用的图源失败', String(error));
       return [];
     }
+  }
+
+  /**
+   * 获取启用的图源（按置顶排序）
+   */
+  async getEnabledSourcesSortedByPinned(): Promise<SourceInfo[]> {
+    const sources = await this.getEnabledSources();
+    return this.sortSourcesByPinned(sources);
+  }
+
+  /**
+   * 获取置顶的图源
+   */
+  async getPinnedSources(): Promise<SourceInfo[]> {
+    const sources = await this.getAllSources();
+    return sources.filter(s => s.isPinned);
   }
 
   /**
@@ -404,6 +443,61 @@ export class SourceManager {
   async updatePriority(sourceId: number, priority: number): Promise<void> {
     await this.dataManager.updateComicSource(sourceId, { priority: priority });
     logger.info(TAG, `图源优先级已更新: ${sourceId} -> ${priority}`);
+  }
+
+  // ==================== 置顶功能 ====================
+
+  /**
+   * 置顶图源
+   */
+  async pinSource(sourceId: number): Promise<void> {
+    await this.dataManager.addSourceToPinnedList(sourceId);
+    logger.info(TAG, `图源已置顶: ${sourceId}`);
+  }
+
+  /**
+   * 取消置顶图源
+   */
+  async unpinSource(sourceId: number): Promise<void> {
+    await this.dataManager.removeSourceFromPinnedList(sourceId);
+    logger.info(TAG, `图源已取消置顶: ${sourceId}`);
+  }
+
+  /**
+   * 切换图源置顶状态
+   */
+  async togglePinSource(sourceId: number): Promise<boolean> {
+    const isPinned = await this.dataManager.isSourcePinned(sourceId);
+    if (isPinned) {
+      await this.unpinSource(sourceId);
+      return false;
+    } else {
+      await this.pinSource(sourceId);
+      return true;
+    }
+  }
+
+  /**
+   * 检查图源是否已置顶
+   */
+  async isSourcePinned(sourceId: number): Promise<boolean> {
+    return await this.dataManager.isSourcePinned(sourceId);
+  }
+
+  /**
+   * 获取置顶图源ID列表
+   */
+  async getPinnedSourceIds(): Promise<number[]> {
+    return await this.dataManager.getSourcePinnedList();
+  }
+
+  /**
+   * 按置顶状态排序图源列表（置顶的在前面，然后按置顶顺序排序）
+   */
+  sortSourcesByPinned(sources: SourceInfo[]): SourceInfo[] {
+    const pinned = sources.filter(s => s.isPinned);
+    const unpinned = sources.filter(s => !s.isPinned);
+    return [...pinned, ...unpinned];
   }
 
   // ==================== 执行功能 ====================

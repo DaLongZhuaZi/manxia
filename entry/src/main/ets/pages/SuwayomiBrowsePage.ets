@@ -16,6 +16,7 @@ import { SuwayomiCategory, PaginatedResult, MangaSortType, SortDirection, MangaS
 import { SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
 import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
+import { SuwayomiImage } from '../components/SuwayomiImage';
 
 const TAG = 'SuwayomiBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -489,11 +490,13 @@ export struct SuwayomiBrowsePage {
   buildSourceItem(source: SuwayomiExtensionSource) {
     Row({ space: 12 }) {
       if (source.iconUrl) {
-        Image(this.getSourceIconUrl(source))
-          .width(40)
-          .height(40)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
+        SuwayomiImage({
+          src: this.getSourceIconUrl(source),
+          imageWidth: 40,
+          imageHeight: 40,
+          imgBorderRadius: 8,
+          objectFit: ImageFit.Cover
+        })
       } else {
         Column() {
           Text(source.name.charAt(0))
@@ -568,11 +571,13 @@ export struct SuwayomiBrowsePage {
     Column({ space: 8 }) {
       Stack() {
         if (source.iconUrl) {
-          Image(this.getSourceIconUrl(source))
-            .width(60)
-            .height(60)
-            .borderRadius(12)
-            .objectFit(ImageFit.Cover)
+          SuwayomiImage({
+            src: this.getSourceIconUrl(source),
+            imageWidth: 60,
+            imageHeight: 60,
+            imgBorderRadius: 12,
+            objectFit: ImageFit.Cover
+          })
         } else {
           Column() {
             Text(source.name.charAt(0))
@@ -630,11 +635,13 @@ export struct SuwayomiBrowsePage {
   buildMangaItem(manga: ComicInfo) {
     Row({ space: 12 }) {
       if (manga.coverUrl) {
-        Image(this.getMangaCoverUrl(manga))
-          .width(60)
-          .height(80)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
+        SuwayomiImage({
+          src: this.getMangaCoverUrl(manga),
+          imageWidth: 60,
+          imageHeight: 80,
+          imgBorderRadius: 8,
+          objectFit: ImageFit.Cover
+        })
       } else {
         Column() {
           Text(manga.title.charAt(0))
@@ -691,11 +698,13 @@ export struct SuwayomiBrowsePage {
   buildMangaGridItem(manga: ComicInfo) {
     Column({ space: 6 }) {
       if (manga.coverUrl) {
-        Image(this.getMangaCoverUrl(manga))
-          .width('100%')
-          .aspectRatio(0.7)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
+        SuwayomiImage({
+          src: this.getMangaCoverUrl(manga),
+          imageWidth: '100%',
+          imgAspectRatio: 0.7,
+          imgBorderRadius: 8,
+          objectFit: ImageFit.Cover
+        })
       } else {
         Column() {
           Text(manga.title.charAt(0))

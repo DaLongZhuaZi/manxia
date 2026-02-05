@@ -132,6 +132,7 @@ abstract class ZeistManga(
     protected open val statusSelectorList = listOf(
         "Status",
         "Estado",
+        "الحالة",
     )
 
     protected open val authorSelectorList = listOf(
@@ -398,12 +399,15 @@ abstract class ZeistManga(
         "ativo",
         "lançando",
         "مستمر",
+        "مستمرة",
     )
 
     protected open val statusCompletedList = listOf(
         "completed",
         "completo",
         "finalizado",
+        "مكتمل",
+        "مكتملة",
     )
 
     protected open val statusHiatusList = listOf(

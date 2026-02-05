@@ -21,7 +21,16 @@ export struct ProxyConfigDialog {
   @Local httpsPortInput: string = '';
 
   aboutToAppear(): void {
-    this.config = { ...this.initialConfig };
+    // 手动复制配置（ArkTS 不支持对象展开操作符）
+    this.config = {
+      enabled: this.initialConfig.enabled,
+      httpEnabled: this.initialConfig.httpEnabled,
+      httpHost: this.initialConfig.httpHost,
+      httpPort: this.initialConfig.httpPort,
+      httpsEnabled: this.initialConfig.httpsEnabled,
+      httpsHost: this.initialConfig.httpsHost,
+      httpsPort: this.initialConfig.httpsPort
+    };
     this.httpHostInput = this.config.httpHost;
     this.httpPortInput = this.config.httpPort.toString();
     this.httpsHostInput = this.config.httpsHost || this.config.httpHost;
@@ -64,11 +73,11 @@ export struct ProxyConfigDialog {
                 })
             }
             .width('100%')
-            .padding({ vertical: 8 })
+            .padding({ top: 8, bottom: 8 })
 
             Divider()
               .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
-              .margin({ vertical: 12 })
+              .margin({ top: 12, bottom: 12 })
 
             // HTTP代理配置
             Column({ space: 8 }) {
@@ -91,7 +100,7 @@ export struct ProxyConfigDialog {
                   .layoutWeight(2)
                   .height(40)
                   .borderRadius(8)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('input_background', this.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
                   .onChange((value: string) => {
                     this.httpHostInput = value;
                     this.config.httpHost = value;
@@ -103,7 +112,7 @@ export struct ProxyConfigDialog {
                   .height(40)
                   .borderRadius(8)
                   .type(InputType.Number)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('input_background', this.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
                   .onChange((value: string) => {
                     this.httpPortInput = value;
                     const port = parseInt(value);
@@ -116,11 +125,11 @@ export struct ProxyConfigDialog {
               .width('100%')
             }
             .width('100%')
-            .padding({ vertical: 8 })
+            .padding({ top: 8, bottom: 8 })
 
             Divider()
               .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
-              .margin({ vertical: 12 })
+              .margin({ top: 12, bottom: 12 })
 
             // HTTPS代理配置
             Column({ space: 8 }) {
@@ -148,7 +157,7 @@ export struct ProxyConfigDialog {
                   .layoutWeight(2)
                   .height(40)
                   .borderRadius(8)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('input_background', this.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
                   .onChange((value: string) => {
                     this.httpsHostInput = value;
                     this.config.httpsHost = value;
@@ -160,7 +169,7 @@ export struct ProxyConfigDialog {
                   .height(40)
                   .borderRadius(8)
                   .type(InputType.Number)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('input_background', this.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.currentTheme))
                   .onChange((value: string) => {
                     this.httpsPortInput = value;
                     const port = parseInt(value);
@@ -173,7 +182,7 @@ export struct ProxyConfigDialog {
               .width('100%')
             }
             .width('100%')
-            .padding({ vertical: 8 })
+            .padding({ top: 8, bottom: 8 })
 
             // 提示信息
             Text('提示：代理将应用于图源的网络请求')

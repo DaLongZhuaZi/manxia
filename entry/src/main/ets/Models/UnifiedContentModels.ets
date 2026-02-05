@@ -93,6 +93,25 @@ export interface UnifiedContent {
 }
 
 /**
+ * 原书信息（用于换源替换）
+ */
+export interface OriginalBookInfo {
+  bookId: string;              // 数据库中的书籍ID
+  bookUrl: string;             // 书籍URL
+  sourceId: string;            // 书源ID
+  sourceName: string;          // 书源名称
+  name: string;                // 书名
+  author: string;              // 作者
+  coverUrl: string;            // 封面URL
+  lastReadChapterIndex: number; // 最后阅读章节索引
+  lastReadChapterTitle: string; // 最后阅读章节标题
+  lastReadPosition: number;    // 最后阅读位置
+  chapterCount: number;        // 章节总数
+  isFavorite: boolean;         // 是否在书架
+  shelfId?: string;            // 原书所在的书架ID
+}
+
+/**
  * 详情页导航参数
  */
 export interface UnifiedDetailPageParams {
@@ -103,6 +122,9 @@ export interface UnifiedDetailPageParams {
   cachedTitle?: string;
   cachedCover?: string;
   cachedAuthor?: string;
+  // 换源相关参数
+  isFromChangeSource?: boolean;       // 是否来自换源
+  originalBookInfo?: OriginalBookInfo; // 原书信息（仅当isFromChangeSource为true时有效）
 }
 
 /**

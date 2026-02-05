@@ -455,12 +455,18 @@ export struct StorageManagementPage {
 
         // 显示文件夹路径（如果有）
         if (item.path && item.path.length > 0) {
-          Text(`📁 ${item.path}`)
-            .fontSize(10)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.folder'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            Text(item.path)
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
         }
 
         Row({ space: 8 }) {
@@ -488,6 +494,14 @@ export struct StorageManagementPage {
     .onClick(() => {
       this.toggleSelection(item.type, item.canClear);
     })
+    .animation({ duration: 200, curve: Curve.EaseOut })
+    .scale({ x: 1, y: 1 })
+    .stateStyles({
+      pressed: {
+        .scale({ x: 0.98, y: 0.98 })
+        .opacity(0.9)
+      }
+    })
   }
 
   /**
@@ -496,10 +510,19 @@ export struct StorageManagementPage {
   @Builder
   buildActionButtons() {
     Row({ space: 12 }) {
-      Button('刷新')
-        .fontSize(14)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Button() {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+            .fontSize(16)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          Text('刷新')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+      }
+        .type(ButtonType.Normal)
+        .height(40)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
           this.themeState.currentTheme))
         .borderRadius(8)
@@ -508,11 +531,27 @@ export struct StorageManagementPage {
         .onClick(() => {
           this.refreshStatistics();
         })
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.96, y: 0.96 })
+            .opacity(0.8)
+          }
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
 
-      Button(`清理选中 (${this.selectedCount})`)
-        .fontSize(14)
-        .fontFamily(this.appFontFamily)
-        .fontColor(Color.White)
+      Button() {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(16)
+            .fontColor([Color.White])
+          Text(`清理选中 (${this.selectedCount})`)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(Color.White)
+        }
+      }
+        .type(ButtonType.Normal)
+        .height(40)
         .backgroundColor(this.selectedCount > 0
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
@@ -522,6 +561,13 @@ export struct StorageManagementPage {
         .onClick(() => {
           this.showClearConfirmDialog();
         })
+        .stateStyles({
+          pressed: {
+            .scale({ x: 0.96, y: 0.96 })
+            .opacity(0.8)
+          }
+        })
+        .animation({ duration: 150, curve: Curve.EaseOut })
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -572,66 +618,119 @@ export struct StorageManagementPage {
 
               // 缓存管理按钮组
               Row({ space: 8 }) {
-                Button('缓存管理')
+                Button() {
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.externaldrive'))
+                      .fontSize(16)
+                      .fontColor([Color.White])
+                    Text('缓存管理')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(Color.White)
+                  }
+                }
+                  .type(ButtonType.Normal)
+                  .height(40)
                   .layoutWeight(1)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(Color.White)
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue',
                     this.themeState.currentTheme))
                   .borderRadius(8)
                   .onClick(() => {
                     this.showCacheConfig = true;
                   })
+                  .stateStyles({
+                    pressed: {
+                      .scale({ x: 0.96, y: 0.96 })
+                      .opacity(0.8)
+                    }
+                  })
+                  .animation({ duration: 150, curve: Curve.EaseOut })
 
-                Button(this.showCacheDetails ? '收起详情' : '查看详情')
+                Button() {
+                  Row({ space: 6 }) {
+                    SymbolGlyph(this.showCacheDetails ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+                      .fontSize(16)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                    Text(this.showCacheDetails ? '收起详情' : '查看详情')
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                        this.themeState.currentTheme))
+                  }
+                }
+                  .type(ButtonType.Normal)
+                  .height(40)
                   .layoutWeight(1)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                    this.themeState.currentTheme))
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
                     this.themeState.currentTheme))
                   .borderRadius(8)
                   .onClick(() => {
                     this.toggleCacheDetails();
                   })
+                  .stateStyles({
+                    pressed: {
+                      .scale({ x: 0.96, y: 0.96 })
+                      .opacity(0.8)
+                    }
+                  })
+                  .animation({ duration: 150, curve: Curve.EaseOut })
               }
               .width('100%')
 
               // 缓存详情内容
               if (this.showCacheDetails && this.cacheDetails) {
                 Column({ space: 8 }) {
-                  Text('缓存详情')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
-                      this.themeState.currentTheme))
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.info_circle'))
+                      .fontSize(18)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                    Text('缓存详情')
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary',
+                        this.themeState.currentTheme))
+                  }
 
-                  Text(`内存缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.memoryCacheSize)}`)
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.memory_module'))
+                      .fontSize(14)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                    Text(`内存缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.memoryCacheSize)}`)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                        this.themeState.currentTheme))
+                  }
 
-                  Text(`磁盘缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.diskCacheSize)}`)
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.externaldrive'))
+                      .fontSize(14)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                    Text(`磁盘缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.diskCacheSize)}`)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                        this.themeState.currentTheme))
+                  }
 
-                  Text(`永久缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.permanentCacheSize)}`)
-                    .fontSize(14)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
-                      this.themeState.currentTheme))
+                  Row({ space: 6 }) {
+                    SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+                      .fontSize(14)
+                      .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                    Text(`永久缓存: ${this.storageAnalyzer.formatSize(this.cacheDetails.permanentCacheSize)}`)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary',
+                        this.themeState.currentTheme))
+                  }
                 }
                 .width('100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
                   this.themeState.currentTheme))
                 .borderRadius(12)
+                .transition(TransitionEffect.OPACITY.animation({ duration: 200 }).combine(TransitionEffect.translate({ y: -10 })))
               }
 
               // 存储项列表
@@ -645,10 +744,14 @@ export struct StorageManagementPage {
                   .margin({ bottom: 4 })
 
                 List({ space: 12 }) {
-                  ForEach(this.statistics.items, (item: StorageItem) => {
+                  ForEach(this.statistics.items, (item: StorageItem, index: number) => {
                     ListItem() {
                       this.buildStorageItemCard(item)
                     }
+                    .transition(TransitionEffect.asymmetric(
+                      TransitionEffect.OPACITY.animation({ duration: 200, delay: index * 50 }),
+                      TransitionEffect.OPACITY.animation({ duration: 150 })
+                    ))
                   }, (item: StorageItem) => item.type)
                 }
                 .layoutWeight(1)

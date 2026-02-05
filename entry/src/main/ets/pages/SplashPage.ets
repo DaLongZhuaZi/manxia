@@ -28,7 +28,6 @@ struct SplashPage {
   @State private isPageLoaded: boolean = false;
   @State private isThemeLoaded: boolean = false;
   @State private backgroundScale: number = 1.0;
-  @State private logoOpacity: number = 0;
   @State private loadingProgress: string = '正在启动...';
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private isWindowPortrait: boolean = true; // 窗口是否为竖屏（根据窗口尺寸判断）
@@ -94,8 +93,6 @@ struct SplashPage {
     try {
       logger.info('SplashPage', '🎯 开始完整初始化流程');
       
-      // 1. 启动入场动画（不依赖主题）
-      this.startEntranceAnimation();
       this.loadingProgress = '正在启动...';
 
       // 2. 初始化欢迎引导管理器
@@ -148,41 +145,6 @@ struct SplashPage {
   }
 
   /**
-   * 启动入场动画
-   */
-  private startEntranceAnimation(): void {
-    if (!this.uiContext) return;
-
-    // 背景缩放动画
-    const scaleAnimateOptions: AnimateParam = {
-      duration: 1500,
-      curve: Curve.EaseOut,
-      iterations: 1,
-      playMode: PlayMode.Normal
-    };
-
-    this.uiContext.animateTo(scaleAnimateOptions, () => {
-      this.backgroundScale = 1.1;
-    });
-
-    // Logo淡入动画
-    setTimeout(() => {
-      if (!this.uiContext) return;
-      
-      const fadeAnimateOptions: AnimateParam = {
-        duration: 800,
-        curve: Curve.EaseInOut,
-        iterations: 1,
-        playMode: PlayMode.Normal
-      };
-
-      this.uiContext.animateTo(fadeAnimateOptions, () => {
-        this.logoOpacity = 1.0;
-      });
-    }, 300);
-  }
-
-  /**
    * 检查初始化是否完成
    */
   private checkInitializationComplete(): void {
@@ -211,7 +173,7 @@ struct SplashPage {
       const shouldShowGuide = this.welcomeGuideManager.shouldShowGuide();
       logger.info('SplashPage', `是否显示引导: ${shouldShowGuide}`);
 
-      // 使用router跳转到对应页面
+      // 使用router跳转到对应页面（依赖pageTransition实现平滑过渡）
       const router = this.uiContext?.getRouter();
       if (router) {
         const targetUrl = shouldShowGuide ? 'pages/WelcomeGuidePage' : 'pages/MainMenuPage';
@@ -296,7 +258,6 @@ struct SplashPage {
             .width(120)
             .height(120)
             .objectFit(ImageFit.Contain)
-            .opacity(this.logoOpacity)
 
           // 加载状态文本
           Text(this.loadingProgress)
@@ -318,6 +279,14 @@ struct SplashPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  // 页面过渡动画：SplashPage淡出的同时MainMenuPage淡入
+  pageTransition() {
+    // 页面退出时淡出（配合微小缩放效果）
+    PageTransitionExit({ duration: 400, curve: Curve.EaseInOut })
+      .opacity(0)
+      .scale({ x: 1.02, y: 1.02 })
   }
 
   // 媒体资源回退：根据当前自定义主题ID与设备类型选择 a_* / b_*

@@ -11,6 +11,7 @@ import { common } from '@kit.AbilityKit';
 import { initializeNovelModule } from '../Novel/NovelInitializer';
 import { DiskCacheManager } from '../Cache/DiskCacheManager';
 import { SandboxManager } from '../Storage/SandboxManager';
+import { DataManager } from '../Data/DataManager';
 
 const TAG = 'DataInitializer';
 
@@ -426,6 +427,18 @@ export class DataInitializer {
     try {
       // 检查是否需要数据迁移
       // 这里可以实现版本检查和数据迁移逻辑
+      
+      // [修复] 修复所有图源缺失的 pkg 字段
+      // 这是一个一次性修复，用于解决旧版本数据没有保存 pkg 的问题
+      try {
+        const dataManager = DataManager.getInstance();
+        const fixedCount = await dataManager.fixAllSourcePkgFields();
+        if (fixedCount > 0) {
+          logger.info(TAG, `[数据迁移] 已修复 ${fixedCount} 个图源的 pkg 字段`);
+        }
+      } catch (pkgFixError) {
+        logger.warn(TAG, `[数据迁移] 修复 pkg 字段时发生警告: ${String(pkgFixError)}`);
+      }
       
       logger.debug(TAG, '数据迁移检查完成');
     } catch (error) {

@@ -2,9 +2,13 @@ ext {
     extName = 'Manhuarm'
     extClass = '.ManhuarmFactory'
     themePkg = 'madara'
-    baseUrl = 'https://manhuarmmtl.com'
-    overrideVersionCode = 7
+    baseUrl = 'https://manhuarmtl.com'
+    overrideVersionCode = 11
     isNsfw = true
 }
 
 apply from: "$rootDir/common.gradle"
+
+dependencies {
+    compileOnly("com.squareup.okhttp3:okhttp-brotli:5.0.0-alpha.11")
+}

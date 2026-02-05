@@ -178,16 +178,24 @@ export struct FontSettingsSubPage {
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
-      SymbolGlyph(this.expandedSection === sectionId ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+      SymbolGlyph($r('sys.symbol.chevron_down'))
         .fontSize(16)
         .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+        .rotate({ angle: this.expandedSection === sectionId ? 180 : 0 })
+        .animation({ duration: 250, curve: Curve.EaseInOut })
     }
     .width('100%')
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
+    .borderRadius(this.expandedSection === sectionId ? { topLeft: 12, topRight: 12 } : 12)
+    .animation({ duration: 250, curve: Curve.EaseInOut })
     .onClick(() => {
-      this.expandedSection = this.expandedSection === sectionId ? '' : sectionId;
+      animateTo({
+        duration: 250,
+        curve: Curve.EaseInOut
+      }, () => {
+        this.expandedSection = this.expandedSection === sectionId ? '' : sectionId;
+      });
     })
   }
 
@@ -339,6 +347,11 @@ export struct FontSettingsSubPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
         .margin({ top: -12 })
+        .transition(TransitionEffect.asymmetric(
+          TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: -10 }).animation({ duration: 200, curve: Curve.EaseOut })),
+          TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+        ))
       }
     }
   }
@@ -365,6 +378,11 @@ export struct FontSettingsSubPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
         .margin({ top: -12 })
+        .transition(TransitionEffect.asymmetric(
+          TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: -10 }).animation({ duration: 200, curve: Curve.EaseOut })),
+          TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+        ))
       }
     }
   }
@@ -391,6 +409,11 @@ export struct FontSettingsSubPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
         .margin({ top: -12 })
+        .transition(TransitionEffect.asymmetric(
+          TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: -10 }).animation({ duration: 200, curve: Curve.EaseOut })),
+          TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+        ))
       }
     }
   }

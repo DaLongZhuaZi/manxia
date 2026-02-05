@@ -61,6 +61,8 @@ export interface BackupData {
  */
 export interface CloudConfigBackupSection {
   webdav?: WebDAVConfigBackup;
+  suwayomi?: SuwayomiConfigBackup;
+  ftp?: FTPConnectionsBackup;
 }
 
 /**
@@ -74,6 +76,40 @@ export interface WebDAVConfigBackup {
   autoBackup: boolean;
   autoBackupInterval: 'manual' | 'daily' | 'weekly';
   keepBackupCount: number;
+}
+
+/**
+ * Suwayomi服务器配置备份
+ */
+export interface SuwayomiConfigBackup {
+  serverUrl: string;
+  username: string;
+  password: string;
+  useAuth: boolean;
+  useBrowsePageAsEntry: boolean;
+}
+
+/**
+ * FTP连接配置备份
+ */
+export interface FTPConnectionsBackup {
+  connections: FTPConnectionBackup[];
+}
+
+/**
+ * 单个FTP连接备份
+ */
+export interface FTPConnectionBackup {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  useFTPS: boolean;
+  passive: boolean;
+  timeoutMs: number;
+  lastUsedAt?: number;
 }
 
 /**
@@ -334,6 +370,17 @@ export interface SettingsBackupSection {
   reader: ReaderSettingsBackup;
   general: GeneralSettingsBackup;
   privacy: PrivacySettingsBackup;
+  // 完整的设置表数据（新增）
+  allSettings?: SettingItemBackup[];
+}
+
+/**
+ * 单个设置项备份
+ */
+export interface SettingItemBackup {
+  settingKey: string;
+  settingValue: string;
+  settingType: string;
 }
 
 /**

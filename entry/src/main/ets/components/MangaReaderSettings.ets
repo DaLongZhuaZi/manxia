@@ -70,7 +70,10 @@ export struct MangaReaderSettings {
     doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
     filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
     volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
-    curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity
+    curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
+    webtoonLeftMargin: DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+    webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
+    webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
   };
   @State private panelOpacity: number = 0;
   @State private panelTranslateY: number = 300;
@@ -134,6 +137,9 @@ export struct MangaReaderSettings {
     this.currentSettings.filterSettings = this.readingSettings.filterSettings;
     this.currentSettings.volumeKeyNavigation = this.readingSettings.volumeKeyNavigation;
     this.currentSettings.curlBackOpacity = this.readingSettings.curlBackOpacity ?? DEFAULT_READING_SETTINGS.curlBackOpacity;
+    this.currentSettings.webtoonLeftMargin = this.readingSettings.webtoonLeftMargin ?? DEFAULT_READING_SETTINGS.webtoonLeftMargin;
+    this.currentSettings.webtoonRightMargin = this.readingSettings.webtoonRightMargin ?? DEFAULT_READING_SETTINGS.webtoonRightMargin;
+    this.currentSettings.webtoonMarginSync = this.readingSettings.webtoonMarginSync ?? DEFAULT_READING_SETTINGS.webtoonMarginSync;
     
     logger.debug(TAG, `复制阅读设置: pageTurnAnimation=${this.currentSettings.pageTurnAnimation}, curlBackOpacity=${this.currentSettings.curlBackOpacity}`);
     
@@ -255,7 +261,10 @@ export struct MangaReaderSettings {
       doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
       volumeKeyNavigation: DEFAULT_READING_SETTINGS.volumeKeyNavigation,
-      curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity
+      curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
+      webtoonLeftMargin: DEFAULT_READING_SETTINGS.webtoonLeftMargin,
+      webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
+      webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
     };
     this.applySettings();
   }

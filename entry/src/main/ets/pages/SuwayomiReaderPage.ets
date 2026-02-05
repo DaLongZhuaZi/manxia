@@ -8,10 +8,13 @@ import { logger } from '../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareState } from '../Framework/Components/FontAware';
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor } from '../Framework/Source/SuwayomiSourceExecutor';
-import { PageInfo } from '../Framework/Source/SourceExecutor';
+import { PageInfo, ChapterInfo, ComicDetailInfo } from '../Framework/Source/SourceExecutor';
 import { display, curves, UIContext } from '@kit.ArkUI';
 import { window } from '@kit.ArkUI';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { AvifDecoder, isAvifFormat } from '../Framework/Image/AvifDecoder';
+import { http } from '@kit.NetworkKit';
+import { image } from '@kit.ImageKit';
 
 const TAG = 'SuwayomiReaderPage';
 
@@ -49,6 +52,10 @@ export struct SuwayomiReaderPage {
   @State pages: PageInfo[] = [];
   @State currentPage: number = 0;
 
+  // 章节列表（用于章节切换）
+  @State chapterList: ChapterInfo[] = [];
+  @State isLoadingChapters: boolean = false;
+
   // 显示控制
   @State showControls: boolean = false;
   @State isFullScreen: boolean = true;
@@ -65,6 +72,10 @@ export struct SuwayomiReaderPage {
   // 图片加载状态
   @State loadedPages: Set<number> = new Set();
   @State failedPages: Set<number> = new Set();
+  
+  // AVIF 图片解码缓存 (pageIndex -> PixelMap)
+  private avifPixelMaps: Map<number, image.PixelMap> = new Map();
+  @State avifLoadingPages: Set<number> = new Set();
 
   // 屏幕尺寸
   @State screenWidth: number = 0;
@@ -82,6 +93,138 @@ export struct SuwayomiReaderPage {
     }
     // 恢复默认显示模式
     this.restoreDefaultMode();
+    // 释放 AVIF PixelMap 资源
+    this.releaseAvifPixelMaps();
+  }
+
+  /**
+   * 释放所有 AVIF PixelMap 资源
+   */
+  private releaseAvifPixelMaps(): void {
+    this.avifPixelMaps.forEach((pixelMap: image.PixelMap) => {
+      try {
+        pixelMap.release();
+      } catch (e) {
+        logger.warn(TAG, `释放 PixelMap 失败: ${e}`);
+      }
+    });
+    this.avifPixelMaps.clear();
+  }
+
+  /**
+   * 下载并解码图片（支持 AVIF）
+   */
+  private async loadAndDecodeImage(url: string, pageIndex: number): Promise<void> {
+    // 已经在加载或已加载完成，跳过
+    if (this.avifLoadingPages.has(pageIndex) || this.avifPixelMaps.has(pageIndex)) {
+      return;
+    }
+
+    // 标记为加载中
+    this.avifLoadingPages.add(pageIndex);
+    this.avifLoadingPages = new Set(this.avifLoadingPages);
+
+    try {
+      // 下载图片数据
+      const buffer = await this.downloadImageWithAuth(url);
+      if (!buffer) {
+        throw new Error('下载图片失败');
+      }
+
+      let pixelMap: image.PixelMap | null = null;
+
+      // 检测是否为 AVIF 格式
+      if (isAvifFormat(buffer)) {
+        logger.info(TAG, `页面 ${pageIndex + 1} 检测到 AVIF 格式，使用 AVIF 解码器`);
+        const avifDecoder = AvifDecoder.getInstance();
+        if (avifDecoder.isSupported()) {
+          pixelMap = await avifDecoder.decode(buffer);
+          if (pixelMap) {
+            logger.info(TAG, `页面 ${pageIndex + 1} AVIF 解码成功`);
+          } else {
+            logger.warn(TAG, `页面 ${pageIndex + 1} AVIF 解码返回 null，尝试系统解码器`);
+          }
+        } else {
+          logger.warn(TAG, `AVIF 解码器不可用，尝试系统解码器`);
+        }
+      }
+
+      // 如果 AVIF 解码失败或不是 AVIF 格式，使用系统解码器
+      if (!pixelMap) {
+        const imageSource = image.createImageSource(buffer);
+        pixelMap = await imageSource.createPixelMap();
+        imageSource.release();
+      }
+
+      if (pixelMap) {
+        this.avifPixelMaps.set(pageIndex, pixelMap);
+        this.loadedPages.add(pageIndex);
+        this.loadedPages = new Set(this.loadedPages);
+      } else {
+        throw new Error('解码图片失败');
+      }
+    } catch (error) {
+      logger.error(TAG, `页面 ${pageIndex + 1} 加载失败: ${error}`);
+      this.failedPages.add(pageIndex);
+      this.failedPages = new Set(this.failedPages);
+    } finally {
+      this.avifLoadingPages.delete(pageIndex);
+      this.avifLoadingPages = new Set(this.avifLoadingPages);
+    }
+  }
+
+  /**
+   * 下载图片（带认证头）
+   */
+  private async downloadImageWithAuth(url: string): Promise<ArrayBuffer | null> {
+    try {
+      const httpRequest = http.createHttp();
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
+      };
+
+      // 添加认证头
+      if (this.imageHeaders['Authorization']) {
+        headers['Authorization'] = this.imageHeaders['Authorization'];
+      }
+
+      const response = await httpRequest.request(url, {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+        connectTimeout: 30000,
+        readTimeout: 60000,
+        header: headers
+      });
+
+      httpRequest.destroy();
+
+      if (response.responseCode === 200 && response.result) {
+        return response.result as ArrayBuffer;
+      }
+
+      logger.warn(TAG, `下载图片失败: HTTP ${response.responseCode}`);
+      return null;
+    } catch (e) {
+      logger.error(TAG, `下载图片异常: ${e}`);
+      return null;
+    }
+  }
+
+  /**
+   * 获取页面的 PixelMap（如果已解码）
+   */
+  private getPagePixelMap(pageIndex: number): image.PixelMap | undefined {
+    return this.avifPixelMaps.get(pageIndex);
+  }
+
+  /**
+   * 重试加载失败的页面
+   */
+  private retryLoadPage(pageIndex: number, url: string): void {
+    this.failedPages.delete(pageIndex);
+    this.failedPages = new Set(this.failedPages);
+    this.loadAndDecodeImage(url, pageIndex);
   }
 
   private async loadChapterPages(): Promise<void> {
@@ -147,6 +290,99 @@ export struct SuwayomiReaderPage {
     } catch (error) {
       logger.error(TAG, `恢复阅读进度失败: ${error}`);
     }
+  }
+
+  /**
+   * 加载漫画章节列表（用于章节切换）
+   */
+  private async loadChapterList(): Promise<void> {
+    if (!this.mangaId || this.isLoadingChapters) {
+      return;
+    }
+
+    this.isLoadingChapters = true;
+    try {
+      const detail = await this.executor.getDetail(this.mangaId);
+      if (detail?.chapters) {
+        this.chapterList = detail.chapters;
+        this.totalChapters = detail.chapters.length;
+        // 更新当前章节索引
+        const currentIndex = this.chapterList.findIndex(
+          (ch: ChapterInfo) => ch.id === this.chapterId
+        );
+        if (currentIndex >= 0) {
+          this.chapterIndex = currentIndex;
+        }
+        logger.info(TAG, `加载章节列表成功: ${this.chapterList.length} 章, 当前索引=${this.chapterIndex}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `加载章节列表失败: ${error}`);
+    }
+    this.isLoadingChapters = false;
+  }
+
+  /**
+   * 切换到上一章
+   */
+  private async goToPreviousChapter(): Promise<void> {
+    if (this.chapterList.length === 0) {
+      await this.loadChapterList();
+    }
+
+    // 注意：章节列表通常按倒序排列（新章在前），所以"上一章"实际是数组中的下一个
+    const prevIndex = this.chapterIndex + 1;
+    if (prevIndex < this.chapterList.length) {
+      await this.switchToChapter(prevIndex);
+    } else {
+      this.showToast('已是第一章');
+    }
+  }
+
+  /**
+   * 切换到下一章
+   */
+  private async goToNextChapter(): Promise<void> {
+    if (this.chapterList.length === 0) {
+      await this.loadChapterList();
+    }
+
+    // 注意：章节列表通常按倒序排列（新章在前），所以"下一章"实际是数组中的上一个
+    const nextIndex = this.chapterIndex - 1;
+    if (nextIndex >= 0) {
+      await this.switchToChapter(nextIndex);
+    } else {
+      this.showToast('已是最新章节');
+    }
+  }
+
+  /**
+   * 切换到指定章节
+   */
+  private async switchToChapter(index: number): Promise<void> {
+    if (index < 0 || index >= this.chapterList.length) {
+      return;
+    }
+
+    // 保存当前章节进度并标记已读
+    await this.saveReadingProgress();
+    await this.markAsRead();
+
+    // 释放当前章节的 AVIF PixelMap 资源
+    this.releaseAvifPixelMaps();
+
+    // 切换到新章节
+    const chapter = this.chapterList[index];
+    this.chapterIndex = index;
+    this.chapterId = chapter.id;
+    this.chapterTitle = chapter.title;
+    this.currentPage = 0;
+    this.pages = [];
+    this.loadedPages = new Set();
+    this.failedPages = new Set();
+    this.avifLoadingPages = new Set();
+
+    logger.info(TAG, `切换到章节: ${chapter.title} (index=${index})`);
+    await this.loadChapterPages();
   }
 
   aboutToAppear(): void {
@@ -363,27 +599,25 @@ export struct SuwayomiReaderPage {
       Row({ space: 16 }) {
         Button('上一章')
           .fontSize(14)
-          .fontColor(this.chapterIndex > 0 ? Color.White : 'rgba(255,255,255,0.5)')
-          .backgroundColor(this.chapterIndex > 0 ? '#007AFF' : 'rgba(255,255,255,0.2)')
-          .height(36)
-          .layoutWeight(1)
-          .enabled(this.chapterIndex > 0)
-          .onClick(() => {
-            // TODO: 实现上一章
-            this.showToast('上一章功能待实现');
-          })
-          .fontFamily(this.appFontFamily)
-
-        Button('下一章')
-          .fontSize(14)
           .fontColor(this.chapterIndex < this.totalChapters - 1 ? Color.White : 'rgba(255,255,255,0.5)')
           .backgroundColor(this.chapterIndex < this.totalChapters - 1 ? '#007AFF' : 'rgba(255,255,255,0.2)')
           .height(36)
           .layoutWeight(1)
           .enabled(this.chapterIndex < this.totalChapters - 1)
           .onClick(() => {
-            // TODO: 实现下一章
-            this.showToast('下一章功能待实现');
+            this.goToPreviousChapter();
+          })
+          .fontFamily(this.appFontFamily)
+
+        Button('下一章')
+          .fontSize(14)
+          .fontColor(this.chapterIndex > 0 ? Color.White : 'rgba(255,255,255,0.5)')
+          .backgroundColor(this.chapterIndex > 0 ? '#007AFF' : 'rgba(255,255,255,0.2)')
+          .height(36)
+          .layoutWeight(1)
+          .enabled(this.chapterIndex > 0)
+          .onClick(() => {
+            this.goToNextChapter();
           })
           .fontFamily(this.appFontFamily)
       }
@@ -432,8 +666,7 @@ export struct SuwayomiReaderPage {
             .height(28)
             .backgroundColor('#007AFF')
             .onClick(() => {
-              this.failedPages.delete(index);
-              this.failedPages = new Set(this.failedPages);
+              this.retryLoadPage(index, page.url);
             })
             .fontFamily(this.appFontFamily)
         }
@@ -442,19 +675,22 @@ export struct SuwayomiReaderPage {
         .justifyContent(FlexAlign.Center)
       }
 
-      // 图片
-      Image(page.url)
-        .width('100%')
-        .objectFit(ImageFit.Contain)
-        .onComplete(() => {
-          this.loadedPages.add(index);
-          this.loadedPages = new Set(this.loadedPages);
-        })
-        .onError(() => {
-          this.failedPages.add(index);
-          this.failedPages = new Set(this.failedPages);
-          logger.error(TAG, `页面 ${index + 1} 加载失败: ${page.url}`);
-        })
+      // 图片显示：优先使用解码后的 PixelMap，否则使用原始 URL
+      if (this.avifPixelMaps.has(index)) {
+        // 使用解码后的 PixelMap（支持 AVIF）
+        Image(this.avifPixelMaps.get(index))
+          .width('100%')
+          .objectFit(ImageFit.Contain)
+      } else if (!this.failedPages.has(index) && !this.avifLoadingPages.has(index)) {
+        // 尚未加载，显示透明占位并触发加载
+        Column()
+          .width('100%')
+          .height(1)
+          .onAppear(() => {
+            // 触发图片加载
+            this.loadAndDecodeImage(page.url, index);
+          })
+      }
     }
     .width('100%')
   }
@@ -634,6 +870,8 @@ export struct SuwayomiReaderPage {
           this.totalChapters = params.totalChapters;
         }
         this.loadChapterPages();
+        // 加载章节列表用于章节切换
+        this.loadChapterList();
       }
     })
   }

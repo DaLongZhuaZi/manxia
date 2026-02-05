@@ -359,6 +359,40 @@ export class PermanentImageCacheManager {
   }
 
   /**
+   * 获取所有图源的缓存配置
+   * 扫描永久缓存目录，返回所有有缓存的图源配置
+   */
+  async getAllSourceConfigs(): Promise<SourceCacheConfig[]> {
+    const configs: SourceCacheConfig[] = [];
+    
+    try {
+      if (!fs.accessSync(this.permanentCachePath)) {
+        return configs;
+      }
+      
+      const items = fs.listFileSync(this.permanentCachePath);
+      
+      for (const item of items) {
+        if (item.startsWith('source_')) {
+          const sourceIdStr = item.replace('source_', '');
+          const sourceId = parseInt(sourceIdStr, 10);
+          
+          if (!isNaN(sourceId)) {
+            const config = await this.getSourceCacheConfig(sourceId);
+            configs.push(config);
+          }
+        }
+      }
+      
+      logger.info(TAG, `获取到 ${configs.length} 个图源配置`);
+    } catch (error) {
+      logger.error(TAG, `获取所有图源配置失败: ${error}`);
+    }
+    
+    return configs;
+  }
+  
+  /**
    * 获取图源的漫画缓存统计
    */
   async getSourceMangaCacheStats(sourceId: number): Promise<MangaCacheStats[]> {

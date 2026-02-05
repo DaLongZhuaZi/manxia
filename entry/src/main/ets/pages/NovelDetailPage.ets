@@ -15,6 +15,7 @@ import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
 import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
 import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
+import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle } from '../Framework/Novel/NovelSourceSearchService';
 import { LegadoBook, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
 import { NovelBook, NovelReadStatus, NovelSearchResult } from '../Models/NovelModels';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
@@ -59,7 +60,13 @@ export struct NovelDetailPage {
   @State downloadEndIndex: number = 0; // 下载结束章节索引
   @State cachedChapterIndexes: Set<number> = new Set(); // 已缓存的章节索引
   @State alternativeSources: NovelSearchResult[] = [];
+  @State alternativeSourceResults: SourceSearchResult[] = []; // 按书源分组的搜索结果
   @State isSearchingSource: boolean = false;
+  @State searchSourceProgress: number = 0; // 搜索进度（0-100）
+  @State searchSourceTotal: number = 0; // 总书源数
+  @State searchSourceCompleted: number = 0; // 已完成搜索的书源数
+  private searchTaskHandle: SearchTaskHandle | null = null; // 搜索任务句柄
+  private sourceSearchService = getNovelSourceSearchService();
   @State lastReadChapterIndex: number = -1; // 上次阅读的章节索引，-1表示未阅读
   @State lastReadChapterTitle: string = ''; // 上次阅读的章节标题
   @State showNovelSettingsPanel: boolean = false; // 显示小说设置面板
@@ -104,6 +111,11 @@ export struct NovelDetailPage {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+    // 取消正在进行的换源搜索
+    if (this.searchTaskHandle) {
+      this.searchTaskHandle.cancel();
+      this.searchTaskHandle = null;
+    }
   }
 
   /**
@@ -978,25 +990,69 @@ export struct NovelDetailPage {
 
   /**
    * 换源 - 搜索同名书籍
+   * 使用新的换源搜索服务，支持分批并行搜索和进度回调
    */
-  async searchAlternativeSources(): Promise<void> {
+  searchAlternativeSources(): void {
     if (!this.book) return;
     
+    // 取消之前的搜索任务
+    if (this.searchTaskHandle) {
+      this.searchTaskHandle.cancel();
+    }
+    
+    // 重置状态
     this.isSearchingSource = true;
     this.alternativeSources = [];
+    this.alternativeSourceResults = [];
+    this.searchSourceCompleted = 0;
+    this.searchSourceTotal = this.sourceSearchService.getSearchableSourceCount();
+    this.searchSourceProgress = 0;
     this.showChangeSourcePanel = true;
     
-    try {
-      const results = await this.sourceManager.searchAll(this.book.name, 1, 10);
-      // 过滤出同名或相似的书籍
-      this.alternativeSources = results.filter(r => 
-        r.name === this.book?.name || 
-        r.name.includes(this.book?.name || '') ||
-        (this.book?.name || '').includes(r.name)
-      );
-      logger.info(TAG, `找到 ${this.alternativeSources.length} 个可用书源`);
-    } catch (error) {
-      logger.error(TAG, `搜索书源失败: ${String(error)}`);
+    const bookName = this.book.name;
+    const bookAuthor = this.book.author;
+    
+    logger.info(TAG, `开始换源搜索: ${bookName}, 共 ${this.searchSourceTotal} 个书源`);
+    
+    // 使用新的换源搜索服务
+    this.searchTaskHandle = this.sourceSearchService.searchForSource(
+      bookName,
+      bookAuthor,
+      {
+        onSourceComplete: (sourceResult: SourceSearchResult) => {
+          // 实时更新结果
+          this.alternativeSourceResults = [...this.alternativeSourceResults, sourceResult];
+          // 同时更新所有结果列表
+          this.alternativeSources = [...this.alternativeSources, ...sourceResult.results];
+        },
+        onProgress: (completed: number, total: number) => {
+          this.searchSourceCompleted = completed;
+          this.searchSourceTotal = total;
+          this.searchSourceProgress = total > 0 ? Math.round((completed / total) * 100) : 0;
+        },
+        onComplete: (allResults: NovelSearchResult[], sourceResults: SourceSearchResult[]) => {
+          this.isSearchingSource = false;
+          this.searchSourceProgress = 100;
+          this.searchTaskHandle = null;
+          logger.info(TAG, `换源搜索完成: 共 ${sourceResults.length} 个书源有结果，总计 ${allResults.length} 本`);
+        },
+        onCancelled: () => {
+          this.isSearchingSource = false;
+          this.searchTaskHandle = null;
+          logger.info(TAG, '换源搜索已取消');
+        }
+      },
+      50 // 最多搜索50个书源
+    );
+  }
+  
+  /**
+   * 取消换源搜索
+   */
+  cancelSourceSearch(): void {
+    if (this.searchTaskHandle) {
+      this.searchTaskHandle.cancel();
+      this.searchTaskHandle = null;
     }
     this.isSearchingSource = false;
   }
@@ -1502,31 +1558,69 @@ export struct NovelDetailPage {
     Column() {
       // 顶部栏
       Row() {
-        Text('换源')
-          .fontSize(16)
-          .fontFamily(this.appFontFamily)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Column() {
+          Row() {
+            Text('换源')
+              .fontSize(16)
+              .fontFamily(this.appFontFamily)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            
+            if (this.alternativeSourceResults.length > 0) {
+              Text(`(${this.alternativeSourceResults.length}个书源)`)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                .margin({ left: 8 })
+            }
+          }
+          
+          // 搜索进度条
+          if (this.isSearchingSource) {
+            Row() {
+              Progress({ value: this.searchSourceProgress, total: 100, type: ProgressType.Linear })
+                .width('100%')
+                .height(4)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('divider', this.themeState.currentTheme))
+            }
+            .width('100%')
+            .margin({ top: 8 })
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
         
-        Blank()
-        
-        SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(24)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
-          .onClick(() => {
-            this.showChangeSourcePanel = false;
-          })
+        Row({ space: 12 }) {
+          // 搜索进度文字
+          if (this.isSearchingSource) {
+            Text(`${this.searchSourceCompleted}/${this.searchSourceTotal}`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          }
+          
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(24)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)])
+            .onClick(() => {
+              this.cancelSourceSearch();
+              this.showChangeSourcePanel = false;
+            })
+        }
       }
       .width('100%')
       .padding(16)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
       
-      if (this.isSearchingSource) {
+      // 搜索结果列表
+      if (this.isSearchingSource && this.alternativeSourceResults.length === 0) {
+        // 正在搜索且还没有结果
         Column() {
           LoadingProgress()
             .width(32)
             .height(32)
-          Text('正在搜索可用书源...')
+          Text(`正在搜索可用书源... (${this.searchSourceCompleted}/${this.searchSourceTotal})`)
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
@@ -1535,60 +1629,118 @@ export struct NovelDetailPage {
         .width('100%')
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
-      } else if (this.alternativeSources.length === 0) {
+      } else if (!this.isSearchingSource && this.alternativeSourceResults.length === 0) {
+        // 搜索完成但没有结果
         Column() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(48)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme)])
           Text('未找到其他书源')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .margin({ top: 12 })
+          Text('试试导入更多书源后再换源')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .margin({ top: 4 })
         }
         .width('100%')
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
+        // 有结果，按书源分组展示
         List() {
-          ForEach(this.alternativeSources, (source: NovelSearchResult) => {
+          ForEach(this.alternativeSourceResults, (sourceResult: SourceSearchResult) => {
+            // 书源分组标题
             ListItem() {
               Row() {
-                Column() {
-                  Text(source.sourceName)
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Medium)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(source.sourceId === this.sourceId ? 
-                      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-                      ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  
-                  Text(source.latestChapterTitle || '暂无最新章节信息')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
-                    .margin({ top: 4 })
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
+                Text(sourceResult.sourceName)
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 
-                if (source.sourceId === this.sourceId) {
-                  Text('当前')
-                    .fontSize(12)
+                Text(`${sourceResult.results.length}本`)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                  .margin({ left: 8 })
+                
+                if (sourceResult.sourceGroup && sourceResult.sourceGroup !== '未分组') {
+                  Text(sourceResult.sourceGroup)
+                    .fontSize(10)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                     .borderRadius(4)
+                    .margin({ left: 8 })
                 }
               }
               .width('100%')
-              .padding(16)
-              .onClick(() => {
-                if (source.sourceId !== this.sourceId) {
-                  this.changeSource(source);
-                }
-              })
+              .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
             }
-          })
+            
+            // 该书源下的书籍列表
+            ForEach(sourceResult.results, (book: NovelSearchResult) => {
+              ListItem() {
+                Row() {
+                  Column() {
+                    Row() {
+                      Text(book.name)
+                        .fontSize(14)
+                        .fontWeight(FontWeight.Medium)
+                        .fontFamily(this.appFontFamily)
+                        .fontColor(book.sourceId === this.sourceId ? 
+                          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+                          ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      
+                      if (book.author) {
+                        Text(`· ${book.author}`)
+                          .fontSize(12)
+                          .fontFamily(this.appFontFamily)
+                          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                          .margin({ left: 8 })
+                          .maxLines(1)
+                      }
+                    }
+                    
+                    Text(book.latestChapterTitle || '暂无最新章节信息')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+                      .margin({ top: 4 })
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+                  
+                  if (book.sourceId === this.sourceId) {
+                    Text('当前')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+                      .borderRadius(4)
+                  }
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+                .onClick(() => {
+                  if (book.sourceId !== this.sourceId) {
+                    this.changeSource(book);
+                  }
+                })
+              }
+            }, (book: NovelSearchResult) => `${sourceResult.sourceId}_${book.bookUrl}`)
+          }, (sourceResult: SourceSearchResult) => sourceResult.sourceId)
         }
         .layoutWeight(1)
         .width('100%')
@@ -1596,7 +1748,7 @@ export struct NovelDetailPage {
       }
     }
     .width('100%')
-    .height('60%')
+    .height('70%')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
     .borderRadius({ topLeft: 16, topRight: 16 })
   }

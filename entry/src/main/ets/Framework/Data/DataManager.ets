@@ -26,7 +26,8 @@ import {
   ChapterUpdateData,
   DownloadTaskUpdateData,
   GeneralUpdateData,
-  UpdateRecordData
+  UpdateRecordData,
+  GenericQueryRecord
 } from '../Database/DatabaseTypes';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { ImageCacheManager, ImageCacheConfig, MemoryCacheConfig, DiskCacheConfig} from '../Cache/ImageCacheManager';
@@ -128,6 +129,16 @@ export interface ChapterUpdateRecord {
  */
 export interface CountQueryResult {
   count: DatabaseValue;
+}
+
+/**
+ * 缓存漫画信息接口
+ * 用于返回有缓存页面的漫画列表
+ */
+export interface CachedMangaInfo {
+  mangaId: string;
+  mangaTitle: string;
+  sourceId: number;
 }
 export interface ComicSource {
   id: string;
@@ -967,7 +978,10 @@ export class DataManager {
 
   public async getOnlineComicChapters(comicId: string): Promise<OnlineChapterInfo[]> {
     try {
-      const sql = 'SELECT * FROM online_chapter WHERE comicId = ? ORDER BY chapterNumber ASC';
+      // [性能优化] 只查询必要字段，避免SELECT *造成的数据传输开销
+      const sql = `SELECT id, comicId, externalId, title, chapterNumber, url, pageCount, 
+                          publishTime, addTime, createTime, updateTime, isDownloaded, downloadPath 
+                   FROM online_chapter WHERE comicId = ? ORDER BY chapterNumber ASC`;
       const result = await this.databaseManager.querySql(sql, [comicId]);
       
       // [修复] 使用专门的在线漫画转换器
@@ -1030,6 +1044,74 @@ export class DataManager {
     } catch (error) {
       logger.error(TAG, `获取在线页面失败: chapterId=${chapterId}`, String(error));
       return [];
+    }
+  }
+
+  /**
+   * [懒加载优化] 批量查询在线章节的页面数量
+   * 使用单条SQL查询所有章节的页数，避免逐个章节查询
+   * @param comicId 漫画ID
+   * @returns Map<章节ID, 页面数量>
+   */
+  public async getOnlineChapterPageCounts(comicId: string): Promise<Map<string, number>> {
+    try {
+      // 使用子查询获取所有属于该漫画的章节的页面数量
+      const sql = `
+        SELECT chapterId, COUNT(*) as pageCount 
+        FROM online_page 
+        WHERE chapterId IN (SELECT id FROM online_chapter WHERE comicId = ?)
+        GROUP BY chapterId
+      `;
+      const result = await this.databaseManager.querySql(sql, [comicId]);
+      
+      const pageCountMap = new Map<string, number>();
+      for (let i = 0; i < result.length; i++) {
+        const record = result[i] as GenericQueryRecord;
+        const chapterId = String(record.chapterId || '');
+        const pageCount = Number(record.pageCount || 0);
+        if (chapterId) {
+          pageCountMap.set(chapterId, pageCount);
+        }
+      }
+      
+      logger.debug(TAG, `[懒加载] 批量查询章节页数完成: comicId=${comicId}, 章节数=${pageCountMap.size}`);
+      return pageCountMap;
+    } catch (error) {
+      logger.error(TAG, `批量查询章节页数失败: comicId=${comicId}`, String(error));
+      return new Map<string, number>();
+    }
+  }
+
+  /**
+   * [懒加载优化] 批量查询本地章节的页面数量
+   * @param comicId 漫画ID
+   * @returns Map<章节ID, 页面数量>
+   */
+  public async getLocalChapterPageCounts(comicId: string): Promise<Map<string, number>> {
+    try {
+      const sql = `
+        SELECT chapterId, COUNT(*) as pageCount 
+        FROM page 
+        WHERE chapterId IN (SELECT id FROM chapter WHERE comicId = ?)
+        GROUP BY chapterId
+      `;
+      const result = await this.databaseManager.querySql(sql, [comicId]);
+      
+      const pageCountMap = new Map<string, number>();
+      for (let i = 0; i < result.length; i++) {
+        const record = result[i] as GenericQueryRecord;
+        const chapterId = String(record.chapterId || '');
+        const pageCount = Number(record.pageCount || 0);
+        if (chapterId) {
+          pageCountMap.set(chapterId, pageCount);
+        }
+      }
+      
+      logger.debug(TAG, `[懒加载] 批量查询本地章节页数完成: comicId=${comicId}, 章节数=${pageCountMap.size}`);
+      return pageCountMap;
+    } catch (error) {
+      logger.error(TAG, `批量查询本地章节页数失败: comicId=${comicId}`, String(error));
+      return new Map<string, number>();
     }
   }
 
@@ -3401,6 +3483,69 @@ export class DataManager {
     }
   }
 
+  // ==================== 图源置顶管理 ====================
+
+  /**
+   * 获取置顶图源ID列表
+   */
+  async getSourcePinnedList(): Promise<number[]> {
+    try {
+      const record = await this.getSetting('source:pinned_list');
+      if (record && record.settingValue) {
+        const ids = JSON.parse(record.settingValue) as number[];
+        return ids;
+      }
+      return [];
+    } catch (error) {
+      logger.error(TAG, '获取置顶图源列表失败', String(error));
+      return [];
+    }
+  }
+
+  /**
+   * 保存置顶图源ID列表
+   */
+  async setSourcePinnedList(ids: number[]): Promise<void> {
+    try {
+      await this.saveSetting('source:pinned_list', JSON.stringify(ids), 'json');
+      logger.info(TAG, `已保存置顶图源列表: ${ids.length}个`);
+    } catch (error) {
+      logger.error(TAG, '保存置顶图源列表失败', String(error));
+      throw error as Error;
+    }
+  }
+
+  /**
+   * 添加图源到置顶列表
+   */
+  async addSourceToPinnedList(sourceId: number): Promise<void> {
+    const pinnedList = await this.getSourcePinnedList();
+    if (!pinnedList.includes(sourceId)) {
+      pinnedList.unshift(sourceId);  // 添加到开头
+      await this.setSourcePinnedList(pinnedList);
+    }
+  }
+
+  /**
+   * 从置顶列表移除图源
+   */
+  async removeSourceFromPinnedList(sourceId: number): Promise<void> {
+    const pinnedList = await this.getSourcePinnedList();
+    const index = pinnedList.indexOf(sourceId);
+    if (index !== -1) {
+      pinnedList.splice(index, 1);
+      await this.setSourcePinnedList(pinnedList);
+    }
+  }
+
+  /**
+   * 检查图源是否已置顶
+   */
+  async isSourcePinned(sourceId: number): Promise<boolean> {
+    const pinnedList = await this.getSourcePinnedList();
+    return pinnedList.includes(sourceId);
+  }
+
   // ==================== WebView 源配置：Cookie 管理 ====================
 
   /**
@@ -3692,6 +3837,46 @@ export class DataManager {
   }
 
   /**
+   * 获取图源所有自定义设置（以 custom. 开头的设置）
+   * 返回 Map<settingKey, settingValue>，其中 settingKey 去掉了 'custom.' 前缀
+   */
+  async getSourceCustomSettings(sourceId: number): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    try {
+      // 获取 pkg 标识符
+      const pkg = await this.getSourcePkgById(sourceId);
+      const keyIdentifier = pkg || `id_${String(sourceId)}`;
+      const keyPrefix: string = `source:${keyIdentifier}:custom.`;
+      
+      // 查询所有以 custom. 开头的设置
+      const sql = `SELECT settingKey, settingValue FROM user_settings WHERE userId = ? AND settingKey LIKE ?`;
+      const records = await this.databaseManager.querySql(sql, ['default_user', `${keyPrefix}%`]);
+      
+      if (records && records.length > 0) {
+        for (let i = 0; i < records.length; i++) {
+          const record: ESObject = records[i] as ESObject;
+          const fullKey = record.settingKey as string;
+          const value = record.settingValue as string;
+          
+          // 提取设置键名（去掉 source:xxx:custom. 前缀）
+          if (fullKey && fullKey.startsWith(keyPrefix)) {
+            const settingKey = fullKey.substring(keyPrefix.length);
+            if (settingKey && value) {
+              result.set(settingKey, value);
+              logger.debug(TAG, `加载自定义设置: ${settingKey}=${value}`);
+            }
+          }
+        }
+      }
+      
+      logger.debug(TAG, `获取图源自定义设置: sourceId=${sourceId}, 数量=${result.size}`);
+    } catch (error) {
+      logger.error(TAG, `获取图源自定义设置失败: sourceId=${sourceId}`, String(error));
+    }
+    return result;
+  }
+
+  /**
    * 更新图源
    */
   async updateComicSource(id: number, updates: ESObject): Promise<void> {
@@ -3735,6 +3920,10 @@ export class DataManager {
         fields.push('type = ?');
         values.push(updates.type as string);
       }
+      if (updates.pkg !== undefined) {
+        fields.push('pkg = ?');
+        values.push(updates.pkg as string);
+      }
       if (updates.lastUpdateTime !== undefined) {
         fields.push('lastUpdateTime = ?');
         values.push(updates.lastUpdateTime as number);
@@ -3758,6 +3947,63 @@ export class DataManager {
     } catch (error) {
       logger.error(TAG, `更新图源失败: id=${id}`, String(error));
       throw error as Error;
+    }
+  }
+
+  /**
+   * [修复] 批量修复所有图源的 pkg 字段
+   * 遍历所有 pkg 为空的图源，从 configJson 中提取 metadata.id 并更新
+   * @returns 修复的图源数量
+   */
+  async fixAllSourcePkgFields(): Promise<number> {
+    try {
+      // 查询所有 pkg 为空的图源
+      const sql = `SELECT id, name, configJson FROM comic_source WHERE pkg IS NULL OR pkg = ''`;
+      const result = await this.databaseManager.querySql(sql, []);
+      
+      if (!result || result.length === 0) {
+        logger.info(TAG, `[修复] 所有图源的 pkg 字段已完整，无需修复`);
+        return 0;
+      }
+      
+      logger.info(TAG, `[修复] 发现 ${result.length} 个图源缺少 pkg 字段，开始修复...`);
+      
+      let fixedCount = 0;
+      for (const record of result) {
+        const row: ESObject = record as ESObject;
+        const sourceId = row.id as number;
+        const sourceName = row.name as string;
+        const configJson = row.configJson as string;
+        
+        if (!configJson) {
+          logger.warn(TAG, `[修复] 图源 ${sourceName} (id=${sourceId}) 没有 configJson，跳过`);
+          continue;
+        }
+        
+        try {
+          const config: ESObject = JSON.parse(configJson) as ESObject;
+          const metadata: ESObject = config.metadata as ESObject;
+          
+          if (metadata && metadata.id) {
+            const extractedPkg = metadata.id as string;
+            await this.databaseManager.executeSql(
+              'UPDATE comic_source SET pkg = ? WHERE id = ?', [extractedPkg, sourceId]
+            );
+            logger.info(TAG, `[修复] 已修复图源 ${sourceName}: pkg=${extractedPkg}`);
+            fixedCount++;
+          } else {
+            logger.warn(TAG, `[修复] 图源 ${sourceName} 的 metadata.id 为空，跳过`);
+          }
+        } catch (parseErr) {
+          logger.warn(TAG, `[修复] 解析图源 ${sourceName} 的 configJson 失败: ${String(parseErr)}`);
+        }
+      }
+      
+      logger.info(TAG, `[修复] pkg 字段修复完成，共修复 ${fixedCount} 个图源`);
+      return fixedCount;
+    } catch (error) {
+      logger.error(TAG, `[修复] 批量修复 pkg 字段失败`, String(error));
+      return 0;
     }
   }
 
@@ -4866,6 +5112,123 @@ export class DataManager {
       fs.rmdirSync(dirPath);
     } catch (error) {
       logger.warn(TAG, `递归删除目录失败 ${dirPath}: ${error}`);
+    }
+  }
+  
+  // ==================== 缓存管理 ====================
+  
+  /**
+   * [新增] 获取指定图源下所有有缓存的漫画列表
+   * 通过检查online_page表的localPath字段来判断是否已缓存
+   * @param sourceId 图源ID
+   * @returns 有缓存页面的漫画信息列表
+   */
+  async getCachedMangasBySource(sourceId: number): Promise<CachedMangaInfo[]> {
+    try {
+      // 从数据库查询所有有缓存页面的漫画
+      // 通过online_page表的localPath字段判断是否已缓存
+      const sql = `
+        SELECT DISTINCT 
+          oci.id as mangaId,
+          oci.title as mangaTitle,
+          oci.sourceId as sourceId
+        FROM online_comic_info oci
+        INNER JOIN online_chapter oc ON oc.comicId = oci.id
+        INNER JOIN online_page op ON op.chapterId = oc.id
+        WHERE oci.sourceId = ? 
+          AND op.localPath IS NOT NULL 
+          AND op.localPath != ''
+        GROUP BY oci.id
+      `;
+      
+      const result = await this.databaseManager.querySql(sql, [String(sourceId)]);
+      const cachedMangas: CachedMangaInfo[] = [];
+      
+      for (const record of result) {
+        const obj = record as Record<string, DatabaseValue>;
+        const info: CachedMangaInfo = {
+          mangaId: String(obj['mangaId'] || ''),
+          mangaTitle: String(obj['mangaTitle'] || ''),
+          sourceId: Number(obj['sourceId'] || 0)
+        };
+        cachedMangas.push(info);
+      }
+      
+      logger.info(TAG, `获取已缓存漫画列表: sourceId=${sourceId}, 找到 ${cachedMangas.length} 部漫画`);
+      return cachedMangas;
+    } catch (error) {
+      logger.error(TAG, `获取已缓存漫画列表失败: sourceId=${sourceId}`, String(error));
+      return [];
+    }
+  }
+  
+  /**
+   * [新增] 清理指定漫画的缓存记录
+   * 将online_page表中该漫画所有页面的localPath和fileSize清空
+   * @param mangaId 漫画ID
+   */
+  async clearMangaCacheRecords(mangaId: string): Promise<void> {
+    try {
+      // 更新该漫画所有章节的所有页面，清空localPath和fileSize
+      const sql = `
+        UPDATE online_page 
+        SET localPath = NULL, fileSize = 0 
+        WHERE chapterId IN (
+          SELECT id FROM online_chapter WHERE comicId = ?
+        )
+      `;
+      await this.databaseManager.executeSql(sql, [mangaId]);
+      logger.info(TAG, `已清理漫画缓存记录: mangaId=${mangaId}`);
+    } catch (error) {
+      logger.error(TAG, `清理漫画缓存记录失败: mangaId=${mangaId}`, String(error));
+      throw error as Error;
+    }
+  }
+  
+  /**
+   * [新增] 获取所有有缓存的漫画列表（不限图源）
+   * 通过检查online_page表的localPath字段来判断是否已缓存
+   * @returns 有缓存页面的漫画信息列表
+   */
+  async getAllCachedMangas(): Promise<CachedMangaInfo[]> {
+    try {
+      // 从数据库查询所有有缓存页面的漫画（不限图源）
+      // 注意：HarmonyOS数据库可能不支持别名，直接选择原始字段
+      const sql = `
+        SELECT DISTINCT 
+          oci.id,
+          oci.title,
+          oci.sourceId
+        FROM online_comic_info oci
+        INNER JOIN online_chapter oc ON oc.comicId = oci.id
+        INNER JOIN online_page op ON op.chapterId = oc.id
+        WHERE op.localPath IS NOT NULL 
+          AND op.localPath != ''
+        GROUP BY oci.id
+      `;
+      
+      const result = await this.databaseManager.querySql(sql, []);
+      const cachedMangas: CachedMangaInfo[] = [];
+      
+      logger.debug(TAG, `查询结果原始数据: ${JSON.stringify(result)}`);
+      
+      for (const record of result) {
+        const obj = record as Record<string, DatabaseValue>;
+        // 使用原始字段名
+        const info: CachedMangaInfo = {
+          mangaId: String(obj['id'] || ''),
+          mangaTitle: String(obj['title'] || ''),
+          sourceId: Number(obj['sourceId'] || 0)
+        };
+        logger.debug(TAG, `解析漫画: id=${info.mangaId}, title=${info.mangaTitle}, sourceId=${info.sourceId}`);
+        cachedMangas.push(info);
+      }
+      
+      logger.info(TAG, `获取所有已缓存漫画列表: 找到 ${cachedMangas.length} 部漫画`);
+      return cachedMangas;
+    } catch (error) {
+      logger.error(TAG, `获取所有已缓存漫画列表失败`, String(error));
+      return [];
     }
   }
 }

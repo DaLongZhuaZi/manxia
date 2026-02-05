@@ -6,7 +6,7 @@
  */
 
 import { logger } from '../../Utils/Logger';
-import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 
 const TAG = 'DownloadSyncManager';
 
@@ -78,6 +78,7 @@ export class DownloadSyncManager {
   private async createReservedFolders(downloadDirPath: string): Promise<void> {
     let createdCount = 0;
     let existingCount = 0;
+    let nomediaCount = 0;
 
     for (const folderName of RESERVED_FOLDERS) {
       try {
@@ -92,12 +93,69 @@ export class DownloadSyncManager {
           createdCount++;
           logger.info(TAG, `创建保留文件夹: ${folderName}`);
         }
+        
+        // 为每个文件夹创建.nomedia文件
+        if (this.createNoMediaFile(folderPath)) {
+          nomediaCount++;
+        }
       } catch (error) {
         logger.warn(TAG, `创建保留文件夹 ${folderName} 失败: ${String(error)}`);
       }
     }
 
-    logger.info(TAG, `保留文件夹检查完成: ${createdCount} 个新建, ${existingCount} 个已存在`);
+    logger.info(TAG, `保留文件夹检查完成: ${createdCount} 个新建, ${existingCount} 个已存在, ${nomediaCount} 个.nomedia文件创建/确认`);
+  }
+  
+  /**
+   * 创建.nomedia文件
+   * 防止系统媒体扫描器将目录识别为媒体文件夹
+   * 使用fileUri.FileUri将URI转换为实际路径后再操作（与.manxia_init创建方式一致）
+   * @param folderPath 文件夹本地路径（例如 /storage/…/Download/manxia/manga）
+   * @returns 是否成功创建或已存在
+   */
+  private createNoMediaFile(folderPath: string): boolean {
+    // 先尝试通过URI转换创建（使用fileUri.FileUri将URI转为路径）
+    try {
+      const baseUri = AppStorage.get<string>('downloadSyncDirUri');
+      if (baseUri && baseUri.length > 0) {
+        const folderName = folderPath.substring(folderPath.replace(/\/+$/, '').lastIndexOf('/') + 1);
+        const targetUri = `${baseUri}/${folderName}/.nomedia`;
+        // 关键：使用fileUri.FileUri将URI转换为实际路径
+        const actualPath = new fileUri.FileUri(targetUri).path;
+        
+        try {
+          fs.accessSync(actualPath);
+          logger.debug(TAG, `.nomedia文件已存在: ${actualPath}`);
+          return true;
+        } catch (_) {
+          // 文件不存在，创建它
+          const file = fs.openSync(actualPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+          fs.closeSync(file);
+          logger.info(TAG, `.nomedia文件已创建: ${actualPath}`);
+          return true;
+        }
+      }
+    } catch (e) {
+      logger.warn(TAG, `通过URI路径创建.nomedia失败: ${String(e)}`);
+    }
+
+    // 回退：直接使用传入的路径（沙箱目录等场景）
+    try {
+      const nomediaPath = `${folderPath}/.nomedia`;
+      try {
+        fs.accessSync(nomediaPath);
+        logger.debug(TAG, `.nomedia文件已存在（路径模式）: ${nomediaPath}`);
+        return true;
+      } catch (_) {
+        const file = fs.openSync(nomediaPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        fs.closeSync(file);
+        logger.info(TAG, `.nomedia文件已创建（路径模式）: ${nomediaPath}`);
+        return true;
+      }
+    } catch (error) {
+      logger.warn(TAG, `创建.nomedia文件失败: ${folderPath}, ${String(error)}`);
+      return false;
+    }
   }
 
   /**

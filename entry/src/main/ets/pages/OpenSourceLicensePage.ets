@@ -66,10 +66,11 @@ export struct OpenSourceLicensePage {
    * 构建章节标题
    */
   @Builder
-  buildSectionTitle(title: string, emoji: string) {
+  buildSectionTitle(title: string, icon: Resource) {
     Row({ space: 8 }) {
-      Text(emoji)
+      SymbolGlyph(icon)
         .fontSize(24)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
 
       Text(title)
         .fontSize(20)
@@ -155,8 +156,12 @@ export struct OpenSourceLicensePage {
   buildTipBox(title: string, content: string, type: 'info' | 'warning' | 'success' = 'info') {
     Column({ space: 8 }) {
       Row({ space: 8 }) {
-        Text(type === 'info' ? '💡' : type === 'warning' ? '⚠️' : '✅')
+        SymbolGlyph(type === 'info' ? $r('sys.symbol.lightbulb') : 
+                   type === 'warning' ? $r('sys.symbol.exclamationmark_triangle') : 
+                   $r('sys.symbol.checkmark_circle'))
           .fontSize(18)
+          .fontColor([type === 'info' ? Color.White : 
+                     type === 'warning' ? '#F57C00' : '#4CAF50'])
 
         Text(title)
           .fontSize(16)
@@ -228,7 +233,7 @@ export struct OpenSourceLicensePage {
           Scroll(this.scroller) {
             Column() {
               // 项目信息
-              this.buildSectionTitle('📱 项目信息', '📱')
+              this.buildSectionTitle('项目信息', $r('sys.symbol.computer_host_fill'))
               this.buildParagraph('漫匣（ManXia）是一款基于HarmonyOS Next的现代化漫画阅读应用，采用纯ArkTS架构开发。')
 
               Column({ space: 8 }) {
@@ -276,7 +281,7 @@ export struct OpenSourceLicensePage {
               .margin({ bottom: 16 })
 
               // 第三方开源库
-              this.buildSectionTitle('📦 第三方开源库', '📦')
+              this.buildSectionTitle('第三方开源库', $r('sys.symbol.flag_fill'))
               this.buildParagraph('本应用使用了以下开源组件，感谢这些优秀项目的贡献者：')
 
               this.buildLibraryItem(
@@ -322,7 +327,7 @@ export struct OpenSourceLicensePage {
               )
 
               // 参考项目
-              this.buildSectionTitle('🙏 参考项目', '🙏')
+              this.buildSectionTitle('参考项目', $r('sys.symbol.hand_thumbsup_fill'))
               this.buildParagraph('本项目在开发过程中参考了以下开源项目的代码和思路：')
 
               this.buildLibraryItem(
@@ -339,8 +344,15 @@ export struct OpenSourceLicensePage {
                 '拷贝漫画图源的API接口分析和实现参考'
               )
 
+              this.buildLibraryItem(
+                'legado / 阅读3.0',
+                '-',
+                'GPL-3.0',
+                '书源规则设计思路、小说解析架构参考'
+              )
+
               // MIT许可证全文
-              this.buildSectionTitle('📄 MIT许可证', '📄')
+              this.buildSectionTitle('MIT许可证', $r('sys.symbol.doc_text'))
 
               Column() {
                 Text(`MIT License

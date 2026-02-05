@@ -16,6 +16,9 @@ import { picker } from '@kit.CoreFileKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 
+// 大文件导入阈值（5MB）
+const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
+
 const TAG = 'BookSourceManagementPage';
 
 // 分页加载常量
@@ -55,6 +58,12 @@ export struct BookSourceManagementPage {
   @State showImportDialog: boolean = false;
   @State importText: string = '';
   @State isImporting: boolean = false;
+  
+  // 大文件导入进度状态
+  @State importProgress: number = 0;           // 导入进度百分比 0-100
+  @State importStage: string = '';             // 当前阶段描述
+  @State importDetail: string = '';            // 详细进度信息
+  @State showProgressDialog: boolean = false;  // 是否显示进度对话框
   
   // 分页加载状态
   private currentPage: number = 0;
@@ -232,6 +241,7 @@ export struct BookSourceManagementPage {
 
   /**
    * 从文件导入书源
+   * 自动检测文件大小，小文件使用传统方式，大文件使用流式导入
    */
   private async importFromFile(): Promise<void> {
     try {
@@ -242,18 +252,147 @@ export struct BookSourceManagementPage {
       
       if (result && result.length > 0) {
         const filePath = result[0];
-        const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
-        const buffer = new ArrayBuffer(1024 * 1024);
-        const readLen = fs.readSync(file.fd, buffer);
-        fs.closeSync(file);
         
-        const jsonStr = String.fromCharCode(...new Uint8Array(buffer.slice(0, readLen)));
-        await this.importSourcesFromJson(jsonStr);
+        // 获取文件大小
+        const stat = fs.statSync(filePath);
+        const fileSize = stat.size;
+        const fileSizeStr = NovelSourceManager.formatFileSize(fileSize);
+        
+        logger.info(TAG, `选择的文件: ${filePath}, 大小: ${fileSizeStr}`);
+        
+        if (fileSize > LARGE_FILE_THRESHOLD) {
+          // 大文件：使用流式导入
+          logger.info(TAG, `检测到大文件 (${fileSizeStr})，使用流式导入`);
+          await this.importLargeFile(filePath, fileSize);
+        } else {
+          // 小文件：使用传统方式
+          await this.importSmallFile(filePath);
+        }
       }
     } catch (error) {
       logger.error(TAG, '从文件导入失败', String(error));
-      promptAction.showToast({ message: '导入失败' });
+      promptAction.showToast({ message: '导入失败: ' + String(error) });
+      this.hideProgressDialog();
     }
+  }
+  
+  /**
+   * 小文件导入（传统方式，适用于5MB以下文件）
+   */
+  private async importSmallFile(filePath: string): Promise<void> {
+    try {
+      this.isImporting = true;
+      this.showProgressDialog = true;
+      this.importStage = '读取文件...';
+      this.importProgress = 10;
+      
+      const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(filePath);
+      const fileSize = stat.size;
+      
+      // 分配足够大的缓冲区
+      const buffer = new ArrayBuffer(fileSize);
+      const readLen = fs.readSync(file.fd, buffer);
+      fs.closeSync(file);
+      
+      this.importStage = '解析JSON...';
+      this.importProgress = 30;
+      
+      // 分批解码字符串，避免栈溢出
+      const uint8Array = new Uint8Array(buffer, 0, readLen);
+      let jsonStr = '';
+      const chunkSize = 32768;  // 32KB 每批
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const end = Math.min(i + chunkSize, uint8Array.length);
+        const slice = uint8Array.slice(i, end);
+        jsonStr += String.fromCharCode(...slice);
+      }
+      
+      this.importStage = '导入书源...';
+      this.importProgress = 50;
+      
+      await this.importSourcesFromJson(jsonStr);
+      
+    } finally {
+      this.hideProgressDialog();
+    }
+  }
+  
+  /**
+   * 大文件流式导入（适用于5MB以上文件）
+   */
+  private async importLargeFile(filePath: string, fileSize: number): Promise<void> {
+    try {
+      this.isImporting = true;
+      this.showProgressDialog = true;
+      this.importStage = '准备导入大文件...';
+      this.importDetail = `文件大小: ${NovelSourceManager.formatFileSize(fileSize)}`;
+      this.importProgress = 0;
+      
+      const result = await this.sourceManager.importFromLargeFile(filePath, {
+        onFileReadProgress: (percent, bytesRead, totalBytes) => {
+          this.importStage = '读取文件...';
+          this.importProgress = Math.round(percent * 0.3);  // 文件读取占30%
+          this.importDetail = `${NovelSourceManager.formatFileSize(bytesRead)} / ${NovelSourceManager.formatFileSize(totalBytes)}`;
+        },
+        onParseProgress: (parsedCount, currentSourceName) => {
+          this.importStage = '解析书源...';
+          this.importProgress = 30 + Math.min(parsedCount / 100, 30);  // 解析占30%
+          this.importDetail = `已解析: ${parsedCount} 个 - ${currentSourceName}`;
+        },
+        onImportProgress: (importedCount, totalCount, currentSourceName) => {
+          this.importStage = '导入书源...';
+          this.importProgress = 60 + Math.round((importedCount / totalCount) * 40);  // 导入占40%
+          this.importDetail = `${importedCount} / ${totalCount} - ${currentSourceName}`;
+        },
+        onStageChange: (stage) => {
+          switch (stage) {
+            case 'reading':
+              this.importStage = '读取文件中...';
+              break;
+            case 'parsing':
+              this.importStage = '解析书源中...';
+              break;
+            case 'importing':
+              this.importStage = '导入数据库中...';
+              break;
+            case 'complete':
+              this.importStage = '导入完成！';
+              this.importProgress = 100;
+              break;
+          }
+        },
+        onError: (error, sourceName) => {
+          logger.warn(TAG, `导入警告: ${error}${sourceName ? ` (${sourceName})` : ''}`);
+        }
+      });
+      
+      // 显示结果
+      if (result.success) {
+        const message = `成功导入 ${result.successCount} 个书源` +
+          (result.failedCount > 0 ? `，失败 ${result.failedCount} 个` : '') +
+          (result.skippedCount > 0 ? `，跳过 ${result.skippedCount} 个` : '') +
+          `\n耗时: ${(result.elapsedMs / 1000).toFixed(1)}秒`;
+        promptAction.showToast({ message, duration: 3000 });
+        await this.loadSourceList();
+      } else {
+        promptAction.showToast({ message: '导入失败: ' + (result.errors[0] || '未知错误') });
+      }
+      
+    } finally {
+      this.hideProgressDialog();
+    }
+  }
+  
+  /**
+   * 隐藏进度对话框并重置状态
+   */
+  private hideProgressDialog(): void {
+    this.showProgressDialog = false;
+    this.isImporting = false;
+    this.importProgress = 0;
+    this.importStage = '';
+    this.importDetail = '';
   }
 
   /**
@@ -321,6 +460,10 @@ export struct BookSourceManagementPage {
       
       if (this.showImportDialog) {
         this.buildImportDialog()
+      }
+      
+      if (this.showProgressDialog) {
+        this.buildProgressDialog()
       }
     }
     .width('100%')
@@ -578,6 +721,62 @@ export struct BookSourceManagementPage {
       this.showImportDialog = false;
       this.importText = '';
     })
+  }
+
+  @Builder
+  buildProgressDialog() {
+    Column() {
+      Column({ space: 20 }) {
+        // 标题
+        Text('导入书源')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        // 阶段描述
+        Text(this.importStage)
+          .fontSize(16)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        
+        // 进度条
+        Progress({ value: this.importProgress, total: 100, type: ProgressType.Linear })
+          .width('100%')
+          .height(8)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        
+        // 进度百分比
+        Text(`${this.importProgress}%`)
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+        
+        // 详细信息
+        if (this.importDetail) {
+          Text(this.importDetail)
+            .fontSize(14)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.Center)
+        }
+        
+        // 提示信息
+        Text('正在处理大文件，请耐心等待...')
+          .fontSize(12)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .margin({ top: 8 })
+      }
+      .width('85%')
+      .padding(28)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(16)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0, 0, 0, 0.6)')
+    .justifyContent(FlexAlign.Center)
   }
 
   private showImportOptions(): void {

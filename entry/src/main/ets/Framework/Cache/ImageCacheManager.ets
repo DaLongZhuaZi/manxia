@@ -243,6 +243,13 @@ export class ImageCacheManager {
     options?: LoadOptions
   ): Promise<image.PixelMap | null> {
     try {
+      // [修复] 先检查是否为本地文件路径
+      // 本地文件绝不应该使用OnlineImageLoader
+      if (this.isLocalFilePath(url)) {
+        logger.debug(TAG, `直接从本地文件加载: ${url.substring(0, 80)}`);
+        return await this.loadLocalFile(url, cacheKey, options);
+      }
+      
       // 判断是否为在线漫画
       const isOnlineManga = this.isOnlineManga(options);
       
@@ -354,17 +361,87 @@ export class ImageCacheManager {
 
   /**
    * 判断是否为在线漫画
+   * [修复] 本地文件不应该使用OnlineImageLoader
    */
   private isOnlineManga(options?: LoadOptions): boolean {
-    // 根据contentType判断
+    // 明确标记为在线未下载的内容
     if (options?.contentType === 'OnlineUndownloaded') {
       return true;
     }
-    // 如果没有永久缓存参数，也认为是在线漫画
-    if (!this.shouldUsePermanentCache(options)) {
+    // 本地文件不是在线漫画
+    if (options?.contentType === 'LocalManga' || options?.contentType === 'Downloaded') {
+      return false;
+    }
+    return false;
+  }
+
+  /**
+   * [新增] 判断 URL 是否为本地文件路径
+   */
+  private isLocalFilePath(url: string): boolean {
+    if (!url) {
+      return false;
+    }
+    // file:// 协议
+    if (url.startsWith('file://')) {
+      return true;
+    }
+    // 绝对路径 (Unix 风格)
+    if (url.startsWith('/')) {
+      return true;
+    }
+    // 特定的本地存储路径
+    if (url.startsWith('storage/') || url.startsWith('data/')) {
       return true;
     }
     return false;
+  }
+
+  /**
+   * [新增] 加载本地文件
+   * 直接从本地文件系统加载图片，不经过网络
+   */
+  private async loadLocalFile(
+    url: string,
+    cacheKey: string,
+    options?: LoadOptions
+  ): Promise<image.PixelMap | null> {
+    try {
+      // 第一级：内存缓存
+      if (!options?.skipMemoryCache && !options?.forceRefresh) {
+        const memoryResult = this.getFromMemoryCache(cacheKey);
+        if (memoryResult) {
+          logger.debug(TAG, `✅ [本地] 内存缓存命中: ${url.substring(0, 60)}`);
+          return memoryResult;
+        }
+      }
+      
+      // 解析实际文件路径
+      let filePath = url;
+      if (filePath.startsWith('file://')) {
+        filePath = filePath.substring(7);
+      } else if (!filePath.startsWith('/')) {
+        filePath = '/' + filePath;
+      }
+      
+      // 直接从文件加载
+      const pixelMap = await this.loadImageFromFile(filePath);
+      
+      if (pixelMap) {
+        // 存入内存缓存
+        if (!options?.skipMemoryCache) {
+          await this.putToMemoryCache(cacheKey, pixelMap);
+        }
+        logger.debug(TAG, `✅ [本地] 文件加载成功: ${url.substring(0, 60)}`);
+      } else {
+        logger.warn(TAG, `❌ [本地] 文件加载失败: ${filePath}`);
+      }
+      
+      return pixelMap;
+    } catch (error) {
+      logger.error(TAG, `[本地] 加载本地文件失败: ${url}`, String(error));
+      return null;
+    }
   }
 
   /**
@@ -1220,6 +1297,12 @@ export class ImageCacheManager {
    */
   public async preloadImage(url: string, options?: LoadOptions): Promise<void> {
     try {
+      // [修复] 本地文件不需要预加载，直接跳过
+      if (this.isLocalFilePath(url)) {
+        logger.debug(TAG, `跳过本地文件预加载: ${url.substring(0, 80)}`);
+        return;
+      }
+      
       logger.debug(TAG, `开始预加载图片: ${url.substring(0, 80)}`);
       
       // 使用OnlineImageLoader下载图片到缓存

@@ -17,7 +17,8 @@
       "copymanga_net": "https://api.copymanga.net",
       "xsskc": "https://api.xsskc.com",
       "copymanga_site": "https://api.copymanga.site",
-      "copy20": "https://www.copy20.com"
+      "copy20": "https://www.copy20.com",
+      "manga2025": "https://api.manga2025.com"
     }
   },
 
@@ -78,6 +79,7 @@
       "default": "copy20",
       "options": [
         {"value": "copy20", "label": "Copy20 (推荐)"},
+        {"value": "manga2025", "label": "Manga2025 API"},
         {"value": "mangacopy", "label": "MangaCopy API"},
         {"value": "copymanga_tv", "label": "CopyManga.tv"},
         {"value": "copymanga_org", "label": "CopyManga.org"},
@@ -147,7 +149,7 @@
         {
           "type": "http",
           "method": "GET",
-          "url": "https://www.copy20.com",
+          "url": "{{domain}}",
           "description": "访问首页建立基础Cookie"
         }
       ]
@@ -159,7 +161,7 @@
         {
           "type": "api",
           "method": "GET",
-          "url": "https://www.copy20.com/api/v3/recs",
+          "url": "{{domain}}/api/v3/recs",
           "params": {
             "pos": "3200102",
             "limit": "30",
@@ -176,7 +178,7 @@
               "description": "comic.brief",
               "status": "comic.status.display",
               "genres": "comic.theme[*].name",
-              "url": "https://www.copy20.com/comic/{{comic.path_word}}"
+              "url": "{{domain}}/comic/{{comic.path_word}}"
             }
           }
         }
@@ -189,7 +191,7 @@
         {
           "type": "api",
           "method": "GET",
-          "url": "https://www.copy20.com/api/v3/update/newest",
+          "url": "{{domain}}/api/v3/update/newest",
           "params": {
             "limit": "30",
             "offset": "0"
@@ -215,7 +217,7 @@
         {
           "type": "api",
           "method": "GET",
-          "url": "https://www.copy20.com/api/v3/search/comic",
+          "url": "{{domain}}/api/v3/search/comic",
           "params": {
             "q": "{{query}}",
             "limit": "30",
@@ -242,7 +244,7 @@
         {
           "type": "api",
           "method": "GET",
-          "url": "https://www.copy20.com/api/v3/comic2/{{mangaId}}",
+          "url": "{{domain}}/api/v3/comic2/{{mangaId}}",
           "extract": {
             "type": "json",
             "path": "results.comic",
@@ -268,7 +270,7 @@
         {
           "type": "api",
           "method": "GET",
-          "url": "https://www.copy20.com/api/v3/comic/{{mangaId}}/group/default/chapters",
+          "url": "{{domain}}/api/v3/comic/{{mangaId}}/group/default/chapters",
           "params": {
             "limit": "500",
             "offset": "0",
@@ -282,7 +284,7 @@
               "title": "name",
               "index": "index",
               "publishTime": "datetime_created",
-              "url": "https://www.copy20.com/comic/{{mangaId}}/chapter/{{uuid}}"
+              "url": "{{domain}}/comic/{{mangaId}}/chapter/{{uuid}}"
             }
           }
         }
@@ -295,7 +297,7 @@
         {
           "type": "api",
           "method": "GET",
-          "url": "https://www.copy20.com/api/v3/comic/{{mangaId}}/chapter2/{{chapterId}}",
+          "url": "{{domain}}/api/v3/comic/{{mangaId}}/chapter/{{chapterId}}",
           "extract": {
             "type": "json",
             "path": "results.chapter.contents",
@@ -327,7 +329,7 @@
       "enabled": false
     },
     "headers": {
-      "Referer": "https://www.copy20.com",
+      "Referer": "{{domain}}",
       "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*"
     }
   },

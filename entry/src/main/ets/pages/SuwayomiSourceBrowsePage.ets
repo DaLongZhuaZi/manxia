@@ -11,6 +11,7 @@ import { FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { SuwayomiSourceExecutor, getSuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Framework/Source/SuwayomiSourceExecutor';
 import { ComicInfo } from '../Framework/Source/SourceExecutor';
+import { SuwayomiImage } from '../components/SuwayomiImage';
 
 const TAG = 'SuwayomiSourceBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -395,13 +396,15 @@ export struct SuwayomiSourceBrowsePage {
     Column() {
       // 封面 - 限制最大高度防止平板横屏时过大
       Stack({ alignContent: Alignment.BottomStart }) {
-        Image(manga.coverUrl)
-          .width('100%')
-          .aspectRatio(0.7)
-          .constraintSize({ maxHeight: 200 }) // 限制最大高度
-          .objectFit(ImageFit.Cover)
-          .borderRadius(8)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        SuwayomiImage({
+          src: manga.coverUrl || '',
+          imageWidth: '100%',
+          imgAspectRatio: 0.7,
+          objectFit: ImageFit.Cover,
+          imgBorderRadius: 8,
+          placeholderColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme)
+        })
+          .constraintSize({ maxHeight: 200 })
 
         // 渐变遮罩
         Column()

@@ -23,6 +23,8 @@ import { getFontManager } from './Framework/Managers/FontManager';
 import { getDownloadSyncManager } from './Framework/Managers/DownloadSyncManager';
 import { getChangelogManager } from './Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
+import { widgetDataSync } from './Utils/WidgetDataSync';
+import { getUnifiedDetailPageEnforcer } from './Framework/Enforcement/UnifiedDetailPageEnforcer';
 
 export default class EntryAbility extends UIAbility {
 
@@ -35,8 +37,12 @@ export default class EntryAbility extends UIAbility {
       logger.info('EntryAbility', `📋 Want参数: ${JSON.stringify(Object.keys(want.parameters))}`);
     }
 
+    // 检查是否来自卡片的router事件
+    if (want.parameters && want.parameters['params']) {
+      this.handleWidgetRouter(want);
+    }
     // 检查是否通过系统分享接收文件
-    if (want.parameters && want.parameters['share_import_files']) {
+    else if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
     }
     // 检查是否通过 Deep Link 打开应用
@@ -192,10 +198,56 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('isInBackground', false);
       logger.info('EntryAbility', `✅ 后台模糊遮罩设置: enabled=${backgroundBlurEnabled}, bgType=${backgroundBlurBgType}, iconType=${backgroundBlurIconType}`);
       
+      // 初始化日志等级设置
+      const logOutputLevel = settingsManager.getNumber(SettingKeys.LOG_OUTPUT_LEVEL, 0); // 默认关闭
+      logger.initializeHilogLevelFromIndex(logOutputLevel);
+      
+      // 初始化并执行统一详情页强制覆盖
+      await this.enforceUnifiedDetailPage();
+      
       logger.info('EntryAbility', '✅ 设置管理器初始化完成，所有设置已同步到AppStorage');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 设置初始化失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 强制执行统一详情页设置覆盖
+   * 在APP启动时检测并强制所有详情页设置为统一详情页
+   */
+  private async enforceUnifiedDetailPage(): Promise<void> {
+    try {
+      logger.info('EntryAbility', '🛡️ 开始执行统一详情页强制覆盖...');
+      
+      const enforcer = getUnifiedDetailPageEnforcer();
+      await enforcer.initialize();
+      
+      // 执行强制覆盖
+      const result = await enforcer.enforce();
+      
+      if (result.success) {
+        if (result.enforced) {
+          logger.info('EntryAbility', `✅ ${result.message}`);
+          // 记录变更详情
+          result.changes.forEach(change => {
+            logger.debug('EntryAbility', `  - ${change.scene}: ${change.oldValue} → ${change.newValue}`);
+          });
+        } else {
+          logger.info('EntryAbility', `✅ ${result.message}`);
+        }
+      } else {
+        logger.warn('EntryAbility', `⚠️ 统一详情页强制覆盖失败: ${result.message}`);
+      }
+      
+      // 输出当前状态
+      const status = enforcer.getCurrentStatus();
+      logger.debug('EntryAbility', `📊 当前详情页设置状态: manga=${status.manga}, ebook=${status.ebook}, novel=${status.novel}`);
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 统一详情页强制执行器初始化失败: ${errorMessage}`);
+      // 不影响应用启动，继续执行
     }
   }
 
@@ -246,6 +298,21 @@ export default class EntryAbility extends UIAbility {
       logger.error('EntryAbility', `❌ WebDAV自动备份调度器初始化失败: ${errorMessage}`);
     }
   }
+  
+  /**
+   * 初始化桌面卡片数据同步
+   */
+  private async initializeWidgetDataSync(): Promise<void> {
+    try {
+      widgetDataSync.init(this.context);
+      // 同步真实数据到卡片
+      await widgetDataSync.syncAllData();
+      logger.info('EntryAbility', '✅ 桌面卡片数据同步初始化成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 桌面卡片数据同步初始化失败: ${errorMessage}`);
+    }
+  }
 
   /**
    * 初始化数据管理系统
@@ -286,6 +353,9 @@ export default class EntryAbility extends UIAbility {
         
         // 初始化WebDAV自动备份调度器
         await this.initializeAutoBackupScheduler();
+        
+        // 初始化桌面卡片数据同步
+        await this.initializeWidgetDataSync();
       } else {
         logger.error('EntryAbility', `❌ 数据管理系统初始化失败: ${result.errors.join(', ')}`);
         // 可以考虑是否要继续启动应用或进入安全模式
@@ -590,6 +660,35 @@ export default class EntryAbility extends UIAbility {
   }
 
   /**
+   * 处理卡片router事件
+   * 根据卡片传递的targetPage参数设置AppStorage标记
+   */
+  private handleWidgetRouter(want: Want): void {
+    try {
+      if (!want.parameters || !want.parameters['params']) {
+        return;
+      }
+      
+      // 解析params参数
+      const paramsStr = want.parameters['params'] as string;
+      const params = JSON.parse(paramsStr) as Record<string, string>;
+      const targetPage = params['targetPage'];
+      
+      logger.info('EntryAbility', `📱 收到卡片router事件: targetPage=${targetPage}`);
+      
+      if (targetPage === 'readingAnalytics') {
+        // 设置标记，跳转到阅读报告页面的日视图
+        AppStorage.setOrCreate('widgetTargetPage', 'readingAnalytics');
+        AppStorage.setOrCreate('widgetTargetView', 'daily'); // 日视图
+        logger.info('EntryAbility', '✅ 已设置卡片跳转目标: 阅读报告-日视图');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 处理卡片router事件失败: ${errorMessage}`);
+    }
+  }
+
+  /**
    * 处理系统分享导入
    */
   private handleShareImport(want: Want): void {
@@ -619,6 +718,12 @@ export default class EntryAbility extends UIAbility {
    */
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.info('EntryAbility', 'onNewWant: 接收到新的Want请求');
+    
+    // 检查是否来自卡片的router事件
+    if (want.parameters && want.parameters['params']) {
+      this.handleWidgetRouter(want);
+      return;
+    }
     
     // 检查是否通过系统分享接收文件
     if (want.parameters && want.parameters['share_import_files']) {

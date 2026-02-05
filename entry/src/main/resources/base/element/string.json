@@ -47,6 +47,14 @@
     {
       "name": "get_documents_reason",
       "value": "应用需要访问Documents目录"
+    },
+    {
+      "name": "widget_display_name",
+      "value": "阅读目标"
+    },
+    {
+      "name": "widget_desc",
+      "value": "显示漫画、电子书、小说的每日阅读目标进度"
     }
   ]
 }

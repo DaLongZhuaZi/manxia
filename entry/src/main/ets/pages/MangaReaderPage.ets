@@ -401,6 +401,10 @@ export struct MangaReaderPage {
   
   // 图片加载状态 - 用于控制titlebar显示
   @State isImageLoaded: boolean = false;
+
+  // 条漫模式相邻章节（用于无缝章节切换）
+  @State prevChapterForWebtoon: MangaChapter | undefined = undefined;
+  @State nextChapterForWebtoon: MangaChapter | undefined = undefined;
   
   // [修复] 阅读器初始化完成标志，用于阻止初始化期间的错误阅读进度保存
   // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，覆盖正确的阅读进度
@@ -1510,55 +1514,29 @@ export struct MangaReaderPage {
         manga = params.manga;
         logger.debug(TAG, `📖 使用直接传递的漫画对象，内容类型: ${params.contentType}`);
         
-        // [修复] 对于WebView图源的在线漫画，从数据库加载章节和页面信息
-        // [修复] 如果设置了skipDatabaseLookup，跳过数据库查找
+        // [懒加载优化] 对于WebView图源的在线漫画，只加载章节骨架信息，不加载页面数据
+        // 页面数据将在章节切换时按需加载
         if (isWebViewSource && manga.id && !params.skipDatabaseLookup) {
-          logger.info(TAG, `🌐 WebView图源在线漫画，从online_chapter表加载章节信息: ${manga.id}`);
+          logger.info(TAG, `🚀 [懒加载] WebView图源在线漫画，加载章节骨架信息: ${manga.id}`);
           try {
-            // [重构] 使用getOnlineComicChapters从online_chapter表加载
+            // Step 1: 加载所有章节基本信息（不加载pages）
             const chapters = await DataManager.getInstance().getOnlineComicChapters(manga.id);
-            logger.debug(TAG, `📚 online_chapter表返回章节数量: ${chapters ? chapters.length : 0}`);
+            logger.info(TAG, `📚 [懒加载] online_chapter表返回章节数量: ${chapters ? chapters.length : 0}`);
+            
             if (chapters && chapters.length > 0) {
-              const mangaChapters: MangaChapter[] = [];
+              // Step 2: 批量查询所有章节的页面数量（单条SQL）
+              const pageCountMap = await DataManager.getInstance().getOnlineChapterPageCounts(manga.id);
+              logger.info(TAG, `📊 [懒加载] 批量查询页数完成，有页面数据的章节数: ${pageCountMap.size}`);
               
+              // Step 3: 转换为MangaChapter骨架（pages为空数组，使用totalPages存储页数）
+              const mangaChapters: MangaChapter[] = [];
               for (const chapterInfo of chapters) {
-                logger.debug(TAG, `📄 加载在线章节页面信息: ${chapterInfo.title} (ID: ${chapterInfo.id}, externalId: ${chapterInfo.externalId})`);
-                const pageInfos = await DataManager.getInstance().getOnlineChapterPages(chapterInfo.id);
-                logger.debug(TAG, `📄 在线章节 ${chapterInfo.title} 有 ${pageInfos.length} 页`);
-                
-                // 转换页面信息为MangaPage格式
-                // [修复] 使用数组索引而不是pageNumber，确保index是0-indexed
-                const pages: MangaPage[] = pageInfos.map((pageInfo, arrayIndex) => {
-                  let sourceType: ImageSourceType;
-                  if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
-                    sourceType = ImageSourceType.NETWORK;
-                  } else if (pageInfo.imageUrl.startsWith('/')) {
-                    sourceType = ImageSourceType.LOCAL;
-                  } else {
-                    sourceType = ImageSourceType.RAWFILE;
-                  }
-                  
-                  const page: MangaPage = {
-                    id: pageInfo.id,
-                    index: arrayIndex, // [修复] 使用0-indexed数组索引
-                    sourceType: sourceType,
-                    imagePath: pageInfo.imageUrl,
-                    imageUrl: pageInfo.imageUrl,
-                    width: pageInfo.width,
-                    height: pageInfo.height,
-                    fileSize: pageInfo.fileSize,
-                    isLoaded: false
-                  };
-                  return page;
-                });
-                
-                logger.debug(TAG, `📄 转换后页面数量: ${pages.length}`);
-                
                 const chapter: MangaChapter = {
                   id: chapterInfo.id,
                   title: chapterInfo.title,
                   chapterNumber: chapterInfo.chapterNumber,
-                  pages: pages,
+                  pages: [], // [懒加载] 初始化时不加载页面数据
+                  totalPages: pageCountMap.get(chapterInfo.id) || chapterInfo.pageCount || 0, // 使用批量查询的页数
                   publishDate: chapterInfo.publishTime || Date.now(),
                   language: 'zh-CN',
                   scanlationGroup: '',
@@ -1566,24 +1544,22 @@ export struct MangaReaderPage {
                   downloadProgress: chapterInfo.isDownloaded ? 100 : 0,
                   downloadStatus: chapterInfo.isDownloaded ? DownloadStatus.COMPLETED : DownloadStatus.PENDING,
                   localPath: chapterInfo.downloadPath,
-                  externalId: chapterInfo.externalId // [重构] 从online_chapter表读取外部ID
+                  externalId: chapterInfo.externalId
                 };
-                
                 mangaChapters.push(chapter);
-                logger.debug(TAG, `✅ 在线章节 ${chapter.title} 转换完成 (externalId: ${chapter.externalId})`);
               }
               
               manga.chapters = mangaChapters;
-              logger.info(TAG, `✅ 从online_chapter表加载了 ${manga.chapters.length} 个章节`);
+              logger.info(TAG, `✅ [懒加载] 章节骨架加载完成，共 ${manga.chapters.length} 个章节（页面数据将按需加载）`);
             } else {
               logger.warn(TAG, '⚠️ online_chapter表中没有章节信息，将使用动态加载');
               manga.chapters = [];
             }
           } catch (error) {
-            logger.error(TAG, `❌ 从online_chapter表加载章节失败: ${String(error)}`);
+            logger.error(TAG, `❌ [懒加载] 加载章节骨架失败: ${String(error)}`);
             manga.chapters = [];
           }
-          logger.debug(TAG, `🔄 WebView图源章节加载完成，继续初始化MangaSourceEngine`);
+          logger.debug(TAG, `🔄 [懒加载] 章节骨架加载完成，继续初始化MangaSourceEngine`);
         } else if (isWebViewSource && manga.id && params.skipDatabaseLookup) {
           logger.info(TAG, `⚠️ skipDatabaseLookup=true，跳过数据库查找章节列表`);
           // [修复] 保留从MangaDetailPage传递的完整章节列表，不要覆盖
@@ -1784,10 +1760,22 @@ export struct MangaReaderPage {
             
             // 转换页面信息为MangaPage格式
             // [修复] 使用数组索引而不是pageNumber/index，确保index是0-indexed
+            // [修复] 对于已下载的章节，优先使用本地路径
+            const isThisChapterDownloaded = chapterInfo.isDownloaded || false;
             const pages: MangaPage[] = pageInfos.map((pageInfo: PageInfo | OnlinePageInfo, arrayIndex: number) => {
-              // 根据图片路径判断sourceType
+              // [修复] 获取localPath - OnlinePageInfo和PageInfo都有localPath字段
+              const localPath = hasSourceId
+                ? (pageInfo as OnlinePageInfo).localPath
+                : (pageInfo as PageInfo).localPath;
+              
+              // [修复] 已下载章节优先使用本地路径
               let sourceType: ImageSourceType;
-              if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
+              let imagePath: string = pageInfo.imageUrl;
+              
+              if (isThisChapterDownloaded && localPath && localPath.length > 0) {
+                sourceType = ImageSourceType.LOCAL;
+                imagePath = localPath;
+              } else if (pageInfo.imageUrl.startsWith('http://') || pageInfo.imageUrl.startsWith('https://')) {
                 sourceType = ImageSourceType.NETWORK;
               } else if (pageInfo.imageUrl.startsWith('/')) {
                 // 本地文件系统路径，使用LOCAL类型
@@ -1796,11 +1784,6 @@ export struct MangaReaderPage {
                 // 默认为rawfile资源
                 sourceType = ImageSourceType.RAWFILE;
               }
-              
-              // [重构] 根据是否为在线漫画选择字段映射
-              const localPath = hasSourceId 
-                ? undefined                                 // OnlinePageInfo没有localPath
-                : (pageInfo as PageInfo).localPath;
               
               const converter: PageInfoToMangaPageConverter = {
                 id: pageInfo.id,
@@ -1813,7 +1796,7 @@ export struct MangaReaderPage {
                 isLoaded: false,
                 index: arrayIndex, // [修复] 使用0-indexed数组索引
                 sourceType: sourceType,
-                imagePath: pageInfo.imageUrl,
+                imagePath: imagePath,
                 loadProgress: 0
               };
               return converter as MangaPage;
@@ -1958,8 +1941,14 @@ export struct MangaReaderPage {
       }
 
       // [重构] 在线已下载：从online_page表加载本地文件路径
-      if (params.contentType === MangaReaderContentType.OnlineDownloaded && this.readerState.currentChapter.pages.length === 0) {
-        logger.info(TAG, '📥 在线已下载章节：从online_page表加载页面');
+      // [修复] 扩展条件：当页面为空，或页面存在但第一页的sourceType仍为NETWORK时，重新加载
+      const needsLocalPathReload = params.contentType === MangaReaderContentType.OnlineDownloaded && (
+        this.readerState.currentChapter.pages.length === 0 ||
+        (this.readerState.currentChapter.pages.length > 0 && 
+         this.readerState.currentChapter.pages[0].sourceType === ImageSourceType.NETWORK)
+      );
+      if (needsLocalPathReload) {
+        logger.info(TAG, '📥 在线已下载章节：从online_page表重新加载页面以获取本地路径');
         
         // [修复] 使用getOnlineChapterPages查询online_page表
         const pageInfos = await DataManager.getInstance().getOnlineChapterPages(this.readerState.currentChapter.id);
@@ -1991,6 +1980,7 @@ export struct MangaReaderPage {
             sourceType: sourceType,
             imagePath: imagePath,
             imageUrl: pageInfo.imageUrl,
+            localPath: pageInfo.localPath, // [新增] 保留本地路径
             width: pageInfo.width,
             height: pageInfo.height,
             fileSize: pageInfo.fileSize,
@@ -1999,7 +1989,10 @@ export struct MangaReaderPage {
           return page;
         });
         this.readerState.currentChapter.pages = mangaPages;
-        logger.info(TAG, `✅ 从online_page表加载 ${mangaPages.length} 张页面`);
+        // [新增] 输出加载统计
+        const localCount = mangaPages.filter(p => p.sourceType === ImageSourceType.LOCAL).length;
+        const networkCount = mangaPages.filter(p => p.sourceType === ImageSourceType.NETWORK).length;
+        logger.info(TAG, `✅ 从online_page表加载 ${mangaPages.length} 张页面 (本地: ${localCount}, 网络: ${networkCount})`);
         if (this.mangaViewerComponent) {
           this.mangaViewerComponent.kickstartLoading();
         }
@@ -2669,6 +2662,9 @@ export struct MangaReaderPage {
       }
       
       logger.info(TAG, `✅ 图片预加载计划完成，预加载 ${endIndex - startIndex + 1} 页`);
+
+      // 更新条漫模式相邻章节信息（用于无缝章节切换）
+      this.updateAdjacentChaptersForWebtoon();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorDetails: PreloadErrorDetails = {
@@ -3646,6 +3642,223 @@ export struct MangaReaderPage {
   }
 
   /**
+   * 更新条漫模式下的相邻章节信息
+   * 用于MangaViewer的无缝章节切换功能
+   */
+  private updateAdjacentChaptersForWebtoon(): void {
+    const manga = this.readerState.currentManga;
+    const chapter = this.readerState.currentChapter;
+    
+    if (!manga || !chapter) {
+      this.prevChapterForWebtoon = undefined;
+      this.nextChapterForWebtoon = undefined;
+      return;
+    }
+
+    const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
+    if (currentIndex < 0) {
+      this.prevChapterForWebtoon = undefined;
+      this.nextChapterForWebtoon = undefined;
+      return;
+    }
+
+    // 获取前一章
+    if (currentIndex > 0) {
+      const prevChapter = manga.chapters[currentIndex - 1];
+      // 检查前一章是否有页面信息
+      if (prevChapter.pages && prevChapter.pages.length > 0) {
+        this.prevChapterForWebtoon = prevChapter;
+        logger.debug(TAG, `条漫前一章: ${prevChapter.title}, ${prevChapter.pages.length}页`);
+      } else {
+        this.prevChapterForWebtoon = undefined;
+      }
+    } else {
+      this.prevChapterForWebtoon = undefined;
+    }
+
+    // 获取下一章
+    if (currentIndex < manga.chapters.length - 1) {
+      const nextChapter = manga.chapters[currentIndex + 1];
+      // 检查下一章是否有页面信息
+      if (nextChapter.pages && nextChapter.pages.length > 0) {
+        this.nextChapterForWebtoon = nextChapter;
+        logger.debug(TAG, `条漫下一章: ${nextChapter.title}, ${nextChapter.pages.length}页`);
+      } else {
+        this.nextChapterForWebtoon = undefined;
+      }
+    } else {
+      this.nextChapterForWebtoon = undefined;
+    }
+  }
+
+  /**
+   * 检查当前章节是否是第一章
+   */
+  private isCurrentChapterFirst(): boolean {
+    const manga = this.readerState.currentManga;
+    const chapter = this.readerState.currentChapter;
+    
+    if (!manga || !chapter || !manga.chapters || manga.chapters.length === 0) {
+      return true; // 安全默认：没有数据时认为是第一章
+    }
+    
+    const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
+    return currentIndex <= 0;
+  }
+
+  /**
+   * 检查当前章节是否是最后一章
+   */
+  private isCurrentChapterLast(): boolean {
+    const manga = this.readerState.currentManga;
+    const chapter = this.readerState.currentChapter;
+    
+    if (!manga || !chapter || !manga.chapters || manga.chapters.length === 0) {
+      return true; // 安全默认：没有数据时认为是最后一章
+    }
+    
+    const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
+    return currentIndex < 0 || currentIndex >= manga.chapters.length - 1;
+  }
+
+  /**
+   * 处理条漫模式请求加载相邻章节
+   * 当用户滚动接近章节边界时触发
+   */
+  private async handleWebtoonAdjacentChapterRequest(direction: 'prev' | 'next'): Promise<void> {
+    const manga = this.readerState.currentManga;
+    const chapter = this.readerState.currentChapter;
+    
+    if (!manga || !chapter) {
+      logger.warn(TAG, '无法加载相邻章节: 漫画或章节数据为空');
+      return;
+    }
+
+    const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
+    if (currentIndex < 0) {
+      logger.warn(TAG, '无法找到当前章节索引');
+      return;
+    }
+
+    const targetIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= manga.chapters.length) {
+      logger.info(TAG, `已达到${direction === 'prev' ? '第一' : '最后'}一章`);
+      return;
+    }
+
+    const targetChapter = manga.chapters[targetIndex];
+    logger.info(TAG, `🔍 条漫相邻章节请求: direction=${direction}, targetChapter=${targetChapter.title}, hasPages=${!!targetChapter.pages && targetChapter.pages.length > 0}`);
+    
+    // 如果目标章节已有页面信息，直接更新状态
+    if (targetChapter.pages && targetChapter.pages.length > 0) {
+      // [修复] 先设置为undefined，再设置为目标章节，强制触发@State更新
+      if (direction === 'prev') {
+        this.prevChapterForWebtoon = undefined;
+        this.prevChapterForWebtoon = targetChapter;
+      } else {
+        this.nextChapterForWebtoon = undefined;
+        this.nextChapterForWebtoon = targetChapter;
+      }
+      logger.info(TAG, `✅ ${direction === 'prev' ? '前' : '后'}一章已加载: ${targetChapter.title}, ${targetChapter.pages.length}页`);
+      return;
+    }
+
+    // 否则异步加载章节页面信息
+    logger.info(TAG, `📥 开始加载${direction === 'prev' ? '前' : '后'}一章: ${targetChapter.title}`);
+    
+    try {
+      await this.preloadChapterPages(targetChapter, -1);
+      
+      // 加载完成后更新状态
+      if (targetChapter.pages && targetChapter.pages.length > 0) {
+        // [修复] 先设置为undefined，再设置为目标章节，强制触发@State更新
+        if (direction === 'prev') {
+          this.prevChapterForWebtoon = undefined;
+          this.prevChapterForWebtoon = targetChapter;
+        } else {
+          this.nextChapterForWebtoon = undefined;
+          this.nextChapterForWebtoon = targetChapter;
+        }
+        logger.info(TAG, `✅ ${direction === 'prev' ? '前' : '后'}一章加载完成: ${targetChapter.title}, ${targetChapter.pages.length}页`);
+      } else {
+        logger.warn(TAG, `⚠️ ${direction === 'prev' ? '前' : '后'}一章加载后仍无页面数据: ${targetChapter.title}`);
+      }
+    } catch (error) {
+      logger.error(TAG, `❌ 加载${direction === 'prev' ? '前' : '后'}一章失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * [新增] 处理条漫模式章节切换
+   * 当用户在条漫模式下滚动到其他章节时调用
+   * @param chapterId 新章节ID
+   * @param chapterTitle 新章节标题
+   * @param pageIndex 在新章节中的页码
+   */
+  private handleWebtoonChapterSwitch(chapterId: string, chapterTitle: string, pageIndex: number): void {
+    const manga = this.readerState.currentManga;
+    const currentChapter = this.readerState.currentChapter;
+    
+    if (!manga || !currentChapter) {
+      logger.warn(TAG, '条漫章节切换: 漫画或章节数据为空');
+      return;
+    }
+    
+    // 如果是同一章节，只更新页码
+    if (chapterId === currentChapter.id) {
+      if (pageIndex !== this.readerState.currentPageIndex) {
+        this.readerState = {
+          currentManga: this.readerState.currentManga,
+          currentChapter: this.readerState.currentChapter,
+          currentPageIndex: pageIndex,
+          isFullscreen: this.readerState.isFullscreen,
+          showControls: this.readerState.showControls,
+          isLoading: this.readerState.isLoading,
+          zoomScale: this.readerState.zoomScale,
+          errorMessage: this.readerState.errorMessage
+        };
+      }
+      return;
+    }
+    
+    // 查找新章节
+    const newChapter = manga.chapters.find(ch => ch.id === chapterId);
+    if (!newChapter) {
+      logger.warn(TAG, `条漫章节切换: 未找到章节 ${chapterId}`);
+      return;
+    }
+    
+    logger.info(TAG, `条漫章节切换: ${currentChapter.title} -> ${chapterTitle}, 页码=${pageIndex + 1}`);
+    
+    // 先保存旧章节的阅读进度
+    this.saveReadingProgressInternal('webtoonChapterSwitch').catch((error: Error) => {
+      logger.error(TAG, `保存旧章节阅读进度失败: ${error.message}`);
+    });
+    
+    // 更新当前章节和页码
+    this.readerState = {
+      currentManga: this.readerState.currentManga,
+      currentChapter: newChapter,
+      currentPageIndex: pageIndex,
+      isFullscreen: this.readerState.isFullscreen,
+      showControls: this.readerState.showControls,
+      isLoading: this.readerState.isLoading,
+      zoomScale: this.readerState.zoomScale,
+      errorMessage: this.readerState.errorMessage
+    };
+    
+    // 重置阅读会话计时
+    this.sessionStartTimestamp = Date.now();
+    this.lastProgressSaveTime = 0;
+    this.lastSavedPageIndex = -1;
+    
+    // 更新相邻章节信息
+    this.updateAdjacentChaptersForWebtoon();
+    
+    logger.info(TAG, `条漫章节切换完成: ${newChapter.title}, 页码=${pageIndex + 1}/${newChapter.pages.length}`);
+  }
+
+  /**
    * 加载图源的预加载设置
    * [修复] 从user_settings表读取设置（与SourceSettingsPage保存位置一致）
    */
@@ -3717,12 +3930,49 @@ export struct MangaReaderPage {
       logger.warn(TAG, 'MangaEngine未初始化，尝试从数据库加载页面信息');
       
       try {
-        // 尝试从online_chapter_pages表加载
         const dataManager = DataManager.getInstance();
+        
+        // [修复] 先尝试从page表加载（本地漫画），再尝试从online_page表加载
+        // 本地漫画的页面存储在page表中
+        const localPages = await dataManager.getChapterPages(chapter.id);
+        
+        if (localPages && localPages.length > 0) {
+          logger.info(TAG, `✅ 从page表加载本地页面信息成功: ${chapter.title}, 共${localPages.length}页`);
+          
+          // 转换为MangaPage格式
+          chapter.pages = localPages.map((localPage, index): MangaPage => {
+            // 确定图片路径：优先使用本地路径，其次使用imageUrl
+            const imagePath = localPage.localPath || localPage.imageUrl || '';
+            let sourceType: ImageSourceType;
+            if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+              sourceType = ImageSourceType.NETWORK;
+            } else if (imagePath.startsWith('/') || imagePath.includes('data/') || imagePath.includes('storage/')) {
+              sourceType = ImageSourceType.LOCAL;
+            } else {
+              sourceType = ImageSourceType.RAWFILE;
+            }
+            
+            return {
+              id: localPage.id,
+              index: index,
+              sourceType: sourceType,
+              imagePath: imagePath,
+              imageUrl: localPage.imageUrl || imagePath,
+              width: localPage.width,
+              height: localPage.height,
+              fileSize: localPage.fileSize,
+              isLoaded: false
+            };
+          });
+          
+          return;
+        }
+        
+        // 本地page表没有数据，尝试从online_page表加载
         const dbPages = await dataManager.getOnlineChapterPages(chapter.id);
         
         if (dbPages && dbPages.length > 0) {
-          logger.info(TAG, `✅ 从数据库加载页面信息成功: ${chapter.title}, 共${dbPages.length}页`);
+          logger.info(TAG, `✅ 从online_page表加载页面信息成功: ${chapter.title}, 共${dbPages.length}页`);
           
           // 转换为MangaPage格式
           chapter.pages = dbPages.map((dbPage, index): MangaPage => {
@@ -3749,12 +3999,12 @@ export struct MangaReaderPage {
           });
           
           return;
-        } else {
-          // 数据库中也没有页面信息
-          const error = 'MangaEngine未初始化且数据库中无页面信息';
-          logger.error(TAG, error);
-          throw new Error(error);
         }
+        
+        // 两个表都没有页面信息
+        const error = `MangaEngine未初始化且数据库中无页面信息: ${chapter.title}`;
+        logger.error(TAG, error);
+        throw new Error(error);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(TAG, `从数据库加载页面信息失败: ${errorMsg}`);
@@ -5316,6 +5566,14 @@ export struct MangaReaderPage {
           preloadNextPages: this.sourcePreloadSettings.preloadNextPages,
           contentType: this.pageParams?.contentType, // [新增] 传递内容类型（用于区分在线/本地漫画）
           preloadDebugInfo: $preloadDebugInfo, // [新增] 传递预加载调试信息
+          // 条漫模式多章节支持
+          prevChapter: this.prevChapterForWebtoon,
+          nextChapter: this.nextChapterForWebtoon,
+          isFirstChapter: this.isCurrentChapterFirst(),
+          isLastChapter: this.isCurrentChapterLast(),
+          onRequestAdjacentChapter: (direction: 'prev' | 'next') => {
+            this.handleWebtoonAdjacentChapterRequest(direction);
+          },
           callbacks: {
             onPageChange: (pageIndex: number) => {
               logger.info(TAG, `页面变更回调: 切换到第 ${pageIndex + 1} 页`);
@@ -5376,6 +5634,10 @@ export struct MangaReaderPage {
             },
             onDoubleTap: (event: ClickEvent) => {
               this.handleDoubleTap(event);
+            },
+            // [新增] 条漫模式章节切换回调 - 当滚动到其他章节时更新状态
+            onWebtoonChapterSwitch: (chapterId: string, chapterTitle: string, pageIndex: number) => {
+              this.handleWebtoonChapterSwitch(chapterId, chapterTitle, pageIndex);
             },
             onComponentReady: (component: MangaViewer) => {
               // 获取MangaViewer组件实例引用

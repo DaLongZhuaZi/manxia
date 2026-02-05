@@ -576,9 +576,26 @@ export class DatabaseManager {
       const resultSet = await store.querySql(sql, args);
       const results: DatabaseRecord[] = [];
       
+      // [性能优化] 只获取一次列名和列类型，避免每行都调用异步的getColumnType
+      const columnNames = resultSet.columnNames;
+      const columnCount = columnNames.length;
+      
+      // 预获取所有列的类型（只需要读取第一行时获取一次）
+      let columnTypes: relationalStore.ColumnType[] = [];
+      let hasFirstRow = false;
+      
       while (resultSet.goToNextRow()) {
-        // 对于原生SQL查询，我们创建一个通用的记录对象
-        const record = await this.createGenericRecordFromResultSet(resultSet);
+        // 第一行时获取列类型
+        if (!hasFirstRow) {
+          columnTypes = [];
+          for (let i = 0; i < columnCount; i++) {
+            columnTypes.push(await resultSet.getColumnType(i));
+          }
+          hasFirstRow = true;
+        }
+        
+        // 使用缓存的列类型创建记录
+        const record = this.createGenericRecordFromResultSetFast(resultSet, columnNames, columnTypes);
         results.push(record);
       }
       
@@ -1090,6 +1107,150 @@ export class DatabaseManager {
         record.isPrivate = value;
       }
       // 其他字段可以根据需要继续添加
+    }
+    
+    return record;
+  }
+
+  /**
+   * [性能优化] 快速创建通用记录对象
+   * 使用预先获取的列类型数组，避免每行都调用异步的getColumnType
+   * 性能提升：从 O(rows × columns) 次异步调用 降低到 O(columns) 次
+   */
+  private createGenericRecordFromResultSetFast(
+    resultSet: relationalStore.ResultSet,
+    columnNames: string[],
+    columnTypes: relationalStore.ColumnType[]
+  ): DatabaseRecord {
+    const record: GenericQueryRecord = {};
+    
+    for (let i = 0; i < columnNames.length; i++) {
+      const columnName = columnNames[i];
+      const columnType = columnTypes[i];
+      let value: DatabaseValue = null;
+      
+      switch (columnType) {
+        case relationalStore.ColumnType.INTEGER:
+          value = resultSet.getLong(i);
+          break;
+        case relationalStore.ColumnType.REAL:
+          value = resultSet.getDouble(i);
+          break;
+        case relationalStore.ColumnType.TEXT:
+          value = resultSet.getString(i);
+          break;
+        case relationalStore.ColumnType.BLOB:
+          value = resultSet.getBlob(i);
+          break;
+        default:
+          value = null;
+          break;
+      }
+      
+      // 直接设置属性，绕过setRecordProperty的类型转换问题
+      if (columnName === 'id') {
+        record.id = value;
+      } else if (columnName === 'comicId') {
+        record.comicId = value;
+      } else if (columnName === 'externalId') {
+        record.externalId = value;
+      } else if (columnName === 'chapterId') {
+        record.chapterId = value;
+      } else if (columnName === 'userId') {
+        record.userId = value;
+      } else if (columnName === 'pageNumber') {
+        record.pageNumber = value;
+      } else if (columnName === 'readTime') {
+        record.readTime = value;
+      } else if (columnName === 'duration') {
+        record.duration = value;
+      } else if (columnName === 'createTime') {
+        record.createTime = value;
+      } else if (columnName === 'settingKey') {
+        record.settingKey = value;
+      } else if (columnName === 'settingValue') {
+        record.settingValue = value;
+      } else if (columnName === 'settingType') {
+        record.settingType = value;
+      } else if (columnName === 'updateTime') {
+        record.updateTime = value;
+      } else if (columnName === 'title') {
+        record.title = value;
+      } else if (columnName === 'author') {
+        record.author = value;
+      } else if (columnName === 'description') {
+        record.description = value;
+      } else if (columnName === 'coverUrl') {
+        record.coverUrl = value;
+      } else if (columnName === 'sourceId') {
+        record.sourceId = value;
+      } else if (columnName === 'status') {
+        record.status = value;
+      } else if (columnName === 'tags') {
+        record.tags = value;
+      } else if (columnName === 'rating') {
+        record.rating = value;
+      } else if (columnName === 'chapterCount') {
+        record.chapterCount = value;
+      } else if (columnName === 'lastUpdateTime') {
+        record.lastUpdateTime = value;
+      } else if (columnName === 'addTime') {
+        record.addTime = value;
+      } else if (columnName === 'chapterIndex') {
+        record.chapterIndex = value;
+      } else if (columnName === 'pageCount') {
+        record.pageCount = value;
+      } else if (columnName === 'isDownloaded') {
+        record.isDownloaded = value;
+      } else if (columnName === 'downloadPath') {
+        record.downloadPath = value;
+      } else if (columnName === 'publishTime') {
+        record.publishTime = value;
+      } else if (columnName === 'index') {
+        record.index = value;
+      } else if (columnName === 'imageUrl') {
+        record.imageUrl = value;
+      } else if (columnName === 'localPath') {
+        record.localPath = value;
+      } else if (columnName === 'width') {
+        record.width = value;
+      } else if (columnName === 'height') {
+        record.height = value;
+      } else if (columnName === 'fileSize') {
+        record.fileSize = value;
+      } else if (columnName === 'name') {
+        record.name = value;
+      } else if (columnName === 'baseUrl') {
+        record.baseUrl = value;
+      } else if (columnName === 'pluginId') {
+        record.pluginId = value;
+      } else if (columnName === 'isEnabled') {
+        record.isEnabled = value;
+      } else if (columnName === 'priority') {
+        record.priority = value;
+      } else if (columnName === 'config') {
+        record.config = value;
+      } else if (columnName === 'configJson') {
+        record.configJson = value;
+      } else if (columnName === 'chapterNumber') {
+        record.chapterNumber = value;
+      } else if (columnName === 'url') {
+        // [懒加载] 添加url字段支持
+        record.url = value;
+      } else if (columnName === 'sourcePkg') {
+        record.sourcePkg = value;
+      } else if (columnName === 'isNSFW') {
+        record.isNSFW = value;
+      } else if (columnName === 'isPrivate') {
+        record.isPrivate = value;
+      } else if (columnName === 'pkg') {
+        record.pkg = value;
+      } else if (columnName === 'version') {
+        record.version = value;
+      } else if (columnName === 'iconPath') {
+        record.iconPath = value;
+      }
+      // 其他不常用字段可以在需要时添加
     }
     
     return record;
