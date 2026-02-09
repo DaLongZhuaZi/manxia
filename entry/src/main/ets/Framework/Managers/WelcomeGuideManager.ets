@@ -19,11 +19,13 @@ const TAG = 'WelcomeGuideManager';
 export enum GuideStep {
   WELCOME = 0,           // 欢迎页
   THEME_SELECTION = 1,   // 主题选择
-  DATA_IMPORT = 2,       // 数据导入引导
-  LOG_EXPORT = 3,        // 日志导出引导
-  ANALYTICS_PERMISSION = 4, // 阅读报告权限询问
-  LIBRARY_INTRO = 5,     // 书库介绍
-  COMPLETED = 6          // 完成
+  DATA_IMPORT = 2,       // Download同步引导（原数据导入引导）
+  IMAGE_SOURCE_GUIDE = 3, // 图源引导
+  BOOK_SOURCE_GUIDE = 4,  // 书源引导
+  CUSTOM_EXPERIENCE = 5,  // 自定义体验引导
+  ANALYTICS_PERMISSION = 6, // 阅读报告权限询问（保留但跳过）
+  LIBRARY_INTRO = 7,     // 书库介绍
+  COMPLETED = 8          // 完成
 }
 
 /**

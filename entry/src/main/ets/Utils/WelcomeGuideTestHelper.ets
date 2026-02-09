@@ -113,10 +113,18 @@ export class WelcomeGuideTestHelper {
     switch (step) {
       case GuideStep.WELCOME:
         return 'WELCOME (欢迎页)';
+      case GuideStep.THEME_SELECTION:
+        return 'THEME_SELECTION (主题选择)';
       case GuideStep.DATA_IMPORT:
-        return 'DATA_IMPORT (数据导入)';
-      case GuideStep.LOG_EXPORT:
-        return 'LOG_EXPORT (日志导出)';
+        return 'DATA_IMPORT (Download同步)';
+      case GuideStep.IMAGE_SOURCE_GUIDE:
+        return 'IMAGE_SOURCE_GUIDE (图源引导)';
+      case GuideStep.BOOK_SOURCE_GUIDE:
+        return 'BOOK_SOURCE_GUIDE (书源引导)';
+      case GuideStep.CUSTOM_EXPERIENCE:
+        return 'CUSTOM_EXPERIENCE (自定义体验)';
+      case GuideStep.ANALYTICS_PERMISSION:
+        return 'ANALYTICS_PERMISSION (阅读报告)';
       case GuideStep.LIBRARY_INTRO:
         return 'LIBRARY_INTRO (书库介绍)';
       case GuideStep.COMPLETED:
@@ -132,8 +140,12 @@ export class WelcomeGuideTestHelper {
   public static printAllSteps(): void {
     const steps = [
       GuideStep.WELCOME,
+      GuideStep.THEME_SELECTION,
       GuideStep.DATA_IMPORT,
-      GuideStep.LOG_EXPORT,
+      GuideStep.IMAGE_SOURCE_GUIDE,
+      GuideStep.BOOK_SOURCE_GUIDE,
+      GuideStep.CUSTOM_EXPERIENCE,
+      GuideStep.ANALYTICS_PERMISSION,
       GuideStep.LIBRARY_INTRO,
       GuideStep.COMPLETED
     ];

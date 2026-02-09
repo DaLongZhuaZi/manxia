@@ -11,8 +11,11 @@ import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/Theme
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { WelcomeGuideManager, GuideStep } from '../Framework/Managers/WelcomeGuideManager';
 import { common } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
+import { promptAction } from '@kit.ArkUI';
 
 const TAG = 'WelcomeGuidePage';
+const SOURCE_REPO_URL = 'https://raw.githubusercontent.com/DaLongZhuaZi/manxia-extensions-source/master/index.main.json';
 
 /**
  * 引导步骤内容接口
@@ -64,7 +67,7 @@ struct WelcomeGuidePage {
     const welcomeContent: GuideStepContent = {
       title: '欢迎您使用漫匣',
       subtitle: '感谢您的支持',
-      description: '漫匣是一款专注于本地漫画、电子书管理和阅读的应用。接下来将引导您快速了解应用的核心功能。',
+      description: '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入与图源、书源。接下来将引导您快速了解应用的核心功能。',
       icon: $r('app.media.icon'),
       buttonText: '开始引导流程',
       showSkip: true
@@ -74,7 +77,7 @@ struct WelcomeGuidePage {
     const themeSelectionContent: GuideStepContent = {
       title: '主题选择',
       subtitle: '选择一个您喜欢的风格',
-      description: '您可以在下方选择默认的两套自定义主题之一进行应用，或点击按钮前往自定义主题页面进行更细致的个性化设置。',
+      description: '您可以在下方选择默认的两套自定义主题之一进行应用，或点击按钮前往自定义主题页面进行更细致的主题与APP视效个性化设置。',
       icon: $r('app.media.icon'),
       buttonText: '继续下一步',
       showSkip: true
@@ -82,25 +85,47 @@ struct WelcomeGuidePage {
     steps.set(GuideStep.THEME_SELECTION, themeSelectionContent);
 
     const dataImportContent: GuideStepContent = {
-      title: '导入本地漫画/电子书',
-      subtitle: '管理您的漫画收藏',
-      description: '您可以导入本地的漫画文件（支持CBZ等格式压缩包，以及TXT、EPUB、MOBI、AZW3、PDF等格式的电子书与漫画），应用会自动解析漫画/电子书信息并组织管理。点击下方按钮前往数据管理页面。',
+      title: '从Download同步',
+      subtitle: '导入您的漫画与电子书',
+      description: '您可以将漫画文件（支持CBZ等格式压缩包）和电子书（TXT、EPUB、MOBI、AZW3、PDF等）放置到Download文件夹下的“漫匣”文件夹当中，然后通过Download同步功能导入到书库。点击下方按钮前往Download同步页面。',
       icon: $r('app.media.ic_guide_import'),
-      buttonText: '前往导入',
+      buttonText: '前往Download同步',
       showSkip: true
     };
     steps.set(GuideStep.DATA_IMPORT, dataImportContent);
 
-    // 日志管理步骤已移除，保留空定义以避免类型错误
-    const logExportContent: GuideStepContent = {
-      title: '',
-      subtitle: '',
-      description: '',
-      icon: $r('app.media.ic_guide_log'),
-      buttonText: '',
+    // 图源引导步骤
+    const imageSourceGuideContent: GuideStepContent = {
+      title: '图源说明',
+      subtitle: '了解图源支持情况',
+      description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库（需要科学网络）。',
+      icon: $r('app.media.ic_guide_library'),
+      buttonText: '下一步',
       showSkip: true
     };
-    steps.set(GuideStep.LOG_EXPORT, logExportContent);
+    steps.set(GuideStep.IMAGE_SOURCE_GUIDE, imageSourceGuideContent);
+
+    // 书源引导步骤
+    const bookSourceGuideContent: GuideStepContent = {
+      title: '书源说明',
+      subtitle: '了解书源支持情况',
+      description: '漫匣支持开源阅读（Legado）的大部分书源（聚合书源除外），您可以导入已有的Legado书源来获取在线小说内容。点击下方按钮前往小说书源管理页面。',
+      icon: $r('app.media.ic_guide_library'),
+      buttonText: '前往书源管理',
+      showSkip: true
+    };
+    steps.set(GuideStep.BOOK_SOURCE_GUIDE, bookSourceGuideContent);
+
+    // 自定义体验引导步骤
+    const customExperienceContent: GuideStepContent = {
+      title: '自定义体验',
+      subtitle: '打造专属于您的阅读体验',
+      description: '漫匣支持丰富的自定义设置，包括自定义字体、自定义页面布局、自定义底栏标签、主题颜色等。您可以在设置页面中根据个人喜好进行调整。点击下方按钮前往全局设置页面。',
+      icon: $r('app.media.ic_guide_library'),
+      buttonText: '前往全局设置',
+      showSkip: true
+    };
+    steps.set(GuideStep.CUSTOM_EXPERIENCE, customExperienceContent);
 
     const analyticsPermissionContent: GuideStepContent = {
       title: '阅读报告',
@@ -115,7 +140,7 @@ struct WelcomeGuidePage {
     const libraryIntroContent: GuideStepContent = {
       title: '开始阅读',
       subtitle: '探索您的书库',
-      description: '现在，您可以在书库页面查看已导入的漫画与电子书，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
+      description: '现在，您可以在书库页面查看已导入的漫画与电子书，或者从图源/书源当中获取，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '进入书库',
       showSkip: false
@@ -289,7 +314,7 @@ struct WelcomeGuidePage {
 
     switch (this.currentStep) {
       case GuideStep.WELCOME:
-        // 欢迎页，进入数据导入引导
+        // 欢迎页，进入主题选择
         logger.debug(TAG, '执行 WELCOME 步骤处理');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.THEME_SELECTION;
@@ -299,7 +324,7 @@ struct WelcomeGuidePage {
         break;
 
       case GuideStep.THEME_SELECTION:
-        // 主题选择页，点击主按钮进入数据导入
+        // 主题选择页，点击主按钮进入Download同步引导
         logger.debug(TAG, '执行 THEME_SELECTION 步骤处理');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.DATA_IMPORT;
@@ -309,15 +334,36 @@ struct WelcomeGuidePage {
         break;
 
       case GuideStep.DATA_IMPORT:
-        // 导航到数据管理页面
-        logger.debug(TAG, '执行 DATA_IMPORT 步骤处理，准备导航到数据管理页面');
-        this.navigateToDataManagement();
+        // 导航到Download同步页面
+        logger.debug(TAG, '执行 DATA_IMPORT 步骤处理，准备导航到Download同步页面');
+        this.navigateToDownloadSync();
         break;
 
-      case GuideStep.LOG_EXPORT:
+      case GuideStep.IMAGE_SOURCE_GUIDE:
+        // 直接进入下一步（书源引导）
+        logger.debug(TAG, '执行 IMAGE_SOURCE_GUIDE 步骤处理，进入书源引导');
+        this.animateStepChange(() => {
+          this.currentStep = GuideStep.BOOK_SOURCE_GUIDE;
+          this.welcomeGuideManager.setCurrentStep(GuideStep.BOOK_SOURCE_GUIDE);
+          logger.info(TAG, `步骤已更新到: ${this.currentStep}`);
+        });
+        break;
+
+      case GuideStep.BOOK_SOURCE_GUIDE:
+        // 导航到小说书源管理页面
+        logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，准备导航到小说书源管理页面');
+        this.navigateToNovelSourceManagement();
+        break;
+
+      case GuideStep.CUSTOM_EXPERIENCE:
+        // 导航到全局设置页面
+        logger.debug(TAG, '执行 CUSTOM_EXPERIENCE 步骤处理，准备导航到全局设置页面');
+        this.navigateToGlobalSettings();
+        break;
+
       case GuideStep.ANALYTICS_PERMISSION:
-        // 这些步骤已移除，直接跳到 LIBRARY_INTRO
-        logger.debug(TAG, '跳过已移除的步骤，直接进入 LIBRARY_INTRO');
+        // 阅读报告步骤（保留但跳过），直接进入 LIBRARY_INTRO
+        logger.debug(TAG, '跳过阅读报告步骤，直接进入 LIBRARY_INTRO');
         this.animateStepChange(() => {
           this.currentStep = GuideStep.LIBRARY_INTRO;
           this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
@@ -355,11 +401,92 @@ struct WelcomeGuidePage {
   }
 
   /**
-   * 导航到数据管理页面
+   * 导航到Download同步页面
    */
-  private navigateToDataManagement(): void {
+  private navigateToDownloadSync(): void {
     try {
-      // 更新步骤到 LIBRARY_INTRO（跳过已移除的步骤）
+      // 更新步骤到图源引导
+      this.welcomeGuideManager.setCurrentStep(GuideStep.IMAGE_SOURCE_GUIDE);
+
+      const router = this.uiContext?.getRouter();
+      if (router) {
+        router.pushUrl({
+          url: 'pages/MainMenuPage',
+          params: {
+            targetPage: 'DownloadSyncPage',
+            fromGuide: true
+          }
+        }).then(() => {
+          logger.info(TAG, '导航到Download同步页面成功');
+        }).catch((error: Error) => {
+          logger.error(TAG, '导航到Download同步页面失败', error.message);
+        });
+      }
+    } catch (error) {
+      logger.error(TAG, '导航到Download同步页面异常', String(error));
+    }
+  }
+
+  /**
+   * 导航到图源页面（MainMenuPage的图源Tab）
+   */
+  private navigateToSourceTab(): void {
+    try {
+      // 更新步骤到书源引导
+      this.welcomeGuideManager.setCurrentStep(GuideStep.BOOK_SOURCE_GUIDE);
+
+      const router = this.uiContext?.getRouter();
+      if (router) {
+        router.pushUrl({
+          url: 'pages/MainMenuPage',
+          params: {
+            targetTab: 3,  // TabIndex.SOURCE = 3
+            fromGuide: true
+          }
+        }).then(() => {
+          logger.info(TAG, '导航到图源页面成功');
+        }).catch((error: Error) => {
+          logger.error(TAG, '导航到图源页面失败', error.message);
+        });
+      }
+    } catch (error) {
+      logger.error(TAG, '导航到图源页面异常', String(error));
+    }
+  }
+
+  /**
+   * 导航到小说书源管理页面
+   */
+  private navigateToNovelSourceManagement(): void {
+    try {
+      // 更新步骤到自定义体验引导
+      this.welcomeGuideManager.setCurrentStep(GuideStep.CUSTOM_EXPERIENCE);
+
+      const router = this.uiContext?.getRouter();
+      if (router) {
+        router.pushUrl({
+          url: 'pages/MainMenuPage',
+          params: {
+            targetPage: 'NovelSourceManagementPage',
+            fromGuide: true
+          }
+        }).then(() => {
+          logger.info(TAG, '导航到小说书源管理页面成功');
+        }).catch((error: Error) => {
+          logger.error(TAG, '导航到小说书源管理页面失败', error.message);
+        });
+      }
+    } catch (error) {
+      logger.error(TAG, '导航到小说书源管理页面异常', String(error));
+    }
+  }
+
+  /**
+   * 导航到全局设置页面
+   */
+  private navigateToGlobalSettings(): void {
+    try {
+      // 更新步骤到书库介绍
       this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
 
       const router = this.uiContext?.getRouter();
@@ -367,17 +494,17 @@ struct WelcomeGuidePage {
         router.pushUrl({
           url: 'pages/MainMenuPage',
           params: {
-            targetPage: 'DataManagementPage',
+            targetPage: 'GlobalSettingsPage',
             fromGuide: true
           }
         }).then(() => {
-          logger.info(TAG, '导航到数据管理页面成功');
+          logger.info(TAG, '导航到全局设置页面成功');
         }).catch((error: Error) => {
-          logger.error(TAG, '导航到数据管理页面失败', error.message);
+          logger.error(TAG, '导航到全局设置页面失败', error.message);
         });
       }
     } catch (error) {
-      logger.error(TAG, '导航到数据管理页面异常', String(error));
+      logger.error(TAG, '导航到全局设置页面异常', String(error));
     }
   }
 
@@ -480,6 +607,31 @@ struct WelcomeGuidePage {
     } catch (error) {
       const msg: string = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '应用次级自定义主题失败', msg);
+    }
+  }
+
+  /**
+   * 复制图源仓库URL到剪贴板
+   */
+  private copySourceUrl(): void {
+    try {
+      const pasteboardData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, SOURCE_REPO_URL);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      systemPasteboard.setData(pasteboardData).then(() => {
+        logger.info(TAG, '图源仓库URL已复制到剪贴板');
+        promptAction.showToast({
+          message: '已复制到剪贴板',
+          duration: 2000
+        });
+      }).catch((error: Error) => {
+        logger.error(TAG, '复制到剪贴板失败', error.message);
+        promptAction.showToast({
+          message: '复制失败',
+          duration: 2000
+        });
+      });
+    } catch (error) {
+      logger.error(TAG, '复制图源URL异常', String(error));
     }
   }
 
@@ -646,7 +798,45 @@ struct WelcomeGuidePage {
               .textAlign(TextAlign.Center)
               .lineHeight(24)
               .padding({ left: 32, right: 32 })
-              .margin({ bottom: 48 })
+              .margin({ bottom: this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE ? 16 : 48 })
+
+            // 图源说明页面的可复制URL文本框
+            if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE) {
+              Column() {
+                Text('图源仓库地址')
+                  .fontSize(12)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .margin({ bottom: 8 })
+
+                Row() {
+                  Text(SOURCE_REPO_URL)
+                    .fontSize(12)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                    .padding({ left: 12, right: 8, top: 10, bottom: 10 })
+
+                  Button('复制')
+                    .fontSize(12)
+                    .height(32)
+                    .padding({ left: 12, right: 12 })
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+                    .borderRadius(16)
+                    .margin({ right: 8 })
+                    .onClick(() => {
+                      this.copySourceUrl();
+                    })
+                }
+                .width('100%')
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                .borderRadius(8)
+              }
+              .width('100%')
+              .padding({ left: 32, right: 32 })
+              .margin({ bottom: 32 })
+            }
           }
         }
         .justifyContent(FlexAlign.Center)
