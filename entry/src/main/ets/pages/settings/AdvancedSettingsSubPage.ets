@@ -58,6 +58,8 @@ export struct AdvancedSettingsSubPage {
   
   // 内容过滤设置
   @State sfwModeEnabled: boolean = false;
+  @State nsfwScopeImageSourceEnabled: boolean = true;
+  @State nsfwScopeBookSourceEnabled: boolean = true;
   private contentFilterManager: ContentFilterManager = ContentFilterManager.getInstance();
   
   // 隐私保护设置
@@ -184,6 +186,10 @@ export struct AdvancedSettingsSubPage {
       
       // 加载SFW模式设置
       this.sfwModeEnabled = this.contentFilterManager.isSFWModeEnabled();
+      
+      // 加载NSFW作用域设置
+      this.nsfwScopeImageSourceEnabled = this.contentFilterManager.isNsfwScopeImageSourceEnabled();
+      this.nsfwScopeBookSourceEnabled = this.contentFilterManager.isNsfwScopeBookSourceEnabled();
       
       // 加载后台模糊设置
       this.backgroundBlurEnabled = this.settingsManager.getBoolean(
@@ -403,6 +409,59 @@ export struct AdvancedSettingsSubPage {
         }
         .width('100%')
         .justifyContent(FlexAlign.SpaceBetween)
+
+        // NSFW作用域子开关（仅在SFW模式关闭时显示）
+        if (!this.sfwModeEnabled) {
+          Row() {
+            Column({ space: 4 }) {
+              Text('图源NSFW作用域')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text('入库时从图源继承NSFW标记')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .alignItems(HorizontalAlign.Start)
+
+            Blank()
+            Toggle({ type: ToggleType.Switch, isOn: this.nsfwScopeImageSourceEnabled })
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .onChange(async (isOn: boolean) => {
+                this.nsfwScopeImageSourceEnabled = isOn;
+                await this.contentFilterManager.setNsfwScopeImageSource(isOn);
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+          .padding({ left: 16 })
+
+          Row() {
+            Column({ space: 4 }) {
+              Text('书源NSFW作用域')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              Text('入库时从书源继承NSFW标记')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            }
+            .alignItems(HorizontalAlign.Start)
+
+            Blank()
+            Toggle({ type: ToggleType.Switch, isOn: this.nsfwScopeBookSourceEnabled })
+              .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+              .onChange(async (isOn: boolean) => {
+                this.nsfwScopeBookSourceEnabled = isOn;
+                await this.contentFilterManager.setNsfwScopeBookSource(isOn);
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+          .padding({ left: 16 })
+        }
 
         Row() {
           Column({ space: 4 }) {

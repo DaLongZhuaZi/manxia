@@ -126,10 +126,8 @@ export class ErrorMonitorService {
       return;
     }
 
-    // 排除网络相关错误
-    if (this.isNetworkError(entry)) {
-      return;
-    }
+    // 判断是否为网络相关错误（不再跳过，而是标记后统一处理）
+    const isNetwork = this.isNetworkError(entry);
 
     // 防抖：同类错误3秒内只处理一次
     const now = Date.now();
@@ -140,8 +138,8 @@ export class ErrorMonitorService {
     this.lastErrorTime = now;
     this.lastErrorMessage = entry.message;
 
-    // 这是一个程序性错误，需要处理
-    this.handleProgramError(entry);
+    // 处理错误（网络错误和程序性错误均记录）
+    this.handleProgramError(entry, isNetwork);
   }
 
   /**
@@ -162,13 +160,32 @@ export class ErrorMonitorService {
   /**
    * 处理程序性错误
    */
-  private handleProgramError(entry: LogEntry): void {
+  private handleProgramError(entry: LogEntry, isNetworkError: boolean): void {
+    // 1. 立即向 ErrorRecordManager 注册记录（确保错误一定被记录）
+    let recordId = '';
     try {
-      // 1. 通过 AppStorage 通知页面弹窗
+      const levelName = this.getLevelName(entry.level);
+      if (isNetworkError) {
+        recordId = ErrorRecordManager.getInstance().addNetworkError(entry.tag, entry.message, levelName, '');
+      } else {
+        recordId = ErrorRecordManager.getInstance().addRuntimeError(entry.tag, entry.message, levelName, '');
+      }
+    } catch (regError) {
+      const msg = regError instanceof Error ? regError.message : String(regError);
+      console.error(`[NGF] ${TAG}: 注册错误记录失败: ${msg}`);
+    }
+
+    // 网络错误仅记录，不弹窗、不导出日志文件
+    if (isNetworkError) {
+      return;
+    }
+
+    try {
+      // 2. 通过 AppStorage 通知页面弹窗
       this.notifyErrorDialog(entry);
 
-      // 2. 异步导出错误附近的500行日志
-      this.exportErrorContext(entry);
+      // 3. 异步导出错误附近的500行日志
+      this.exportErrorContext(entry, recordId);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[NGF] ${TAG}: 处理错误时发生异常: ${msg}`);
@@ -204,7 +221,7 @@ export class ErrorMonitorService {
    * 导出错误附近的500行日志
    * 以错误所在位置为中心，前250行 + 后250行（取可用范围）
    */
-  private exportErrorContext(entry: LogEntry): void {
+  private exportErrorContext(entry: LogEntry, recordId: string = ''): void {
     try {
       const allLogs = this.logCollector.getAllLogs();
       if (allLogs.length === 0) {
@@ -246,7 +263,7 @@ export class ErrorMonitorService {
       const content = this.buildErrorReport(entry, contextLogs, errorIndex - startIndex);
 
       // 导出文件
-      this.writeErrorLogFile(entry, content);
+      this.writeErrorLogFile(entry, content, recordId);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[NGF] ${TAG}: 导出错误上下文失败: ${msg}`);
@@ -317,7 +334,7 @@ export class ErrorMonitorService {
    * 写入错误日志文件
    * 默认先写入沙箱 error_logs/，再尝试复制到 Download
    */
-  private writeErrorLogFile(entry: LogEntry, content: string): void {
+  private writeErrorLogFile(entry: LogEntry, content: string, recordId: string = ''): void {
     try {
       this.errorCounter++;
       const dateStr = this.formatDateTime(entry.timestamp);
@@ -335,12 +352,13 @@ export class ErrorMonitorService {
       // 2. 尝试复制到 Download 目录
       this.tryCopyToDownload(sandboxPath, fileName);
 
-      // 3. 向 ErrorRecordManager 注册结构化记录
-      try {
-        const levelName = this.getLevelName(entry.level);
-        ErrorRecordManager.getInstance().addRuntimeError(entry.tag, entry.message, levelName, fileName);
-      } catch {
-        // 注册失败不影响主流程
+      // 3. 更新 ErrorRecordManager 中的日志文件名
+      if (recordId) {
+        try {
+          ErrorRecordManager.getInstance().updateRecordLogFileName(recordId, fileName);
+        } catch {
+          // 更新失败不影响主流程
+        }
       }
 
       // 4. 清理旧的错误日志（沙箱中保留最近20份）

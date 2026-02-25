@@ -104,6 +104,7 @@ export struct PageSettingsSubPage {
   @State ebookDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State novelDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State recommendationEnabled: boolean = true;
+  @State shelfContentEnabled: boolean = true;
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -206,8 +207,9 @@ export struct PageSettingsSubPage {
     this.ebookDetailPageType = ebookType as DetailPageType;
     this.novelDetailPageType = novelType as DetailPageType;
     this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
+    this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
 
-    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}`);
+    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
   }
 
   /**
@@ -218,8 +220,9 @@ export struct PageSettingsSubPage {
     this.settingsManager.setString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, this.ebookDetailPageType);
     this.settingsManager.setString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, this.novelDetailPageType);
     this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
+    this.settingsManager.setBoolean(SettingKeys.SHELF_CONTENT_ENABLED, this.shelfContentEnabled);
 
-    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}`);
+    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
 
     promptAction.showToast({
       message: '设置已保存',
@@ -792,6 +795,41 @@ export struct PageSettingsSubPage {
               .borderRadius(12)
               .onClick(() => {
                 this.recommendationEnabled = !this.recommendationEnabled;
+                this.saveSettings();
+              })
+
+              // 同书架内容开关
+              Row() {
+                Column({ space: 4 }) {
+                  Text('同书架内容')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('在统一详情页内展示当前内容所在书架的其他内容')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.shelfContentEnabled })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.shelfContentEnabled = isOn;
+                    this.saveSettings();
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(12)
+              .onClick(() => {
+                this.shelfContentEnabled = !this.shelfContentEnabled;
                 this.saveSettings();
               })
             }

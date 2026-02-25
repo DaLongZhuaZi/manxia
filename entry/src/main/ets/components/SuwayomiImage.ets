@@ -14,7 +14,7 @@ const TAG = 'SuwayomiImage';
 
 @Component
 export struct SuwayomiImage {
-  @Prop src: string = '';
+  @Prop @Watch('onSrcChange') src: string = '';
   @Prop imageWidth: Length = '100%';
   @Prop imageHeight: Length = '100%';
   @Prop imgAspectRatio: number = 0; // 0 表示不使用宽高比
@@ -39,6 +39,20 @@ export struct SuwayomiImage {
   aboutToDisappear() {
     this.loadingAborted = true;
     this.releasePixelMap();
+    // 重置 currentSrc，确保组件被回收后重新出现时能重新加载图片
+    this.currentSrc = '';
+    this.useDirectImage = false;
+    this.loadError = false;
+  }
+
+  /**
+   * 当 src 属性变化时重新加载图片
+   * 例如：封面缓存完成后，src 从 HTTP URL 变为 file:// 路径
+   */
+  onSrcChange(): void {
+    if (this.src && this.src !== this.currentSrc) {
+      this.loadImage();
+    }
   }
 
   private releasePixelMap(): void {
@@ -53,7 +67,11 @@ export struct SuwayomiImage {
   }
 
   private async loadImage(): Promise<void> {
-    if (!this.src || this.src === this.currentSrc || this.isLoading) {
+    if (!this.src || this.isLoading) {
+      return;
+    }
+    // 如果 src 未变但 pixelMap 已被释放（组件回收后重新出现），允许重新加载
+    if (this.src === this.currentSrc && this.pixelMap !== null) {
       return;
     }
 
@@ -65,14 +83,14 @@ export struct SuwayomiImage {
     this.loadingAborted = false;
 
     try {
-      // 非 HTTP URL 直接使用 Image 组件
+      // 非 HTTP URL 直接使用 Image 组件（file:// 等本地路径无需认证头）
       if (!this.src.startsWith('http://') && !this.src.startsWith('https://')) {
         this.useDirectImage = true;
         this.isLoading = false;
         return;
       }
 
-      // 下载图片数据
+      // HTTP URL 下载图片数据（带认证头）
       const buffer = await this.downloadImage(this.src);
       
       if (this.loadingAborted) {
@@ -80,8 +98,9 @@ export struct SuwayomiImage {
       }
 
       if (!buffer) {
-        // 下载失败，尝试直接使用 Image 组件
-        this.useDirectImage = true;
+        // 下载失败，标记为错误（不回退到 Image(url) —— 它无法发送认证头）
+        logger.warn(TAG, `下载图片失败: ${this.src.substring(0, 80)}`);
+        this.loadError = true;
         this.isLoading = false;
         return;
       }
@@ -107,8 +126,8 @@ export struct SuwayomiImage {
           pixelMap = await imageSource.createPixelMap();
           imageSource.release();
         } catch (decodeError) {
-          logger.warn(TAG, `系统解码失败，回退到直接加载: ${decodeError}`);
-          this.useDirectImage = true;
+          logger.warn(TAG, `系统解码失败: ${decodeError}`);
+          this.loadError = true;
           this.isLoading = false;
           return;
         }
@@ -124,13 +143,11 @@ export struct SuwayomiImage {
       if (pixelMap) {
         this.pixelMap = pixelMap;
       } else {
-        // 解码失败，尝试直接使用 Image 组件
-        this.useDirectImage = true;
+        this.loadError = true;
       }
     } catch (e) {
       logger.warn(TAG, `加载图片失败: ${e}`);
-      // 出错时回退到直接使用 Image 组件
-      this.useDirectImage = true;
+      this.loadError = true;
     } finally {
       if (!this.loadingAborted) {
         this.isLoading = false;

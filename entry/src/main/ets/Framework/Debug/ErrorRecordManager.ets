@@ -17,7 +17,8 @@ const TAG = 'ErrorRecordManager';
  */
 export enum ErrorSource {
   RUNTIME_ERROR = 'runtime',   // 运行时错误（ErrorMonitorService）
-  CRASH = 'crash'              // 闪退（CrashRecorderService）
+  CRASH = 'crash',             // 闪退（CrashRecorderService）
+  NETWORK_ERROR = 'network'    // 网络相关错误
 }
 
 /**
@@ -44,6 +45,7 @@ export interface ErrorSummary {
   total: number;
   runtimeErrors: number;
   crashes: number;
+  networkErrors: number;
   topTags: TagCount[];         // 出现最多的 tag
   firstTime: number;           // 最早一条
   lastTime: number;            // 最近一条
@@ -92,7 +94,7 @@ export class ErrorRecordManager {
   /**
    * 添加一条运行时错误记录
    */
-  public addRuntimeError(tag: string, message: string, level: string, logFileName: string): void {
+  public addRuntimeError(tag: string, message: string, level: string, logFileName: string): string {
     const now = Date.now();
     const record: ErrorRecord = {
       id: `rt_${now}_${Math.floor(Math.random() * 10000)}`,
@@ -108,6 +110,7 @@ export class ErrorRecordManager {
       osVersion: this.getOsVersion()
     };
     this.pushRecord(record);
+    return record.id;
   }
 
   /**
@@ -129,6 +132,28 @@ export class ErrorRecordManager {
       osVersion: this.getOsVersion()
     };
     this.pushRecord(record);
+  }
+
+  /**
+   * 添加一条网络错误记录
+   */
+  public addNetworkError(tag: string, message: string, level: string, logFileName: string): string {
+    const now = Date.now();
+    const record: ErrorRecord = {
+      id: `net_${now}_${Math.floor(Math.random() * 10000)}`,
+      source: ErrorSource.NETWORK_ERROR,
+      timestamp: now,
+      timeStr: this.formatDateTime(now),
+      tag: tag,
+      message: message,
+      stackTrace: '',
+      level: level,
+      logFileName: logFileName,
+      deviceModel: this.getDeviceModel(),
+      osVersion: this.getOsVersion()
+    };
+    this.pushRecord(record);
+    return record.id;
   }
 
   private pushRecord(record: ErrorRecord): void {
@@ -163,6 +188,7 @@ export class ErrorRecordManager {
     const tagMap = new Map<string, number>();
     let runtimeCount = 0;
     let crashCount = 0;
+    let networkCount = 0;
     let firstTime = Number.MAX_SAFE_INTEGER;
     let lastTime = 0;
 
@@ -170,8 +196,10 @@ export class ErrorRecordManager {
       const r = this.records[i];
       if (r.source === ErrorSource.RUNTIME_ERROR) {
         runtimeCount++;
-      } else {
+      } else if (r.source === ErrorSource.CRASH) {
         crashCount++;
+      } else if (r.source === ErrorSource.NETWORK_ERROR) {
+        networkCount++;
       }
       if (r.timestamp < firstTime) {
         firstTime = r.timestamp;
@@ -194,6 +222,7 @@ export class ErrorRecordManager {
       total: this.records.length,
       runtimeErrors: runtimeCount,
       crashes: crashCount,
+      networkErrors: networkCount,
       topTags: topTags.slice(0, 10),
       firstTime: firstTime === Number.MAX_SAFE_INTEGER ? 0 : firstTime,
       lastTime: lastTime
@@ -217,6 +246,19 @@ export class ErrorRecordManager {
   }
 
   /**
+   * 更新指定记录的日志文件名
+   */
+  public updateRecordLogFileName(id: string, fileName: string): void {
+    for (let i = this.records.length - 1; i >= 0; i--) {
+      if (this.records[i].id === id) {
+        this.records[i].logFileName = fileName;
+        this.saveRecords();
+        return;
+      }
+    }
+  }
+
+  /**
    * 导出单条记录为格式化文本
    */
   public exportSingleRecord(record: ErrorRecord): string {
@@ -226,7 +268,7 @@ export class ErrorRecordManager {
     sections.push('╚══════════════════════════════════════════════════════════════╝');
     sections.push('');
     sections.push(`▶ 错误ID: ${record.id}`);
-    sections.push(`▶ 类型: ${record.source === ErrorSource.CRASH ? '闪退 (CRASH)' : '运行时错误 (RUNTIME)'}`);
+    sections.push(`▶ 类型: ${record.source === ErrorSource.CRASH ? '闪退 (CRASH)' : record.source === ErrorSource.NETWORK_ERROR ? '网络错误 (NETWORK)' : '运行时错误 (RUNTIME)'}`);
     sections.push(`▶ 时间: ${record.timeStr}`);
     sections.push(`▶ 级别: ${record.level}`);
     sections.push(`▶ 来源模块: ${record.tag}`);
@@ -272,11 +314,14 @@ export class ErrorRecordManager {
     // 统计摘要
     let runtimeCount = 0;
     let crashCount = 0;
+    let networkCount = 0;
     const tagSet = new Map<string, number>();
     for (let i = 0; i < sorted.length; i++) {
       const r = sorted[i];
       if (r.source === ErrorSource.CRASH) {
         crashCount++;
+      } else if (r.source === ErrorSource.NETWORK_ERROR) {
+        networkCount++;
       } else {
         runtimeCount++;
       }
@@ -285,6 +330,7 @@ export class ErrorRecordManager {
     }
     sections.push('▶ 统计摘要');
     sections.push(`  运行时错误: ${runtimeCount} 条`);
+    sections.push(`  网络错误: ${networkCount} 条`);
     sections.push(`  闪退记录: ${crashCount} 条`);
     sections.push(`  时间跨度: ${sorted.length > 0 ? sorted[0].timeStr : '-'} ~ ${sorted.length > 0 ? sorted[sorted.length - 1].timeStr : '-'}`);
     sections.push('');
@@ -305,7 +351,7 @@ export class ErrorRecordManager {
       const idx = i + 1;
       sections.push(`────────────────── 第 ${idx}/${sorted.length} 条 ──────────────────`);
       sections.push(`  ID: ${r.id}`);
-      sections.push(`  类型: ${r.source === ErrorSource.CRASH ? '闪退' : '运行时错误'}`);
+      sections.push(`  类型: ${r.source === ErrorSource.CRASH ? '闪退' : r.source === ErrorSource.NETWORK_ERROR ? '网络错误' : '运行时错误'}`);
       sections.push(`  时间: ${r.timeStr}`);
       sections.push(`  级别: ${r.level}`);
       sections.push(`  模块: ${r.tag}`);

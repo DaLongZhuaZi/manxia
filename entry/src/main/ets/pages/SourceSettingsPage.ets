@@ -145,6 +145,9 @@ export struct SourceSettingsPage {
   // 图源级别UserAgent设置
   @State sourceUserAgent: string = '';
   @State sourceUserAgentEnabled: boolean = false;
+  
+  // 图源级别NSFW设置
+  @State sourceIsNSFW: boolean = false;
   private readonly DEFAULT_USER_AGENT: string = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
   // Popup显示状态
@@ -517,6 +520,11 @@ export struct SourceSettingsPage {
       const uaValue: UserSettingsDatabaseRecord | null = await this.dataManager.getSourceUserSetting(sid, 'network.userAgent');
       if (uaEnabled && uaEnabled.settingValue) { this.sourceUserAgentEnabled = uaEnabled.settingValue === '1'; }
       if (uaValue && uaValue.settingValue) { this.sourceUserAgent = uaValue.settingValue; } else { this.sourceUserAgent = this.DEFAULT_USER_AGENT; }
+
+      // 加载图源NSFW状态
+      if (sourceRecord.isNSFW !== undefined) {
+        this.sourceIsNSFW = sourceRecord.isNSFW === 1;
+      }
     } catch (error) {
       logger.error(TAG, '加载图源设置失败', String(error));
     }
@@ -591,6 +599,9 @@ export struct SourceSettingsPage {
       if (this.sourceUserAgentEnabled) {
         await this.dataManager.saveSourceUserSetting(sid, 'network.userAgent', this.sourceUserAgent, 'string');
       }
+
+      // 保存图源NSFW状态
+      await this.dataManager.updateSourceNSFW(sid, this.sourceIsNSFW);
 
       this.showToast('设置已保存');
     } catch (error) {

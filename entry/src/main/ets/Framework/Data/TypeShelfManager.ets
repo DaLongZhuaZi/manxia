@@ -15,7 +15,8 @@ const TYPE_SHELVES_KEY = 'type_shelves';
  */
 export enum ShelfType {
   SINGLE = 'single',   // 单一书架：只显示一种内容类型
-  MIXED = 'mixed'      // 混合书架：可以显示多种内容类型
+  MIXED = 'mixed',     // 混合书架：可以显示多种内容类型
+  DYNAMIC = 'dynamic'  // 动态书架：基于筛选条件自动匹配内容
 }
 
 /**
@@ -28,12 +29,24 @@ export enum ShelfContentType {
 }
 
 /**
+ * 动态书架筛选条件接口
+ */
+export interface DynamicShelfFilter {
+  authors: string[];          // 选中的作者
+  tags: string[];             // 选中的标签
+  titleKeywords: string[];    // 从标题智能拆分的关键词
+  sourceNames: string[];      // 选中的书源/图源名称
+  customKeywords: string[];   // 用户自定义的筛选关键词
+  nsfwFilter?: 'nsfw' | 'sfw' | 'all';  // NSFW内容分级筛选：'nsfw'=仅NSFW, 'sfw'=仅SFW, 'all'/undefined=不限
+}
+
+/**
  * 类型书架接口
  */
 export interface TypeShelf {
   id: string;                          // 唯一标识
   name: string;                        // 书架名称
-  shelfType: ShelfType;                // 书架类型：单一或混合
+  shelfType: ShelfType;                // 书架类型：单一、混合或动态
   contentTypes: ShelfContentType[];    // 允许的内容类型（单一书架只有一个，混合书架可以有多个）
   icon: string;                        // 书架图标（emoji或系统图标名）
   color: string;                       // 书架主题色
@@ -41,6 +54,7 @@ export interface TypeShelf {
   isSystem: boolean;                   // 是否为系统内置书架（不可删除）
   createTime: number;                  // 创建时间
   updateTime: number;                  // 更新时间
+  dynamicFilter?: DynamicShelfFilter;  // 动态书架筛选条件（仅DYNAMIC类型使用）
 }
 
 /**
@@ -52,6 +66,7 @@ export interface CreateShelfParams {
   contentTypes: ShelfContentType[];
   icon?: string;
   color?: string;
+  dynamicFilter?: DynamicShelfFilter;
 }
 
 /**
@@ -169,6 +184,16 @@ export class TypeShelfManager {
       createTime: Date.now(),
       updateTime: Date.now()
     };
+    if (shelf.dynamicFilter) {
+      result.dynamicFilter = {
+        authors: shelf.dynamicFilter.authors.slice(),
+        tags: shelf.dynamicFilter.tags.slice(),
+        titleKeywords: shelf.dynamicFilter.titleKeywords.slice(),
+        sourceNames: shelf.dynamicFilter.sourceNames.slice(),
+        customKeywords: shelf.dynamicFilter.customKeywords.slice(),
+        nsfwFilter: shelf.dynamicFilter.nsfwFilter
+      };
+    }
     return result;
   }
 
@@ -302,12 +327,25 @@ export class TypeShelfManager {
       createTime: now,
       updateTime: now
     };
+    if (params.dynamicFilter) {
+      newShelf.dynamicFilter = {
+        authors: params.dynamicFilter.authors.slice(),
+        tags: params.dynamicFilter.tags.slice(),
+        titleKeywords: params.dynamicFilter.titleKeywords.slice(),
+        sourceNames: params.dynamicFilter.sourceNames.slice(),
+        customKeywords: params.dynamicFilter.customKeywords.slice(),
+        nsfwFilter: params.dynamicFilter.nsfwFilter
+      };
+    }
 
     this.shelves.push(newShelf);
     await this.saveShelves();
     
-    // 同步创建BookshelfCategory（用于内容映射）
-    await this.categoryManager.createCategoryWithId(shelfId, params.name);
+    // 动态书架不需要创建BookshelfCategory映射（实时计算）
+    if (params.shelfType !== ShelfType.DYNAMIC) {
+      // 同步创建BookshelfCategory（用于内容映射）
+      await this.categoryManager.createCategoryWithId(shelfId, params.name);
+    }
     
     logger.info(TAG, `创建书架: ${newShelf.name}, 类型: ${newShelf.shelfType}`);
     return newShelf;
@@ -336,6 +374,7 @@ export class TypeShelfManager {
       if (updates.icon !== undefined) shelf.icon = updates.icon;
       if (updates.color !== undefined) shelf.color = updates.color;
       if (updates.order !== undefined) shelf.order = updates.order;
+      if (updates.dynamicFilter !== undefined) shelf.dynamicFilter = updates.dynamicFilter;
     }
 
     shelf.updateTime = Date.now();
@@ -525,6 +564,207 @@ export class TypeShelfManager {
   getCategoryManager(): BookshelfCategoryManager {
     return this.categoryManager;
   }
+
+  /**
+   * 获取所有动态书架
+   */
+  getDynamicShelves(): TypeShelf[] {
+    return this.shelves.filter(s => s.shelfType === ShelfType.DYNAMIC);
+  }
+}
+
+// ==================== 动态书架工具函数 ====================
+
+/**
+ * 多语言智能分词
+ * 兼容中文、英语、日语、韩语四种常用语言
+ * @param text 输入文本
+ * @returns 分词结果（去重、去除过短token）
+ */
+export function smartTokenize(text: string): string[] {
+  if (!text || text.trim().length === 0) {
+    return [];
+  }
+
+  const tokens: string[] = [];
+  const normalized = text.trim();
+
+  // 按不同语言字符块拆分
+  // 正则匹配：连续中文CJK字符块、连续日文假名块、连续韩文块、连续拉丁/数字块
+  const blockPattern = /[\u4e00-\u9fff\u3400-\u4dbf]+|[\u3040-\u309f\u30a0-\u30ff]+|[\uac00-\ud7af]+|[a-zA-Z0-9]+/g;
+  const blocks = normalized.match(blockPattern);
+  if (!blocks) {
+    return [];
+  }
+
+  for (const block of blocks) {
+    const firstChar = block.charCodeAt(0);
+
+    // 中文CJK字符块：生成单字和2-3字组合
+    if ((firstChar >= 0x4e00 && firstChar <= 0x9fff) || (firstChar >= 0x3400 && firstChar <= 0x4dbf)) {
+      // 整块作为一个token
+      if (block.length >= 2) {
+        tokens.push(block);
+      }
+      // 2字组合
+      for (let i = 0; i < block.length - 1; i++) {
+        tokens.push(block.substring(i, i + 2));
+      }
+      // 3字组合
+      for (let i = 0; i < block.length - 2; i++) {
+        tokens.push(block.substring(i, i + 3));
+      }
+      // 单字（仅当不是太常见的单字时保留）
+      for (let i = 0; i < block.length; i++) {
+        tokens.push(block.charAt(i));
+      }
+    }
+    // 日文假名块：整块作为token
+    else if ((firstChar >= 0x3040 && firstChar <= 0x309f) || (firstChar >= 0x30a0 && firstChar <= 0x30ff)) {
+      if (block.length >= 2) {
+        tokens.push(block);
+      }
+      // 2-3字假名组合
+      for (let i = 0; i < block.length - 1; i++) {
+        tokens.push(block.substring(i, i + 2));
+      }
+      for (let i = 0; i < block.length - 2; i++) {
+        tokens.push(block.substring(i, i + 3));
+      }
+    }
+    // 韩文块：整块和2-3字组合
+    else if (firstChar >= 0xac00 && firstChar <= 0xd7af) {
+      if (block.length >= 2) {
+        tokens.push(block);
+      }
+      for (let i = 0; i < block.length - 1; i++) {
+        tokens.push(block.substring(i, i + 2));
+      }
+      for (let i = 0; i < block.length - 2; i++) {
+        tokens.push(block.substring(i, i + 3));
+      }
+    }
+    // 英文/拉丁块：按驼峰拆分
+    else {
+      // 整词
+      if (block.length >= 2) {
+        tokens.push(block.toLowerCase());
+      }
+      // 驼峰拆分 (e.g. "OnePiece" -> ["One", "Piece"])
+      const camelParts = block.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ');
+      for (const part of camelParts) {
+        if (part.length >= 2) {
+          tokens.push(part.toLowerCase());
+        }
+      }
+    }
+  }
+
+  // 去重并过滤过短的token（少于2个字符的英文，少于1个字符的CJK）
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const token of tokens) {
+    if (!seen.has(token) && token.length >= 1) {
+      seen.add(token);
+      result.push(token);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 动态书架内容匹配信息接口
+ * 用于传入匹配检查方法
+ */
+export interface DynamicMatchItem {
+  title: string;
+  authors: string[];
+  tags: string[];
+  sourceName: string;
+  isNSFW?: boolean;  // 是否为NSFW内容
+}
+
+/**
+ * 检查内容是否匹配动态书架的筛选条件
+ * 匹配逻辑：OR关系，满足任一条件即匹配
+ * - 作者在筛选列表中
+ * - 标签与筛选标签有交集
+ * - 标题包含筛选关键词
+ * - 来源名称在筛选列表中
+ * - 标题/标签/作者包含自定义关键词
+ */
+export function matchesDynamicFilter(item: DynamicMatchItem, filter: DynamicShelfFilter): boolean {
+  // 没有任何筛选条件，不匹配
+  const hasNsfwFilter = filter.nsfwFilter !== undefined && filter.nsfwFilter !== 'all';
+  if (filter.authors.length === 0 && filter.tags.length === 0 &&
+    filter.titleKeywords.length === 0 && filter.sourceNames.length === 0 &&
+    filter.customKeywords.length === 0 && !hasNsfwFilter) {
+    return false;
+  }
+
+  // NSFW/SFW 内容分级过滤（AND逻辑：必须满足分级要求）
+  if (hasNsfwFilter) {
+    if (filter.nsfwFilter === 'nsfw' && item.isNSFW !== true) {
+      return false; // 要求NSFW但内容不是NSFW
+    }
+    if (filter.nsfwFilter === 'sfw' && item.isNSFW === true) {
+      return false; // 要求SFW但内容是NSFW
+    }
+    // 如果没有其他筛选条件，仅凭NSFW过滤即可匹配
+    if (filter.authors.length === 0 && filter.tags.length === 0 &&
+      filter.titleKeywords.length === 0 && filter.sourceNames.length === 0 &&
+      filter.customKeywords.length === 0) {
+      return true;
+    }
+  }
+
+  // 作者匹配
+  if (filter.authors.length > 0) {
+    for (const author of item.authors) {
+      if (filter.authors.includes(author)) {
+        return true;
+      }
+    }
+  }
+
+  // 标签匹配
+  if (filter.tags.length > 0) {
+    for (const tag of item.tags) {
+      if (filter.tags.includes(tag)) {
+        return true;
+      }
+    }
+  }
+
+  // 标题关键词匹配
+  if (filter.titleKeywords.length > 0) {
+    const titleLower = item.title.toLowerCase();
+    for (const keyword of filter.titleKeywords) {
+      if (titleLower.includes(keyword.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+
+  // 来源名称匹配
+  if (filter.sourceNames.length > 0 && item.sourceName) {
+    if (filter.sourceNames.includes(item.sourceName)) {
+      return true;
+    }
+  }
+
+  // 自定义关键词匹配（在标题、作者、标签中搜索）
+  if (filter.customKeywords.length > 0) {
+    const searchText = [item.title, ...item.authors, ...item.tags].join(' ').toLowerCase();
+    for (const keyword of filter.customKeywords) {
+      if (searchText.includes(keyword.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**

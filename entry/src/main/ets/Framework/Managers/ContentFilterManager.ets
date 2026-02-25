@@ -25,6 +25,8 @@ export class ContentFilterManager {
   private static instance: ContentFilterManager;
   private settingsManager: SettingsManager;
   private sfwModeEnabled: boolean = false;
+  private nsfwScopeImageSourceEnabled: boolean = true;
+  private nsfwScopeBookSourceEnabled: boolean = true;
   private listeners: Set<(enabled: boolean) => void> = new Set();
 
   private constructor() {
@@ -46,7 +48,12 @@ export class ContentFilterManager {
     try {
       const enabled = await this.settingsManager.getBoolean(SettingKeys.SFW_MODE_ENABLED, false);
       this.sfwModeEnabled = enabled;
-      logger.info(TAG, `SFW模式已加载: ${enabled ? '启用' : '禁用'}`);
+      
+      // 加载NSFW作用域开关
+      this.nsfwScopeImageSourceEnabled = this.settingsManager.getBoolean(SettingKeys.NSFW_SCOPE_IMAGE_SOURCE_ENABLED, true);
+      this.nsfwScopeBookSourceEnabled = this.settingsManager.getBoolean(SettingKeys.NSFW_SCOPE_BOOK_SOURCE_ENABLED, true);
+      
+      logger.info(TAG, `SFW模式已加载: ${enabled ? '启用' : '禁用'}, 图源作用域=${this.nsfwScopeImageSourceEnabled}, 书源作用域=${this.nsfwScopeBookSourceEnabled}`);
     } catch (error) {
       logger.error(TAG, `加载SFW模式设置失败: ${error}`);
       this.sfwModeEnabled = false;
@@ -145,6 +152,48 @@ export class ContentFilterManager {
         logger.error(TAG, `通知监听器失败: ${error}`);
       }
     });
+  }
+
+  // ==================== NSFW作用域开关 ====================
+
+  /**
+   * 图源NSFW作用域是否启用
+   */
+  public isNsfwScopeImageSourceEnabled(): boolean {
+    return this.nsfwScopeImageSourceEnabled;
+  }
+
+  /**
+   * 书源NSFW作用域是否启用
+   */
+  public isNsfwScopeBookSourceEnabled(): boolean {
+    return this.nsfwScopeBookSourceEnabled;
+  }
+
+  /**
+   * 设置图源NSFW作用域
+   */
+  public async setNsfwScopeImageSource(enabled: boolean): Promise<void> {
+    try {
+      await this.settingsManager.setBoolean(SettingKeys.NSFW_SCOPE_IMAGE_SOURCE_ENABLED, enabled);
+      this.nsfwScopeImageSourceEnabled = enabled;
+      logger.info(TAG, `图源NSFW作用域已${enabled ? '启用' : '禁用'}`);
+    } catch (error) {
+      logger.error(TAG, `设置图源NSFW作用域失败: ${error}`);
+    }
+  }
+
+  /**
+   * 设置书源NSFW作用域
+   */
+  public async setNsfwScopeBookSource(enabled: boolean): Promise<void> {
+    try {
+      await this.settingsManager.setBoolean(SettingKeys.NSFW_SCOPE_BOOK_SOURCE_ENABLED, enabled);
+      this.nsfwScopeBookSourceEnabled = enabled;
+      logger.info(TAG, `书源NSFW作用域已${enabled ? '启用' : '禁用'}`);
+    } catch (error) {
+      logger.error(TAG, `设置书源NSFW作用域失败: ${error}`);
+    }
   }
 
   /**

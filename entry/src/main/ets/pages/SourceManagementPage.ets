@@ -42,6 +42,7 @@ interface SourceInfo {
   createTime: number;
   iconPath?: string;
   isPinned?: boolean;  // 是否置顶
+  isNSFW?: boolean;    // 是否为NSFW图源
 }
 
 /**
@@ -50,7 +51,8 @@ interface SourceInfo {
 enum SourceFilterType {
   ALL = 'all',
   PINNED = 'pinned',
-  DISABLED = 'disabled'
+  DISABLED = 'disabled',
+  NSFW = 'nsfw'
 }
 
 const TITLE_BAR_HEIGHT_MINI = 56;
@@ -75,6 +77,7 @@ export struct SourceManagementPage {
   @State totalCount: number = 0;  // 图源总数
   @State pinnedCount: number = 0;  // 置顶图源数
   @State disabledCount: number = 0;  // 已关闭图源数
+  @State nsfwCount: number = 0;  // NSFW图源数
   @State testingSourceId: number = -1;  // 正在测试的图源ID
   
   // 分页加载状态
@@ -155,7 +158,8 @@ export struct SourceManagementPage {
           lastUpdateTime: source.lastUpdateTime || 0,
           createTime: source.createTime,
           iconPath: iconPath,
-          isPinned: source.isPinned || false
+          isPinned: source.isPinned || false,
+          isNSFW: source.isNSFW || false
         };
         return info;
       });
@@ -182,6 +186,8 @@ export struct SourceManagementPage {
       filtered = filtered.filter((s: SourceInfo) => s.isPinned);
     } else if (this.currentFilter === SourceFilterType.DISABLED) {
       filtered = filtered.filter((s: SourceInfo) => !s.isEnabled);
+    } else if (this.currentFilter === SourceFilterType.NSFW) {
+      filtered = filtered.filter((s: SourceInfo) => s.isNSFW);
     }
     
     // 应用搜索筛选
@@ -251,6 +257,7 @@ export struct SourceManagementPage {
     this.totalCount = this.allSources.length;
     this.pinnedCount = this.allSources.filter((s: SourceInfo) => s.isPinned).length;
     this.disabledCount = this.allSources.filter((s: SourceInfo) => !s.isEnabled).length;
+    this.nsfwCount = this.allSources.filter((s: SourceInfo) => s.isNSFW).length;
   }
 
   /**
@@ -260,6 +267,29 @@ export struct SourceManagementPage {
     this.searchText = keyword;
     this.applyFilter();
     logger.debug(TAG, `搜索"${keyword}"，找到${this.filteredSourceList.length}个结果`);
+  }
+
+  /**
+   * 切换NSFW状态
+   */
+  private async toggleSourceNSFW(source: SourceInfo): Promise<void> {
+    try {
+      const newNSFWState = !source.isNSFW;
+      await this.dataManager.updateSourceNSFW(source.id, newNSFWState);
+      
+      // 更新本地状态
+      source.isNSFW = newNSFWState;
+      
+      // 重新应用筛选
+      this.applyFilter();
+      this.updateCounts();
+      
+      logger.info(TAG, `图源"${source.name}"已${newNSFWState ? '标记' : '取消'}NSFW`);
+      this.showToast(`图源"${source.name}"已${newNSFWState ? '标记为NSFW' : '取消NSFW标记'}`);
+    } catch (error) {
+      logger.error(TAG, `切换NSFW状态失败: ${source.name}`, String(error));
+      this.showToast('操作失败');
+    }
   }
 
   /**
@@ -510,6 +540,7 @@ export struct SourceManagementPage {
         this.buildFilterTab('全部', SourceFilterType.ALL)
         this.buildFilterTab('已置顶', SourceFilterType.PINNED)
         this.buildFilterTab('已关闭', SourceFilterType.DISABLED)
+        this.buildFilterTab('NSFW', SourceFilterType.NSFW)
       }
       .width('100%')
     }
@@ -564,6 +595,8 @@ export struct SourceManagementPage {
         return this.pinnedCount;
       case SourceFilterType.DISABLED:
         return this.disabledCount;
+      case SourceFilterType.NSFW:
+        return this.nsfwCount;
       default:
         return 0;
     }
@@ -624,8 +657,10 @@ export struct SourceManagementPage {
         return '暂无置顶图源';
       case SourceFilterType.DISABLED:
         return '暂无已关闭的图源';
+      case SourceFilterType.NSFW:
+        return '暂无NSFW图源';
       default:
-        return '暂无图源\n请通过主页面的“图源导入”导入图源';
+        return '暂无图源\n请通过主页面的"图源导入"导入图源';
     }
   }
 
@@ -734,6 +769,16 @@ export struct SourceManagementPage {
                 .borderRadius(4)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20')
             }
+            
+            if (source.isNSFW) {
+              Text('NSFW')
+                .fontSize(10)
+                .fontFamily(this.appFontFamily)
+                .fontColor('#FF4444')
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .borderRadius(4)
+                .backgroundColor('#FF444420')
+            }
           }
           
           Text(source.baseUrl)
@@ -796,15 +841,28 @@ export struct SourceManagementPage {
             await this.togglePinSource(source);
           })
         
-        Button(this.testingSourceId === source.id ? '测试中...' : '测试')
+        Button(source.isNSFW ? '取消NSFW' : 'NSFW')
           .fontSize(12)
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-          .enabled(this.testingSourceId === -1)
+          .backgroundColor(source.isNSFW ?
+            '#FF4444' :
+            ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .fontColor(source.isNSFW ? Color.White :
+            ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .onClick(async () => {
-            await this.testSource(source);
+            await this.toggleSourceNSFW(source);
           })
+        
+        // Button(this.testingSourceId === source.id ? '测试中...' : '测试')
+        //   .fontSize(12)
+        //   .layoutWeight(1)
+        //   .fontFamily(this.appFontFamily)
+        //   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        //   .enabled(this.testingSourceId === -1)
+        //   .onClick(async () => {
+        //     await this.testSource(source);
+        //   })
         
         Button('删除')
           .fontSize(12)

@@ -243,7 +243,8 @@ export class NovelSourceManager {
         lastUpdateTime: source.lastUpdateTime || 0,
         respondTime: source.respondTime || 180000,
         searchable: !!source.searchUrl,
-        hasExplore: !!source.exploreUrl
+        hasExplore: !!source.exploreUrl,
+        isNSFW: source.isNSFW === true
       });
     });
 
@@ -309,6 +310,28 @@ export class NovelSourceManager {
   }
 
   /**
+   * 设置书源的NSFW状态
+   */
+  async setSourceNSFW(sourceId: string, isNSFW: boolean): Promise<boolean> {
+    const source = this.sources.get(sourceId);
+    if (source) {
+      source.isNSFW = isNSFW;
+      
+      // 更新数据库
+      try {
+        const dataManager = getNovelDataManager();
+        await dataManager.saveSource(source);
+        logger.info(TAG, `书源NSFW状态已更新: ${source.bookSourceName}, isNSFW=${isNSFW}`);
+      } catch (error) {
+        logger.warn(TAG, `更新书源NSFW状态失败: ${String(error)}`);
+      }
+      
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * 获取原始书源对象
    */
   getSource(sourceId: string): LegadoBookSource | null {
@@ -357,7 +380,8 @@ export class NovelSourceManager {
         intro: book.intro,
         coverUrl: book.coverUrl,
         latestChapterTitle: book.latestChapterTitle,
-        wordCount: book.wordCount
+        wordCount: book.wordCount,
+        isNSFW: source.isNSFW === true
       };
       return result;
     });
@@ -526,7 +550,8 @@ export class NovelSourceManager {
         intro: book.intro,
         coverUrl: book.coverUrl,
         latestChapterTitle: book.latestChapterTitle,
-        wordCount: book.wordCount
+        wordCount: book.wordCount,
+        isNSFW: source.isNSFW === true
       };
       searchResults.push(searchResult);
     }
@@ -733,6 +758,7 @@ export class NovelSourceManager {
         lastUpdateTime: typeof obj['lastUpdateTime'] === 'number' ? obj['lastUpdateTime'] : Date.now(),
         respondTime: typeof obj['respondTime'] === 'number' ? obj['respondTime'] : 180000,
         weight: 0,
+        isNSFW: obj['isNSFW'] === true || obj['isNSFW'] === 1,
         exploreUrl: obj['exploreUrl'] ? String(obj['exploreUrl']) : undefined,
         exploreScreen: obj['exploreScreen'] ? String(obj['exploreScreen']) : undefined,
         searchUrl: obj['searchUrl'] ? String(obj['searchUrl']) : undefined,

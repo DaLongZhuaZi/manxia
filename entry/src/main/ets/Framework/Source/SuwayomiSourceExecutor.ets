@@ -26,6 +26,7 @@ export class SuwayomiSourceExecutor {
   private static instance: SuwayomiSourceExecutor | null = null;
   private suwayomiSource: SuwayomiSource;
   private currentSourceId: string = ''; // 当前选择的 Suwayomi 扩展源 ID
+  private sourceNsfwMap: Map<string, boolean> = new Map(); // 缓存源NSFW状态
 
   private constructor() {
     this.suwayomiSource = getSuwayomiSource();
@@ -95,6 +96,10 @@ export class SuwayomiSourceExecutor {
   public async getAvailableSources(): Promise<SuwayomiExtensionSource[]> {
     try {
       const sources = await this.suwayomiSource.getSources();
+      // 缓存所有源的NSFW状态
+      for (const s of sources) {
+        this.sourceNsfwMap.set(s.id, s.isNsfw);
+      }
       return sources.map((s): SuwayomiExtensionSource => {
         const result: SuwayomiExtensionSource = {
           id: s.id,
@@ -112,16 +117,32 @@ export class SuwayomiSourceExecutor {
   }
 
   /**
+   * 为ComicInfo结果注入当前源的isNSFW标记
+   */
+  private injectNsfwFlag(results: ComicInfo[], sourceId?: string): ComicInfo[] {
+    const sid = sourceId || this.currentSourceId;
+    const isNsfw = sid ? (this.sourceNsfwMap.get(sid) === true) : false;
+    if (isNsfw) {
+      for (const item of results) {
+        (item as ESObject).isNSFW = true;
+      }
+    }
+    return results;
+  }
+
+  /**
    * 搜索漫画
    * 如果设置了当前源，则从该源搜索；否则从库中搜索
    */
   public async search(query: string): Promise<ComicInfo[]> {
     try {
+      let results: ComicInfo[];
       if (this.currentSourceId) {
-        return await this.suwayomiSource.searchManga(this.currentSourceId, query);
+        results = await this.suwayomiSource.searchManga(this.currentSourceId, query);
       } else {
-        return await this.suwayomiSource.searchLibrary(query);
+        results = await this.suwayomiSource.searchLibrary(query);
       }
+      return this.injectNsfwFlag(results);
     } catch (error) {
       logger.error(TAG, `搜索失败: ${error}`);
       return [];
@@ -204,7 +225,8 @@ export class SuwayomiSourceExecutor {
       return [];
     }
     try {
-      return await this.suwayomiSource.browseSource(this.currentSourceId, type, page);
+      const results = await this.suwayomiSource.browseSource(this.currentSourceId, type, page);
+      return this.injectNsfwFlag(results);
     } catch (error) {
       logger.error(TAG, `浏览失败: ${error}`);
       return [];

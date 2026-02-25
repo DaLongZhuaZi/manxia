@@ -2945,6 +2945,7 @@ export class EnhancedBackupManager {
           configJson: String(source['configJson']),  // 完整的Legado书源配置
           createTime: Number(source['createTime'] || 0),
           updateTime: Number(source['updateTime'] || 0),
+          isNSFW: Boolean(source['isNSFW']),
           // 兼容字段
           name: String(source['bookSourceName']),
           sourceUrl: String(source['bookSourceUrl']),
@@ -3121,8 +3122,8 @@ export class EnhancedBackupManager {
         
         const sql = `INSERT OR REPLACE INTO novel_source (
           id, bookSourceUrl, bookSourceName, bookSourceGroup, bookSourceType,
-          enabled, weight, respondTime, configJson, createTime, updateTime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          enabled, weight, respondTime, configJson, createTime, updateTime, isNSFW
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         await this.dbManager.executeSql(sql, [
           id,
@@ -3135,7 +3136,8 @@ export class EnhancedBackupManager {
           item.respondTime || 180000,
           item.configJson,
           item.createTime || now,
-          item.updateTime || now
+          item.updateTime || now,
+          item.isNSFW ? 1 : 0
         ]);
         
         // 同时加载到内存中

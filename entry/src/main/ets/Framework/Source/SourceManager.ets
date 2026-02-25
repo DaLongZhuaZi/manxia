@@ -39,6 +39,7 @@ export interface SourceInfo {
   iconPath?: string;  // 图源图标路径
   requireProxy?: boolean;  // 是否需要代理访问（对应 metadata.Internet）
   isPinned?: boolean;  // 是否置顶
+  isNSFW?: boolean;    // 是否为NSFW图源
 }
 
 /**
@@ -601,7 +602,8 @@ export class SourceManager {
       createTime: source.createTime as number,
       lastUpdateTime: source.lastUpdateTime as number,
       iconPath: iconPath,
-      requireProxy: Boolean(source.requireProxy)
+      requireProxy: Boolean(source.requireProxy),
+      isNSFW: Boolean(source.isNSFW)
     };
   }
 

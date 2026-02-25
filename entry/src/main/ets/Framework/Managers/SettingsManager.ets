@@ -92,6 +92,8 @@ export class SettingKeys {
   
   // 内容过滤设置
   static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）
+  static readonly NSFW_SCOPE_IMAGE_SOURCE_ENABLED = 'nsfw_scope_image_source_enabled'; // 图源NSFW作用域（默认true）
+  static readonly NSFW_SCOPE_BOOK_SOURCE_ENABLED = 'nsfw_scope_book_source_enabled'; // 书源NSFW作用域（默认true）
   
   // 全局UserAgent设置
   static readonly GLOBAL_USER_AGENT = 'global_user_agent'; // 全局自定义User-Agent
@@ -115,6 +117,7 @@ export class SettingKeys {
   
   // 详情页推荐功能
   static readonly RECOMMENDATION_ENABLED = 'recommendation_enabled'; // 统一详情页相关推荐功能开关（默认开启）
+  static readonly SHELF_CONTENT_ENABLED = 'shelf_content_enabled'; // 统一详情页同书架内容功能开关（默认开启）
 }
 
 /**

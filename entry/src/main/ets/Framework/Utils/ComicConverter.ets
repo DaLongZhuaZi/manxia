@@ -13,6 +13,7 @@ import {
   DEFAULT_READING_SETTINGS
 } from '../../Models/MangaModels';
 import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } from '../Data/DataManager';
+import { ComicSourceDatabaseRecord } from '../Database/DatabaseTypes';
 import { MangaStatus, ReadingStatus, StatusConverter } from '../Types/StatusEnums';
 import { DataManager } from '../Data/DataManager';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
@@ -430,6 +431,29 @@ export class ComicConverter {
 
     const isNSFWBoolean = onlineComic.isNSFW === 1;
     logger.debug(TAG, `[NSFW调试] convertOnlineComicInfoToMangaAsync: title="${onlineComic.title}", OnlineComicInfo.isNSFW=${onlineComic.isNSFW}, Manga.isNSFW=${isNSFWBoolean}`);
+
+    // [修复] 解析sourceName：如果数据库记录为空，则从comic_source表按sourceId查询并回填
+    let resolvedSourceName: string = onlineComic.sourceName || '';
+    if (!resolvedSourceName) {
+      try {
+        const sourceIdNum = Number(onlineComic.sourceId);
+        if (!isNaN(sourceIdNum)) {
+          const dmResolve: DataManager = DataManager.getInstance();
+          const sourceRecord: ComicSourceDatabaseRecord | null = await dmResolve.getComicSourceById(sourceIdNum);
+          if (sourceRecord && sourceRecord.name) {
+            resolvedSourceName = sourceRecord.name;
+            logger.info(TAG, `[修复] 从comic_source表获取sourceName: sourceId=${sourceIdNum}, name="${resolvedSourceName}"`);
+            // 回填到online_comic_info表，后续不再需要查询
+            await dmResolve.updateOnlineComicSourceNameById(onlineComic.id, resolvedSourceName);
+          }
+        }
+      } catch (e) {
+        logger.warn(TAG, `解析sourceName失败: ${String(e)}`);
+      }
+      if (!resolvedSourceName) {
+        resolvedSourceName = 'WebView Source';
+      }
+    }
     
     return {
       id: onlineComic.id,
@@ -449,7 +473,7 @@ export class ComicConverter {
       lastUpdatedAt: onlineComic.lastUpdateTime,
       sourceInfo: {
         sourceId: onlineComic.sourceId,
-        sourceName: onlineComic.sourceName || 'WebView Source',
+        sourceName: resolvedSourceName,
         sourceUrl: '',
         sourceLanguage: 'zh-CN',
         requiresLogin: false

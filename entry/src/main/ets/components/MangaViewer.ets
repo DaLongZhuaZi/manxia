@@ -536,6 +536,7 @@ export struct MangaViewer {
   @State private curlProgress: number = 0;         // 卷页进度 (0-1)，用于实时拖拽
   @State private curlAnimateTarget: number = -1;   // 内部动画目标进度（-1 表示不使用）
   @State private curlAnimateFrom: number = 0;      // 内部动画起始进度
+  @State private curlAnimateVelocity: number = 0;  // 脱手时的翻页速度（progress/ms），用于速度延续动画
   @State private curlCurrentPixelMap: image.PixelMap | null = null;  // 当前页PixelMap
   @State private curlNextPixelMap: image.PixelMap | null = null;     // 下一页PixelMap
   @State private curlIsForward: boolean = true;    // 翻页方向
@@ -554,7 +555,7 @@ export struct MangaViewer {
     animationDuration: 300,  // 回弹/完成动画时长
     enableShadow: true,
     enableHighlight: true,
-    flipThreshold: 0.35      // 翻页阈值
+    flipThreshold: 0.33      // 翻页阈值（单页宽度的 1/3）
   };
 
   // ========== 双页卷页动画状态 ==========
@@ -1763,10 +1764,13 @@ export struct MangaViewer {
           const flipThreshold: number = this.curlEffectConfig.flipThreshold;
           const elapsed: number = Math.max(Date.now() - this.panStartTime, 1);
           const deltaX: number = Math.abs(event.fingerList[0].globalX - this.panStartX);
-          const velocity: number = deltaX / elapsed;
+          const velocity: number = deltaX / elapsed;  // px/ms
+          // 将 px/ms 速度转换为 progress/ms（与半页宽度归一化）
+          const halfW: number = this.screenWidth > 0 ? this.screenWidth / 2 : 360;
+          const progressVelocity: number = velocity / halfW;  // progress/ms
           const isQuickFlip: boolean = velocity > 0.35 && deltaX > 25 && this.dualCurlProgress > 0.02;
           if (this.dualCurlProgress >= flipThreshold || isQuickFlip) {
-            this.animateDualCurlToComplete();
+            this.animateDualCurlToComplete(progressVelocity);
           } else {
             this.animateDualCurlToCancel();
           }
@@ -1780,15 +1784,18 @@ export struct MangaViewer {
           const elapsed: number = Math.max(Date.now() - this.panStartTime, 1);
           const deltaX: number = Math.abs(event.fingerList[0].globalX - this.panStartX);
           const velocity: number = deltaX / elapsed;  // px/ms
+          // 将 px/ms 速度转换为 progress/ms（与图片宽度归一化）
+          const imgW: number = this.imageDisplayRect.w > 0 ? this.imageDisplayRect.w : this.screenWidth;
+          const progressVelocity: number = velocity / imgW;  // progress/ms
           const isQuickFlip: boolean = velocity > 0.4 && deltaX > 30 && this.curlProgress > 0.03;
           if (this.curlProgress >= flipThreshold || isQuickFlip) {
-            // 超过阈值 或 快速滑动，完成翻页动画
+            // 超过阈值 或 快速滑动，完成翻页动画，传入速度使动画延续用户力度
             if (isQuickFlip && this.curlProgress < flipThreshold) {
               logger.info(TAG, `快速翻页触发: velocity=${velocity.toFixed(2)}px/ms, deltaX=${deltaX.toFixed(0)}, progress=${this.curlProgress.toFixed(2)}`);
             }
-            this.animateCurlToComplete();
+            this.animateCurlToComplete(progressVelocity);
           } else {
-            // 未超过阈值且非快速滑动，回弹
+            // 未超过阈值且非快速滑动，回弹（速度传0，使用默认缓出）
             this.animateCurlToCancel();
           }
           return;
@@ -2683,12 +2690,13 @@ export struct MangaViewer {
 
   /**
    * 动画完成卷页翻页
+   * @param velocity 脱手时的翻页速度 (progress/ms)，用于使动画延续用户力度
    */
-  private animateCurlToComplete(): void {
+  private animateCurlToComplete(velocity: number = 0): void {
     this.stopCurlAnimation();
 
     // 提前更新页面索引，让底层UI在动画过程中就切换到新页面
-    // 这样动画结束移除Canvas时，底层已经稳定显示新页面，避免UI抽动
+    // 这样动画结束移除Canvas时，底层已经稳定显示新页面，避免UI抄动
     const targetIndex: number = this.curlPendingPageIndex;
     if (targetIndex >= 0 && targetIndex < this.chapter.pages.length) {
       logger.info(TAG, `[animateCurlToComplete] 提前切换页面: ${this.viewCurrentPageIndex + 1} -> ${targetIndex + 1}`);
@@ -2712,13 +2720,14 @@ export struct MangaViewer {
 
     const startProgress: number = this.curlProgress;
 
-    logger.info(TAG, `动画完成卷页(内部模式): startProgress=${startProgress.toFixed(2)}`);
+    logger.info(TAG, `动画完成卷页(内部模式): startProgress=${startProgress.toFixed(2)}, velocity=${velocity.toFixed(4)}`);
 
     // 禁用外部进度控制，避免与内部动画冲突
     this.curlProgress = -1;
 
+    // 传递吸手速度给内部动画，使动画从用户的实际力度出发
+    this.curlAnimateVelocity = velocity;
     // 使用内部动画模式：设置目标进度，让 PageCurlEffectV2 内部执行动画循环
-    // 这避免了每帧更新 @State 变量的开销
     this.curlAnimateFrom = startProgress;
     this.curlAnimateTarget = 1.0;  // 触发内部动画
   }
@@ -2756,6 +2765,8 @@ export struct MangaViewer {
     // 禁用外部进度控制，避免与内部动画冲突
     this.curlProgress = -1;
 
+    // 回弹动画不使用速度延续，使用默认缓出
+    this.curlAnimateVelocity = 0;
     // 使用内部动画模式
     this.curlAnimateFrom = startProgress;
     this.curlAnimateTarget = 0;  // 触发回弹动画
@@ -2815,6 +2826,7 @@ export struct MangaViewer {
         this.curlProgress = 0;
         this.curlAnimateTarget = -1;  // 重置内部动画状态
         this.curlAnimateFrom = 0;
+        this.curlAnimateVelocity = 0;  // 重置速度
         this.curlCurrentPixelMap = null;
         this.curlNextPixelMap = null;
         this.suppressExternalIndex = false;
@@ -2965,44 +2977,64 @@ export struct MangaViewer {
 
   /**
    * 父组件驱动的双页卷页动画
+   *
+   * 动画时长由脱手速度（velocity）决定，使动画无缝延续用户的翻页力度：
+   *  - 有速度时：duration = 3 * Δ / v（easeOutCubic 初始斜率=3 → 动画开始速度 ≈ 用户脱手速度）
+   *  - 无速度时：使用基于进度的默认时长
+   *
+   * @param target 目标进度 (0 或 1)
+   * @param onComplete 完成回调
+   * @param velocity 脱手速度 (progress/ms)，0 = 使用默认时长
    */
-  private animateDualCurlProgressTo(target: number, onComplete: () => void): void {
+  private animateDualCurlProgressTo(target: number, onComplete: () => void, velocity: number = 0): void {
     this.stopDualCurlAnimation();
 
     const start: number = this.dualCurlProgress;
-    const delta: number = Math.abs(target - start);
+    const progressDelta: number = Math.abs(target - start);
 
-    if (delta < 0.01) {
+    if (progressDelta < 0.01) {
       this.dualCurlProgress = target;
       onComplete();
       return;
     }
 
-    const isForwardAnim: boolean = target > start;
-    const minDuration: number = isForwardAnim ? 450 : 250;
-    const rawDuration: number = isForwardAnim
-      ? this.curlEffectConfig.animationDuration * delta * 2.0
-      : this.curlEffectConfig.animationDuration * delta;
-    const duration: number = Math.max(minDuration, rawDuration);
+    const isComplete: boolean = target > start;
+
+    let duration: number;
+    if (velocity > 0.0003 && isComplete) {
+      // ① 速度驱动时长（与 PageCurlEffectV2 完全一致）
+      // easeOutCubic 的归一化初始斜率 = 3
+      // 令 3 * Δ / T = v  →  T = 3 * Δ / v
+      // 这样动画第一帧的实际速度恰好等于用户脱手时的速度，实现无缝衔接
+      const physDuration: number = 3.0 * progressDelta / velocity;
+      // 限制在合理范围：太短会看不清动画，太长则拖沓
+      duration = Math.min(500, Math.max(120, physDuration));
+    } else if (isComplete) {
+      // ② 无速度信息（tap 触发翻页）：基于剩余进度估算
+      duration = Math.max(200, this.curlEffectConfig.animationDuration * progressDelta * 1.5);
+    } else {
+      // ③ 回弹取消：固定底线确保平滑返回
+      duration = Math.max(220, this.curlEffectConfig.animationDuration * progressDelta * 1.8);
+    }
+
     const startTime: number = Date.now();
 
     const animate = (): void => {
-      const elapsed: number = Date.now() - startTime;
+      const now: number = Date.now();
+      const elapsed: number = now - startTime;
       const t: number = Math.min(elapsed / Math.max(duration, 50), 1.0);
-      let eased: number;
-      if (isForwardAnim) {
-        const decay: number = Math.exp(-4.5 * t);
-        const oscillation: number = Math.cos(3.5 * Math.PI * t);
-        eased = 1 - decay * oscillation;
-      } else {
-        eased = 1 - Math.pow(1 - t, 3);
-      }
+
+      // easeOutCubic：初始斜率=3，快速减速至终点
+      // 与速度驱动时长配合，保证动画起始速度无缝衔接用户手势力度
+      const eased: number = 1 - Math.pow(1 - t, 3);
 
       this.dualCurlProgress = start + (target - start) * eased;
 
       if (t < 1.0) {
-        const frameProcessTime: number = Date.now() - (startTime + elapsed);
-        this.dualCurlAnimTimer = setTimeout(animate, Math.max(1, 16 - frameProcessTime));
+        // 动态补偿帧处理时间，维持接近 60fps
+        const frameTime: number = Date.now() - now;
+        const nextDelay: number = Math.max(1, 16 - frameTime);
+        this.dualCurlAnimTimer = setTimeout(animate, nextDelay);
       } else {
         this.dualCurlProgress = target;
         this.dualCurlAnimTimer = -1;
@@ -3010,6 +3042,7 @@ export struct MangaViewer {
       }
     };
 
+    // 立即执行第一帧（同步），避免 setTimeout 引入额外延迟
     animate();
   }
 
@@ -3214,12 +3247,13 @@ export struct MangaViewer {
 
   /**
    * 双页卷页完成动画（松手后继续翻到底）
+   * @param velocity 脱手速度 (progress/ms)，使动画延续用户的翻页力度；0 = 使用默认时长
    */
-  private animateDualCurlToComplete(): void {
+  private animateDualCurlToComplete(velocity: number = 0): void {
     this.stopDualCurlAnimation();
     this.animateDualCurlProgressTo(1.0, () => {
       this.onDualCurlAnimationComplete();
-    });
+    }, velocity);
   }
 
   /**
@@ -3877,6 +3911,7 @@ export struct MangaViewer {
       externalProgress: this.curlProgress,        // 外部驱动的进度（用于实时拖拽）
       animateToTarget: this.curlAnimateTarget,    // 内部动画目标（高性能模式）
       animateFromProgress: this.curlAnimateFrom,  // 内部动画起始进度
+      animateVelocity: this.curlAnimateVelocity,  // 脱手速度，使动画延续用户力度
       onPageFlip: (completed: boolean) => {
         this.handleCurlFlipComplete(completed);
       },
@@ -3913,6 +3948,7 @@ export struct MangaViewer {
     this.curlProgress = 0;
     this.curlAnimateTarget = -1;  // 重置内部动画状态
     this.curlAnimateFrom = 0;
+    this.curlAnimateVelocity = 0;  // 重置速度
     this.curlCurrentPixelMap = null;
     this.curlNextPixelMap = null;
     this.isPageTurning = false;

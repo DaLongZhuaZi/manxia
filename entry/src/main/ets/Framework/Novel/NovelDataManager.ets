@@ -113,6 +113,13 @@ export class NovelDataManager {
         await store.executeSql(table.sql);
         logger.debug(TAG, `创建表成功: ${table.name}`);
         
+        // 为 novel_source 表添加可能缺失的 isNSFW 列
+        if (table.name === 'novel_source') {
+          try { await store.executeSql('ALTER TABLE novel_source ADD COLUMN isNSFW INTEGER DEFAULT 0'); } catch (e) {}
+          try { await store.executeSql('UPDATE novel_source SET isNSFW = 0 WHERE isNSFW IS NULL'); } catch (e) {}
+          logger.info(TAG, '✅ [NOVEL_SOURCE] isNSFW列添加完成');
+        }
+        
         // 为 novel_book 表添加可能缺失的列
         if (table.name === 'novel_book') {
           logger.info(TAG, '🔧 [NOVEL_BOOK] 添加隐私列');
@@ -154,8 +161,8 @@ export class NovelDataManager {
 
     const sql = `INSERT OR REPLACE INTO novel_source 
       (id, bookSourceUrl, bookSourceName, bookSourceGroup, bookSourceType, 
-       enabled, weight, lastUpdateTime, respondTime, configJson, createTime, updateTime)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+       enabled, weight, lastUpdateTime, respondTime, configJson, isNSFW, createTime, updateTime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     await store.executeSql(sql, [
       id,
@@ -168,6 +175,7 @@ export class NovelDataManager {
       source.lastUpdateTime || now,
       source.respondTime || 180000,
       JSON.stringify(source),
+      source.isNSFW ? 1 : 0,
       now,
       now
     ]);
@@ -215,6 +223,39 @@ export class NovelDataManager {
     const now = Date.now();
     const id = book.id || this.generateId();
 
+    // 【NSFW作用域】从书源继承NSFW状态（受作用域开关控制）
+    let isNSFWVal = book.isNSFW ? 1 : 0;
+    if (isNSFWVal === 0 && book.isNSFW === undefined && book.sourceId) {
+      try {
+        const sourceNsfwRs = await store.querySql(
+          'SELECT isNSFW FROM novel_source WHERE bookSourceUrl = ? OR id = ?',
+          [book.sourceId, book.sourceId]
+        );
+        if (sourceNsfwRs.goToFirstRow()) {
+          const sourceIsNSFW = sourceNsfwRs.getLong(0);
+          if (sourceIsNSFW === 1) {
+            // 检查书源NSFW作用域开关
+            let scopeEnabled = true;
+            try {
+              const cfmModule = await import('../Managers/ContentFilterManager');
+              scopeEnabled = cfmModule.ContentFilterManager.getInstance().isNsfwScopeBookSourceEnabled();
+            } catch (_e) {
+              // ContentFilterManager未初始化时默认启用
+            }
+            if (scopeEnabled) {
+              isNSFWVal = 1;
+              logger.debug(TAG, `【NSFW作用域】小说从书源继承NSFW标记: ${book.name}`);
+            }
+          }
+          sourceNsfwRs.close();
+        } else {
+          sourceNsfwRs.close();
+        }
+      } catch (e) {
+        logger.warn(TAG, `查询书源NSFW状态失败: ${e}`);
+      }
+    }
+
     const sql = `INSERT OR REPLACE INTO novel_book 
       (id, sourceId, sourceName, bookUrl, name, author, kind, intro, coverUrl, 
        coverLocalPath, tocUrl, latestChapterTitle, wordCount, chapterCount,
@@ -231,7 +272,7 @@ export class NovelDataManager {
       book.lastReadPosition || 0, book.lastReadTime || 0,
       book.isFavorite ? 1 : 0,
       book.isPrivate ? 1 : 0,  // isPrivate默认为0（普通内容）
-      book.isNSFW ? 1 : 0,     // isNSFW默认为0（非NSFW内容）
+      isNSFWVal,                // isNSFW：支持从书源自动继承
       book.createTime || now, now
     ]);
 

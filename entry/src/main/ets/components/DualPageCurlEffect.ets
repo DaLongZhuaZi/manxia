@@ -62,6 +62,7 @@ export struct DualPageCurlEffect {
   // ========== 内部动画控制 ==========
   @Prop @Watch('onAnimateToTargetChange') animateToTarget: number = -1;
   @Prop animateFromProgress: number = 0;
+  @Prop animateVelocity: number = 0;      // 脱手速度（progress/ms），用于速度延续动画；0 = 使用默认时长
 
   // ========== 回调 ==========
   onAnimationComplete: () => void = () => {};
@@ -94,6 +95,8 @@ export struct DualPageCurlEffect {
   private anchorAY: number = -1;
 
   private animationTimer: number = -1;
+  // 动画期间弹簧软化标记
+  private isReleaseAnimating: boolean = false;
 
   private canvasSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.canvasSettings);
@@ -293,6 +296,13 @@ export struct DualPageCurlEffect {
     }
   }
 
+  /**
+   * 内部动画控制：当 animateToTarget 变化时触发
+   *
+   * 动画时长由脱手速度（animateVelocity）决定，使动画无缝延续用户的翻页力度：
+   *  - 有速度时：duration = 3 * Δ / v（easeOutCubic 初始斜率=3 → 动画开始速度 ≈ 用户脱手速度）
+   *  - 无速度时：使用基于进度的默认时长
+   */
   onAnimateToTargetChange(): void {
     if (this.animateToTarget < 0 || !this.isReady) return;
 
@@ -301,9 +311,9 @@ export struct DualPageCurlEffect {
 
     const startProgress: number = this.curlProgress;
     const targetProgress: number = this.animateToTarget;
-    const delta: number = Math.abs(targetProgress - startProgress);
+    const progressDelta: number = Math.abs(targetProgress - startProgress);
 
-    if (delta < 0.01) {
+    if (progressDelta < 0.01) {
       this.curlProgress = targetProgress;
       this.renderCurlEffect();
       this.onAnimationComplete();
@@ -311,45 +321,65 @@ export struct DualPageCurlEffect {
     }
 
     const isComplete: boolean = targetProgress > startProgress;
-    // 设置最小动画时长，避免翻过书脊后松手时因 delta 太小导致动画闪现
-    const minDuration: number = isComplete ? 300 : 200;
-    const rawDuration: number = isComplete
-      ? this.config.animationDuration * delta * 1.6
-      : this.config.animationDuration * delta;
-    const duration: number = Math.max(minDuration, rawDuration);
+    const velocity: number = this.animateVelocity;  // progress/ms
+
+    let duration: number;
+    // 缓动类型: 0=重力落下(取消回弹), 1=速度延续+微过冲(完成有速度), 2=重力辅助(完成无速度)
+    let easingType: number;
+
+    if (!isComplete) {
+      // ① 取消回弹 — 重力加速 + 微弹跳
+      duration = Math.max(280, this.config.animationDuration * progressDelta * 1.8 * 1.2);
+      easingType = 0;
+    } else if (velocity > 0.0003) {
+      // ② 完成翻页（有速度）— 速度延续 + 末尾微过冲
+      const physDuration: number = 3.0 * progressDelta / velocity;
+      duration = Math.min(500, Math.max(120, physDuration));
+      easingType = 1;
+    } else {
+      // ③ 完成翻页（无速度）— 重力辅助 easeInOutCubic
+      duration = Math.max(200, this.config.animationDuration * progressDelta * 1.5);
+      easingType = 2;
+    }
+
+    // 释放后弹簧参数软化
+    this.isReleaseAnimating = true;
+
     const startTime: number = Date.now();
 
     const animate = (): void => {
-      const elapsed: number = Date.now() - startTime;
+      const now: number = Date.now();
+      const elapsed: number = now - startTime;
       const t: number = Math.min(elapsed / Math.max(duration, 50), 1.0);
+
+      // 根据场景选择缓动函数
       let eased: number;
-      if (isComplete) {
-        eased = this.springEaseOut(t);
+      if (easingType === 0) {
+        eased = this.easeGravityDrop(t);
+      } else if (easingType === 1) {
+        eased = this.easeOutCubicWithOvershoot(t);
       } else {
-        eased = 1 - Math.pow(1 - t, 3);
+        eased = this.easeInOutCubic(t);
       }
 
       this.curlProgress = startProgress + (targetProgress - startProgress) * eased;
       this.renderCurlEffect();
 
       if (t < 1.0) {
-        const frameProcessTime: number = Date.now() - (startTime + elapsed);
-        this.animationTimer = setTimeout(animate, Math.max(1, 16 - frameProcessTime));
+        const frameTime: number = Date.now() - now;
+        const nextDelay: number = Math.max(1, 16 - frameTime);
+        this.animationTimer = setTimeout(animate, nextDelay);
       } else {
         this.curlProgress = targetProgress;
         this.renderCurlEffect();
         this.animationTimer = -1;
+        this.isReleaseAnimating = false;  // 恢复弹簧参数
         this.onAnimationComplete();
       }
     };
 
+    // 立即执行第一帧，避免 setTimeout 引入额外延迟
     animate();
-  }
-
-  private springEaseOut(t: number): number {
-    const decay: number = Math.exp(-4.5 * t);
-    const oscillation: number = Math.cos(3.5 * Math.PI * t);
-    return 1 - decay * oscillation;
   }
 
   private stopAnimation(): void {
@@ -454,7 +484,19 @@ export struct DualPageCurlEffect {
     }
     ctx.restore();
 
-    // === 3. V2式卷曲动画 / 着陆动画 ===
+    // === 3. 书脊阴影（绘制在底层页和不动页上方，卷曲动画下方） ===
+    if (this.config.enableShadow) {
+      ctx.save();
+      const sg: CanvasGradient = ctx.createLinearGradient(hw - 8, 0, hw + 8, 0);
+      sg.addColorStop(0, 'rgba(0,0,0,0)');
+      sg.addColorStop(0.5, 'rgba(0,0,0,0.15)');
+      sg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = sg;
+      ctx.fillRect(hw - 8, 0, 16, ch);
+      ctx.restore();
+    }
+
+    // === 4. V2式卷曲动画 / 着陆动画 ===
     if (!crossedSpine) {
       const turningBitmap: ImageBitmap | null = isLeftTurn ? this.curLeftBitmap : this.curRightBitmap;
       const turningPM: image.PixelMap | null = isLeftTurn ? this.currentLeftPixelMap : this.currentRightPixelMap;
@@ -520,18 +562,6 @@ export struct DualPageCurlEffect {
       }
     }
 
-    // === 4. 书脊阴影 ===
-    if (this.config.enableShadow) {
-      ctx.save();
-      const sg: CanvasGradient = ctx.createLinearGradient(hw - 8, 0, hw + 8, 0);
-      sg.addColorStop(0, 'rgba(0,0,0,0)');
-      sg.addColorStop(0.5, 'rgba(0,0,0,0.15)');
-      sg.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = sg;
-      ctx.fillRect(hw - 8, 0, 16, ch);
-      ctx.restore();
-    }
-    
     ctx.globalAlpha = 1.0;
   }
   
@@ -595,7 +625,7 @@ export struct DualPageCurlEffect {
       this.springVelocityX = 0;
       this.springVelocityY = 0;
     } else {
-      const stiffness: number = 0.15;
+      const stiffness: number = this.isReleaseAnimating ? 0.08 : 0.15;    // 释放动画期间软化
       const damping: number = 0.72;
       this.springVelocityX = this.springVelocityX * damping + (px - this.smoothPeelX) * stiffness;
       this.springVelocityY = this.springVelocityY * damping + (py - this.smoothPeelY) * stiffness;
@@ -736,12 +766,67 @@ export struct DualPageCurlEffect {
         ctx.fillRect(imgRect.x - 50, imgRect.y - 50, imgRect.w + 100, imgRect.h + 100);
         ctx.restore();
       }
+
+      // 6d. 翻起页外沿阴影（反射多边形远离折叠线的边缘薄阴影）
+      if (this.config.enableShadow && localProgress > 0.08) {
+        ctx.save();
+        let maxDist: number = 0;
+        let farIdx: number = 0;
+        for (let i = 0; i < reflCurl.length; i++) {
+          const d: number = Math.abs(nx * (reflCurl[i][0] - fmx) + ny * (reflCurl[i][1] - fmy));
+          if (d > maxDist) { maxDist = d; farIdx = i; }
+        }
+        if (maxDist > 5) {
+          const edgeSw: number = Math.min(12, 6 + localProgress * 8);
+          const edgeAlpha: number = Math.min(0.12, 0.06 + localProgress * 0.06);
+          const fp: number[] = reflCurl[farIdx];
+          const outDirX: number = nx;
+          const outDirY: number = ny;
+          const gEdge: CanvasGradient = ctx.createLinearGradient(
+            fp[0] - outDirX * 2, fp[1] - outDirY * 2,
+            fp[0] + outDirX * edgeSw, fp[1] + outDirY * edgeSw
+          );
+          gEdge.addColorStop(0, `rgba(0,0,0,${edgeAlpha})`);
+          gEdge.addColorStop(0.4, `rgba(0,0,0,${edgeAlpha * 0.4})`);
+          gEdge.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = gEdge;
+          ctx.fillRect(imgRect.x - 50, imgRect.y - 50, imgRect.w + 100, imgRect.h + 100);
+        }
+        ctx.restore();
+      }
     }
 
     // === 7. 折叠线阴影（投射到底层/curlPoly区域） ===
     if (this.config.enableShadow && localProgress > 0.02 && curlPoly.length >= 3) {
-      const sw: number = Math.min(40, imgRect.w * 0.06) * Math.sqrt(localProgress);
-      const sa: number = Math.min(0.3, 0.22 * Math.sqrt(localProgress));
+      // 7a. 页面悬浮投影 — 更宽更柔的阴影层（底层）
+      if (localProgress > 0.06) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(curlPoly[0][0], curlPoly[0][1]);
+        for (let k = 1; k < curlPoly.length; k++) {
+          ctx.lineTo(curlPoly[k][0], curlPoly[k][1]);
+        }
+        ctx.closePath();
+        ctx.clip();
+        const wideSw: number = Math.min(80, imgRect.w * 0.12) * localProgress;
+        const wideAlpha: number = Math.min(0.15, 0.03 + localProgress * localProgress * 0.12);
+        const gWide: CanvasGradient = ctx.createLinearGradient(
+          fmx, fmy,
+          fmx - nx * wideSw, fmy - ny * wideSw
+        );
+        gWide.addColorStop(0, `rgba(0,0,0,${wideAlpha})`);
+        gWide.addColorStop(0.15, `rgba(0,0,0,${wideAlpha * 0.7})`);
+        gWide.addColorStop(0.35, `rgba(0,0,0,${wideAlpha * 0.4})`);
+        gWide.addColorStop(0.6, `rgba(0,0,0,${wideAlpha * 0.15})`);
+        gWide.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gWide;
+        ctx.fillRect(imgRect.x - 50, imgRect.y - 50, imgRect.w + 100, imgRect.h + 100);
+        ctx.restore();
+      }
+
+      // 7b. 主折叠阴影 — 动态宽度，6-stop高斯式衰减（上层）
+      const sw: number = Math.min(50, imgRect.w * (0.04 + 0.04 * localProgress)) * Math.sqrt(localProgress);
+      const sa: number = Math.min(0.35, 0.24 * Math.sqrt(localProgress));
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(curlPoly[0][0], curlPoly[0][1]);
@@ -750,13 +835,25 @@ export struct DualPageCurlEffect {
       }
       ctx.closePath();
       ctx.clip();
+      // 极窄接触面阴影带(3px)
+      const gContact: CanvasGradient = ctx.createLinearGradient(
+        fmx + nx * 1, fmy + ny * 1,
+        fmx - nx * 3, fmy - ny * 3
+      );
+      gContact.addColorStop(0, `rgba(0,0,0,${Math.min(0.4, sa * 1.3)})`);
+      gContact.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = gContact;
+      ctx.fillRect(imgRect.x - 50, imgRect.y - 50, imgRect.w + 100, imgRect.h + 100);
+      // 主阴影：6-stop平滑衰减
       const g1: CanvasGradient = ctx.createLinearGradient(
         fmx + nx * 2, fmy + ny * 2,
         fmx - nx * sw, fmy - ny * sw
       );
       g1.addColorStop(0, `rgba(0,0,0,${sa})`);
-      g1.addColorStop(0.2, `rgba(0,0,0,${sa * 0.35})`);
-      g1.addColorStop(0.5, `rgba(0,0,0,${sa * 0.08})`);
+      g1.addColorStop(0.1, `rgba(0,0,0,${sa * 0.6})`);
+      g1.addColorStop(0.25, `rgba(0,0,0,${sa * 0.3})`);
+      g1.addColorStop(0.45, `rgba(0,0,0,${sa * 0.12})`);
+      g1.addColorStop(0.7, `rgba(0,0,0,${sa * 0.03})`);
       g1.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g1;
       ctx.fillRect(imgRect.x - 50, imgRect.y - 50, imgRect.w + 100, imgRect.h + 100);
@@ -821,6 +918,55 @@ export struct DualPageCurlEffect {
       ctx.fillRect(hw, 0, hw, ch);
     }
     ctx.restore();
+  }
+
+  // ========== 缓动函数 ==========
+
+  private easeOutCubic(t: number): number {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  /**
+   * 重力落下缓动：模拟页面在重力下落回 + 微弹跳
+   * 前60%: 加速相 easeInQuad（模拟重力加速）
+   * 60%-90%: 减速相，略微过冲(~3%)（模拟落地微弹）
+   * 90%-100%: 平滑回归安定
+   */
+  private easeGravityDrop(t: number): number {
+    if (t < 0.6) {
+      const nt: number = t / 0.6;
+      return 0.6 * nt * nt;
+    } else if (t < 0.9) {
+      const nt: number = (t - 0.6) / 0.3;
+      const ease: number = nt * (2 - nt);
+      return 0.6 + 0.43 * ease;
+    } else {
+      const nt: number = (t - 0.9) / 0.1;
+      return 1.03 - 0.03 * nt * nt;
+    }
+  }
+
+  /**
+   * easeOutCubic + 末尾微过冲：速度延续翻页用
+   * t > 0.95 时混入 ~1.5% overshoot，模拟惯性超调
+   */
+  private easeOutCubicWithOvershoot(t: number): number {
+    const base: number = 1 - Math.pow(1 - t, 3);
+    if (t > 0.95) {
+      const ot: number = (t - 0.95) / 0.05;
+      const overshoot: number = Math.sin(ot * Math.PI) * 0.015;
+      return base + overshoot;
+    }
+    return base;
+  }
+
+  /**
+   * easeInOutCubic：先加速再减速，模拟重力辅助翻页
+   */
+  private easeInOutCubic(t: number): number {
+    return t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2;
   }
 
   // ========== UI ==========

@@ -9,6 +9,7 @@ import { Context } from '@kit.AbilityKit';
 import { SourceManager, ImportResult } from './SourceManager';
 import { http } from '@kit.NetworkKit';
 import { ProxyManager } from '../Network/ProxyManager';
+import { DataManager } from '../Data/DataManager';
 
 const TAG = 'SourceRepositoryManager';
 
@@ -462,6 +463,14 @@ export class SourceRepositoryManager {
               const result = await this.importSourceFromRepository(source.pkg);
               if (result.success) {
                 log('info', `图源已更新: ${source.name}`);
+                // 同步仓库索引中的NSFW状态
+                if (result.sourceId) {
+                  try {
+                    await DataManager.getInstance().updateSourceNSFW(result.sourceId, source.nsfw === 1);
+                  } catch (nsfwError) {
+                    log('warn', `同步NSFW状态失败: ${source.name} - ${String(nsfwError)}`);
+                  }
+                }
               } else {
                 log('warn', `更新图源失败: ${source.name} - ${result.error ?? '未知错误'}`);
               }
@@ -796,6 +805,15 @@ export class SourceRepositoryManager {
         const result = await this.importSourceFromRepository(source.pkg);
         if (result.success) {
           logger.info(TAG, `新增图源已导入: ${source.name}`);
+          // 根据仓库索引中的nsfw字段自动标记NSFW
+          if (source.nsfw === 1 && result.sourceId) {
+            try {
+              await DataManager.getInstance().updateSourceNSFW(result.sourceId, true);
+              logger.info(TAG, `图源已自动标记为NSFW: ${source.name}`);
+            } catch (nsfwError) {
+              logger.warn(TAG, `自动标记NSFW失败: ${source.name}`, String(nsfwError));
+            }
+          }
         } else {
           logger.warn(TAG, `导入图源失败: ${source.name}`, result.error ?? '未知错误');
         }
