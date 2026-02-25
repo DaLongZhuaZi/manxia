@@ -9,7 +9,8 @@
 export enum TextReadingMode {
   SCROLL = 'SCROLL',           // 连续滚动模式
   PAGE = 'PAGE',               // 翻页模式
-  AUTO_SCROLL = 'AUTO_SCROLL'  // 自动滚动模式
+  AUTO_SCROLL = 'AUTO_SCROLL', // 自动滚动模式
+  DUAL_PAGE = 'DUAL_PAGE'      // 双页模式（横屏左右双页）
 }
 
 /**

@@ -77,6 +77,7 @@ export struct EBookMetadataDialog {
     this.coverPath = this.initialMetadata.coverImagePath || '';
     
     logger.info(TAG, `对话框初始化: 标题=${this.title}, 作者=${this.author}, 章节数=${this.chapters.length}`);
+    logger.info(TAG, `[封面诊断] aboutToAppear: initialMetadata.coverImagePath='${this.initialMetadata.coverImagePath}', coverPath='${this.coverPath}'`);
   }
 
   build() {
@@ -153,6 +154,8 @@ export struct EBookMetadataDialog {
           .fontFamily(this.appFontFamily)
           .onClick(() => {
             if (this.validateForm()) {
+              const resolvedCoverPath = this.customCoverPath || this.coverPath || this.initialMetadata.coverImagePath;
+              logger.info(TAG, `[封面诊断] 确认时: customCoverPath='${this.customCoverPath}', coverPath='${this.coverPath}', initialMetadata.coverImagePath='${this.initialMetadata.coverImagePath}', 最终='${resolvedCoverPath}'`);
               const metadata: EBookMetadata = {
                 title: this.title.trim(),
                 author: this.author.trim(),
@@ -161,7 +164,7 @@ export struct EBookMetadataDialog {
                 publishDate: this.publishDate.trim(),
                 isbn: this.isbn.trim(),
                 language: this.initialMetadata.language,
-                coverImagePath: this.customCoverPath || this.coverPath || this.initialMetadata.coverImagePath,
+                coverImagePath: resolvedCoverPath,
                 tags: this.parseTags(this.tagsText),
                 rating: this.initialMetadata.rating
               };

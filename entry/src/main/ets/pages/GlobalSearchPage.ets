@@ -73,6 +73,9 @@ interface SuwayomiDetailNavParam {
 // 全局搜索页面参数接口
 export interface GlobalSearchPageParams {
   initialKeyword?: string;  // 初始搜索关键词
+  initialContentType?: string;    // 初始内容类型筛选 ('manga' | 'novel' | 'ebook' | 'all')
+  initialSourceType?: string;     // 初始来源类型筛选 ('local' | 'online' | 'all')
+  autoSelectAllSources?: boolean; // 是否自动选中该类型的所有已开启源
 }
 
 
@@ -258,12 +261,46 @@ export struct GlobalSearchPage {
   
   /**
    * 处理页面参数，如果有初始关键词则自动搜索
+   * 支持预设筛选配置（从详情页快捷搜索跳转时使用）
    */
-  private handlePageParams(): void {
+  private async handlePageParams(): Promise<void> {
     if (this.pageParams?.initialKeyword) {
       this.searchKeyword = this.pageParams.initialKeyword;
-      logger.info(TAG, `收到初始搜索关键词: ${this.searchKeyword}`);
+      
+      // 应用初始筛选配置（如果提供）
+      if (this.pageParams.initialContentType) {
+        this.contentTypeFilter = this.pageParams.initialContentType as SearchContentType;
+      }
+      if (this.pageParams.initialSourceType) {
+        this.sourceTypeFilter = this.pageParams.initialSourceType as SearchSourceType;
+      }
+      
+      // 自动选中所有已开启的源
+      if (this.pageParams.autoSelectAllSources) {
+        // 确保源列表已加载
+        await this.loadAvailableSources();
+        this.autoSelectSourcesForContentType();
+      }
+      
+      logger.info(TAG, `收到初始搜索关键词: ${this.searchKeyword}, contentType=${this.contentTypeFilter}, sourceType=${this.sourceTypeFilter}`);
       this.performSearch();
+    }
+  }
+  
+  /**
+   * 根据当前内容类型自动选中所有已开启的源
+   * 用于从详情页快捷搜索跳转时，自动选中对应类型的所有源
+   */
+  private autoSelectSourcesForContentType(): void {
+    if (this.contentTypeFilter === SearchContentType.MANGA || this.contentTypeFilter === SearchContentType.ALL) {
+      // 选中所有已开启的漫画图源（已按置顶排序）
+      this.selectedMangaSources = this.availableMangaSources.map(s => s.id.toString());
+      logger.info(TAG, `自动选中 ${this.selectedMangaSources.length} 个漫画图源`);
+    }
+    if (this.contentTypeFilter === SearchContentType.NOVEL || this.contentTypeFilter === SearchContentType.ALL) {
+      // 选中所有已开启的小说书源
+      this.selectedNovelSources = this.availableNovelSources.map(s => s.id);
+      logger.info(TAG, `自动选中 ${this.selectedNovelSources.length} 个小说书源`);
     }
   }
 

@@ -29,8 +29,14 @@ export interface BatchFileInfo {
   prefilledInfo: PrefilledComicInfo | null;
   /** 推测的漫画标题（用于分组） */
   inferredTitle: string;
-  /** 推测的章节编号 */
+  /** 推测的章节编号（0 表示无法推测） */
   inferredChapterNumber: number;
+  /** 推测的卷号（0 表示无卷号信息） */
+  inferredVolumeNumber: number;
+  /** 文件内容类型（智能推测，可手动调整） */
+  contentType: FileContentType;
+  /** 是否参与导入（用户可逐个开关） */
+  enabled: boolean;
   /** 是否正在解析 */
   isParsing: boolean;
   /** 解析错误 */
@@ -44,6 +50,18 @@ export enum MangaStatus {
   UNKNOWN = 'unknown',
   ONGOING = 'ongoing',
   COMPLETED = 'completed'
+}
+
+/**
+ * 文件内容类型
+ */
+export enum FileContentType {
+  /** 单话/章节（某部漫画的一个章节） */
+  CHAPTER = 'chapter',
+  /** 单行本/卷（独立完整的一本漫画） */
+  VOLUME = 'volume',
+  /** 多章节容器（内含多个章节的压缩包或文件夹） */
+  MULTI_CHAPTER = 'multi_chapter',
 }
 
 /**
@@ -172,16 +190,40 @@ export struct BatchMangaImportDialog {
   @State analyzeProgress: number = 0;
   @State analyzeMessage: string = '正在分析文件...';
   @State currentTab: number = 0; // 0: 分组视图, 1: 文件列表视图
+  // 分组视图刷新计数器：每次切换回分组 tab 时递增，强制 ForEach 重建所有卡片
+  @State groupViewRefreshTick: number = 0;
+  // 数据版本号：每次文件状态变化时递增，驱动文件列表 & 分组视图 ForEach key 全量失效
+  @State dataVersion: number = 0;
   // 文件列表多选状态
-  @State selectedFileIndices: Set<number> = new Set<number>();
+  @State selectedFileIndices: number[] = [];
   @State isMultiSelectMode: boolean = false;
-  
+  // 入场动画状态
+  @State private animOpacity: number = 0.0;
+  @State private animTranslateY: number = 20;
+
+  // UI上下文（入场动画使用）
+  private uiContext: UIContext | null = null;
   // 刮削对话框控制器
   private scraperDialogController: CustomDialogController | null = null;
   // 当前正在刮削的分组索引
   private currentScrapingGroupIndex: number = -1;
 
   aboutToAppear(): void {
+    // 获取UI上下文，用于入场动画
+    this.uiContext = this.getUIContext();
+    const ctx = this.uiContext;
+    if (ctx) {
+      setTimeout(() => {
+        const animateOptions = { duration: 300, curve: Curve.EaseOut } as AnimateParam;
+        ctx.animateTo(animateOptions, () => {
+          this.animOpacity = 1.0;
+          this.animTranslateY = 0;
+        });
+      }, 0);
+    } else {
+      this.animOpacity = 1.0;
+      this.animTranslateY = 0;
+    }
     this.initializeFiles();
     this.startAnalysis();
   }
@@ -192,6 +234,7 @@ export struct BatchMangaImportDialog {
   private initializeFiles(): void {
     this.files = this.fileUris.map((uri: string) => {
       const fileName = this.getFileNameFromUri(uri);
+      const isFolder = uri.startsWith('folder:');
       return {
         fileUri: uri,
         fileName: fileName,
@@ -199,6 +242,9 @@ export struct BatchMangaImportDialog {
         prefilledInfo: null,
         inferredTitle: this.inferTitleFromFileName(fileName),
         inferredChapterNumber: this.inferChapterNumberFromFileName(fileName),
+        inferredVolumeNumber: this.inferVolumeNumberFromFileName(fileName),
+        contentType: this.inferContentTypeFromFileName(fileName, isFolder),
+        enabled: true,
         isParsing: true,
         parseError: null
       } as BatchFileInfo;
@@ -252,7 +298,12 @@ export struct BatchMangaImportDialog {
             logger.info(TAG, `解析ComicInfo成功: ${file.fileName}, series=${prefilledInfo.series}, title=${prefilledInfo.title}`);
           }
         }
-        
+
+        // 解析完成后基于结构信息精化内容类型
+        file.contentType = this.inferContentTypeFromFile(
+          file.fileName, file.fileUri, structure, file.prefilledInfo
+        );
+
         // 触发UI更新
         this.files = this.files.slice();
         
@@ -276,70 +327,58 @@ export struct BatchMangaImportDialog {
   }
 
   /**
-   * 执行智能分组
+   * 执行智能分组（以 contentType 为核心分组依据）
+   * - CHAPTER 文件：按规范化标题聚合，排序按卷号→章节号
+   * - VOLUME / MULTI_CHAPTER 文件：每个文件独占一个分组
    */
   private async performSmartGrouping(): Promise<void> {
-    // 按推测标题分组
-    const groupMap = new Map<string, BatchFileInfo[]>();
-    
-    for (const file of this.files) {
-      if (file.parseError) continue;
-      
-      const normalizedTitle = this.normalizeTitle(file.inferredTitle);
-      
-      if (!groupMap.has(normalizedTitle)) {
-        groupMap.set(normalizedTitle, []);
-      }
-      groupMap.get(normalizedTitle)!.push(file);
-    }
-    
-    // 创建分组
     this.groups = [];
     let groupIndex = 0;
-    
-    groupMap.forEach((files: BatchFileInfo[], title: string) => {
-      // 按章节编号排序
-      files.sort((a, b) => a.inferredChapterNumber - b.inferredChapterNumber);
-      
-      // 获取第一个文件的预填充信息作为默认值
+
+    // CHAPTER 文件按规范化标题聚合
+    const chapterMap = new Map<string, BatchFileInfo[]>();
+    // VOLUME / MULTI_CHAPTER 文件各自独占一组
+    const soloFiles: BatchFileInfo[] = [];
+
+    for (const file of this.files) {
+      if (file.parseError) continue;
+      if (file.contentType === FileContentType.CHAPTER) {
+        const key = this.normalizeTitle(file.inferredTitle);
+        if (!chapterMap.has(key)) {
+          chapterMap.set(key, []);
+        }
+        chapterMap.get(key)!.push(file);
+      } else {
+        soloFiles.push(file);
+      }
+    }
+
+    // 创建 CHAPTER 分组
+    chapterMap.forEach((files: BatchFileInfo[], title: string) => {
+      files.sort((a, b) => {
+        if (a.inferredVolumeNumber !== b.inferredVolumeNumber) {
+          return a.inferredVolumeNumber - b.inferredVolumeNumber;
+        }
+        return a.inferredChapterNumber - b.inferredChapterNumber;
+      });
+
       const firstFile = files[0];
       const prefilledInfo = firstFile.prefilledInfo;
-      
-      // 创建章节列表
+
       const chapters: BatchChapterInfo[] = files.map((file: BatchFileInfo, index: number) => {
-        // 优先使用xml中的章节标题
-        const chapterTitle = file.prefilledInfo?.title || `第${file.inferredChapterNumber || (index + 1)}话`;
         const chapterInfo: BatchChapterInfo = {
           number: file.inferredChapterNumber || (index + 1),
-          title: chapterTitle,
+          title: file.prefilledInfo?.title || `第${file.inferredChapterNumber || (index + 1)}话`,
           file: file,
           pageCount: file.parsedStructure?.totalImageCount || 0
         };
         return chapterInfo;
       });
-      
-      // 确定导入模式
-      let importMode = MangaImportMode.TANKOUBON;
-      if (files.length > 1) {
-        // 多个文件，使用多章节模式（每个文件作为一个章节）
-        importMode = MangaImportMode.SINGLE_CHAPTER;
-      } else if (firstFile.parsedStructure?.detectedChapters && 
-                 firstFile.parsedStructure.detectedChapters.length > 1) {
-        // 单个文件但包含多个章节
-        importMode = MangaImportMode.MULTI_CHAPTER;
-      }
-      
-      // 初始化封面候选
-      const coverCandidates = this.initCoverCandidatesForGroup(files);
-      
-      // 获取漫画标题
+
+      const importMode = files.length > 1 ? MangaImportMode.SINGLE_CHAPTER : MangaImportMode.TANKOUBON;
       const groupTitle = prefilledInfo?.series || prefilledInfo?.title || this.denormalizeTitle(title);
-      
-      // 自动检测是否有同名的已有漫画
       const matchedManga = this.findMatchingExistingManga(groupTitle);
-      const shouldMerge = matchedManga !== null;
-      const targetId = matchedManga?.id || '';
-      
+
       const group: MangaGroup = {
         groupId: `group_${groupIndex++}`,
         title: groupTitle,
@@ -350,22 +389,84 @@ export struct BatchMangaImportDialog {
         chapters: chapters,
         isExpanded: true,
         importMode: importMode,
-        mergeToExisting: shouldMerge,
-        targetMangaId: targetId,
+        mergeToExisting: matchedManga !== null,
+        targetMangaId: matchedManga?.id || '',
         selectedCoverFileIndex: 0,
-        coverCandidates: coverCandidates,
+        coverCandidates: this.initCoverCandidatesForGroup(files),
         selectedCoverIndex: 0,
         status: MangaStatus.UNKNOWN,
         isNSFW: false
       };
-      
-      if (shouldMerge && matchedManga) {
-        logger.info(TAG, `自动匹配到已有漫画: ${groupTitle} -> ${matchedManga.title} (${matchedManga.id})`);
+
+      if (matchedManga) {
+        logger.info(TAG, `自动匹配到已有漫画: ${groupTitle} -> ${matchedManga.title}`);
       }
-      
       this.groups.push(group);
     });
-    
+
+    // 创建 VOLUME / MULTI_CHAPTER 独立分组
+    for (const file of soloFiles) {
+      const prefilledInfo = file.prefilledInfo;
+      let chapters: BatchChapterInfo[];
+      let importMode: MangaImportMode;
+
+      if (file.contentType === FileContentType.MULTI_CHAPTER) {
+        importMode = MangaImportMode.MULTI_CHAPTER;
+        if (file.parsedStructure?.detectedChapters && file.parsedStructure.detectedChapters.length > 1) {
+          chapters = file.parsedStructure.detectedChapters.map((ch: ChapterInfo) => {
+            const ci: BatchChapterInfo = {
+              number: ch.number,
+              title: ch.title,
+              file: file,
+              pageCount: ch.pageCount
+            };
+            return ci;
+          });
+        } else {
+          chapters = [{
+            number: file.inferredChapterNumber || 1,
+            title: prefilledInfo?.title || `第${file.inferredChapterNumber || 1}话`,
+            file: file,
+            pageCount: file.parsedStructure?.totalImageCount || 0
+          }];
+        }
+      } else {
+        // VOLUME
+        importMode = MangaImportMode.TANKOUBON;
+        chapters = [{
+          number: file.inferredVolumeNumber || 1,
+          title: prefilledInfo?.title ||
+            (file.inferredVolumeNumber > 0 ? `第${file.inferredVolumeNumber}卷` : file.inferredTitle),
+          file: file,
+          pageCount: file.parsedStructure?.totalImageCount || 0
+        }];
+      }
+
+      const groupTitle = prefilledInfo?.series || prefilledInfo?.title || file.inferredTitle;
+      const matchedManga = this.findMatchingExistingManga(groupTitle);
+
+      const group: MangaGroup = {
+        groupId: `__solo_${file.fileUri}`,
+        title: groupTitle,
+        author: prefilledInfo?.author || '',
+        description: prefilledInfo?.description || '',
+        tags: prefilledInfo?.tags || [],
+        files: [file],
+        chapters: chapters,
+        isExpanded: true,
+        importMode: importMode,
+        mergeToExisting: matchedManga !== null,
+        targetMangaId: matchedManga?.id || '',
+        selectedCoverFileIndex: 0,
+        coverCandidates: this.initCoverCandidatesForGroup([file]),
+        selectedCoverIndex: 0,
+        status: MangaStatus.UNKNOWN,
+        isNSFW: false
+      };
+      this.groups.push(group);
+      logger.info(TAG, `独立分组 (${file.contentType}): ${groupTitle}`);
+    }
+
     logger.info(TAG, `智能分组完成: ${this.groups.length} 个漫画分组`);
   }
   
@@ -406,28 +507,12 @@ export struct BatchMangaImportDialog {
    * 初始化分组的封面候选
    */
   private initCoverCandidatesForGroup(files: BatchFileInfo[]): string[] {
-    const candidates: string[] = [];
-    
     // 从第一个文件获取封面候选
     const firstFile = files[0];
     if (firstFile.parsedStructure?.extractedPath) {
       try {
         const extractedPath = firstFile.parsedStructure.extractedPath;
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
-        
-        const fileList = fileIo.listFileSync(extractedPath);
-        const imageFiles: string[] = [];
-        
-        for (const file of fileList) {
-          const lowerFile = file.toLowerCase();
-          for (const ext of imageExtensions) {
-            if (lowerFile.endsWith(ext)) {
-              imageFiles.push(`${extractedPath}/${file}`);
-              break;
-            }
-          }
-        }
-        
+        const imageFiles = this.findImagesRecursive(extractedPath, 3);
         imageFiles.sort();
         return imageFiles.slice(0, 3);
       } catch (error) {
@@ -435,73 +520,237 @@ export struct BatchMangaImportDialog {
       }
     }
     
-    return candidates;
+    return [];
   }
 
   /**
-   * 从文件名推测漫画标题
+   * 递归查找图片文件（先搜索当前目录，再搜索子目录）
+   */
+  private findImagesRecursive(dirPath: string, maxCount: number, currentDepth: number = 0): string[] {
+    if (currentDepth > 3) return [];
+    
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+    const imageFiles: string[] = [];
+    const subDirs: string[] = [];
+    
+    try {
+      const fileList = fileIo.listFileSync(dirPath);
+      
+      for (const file of fileList) {
+        const lowerFile = file.toLowerCase();
+        const fullPath = `${dirPath}/${file}`;
+        let isImage = false;
+        
+        for (const ext of imageExtensions) {
+          if (lowerFile.endsWith(ext)) {
+            imageFiles.push(fullPath);
+            isImage = true;
+            break;
+          }
+        }
+        
+        if (!isImage) {
+          try {
+            const stat = fileIo.statSync(fullPath);
+            if (stat.isDirectory()) {
+              subDirs.push(fullPath);
+            }
+          } catch (_e) {
+            // 忽略
+          }
+        }
+        
+        if (imageFiles.length >= maxCount) break;
+      }
+      
+      // 如果当前目录没有足够图片，递归搜索子目录
+      if (imageFiles.length < maxCount && subDirs.length > 0) {
+        subDirs.sort();
+        for (const subDir of subDirs) {
+          const subImages = this.findImagesRecursive(subDir, maxCount - imageFiles.length, currentDepth + 1);
+          for (const img of subImages) {
+            imageFiles.push(img);
+            if (imageFiles.length >= maxCount) break;
+          }
+          if (imageFiles.length >= maxCount) break;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描目录图片失败: ${dirPath}`, String(error));
+    }
+    
+    return imageFiles;
+  }
+
+  /**
+   * 移除文件扩展名
+   */
+  private getFileNameWithoutExt(fileName: string): string {
+    const lastDotIndex = fileName.lastIndexOf('.');
+    if (lastDotIndex > 0) {
+      return fileName.substring(0, lastDotIndex);
+    }
+    return fileName;
+  }
+
+  /**
+   * 从文件名推测漫画标题（增强版）
    */
   private inferTitleFromFileName(fileName: string): string {
-    // 移除扩展名
-    let title = fileName;
-    const lastDotIndex = title.lastIndexOf('.');
-    if (lastDotIndex > 0) {
-      title = title.substring(0, lastDotIndex);
-    }
-    
-    // 移除常见的章节标识
-    const patterns: RegExp[] = [
-      /[\[\(【（]\d+[\]\)】）]/g,           // [1], (1), 【1】, （1）
-      /第\d+[话話章回卷]/g,                  // 第1话、第1章
-      /[话話章回卷]\d+/g,                    // 话1、章1
-      /[Cc]h(?:apter)?[.\s]*\d+/gi,        // Ch.1, Chapter 1
-      /[Ee]p(?:isode)?[.\s]*\d+/gi,        // Ep.1, Episode 1
-      /[Vv]ol(?:ume)?[.\s]*\d+/gi,         // Vol.1, Volume 1
-      /[_\-\s]+\d{1,4}[_\-\s]*/g,          // _001_, -01-
-      /\s*\d{1,4}$/g                        // 末尾的数字
+    let title = this.getFileNameWithoutExt(fileName);
+
+    // 移除扫描组/汉化组标签
+    title = title.replace(/[\[\([［（][^\]\)[］）]{0,30}?(?:汉化|翻译|扫描|Digital|WEB|RAW|DL)[^\]\)[］）]{0,20}?[\]\)[］）]/gi, '');
+
+    // 移除章节/卷标识
+    const stripPatterns: RegExp[] = [
+      /第\d+(\.\d+)?[话話章回]/g,
+      /[话話章回]\d+/g,
+      /[Cc]h(?:apter)?\.?\s*\d+(\.\d+)?/gi,
+      /[Ee]p(?:isode)?\.?\s*\d+/gi,
+      /[Vv]ol(?:ume)?\.?\s*\d+(\.\d+)?/gi,
+      /第\d+[卷册]/g,
+      /[\[\([［（]\d+(\.\d+)?[\]\)[］）]/g,
+      /[_\-\s]+\d{1,4}(\.\d+)?[_\-\s]*/g,
+      /\s*\d{1,4}(\.\d+)?$/g
     ];
-    
-    for (const pattern of patterns) {
+
+    for (const pattern of stripPatterns) {
       title = title.replace(pattern, '');
     }
-    
-    // 清理多余的空格和符号
+
     title = title.replace(/[\s_\-]+/g, ' ').trim();
-    
-    // 如果标题为空，使用原文件名
     if (!title) {
-      title = fileName.substring(0, lastDotIndex > 0 ? lastDotIndex : fileName.length);
+      title = this.getFileNameWithoutExt(fileName);
     }
-    
     return title;
   }
 
   /**
-   * 从文件名推测章节编号
+   * 从文件名推测章节编号（增强版）
    */
   private inferChapterNumberFromFileName(fileName: string): number {
+    const base = this.getFileNameWithoutExt(fileName);
     const patterns: RegExp[] = [
-      /第(\d+)[话話章回卷]/,           // 第1话、第1章
-      /[话話章回卷](\d+)/,              // 话1、章1
-      /[Cc]h(?:apter)?[.\s]*(\d+)/i,   // Ch.1, Chapter 1
-      /[Ee]p(?:isode)?[.\s]*(\d+)/i,   // Ep.1, Episode 1
-      /[Vv]ol(?:ume)?[.\s]*(\d+)/i,    // Vol.1, Volume 1
-      /[\[\(【（](\d+)[\]\)】）]/,      // [1], (1), 【1】, （1）
-      /[_\-\s](\d{1,4})[_\-\s.]/,      // _001_, -01-
-      /(\d{1,4})$/                      // 末尾的数字
+      /第(\d+(?:\.\d+)?)[话話章回]/,
+      /[话話章回](\d+)/,
+      /[Cc]h(?:apter)?\.?\s*(\d+(?:\.\d+)?)/i,
+      /[Ee]p(?:isode)?\.?\s*(\d+)/i,
+      /[\[\([［（](\d+(?:\.\d+)?)[\]\)[］）]/,
+      /[_\-\s](\d{3,4})(?:[_\-\s.]|$)/,
+      /(\d{1,4})$/
     ];
-
     for (const pattern of patterns) {
-      const match = fileName.match(pattern);
+      const match = base.match(pattern);
       if (match && match[1]) {
-        const num = parseInt(match[1], 10);
+        const num = parseFloat(match[1]);
         if (num > 0 && num < 10000) {
-          return num;
+          return Math.floor(num);
         }
       }
     }
-
     return 1;
+  }
+
+  /**
+   * 从文件名推测卷号
+   */
+  private inferVolumeNumberFromFileName(fileName: string): number {
+    const base = this.getFileNameWithoutExt(fileName);
+    const patterns: RegExp[] = [
+      /第(\d+(?:\.\d+)?)[卷册]/,
+      /[Vv]ol(?:ume)?\.?\s*(\d+(?:\.\d+)?)/,
+      /v(\d+(?:\.\d+)?)(?:[_\-\s.]|$)/i
+    ];
+    for (const pattern of patterns) {
+      const match = base.match(pattern);
+      if (match && match[1]) {
+        const num = parseFloat(match[1]);
+        if (num > 0 && num < 1000) {
+          return Math.floor(num);
+        }
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * 从文件名智能推断内容类型（基础阶段，无解析结构）
+   */
+  private inferContentTypeFromFileName(fileName: string, isFolder: boolean): FileContentType {
+    if (isFolder) {
+      return FileContentType.MULTI_CHAPTER;
+    }
+    const base = this.getFileNameWithoutExt(fileName).toLowerCase();
+
+    // 章节范围检测：001-050，差値≥ 2 → 多章节合集
+    const rangeMatch = base.match(/(?:ch(?:apter)?\.?\s*)?(\d+)\s*[-~到]\s*(\d+)/i);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1], 10);
+      const end = parseInt(rangeMatch[2], 10);
+      if (!isNaN(start) && !isNaN(end) && end - start >= 2) {
+        return FileContentType.MULTI_CHAPTER;
+      }
+    }
+
+    // 有卷号且无章节号 → 单行本
+    const hasVol = /vol(?:ume)?\.?\s*\d+|第\d+[卷册]/.test(base);
+    const hasCh = /ch(?:apter)?\.?\s*\d+|第\d+[话話章回]|ep(?:isode)?\.?\s*\d+/.test(base);
+    if (hasVol && !hasCh) {
+      return FileContentType.VOLUME;
+    }
+
+    // 多章节关键词
+    const multiKeywords = ['合集', '合本', '合订', 'omnibus', 'anthology', 'collection', '精选', '特辑'];
+    for (const kw of multiKeywords) {
+      if (base.includes(kw)) {
+        return FileContentType.MULTI_CHAPTER;
+      }
+    }
+
+    return FileContentType.CHAPTER;
+  }
+
+  /**
+   * 解析完成后精化内容类型
+   */
+  private inferContentTypeFromFile(
+    fileName: string,
+    fileUri: string,
+    parsedStructure: ParsedArchiveStructure | null,
+    prefilledInfo: PrefilledComicInfo | null
+  ): FileContentType {
+    const isFolder = fileUri.startsWith('folder:');
+    let contentType = this.inferContentTypeFromFileName(fileName, isFolder);
+    if (!parsedStructure) {
+      return contentType;
+    }
+    const detectedChapterCount = parsedStructure.detectedChapters?.length ?? 0;
+    const pageCount = parsedStructure.totalImageCount ?? 0;
+
+    // 内含多个子目录 → 多章节
+    if (detectedChapterCount > 1) {
+      return FileContentType.MULTI_CHAPTER;
+    }
+
+    // 页数占位（仅当文件名未能确定类型时）
+    if (detectedChapterCount <= 1 && contentType === FileContentType.CHAPTER) {
+      if (pageCount >= 250) {
+        return FileContentType.MULTI_CHAPTER;
+      }
+      if (pageCount >= 150) {
+        return FileContentType.VOLUME;
+      }
+    }
+
+    // ComicInfo series != title → 是章节形式
+    if (prefilledInfo && prefilledInfo.series && prefilledInfo.series !== prefilledInfo.title) {
+      if (contentType !== FileContentType.MULTI_CHAPTER) {
+        return FileContentType.CHAPTER;
+      }
+    }
+
+    return contentType;
   }
 
   /**
@@ -541,21 +790,24 @@ export struct BatchMangaImportDialog {
   }
 
   /**
-   * 验证表单
+   * 验证表单（跳过全部文件均已禁用的分组）
    */
   private validateForm(): boolean {
     for (const group of this.groups) {
+      // 全部禁用的分组不参与导入，跳过验证
+      const hasEnabledFile = group.files.some((f: BatchFileInfo) => f.enabled);
+      if (!hasEnabledFile) continue;
+
       if (!group.title || group.title.trim().length === 0) {
         this.showToast('请为所有漫画输入标题');
         return false;
       }
-      
+
       if (group.mergeToExisting && !group.targetMangaId) {
         this.showToast(`请为"${group.title}"选择要合并的目标漫画`);
         return false;
       }
     }
-    
     return true;
   }
 
@@ -567,27 +819,32 @@ export struct BatchMangaImportDialog {
   }
 
   /**
-   * 构建结果
+   * 构建结果（过滤全禁用分组及禁用文件）
    */
   private buildResult(): BatchMangaImportDialogResult {
-    const groupResults: MangaGroupResult[] = this.groups.map((group: MangaGroup) => {
-      const chapterResults: BatchChapterResult[] = group.chapters.map((chapter: BatchChapterInfo) => {
-        const result: BatchChapterResult = {
-          number: chapter.number,
-          title: chapter.title,
-          fileUri: chapter.file.fileUri,
-          parsedStructure: chapter.file.parsedStructure
-        };
-        return result;
-      });
-      
-      // 获取选中的封面路径
+    const groupResults: MangaGroupResult[] = [];
+    for (const group of this.groups) {
+      const hasEnabledFile = group.files.some((f: BatchFileInfo) => f.enabled);
+      if (!hasEnabledFile) continue;
+
+      const chapterResults: BatchChapterResult[] = group.chapters
+        .filter((chapter: BatchChapterInfo) => chapter.file.enabled)
+        .map((chapter: BatchChapterInfo) => {
+          const result: BatchChapterResult = {
+            number: chapter.number,
+            title: chapter.title,
+            fileUri: chapter.file.fileUri,
+            parsedStructure: chapter.file.parsedStructure
+          };
+          return result;
+        });
+
       let selectedCoverPath = '';
       if (group.coverCandidates.length > 0 && group.selectedCoverIndex < group.coverCandidates.length) {
         selectedCoverPath = group.coverCandidates[group.selectedCoverIndex];
       }
-      
-      return {
+
+      groupResults.push({
         title: group.title.trim(),
         author: group.author.trim() || '未知作者',
         description: group.description.trim(),
@@ -597,9 +854,8 @@ export struct BatchMangaImportDialog {
         mergeToExisting: group.mergeToExisting,
         targetMangaId: group.mergeToExisting ? group.targetMangaId : undefined,
         selectedCoverPath: selectedCoverPath
-      } as MangaGroupResult;
-    });
-    
+      } as MangaGroupResult);
+    }
     return { groups: groupResults };
   }
 
@@ -615,12 +871,22 @@ export struct BatchMangaImportDialog {
         // 标签页切换
         this.buildTabBar()
         
-        // 内容区域
-        if (this.currentTab === 0) {
+        // 内容区域：始终同时挂载两个视图，通过 Visibility 切换而非 if/else，
+        // 防止 ArkUI 对 if/else 分支的组件缓存复用导致切回分组视图时显示旧数据。
+        // Visibility.None 的组件仍保留在组件树中，@State 变化可实时传播给它。
+        Column() {
           this.buildGroupsView()
-        } else {
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .visibility(this.currentTab === 0 ? Visibility.Visible : Visibility.None)
+        
+        Column() {
           this.buildFilesListView()
         }
+        .width('100%')
+        .layoutWeight(1)
+        .visibility(this.currentTab === 1 ? Visibility.Visible : Visibility.None)
         
         // 操作按钮
         this.buildActionButtons()
@@ -630,6 +896,8 @@ export struct BatchMangaImportDialog {
     .height('90%')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .borderRadius(16)
+    .opacity(this.animOpacity)
+    .translate({ y: this.animTranslateY })
   }
 
   /**
@@ -735,10 +1003,15 @@ export struct BatchMangaImportDialog {
           ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
           'transparent')
         .margin({ top: 4 })
+        .animation({ duration: 200, curve: Curve.EaseOut })
     }
     .layoutWeight(1)
     .padding({ top: 12, bottom: 8 })
     .onClick(() => {
+      if (index === 0) {
+        // 切换回分组视图前递增 tick，使 ForEach key 全部失效，强制重建分组卡片
+        this.groupViewRefreshTick++;
+      }
       this.currentTab = index;
     })
   }
@@ -764,7 +1037,7 @@ export struct BatchMangaImportDialog {
       Column({ space: 12 }) {
         ForEach(this.groups, (group: MangaGroup) => {
           this.buildGroupCardById(group.groupId)
-        }, (group: MangaGroup) => `${group.groupId}_${group.isExpanded}_${group.mergeToExisting}_${group.targetMangaId}_${group.title}`)
+        }, (group: MangaGroup) => `r${this.groupViewRefreshTick}_v${this.dataVersion}_${group.groupId}_${group.isExpanded}_${group.mergeToExisting}_${group.targetMangaId}_${group.title}_${group.importMode}_${group.status}_${group.isNSFW}_${group.selectedCoverIndex}_${group.files.length}_${group.files.filter((f: BatchFileInfo) => f.enabled).length}_${group.chapters.length}_${group.files.map((f: BatchFileInfo) => f.contentType).join(',')}`)
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -772,10 +1045,15 @@ export struct BatchMangaImportDialog {
     .layoutWeight(1)
     .scrollable(ScrollDirection.Vertical)
     .scrollBar(BarState.Auto)
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ x: -15 }).animation({ duration: 250, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+    ))
   }
   
   /**
-   * 根据groupId构建分组卡片
+   * 根据groupId查找分组索引
    */
   @Builder
   buildGroupCardById(groupId: string) {
@@ -837,7 +1115,7 @@ export struct BatchMangaImportDialog {
       Row({ space: 12 }) {
         // 展开/折叠图标
         Row() {
-          SymbolGlyph(group.isExpanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          SymbolGlyph(this.groups[groupIndex].isExpanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
             .fontSize(16)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
         }
@@ -851,7 +1129,7 @@ export struct BatchMangaImportDialog {
         // 漫画信息
         Column({ space: 4 }) {
           // 标题输入（可编辑）
-          TextInput({ text: group.title, placeholder: '漫画标题' })
+          TextInput({ text: this.groups[groupIndex].title, placeholder: '漫画标题' })
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -863,8 +1141,8 @@ export struct BatchMangaImportDialog {
               this.updateGroupTitle(groupIndex, value);
             })
           
-          // 章节统计
-          Text(`${group.chapters.length} 个章节 · ${this.getTotalPages(group)} 页`)
+          // 章节统计（显示已启用/总计）
+          Text(`${this.groups[groupIndex].chapters.filter((c: BatchChapterInfo) => c.file.enabled && (this.dataVersion >= 0)).length}/${this.groups[groupIndex].chapters.length} 个章节 · ${this.getTotalPages(this.groups[groupIndex])} 页`)
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -873,7 +1151,7 @@ export struct BatchMangaImportDialog {
         .alignItems(HorizontalAlign.Start)
         
         // 拆分按钮（仅当分组有多个文件时显示）
-        if (group.files.length > 1) {
+        if (this.groups[groupIndex].files.length > 1) {
           Row({ space: 4 }) {
             Text('拆分')
               .fontSize(11)
@@ -909,13 +1187,14 @@ export struct BatchMangaImportDialog {
       .padding(12)
       
       // 展开的详细内容
-      if (group.isExpanded) {
+      if (this.groups[groupIndex].isExpanded) {
         Column({ space: 12 }) {
           // 来源信息提示（如果有xml信息）
-          if (this.hasXmlInfo(group)) {
+          if (this.hasXmlInfo(this.groups[groupIndex])) {
             Row({ space: 4 }) {
-              Text('📄')
-                .fontSize(12)
+              SymbolGlyph($r('sys.symbol.doc_text'))
+                .fontSize(13)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
               Text('包含 ComicInfo.xml 元数据')
                 .fontSize(11)
                 .fontFamily(this.appFontFamily)
@@ -928,19 +1207,19 @@ export struct BatchMangaImportDialog {
           }
           
           // 作者输入
-          this.buildInputField('作者', group.author, '请输入作者', (value: string) => {
+          this.buildInputField('作者', this.groups[groupIndex].author, '请输入作者', (value: string) => {
             this.groups[groupIndex].author = value;
           })
           
           // 简介输入（如果有xml信息则显示）
-          if (group.description) {
-            this.buildInputField('简介', group.description, '漫画简介', (value: string) => {
+          if (this.groups[groupIndex].description) {
+            this.buildInputField('简介', this.groups[groupIndex].description, '漫画简介', (value: string) => {
               this.groups[groupIndex].description = value;
             })
           }
           
           // 标签输入
-          this.buildInputField('标签', group.tags.join(', '), '逗号分隔', (value: string) => {
+          this.buildInputField('标签', this.groups[groupIndex].tags.join(', '), '逗号分隔', (value: string) => {
             this.groups[groupIndex].tags = value.split(/[,，、]/).map(t => t.trim()).filter(t => t.length > 0);
           })
           
@@ -958,6 +1237,11 @@ export struct BatchMangaImportDialog {
         }
         .width('100%')
         .padding({ left: 12, right: 12, bottom: 12 })
+        .transition(TransitionEffect.asymmetric(
+          TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+            .combine(TransitionEffect.translate({ y: -8 }).animation({ duration: 200, curve: Curve.EaseOut })),
+          TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+        ))
       }
     }
     .width('100%')
@@ -967,6 +1251,11 @@ export struct BatchMangaImportDialog {
       width: 1,
       color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
     })
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ y: 10 }).animation({ duration: 250, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+    ))
   }
 
   /**
@@ -1012,11 +1301,11 @@ export struct BatchMangaImportDialog {
           Text('未知')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(group.status === MangaStatus.UNKNOWN ?
+            .fontColor(this.groups[groupIndex].status === MangaStatus.UNKNOWN ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor(group.status === MangaStatus.UNKNOWN ?
+            .backgroundColor(this.groups[groupIndex].status === MangaStatus.UNKNOWN ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20' :
               ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .borderRadius(4)
@@ -1027,11 +1316,11 @@ export struct BatchMangaImportDialog {
           Text('连载')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(group.status === MangaStatus.ONGOING ?
+            .fontColor(this.groups[groupIndex].status === MangaStatus.ONGOING ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor(group.status === MangaStatus.ONGOING ?
+            .backgroundColor(this.groups[groupIndex].status === MangaStatus.ONGOING ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20' :
               ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .borderRadius(4)
@@ -1042,11 +1331,11 @@ export struct BatchMangaImportDialog {
           Text('完结')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(group.status === MangaStatus.COMPLETED ?
+            .fontColor(this.groups[groupIndex].status === MangaStatus.COMPLETED ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor(group.status === MangaStatus.COMPLETED ?
+            .backgroundColor(this.groups[groupIndex].status === MangaStatus.COMPLETED ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20' :
               ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
             .borderRadius(4)
@@ -1064,7 +1353,7 @@ export struct BatchMangaImportDialog {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
-        Toggle({ type: ToggleType.Switch, isOn: group.isNSFW })
+        Toggle({ type: ToggleType.Switch, isOn: this.groups[groupIndex].isNSFW })
           .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .onChange((isOn: boolean) => {
             this.updateGroupNSFW(groupIndex, isOn);
@@ -1108,8 +1397,8 @@ export struct BatchMangaImportDialog {
         
         Blank()
         
-        if (group.coverCandidates.length > 0) {
-          Text(`已选第 ${group.selectedCoverIndex + 1} 张`)
+        if (this.groups[groupIndex].coverCandidates.length > 0) {
+          Text(`已选第 ${this.groups[groupIndex].selectedCoverIndex + 1} 张`)
             .fontSize(11)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -1117,14 +1406,14 @@ export struct BatchMangaImportDialog {
       }
       .width('100%')
       
-      if (group.coverCandidates.length === 0) {
+      if (this.groups[groupIndex].coverCandidates.length === 0) {
         Text('暂无封面候选')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       } else {
         Row({ space: 8 }) {
-          ForEach(group.coverCandidates, (path: string, index: number) => {
+          ForEach(this.groups[groupIndex].coverCandidates, (path: string, index: number) => {
             Column() {
               Image(path.startsWith('file://') ? path : `file://${path}`)
                 .width(60)
@@ -1140,16 +1429,17 @@ export struct BatchMangaImportDialog {
               
               // 选中指示器
               if (this.groups[groupIndex].selectedCoverIndex === index) {
-                Text('✓')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(AppColors.onPrimary)
-                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                  .borderRadius(10)
-                  .width(20)
-                  .height(20)
-                  .textAlign(TextAlign.Center)
-                  .margin({ top: -15 })
+                Row() {
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(12)
+                    .fontColor([AppColors.onPrimary])
+                }
+                .width(20)
+                .height(20)
+                .justifyContent(FlexAlign.Center)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .borderRadius(10)
+                .margin({ top: -15 })
               }
             }
             .onClick(() => {
@@ -1171,7 +1461,7 @@ export struct BatchMangaImportDialog {
   }
 
   /**
-   * 构建章节列表
+   * 构建章节列表（仅显示已启用的章节）
    */
   @Builder
   buildChapterList(group: MangaGroup, groupIndex: number) {
@@ -1184,21 +1474,22 @@ export struct BatchMangaImportDialog {
         
         Blank()
         
-        Text(`共 ${group.chapters.length} 章`)
+        Text(`共 ${this.groups[groupIndex].chapters.filter((c: BatchChapterInfo) => c.file.enabled && (this.dataVersion >= 0)).length} 章`)
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
       }
       .width('100%')
       
-      // 章节列表（最多显示5个，其余折叠）
+      // 章节列表（仅显示已启用章节，最多5个，其余折叠）
       Column({ space: 4 }) {
-        ForEach(group.chapters.slice(0, 5), (chapter: BatchChapterInfo, chapterIndex: number) => {
-          this.buildChapterItem(chapter, groupIndex, chapterIndex)
-        }, (chapter: BatchChapterInfo, index: number) => `chapter_${groupIndex}_${index}`)
+        ForEach(this.groups[groupIndex].chapters.filter((c: BatchChapterInfo) => c.file.enabled && (this.dataVersion >= 0)).slice(0, 5),
+          (chapter: BatchChapterInfo, chapterIndex: number) => {
+            this.buildChapterItem(chapter, groupIndex, chapterIndex)
+          }, (chapter: BatchChapterInfo) => `chapter_${groupIndex}_${chapter.file.fileUri}_${this.dataVersion}`)
         
-        if (group.chapters.length > 5) {
-          Text(`... 还有 ${group.chapters.length - 5} 个章节`)
+        if (this.groups[groupIndex].chapters.filter((c: BatchChapterInfo) => c.file.enabled && (this.dataVersion >= 0)).length > 5) {
+          Text(`... 还有 ${this.groups[groupIndex].chapters.filter((c: BatchChapterInfo) => c.file.enabled && (this.dataVersion >= 0)).length - 5} 个章节`)
             .fontSize(11)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1235,9 +1526,12 @@ export struct BatchMangaImportDialog {
           .onChange((value: string) => {
             const num = parseInt(value, 10);
             if (!isNaN(num) && num > 0) {
-              this.groups[groupIndex].chapters[chapterIndex].number = num;
+              chapter.number = num;
               // 检查章节是否可能已存在
-              this.checkChapterExistence(groupIndex, chapterIndex);
+              const realChapterIdx = this.groups[groupIndex].chapters.indexOf(chapter);
+              if (realChapterIdx >= 0) {
+                this.checkChapterExistence(groupIndex, realChapterIdx);
+              }
               this.groups = this.groups.slice();
             }
           })
@@ -1252,7 +1546,7 @@ export struct BatchMangaImportDialog {
           .height(28)
           .layoutWeight(1)
           .onChange((value: string) => {
-            this.groups[groupIndex].chapters[chapterIndex].title = value;
+            chapter.title = value;
             this.groups = this.groups.slice();
           })
         
@@ -1281,6 +1575,7 @@ export struct BatchMangaImportDialog {
       }
     }
     .width('100%')
+    .opacity(chapter.file.enabled ? 1.0 : 0.35)
   }
 
   /**
@@ -1291,7 +1586,7 @@ export struct BatchMangaImportDialog {
     Column({ space: 8 }) {
       Row({ space: 8 }) {
         Checkbox()
-          .select(group.mergeToExisting)
+          .select(this.groups[groupIndex].mergeToExisting)
           .onChange((value: boolean) => {
             this.toggleMergeToExisting(groupIndex, value);
           })
@@ -1302,7 +1597,7 @@ export struct BatchMangaImportDialog {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
         // 如果已自动匹配，显示提示
-        if (group.mergeToExisting && group.targetMangaId) {
+        if (this.groups[groupIndex].mergeToExisting && this.groups[groupIndex].targetMangaId) {
           Text('(已自动匹配)')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
@@ -1314,7 +1609,7 @@ export struct BatchMangaImportDialog {
       // 始终显示已有漫画列表（勾选后才能选择）
       if (this.existingMangaCandidates.length > 0) {
         Column({ space: 4 }) {
-          if (!group.mergeToExisting) {
+          if (!this.groups[groupIndex].mergeToExisting) {
             Text('勾选上方选项后可选择目标漫画')
               .fontSize(11)
               .fontFamily(this.appFontFamily)
@@ -1327,14 +1622,14 @@ export struct BatchMangaImportDialog {
             Row({ space: 8 }) {
               // 选中指示器
               Row() {
-                if (group.targetMangaId === manga.id && group.mergeToExisting) {
+                if (this.groups[groupIndex].targetMangaId === manga.id && this.groups[groupIndex].mergeToExisting) {
                   SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
                     .fontSize(20)
                     .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
                 } else {
                   SymbolGlyph($r('sys.symbol.circle'))
                     .fontSize(20)
-                    .fontColor([group.mergeToExisting ? 
+                    .fontColor([this.groups[groupIndex].mergeToExisting ? 
                       ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) :
                       ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
                 }
@@ -1347,7 +1642,7 @@ export struct BatchMangaImportDialog {
                 Text(manga.title)
                   .fontSize(12)
                   .fontFamily(this.appFontFamily)
-                  .fontColor(group.mergeToExisting ? 
+                  .fontColor(this.groups[groupIndex].mergeToExisting ? 
                     ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) :
                     ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                   .maxLines(1)
@@ -1363,17 +1658,17 @@ export struct BatchMangaImportDialog {
             }
             .width('100%')
             .padding(6)
-            .backgroundColor(group.targetMangaId === manga.id && group.mergeToExisting ?
+            .backgroundColor(this.groups[groupIndex].targetMangaId === manga.id && this.groups[groupIndex].mergeToExisting ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15' :
               'transparent')
             .borderRadius(4)
-            .opacity(group.mergeToExisting ? 1.0 : 0.5)
+            .opacity(this.groups[groupIndex].mergeToExisting ? 1.0 : 0.5)
             .onClick(() => {
-              if (group.mergeToExisting) {
+              if (this.groups[groupIndex].mergeToExisting) {
                 this.selectTargetManga(groupIndex, manga.id);
               }
             })
-          }, (manga: ExistingMangaCandidate) => `${manga.id}_${group.mergeToExisting}_${group.targetMangaId}`)
+          }, (manga: ExistingMangaCandidate) => `${manga.id}_${this.groups[groupIndex].mergeToExisting}_${this.groups[groupIndex].targetMangaId}`)
         }
         .width('100%')
         .padding(8)
@@ -1392,19 +1687,42 @@ export struct BatchMangaImportDialog {
   }
 
   /**
-   * 构建文件列表视图
+   * 构建文件列表视图（分组分区）
    */
   @Builder
   buildFilesListView() {
     Column({ space: 0 }) {
-      // 操作栏
       this.buildFileListToolbar()
-      
       Scroll() {
-        Column({ space: 8 }) {
-          ForEach(this.files, (file: BatchFileInfo, index: number) => {
-            this.buildFileItem(file, index)
-          }, (file: BatchFileInfo, index: number) => `file_${index}_${this.selectedFileIndices.has(index)}`)
+        Column({ space: 10 }) {
+          ForEach(this.groups, (group: MangaGroup) => {
+            this.buildFileGroupSection(group)
+          }, (group: MangaGroup) =>
+            `v${this.dataVersion}_sec_${group.groupId}_${group.importMode}_${group.files.length}_${group.files.filter((f: BatchFileInfo) => f.enabled).length}`)
+          if (this.getErrorFiles().length > 0) {
+            Column({ space: 4 }) {
+              Row({ space: 6 }) {
+                Text('解析失败')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(AppColors.error)
+                Text(`${this.getErrorFiles().length} 个`)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .width('100%')
+              .padding({ left: 8, bottom: 4 })
+              ForEach(this.getErrorFiles(), (file: BatchFileInfo) => {
+                this.buildFileItemInGroup(file, this.getFileIndex(file))
+              }, (file: BatchFileInfo) => `err_${file.fileUri}`)
+            }
+            .width('100%')
+            .padding(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+            .borderRadius(8)
+          }
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -1415,6 +1733,11 @@ export struct BatchMangaImportDialog {
     }
     .width('100%')
     .layoutWeight(1)
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ x: 15 }).animation({ duration: 250, curve: Curve.EaseOut })),
+      TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+    ))
   }
   
   /**
@@ -1422,66 +1745,114 @@ export struct BatchMangaImportDialog {
    */
   @Builder
   buildFileListToolbar() {
-    Row({ space: 8 }) {
-      // 多选模式切换
-      Row({ space: 4 }) {
-        Checkbox()
-          .select(this.isMultiSelectMode)
-          .onChange((value: boolean) => {
-            this.isMultiSelectMode = value;
-            if (!value) {
-              this.selectedFileIndices.clear();
-              this.selectedFileIndices = new Set<number>(this.selectedFileIndices);
-            }
-          })
-        Text('多选')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-      }
-      
-      if (this.isMultiSelectMode && this.selectedFileIndices.size > 0) {
-        Text(`已选 ${this.selectedFileIndices.size} 个`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        
-        // 合并按钮
-        Button('合并为一部漫画')
-          .fontSize(11)
-          .height(28)
-          .padding({ left: 8, right: 8 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .fontColor(AppColors.onPrimary)
-          .borderRadius(4)
-          .enabled(this.selectedFileIndices.size >= 2)
-          .onClick(() => {
-            this.mergeSelectedFiles();
-          })
-      }
-      
-      Blank()
-      
-      // 全选/取消全选
-      if (this.isMultiSelectMode) {
-        Text(this.selectedFileIndices.size === this.files.length ? '取消全选' : '全选')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onClick(() => {
-            if (this.selectedFileIndices.size === this.files.length) {
-              this.selectedFileIndices.clear();
-            } else {
-              for (let i = 0; i < this.files.length; i++) {
-                this.selectedFileIndices.add(i);
+    Column({ space: 0 }) {
+      // 第一行：多选控制
+      Row({ space: 8 }) {
+        Row({ space: 4 }) {
+          Checkbox()
+            .select(this.isMultiSelectMode)
+            .onChange((value: boolean) => {
+              this.isMultiSelectMode = value;
+              if (!value) {
+                this.selectedFileIndices = [];
               }
-            }
-            this.selectedFileIndices = new Set<number>(this.selectedFileIndices);
-          })
+            })
+          Text('多选')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+        if (this.isMultiSelectMode && this.selectedFileIndices.length > 0) {
+          Text(`已选 ${this.selectedFileIndices.length} 个`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          Button('合并')
+            .fontSize(11)
+            .height(28)
+            .padding({ left: 8, right: 8 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(AppColors.onPrimary)
+            .borderRadius(4)
+            .enabled(this.selectedFileIndices.length >= 2)
+            .onClick(() => { this.mergeSelectedFiles(); })
+        }
+        Blank()
+        if (this.isMultiSelectMode) {
+          Text(this.selectedFileIndices.length === this.files.length ? '取消全选' : '全选')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              if (this.selectedFileIndices.length === this.files.length) {
+                this.selectedFileIndices = [];
+              } else {
+                const allIndices: number[] = [];
+                for (let i = 0; i < this.files.length; i++) {
+                  allIndices.push(i);
+                }
+                this.selectedFileIndices = allIndices;
+              }
+            })
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      // 第二行：批量操作（多选且有选中时显示）
+      if (this.isMultiSelectMode && this.selectedFileIndices.length > 0) {
+        Row({ space: 6 }) {
+          Text('批量类型:')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .flexShrink(0)
+          Text('章节')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#4FC3F7')
+            .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+            .backgroundColor('#4FC3F720')
+            .borderRadius(4)
+            .onClick(() => { this.batchChangeContentType(FileContentType.CHAPTER); })
+          Text('单行本')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#81C784')
+            .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+            .backgroundColor('#81C78420')
+            .borderRadius(4)
+            .onClick(() => { this.batchChangeContentType(FileContentType.VOLUME); })
+          Text('多章节')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#FFB74D')
+            .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+            .backgroundColor('#FFB74D20')
+            .borderRadius(4)
+            .onClick(() => { this.batchChangeContentType(FileContentType.MULTI_CHAPTER); })
+          Blank()
+          Text('启用')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#81C784')
+            .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+            .backgroundColor('#81C78420')
+            .borderRadius(4)
+            .onClick(() => { this.batchToggleEnabled(true); })
+          Text('禁用')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(AppColors.error)
+            .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+            .backgroundColor(AppColors.error + '20')
+            .borderRadius(4)
+            .onClick(() => { this.batchToggleEnabled(false); })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 4, bottom: 8 })
       }
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
   }
   
@@ -1489,9 +1860,9 @@ export struct BatchMangaImportDialog {
    * 合并选中的文件为一个分组
    */
   private mergeSelectedFiles(): void {
-    if (this.selectedFileIndices.size < 2) return;
+    if (this.selectedFileIndices.length < 2) return;
     
-    const selectedIndices = Array.from(this.selectedFileIndices).sort((a, b) => a - b);
+    const selectedIndices = this.selectedFileIndices.slice().sort((a, b) => a - b);
     const selectedFiles: BatchFileInfo[] = selectedIndices.map(i => this.files[i]);
     
     // 收集被合并分组的用户自定义信息
@@ -1534,9 +1905,11 @@ export struct BatchMangaImportDialog {
     const firstFile = selectedFiles[0];
     const prefilledInfo = firstFile.prefilledInfo;
     
+    // 合并后统一设置为 CHAPTER 类型
+    selectedFiles.forEach((f: BatchFileInfo) => { f.contentType = FileContentType.CHAPTER; });
     // 按章节编号排序
     selectedFiles.sort((a, b) => a.inferredChapterNumber - b.inferredChapterNumber);
-    
+
     // 创建章节列表
     const chapters: BatchChapterInfo[] = selectedFiles.map((file: BatchFileInfo, index: number) => {
       const chapterInfo: BatchChapterInfo = {
@@ -1578,11 +1951,11 @@ export struct BatchMangaImportDialog {
     this.groups = this.groups.slice();
     
     // 清除选择
-    this.selectedFileIndices.clear();
-    this.selectedFileIndices = new Set<number>(this.selectedFileIndices);
+    this.selectedFileIndices = [];
     this.isMultiSelectMode = false;
     
-    // 切换到分组视图
+    // 切换到分组视图（同时递增 tick 强制刷新）
+    this.groupViewRefreshTick++;
     this.currentTab = 0;
     
     logger.info(TAG, `合并 ${selectedFiles.length} 个文件为新分组: ${newGroup.title}`);
@@ -1607,8 +1980,11 @@ export struct BatchMangaImportDialog {
       const prefilledInfo = file.prefilledInfo;
       
       // 优先使用xml信息，其次使用原分组的用户自定义信息
+      const splitImportMode = this.contentTypeToImportMode(file.contentType);
       const newGroup: MangaGroup = {
-        groupId: `group_split_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        groupId: file.contentType !== FileContentType.CHAPTER
+          ? `__solo_${file.fileUri}`
+          : `group_split_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         title: prefilledInfo?.series || prefilledInfo?.title || file.inferredTitle,
         author: prefilledInfo?.author || originalAuthor,
         description: prefilledInfo?.description || '',
@@ -1616,7 +1992,7 @@ export struct BatchMangaImportDialog {
         files: [file],
         chapters: [this.createChapterInfo(file, prefilledInfo)],
         isExpanded: false,
-        importMode: MangaImportMode.TANKOUBON,
+        importMode: splitImportMode,
         mergeToExisting: false,
         targetMangaId: '',
         selectedCoverFileIndex: 0,
@@ -1634,147 +2010,323 @@ export struct BatchMangaImportDialog {
   }
 
   /**
-   * 构建文件项
+   * 构建文件分组区域（每个分组占一个卡片）
    */
   @Builder
-  buildFileItem(file: BatchFileInfo, index: number) {
-    Row({ space: 12 }) {
-      // 多选复选框
-      if (this.isMultiSelectMode) {
-        Checkbox()
-          .select(this.selectedFileIndices.has(index))
-          .onChange((value: boolean) => {
-            if (value) {
-              this.selectedFileIndices.add(index);
-            } else {
-              this.selectedFileIndices.delete(index);
-            }
-            this.selectedFileIndices = new Set<number>(this.selectedFileIndices);
-          })
-      }
-      
-      // 状态图标
-      if (file.isParsing) {
-        LoadingProgress()
-          .width(20)
-          .height(20)
-          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      } else if (file.parseError) {
-        Text('❌')
-          .fontSize(16)
+  buildFileGroupSection(group: MangaGroup) {
+    Column({ space: 0 }) {
+      Row({ space: 6 }) {
+        Text(this.getImportModeLabel(group.importMode))
+          .fontSize(10)
           .fontFamily(this.appFontFamily)
-      } else {
-        Text('✅')
-          .fontSize(16)
+          .fontColor(group.importMode === MangaImportMode.MULTI_CHAPTER ? '#FFB74D' :
+            group.importMode === MangaImportMode.TANKOUBON ? '#81C784' : '#4FC3F7')
+          .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+          .backgroundColor(group.importMode === MangaImportMode.MULTI_CHAPTER ? '#FFB74D20' :
+            group.importMode === MangaImportMode.TANKOUBON ? '#81C78420' : '#4FC3F720')
+          .borderRadius(3)
+          .flexShrink(0)
+        Text(group.title || '(无标题)')
+          .fontSize(12)
           .fontFamily(this.appFontFamily)
-      }
-      
-      // 文件信息
-      Column({ space: 2 }) {
-        Text(file.fileName)
-          .fontSize(13)
-          .fontFamily(this.appFontFamily)
+          .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        
-        if (file.parseError) {
-          Text(file.parseError)
-            .fontSize(11)
+          .layoutWeight(1)
+        Text(`${group.files.filter((f: BatchFileInfo) => f.enabled && !f.parseError).length}/${group.files.filter((f: BatchFileInfo) => !f.parseError).length}`)
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .flexShrink(0)
+      }
+      .width('100%')
+      .padding({ left: 10, right: 10, top: 8, bottom: 6 })
+
+      ForEach(group.files.filter((f: BatchFileInfo) => !f.parseError), (file: BatchFileInfo) => {
+        this.buildFileItemInGroup(file, this.getFileIndex(file))
+      }, (file: BatchFileInfo) =>
+        `v${this.dataVersion}_fgi_${file.fileUri}_${file.enabled}_${file.contentType}_${this.selectedFileIndices.includes(this.getFileIndex(file))}`)
+    }
+    .width('100%')
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(8)
+    .clip(true)
+  }
+
+  /**
+   * 构建单个文件项（启用开关 + 内容类型徽章）
+   */
+  @Builder
+  buildFileItemInGroup(file: BatchFileInfo, fileIdx: number) {
+    Row({ space: 8 }) {
+      // 多选复选框
+      if (this.isMultiSelectMode) {
+        Checkbox()
+          .select(this.selectedFileIndices.includes(fileIdx))
+          .onChange((value: boolean) => {
+            if (value) {
+              if (!this.selectedFileIndices.includes(fileIdx)) {
+                this.selectedFileIndices = [...this.selectedFileIndices, fileIdx];
+              }
+            } else {
+              this.selectedFileIndices = this.selectedFileIndices.filter((i: number) => i !== fileIdx);
+            }
+          })
+      }
+      // 选中/启用指示器
+      if (file.isParsing) {
+        LoadingProgress()
+          .width(22)
+          .height(22)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      } else {
+        SymbolGlyph(file.enabled ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.circle'))
+          .fontSize(22)
+          .fontColor([file.enabled ?
+            ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+            ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+          .onClick(() => {
+            if (!this.isMultiSelectMode) {
+              file.enabled = !file.enabled;
+              this.dataVersion++;
+              this.files = this.files.slice();
+              // 深度更新 groups：重建包含此文件的分组的 chapters 数组
+              this.rebuildGroupsChapters(file);
+            }
+          })
+      }
+      // 文件信息
+      Column({ space: 2 }) {
+        Row({ space: 4 }) {
+          if (file.fileUri.startsWith('folder:')) {
+            SymbolGlyph($r('sys.symbol.folder'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          Text(file.fileName)
+            .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(AppColors.error)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-        } else if (file.parsedStructure) {
-          // 显示xml信息（如果有）
-          if (file.prefilledInfo) {
-            Text(`${file.parsedStructure.totalImageCount} 页 · ${file.prefilledInfo.series || file.prefilledInfo.title || file.inferredTitle} 第${file.inferredChapterNumber}话`)
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          } else {
-            Text(`${file.parsedStructure.totalImageCount} 页 · 推测: ${file.inferredTitle} 第${file.inferredChapterNumber}话`)
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
+            .layoutWeight(1)
+        }
+        .width('100%')
+        if (file.parsedStructure) {
+          Text(`${file.parsedStructure.totalImageCount} 页 · ${file.inferredTitle}`)
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
-      
-      // 导入模式标签（可点击切换）
-      if (!file.isParsing && !file.parseError) {
-        Text(this.getFileImportModeLabel(file))
-          .fontSize(10)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .padding({ left: 6, right: 6, top: 3, bottom: 3 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '20')
-          .borderRadius(4)
-          .onClick(() => {
-            this.cycleFileImportMode(index);
-          })
-      }
+      .opacity(file.enabled ? 1.0 : 0.5)
+      .animation({ duration: 200, curve: Curve.EaseOut })
+      // 内容类型标签（点击循环切换）
+      Text(this.getContentTypeLabel(file.contentType))
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.getContentTypeColor(file.contentType))
+        .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+        .backgroundColor(this.getContentTypeColor(file.contentType) + '20')
+        .borderRadius(4)
+        .flexShrink(0)
+        .onClick(() => { this.cycleFileContentType(file); })
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor(this.selectedFileIndices.has(index) ?
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor(this.selectedFileIndices.includes(fileIdx) ?
       ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '15' :
-      ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(8)
-    .border({
-      width: this.selectedFileIndices.has(index) ? 2 : 0,
-      color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-    })
+      'transparent')
     .onClick(() => {
       if (this.isMultiSelectMode) {
-        if (this.selectedFileIndices.has(index)) {
-          this.selectedFileIndices.delete(index);
+        if (this.selectedFileIndices.includes(fileIdx)) {
+          this.selectedFileIndices = this.selectedFileIndices.filter((i: number) => i !== fileIdx);
         } else {
-          this.selectedFileIndices.add(index);
+          this.selectedFileIndices = [...this.selectedFileIndices, fileIdx];
         }
-        this.selectedFileIndices = new Set<number>(this.selectedFileIndices);
       }
+      // 非多选模式下，启用状态由左侧 SymbolGlyph 单独处理
+      // 避免点击子元素（SymbolGlyph / 内容类型徽章）时事件冒泡到 Row 导致二次触发
     })
   }
   
   /**
-   * 获取文件的导入模式标签
+   * 获取文件在 this.files 中的索引
    */
-  private getFileImportModeLabel(file: BatchFileInfo): string {
-    // 查找文件所属的分组
-    for (const group of this.groups) {
-      if (group.files.includes(file)) {
-        return this.getImportModeLabel(group.importMode);
+  private getFileIndex(file: BatchFileInfo): number {
+    return this.files.indexOf(file);
+  }
+
+  /**
+   * 获取解析失败的文件列表
+   */
+  private getErrorFiles(): BatchFileInfo[] {
+    return this.files.filter((f: BatchFileInfo) => f.parseError !== null);
+  }
+
+  /**
+   * 内容类型标签
+   */
+  private getContentTypeLabel(contentType: FileContentType): string {
+    switch (contentType) {
+      case FileContentType.CHAPTER: return '章节';
+      case FileContentType.VOLUME: return '单行本';
+      case FileContentType.MULTI_CHAPTER: return '多章节';
+      default: return '未知';
+    }
+  }
+
+  /**
+   * 内容类型颜色
+   */
+  private getContentTypeColor(contentType: FileContentType): string {
+    switch (contentType) {
+      case FileContentType.CHAPTER: return '#4FC3F7';
+      case FileContentType.VOLUME: return '#81C784';
+      case FileContentType.MULTI_CHAPTER: return '#FFB74D';
+      default: return '#90A4AE';
+    }
+  }
+
+  /**
+   * 内容类型 → 导入模式
+   */
+  private contentTypeToImportMode(contentType: FileContentType): MangaImportMode {
+    switch (contentType) {
+      case FileContentType.CHAPTER: return MangaImportMode.SINGLE_CHAPTER;
+      case FileContentType.VOLUME: return MangaImportMode.TANKOUBON;
+      case FileContentType.MULTI_CHAPTER: return MangaImportMode.MULTI_CHAPTER;
+      default: return MangaImportMode.TANKOUBON;
+    }
+  }
+
+  /**
+   * 循环切换文件内容类型
+   */
+  private cycleFileContentType(file: BatchFileInfo): void {
+    const types = [FileContentType.CHAPTER, FileContentType.VOLUME, FileContentType.MULTI_CHAPTER];
+    const nextType = types[(types.indexOf(file.contentType) + 1) % types.length];
+    this.changeFileContentType(this.getFileIndex(file), nextType);
+  }
+
+  /**
+   * 修改文件内容类型（含拆组逻辑）
+   * triggerUpdate=false 时不立即刷新 UI，用于批量操作
+   */
+  private changeFileContentType(fileIndex: number, newContentType: FileContentType, triggerUpdate: boolean = true): void {
+    if (fileIndex < 0 || fileIndex >= this.files.length) return;
+    const file = this.files[fileIndex];
+    file.contentType = newContentType;
+
+    for (let i = 0; i < this.groups.length; i++) {
+      const group = this.groups[i];
+      if (!group.files.includes(file)) continue;
+
+      if (group.files.length === 1) {
+        // 单文件分组：直接更新 importMode
+        this.groups[i].importMode = this.contentTypeToImportMode(newContentType);
+        if (newContentType !== FileContentType.CHAPTER) {
+          this.groups[i].groupId = `__solo_${file.fileUri}`;
+        }
+      } else if (newContentType !== FileContentType.CHAPTER) {
+        // 多文件分组 + 非 CHAPTER：将文件移出，创建独立分组
+        this.groups[i].files = group.files.filter(f => f !== file);
+        this.groups[i].chapters = group.chapters.filter(c => c.file !== file);
+        if (this.groups[i].files.length === 0) {
+          this.groups.splice(i, 1);
+        }
+        const soloGroup: MangaGroup = {
+          groupId: `__solo_${file.fileUri}`,
+          title: file.prefilledInfo?.series || file.prefilledInfo?.title || file.inferredTitle,
+          author: file.prefilledInfo?.author || group.author,
+          description: file.prefilledInfo?.description || '',
+          tags: file.prefilledInfo?.tags || group.tags.slice(),
+          files: [file],
+          chapters: [{
+            number: newContentType === FileContentType.VOLUME
+              ? (file.inferredVolumeNumber || 1)
+              : (file.inferredChapterNumber || 1),
+            title: file.prefilledInfo?.title || file.inferredTitle,
+            file: file,
+            pageCount: file.parsedStructure?.totalImageCount || 0
+          }],
+          isExpanded: false,
+          importMode: this.contentTypeToImportMode(newContentType),
+          mergeToExisting: false,
+          targetMangaId: '',
+          selectedCoverFileIndex: 0,
+          coverCandidates: this.initCoverCandidatesForGroup([file]),
+          selectedCoverIndex: 0,
+          status: MangaStatus.UNKNOWN,
+          isNSFW: false
+        };
+        this.groups.push(soloGroup);
+      }
+      // CHAPTER + 多文件分组：保留在组内，无需操作
+      break;
+    }
+
+    if (triggerUpdate) {
+      this.dataVersion++;
+      this.files = this.files.slice();
+      this.groups = this.groups.slice();
+    }
+  }
+
+  /**
+   * 批量修改选中文件的内容类型
+   */
+  private batchChangeContentType(newContentType: FileContentType): void {
+    for (const idx of this.selectedFileIndices) {
+      this.changeFileContentType(idx, newContentType, false);
+    }
+    this.dataVersion++;
+    this.files = this.files.slice();
+    this.groups = this.groups.slice();
+  }
+
+  /**
+   * 批量设置选中文件的启用/禁用状态
+   */
+  private batchToggleEnabled(enabled: boolean): void {
+    for (const idx of this.selectedFileIndices) {
+      if (idx >= 0 && idx < this.files.length) {
+        this.files[idx].enabled = enabled;
       }
     }
-    return '单行本';
+    this.dataVersion++;
+    this.files = this.files.slice();
+    // 深度更新所有 groups 的 chapters
+    this.rebuildAllGroupsChapters();
   }
   
   /**
-   * 循环切换文件的导入模式
+   * 深度更新包含指定文件的分组的 chapters 数组（触发响应式更新）
    */
-  private cycleFileImportMode(fileIndex: number): void {
-    const file = this.files[fileIndex];
-    
-    // 查找文件所属的分组
+  private rebuildGroupsChapters(file: BatchFileInfo): void {
     for (let i = 0; i < this.groups.length; i++) {
       const group = this.groups[i];
       if (group.files.includes(file)) {
-        // 循环切换模式
-        const modes = [MangaImportMode.TANKOUBON, MangaImportMode.SINGLE_CHAPTER, MangaImportMode.MULTI_CHAPTER];
-        const currentIndex = modes.indexOf(group.importMode);
-        const nextIndex = (currentIndex + 1) % modes.length;
-        this.groups[i].importMode = modes[nextIndex];
-        this.groups = this.groups.slice();
-        break;
+        // 克隆 chapters 数组，触发深度变化检测
+        this.groups[i].chapters = group.chapters.slice();
       }
     }
+    this.groups = this.groups.slice();
+  }
+  
+  /**
+   * 深度更新所有分组的 chapters 数组（用于批量操作）
+   */
+  private rebuildAllGroupsChapters(): void {
+    for (let i = 0; i < this.groups.length; i++) {
+      this.groups[i].chapters = this.groups[i].chapters.slice();
+    }
+    this.groups = this.groups.slice();
   }
 
   /**

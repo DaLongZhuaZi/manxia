@@ -87,3 +87,5 @@ response.json
 # Hvigor cache
 /.hvigor/
 **/hvigorfile.ts.timestamp
+/entry/src/main/cpp/avif/build_windows
+/entry/src/main/cpp/avif/build_windows

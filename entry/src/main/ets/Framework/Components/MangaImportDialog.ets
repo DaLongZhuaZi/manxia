@@ -242,25 +242,9 @@ export struct MangaImportDialog {
     }
     
     try {
-      // 获取解压目录中的图片文件
       const extractedPath = this.parsedStructure.extractedPath;
-      const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+      const imageFiles = this.findImagesRecursive(extractedPath, 3);
       
-      // 使用fileIo列出目录内容
-      const files = fileIo.listFileSync(extractedPath);
-      const imageFiles: string[] = [];
-      
-      for (const file of files) {
-        const lowerFile = file.toLowerCase();
-        for (const ext of imageExtensions) {
-          if (lowerFile.endsWith(ext)) {
-            imageFiles.push(`${extractedPath}/${file}`);
-            break;
-          }
-        }
-      }
-      
-      // 排序并取前三张
       imageFiles.sort();
       this.coverCandidates = imageFiles.slice(0, 3);
       this.selectedCoverIndex = 0;
@@ -269,6 +253,66 @@ export struct MangaImportDialog {
     } catch (error) {
       logger.error(TAG, `初始化封面候选失败: ${error}`);
     }
+  }
+
+  /**
+   * 递归查找图片文件（先搜索当前目录，再搜索子目录）
+   */
+  private findImagesRecursive(dirPath: string, maxCount: number, currentDepth: number = 0): string[] {
+    if (currentDepth > 3) return [];
+    
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+    const imageFiles: string[] = [];
+    const subDirs: string[] = [];
+    
+    try {
+      const files = fileIo.listFileSync(dirPath);
+      
+      for (const file of files) {
+        const lowerFile = file.toLowerCase();
+        const fullPath = `${dirPath}/${file}`;
+        let isImage = false;
+        
+        for (const ext of imageExtensions) {
+          if (lowerFile.endsWith(ext)) {
+            imageFiles.push(fullPath);
+            isImage = true;
+            break;
+          }
+        }
+        
+        if (!isImage) {
+          // 检查是否为目录
+          try {
+            const stat = fileIo.statSync(fullPath);
+            if (stat.isDirectory()) {
+              subDirs.push(fullPath);
+            }
+          } catch (_e) {
+            // 忽略
+          }
+        }
+        
+        if (imageFiles.length >= maxCount) break;
+      }
+      
+      // 如果当前目录没有足够图片，递归搜索子目录
+      if (imageFiles.length < maxCount && subDirs.length > 0) {
+        subDirs.sort();
+        for (const subDir of subDirs) {
+          const subImages = this.findImagesRecursive(subDir, maxCount - imageFiles.length, currentDepth + 1);
+          for (const img of subImages) {
+            imageFiles.push(img);
+            if (imageFiles.length >= maxCount) break;
+          }
+          if (imageFiles.length >= maxCount) break;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描目录图片失败: ${dirPath}`, String(error));
+    }
+    
+    return imageFiles;
   }
 
   /**
@@ -412,10 +456,9 @@ export struct MangaImportDialog {
       return false;
     }
     
-    // 封面必选
+    // 封面可选（不再阻止导入）
     if (this.coverCandidates.length === 0) {
-      this.showToast('正在加载封面，请稍候');
-      return false;
+      logger.warn(TAG, '未找到封面候选图片，将使用默认封面');
     }
     
     return true;
@@ -1151,7 +1194,7 @@ export struct MangaImportDialog {
         .width('100%')
 
       if (this.coverCandidates.length === 0) {
-        Text('正在加载封面候选...')
+        Text('暂无封面候选，将使用默认封面')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))

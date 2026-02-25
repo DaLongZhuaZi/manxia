@@ -1673,6 +1673,79 @@ export class CompressionUtils {
   }
 
   /**
+   * 解析文件夹结构（用于已解压的漫画文件夹导入）
+   * 不做解压操作，直接扫描文件夹
+   * @param folderPath 文件夹路径
+   * @returns 解析后的结构信息（与parseArchiveStructure兼容）
+   */
+  public async parseFolderAsArchiveStructure(folderPath: string): Promise<ParsedArchiveStructure> {
+    const warnings: string[] = [];
+    const detectedChapters: DetectedChapterInfo[] = [];
+    let hasComicInfo = false;
+    let comicInfoContent: string | undefined;
+    let totalImageCount = 0;
+    let rootImageCount = 0;
+
+    try {
+      logger.info(TAG, `开始解析文件夹结构: ${folderPath}`);
+
+      // 如果只有一个子目录，进入该目录
+      let effectivePath = folderPath;
+      const topFiles = await this.sandboxManager.listDirectory(folderPath);
+      if (topFiles.length === 1) {
+        const singleItem = `${folderPath}/${topFiles[0]}`;
+        if (await this.isDirectory(singleItem)) {
+          effectivePath = singleItem;
+        }
+      }
+
+      // 1. 查找ComicInfo.xml
+      const comicInfoPath = await this.findComicInfoFile(effectivePath);
+      if (comicInfoPath) {
+        try {
+          comicInfoContent = await this.sandboxManager.readTextFile(comicInfoPath);
+          hasComicInfo = true;
+          logger.info(TAG, `找到ComicInfo.xml: ${comicInfoPath}`);
+        } catch (error) {
+          warnings.push(`读取ComicInfo.xml失败: ${error}`);
+        }
+      }
+
+      // 2. 扫描目录结构，检测章节
+      const scanResult = await this.scanDirectoryForChapters(effectivePath);
+      rootImageCount = scanResult.rootImageCount;
+      totalImageCount = scanResult.totalImageCount;
+
+      // 3. 处理检测到的章节
+      for (const chapter of scanResult.chapters) {
+        detectedChapters.push(chapter);
+      }
+
+      // 4. 对章节进行自然排序
+      this.sortChaptersNaturally(detectedChapters);
+
+      const result: ParsedArchiveStructure = {
+        hasComicInfo: hasComicInfo,
+        comicInfoContent: comicInfoContent,
+        isMultiLayer: detectedChapters.length > 1,
+        detectedChapters: detectedChapters,
+        rootImageCount: rootImageCount,
+        totalImageCount: totalImageCount,
+        extractedPath: effectivePath,
+        tempDirectories: [], // 文件夹不需要清理临时目录
+        warnings: warnings
+      };
+
+      logger.info(TAG, `文件夹结构解析完成: ${detectedChapters.length} 个章节, ${totalImageCount} 张图片`);
+      return result;
+
+    } catch (error) {
+      logger.error(TAG, '解析文件夹结构失败', String(error));
+      throw error as Error;
+    }
+  }
+
+  /**
    * 清理解析后的结构（清理临时目录）
    */
   public async cleanupParsedArchiveStructure(structure: ParsedArchiveStructure): Promise<void> {

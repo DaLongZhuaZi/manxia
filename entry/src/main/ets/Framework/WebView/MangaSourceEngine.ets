@@ -28,7 +28,8 @@ import {
   TaskDefinition,
   TaskResult,
   DirectSearchResult,
-  DirectSearchResultType
+  DirectSearchResultType,
+  APIRequestAction
 } from './MangaSourceTypes';
 import { TaskExecutor, TaskExecutorConfig } from './TaskExecutor';
 
@@ -2291,6 +2292,63 @@ export class MangaSourceEngine {
       this.lastChapterAccessDenied = false;
       
       for (const action of actions) {
+        // [修复] 检测 API 操作的分页配置，自动循环获取所有章节
+        if (action.type === 'api') {
+          const apiAction = action as APIRequestAction;
+          const paginationConfig = apiAction.pagination;
+          
+          if (paginationConfig && paginationConfig.enabled) {
+            // 带分页的 API 请求 - 循环获取所有章节
+            const pageParam: string = paginationConfig.pageParam || 'page';
+            const maxPages: number = 50;
+            
+            logger.info(TAG, `检测到章节列表API分页配置: pageParam=${pageParam}, 开始分页加载`);
+            
+            for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+              if (apiAction.params) {
+                apiAction.params[pageParam] = String(pageNum);
+              }
+              
+              logger.info(TAG, `分页加载章节列表: 第${pageNum}页`);
+              
+              const result = await this.actionEngine.executeAction(action, context);
+              
+              if (!result.success) {
+                if (pageNum === 1) {
+                  throw new MangaSourceError(
+                    MangaSourceErrorCode.ACTION_FAILED,
+                    `获取章节列表操作失败: ${result.error}`
+                  );
+                }
+                logger.warn(TAG, `分页加载第${pageNum}页失败，停止分页: ${result.error}`);
+                break;
+              }
+              
+              if (!result.data) {
+                logger.info(TAG, `分页加载: 第${pageNum}页无数据，分页完成`);
+                break;
+              }
+              
+              const resultData = result.data as Record<string, Object> | Array<Record<string, Object>>;
+              const extractedData = Array.isArray(resultData) ? resultData : [resultData];
+              const newChapters: ChapterInfo[] = extractedData.map((item: Record<string, Object>) => this.transformToChapterInfo(item));
+              
+              if (newChapters.length === 0) {
+                logger.info(TAG, `分页加载: 第${pageNum}页返回空数据，分页完成`);
+                break;
+              }
+              
+              for (let ci = 0; ci < newChapters.length; ci++) {
+                chapters.push(newChapters[ci]);
+              }
+              logger.info(TAG, `分页加载: 第${pageNum}页获取到${newChapters.length}个章节，累计${chapters.length}个`);
+            }
+            
+            continue;
+          }
+        }
+        
+        // 非分页的普通执行逻辑
         const result = await this.actionEngine.executeAction(action, context);
         
         if (!result.success) {
@@ -2603,6 +2661,70 @@ export class MangaSourceEngine {
       let pages: PageInfo[] = [];
       
       for (const action of actions) {
+        // [修复] 检测 API 操作的分页配置，自动循环获取所有页面
+        if (action.type === 'api') {
+          const apiAction = action as APIRequestAction;
+          const paginationConfig = apiAction.pagination;
+          
+          if (paginationConfig && paginationConfig.enabled) {
+            // 带分页的 API 请求 - 循环获取所有页面
+            const pageParam: string = paginationConfig.pageParam || 'page';
+            const maxPages: number = 50; // 安全上限，防止无限循环
+            
+            logger.info(TAG, `检测到API分页配置: pageParam=${pageParam}, 开始分页加载`);
+            
+            for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+              // 更新页码参数
+              if (apiAction.params) {
+                apiAction.params[pageParam] = String(pageNum);
+              }
+              
+              logger.info(TAG, `分页加载图片列表: 第${pageNum}页`);
+              
+              const result = await this.actionEngine.executeAction(action, context);
+              
+              if (!result.success) {
+                if (pageNum === 1) {
+                  // 第一页失败，抛出错误
+                  throw new MangaSourceError(
+                    MangaSourceErrorCode.ACTION_FAILED,
+                    `获取页面列表操作失败: ${result.error}`
+                  );
+                }
+                // 后续页失败，停止但保留已获取的数据
+                logger.warn(TAG, `分页加载第${pageNum}页失败，停止分页: ${result.error}`);
+                break;
+              }
+              
+              if (!result.data) {
+                logger.info(TAG, `分页加载: 第${pageNum}页无数据，分页完成`);
+                break;
+              }
+              
+              // 从当前页结果提取页面信息
+              const resultData = result.data as Record<string, Object> | Array<Record<string, Object>>;
+              const extractedData = Array.isArray(resultData) ? resultData : [resultData];
+              const newPages: PageInfo[] = extractedData.map((item: Record<string, Object>, index: number) =>
+                this.transformToPageInfo(item, pages.length + index)
+              );
+              
+              if (newPages.length === 0) {
+                logger.info(TAG, `分页加载: 第${pageNum}页返回空数据，分页完成`);
+                break;
+              }
+              
+              for (let pi = 0; pi < newPages.length; pi++) {
+                pages.push(newPages[pi]);
+              }
+              logger.info(TAG, `分页加载: 第${pageNum}页获取到${newPages.length}个页面，累计${pages.length}个`);
+            }
+            
+            // 分页处理完成，跳到下一个 action
+            continue;
+          }
+        }
+        
+        // 非分页的普通执行逻辑
         const result = await this.actionEngine.executeAction(action, context);
         
         if (!result.success) {

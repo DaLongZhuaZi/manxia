@@ -97,6 +97,14 @@ export struct SuwayomiReaderPage {
     this.releaseAvifPixelMaps();
   }
 
+  onPageHide(): void {
+    logger.lifecycle(TAG, 'Suwayomi阅读器页面隐藏（进入后台）');
+    // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
+    if (this.chapterId) {
+      this.saveReadingProgress();
+    }
+  }
+
   /**
    * 释放所有 AVIF PixelMap 资源
    */

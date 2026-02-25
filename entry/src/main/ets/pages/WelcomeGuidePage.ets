@@ -70,7 +70,7 @@ struct WelcomeGuidePage {
       description: '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入与图源、书源。接下来将引导您快速了解应用的核心功能。',
       icon: $r('app.media.icon'),
       buttonText: '开始引导流程',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.WELCOME, welcomeContent);
 
@@ -80,7 +80,7 @@ struct WelcomeGuidePage {
       description: '您可以在下方选择默认的两套自定义主题之一进行应用，或点击按钮前往自定义主题页面进行更细致的主题与APP视效个性化设置。',
       icon: $r('app.media.icon'),
       buttonText: '继续下一步',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.THEME_SELECTION, themeSelectionContent);
 
@@ -90,7 +90,7 @@ struct WelcomeGuidePage {
       description: '您可以将漫画文件（支持CBZ等格式压缩包）和电子书（TXT、EPUB、MOBI、AZW3、PDF等）放置到Download文件夹下的“漫匣”文件夹当中，然后通过Download同步功能导入到书库。点击下方按钮前往Download同步页面。',
       icon: $r('app.media.ic_guide_import'),
       buttonText: '前往Download同步',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.DATA_IMPORT, dataImportContent);
 
@@ -101,7 +101,7 @@ struct WelcomeGuidePage {
       description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库（需要科学网络）。',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '下一步',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.IMAGE_SOURCE_GUIDE, imageSourceGuideContent);
 
@@ -112,7 +112,7 @@ struct WelcomeGuidePage {
       description: '漫匣支持开源阅读（Legado）的大部分书源（聚合书源除外），您可以导入已有的Legado书源来获取在线小说内容。点击下方按钮前往小说书源管理页面。',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '前往书源管理',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.BOOK_SOURCE_GUIDE, bookSourceGuideContent);
 
@@ -123,7 +123,7 @@ struct WelcomeGuidePage {
       description: '漫匣支持丰富的自定义设置，包括自定义字体、自定义页面布局、自定义底栏标签、主题颜色等。您可以在设置页面中根据个人喜好进行调整。点击下方按钮前往全局设置页面。',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '前往全局设置',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.CUSTOM_EXPERIENCE, customExperienceContent);
 
@@ -133,7 +133,7 @@ struct WelcomeGuidePage {
       description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，在本地分析处理后为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时进入报告页面中更改。',
       icon: $r('app.media.ic_guide_library'),
       buttonText: '继续',
-      showSkip: true
+      showSkip: false
     };
     steps.set(GuideStep.ANALYTICS_PERMISSION, analyticsPermissionContent);
 
@@ -383,12 +383,31 @@ struct WelcomeGuidePage {
   }
 
   /**
-   * 跳过引导
+   * 不导航直接进入下一步（用于可导航步骤）
    */
-  private skipGuide(): void {
-    logger.info(TAG, '用户选择跳过引导');
-    this.welcomeGuideManager.skipGuide();
-    this.navigateToMainMenu();
+  private handleNextStepSkipNavigation(): void {
+    if (this.isAnimating) return;
+
+    let nextStep: GuideStep = this.currentStep;
+    switch (this.currentStep) {
+      case GuideStep.DATA_IMPORT:
+        nextStep = GuideStep.IMAGE_SOURCE_GUIDE;
+        break;
+      case GuideStep.BOOK_SOURCE_GUIDE:
+        nextStep = GuideStep.CUSTOM_EXPERIENCE;
+        break;
+      case GuideStep.CUSTOM_EXPERIENCE:
+        nextStep = GuideStep.ANALYTICS_PERMISSION;
+        break;
+      default:
+        return;
+    }
+
+    logger.info(TAG, `跳过导航，直接进入下一步: ${nextStep}`);
+    this.animateStepChange(() => {
+      this.currentStep = nextStep;
+      this.welcomeGuideManager.setCurrentStep(nextStep);
+    });
   }
 
   /**
@@ -669,7 +688,7 @@ struct WelcomeGuidePage {
       description: '',
       icon: $r('app.media.icon'),
       buttonText: '继续',
-      showSkip: true
+      showSkip: false
     };
   }
 
@@ -862,18 +881,19 @@ struct WelcomeGuidePage {
               this.handleNextStep();
             })
 
-          // 跳过按钮
-          if (this.getCurrentStepContent().showSkip) {
-            Text('跳过引导')
+          // 下一步按钮（用于可导航步骤，允许不导航直接进入下一步）
+          if (this.currentStep === GuideStep.DATA_IMPORT ||
+              this.currentStep === GuideStep.BOOK_SOURCE_GUIDE ||
+              this.currentStep === GuideStep.CUSTOM_EXPERIENCE) {
+            Text('下一步')
               .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
               .margin({ top: 8 })
-              .opacity(this.isAnimating ? 0.5 : 1.0)  // 动画期间降低透明度
-              .enabled(!this.isAnimating)  // 动画期间禁用
+              .opacity(this.isAnimating ? 0.5 : 1.0)
+              .enabled(!this.isAnimating)
               .onClick(() => {
                 if (!this.isAnimating) {
-                  logger.info(TAG, '🔘 跳过按钮点击');
-                  this.skipGuide();
+                  this.handleNextStepSkipNavigation();
                 }
               })
           }

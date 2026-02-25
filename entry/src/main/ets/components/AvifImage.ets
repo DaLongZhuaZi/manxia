@@ -153,46 +153,63 @@ export struct AvifImage {
     }
   }
   
+  /**
+   * 判断是否为本地文件路径（非网络URL）
+   */
+  private isLocalFile(): boolean {
+    return this.src.length > 0 && !this.src.startsWith('http://') && !this.src.startsWith('https://');
+  }
+
   build() {
     Stack() {
-      // 显示加载中占位符
-      if (this.isLoading && this.placeholder) {
-        Image(this.placeholder)
-          .width(this.imageWidth)
-          .height(this.imageHeight)
-          .objectFit(this.objectFit)
-          .borderRadius(this.imageBorderRadius)
-      }
-      
-      // 显示错误占位符
-      if (this.loadError && this.errorHolder) {
-        Image(this.errorHolder)
-          .width(this.imageWidth)
-          .height(this.imageHeight)
-          .objectFit(this.objectFit)
-          .borderRadius(this.imageBorderRadius)
-      }
-      
-      // 显示解码后的PixelMap（AVIF或其他需要手动解码的格式）
-      if (this.pixelMap) {
-        Image(this.pixelMap)
-          .width(this.imageWidth)
-          .height(this.imageHeight)
-          .objectFit(this.objectFit)
-          .borderRadius(this.imageBorderRadius)
-      }
-      
-      // 非AVIF格式且非加载中/错误状态，直接使用Image组件加载
-      if (!this.isAvif && !this.isLoading && !this.loadError && !this.pixelMap && this.src) {
+      if (this.isLocalFile()) {
+        // 本地文件：直接使用Image组件，不设置会永久隐藏的onError
         Image(this.src)
           .width(this.imageWidth)
           .height(this.imageHeight)
           .objectFit(this.objectFit)
           .borderRadius(this.imageBorderRadius)
-          .onError(() => {
-            logger.warn(TAG, `Image组件加载失败: ${this.src.substring(0, 50)}...`);
-            this.loadError = true;
-          })
+      } else {
+        // 网络图片路径
+        // 显示加载中占位符
+        if (this.isLoading && this.placeholder) {
+          Image(this.placeholder)
+            .width(this.imageWidth)
+            .height(this.imageHeight)
+            .objectFit(this.objectFit)
+            .borderRadius(this.imageBorderRadius)
+        }
+
+        // 显示错误占位符
+        if (this.loadError && this.errorHolder) {
+          Image(this.errorHolder)
+            .width(this.imageWidth)
+            .height(this.imageHeight)
+            .objectFit(this.objectFit)
+            .borderRadius(this.imageBorderRadius)
+        }
+
+        // 显示解码后的PixelMap（AVIF或其他需要手动解码的格式）
+        if (this.pixelMap) {
+          Image(this.pixelMap)
+            .width(this.imageWidth)
+            .height(this.imageHeight)
+            .objectFit(this.objectFit)
+            .borderRadius(this.imageBorderRadius)
+        }
+
+        // 非AVIF格式且非加载中/错误状态，直接使用Image组件加载
+        if (!this.isAvif && !this.isLoading && !this.loadError && !this.pixelMap && this.src) {
+          Image(this.src)
+            .width(this.imageWidth)
+            .height(this.imageHeight)
+            .objectFit(this.objectFit)
+            .borderRadius(this.imageBorderRadius)
+            .onError(() => {
+              logger.warn(TAG, `Image组件加载失败: ${this.src.substring(0, 50)}...`);
+              this.loadError = true;
+            })
+        }
       }
     }
     .width(this.imageWidth)

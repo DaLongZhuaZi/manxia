@@ -8,12 +8,12 @@
 import { logger } from '../../Utils/Logger';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
-import { getNovelDataManager } from '../Novel/NovelDataManager';
-import { getNovelSourceManager } from '../Novel/NovelSourceManager';
-import { getNovelSettingsManager } from '../Novel/NovelSettingsManager';
+import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
+import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
+import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
 import { SettingsManager } from './SettingsManager';
 import { AppInfoManager } from './AppInfoManager';
-import { getTarPackager } from '../Utils/TarPackager';
+import { getTarPackager, TarPackager } from '../Utils/TarPackager';
 import { preferences } from '@kit.ArkData';
 import { getContext as getGlobalContext } from '../../GlobalContext';
 import {
@@ -121,18 +121,51 @@ export interface RestoreOptions {
 
 export class EnhancedBackupManager {
   private static instance: EnhancedBackupManager;
-  private dbManager: DatabaseManager;
-  private sandboxManager: SandboxManager;
-  private novelDataManager = getNovelDataManager();
-  private novelSourceManager = getNovelSourceManager();
-  private novelSettingsManager = getNovelSettingsManager();
-  private settingsManager = SettingsManager.getInstance();
-  private appInfoManager = AppInfoManager.getInstance();
-  private tarPackager = getTarPackager();
+  // [修复] 所有管理器改为延迟初始化，避免在构造时访问未就绪的单例导致崩溃
+  private _dbManager: DatabaseManager | null = null;
+  private _sandboxManager: SandboxManager | null = null;
+  private _novelDataManager: NovelDataManager | null = null;
+  private _novelSourceManager: NovelSourceManager | null = null;
+  private _novelSettingsManager: NovelSettingsManager | null = null;
+  private _settingsManager: SettingsManager | null = null;
+  private _appInfoManager: AppInfoManager | null = null;
+  private _tarPackager: TarPackager | null = null;
+
+  private get dbManager(): DatabaseManager {
+    if (!this._dbManager) this._dbManager = DatabaseManager.getInstance();
+    return this._dbManager;
+  }
+  private get sandboxManager(): SandboxManager {
+    if (!this._sandboxManager) this._sandboxManager = SandboxManager.getInstance();
+    return this._sandboxManager;
+  }
+  private get novelDataManager(): NovelDataManager {
+    if (!this._novelDataManager) this._novelDataManager = getNovelDataManager();
+    return this._novelDataManager;
+  }
+  private get novelSourceManager(): NovelSourceManager {
+    if (!this._novelSourceManager) this._novelSourceManager = getNovelSourceManager();
+    return this._novelSourceManager;
+  }
+  private get novelSettingsManager(): NovelSettingsManager {
+    if (!this._novelSettingsManager) this._novelSettingsManager = getNovelSettingsManager();
+    return this._novelSettingsManager;
+  }
+  private get settingsManager(): SettingsManager {
+    if (!this._settingsManager) this._settingsManager = SettingsManager.getInstance();
+    return this._settingsManager;
+  }
+  private get appInfoManager(): AppInfoManager {
+    if (!this._appInfoManager) this._appInfoManager = AppInfoManager.getInstance();
+    return this._appInfoManager;
+  }
+  private get tarPackager(): TarPackager {
+    if (!this._tarPackager) this._tarPackager = getTarPackager();
+    return this._tarPackager;
+  }
 
   private constructor() {
-    this.dbManager = DatabaseManager.getInstance();
-    this.sandboxManager = SandboxManager.getInstance();
+    // [修复] 构造函数不再立即初始化管理器，推迟到首次访问时
   }
 
   static getInstance(): EnhancedBackupManager {
@@ -527,67 +560,123 @@ export class EnhancedBackupManager {
     logger.info(TAG, `开始选择性数据恢复，策略: ${options.conflictStrategy}`);
     logger.info(TAG, `备份数据检查: manga=${!!backupData.manga}, manga.library=${!!backupData.manga?.library}, 数量=${backupData.manga?.library?.length || 0}`);
     
-    if (options.restoreMangaLibrary && backupData.manga?.library) {
-      logger.info(TAG, `开始恢复漫画库，数量: ${backupData.manga.library.length}`);
-      await this.restoreMangaLibraryWithStrategy(backupData.manga.library, options.conflictStrategy);
-    } else {
-      logger.info(TAG, `跳过漫画库恢复: restoreMangaLibrary=${options.restoreMangaLibrary}, hasLibrary=${!!backupData.manga?.library}`);
-    }
-    
-    if (options.restoreNovelLibrary && backupData.novel?.library) {
-      await this.restoreNovelLibraryWithStrategy(backupData.novel.library, options.conflictStrategy);
-    }
-    
-    if (options.restoreEBookLibrary && backupData.ebook?.library) {
-      await this.restoreEBookLibraryWithStrategy(backupData.ebook.library, options.conflictStrategy);
-    }
-    
-    if (options.restoreSources && backupData.sources?.manga) {
-      await this.restoreMangaSourcesWithStrategy(backupData.sources.manga, options.conflictStrategy);
-    }
-    
-    if (options.restoreSources && backupData.sources?.novel) {
-      await this.restoreNovelSourcesWithStrategy(backupData.sources.novel, options.conflictStrategy);
-    }
-    
-    if (options.restoreReadProgress && backupData.manga?.readProgress) {
-      await this.restoreMangaReadProgress(backupData.manga.readProgress);
-    }
-    
-    if (options.restoreReadProgress && backupData.novel?.readProgress) {
-      await this.restoreNovelReadProgress(backupData.novel.readProgress);
-    }
-    
-    if (options.restoreSettings && backupData.settings) {
-      await this.restoreSettings(backupData.settings);
-      // 恢复整个设置表
-      if (backupData.settings.allSettings) {
-        await this.restoreAllSettings(backupData.settings.allSettings);
+    try {
+      if (options.restoreMangaLibrary && backupData.manga?.library) {
+        logger.info(TAG, `开始恢复漫画库，数量: ${backupData.manga.library.length}`);
+        await this.restoreMangaLibraryWithStrategy(backupData.manga.library, options.conflictStrategy);
+      } else {
+        logger.info(TAG, `跳过漫画库恢复: restoreMangaLibrary=${options.restoreMangaLibrary}, hasLibrary=${!!backupData.manga?.library}`);
       }
+    } catch (error) {
+      logger.error(TAG, `恢复漫画库失败: ${error}`);
     }
     
-    if (options.restoreHistory && backupData.history) {
-      await this.restoreHistory(backupData.history);
+    try {
+      if (options.restoreNovelLibrary && backupData.novel?.library) {
+        await this.restoreNovelLibraryWithStrategy(backupData.novel.library, options.conflictStrategy);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复小说库失败: ${error}`);
     }
     
-    if (options.restoreWebViewConfig && backupData.webview) {
-      await this.restoreWebViewConfigs(backupData.webview.configs);
+    try {
+      if (options.restoreEBookLibrary && backupData.ebook?.library) {
+        await this.restoreEBookLibraryWithStrategy(backupData.ebook.library, options.conflictStrategy);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复电子书库失败: ${error}`);
     }
     
-    if (options.restoreDownloadTasks && backupData.downloads) {
-      await this.restoreDownloadTasks(backupData.downloads.tasks);
+    try {
+      if (options.restoreSources && backupData.sources?.manga) {
+        await this.restoreMangaSourcesWithStrategy(backupData.sources.manga, options.conflictStrategy);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复漫画源失败: ${error}`);
     }
     
-    if (options.restoreFavorites && backupData.favorites) {
-      await this.restoreFavorites(backupData.favorites.favorites);
+    try {
+      if (options.restoreSources && backupData.sources?.novel) {
+        await this.restoreNovelSourcesWithStrategy(backupData.sources.novel, options.conflictStrategy);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复小说源失败: ${error}`);
     }
     
-    if (options.restoreOnlineData && backupData.onlineData) {
-      await this.restoreOnlineData(backupData.onlineData);
+    try {
+      if (options.restoreReadProgress && backupData.manga?.readProgress) {
+        await this.restoreMangaReadProgress(backupData.manga.readProgress);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复漫画阅读进度失败: ${error}`);
     }
     
-    if (options.restoreCloudConfig && backupData.cloudConfig) {
-      await this.restoreCloudConfig(backupData.cloudConfig);
+    try {
+      if (options.restoreReadProgress && backupData.novel?.readProgress) {
+        await this.restoreNovelReadProgress(backupData.novel.readProgress);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复小说阅读进度失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreSettings && backupData.settings) {
+        await this.restoreSettings(backupData.settings);
+        // 恢复整个设置表
+        if (backupData.settings.allSettings) {
+          await this.restoreAllSettings(backupData.settings.allSettings);
+        }
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复设置失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreHistory && backupData.history) {
+        await this.restoreHistory(backupData.history);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复历史记录失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreWebViewConfig && backupData.webview) {
+        await this.restoreWebViewConfigs(backupData.webview.configs);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复WebView配置失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreDownloadTasks && backupData.downloads) {
+        await this.restoreDownloadTasks(backupData.downloads.tasks);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复下载任务失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreFavorites && backupData.favorites) {
+        await this.restoreFavorites(backupData.favorites.favorites);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复收藏失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreOnlineData && backupData.onlineData) {
+        await this.restoreOnlineData(backupData.onlineData);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复在线数据失败: ${error}`);
+    }
+    
+    try {
+      if (options.restoreCloudConfig && backupData.cloudConfig) {
+        await this.restoreCloudConfig(backupData.cloudConfig);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复云存储配置失败: ${error}`);
     }
     
     logger.info(TAG, '数据恢复完成');
@@ -3293,50 +3382,63 @@ export class EnhancedBackupManager {
    * 恢复在线数据
    */
   private async restoreOnlineData(data: OnlineDataBackupSection): Promise<void> {
-    logger.info(TAG, `Restoring online data: ${data.comics.length} comics`);
+    const comics = data.comics as OnlineComicBackup[] | undefined;
+    const readHistory = data.readHistory as OnlineReadHistoryBackup[] | undefined;
     
-    for (const comic of data.comics as OnlineComicBackup[]) {
-      try {
-        const sqlComic = 'INSERT OR REPLACE INTO online_comic_info (id, sourceId, externalId, title, author, coverUrl, description, status, lastUpdateTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-        
-        await this.dbManager.executeSql(sqlComic, [
-          comic.id, comic.sourceId, comic.externalId, comic.title,
-          comic.author, comic.coverUrl, comic.description, comic.status,
-          comic.lastUpdateTime
-        ]);
-        
-        for (const chapter of comic.chapters as OnlineChapterBackup[]) {
-          const sqlChapter = 'INSERT OR REPLACE INTO online_chapter (id, comicId, externalId, title, chapterNumber, publishTime) VALUES (?, ?, ?, ?, ?, ?)';
+    logger.info(TAG, `Restoring online data: ${comics?.length ?? 0} comics, ${readHistory?.length ?? 0} history`);
+    
+    if (comics && comics.length > 0) {
+      for (const comic of comics) {
+        try {
+          const sqlComic = 'INSERT OR REPLACE INTO online_comic_info (id, sourceId, externalId, title, author, coverUrl, description, status, lastUpdateTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
           
-          await this.dbManager.executeSql(sqlChapter, [
-            chapter.id, chapter.comicId, chapter.externalId,
-            chapter.title, chapter.chapterNumber, chapter.publishTime
+          await this.dbManager.executeSql(sqlComic, [
+            comic.id, comic.sourceId, comic.externalId, comic.title,
+            comic.author, comic.coverUrl, comic.description, comic.status,
+            comic.lastUpdateTime
           ]);
           
-          for (const page of chapter.pages as OnlinePageBackup[]) {
-            const sqlPage = 'INSERT OR REPLACE INTO online_page (id, chapterId, pageNumber, imageUrl, width, height) VALUES (?, ?, ?, ?, ?, ?)';
-            
-            await this.dbManager.executeSql(sqlPage, [
-              page.id, page.chapterId, page.pageNumber,
-              page.imageUrl, page.width, page.height
-            ]);
+          const chapters = comic.chapters as OnlineChapterBackup[] | undefined;
+          if (chapters) {
+            for (const chapter of chapters) {
+              const sqlChapter = 'INSERT OR REPLACE INTO online_chapter (id, comicId, externalId, title, chapterNumber, publishTime) VALUES (?, ?, ?, ?, ?, ?)';
+              
+              await this.dbManager.executeSql(sqlChapter, [
+                chapter.id, chapter.comicId, chapter.externalId,
+                chapter.title, chapter.chapterNumber, chapter.publishTime
+              ]);
+              
+              const pages = chapter.pages as OnlinePageBackup[] | undefined;
+              if (pages) {
+                for (const page of pages) {
+                  const sqlPage = 'INSERT OR REPLACE INTO online_page (id, chapterId, pageNumber, imageUrl, width, height) VALUES (?, ?, ?, ?, ?, ?)';
+                  
+                  await this.dbManager.executeSql(sqlPage, [
+                    page.id, page.chapterId, page.pageNumber,
+                    page.imageUrl, page.width, page.height
+                  ]);
+                }
+              }
+            }
           }
+        } catch (error) {
+          logger.error(TAG, `Failed to restore online comic: ${comic.title}, ${error}`);
         }
-      } catch (error) {
-        logger.error(TAG, `Failed to restore online comic: ${comic.title}, ${error}`);
       }
     }
     
-    for (const history of data.readHistory as OnlineReadHistoryBackup[]) {
-      try {
-        const sql = 'INSERT OR REPLACE INTO online_read_history (id, comicId, chapterId, pageIndex, readTime) VALUES (?, ?, ?, ?, ?)';
-        
-        await this.dbManager.executeSql(sql, [
-          history.id, history.comicId, history.chapterId,
-          history.pageIndex, history.readTime
-        ]);
-      } catch (error) {
-        logger.error(TAG, `Failed to restore online read history: ${error}`);
+    if (readHistory && readHistory.length > 0) {
+      for (const history of readHistory) {
+        try {
+          const sql = 'INSERT OR REPLACE INTO online_read_history (id, comicId, chapterId, pageIndex, readTime) VALUES (?, ?, ?, ?, ?)';
+          
+          await this.dbManager.executeSql(sql, [
+            history.id, history.comicId, history.chapterId,
+            history.pageIndex, history.readTime
+          ]);
+        } catch (error) {
+          logger.error(TAG, `Failed to restore online read history: ${error}`);
+        }
       }
     }
     

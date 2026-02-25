@@ -17,6 +17,7 @@ import { SettingsManager, SettingKeys } from './Framework/Managers/SettingsManag
 import { AnimationSettingsManager } from './Framework/Animation/AnimationSettingsManager';
 import { AppNotificationManager } from './Framework/Managers/NotificationManager';
 import { MangaDownloadManager } from './Framework/Download/DownloadManager';
+import { getNovelSourceValidator } from './Framework/Novel/NovelSourceValidator';
 import { uiContextManager } from './Framework/Managers/UIContextManager';
 import { ProxyManager } from './Framework/Network/ProxyManager';
 import { getFontManager } from './Framework/Managers/FontManager';
@@ -25,6 +26,10 @@ import { getChangelogManager } from './Framework/Managers/ChangelogManager';
 import { getAutoBackupScheduler } from './Framework/WebDAV/WebDAVAutoBackupScheduler';
 import { widgetDataSync } from './Utils/WidgetDataSync';
 import { getUnifiedDetailPageEnforcer } from './Framework/Enforcement/UnifiedDetailPageEnforcer';
+import { getAppInitializationManager, InitPhase } from './Framework/Managers/AppInitializationManager';
+import { getCrashRecorderService } from './Framework/Debug/CrashRecorderService';
+import { getErrorMonitorService } from './Framework/Debug/ErrorMonitorService';
+import { getErrorRecordManager } from './Framework/Debug/ErrorRecordManager';
 
 export default class EntryAbility extends UIAbility {
 
@@ -37,12 +42,8 @@ export default class EntryAbility extends UIAbility {
       logger.info('EntryAbility', `📋 Want参数: ${JSON.stringify(Object.keys(want.parameters))}`);
     }
 
-    // 检查是否来自卡片的router事件
-    if (want.parameters && want.parameters['params']) {
-      this.handleWidgetRouter(want);
-    }
-    // 检查是否通过系统分享接收文件
-    else if (want.parameters && want.parameters['share_import_files']) {
+    // 优先处理文件分享导入（排在最前，避免 params 键的存在导致误入卡片逻辑）
+    if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
     }
     // 检查是否通过 Deep Link 打开应用
@@ -71,97 +72,240 @@ export default class EntryAbility extends UIAbility {
       }
     }
 
-    // 唯一的职责：设置全局上下文
-    try {
-      setContext(this.context);
-      logger.info('EntryAbility', '✅ GlobalContext 设置成功');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ GlobalContext 设置失败: ${errorMessage}`);
-      // 这是一个关键错误，可以考虑是否要终止应用
+    // 卡片router事件放最后（文件打开的Want也可能携带params，必须排在文件处理之后）
+    if (want.parameters && want.parameters['params']) {
+      this.handleWidgetRouter(want);
     }
 
-    // 设置UIContextManager的AbilityContext
-    try {
-      uiContextManager.setAbilityContext(this.context);
-      logger.info('EntryAbility', '✅ UIContextManager AbilityContext 设置成功');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ UIContextManager AbilityContext 设置失败: ${errorMessage}`);
-    }
-
-    // 初始化设备适配管理器
-    try {
-      const deviceManager = DeviceAdaptationManager.getInstance();
-      const deviceInfo = deviceManager.getDeviceInfo();
-      logger.info('EntryAbility', `📱 设备适配管理器初始化成功: 设备类型=${deviceInfo.deviceType}, 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ 设备适配管理器初始化失败: ${errorMessage}`);
-    }
-
-    // 初始化数据管理系统
-    this.initializeDataSystem();
-    
-    // 初始化代理管理器
-    this.initializeProxyManager();
-    
-    // 初始化字体管理器
-    this.initializeFontManager();
-    
-    // 初始化更新日志管理器
-    this.initializeChangelogManager();
+    // 启动可监控的初始化流程
+    this.runManagedInitialization();
   }
   
   /**
-   * 初始化字体管理器
+   * 执行可监控的初始化流程
+   * 所有初始化按顺序执行，并通过AppInitializationManager报告进度
    */
-  private async initializeFontManager(): Promise<void> {
+  private async runManagedInitialization(): Promise<void> {
+    const initManager = getAppInitializationManager();
+    initManager.startInitialization();
+    
+    // 阶段1：设置全局上下文
+    initManager.beginPhase(InitPhase.CONTEXT_SETUP);
+    try {
+      setContext(this.context);
+      uiContextManager.setAbilityContext(this.context);
+      logger.info('EntryAbility', '✅ GlobalContext 和 UIContextManager 设置成功');
+      initManager.completePhase(InitPhase.CONTEXT_SETUP);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 上下文设置失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.CONTEXT_SETUP, errorMessage);
+      return; // 关键阶段失败，停止初始化
+    }
+
+    // 阶段2：设备适配
+    initManager.beginPhase(InitPhase.DEVICE_ADAPTATION);
+    try {
+      const deviceManager = DeviceAdaptationManager.getInstance();
+      const deviceInfo = deviceManager.getDeviceInfo();
+      logger.info('EntryAbility', `📱 设备适配: ${deviceInfo.deviceType}, ${deviceInfo.breakpoint}`);
+      initManager.completePhase(InitPhase.DEVICE_ADAPTATION);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 设备适配失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.DEVICE_ADAPTATION, errorMessage);
+      // 非关键阶段，继续执行
+    }
+
+    // 阶段3：数据系统初始化
+    initManager.beginPhase(InitPhase.DATA_SYSTEM);
+    try {
+      const dataInitializer = DataInitializer.getInstance();
+      const result = await dataInitializer.initialize(this.context, {
+        enableAutoBackup: true,
+        enableDataSync: false,
+        cacheConfig: {
+          maxImageCacheSize: 500 * 1024 * 1024,
+          maxDiskCacheAge: 7 * 24 * 60 * 60 * 1000
+        },
+        databaseConfig: {
+          enableWAL: true,
+          pageSize: 4096,
+          cacheSize: 2000
+        }
+      });
+      
+      if (result.success) {
+        logger.info('EntryAbility', `✅ 数据系统初始化成功，耗时: ${result.duration}ms`);
+        initManager.completePhase(InitPhase.DATA_SYSTEM);
+      } else {
+        throw new Error(result.errors.join(', '));
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 数据系统初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.DATA_SYSTEM, errorMessage);
+      return; // 关键阶段失败，停止初始化
+    }
+
+    // 阶段4：设置管理器
+    initManager.beginPhase(InitPhase.SETTINGS);
+    try {
+      await this.initializeAppStorage();
+      initManager.completePhase(InitPhase.SETTINGS);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error('EntryAbility', `❌ 设置管理器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.SETTINGS, errorMessage);
+      return; // 关键阶段失败，停止初始化
+    }
+
+    // 阶段5：字体管理器（关键 - 修复字体失效问题）
+    initManager.beginPhase(InitPhase.FONT_MANAGER);
     try {
       const fontManager = getFontManager();
       await fontManager.initialize(this.context);
       logger.info('EntryAbility', '✅ 字体管理器初始化成功');
+      initManager.completePhase(InitPhase.FONT_MANAGER);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 字体管理器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.FONT_MANAGER, errorMessage);
+      return; // 关键阶段失败，停止初始化
     }
-  }
 
-  /**
-   * 初始化更新日志管理器
-   */
-  private async initializeChangelogManager(): Promise<void> {
-    try {
-      const changelogManager = getChangelogManager();
-      await changelogManager.initialize(this.context);
-      logger.info('EntryAbility', `✅ 更新日志管理器初始化成功，当前版本: ${changelogManager.getCurrentVersion()}`);
-      
-      // 检查是否需要显示更新日志（新版本首次启动）
-      // 注意：实际显示会在主页面加载后触发，这里只是初始化
-      if (changelogManager.shouldShowChangelog()) {
-        logger.info('EntryAbility', '📋 检测到新版本，将在主页面显示更新日志');
-        AppStorage.setOrCreate('shouldShowChangelog', true);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ 更新日志管理器初始化失败: ${errorMessage}`);
-    }
-  }
-  
-  /**
-   * 初始化代理管理器
-   */
-  private async initializeProxyManager(): Promise<void> {
+    // 阶段6：代理管理器
+    initManager.beginPhase(InitPhase.PROXY_MANAGER);
     try {
       const proxyManager = ProxyManager.getInstance();
       await proxyManager.initialize();
-      logger.info('EntryAbility', `✅ 代理管理器初始化成功: enabled=${proxyManager.isEnabled()}`);
+      logger.info('EntryAbility', `✅ 代理管理器初始化成功`);
+      initManager.completePhase(InitPhase.PROXY_MANAGER);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ 代理管理器初始化失败: ${errorMessage}`);
+      logger.warn('EntryAbility', `⚠️ 代理管理器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.PROXY_MANAGER, errorMessage);
     }
-  }
 
+    // 阶段7：下载同步管理器
+    initManager.beginPhase(InitPhase.DOWNLOAD_SYNC);
+    try {
+      const downloadSyncManager = getDownloadSyncManager();
+      await downloadSyncManager.initialize();
+      logger.info('EntryAbility', '✅ 下载同步管理器初始化成功');
+      initManager.completePhase(InitPhase.DOWNLOAD_SYNC);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 下载同步管理器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.DOWNLOAD_SYNC, errorMessage);
+    }
+
+    // 阶段8：下载管理器
+    initManager.beginPhase(InitPhase.DOWNLOAD_MANAGER);
+    try {
+      const downloadManager = MangaDownloadManager.getInstance();
+      downloadManager.setContext(this.context);
+      // 同步设置书源校验器的 context，确保后台长时任务可用
+      getNovelSourceValidator().setContext(this.context);
+      logger.info('EntryAbility', '✅ 下载管理器 & 书源校验器初始化成功');
+      initManager.completePhase(InitPhase.DOWNLOAD_MANAGER);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 下载管理器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.DOWNLOAD_MANAGER, errorMessage);
+    }
+
+    // 阶段9：自动备份调度器
+    initManager.beginPhase(InitPhase.AUTO_BACKUP);
+    try {
+      const scheduler = getAutoBackupScheduler();
+      await scheduler.initialize(this.context);
+      logger.info('EntryAbility', '✅ 自动备份调度器初始化成功');
+      initManager.completePhase(InitPhase.AUTO_BACKUP);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 自动备份调度器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.AUTO_BACKUP, errorMessage);
+    }
+
+    // 阶段10：桌面卡片同步
+    initManager.beginPhase(InitPhase.WIDGET_SYNC);
+    try {
+      widgetDataSync.init(this.context);
+      await widgetDataSync.syncAllData();
+      logger.info('EntryAbility', '✅ 桌面卡片同步初始化成功');
+      initManager.completePhase(InitPhase.WIDGET_SYNC);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 桌面卡片同步初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.WIDGET_SYNC, errorMessage);
+    }
+
+    // 阶段11：更新日志管理器
+    initManager.beginPhase(InitPhase.CHANGELOG);
+    try {
+      const changelogManager = getChangelogManager();
+      await changelogManager.initialize(this.context);
+      if (changelogManager.shouldShowChangelog()) {
+        AppStorage.setOrCreate('shouldShowChangelog', true);
+      }
+      logger.info('EntryAbility', '✅ 更新日志管理器初始化成功');
+      initManager.completePhase(InitPhase.CHANGELOG);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 更新日志管理器初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.CHANGELOG, errorMessage);
+    }
+
+    // 初始化统一错误记录管理器（必须在 CrashRecorder/ErrorMonitor 之前）
+    try {
+      getErrorRecordManager().initialize(this.context);
+      logger.info('EntryAbility', '✅ 统一错误记录管理器初始化成功');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 统一错误记录管理器初始化失败: ${errorMessage}`);
+    }
+
+    // 阶段12：闪退记录服务（尽早注册，捕获后续初始化阶段的崩溃）
+    initManager.beginPhase(InitPhase.CRASH_RECORDER);
+    try {
+      const crashRecorder = getCrashRecorderService();
+      crashRecorder.initialize(this.context);
+      crashRecorder.cleanOldCrashLogs();
+      logger.info('EntryAbility', '✅ 闪退记录服务初始化成功');
+      initManager.completePhase(InitPhase.CRASH_RECORDER);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 闪退记录服务初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.CRASH_RECORDER, errorMessage);
+    }
+
+    // 阶段13：错误监控服务（延迟500ms启动，确保日志系统完全就绪）
+    initManager.beginPhase(InitPhase.ERROR_MONITOR);
+    try {
+      const errorMonitor = getErrorMonitorService();
+      // 延迟启动，与日志系统略有延迟同步
+      setTimeout((): void => {
+        try {
+          errorMonitor.start(this.context);
+          logger.info('EntryAbility', '✅ 错误监控服务已延迟启动');
+        } catch (delayError) {
+          const msg = delayError instanceof Error ? delayError.message : String(delayError);
+          logger.warn('EntryAbility', `⚠️ 错误监控服务延迟启动失败: ${msg}`);
+        }
+      }, 500);
+      logger.info('EntryAbility', '✅ 错误监控服务初始化成功（将在500ms后启动）');
+      initManager.completePhase(InitPhase.ERROR_MONITOR);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn('EntryAbility', `⚠️ 错误监控服务初始化失败: ${errorMessage}`);
+      initManager.failPhase(InitPhase.ERROR_MONITOR, errorMessage);
+    }
+
+    // 所有阶段完成
+    initManager.markCompleted();
+  }
+  
   /**
    * 初始化AppStorage（从数据库加载设置）
    * 注意：此方法必须在数据库初始化完成后调用
@@ -248,121 +392,6 @@ export default class EntryAbility extends UIAbility {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 统一详情页强制执行器初始化失败: ${errorMessage}`);
       // 不影响应用启动，继续执行
-    }
-  }
-
-  /**
-   * 初始化Download同步管理器
-   * 检查并创建保留文件夹（ebooks, manga, storage, covers, temp, backup）
-   */
-  private async initializeDownloadSyncManager(): Promise<void> {
-    try {
-      const downloadSyncManager = getDownloadSyncManager();
-      await downloadSyncManager.initialize();
-      logger.info('EntryAbility', '✅ Download同步管理器初始化成功');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ Download同步管理器初始化失败: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * 初始化下载管理器
-   */
-  private async initializeDownloadManager(): Promise<void> {
-    try {
-      logger.info('EntryAbility', '📥 开始初始化下载管理器');
-      
-      // 只初始化下载管理器，不请求通知权限
-      const downloadManager = MangaDownloadManager.getInstance();
-      downloadManager.setContext(this.context);
-      logger.info('EntryAbility', '✅ 下载管理器初始化成功');
-      
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ 下载管理器初始化失败: ${errorMessage}`);
-    }
-  }
-  
-  /**
-   * 初始化WebDAV自动备份调度器
-   */
-  private async initializeAutoBackupScheduler(): Promise<void> {
-    try {
-      logger.info('EntryAbility', '📦 开始初始化WebDAV自动备份调度器');
-      const scheduler = getAutoBackupScheduler();
-      await scheduler.initialize(this.context);
-      logger.info('EntryAbility', '✅ WebDAV自动备份调度器初始化成功');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ WebDAV自动备份调度器初始化失败: ${errorMessage}`);
-    }
-  }
-  
-  /**
-   * 初始化桌面卡片数据同步
-   */
-  private async initializeWidgetDataSync(): Promise<void> {
-    try {
-      widgetDataSync.init(this.context);
-      // 同步真实数据到卡片
-      await widgetDataSync.syncAllData();
-      logger.info('EntryAbility', '✅ 桌面卡片数据同步初始化成功');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ 桌面卡片数据同步初始化失败: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * 初始化数据管理系统
-   */
-  private async initializeDataSystem(): Promise<void> {
-    try {
-      logger.info('EntryAbility', '🚀 开始初始化数据管理系统');
-      
-      const dataInitializer = DataInitializer.getInstance();
-      const result = await dataInitializer.initialize(this.context, {
-        enableAutoBackup: true,
-        enableDataSync: false,
-        cacheConfig: {
-          maxImageCacheSize: 500 * 1024 * 1024, // 500MB
-          maxDiskCacheAge: 7 * 24 * 60 * 60 * 1000 // 7天
-        },
-        databaseConfig: {
-          enableWAL: true,
-          pageSize: 4096,
-          cacheSize: 2000
-        }
-      });
-
-      if (result.success) {
-        logger.info('EntryAbility', `✅ 数据管理系统初始化成功，耗时: ${result.duration}ms`);
-        if (result.warnings.length > 0) {
-          logger.warn('EntryAbility', `⚠️ 初始化警告: ${result.warnings.join(', ')}`);
-        }
-        
-        // 数据库初始化成功后，初始化设置管理器
-        await this.initializeAppStorage();
-        
-        // 初始化Download同步管理器（检查并创建保留文件夹）
-        await this.initializeDownloadSyncManager();
-        
-        // 初始化下载管理器（不请求通知权限，在MainMenuPage首次显示时请求）
-        await this.initializeDownloadManager();
-        
-        // 初始化WebDAV自动备份调度器
-        await this.initializeAutoBackupScheduler();
-        
-        // 初始化桌面卡片数据同步
-        await this.initializeWidgetDataSync();
-      } else {
-        logger.error('EntryAbility', `❌ 数据管理系统初始化失败: ${result.errors.join(', ')}`);
-        // 可以考虑是否要继续启动应用或进入安全模式
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('EntryAbility', `❌ 数据管理系统初始化异常: ${errorMessage}`);
     }
   }
 
@@ -718,24 +747,29 @@ export default class EntryAbility extends UIAbility {
    */
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     logger.info('EntryAbility', 'onNewWant: 接收到新的Want请求');
-    
-    // 检查是否来自卡片的router事件
-    if (want.parameters && want.parameters['params']) {
-      this.handleWidgetRouter(want);
-      return;
+    // 打印Want详情辅助调试
+    logger.info('EntryAbility', `📋 onNewWant Want: uri=${want.uri || 'null'}, type=${want.type || 'null'}`);
+    if (want.parameters) {
+      logger.info('EntryAbility', `📋 onNewWant 参数键: ${JSON.stringify(Object.keys(want.parameters))}`);
     }
     
-    // 检查是否通过系统分享接收文件
+    // 优先处理文件分享导入（share_import_files是系统分享的特征键）
     if (want.parameters && want.parameters['share_import_files']) {
       this.handleShareImport(want);
+      this.notifyFileOpenToUI();
       return;
     }
     
-    // 检查是否通过文件打开应用
+    // 检查是否通过文件URI打开应用
     if (want.uri) {
       logger.info('EntryAbility', `📁 通过文件打开应用（onNewWant）: ${want.uri}`);
       this.handleFileOpen(want.uri, want.type || '');
-    } else if (want.parameters) {
+      this.notifyFileOpenToUI();
+      return;
+    }
+    
+    // 检查是否通过参数传递文件URI（兼容性处理）
+    if (want.parameters) {
       const uri = want.parameters['uri'] as string;
       const type = want.parameters['type'] as string;
       const fileUris = want.parameters['fileUris'] as string[];
@@ -743,21 +777,52 @@ export default class EntryAbility extends UIAbility {
       if (fileUris && fileUris.length > 0) {
         logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${fileUris[0]}`);
         this.handleFileOpen(fileUris[0], '');
+        this.notifyFileOpenToUI();
+        return;
       } else if (uri) {
         logger.info('EntryAbility', `📁 通过参数打开文件（onNewWant）: ${uri}`);
         this.handleFileOpen(uri, type || '');
+        this.notifyFileOpenToUI();
+        return;
       }
+    }
+    
+    // 卡片router事件放最后（文件打开的Want也可能携带params，必须排在文件处理之后）
+    if (want.parameters && want.parameters['params']) {
+      this.handleWidgetRouter(want);
     }
   }
 
   /**
+   * 通知UI层有新文件需要处理（仅用于onNewWant场景）
+   * 通过递增AppStorage计数器触发MainMenuPage的@Watch监听器，
+   * 解决app在前台时onPageShow不会重新触发的问题
+   */
+  private notifyFileOpenToUI(): void {
+    const current = AppStorage.get<number>('fileOpenNewWantTrigger') || 0;
+    AppStorage.setOrCreate('fileOpenNewWantTrigger', current + 1);
+    logger.info('EntryAbility', `📣 通知UI处理新文件 (trigger: ${current + 1})`);
+  }
+
+  /**
    * 应用进入前台时的回调
+   * 回到前台不需要主动停止长时任务，等业务完成后再停止
    */
   onForeground(): void {
     logger.lifecycle('EntryAbility', '应用进入前台');
     
     // 清除后台模糊状态
     AppStorage.setOrCreate('isInBackground', false);
+
+    // 触发业务注册的前台回调
+    try {
+      const onEnterForeground = AppStorage.get<() => void>('onEnterForeground');
+      if (onEnterForeground) {
+        onEnterForeground();
+      }
+    } catch (error) {
+      logger.warn('EntryAbility', `onForeground 回调执行异常: ${String(error)}`);
+    }
     
     // 重新检测系统主题
     try {
@@ -779,12 +844,27 @@ export default class EntryAbility extends UIAbility {
 
   /**
    * 应用进入后台时的回调
+   *
+   * 注意事项：
+   *  - 长时任务应在业务开始时已申请（用户触发下载/校验时）
+   *  - onBackground 中可申请短时任务（秒级，用于应急收尾)
+   *  - 业务注册回调：AppStorage.setOrCreate('onEnterBackground', callback)
    */
   onBackground(): void {
     logger.lifecycle('EntryAbility', '应用进入后台');
     
     // 设置后台状态，触发模糊遮罩（如果已启用）
     AppStorage.setOrCreate('isInBackground', true);
+
+    // 触发业务注册的后台回调（下载管理器、校验器等可注册此回调）
+    try {
+      const onEnterBackground = AppStorage.get<() => void>('onEnterBackground');
+      if (onEnterBackground) {
+        onEnterBackground();
+      }
+    } catch (error) {
+      logger.warn('EntryAbility', `onBackground 回调执行异常: ${String(error)}`);
+    }
   }
 
   /**

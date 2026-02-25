@@ -12,6 +12,8 @@ import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoSearchBook } from '.
 import { NovelSourceExecutor, SearchErrorType } from './NovelSourceExecutor';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import { AppNotificationManager } from '../Managers/NotificationManager';
+import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
+import { common } from '@kit.AbilityKit';
 
 const TAG = 'NovelSourceValidator';
 
@@ -177,6 +179,8 @@ export class NovelSourceValidator {
   private currentValidationTaskId: string = '';
   private lastNotificationTime: number = 0;
   private notificationInterval: number = 1000; // 通知更新间隔（毫秒）
+  /** UIAbility 上下文，用于申请后台长时任务 */
+  private context: common.UIAbilityContext | null = null;
 
   private createDefaultConfig(): ValidationConfig {
     const cfg: ValidationConfig = {
@@ -212,6 +216,15 @@ export class NovelSourceValidator {
       NovelSourceValidator.instance = new NovelSourceValidator();
     }
     return NovelSourceValidator.instance;
+  }
+
+  /**
+   * 设置 UIAbility 上下文
+   * 设置后，批量校验时会自动申请 DATA_TRANSFER 后台长时任务
+   * APP 被挂起后网络请求不会被中断
+   */
+  setContext(context: common.UIAbilityContext): void {
+    this.context = context;
   }
 
   /**
@@ -559,6 +572,11 @@ export class NovelSourceValidator {
     let invalid = 0;
     let completedCount = 0;
 
+    // 有上下文时申请 DATA_TRANSFER 后台长时任务
+    if (this.context) {
+      await BackgroundTaskHelper.startDataTransferTask(this.context);
+    }
+
     // 发送开始通知
     if (showNotification) {
       await this.sendProgressNotification(0, sourceIds.length, 0, 0);
@@ -640,6 +658,10 @@ export class NovelSourceValidator {
       }
     } finally {
       this.isValidating = false;
+      // 校验完成（无论正常结束还是异常）后停止后台长时任务
+      if (this.context) {
+        await BackgroundTaskHelper.stopDataTransferTask(this.context);
+      }
     }
 
     const batchResult: BatchValidationResult = {

@@ -2128,11 +2128,22 @@ struct DataManagementPage {
       // 清除标记
       AppStorage.delete('shareImportPending');
 
-      // 获取分享文件信息
-      const pendingShareFiles = AppStorage.get<string[]>('pendingShareFiles');
+      // 获取分享文件信息（Bug 2 fix：MainMenuPage将pendingShareFiles存为JSON字符串，需要解析）
+      const rawShareFiles = AppStorage.get<string | string[]>('pendingShareFiles');
+      let pendingShareFiles: string[] = [];
+      if (typeof rawShareFiles === 'string') {
+        try {
+          pendingShareFiles = JSON.parse(rawShareFiles) as string[];
+        } catch {
+          logger.warn(TAG, '解析pendingShareFiles JSON失败');
+          pendingShareFiles = [];
+        }
+      } else if (Array.isArray(rawShareFiles)) {
+        pendingShareFiles = rawShareFiles;
+      }
       const pendingShareType = AppStorage.get<string>('pendingShareType');
 
-      if (!pendingShareFiles || !Array.isArray(pendingShareFiles) || pendingShareFiles.length === 0) {
+      if (!pendingShareFiles || pendingShareFiles.length === 0) {
         logger.warn(TAG, '未找到分享文件数据');
         return;
       }
@@ -3219,6 +3230,7 @@ struct DataManagementPage {
       // 尝试提取封面图片
       this.updateProgress(ImportStatus.PROCESSING, '正在提取封面...', 60);
       await this.tryExtractEBookCover(ebook, sandboxPath);
+      logger.info(TAG, `[封面诊断] 提取封面后 coverImagePath='${ebook.metadata.coverImagePath}'`);
 
       // 显示确认对话框，让用户查看和编辑解析到的信息
       logger.info(TAG, `显示电子书确认对话框: ${ebook.metadata.title}, 章节数: ${ebook.chapters.length}`);
@@ -3631,8 +3643,18 @@ struct DataManagementPage {
           chapters: ebook.chapters,  // 传递章节信息
           onConfirm: async (result: EBookMetadataDialogResult) => {
             logger.info(TAG, '用户确认导入电子书');
+            // [修复] 保存原始封面路径，防止 @Prop 深拷贝丢失嵌套属性
+            const originalCoverPath = ebook.metadata.coverImagePath || '';
+            logger.info(TAG, `[封面诊断] 对话框确认前: originalCoverPath='${originalCoverPath}', result.coverImagePath='${result.metadata.coverImagePath}'`);
+            
             // 更新电子书元数据
             ebook.metadata = result.metadata;
+            
+            // [修复] 如果对话框返回的封面路径为空，恢复原始封面路径
+            if (!ebook.metadata.coverImagePath && originalCoverPath) {
+              ebook.metadata.coverImagePath = originalCoverPath;
+              logger.info(TAG, `[封面诊断] 对话框返回封面为空，已恢复原始路径: '${originalCoverPath}'`);
+            }
             
             // 如果用户选择了自定义封面，需要复制到应用目录
             if (result.customCoverPath) {
@@ -3645,6 +3667,7 @@ struct DataManagementPage {
               }
             }
             
+            logger.info(TAG, `[封面诊断] 保存前最终 coverImagePath='${ebook.metadata.coverImagePath}'`);
             // 保存到数据库
             await this.ebookDataManager.saveEBook(ebook);
             logger.info(TAG, `电子书导入成功: ${ebook.metadata.title}`);
@@ -3879,43 +3902,75 @@ struct DataManagementPage {
   
   /**
    * 为批量导入解析文件结构
+   * 支持压缩包和文件夹（解压失败时回退到文件夹扫描）
    */
   private async parseFileStructureForBatch(fileUri: string): Promise<ParsedArchiveStructure | null> {
     try {
-      const parsedStructure = await this.compressionUtils.parseArchiveStructure(fileUri);
-      
-      // 转换为对话框需要的格式
-      const convertedChapters: ChapterInfo[] = [];
-      for (let i = 0; i < parsedStructure.detectedChapters.length; i++) {
-        const ch = parsedStructure.detectedChapters[i];
-        const chapterInfo: ChapterInfo = {
-          index: ch.index,
-          number: ch.number,
-          title: ch.title,
-          originalName: ch.originalName,
-          path: ch.path,
-          pageCount: ch.pageCount
-        };
-        convertedChapters.push(chapterInfo);
+      // 检查是否为文件夹类型
+      if (fileUri.startsWith('folder:')) {
+        const folderPath = fileUri.substring(7);
+        return await this.convertParsedStructure(
+          await this.compressionUtils.parseFolderAsArchiveStructure(folderPath)
+        );
       }
       
-      const dialogStructure: ParsedArchiveStructure = {
-        hasComicInfo: parsedStructure.hasComicInfo,
-        comicInfoContent: parsedStructure.comicInfoContent,
-        isMultiLayer: parsedStructure.isMultiLayer,
-        detectedChapters: convertedChapters,
-        rootImageCount: parsedStructure.rootImageCount,
-        totalImageCount: parsedStructure.totalImageCount,
-        extractedPath: parsedStructure.extractedPath,
-        tempDirectories: parsedStructure.tempDirectories,
-        warnings: parsedStructure.warnings
-      };
-      
-      return dialogStructure;
+      // 尝试作为压缩包解析
+      try {
+        const parsedStructure = await this.compressionUtils.parseArchiveStructure(fileUri);
+        return this.convertParsedStructure(parsedStructure);
+      } catch (archiveError) {
+        // 解压失败，尝试将路径当作文件夹扫描
+        logger.warn(TAG, `解压失败，尝试作为文件夹解析: ${fileUri}`, String(archiveError));
+        try {
+          // 将URI转换为本地路径后尝试作为文件夹
+          let localPath = fileUri;
+          if (fileUri.startsWith('file://')) {
+            localPath = fileUri.replace('file://', '');
+          }
+          const parsedStructure = await this.compressionUtils.parseFolderAsArchiveStructure(localPath);
+          if (parsedStructure.totalImageCount > 0) {
+            return this.convertParsedStructure(parsedStructure);
+          }
+        } catch (folderError) {
+          logger.warn(TAG, `文件夹解析也失败: ${fileUri}`, String(folderError));
+        }
+        return null;
+      }
     } catch (error) {
       logger.error(TAG, `解析文件结构失败: ${fileUri}`, String(error));
       return null;
     }
+  }
+  
+  /**
+   * 将CompressionUtils的ParsedArchiveStructure转换为对话框格式
+   */
+  private convertParsedStructure(parsedStructure: CompressionParsedStructure): ParsedArchiveStructure {
+    const convertedChapters: ChapterInfo[] = [];
+    for (let i = 0; i < parsedStructure.detectedChapters.length; i++) {
+      const ch = parsedStructure.detectedChapters[i];
+      const chapterInfo: ChapterInfo = {
+        index: ch.index,
+        number: ch.number,
+        title: ch.title,
+        originalName: ch.originalName,
+        path: ch.path,
+        pageCount: ch.pageCount
+      };
+      convertedChapters.push(chapterInfo);
+    }
+    
+    return {
+      hasComicInfo: parsedStructure.hasComicInfo,
+      comicInfoContent: parsedStructure.comicInfoContent,
+      isMultiLayer: parsedStructure.isMultiLayer,
+      detectedChapters: convertedChapters,
+      rootImageCount: parsedStructure.rootImageCount,
+      totalImageCount: parsedStructure.totalImageCount,
+      extractedPath: parsedStructure.extractedPath,
+      tempDirectories: parsedStructure.tempDirectories,
+      warnings: parsedStructure.warnings
+    };
   }
   
   /**

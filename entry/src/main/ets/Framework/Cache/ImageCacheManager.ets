@@ -424,8 +424,9 @@ export class ImageCacheManager {
         filePath = '/' + filePath;
       }
       
-      // 直接从文件加载
-      const pixelMap = await this.loadImageFromFile(filePath);
+      // 直接从文件加载（使用降采样，限制最大宽度为1440像素，避免内存爆炸）
+      const maxDecodeWidth = 1440;
+      const pixelMap = await this.loadImageFromFile(filePath, maxDecodeWidth);
       
       if (pixelMap) {
         // 存入内存缓存
@@ -515,10 +516,45 @@ export class ImageCacheManager {
 
   /**
    * 从文件加载PixelMap
+   * [性能修复] 支持降采样，防止全分辨率解码导致内存爆炸
+   * @param filePath 文件路径
+   * @param maxWidth 最大宽度（0 表示不限制），用于计算降采样比例
    */
-  private async loadImageFromFile(filePath: string): Promise<image.PixelMap | null> {
+  private async loadImageFromFile(filePath: string, maxWidth: number = 0): Promise<image.PixelMap | null> {
     try {
       const imageSourceApi = image.createImageSource(filePath);
+
+      // 如果指定了 maxWidth，则进行降采样
+      if (maxWidth > 0) {
+        try {
+          const imgInfo = await imageSourceApi.getImageInfo();
+          const originalWidth = imgInfo.size.width;
+          const originalHeight = imgInfo.size.height;
+
+          if (originalWidth > maxWidth) {
+            let sampleSize = 1;
+            const ratio = Math.ceil(originalWidth / maxWidth);
+            // sampleSize 取2的幂次
+            let powerOf2 = 1;
+            while (powerOf2 * 2 <= ratio) {
+              powerOf2 *= 2;
+            }
+            sampleSize = Math.max(1, powerOf2);
+
+            const decodingOpts: image.DecodingOptions = {
+              sampleSize: sampleSize,
+              editable: false
+            };
+            const pixelMap = await imageSourceApi.createPixelMap(decodingOpts);
+            logger.debug(TAG, `[本地] 降采样加载: ${filePath.substring(filePath.length - 30)}, 原始=${originalWidth}x${originalHeight}, sample=${sampleSize}`);
+            return pixelMap;
+          }
+        } catch (infoErr) {
+          logger.warn(TAG, `获取图片信息失败，回退全分辨率: ${String(infoErr)}`);
+        }
+      }
+
+      // 不需要降采样或降采样失败时，使用默认解码
       const pixelMap = await imageSourceApi.createPixelMap();
       return pixelMap;
     } catch (error) {
@@ -1127,6 +1163,25 @@ export class ImageCacheManager {
       
     } catch (error) {
       logger.error(TAG, '清理过期缓存失败' + String(error));
+    }
+  }
+
+  /**
+   * 从内存缓存中移除匹配的 PixelMap 条目
+   * 用于在外部主动释放 PixelMap 时，同步清理缓存中的引用，
+   * 防止已释放的 PixelMap 被缓存再次返回导致崩溃。
+   * 注意：此方法不会调用 pm.release()，调用方负责释放。
+   */
+  public evictFromMemoryCacheByPixelMap(pm: image.PixelMap): void {
+    for (const mapEntry of this.memoryCache) {
+      const key = mapEntry[0];
+      const entry = mapEntry[1];
+      if (entry.pixelMap === pm) {
+        this.memoryCache.delete(key);
+        this.memoryCacheSize -= entry.size;
+        logger.debug(TAG, `从内存缓存移除(ByPixelMap): ${key}, size=${entry.size}`);
+        return;
+      }
     }
   }
 

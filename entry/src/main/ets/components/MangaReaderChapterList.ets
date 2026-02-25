@@ -6,7 +6,7 @@
 import { logger } from '../Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { MangaChapter } from '../Models/MangaModels';
-import { curves, UIContext } from '@kit.ArkUI';
+import { curves, UIContext, display } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 
@@ -45,8 +45,13 @@ export struct MangaReaderChapterList {
   @State private panelOpacity: number = 0;
   @State private panelScale: number = 0.95;
   @State private panelTranslateY: number = 20;
+  @State private panelTranslateX: number = -300;
   @State private backdropOpacity: number = 0;
   @State private themeState: ThemeAwareState = new ThemeAwareState();
+  @State private isLandscape: boolean = false;
+
+  // 列表滚动控制器（用于自动滚动到当前章节）
+  private listScroller: ListScroller = new ListScroller();
 
   // 动画系统
   private uiContext: UIContext | undefined = undefined;
@@ -58,6 +63,9 @@ export struct MangaReaderChapterList {
       logger.error(TAG, '获取UIContext失败');
     }
     
+    // 初始化屏幕方向检测
+    this.detectScreenOrientation();
+    
     // 初始化主题感知
     ThemeAwareHelper.initializeThemeAware('MangaReaderChapterList', this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `MangaReaderChapterList 主题切换: ${theme}`);
@@ -67,7 +75,47 @@ export struct MangaReaderChapterList {
     if (this.isVisible) {
       setTimeout(() => {
         this.showPanel();
+        // 自动滚动到当前章节
+        this.scrollToCurrentChapter();
       }, 50);
+    }
+  }
+  
+  /**
+   * 检测屏幕方向
+   */
+  private detectScreenOrientation(): void {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      if (displayInfo) {
+        const screenWidth = displayInfo.width / (displayInfo.densityPixels || 1);
+        const screenHeight = displayInfo.height / (displayInfo.densityPixels || 1);
+        this.isLandscape = screenWidth > screenHeight;
+      }
+    } catch (error) {
+      logger.error(TAG, `屏幕方向检测失败: ${String(error)}`);
+    }
+  }
+  
+  /**
+   * 自动滚动到当前章节
+   */
+  private scrollToCurrentChapter(): void {
+    if (!this.currentChapterId || this.chapters.length === 0) {
+      return;
+    }
+    
+    const currentIndex = this.chapters.findIndex((ch: MangaChapter) => ch.id === this.currentChapterId);
+    if (currentIndex > 0) {
+      // 延迟滚动，确保列表已完成渲染
+      setTimeout(() => {
+        try {
+          this.listScroller.scrollToIndex(Math.max(0, currentIndex - 1), true);
+          logger.info(TAG, `自动滚动到当前章节: index=${currentIndex}, title=${this.chapters[currentIndex].title}`);
+        } catch (error) {
+          logger.warn(TAG, `自动滚动失败: ${String(error)}`);
+        }
+      }, 100);
     }
   }
 
@@ -101,17 +149,33 @@ export struct MangaReaderChapterList {
       this.backdropOpacity = 0.5;
     });
 
-    const slideInOptions: AnimateParam = { 
-      duration: 200, 
-      curve: curves.initCurve(Curve.EaseOut),
-      iterations: 1,
-      playMode: PlayMode.Normal
-    };
-    this.uiContext.animateTo(slideInOptions, () => {
-      this.panelOpacity = 1;
-      this.panelScale = 1;
-      this.panelTranslateY = 0;
-    });
+    if (this.isLandscape) {
+      // 横屏：从左侧滑入
+      this.panelTranslateX = -300;
+      const slideInOptions: AnimateParam = { 
+        duration: 300, 
+        curve: curves.initCurve(Curve.EaseOut),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideInOptions, () => {
+        this.panelOpacity = 1;
+        this.panelTranslateX = 0;
+      });
+    } else {
+      // 竖屏：缩放弹入
+      const slideInOptions: AnimateParam = { 
+        duration: 200, 
+        curve: curves.initCurve(Curve.EaseOut),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideInOptions, () => {
+        this.panelOpacity = 1;
+        this.panelScale = 1;
+        this.panelTranslateY = 0;
+      });
+    }
   }
 
   /**
@@ -123,17 +187,32 @@ export struct MangaReaderChapterList {
       return;
     }
 
-    const slideOutOptions: AnimateParam = { 
-      duration: 160, 
-      curve: curves.initCurve(Curve.EaseIn),
-      iterations: 1,
-      playMode: PlayMode.Normal
-    };
-    this.uiContext.animateTo(slideOutOptions, () => {
-      this.panelOpacity = 0;
-      this.panelScale = 0.95;
-      this.panelTranslateY = 20;
-    });
+    if (this.isLandscape) {
+      // 横屏：滑出到左侧
+      const slideOutOptions: AnimateParam = { 
+        duration: 250, 
+        curve: curves.initCurve(Curve.EaseIn),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideOutOptions, () => {
+        this.panelOpacity = 0;
+        this.panelTranslateX = -300;
+      });
+    } else {
+      // 竖屏：缩放淡出
+      const slideOutOptions: AnimateParam = { 
+        duration: 160, 
+        curve: curves.initCurve(Curve.EaseIn),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideOutOptions, () => {
+        this.panelOpacity = 0;
+        this.panelScale = 0.95;
+        this.panelTranslateY = 20;
+      });
+    }
 
     const fadeOutOptions: AnimateParam = { 
       duration: 200, 
@@ -217,6 +296,155 @@ export struct MangaReaderChapterList {
     })
   }
 
+  /**
+   * 构建竖屏面板（居中弹窗样式）
+   */
+  @Builder
+  buildPortraitPanel() {
+    Column() {
+      // 面板标题
+      Row() {
+        Text('章节目录')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+
+        Text(`共${this.chapters.length}章`)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ right: 12 })
+
+        Button() {
+          Image($r('app.media.ic_close'))
+            .width(20)
+            .height(20)
+            .fillColor($r('app.color.text_secondary'))
+        }
+        .width(36)
+        .height(36)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.hidePanel();
+          if (this.callbacks.onClose) {
+            this.callbacks.onClose();
+          }
+        })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
+      // 滚动章节列表
+      List({ scroller: this.listScroller }) {
+        ForEach(this.chapters, (chapter: MangaChapter, index: number) => {
+          ListItem() {
+            this.buildChapterItem(chapter, index)
+          }
+        }, (chapter: MangaChapter) => chapter.id)
+      }
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
+      .divider({
+        strokeWidth: 1,
+        color: $r('app.color.divider'),
+        startMargin: 16,
+        endMargin: 16
+      })
+    }
+    .width('90%')
+    .height('70%')
+    .constraintSize({ maxWidth: 500, maxHeight: 600 })
+    .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+    .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+    .borderRadius(16)
+    .padding(20)
+    .opacity(this.panelOpacity)
+    .scale({ x: this.panelScale, y: this.panelScale })
+    .translate({ y: this.panelTranslateY })
+  }
+
+  /**
+   * 构建横屏面板（左侧贴边侧栏）
+   */
+  @Builder
+  buildLandscapePanel() {
+    Row() {
+      // 左侧章节列表面板
+      Column() {
+        // 面板标题
+        Row() {
+          Text('章节目录')
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+
+          Text(`共${this.chapters.length}章`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .margin({ right: 8 })
+
+          Button() {
+            Image($r('app.media.ic_close'))
+              .width(18)
+              .height(18)
+              .fillColor($r('app.color.text_secondary'))
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.hidePanel();
+            if (this.callbacks.onClose) {
+              this.callbacks.onClose();
+            }
+          })
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        // 滚动章节列表
+        List({ scroller: this.listScroller }) {
+          ForEach(this.chapters, (chapter: MangaChapter, index: number) => {
+            ListItem() {
+              this.buildChapterItem(chapter, index)
+            }
+          }, (chapter: MangaChapter) => chapter.id)
+        }
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+        .divider({
+          strokeWidth: 1,
+          color: $r('app.color.divider'),
+          startMargin: 16,
+          endMargin: 16
+        })
+      }
+      .width(300)
+      .height('100%')
+      .padding(16)
+      .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+      .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+      .borderRadius({ topRight: 16, bottomRight: 16 })
+      .opacity(this.panelOpacity)
+      .translate({ x: this.panelTranslateX })
+      .hitTestBehavior(HitTestMode.Default)
+
+      // 右侧空白区域（点击关闭）
+      Column()
+        .layoutWeight(1)
+        .height('100%')
+        .onClick(() => {
+          this.hidePanel();
+          if (this.callbacks.onClose) {
+            this.callbacks.onClose();
+          }
+        })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   build() {
     if (this.isVisible) {
       Stack() {
@@ -233,71 +461,23 @@ export struct MangaReaderChapterList {
             }
           })
 
-        // 章节列表面板（居中弹窗样式）
-        Column() {
-          // 面板标题
-          Row() {
-            Text('章节目录')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              .layoutWeight(1)
-
-            Text(`共${this.chapters.length}章`)
-              .fontSize(14)
-              .fontColor($r('app.color.text_secondary'))
-              .margin({ right: 12 })
-
-            Button() {
-              Image($r('app.media.ic_close'))
-                .width(20)
-                .height(20)
-                .fillColor($r('app.color.text_secondary'))
-            }
-            .width(36)
-            .height(36)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.hidePanel();
-              if (this.callbacks.onClose) {
-                this.callbacks.onClose();
-              }
-            })
-          }
-          .width('100%')
-          .margin({ bottom: 16 })
-
-          // 滚动章节列表
-          List() {
-            ForEach(this.chapters, (chapter: MangaChapter, index: number) => {
-              ListItem() {
-                this.buildChapterItem(chapter, index)
-              }
-            }, (chapter: MangaChapter) => chapter.id)
-          }
-          .layoutWeight(1)
-          .scrollBar(BarState.Auto)
-          .divider({
-            strokeWidth: 1,
-            color: $r('app.color.divider'),
-            startMargin: 16,
-            endMargin: 16
-          })
+        // 根据屏幕方向选择不同布局
+        if (this.isLandscape) {
+          this.buildLandscapePanel()
+        } else {
+          this.buildPortraitPanel()
         }
-        .width('90%')
-        .height('70%')
-        .constraintSize({ maxWidth: 500, maxHeight: 600 })
-        .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-        .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-        .borderRadius(16)
-        .padding(20)
-        .opacity(this.panelOpacity)
-        .scale({ x: this.panelScale, y: this.panelScale })
-        .translate({ y: this.panelTranslateY })
       }
       .width('100%')
       .height('100%')
       .position({ x: 0, y: 0 })
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        const newWidth = Number(newValue.width);
+        const newHeight = Number(newValue.height);
+        if (newWidth > 0 && newHeight > 0) {
+          this.isLandscape = newWidth > newHeight;
+        }
+      })
     }
   }
 }

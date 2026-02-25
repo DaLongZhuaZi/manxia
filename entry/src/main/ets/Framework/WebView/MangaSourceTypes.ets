@@ -1060,6 +1060,20 @@ export interface ExtractConfig {
 }
 
 /**
+ * API分页配置
+ */
+export interface APIPaginationConfig {
+  /** 是否启用分页 */
+  enabled: boolean;
+  /** 分页类型 */
+  type?: string;
+  /** 页码参数名 */
+  pageParam?: string;
+  /** 判断是否有更多页的路径表达式 */
+  hasMorePath?: string;
+}
+
+/**
  * API请求操作
  */
 export interface APIRequestAction extends BaseAction {
@@ -1076,6 +1090,8 @@ export interface APIRequestAction extends BaseAction {
   body?: ESObject;
   /** 响应数据提取配置 */
   extract?: ExtractConfig;
+  /** API分页配置 */
+  pagination?: APIPaginationConfig;
 }
 
 /**

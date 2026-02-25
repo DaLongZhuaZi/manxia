@@ -1,5 +1,5 @@
 // 文件路径: src/main/ets/pages/SplashPage.ets
-// 职责: 应用启动页面，显示品牌标识和加载状态
+// 职责: 应用启动页面，显示品牌标识和加载状态，监听真实初始化进度
 
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -10,6 +10,7 @@ import { WindowManager } from '../Utils/WindowManager';
 import { common } from '@kit.AbilityKit';
 import { colorMap } from '../Data/ResourceMap';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { getAppInitializationManager, InitializationState, InitPhase, InitProgressCallback } from '../Framework/Managers/AppInitializationManager';
 
 const TAG = 'SplashPage';
 
@@ -27,10 +28,15 @@ struct SplashPage {
   // 页面状态
   @State private isPageLoaded: boolean = false;
   @State private isThemeLoaded: boolean = false;
+  @State private isAppInitialized: boolean = false; // APP初始化是否完成
   @State private backgroundScale: number = 1.0;
   @State private loadingProgress: string = '正在启动...';
+  @State private initProgress: number = 0; // 初始化进度 0-100
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private isWindowPortrait: boolean = true; // 窗口是否为竖屏（根据窗口尺寸判断）
+  
+  // 初始化管理器回调
+  private initProgressCallback: InitProgressCallback | null = null;
 
   // 自定义主题全局状态（用于背景选择）
   @StorageProp(CUSTOM_THEME_KEYS.SPLASH_BACKGROUND_IMAGE) customSplashBackgroundImage: string = '';
@@ -43,6 +49,8 @@ struct SplashPage {
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
   private uiContext: UIContext | undefined = undefined;
   private componentId: string = 'SplashPage';
+  private initStartTime: number = 0; // 初始化开始时间
+  private readonly MIN_SPLASH_DURATION: number = 1600; // 最小停留时间 1.6 秒
 
   aboutToAppear(): void {
     logger.lifecycle('SplashPage', '🚀 启动页面开始加载');
@@ -88,23 +96,26 @@ struct SplashPage {
 
   /**
    * 开始完整的初始化流程
+   * 监听 EntryAbility 的真实初始化进度
    */
   private async startCompleteInitialization(): Promise<void> {
     try {
       logger.info('SplashPage', '🎯 开始完整初始化流程');
+      this.initStartTime = Date.now();
       
-      this.loadingProgress = '正在启动...';
-
-      // 2. 初始化欢迎引导管理器
-      logger.info('SplashPage', '📖 开始初始化欢迎引导管理器...');
+      // 1. 注册初始化进度监听器
+      this.setupInitializationListener();
+      
+      // 2. 初始化欢迎引导管理器（SplashPage自己的初始化）
+      logger.info('SplashPage', '📖 初始化欢迎引导管理器...');
       await this.welcomeGuideManager.initialize();
       logger.info('SplashPage', '✅ 欢迎引导管理器初始化完成');
 
-      // 3. 等待ThemeManager完全初始化
-      logger.info('SplashPage', '🎨 开始初始化主题管理器...');
+      // 3. 初始化主题管理器
+      logger.info('SplashPage', '🎨 初始化主题管理器...');
       await this.themeManager.initialize();
       
-      // 4. 使用ThemeAwareHelper初始化主题感知功能（现在会获取正确的实际主题）
+      // 4. 初始化主题感知功能
       await ThemeAwareHelper.initializeThemeAware(
         this.componentId,
         this.themeState,
@@ -112,35 +123,81 @@ struct SplashPage {
           logger.info('SplashPage', `🔄 主题变化: ${this.themeState.currentTheme} -> ${newTheme}`);
         },
         (newState: ThemeAwareState) => {
-          // 重新赋值整个themeState对象以触发UI更新
           this.themeState = newState;
         }
       );
       
-      logger.info('SplashPage', `✅ 主题初始化完成，当前显示主题: ${this.themeState.currentTheme}`);
-
+      logger.info('SplashPage', `✅ 主题初始化完成: ${this.themeState.currentTheme}`);
       this.isThemeLoaded = true;
-      this.loadingProgress = '主题加载完成';
 
-      // 5. 等待页面渲染完成
-      setTimeout(() => {
-        this.isPageLoaded = true;
-        this.loadingProgress = '初始化完成';
-        this.checkInitializationComplete();
-      }, 800); // 给用户足够时间看到主题应用效果
+      // 5. 等待 EntryAbility 的初始化完成
+      await this.waitForAppInitialization();
+      
+      // 6. 所有初始化完成
+      this.isPageLoaded = true;
+      this.checkInitializationComplete();
 
     } catch (error) {
-      logger.error('SplashPage', '完整初始化失败', String(error));
+      logger.error('SplashPage', '初始化失败', String(error));
       this.loadingProgress = '初始化失败';
-
-
       this.isThemeLoaded = true;
       this.isPageLoaded = true;
+      this.isAppInitialized = true;
       
-      // 即使失败也要跳转，避免卡在启动页
+      // 即使失败也要跳转
       setTimeout(() => {
         this.navigateToMainPage();
       }, 1000);
+    }
+  }
+  
+  /**
+   * 设置初始化进度监听器
+   */
+  private setupInitializationListener(): void {
+    const initManager = getAppInitializationManager();
+    
+    this.initProgressCallback = (state: InitializationState) => {
+      // 更新进度和显示文本
+      this.initProgress = state.progress;
+      this.loadingProgress = state.displayText;
+      
+      logger.info('SplashPage', `📊 初始化进度: ${state.progress}% - ${state.displayText}`);
+      
+      // 检查是否完成或失败
+      if (state.isCompleted) {
+        this.isAppInitialized = true;
+        logger.info('SplashPage', '✅ APP初始化完成');
+      } else if (state.isFailed) {
+        this.isAppInitialized = true;
+        logger.warn('SplashPage', `⚠️ APP初始化失败: ${state.errorMessage}`);
+      }
+    };
+    
+    initManager.addProgressListener(this.initProgressCallback);
+  }
+  
+  /**
+   * 等待APP初始化完成
+   */
+  private async waitForAppInitialization(): Promise<void> {
+    const initManager = getAppInitializationManager();
+    
+    // 如果已经完成，直接返回
+    if (initManager.isCompleted() || initManager.isFailed()) {
+      this.isAppInitialized = true;
+      return;
+    }
+    
+    // 等待初始化Promise完成
+    logger.info('SplashPage', '⏳ 等待APP初始化完成...');
+    const success = await initManager.getCompletionPromise();
+    this.isAppInitialized = true;
+    
+    if (success) {
+      logger.info('SplashPage', `✅ APP初始化成功，耗时: ${initManager.getDuration()}ms`);
+    } else {
+      logger.warn('SplashPage', '⚠️ APP初始化失败，将继续启动');
     }
   }
 
@@ -148,14 +205,32 @@ struct SplashPage {
    * 检查初始化是否完成
    */
   private checkInitializationComplete(): void {
-    if (this.isPageLoaded && this.isThemeLoaded) {
-      logger.info('SplashPage', '✅ 所有初始化完成，准备跳转到主页面');
+    // 必须同时满足：页面加载完成 + 主题加载完成 + APP初始化完成
+    if (this.isPageLoaded && this.isThemeLoaded && this.isAppInitialized) {
+      const elapsed = Date.now() - this.initStartTime;
+      const remainingTime = Math.max(0, this.MIN_SPLASH_DURATION - elapsed);
       
-      // 延迟一段时间让用户看到完成状态
-      setTimeout(() => {
-        this.navigateToMainPage();
-      }, 800);
+      logger.info('SplashPage', `✅ 所有初始化完成，耗时 ${elapsed}ms，还需等待 ${remainingTime}ms`);
+      
+      // 确保最少停留时间
+      if (remainingTime > 0) {
+        this.loadingProgress = '准备就绪';
+        setTimeout(() => {
+          this.fadeOutAndNavigate();
+        }, remainingTime);
+      } else {
+        this.fadeOutAndNavigate();
+      }
     }
+  }
+
+  /**
+   * 执行跳转（淡出动画由 pageTransition 处理）
+   */
+  private fadeOutAndNavigate(): void {
+    this.loadingProgress = '';
+    // 直接跳转，淡出动画由 pageTransition 处理
+    this.navigateToMainPage();
   }
 
   /**
@@ -173,15 +248,17 @@ struct SplashPage {
       const shouldShowGuide = this.welcomeGuideManager.shouldShowGuide();
       logger.info('SplashPage', `是否显示引导: ${shouldShowGuide}`);
 
-      // 使用router跳转到对应页面（依赖pageTransition实现平滑过渡）
+      // 使用 pushUrl 跳转，让 SplashPage 在上层淡出，MainMenuPage 在下层显示
       const router = this.uiContext?.getRouter();
       if (router) {
         const targetUrl = shouldShowGuide ? 'pages/WelcomeGuidePage' : 'pages/MainMenuPage';
         
-        router.replaceUrl({
+        router.pushUrl({
           url: targetUrl
         }).then(() => {
           logger.info('SplashPage', `✅ 成功跳转到${shouldShowGuide ? '引导' : '主'}页面`);
+          // 跳转成功后清除路由历史，防止用户返回 SplashPage
+          router.clear();
         }).catch((error: Error) => {
           logger.error('SplashPage', '跳转失败', error.message);
         });
@@ -203,6 +280,13 @@ struct SplashPage {
     this.lifecycle.destroy();
     // 清理主题感知功能
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
+    
+    // 清理初始化进度监听器
+    if (this.initProgressCallback) {
+      const initManager = getAppInitializationManager();
+      initManager.removeProgressListener(this.initProgressCallback);
+      this.initProgressCallback = null;
+    }
   }
 
   /**
@@ -255,9 +339,10 @@ struct SplashPage {
         Column() {
           // Logo区域 - 使用应用图标
           Image($r('app.media.icon'))
-            .width(120)
-            .height(120)
+            .width(126)
+            .height(126)
             .objectFit(ImageFit.Contain)
+            .animation({ duration: 300, curve: Curve.EaseOut })
 
           // 加载状态文本
           Text(this.loadingProgress)
@@ -265,6 +350,44 @@ struct SplashPage {
             .fontColor(this.getTextColor())
             .opacity(0.8)
             .margin({ top: 24 })
+            .animation({ duration: 200, curve: Curve.EaseOut })
+          
+          // 进度条容器
+          Column() {
+            // 进度条背景
+            Stack({ alignContent: Alignment.Start }) {
+              // 背景轨道
+              Row()
+                .width('100%')
+                .height(4)
+                .borderRadius(2)
+                .backgroundColor(this.themeState.currentTheme === 'dark' 
+                  ? 'rgba(255, 255, 255, 0.1)' 
+                  : 'rgba(0, 0, 0, 0.1)')
+              
+              // 进度填充
+              Row()
+                .width(`${this.initProgress}%`)
+                .height(4)
+                .borderRadius(2)
+                .backgroundColor(this.themeState.currentTheme === 'dark'
+                  ? '#4FC3F7'
+                  : '#2196F3')
+                .animation({ duration: 300, curve: Curve.EaseOut })
+            }
+            .width(200)
+            .height(4)
+            
+            // 进度百分比文本
+            Text(`${this.initProgress}%`)
+              .fontSize(12)
+              .fontColor(this.getTextColor())
+              .opacity(0.6)
+              .margin({ top: 8 })
+          }
+          .margin({ top: 32 })
+          .opacity(this.initProgress > 0 ? 1 : 0)
+          .animation({ duration: 300, curve: Curve.EaseOut })
         }
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
@@ -281,12 +404,10 @@ struct SplashPage {
     .height('100%')
   }
 
-  // 页面过渡动画：SplashPage淡出的同时MainMenuPage淡入
+  // 页面过渡动画
   pageTransition() {
-    // 页面退出时淡出（配合微小缩放效果）
-    PageTransitionExit({ duration: 400, curve: Curve.EaseInOut })
-      .opacity(0)
-      .scale({ x: 1.02, y: 1.02 })
+    // SplashPage 退出时保持不变（让 MainMenuPage 淡入覆盖）
+    PageTransitionExit({ duration: 350, curve: Curve.EaseOut })
   }
 
   // 媒体资源回退：根据当前自定义主题ID与设备类型选择 a_* / b_*

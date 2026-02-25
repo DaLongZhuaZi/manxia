@@ -725,7 +725,15 @@ A: 不会，原文件保持不变。`;
       const fullRelativePath = parentPath ? `${parentPath}/${node.name}` : node.name;
       
       if (node.isDirectory) {
-        this.collectImportableFiles(node.children, fullRelativePath);
+        // 检查文件夹是否包含图片（可能是已解压的漫画文件夹）
+        if (this.isMangaFolder(node)) {
+          // 用 folder: 前缀标记为文件夹类型
+          this.pendingMangaFiles.push(`folder:${fullRelativePath}`);
+          this.downloadDirFiles.push(`📂 ${fullRelativePath}`);
+          logger.info(TAG, `识别到漫画文件夹: ${fullRelativePath}`);
+        } else {
+          this.collectImportableFiles(node.children, fullRelativePath);
+        }
       } else {
         const ext = this.getDownloadFileExtension(node.name);
         this.downloadDirFiles.push(fullRelativePath);
@@ -741,6 +749,54 @@ A: 不会，原文件保持不变。`;
         }
       }
     }
+  }
+
+  /**
+   * 检查文件夹是否为漫画文件夹（包含图片或包含子文件夹且子文件夹含图片）
+   */
+  private isMangaFolder(node: FileTreeNode): boolean {
+    const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'];
+
+    // 如果直接子文件中存在可独立导入的文件（压缩包/电子书/PDF/小说），
+    // 则该文件夹是混合内容目录，应递归扫描以分别识别各类文件，而不是整体作为漫画文件夹
+    for (const child of node.children) {
+      if (!child.isDirectory) {
+        const ext = this.getDownloadFileExtension(child.name);
+        if (DownloadSyncPage.MANGA_EXTENSIONS.includes(ext) ||
+            DownloadSyncPage.EBOOK_EXTENSIONS.includes(ext) ||
+            DownloadSyncPage.PDF_EXTENSIONS.includes(ext) ||
+            DownloadSyncPage.NOVEL_EXTENSIONS.includes(ext)) {
+          return false;
+        }
+      }
+    }
+
+    // 检查直接子文件是否有图片（平铺结构）
+    for (const child of node.children) {
+      if (!child.isDirectory) {
+        const ext = this.getDownloadFileExtension(child.name);
+        if (imageExts.includes(ext)) return true;
+      }
+    }
+
+    // 检查子文件夹是否包含图片（章节文件夹结构）
+    let hasSubDirWithImages = false;
+    for (const child of node.children) {
+      if (child.isDirectory && !child.isReserved) {
+        for (const grandChild of child.children) {
+          if (!grandChild.isDirectory) {
+            const ext = this.getDownloadFileExtension(grandChild.name);
+            if (imageExts.includes(ext)) {
+              hasSubDirWithImages = true;
+              break;
+            }
+          }
+        }
+        if (hasSubDirWithImages) break;
+      }
+    }
+
+    return hasSubDirWithImages;
   }
 
   build() {
@@ -1530,16 +1586,28 @@ A: 不会，原文件保持不变。`;
     }
     
     const filename = this.pendingMangaFiles[0];
-    const uri = `${this.downloadDirUri}/${filename}`;
-    await this.showDownloadSingleImportDialog(uri, filename);
+    if (filename.startsWith('folder:')) {
+      // 文件夹类型：使用文件夹路径
+      const folderPath = `${this.downloadDirPath}/${filename.substring(7)}`;
+      const displayName = filename.substring(7);
+      await this.showDownloadSingleFolderImportDialog(folderPath, displayName);
+    } else {
+      const uri = `${this.downloadDirUri}/${filename}`;
+      await this.showDownloadSingleImportDialog(uri, filename);
+    }
   }
 
   private async showDownloadBatchImportDialog(): Promise<void> {
     const fileUris: string[] = [];
     for (let i = 0; i < this.pendingMangaFiles.length; i++) {
       const filename = this.pendingMangaFiles[i];
-      const uri = `${this.downloadDirUri}/${filename}`;
-      fileUris.push(uri);
+      if (filename.startsWith('folder:')) {
+        // 文件夹类型：使用文件夹路径作为URI（带folder:前缀）
+        fileUris.push(`folder:${this.downloadDirPath}/${filename.substring(7)}`);
+      } else {
+        const uri = `${this.downloadDirUri}/${filename}`;
+        fileUris.push(uri);
+      }
     }
     
     await this.findExistingMangaCandidatesForBatch();
@@ -1550,6 +1618,13 @@ A: 不会，原文件保持不变。`;
         fileUris: fileUris,
         existingMangaCandidates: this.existingMangaCandidates,
         parseFileStructure: async (fileUri: string): Promise<ParsedArchiveStructure | null> => {
+          // 检查是否为文件夹类型
+          if (fileUri.startsWith('folder:')) {
+            const folderPath = fileUri.substring(7);
+            const parsed = await this.compressionUtils.parseFolderAsArchiveStructure(folderPath);
+            return this.convertToDialogStructure(parsed);
+          }
+          // 压缩包类型
           const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
           return this.convertToDialogStructure(parsed);
         },
@@ -1631,23 +1706,45 @@ A: 不会，原文件保持不变。`;
       const chapterPath = `${mangaPath}/${this.sanitizeFolderName(chapter.title)}`;
       try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
-      const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
-      const imageFiles: string[] = [];
-      
-      if (parsed.extractedPath) {
-        const files = fs.listFileSync(parsed.extractedPath);
-        for (const file of files) {
-          if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
-            const srcPath = `${parsed.extractedPath}/${file}`;
-            const destPath = `${chapterPath}/${file}`;
-            try {
-              fs.copyFileSync(srcPath, destPath);
-              imageFiles.push(file);
-            } catch (e) {
-              logger.warn(TAG, `复制文件失败: ${file}`);
-            }
+      const isFolder = chapter.fileUri.startsWith('folder:');
+      let sourcePath = '';
+
+      if (isFolder) {
+        const detectedChapters = chapter.parsedStructure?.detectedChapters || [];
+        if (detectedChapters.length > 1) {
+          // 多章节文件夹：根据章节编号定位对应子目录
+          const matchedChapter = detectedChapters.find((dc: ChapterInfo) => dc.number === chapter.number);
+          sourcePath = matchedChapter ? matchedChapter.path : chapter.fileUri.substring(7);
+        } else {
+          // 单章节文件夹：使用 extractedPath 或整个文件夹路径
+          sourcePath = chapter.fileUri.substring(7);
+          if (chapter.parsedStructure?.extractedPath) {
+            sourcePath = chapter.parsedStructure.extractedPath;
           }
         }
+      } else {
+        const detectedChaptersArchive = chapter.parsedStructure?.detectedChapters || [];
+        if (detectedChaptersArchive.length > 1) {
+          // 多章节压缩包：使用分析阶段已解压的子目录路径，避免重复解压
+          const matchedChapter = detectedChaptersArchive.find((dc: ChapterInfo) => dc.number === chapter.number);
+          sourcePath = matchedChapter ? matchedChapter.path : '';
+          if (!sourcePath) {
+            // 回退：重新解压整个压缩包
+            const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
+            sourcePath = parsed.extractedPath;
+          }
+        } else {
+          // 单章节压缩包：解压后获取路径
+          const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
+          sourcePath = parsed.extractedPath;
+        }
+      }
+      
+      const imageFiles: string[] = [];
+      
+      if (sourcePath) {
+        // 递归收集图片文件（支持嵌套目录）
+        this.collectAndCopyImages(sourcePath, chapterPath, imageFiles);
       }
       
       const chapterId = await this.dataManager.addChapterInfo({
@@ -1669,11 +1766,15 @@ A: 不会，原文件保持不变。`;
       }
     }
     
-    if (firstCoverPath) {
-      const ext = firstCoverPath.substring(firstCoverPath.lastIndexOf('.'));
+    // 确定封面来源：优先使用用户选择的封面，否则使用第一章第一张图片
+    const coverSrcPath = (group.selectedCoverPath && group.selectedCoverPath.length > 0)
+      ? group.selectedCoverPath
+      : firstCoverPath;
+    if (coverSrcPath) {
+      const ext = coverSrcPath.substring(coverSrcPath.lastIndexOf('.'));
       const coverPath = `${mangaPath}/cover${ext}`;
       try {
-        fs.copyFileSync(firstCoverPath, coverPath);
+        fs.copyFileSync(coverSrcPath, coverPath);
         await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
         logger.info(TAG, `封面已保存: ${coverPath}`);
       } catch (e) {
@@ -1682,6 +1783,87 @@ A: 不会，原文件保持不变。`;
     }
     
     logger.info(TAG, `Download导入成功: ${group.title}`);
+  }
+
+  /**
+   * 递归收集并复制图片文件（支持嵌套目录）
+   */
+  private collectAndCopyImages(sourcePath: string, destPath: string, imageFiles: string[]): void {
+    try {
+      const files = fs.listFileSync(sourcePath);
+      
+      for (const file of files) {
+        const srcFullPath = `${sourcePath}/${file}`;
+        
+        if (/\.(jpg|jpeg|png|webp|avif|gif|bmp)$/i.test(file)) {
+          const destFullPath = `${destPath}/${file}`;
+          try {
+            fs.copyFileSync(srcFullPath, destFullPath);
+            imageFiles.push(file);
+          } catch (e) {
+            logger.warn(TAG, `复制文件失败: ${file}`);
+          }
+        } else {
+          // 检查是否为子目录，递归处理
+          try {
+            const stat = fs.statSync(srcFullPath);
+            if (stat.isDirectory()) {
+              this.collectAndCopyImages(srcFullPath, destPath, imageFiles);
+            }
+          } catch (_e) {
+            // 忽略
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `扫描源目录失败: ${sourcePath}`, String(error));
+    }
+  }
+
+  /**
+   * 显示单个文件夹导入对话框
+   */
+  private async showDownloadSingleFolderImportDialog(folderPath: string, displayName: string): Promise<void> {
+    try {
+      this.updateProgress(ImportStatus.PARSING, `正在解析文件夹: ${displayName}`, 10);
+      
+      const parsed = await this.compressionUtils.parseFolderAsArchiveStructure(folderPath);
+      const dialogStructure: ParsedArchiveStructure = this.convertToDialogStructure(parsed);
+      
+      const title = displayName.includes('/') ? displayName.substring(displayName.lastIndexOf('/') + 1) : displayName;
+      await this.findExistingMangaCandidates(title);
+      
+      this.currentFileUri = `folder:${folderPath}`;
+      this.currentParsedStructure = dialogStructure;
+      
+      this.mangaImportDialogController = new CustomDialogController({
+        builder: MangaImportDialog({
+          themeState: this.themeState,
+          fileName: `📂 ${title}`,
+          parsedStructure: dialogStructure,
+          existingMangaCandidates: this.existingMangaCandidates,
+          sourceFileUri: `folder:${folderPath}`,
+          onConfirm: (result: MangaImportDialogResult) => {
+            this.handleDownloadSingleImportResult(result);
+          },
+          onCancel: () => {
+            this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+            this.pendingMangaFiles = [];
+          }
+        }),
+        autoCancel: false,
+        customStyle: true,
+        alignment: DialogAlignment.Center
+      });
+
+      this.mangaImportDialogController.open();
+      this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `解析文件夹失败: ${displayName}`, String(error));
+      promptAction.showToast({ message: `解析失败: ${String(error)}` });
+      this.pendingMangaFiles = [];
+    }
   }
 
   private async showDownloadSingleImportDialog(fileUri: string, filename: string): Promise<void> {
@@ -1762,19 +1944,8 @@ A: 不会，原文件保持不变。`;
       
       const imageFiles: string[] = [];
       if (parsed.extractedPath) {
-        const files = fs.listFileSync(parsed.extractedPath);
-        for (const file of files) {
-          if (/\.(jpg|jpeg|png|webp|avif)$/i.test(file)) {
-            const srcPath = `${parsed.extractedPath}/${file}`;
-            const destPath = `${chapterPath}/${file}`;
-            try {
-              fs.copyFileSync(srcPath, destPath);
-              imageFiles.push(file);
-            } catch (e) {
-              logger.warn(TAG, `复制文件失败: ${file}`);
-            }
-          }
-        }
+        // 递归复制图片，支持图片在子目录（章节文件夹）中的情况
+        this.collectAndCopyImages(parsed.extractedPath, chapterPath, imageFiles);
         
         if (parsed.hasComicInfo) {
           const comicInfoSrc = `${parsed.extractedPath}/ComicInfo.xml`;
@@ -1801,14 +1972,17 @@ A: 不会，原文件保持不变。`;
       
       await this.addPageInfoToDatabaseFromPath(chapterId, chapterPath);
       
-      if (imageFiles.length > 0) {
+      // 确定封面来源：优先使用用户选择的封面，否则使用第一张图片
+      let coverSrcPath = result.selectedCoverPath || '';
+      if (!coverSrcPath && imageFiles.length > 0) {
         imageFiles.sort();
-        const firstImagePath = `${chapterPath}/${imageFiles[0]}`;
-        const ext = imageFiles[0].substring(imageFiles[0].lastIndexOf('.'));
+        coverSrcPath = `${chapterPath}/${imageFiles[0]}`;
+      }
+      if (coverSrcPath) {
+        const ext = coverSrcPath.substring(coverSrcPath.lastIndexOf('.'));
         const coverPath = `${mangaPath}/cover${ext}`;
-        
         try {
-          fs.copyFileSync(firstImagePath, coverPath);
+          fs.copyFileSync(coverSrcPath, coverPath);
           await this.dataManager.updateComicCoverUrl(mangaId, coverPath);
           logger.info(TAG, `封面已保存: ${coverPath}`);
         } catch (e) {
@@ -2098,6 +2272,7 @@ A: 不会，原文件保持不变。`;
       
       // 提取封面
       await this.extractEbookCover(ebook, targetPath, bookFolderPath);
+      logger.info(TAG, `[封面诊断] 提取封面后 coverImagePath='${ebook.metadata.coverImagePath}'`);
       
       // 保存临时数据
       this.pendingEbookData = ebook;
@@ -2255,8 +2430,18 @@ A: 不会，原文件保持不变。`;
     try {
       this.updateProgress(ImportStatus.IMPORTING, `正在导入: ${result.metadata.title}`, 70);
       
+      // [修复] 保存原始封面路径，防止 @Prop 深拷贝丢失嵌套属性
+      const originalCoverPath = this.pendingEbookData.metadata.coverImagePath || '';
+      logger.info(TAG, `[封面诊断] 对话框确认前: originalCoverPath='${originalCoverPath}', result.coverImagePath='${result.metadata.coverImagePath}'`);
+      
       // 应用用户修改的元数据
       this.pendingEbookData.metadata = result.metadata;
+      
+      // [修复] 如果对话框返回的封面路径为空，恢复原始封面路径
+      if (!this.pendingEbookData.metadata.coverImagePath && originalCoverPath) {
+        this.pendingEbookData.metadata.coverImagePath = originalCoverPath;
+        logger.info(TAG, `[封面诊断] 对话框返回封面为空，已恢复原始路径: '${originalCoverPath}'`);
+      }
       
       // 如果用户选择了自定义封面，复制到目标位置
       if (result.customCoverPath) {
@@ -2275,6 +2460,7 @@ A: 不会，原文件保持不变。`;
       // 标记为收藏
       this.pendingEbookData.isFavorite = true;
       
+      logger.info(TAG, `[封面诊断] 保存前最终 coverImagePath='${this.pendingEbookData.metadata.coverImagePath}'`);
       // 保存到数据库
       this.updateProgress(ImportStatus.IMPORTING, `正在保存: ${result.metadata.title}`, 90);
       await this.ebookDataManager.saveEBook(this.pendingEbookData);

@@ -6,9 +6,9 @@
 import { logger } from '../../Utils/Logger';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { DatabaseManager } from '../Database/DatabaseManager';
-import { getNovelDataManager } from '../Novel/NovelDataManager';
-import { getNovelSourceManager } from '../Novel/NovelSourceManager';
-import { getNovelSettingsManager } from '../Novel/NovelSettingsManager';
+import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
+import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
+import { getNovelSettingsManager, NovelSettingsManager } from '../Novel/NovelSettingsManager';
 import { SettingsManager } from './SettingsManager';
 import { AppInfoManager } from './AppInfoManager';
 import {
@@ -43,15 +43,41 @@ const BACKUP_VERSION = '1.0.0';
 
 export class BackupManager {
   private static instance: BackupManager;
-  private dbManager: DatabaseManager;
-  private novelDataManager = getNovelDataManager();
-  private novelSourceManager = getNovelSourceManager();
-  private novelSettingsManager = getNovelSettingsManager();
-  private settingsManager = SettingsManager.getInstance();
-  private appInfoManager = AppInfoManager.getInstance();
+  // [修复] 所有管理器改为延迟初始化，避免在构造时访问未就绪的单例导致崩溃
+  private _dbManager: DatabaseManager | null = null;
+  private _novelDataManager: NovelDataManager | null = null;
+  private _novelSourceManager: NovelSourceManager | null = null;
+  private _novelSettingsManager: NovelSettingsManager | null = null;
+  private _settingsManager: SettingsManager | null = null;
+  private _appInfoManager: AppInfoManager | null = null;
+
+  private get dbManager(): DatabaseManager {
+    if (!this._dbManager) this._dbManager = DatabaseManager.getInstance();
+    return this._dbManager;
+  }
+  private get novelDataManager(): NovelDataManager {
+    if (!this._novelDataManager) this._novelDataManager = getNovelDataManager();
+    return this._novelDataManager;
+  }
+  private get novelSourceManager(): NovelSourceManager {
+    if (!this._novelSourceManager) this._novelSourceManager = getNovelSourceManager();
+    return this._novelSourceManager;
+  }
+  private get novelSettingsManager(): NovelSettingsManager {
+    if (!this._novelSettingsManager) this._novelSettingsManager = getNovelSettingsManager();
+    return this._novelSettingsManager;
+  }
+  private get settingsManager(): SettingsManager {
+    if (!this._settingsManager) this._settingsManager = SettingsManager.getInstance();
+    return this._settingsManager;
+  }
+  private get appInfoManager(): AppInfoManager {
+    if (!this._appInfoManager) this._appInfoManager = AppInfoManager.getInstance();
+    return this._appInfoManager;
+  }
 
   private constructor() {
-    this.dbManager = DatabaseManager.getInstance();
+    // [修复] 构造函数不再立即初始化管理器，推迟到首次访问时
   }
 
   static getInstance(): BackupManager {

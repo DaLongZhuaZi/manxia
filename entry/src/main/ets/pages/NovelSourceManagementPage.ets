@@ -37,6 +37,7 @@ import { ValidationProgressDialog, ValidationProgressController, ValidationProgr
 import { GroupManagementDialog, GroupInfo, GroupOperationCallback, SplitCondition } from '../Framework/Components/GroupManagementDialog';
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { FileEditorParams } from './FileEditorPage';
+import { BackgroundTaskHelper } from '../Framework/Task/BackgroundTaskHelper';
 
 const TAG = 'NovelSourceManagementPage';
 
@@ -2031,6 +2032,14 @@ export struct NovelSourceManagementPage {
     
     const validator = getNovelSourceValidator();
     const idsToValidate = sourceIds || this.allSources.map(s => s.id);
+    
+    // 设置 UIAbility 上下文（后台长时任务所需）
+    const context = getContext(this) as common.UIAbilityContext;
+    validator.setContext(context);
+    
+    // 在进入校验循环前先申请 DATA_TRANSFER 后台长时任务
+    // 确保 APP 进入后台后网络请求不被系统中断
+    await BackgroundTaskHelper.startDataTransferTask(context);
     
     // 显示进度对话框
     this.showValidationProgressDialog(idsToValidate.length, validator);

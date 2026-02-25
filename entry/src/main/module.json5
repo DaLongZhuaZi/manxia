@@ -38,6 +38,7 @@
         "exported": true,
         "continuable": true,
         "orientation": "auto_rotation",
+        "backgroundModes": ["dataTransfer"],
         "skills": [
           {
             "entities": [
@@ -287,6 +288,14 @@
       {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:get_internet_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
+        "reason": "$string:background_running_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "always"

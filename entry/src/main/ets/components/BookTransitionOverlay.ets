@@ -78,6 +78,8 @@ export class TransitionController {
   
   // 保存翻开动画的封面位置，用于关闭动画复用
   private lastOpenCoverPosition: CoverPosition | null = null;
+  // 保存翻开动画的封面图片路径，用于关闭动画复用（封面翻页盖住效果）
+  private lastOpenCoverImagePath: string = '';
   
   // 取消相关
   private isCancelling: boolean = false;
@@ -137,6 +139,13 @@ export class TransitionController {
     
     logger.info(TAG, `开始翻开过渡: bookId=${targetBookId}, type=${targetBookType}, 有背景设置=${ebookBackground ? '是' : '否'}`);
     
+    // [修复] 重置取消状态，防止上次残留的 isCancelling=true 导致 cancelTransition() 失效
+    if (this.isCancelling) {
+      logger.warn(TAG, '检测到残留的 isCancelling=true，在新的翻开过渡开始前强制重置');
+      this.isCancelling = false;
+      this.onCancelCallback = null;
+    }
+    
     // 只在位置有效时保存（避免默认位置覆盖正确位置）
     const isDefaultPosition = coverPosition.x === 16 && coverPosition.y === 120 && 
                               coverPosition.width === 140 && coverPosition.height === 200;
@@ -145,6 +154,12 @@ export class TransitionController {
       logger.info(TAG, `保存封面位置: pos=(${coverPosition.x}, ${coverPosition.y}), size=${coverPosition.width}x${coverPosition.height}`);
     } else {
       logger.warn(TAG, `跳过保存默认位置，保留已有位置: ${this.lastOpenCoverPosition ? `pos=(${this.lastOpenCoverPosition.x}, ${this.lastOpenCoverPosition.y})` : '无'}`);
+    }
+    
+    // 保存封面图片路径，用于关闭动画的封面翻页盖住效果
+    if (coverImagePath && coverImagePath.length > 0) {
+      this.lastOpenCoverImagePath = coverImagePath;
+      logger.info(TAG, `保存封面图片路径: ${coverImagePath.substring(0, 60)}`);
     }
     
     this.currentState = {
@@ -190,6 +205,13 @@ export class TransitionController {
     
     logger.info(TAG, '开始关闭过渡');
     
+    // [修复] 重置取消状态，防止上次残留的 isCancelling=true 导致 cancelTransition() 失效
+    if (this.isCancelling) {
+      logger.warn(TAG, '检测到残留的 isCancelling=true，在新的关闭过渡开始前强制重置');
+      this.isCancelling = false;
+      this.onCancelCallback = null;
+    }
+    
     // 优先使用翻开动画保存的位置（因为关闭时封面组件可能不在屏幕上）
     let finalCoverPosition: CoverPosition;
     
@@ -214,7 +236,13 @@ export class TransitionController {
     this.currentState.readerContentImagePath = readerContentImagePath || '';
     this.currentState.isReaderReady = true;
     
-    logger.info(TAG, `关闭过渡状态: imagePath=${readerContentImagePath ? '有' : '无'}, pixelMap=${readerContentPixelMap ? '有' : '无'}`);
+    // 恢复翻开动画保存的封面图片路径，用于关闭动画的封面翻页盖住效果
+    if (this.lastOpenCoverImagePath && this.lastOpenCoverImagePath.length > 0) {
+      this.currentState.coverImagePath = this.lastOpenCoverImagePath;
+      logger.info(TAG, `恢复封面图片路径: ${this.lastOpenCoverImagePath.substring(0, 60)}`);
+    }
+    
+    logger.info(TAG, `关闭过渡状态: imagePath=${readerContentImagePath ? '有' : '无'}, pixelMap=${readerContentPixelMap ? '有' : '无'}, coverImagePath=${this.currentState.coverImagePath ? '有' : '无'}`);
     
     this.onCloseComplete = onComplete || null;
     this.notifyStateChange();
@@ -536,6 +564,12 @@ export struct BookTransitionOverlay {
       this.startSafetyTimeout();
     } else if (!this.isActive && wasActive) {
       this.clearSafetyTimeout();
+      // [修复] 覆盖层已隐藏，若处于取消状态则通知控制器完成取消，重置 isCancelling
+      // 若不重置，isCancelling 将永久为 true，导致后续 cancelTransition() 无法工作，
+      // 从而使覆盖层在每次关闭时都锁死整个屏幕约 950ms
+      if (this.controller.isCancellingTransition()) {
+        this.controller.onCancelComplete();
+      }
     }
     
     logger.debug(TAG, `状态更新: isActive=${this.isActive}, mode=${this.mode}, isReaderReady=${this.isReaderReady}, imagePath=${this.readerContentImagePath ? '有' : '无'}, ebookBg=${this.ebookBackground ? '有' : '无'}`);

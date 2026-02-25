@@ -117,6 +117,13 @@ export struct GlobalSettingsPage {
       targetPage: 'AdvancedSettingsSubPage'
     },
     {
+      id: 'error_management',
+      title: '错误管理',
+      subtitle: '查看捕获的错误和闪退记录、导出错误报告',
+      icon: $r('sys.symbol.exclamationmark_triangle'),
+      targetPage: 'ErrorManagementSubPage'
+    },
+    {
       id: 'backup',
       title: '数据管理',
       subtitle: '备份与恢复、数据导入导出',
