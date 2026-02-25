@@ -62,13 +62,19 @@ export class WebDAVAutoBackupScheduler {
   
   /**
    * 初始化调度器
+   * [修复] 不再在初始化时同步等待备份执行，避免备份+上传操作导致启动阻塞/ANR
    */
   async initialize(context: common.UIAbilityContext): Promise<void> {
     this.context = context;
     logger.info(TAG, '自动备份调度器初始化');
     
-    // 检查是否需要执行备份
-    await this.checkAndExecuteBackup();
+    // [修复] 延迟检查备份，不阻塞启动流程
+    // 使用setTimeout延迟30秒后再检查，确保应用完全启动后再执行
+    setTimeout(() => {
+      this.checkAndExecuteBackup().catch((error: Error) => {
+        logger.error(TAG, `延迟自动备份检查失败: ${error}`);
+      });
+    }, 30000);
     
     // 启动定时检查（每小时检查一次）
     this.startPeriodicCheck();

@@ -84,6 +84,8 @@ export class SettingKeys {
   static readonly NOVEL_READER_SETTINGS = 'novel_reader_settings';
   // 小说搜索设置
   static readonly NOVEL_SEARCH_MAX_SOURCES = 'novel_search_max_sources';
+  // 书源校验并发线程数（默认 10，范围 1-20）
+  static readonly NOVEL_SOURCE_VALIDATION_CONCURRENCY = 'novel_source_validation_concurrency';
   
   // 底部导航栏自定义设置
   static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
@@ -110,6 +112,9 @@ export class SettingKeys {
   
   // 日志设置
   static readonly LOG_OUTPUT_LEVEL = 'log_output_level'; // hilog日志输出等级: 0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL
+  
+  // 详情页推荐功能
+  static readonly RECOMMENDATION_ENABLED = 'recommendation_enabled'; // 统一详情页相关推荐功能开关（默认开启）
 }
 
 /**

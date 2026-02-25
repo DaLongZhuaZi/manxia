@@ -8,6 +8,7 @@
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { LengthMetrics, promptAction, curves } from '@kit.ArkUI';
 import { common, Want } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
@@ -21,6 +22,7 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 
 import {
   UnifiedContent,
@@ -68,6 +70,8 @@ import { AvifImage } from '../components/AvifImage';
 import { eventBus, GameEvent, IEventPayload, CoverChangedPayload, BasePayload } from '../Framework/EventBus';
 import { getTypeShelfManager, TypeShelfManager, TypeShelf, ShelfType, ShelfContentType } from '../Framework/Data/TypeShelfManager';
 import { BookshelfCategoryManager, ContentType } from '../Framework/Data/BookshelfCategoryManager';
+import { GlobalSearchPageParams } from './GlobalSearchPage';
+import { GlobalSearchService, UnifiedSearchItem } from '../Framework/Services/GlobalSearchService';
 
 // 模型导入
 import { Manga, MangaChapter, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
@@ -89,6 +93,30 @@ const TAG = 'UnifiedDetailPage';
 const TITLE_BAR_HEIGHT = 56;
 const COVER_HEIGHT = 200;
 const COVER_WIDTH = 140;
+
+// ==================== 智能推荐栏常量 ====================
+const RECOMMEND_CARD_COVER_W = 90;   // 推荐卡片封面宽度
+const RECOMMEND_CARD_COVER_H = 130;  // 推荐卡片封面高度
+const RECOMMEND_MAX_COUNT = 8;       // 最多显示推荐数量
+const RECOMMEND_MIN_SCORE = 15;      // 本地推荐最低相关度阈值
+
+/**
+ * 智能推荐内容项
+ */
+interface RecommendationItem {
+  id: string;
+  title: string;
+  coverUrl: string;
+  contentType: UnifiedContentType;
+  isLocal: boolean;
+  sourceId?: string;
+  sourceName?: string;
+  score: number;
+  /** 导航时使用的内容ID */
+  navContentId: string;
+  /** 导航时使用的图源ID（在线内容） */
+  navSourceId?: string;
+}
 
 @Component
 export struct UnifiedDetailPage {
@@ -199,6 +227,7 @@ export struct UnifiedDetailPage {
   // UI状态
   @State isFavorite: boolean = false;
   @State showFullDescription: boolean = false;
+  @State descriptionSelectedText: string = '';  // 简介中当前选中的文本
   @State showChapterPanel: boolean = false;
   @State chapterFilter: ChapterFilterType = ChapterFilterType.ALL;
   @State chapterSortOrder: ChapterSortOrder = ChapterSortOrder.ASCENDING;
@@ -279,6 +308,13 @@ export struct UnifiedDetailPage {
   @State private ebookWebViewReady: boolean = false;
   @State private ebookSourceInfo: SourceInfo | null = null;
   @State private onlineReaderUrl: string = '';
+  
+  // 设置管理器
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
+  
+  // 智能推荐状态
+  @State recommendedItems: RecommendationItem[] = [];
+  @State isLoadingRecommendations: boolean = false;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -416,6 +452,13 @@ export struct UnifiedDetailPage {
       
       // 检查是否已在书架中
       await this.checkIfInShelf();
+      
+      // 触发智能推荐加载（非阻塞，仅当设置开启时）
+      if (this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true)) {
+        this.loadRecommendations();
+      } else {
+        logger.debug(TAG, '相关推荐功能已关闭，跳过加载');
+      }
 
     } catch (error) {
       logger.error(TAG, '加载内容失败', String(error));
@@ -1450,10 +1493,14 @@ export struct UnifiedDetailPage {
       logger.info(TAG, `本地漫画阅读: mangaId=${readerParams.mangaId}, chapterId=${readerParams.chapterId}`);
     }
     
-    readerParams.pageIndex = 0;
+    // [修复] 使用章节阅读进度中的页码，而不是总是从第一页开始
+    const chapterProgress = this.chapterProgressMap.get(chapter.id);
+    readerParams.pageIndex = chapterProgress ? chapterProgress.lastReadPageIndex : 0;
+    logger.info(TAG, `阅读页码: chapterId=${chapter.id}, pageIndex=${readerParams.pageIndex} (来源: ${chapterProgress ? 'chapterProgressMap' : '默认'})`);
 
     // 触发翻开过渡动画
-    const coverPath: string = this.content.coverUrl || '';
+    // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
+    const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
     
     logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
@@ -1482,7 +1529,8 @@ export struct UnifiedDetailPage {
     };
 
     // 触发翻开过渡动画
-    const coverPath: string = this.content.coverUrl || '';
+    // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
+    const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
     
     logger.info(TAG, `触发电子书翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
@@ -1526,7 +1574,8 @@ export struct UnifiedDetailPage {
     };
 
     // 触发翻开过渡动画
-    const coverPath: string = this.content.coverUrl || '';
+    // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
+    const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
     
     logger.info(TAG, `触发小说翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
@@ -1917,6 +1966,379 @@ export struct UnifiedDetailPage {
     }
   }
 
+  // ==================== 快捷搜索功能 ====================
+  
+  /**
+   * 复制文本到剪贴板
+   */
+  private copyToClipboard(text: string): void {
+    try {
+      const cleanText = this.stripHtmlTags(text).trim();
+      if (!cleanText) return;
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, cleanText);
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      systemPasteboard.setData(pasteData);
+      promptAction.showToast({ message: '已复制', duration: 1500 });
+    } catch (error) {
+      logger.error(TAG, `复制到剪贴板失败: ${String(error)}`);
+      promptAction.showToast({ message: '复制失败', duration: 1500 });
+    }
+  }
+  
+  /**
+   * 导航到全局搜索页面
+   * 根据当前内容类型自动设置搜索范围：
+   * - 漫画：仅搜索已开启的图源+本地漫画
+   * - 小说：仅搜索已开启的书源+本地小说
+   * - 电子书：仅搜索本地内容
+   */
+  private navigateToSearch(keyword: string): void {
+    if (!keyword || keyword.trim() === '') return;
+    
+    const cleanKeyword = this.stripHtmlTags(keyword).trim();
+    if (!cleanKeyword) return;
+    
+    // 根据当前内容类型确定搜索范围
+    let initialContentType: string = 'all';
+    let initialSourceType: string = 'all';
+    
+    if (this.content) {
+      switch (this.content.contentType) {
+        case UnifiedContentType.MANGA:
+          // 漫画：搜索漫画类型，本地+已开启图源
+          initialContentType = 'manga';
+          initialSourceType = 'all';
+          break;
+        case UnifiedContentType.NOVEL:
+          // 小说：搜索小说类型，本地+已开启书源
+          initialContentType = 'novel';
+          initialSourceType = 'all';
+          break;
+        case UnifiedContentType.EBOOK:
+          // 电子书：仅搜索本地内容
+          initialContentType = 'all';
+          initialSourceType = 'local';
+          break;
+      }
+    }
+    
+    const params: GlobalSearchPageParams = {
+      initialKeyword: cleanKeyword,
+      initialContentType: initialContentType,
+      initialSourceType: initialSourceType,
+      autoSelectAllSources: initialSourceType !== 'local'  // 非纯本地搜索时自动选中所有已开启源
+    };
+    
+    logger.info(TAG, `快捷搜索: keyword="${cleanKeyword}", contentType=${initialContentType}, sourceType=${initialSourceType}`);
+    this.pathStack.pushPathByName('GlobalSearchPage', params);
+  }
+
+  // ==================== 智能推荐功能 ====================
+
+  /**
+   * 判断当前内容是否应使用在线推荐（搜索图源）
+   * 小说始终使用本地推荐（在数据库中搜索），因为小说数据本地化存储
+   * 在线漫画 / 在线电子书 使用图源搜索
+   */
+  private shouldUseOnlineRecommendation(): boolean {
+    if (!this.content) return false;
+    if (this.content.contentType === UnifiedContentType.NOVEL) return false;
+    return this.isOnlineContent();
+  }
+
+  /**
+   * 拆分多作者字符串
+   * 支持中文/日文/英文常见分隔符：，、·/&,；×xX 及空格
+   */
+  private splitAuthorNames(authorStr: string): string[] {
+    if (!authorStr || !authorStr.trim()) return [];
+    return authorStr
+      .split(/[，、·\/&,；\s×xX]+/)
+      .map((a: string) => a.trim())
+      .filter((a: string) => a.length > 0);
+  }
+
+  /**
+   * 计算字符串 bigram 集合（用于相似度计算）
+   */
+  private computeBigramSet(text: string): string[] {
+    if (!text || text.length < 2) return text.length === 1 ? [text] : [];
+    const bigrams: string[] = [];
+    for (let i = 0; i < text.length - 1; i++) {
+      bigrams.push(text.substring(i, i + 2));
+    }
+    return bigrams;
+  }
+
+  /**
+   * Bigram Jaccard 相似度（0~1）
+   * 用于估算两个字符串的相关程度
+   */
+  private bigramJaccard(a: string, b: string): number {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const bigramsA = this.computeBigramSet(a);
+    const bigramsB = this.computeBigramSet(b);
+    if (bigramsA.length === 0 || bigramsB.length === 0) return 0;
+    const setB = new Set<string>(bigramsB);
+    let intersection = 0;
+    for (let i = 0; i < bigramsA.length; i++) {
+      if (setB.has(bigramsA[i])) intersection++;
+    }
+    const union = bigramsA.length + bigramsB.length - intersection;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  /**
+   * 计算候选内容与当前内容的综合相关度评分
+   * 标题（权重3）> 作者（权重2）> 标签（每个 10 分，上限 30）
+   */
+  private calculateRelevanceScore(
+    currentTitle: string,
+    currentAuthor: string,
+    currentTags: string[],
+    candidateTitle: string,
+    candidateAuthor: string,
+    candidateTags: string[]
+  ): number {
+    let score = 0;
+
+    // 标题相似度（权重 3）
+    const titleSim = this.bigramJaccard(currentTitle, candidateTitle);
+    score += titleSim * 100 * 3;
+
+    // 作者匹配（权重 2）
+    if (currentAuthor && candidateAuthor) {
+      if (currentAuthor === candidateAuthor) {
+        score += 80 * 2;
+      } else if (currentAuthor.includes(candidateAuthor) || candidateAuthor.includes(currentAuthor)) {
+        score += 40 * 2;
+      }
+    }
+
+    // 标签重叠（每个 10 分，上限 30）
+    if (currentTags.length > 0 && candidateTags.length > 0) {
+      let tagMatches = 0;
+      for (let i = 0; i < currentTags.length; i++) {
+        if (candidateTags.indexOf(currentTags[i]) >= 0) tagMatches++;
+      }
+      score += Math.min(tagMatches * 10, 30);
+    }
+
+    return Math.round(score);
+  }
+
+  /**
+   * 触发智能推荐加载（内容加载完成后调用）
+   */
+  private async loadRecommendations(): Promise<void> {
+    if (!this.content) return;
+
+    this.isLoadingRecommendations = true;
+    this.recommendedItems = [];
+
+    try {
+      if (this.shouldUseOnlineRecommendation()) {
+        await this.loadOnlineRecommendations();
+      } else {
+        await this.loadLocalRecommendations();
+      }
+    } catch (error) {
+      logger.warn(TAG, `智能推荐加载失败: ${String(error)}`);
+    } finally {
+      this.isLoadingRecommendations = false;
+    }
+  }
+
+  /**
+   * 本地推荐：在本地数据库中搜索相关内容并按相关度排序
+   * 覆盖本地漫画、本地电子书、数据库中的小说
+   */
+  private async loadLocalRecommendations(): Promise<void> {
+    if (!this.content) return;
+
+    const currentId = this.content.id;
+    const currentTitle = this.stripHtmlTags(this.content.title || '').toLowerCase().trim();
+    const currentAuthor = this.stripHtmlTags(this.content.author || '').toLowerCase().trim();
+    const currentGenres = (this.content.genres || []).map((g: string) => this.stripHtmlTags(g).toLowerCase().trim());
+    const currentTags = (this.content.tags || []).map((t: string) => this.stripHtmlTags(t).toLowerCase().trim());
+    const allCurrentTags: string[] = [...currentGenres, ...currentTags].filter((t: string) => t.length > 0);
+
+    const candidates: RecommendationItem[] = [];
+
+    // ---- 查询本地漫画 ----
+    // [性能优化] 使用 SQL LIKE 预过滤，缩小候选集
+    try {
+      const comics = await this.dataManager.getRecommendationCandidateComics(currentAuthor, allCurrentTags);
+      for (let ci = 0; ci < comics.length; ci++) {
+        const comic = comics[ci];
+        if (comic.id === currentId) continue;
+        const cTitle = (comic.title || '').toLowerCase().trim();
+        const cAuthor = (comic.author || '').toLowerCase().trim();
+        const cTags = (comic.tags || []).map((t: string) => t.toLowerCase().trim());
+        const score = this.calculateRelevanceScore(currentTitle, currentAuthor, allCurrentTags, cTitle, cAuthor, cTags);
+        if (score >= RECOMMEND_MIN_SCORE) {
+          const coverUrl = comic.coverLocalPath || comic.coverUrl || '';
+          const item: RecommendationItem = {
+            id: `rec_manga_${comic.id}`,
+            title: comic.title || '未知标题',
+            coverUrl: coverUrl,
+            contentType: UnifiedContentType.MANGA,
+            isLocal: true,
+            score: score,
+            navContentId: comic.id
+          };
+          candidates.push(item);
+        }
+      }
+    } catch (e) {
+      logger.warn(TAG, `本地漫画推荐查询失败: ${String(e)}`);
+    }
+
+    // ---- 查询本地电子书 ----
+    try {
+      const ebooks = await this.ebookDataManager.getNonPrivateEBooks();
+      for (let ei = 0; ei < ebooks.length; ei++) {
+        const ebook = ebooks[ei];
+        if (!ebook.metadata) continue;
+        if (ebook.id === currentId) continue;
+        const cTitle = (ebook.metadata.title || '').toLowerCase().trim();
+        const cAuthor = (ebook.metadata.author || '').toLowerCase().trim();
+        const cTags = (ebook.metadata.tags || []).map((t: string) => t.toLowerCase().trim());
+        const score = this.calculateRelevanceScore(currentTitle, currentAuthor, allCurrentTags, cTitle, cAuthor, cTags);
+        if (score >= RECOMMEND_MIN_SCORE) {
+          const item: RecommendationItem = {
+            id: `rec_ebook_${ebook.id}`,
+            title: ebook.metadata.title || '未知标题',
+            coverUrl: ebook.metadata.coverImagePath || '',
+            contentType: UnifiedContentType.EBOOK,
+            isLocal: true,
+            score: score,
+            navContentId: ebook.id
+          };
+          candidates.push(item);
+        }
+      }
+    } catch (e) {
+      logger.warn(TAG, `本地电子书推荐查询失败: ${String(e)}`);
+    }
+
+    // ---- 查询数据库中的小说 ----
+    try {
+      const novels = await this.novelDataManager.getNonPrivateBooks();
+      for (let ni = 0; ni < novels.length; ni++) {
+        const novel = novels[ni];
+        if (novel.bookUrl === currentId || novel.id === currentId) continue;
+        const cTitle = (novel.name || '').toLowerCase().trim();
+        const cAuthor = (novel.author || '').toLowerCase().trim();
+        // kind 字段存放分类/标签，按逗号等分隔
+        const cTags = (novel.kind || '')
+          .split(/[,，、\s]+/)
+          .map((t: string) => t.trim().toLowerCase())
+          .filter((t: string) => t.length > 0);
+        const score = this.calculateRelevanceScore(currentTitle, currentAuthor, allCurrentTags, cTitle, cAuthor, cTags);
+        if (score >= RECOMMEND_MIN_SCORE) {
+          const item: RecommendationItem = {
+            id: `rec_novel_${novel.id}`,
+            title: novel.name || '未知标题',
+            coverUrl: novel.coverUrl || '',
+            contentType: UnifiedContentType.NOVEL,
+            isLocal: false,
+            sourceName: novel.sourceName,
+            score: score,
+            navContentId: novel.bookUrl,
+            navSourceId: novel.sourceId
+          };
+          candidates.push(item);
+        }
+      }
+    } catch (e) {
+      logger.warn(TAG, `小说推荐查询失败: ${String(e)}`);
+    }
+
+    // 按相关度降序排列，取前 RECOMMEND_MAX_COUNT 条
+    candidates.sort((a: RecommendationItem, b: RecommendationItem) => b.score - a.score);
+    this.recommendedItems = candidates.slice(0, RECOMMEND_MAX_COUNT);
+    logger.info(TAG, `本地推荐加载完成: ${this.recommendedItems.length} 条`);
+  }
+
+  /**
+   * 在线推荐：使用当前内容的作者名在同图源搜索
+   * 适用于在线漫画、在线电子书
+   */
+  private async loadOnlineRecommendations(): Promise<void> {
+    if (!this.content) return;
+
+    const authorStr = this.stripHtmlTags(this.content.author || '').trim();
+    if (!authorStr) {
+      logger.info(TAG, '在线推荐: 无作者信息，跳过');
+      return;
+    }
+
+    // 拆分多作者，取第一个作为搜索关键词
+    const authors = this.splitAuthorNames(authorStr);
+    if (authors.length === 0) return;
+    const searchKeyword = authors[0];
+
+    const sourceIdNum = this.content.sourceId ? Number(this.content.sourceId) : 0;
+    if (!sourceIdNum || sourceIdNum <= 0) return;
+
+    const currentContentId = this.content.id;
+    const results: RecommendationItem[] = [];
+    const seenIds = new Set<string>();
+    seenIds.add(currentContentId);
+
+    try {
+      logger.info(TAG, `在线推荐搜索: sourceId=${sourceIdNum}, keyword="${searchKeyword}"`);
+      const globalSearch = GlobalSearchService.getInstance();
+      const searchItems = await globalSearch.searchOnlineManga(sourceIdNum, searchKeyword);
+
+      for (let si = 0; si < searchItems.length; si++) {
+        if (results.length >= RECOMMEND_MAX_COUNT) break;
+        const item = searchItems[si];
+        const comic = item.rawOnlineComic;
+        if (!comic) continue;
+        const comicId = comic.id || comic.url || '';
+        if (!comicId || seenIds.has(comicId)) continue;
+        seenIds.add(comicId);
+
+        const recItem: RecommendationItem = {
+          id: `rec_online_${sourceIdNum}_${comicId}`,
+          title: item.title || '未知标题',
+          coverUrl: item.coverUrl || '',
+          contentType: this.content.contentType,
+          isLocal: false,
+          sourceId: String(sourceIdNum),
+          sourceName: this.content.sourceName,
+          score: 0,
+          navContentId: comicId,
+          navSourceId: String(sourceIdNum)
+        };
+        results.push(recItem);
+      }
+    } catch (e) {
+      logger.warn(TAG, `在线推荐搜索失败: ${String(e)}`);
+    }
+
+    this.recommendedItems = results;
+    logger.info(TAG, `在线推荐加载完成: ${this.recommendedItems.length} 条`);
+  }
+
+  /**
+   * 点击推荐项，导航到对应的统一详情页
+   */
+  private navigateToRecommendedItem(item: RecommendationItem): void {
+    const params: UnifiedDetailPageParams = {
+      contentType: item.contentType,
+      contentId: item.navContentId,
+      sourceId: item.navSourceId,
+      cachedTitle: item.title,
+      cachedCover: item.coverUrl
+    };
+    logger.info(TAG, `跳转推荐内容: type=${item.contentType}, id=${item.navContentId}`);
+    this.pathStack.pushPathByName('UnifiedDetailPage', params);
+  }
+
   // ==================== UI构建 ====================
 
   /**
@@ -1944,6 +2366,15 @@ export struct UnifiedDetailPage {
     }
     
     return coverUrl;
+  }
+
+  /**
+   * 判断封面是否为本地文件（非网络URL）
+   */
+  private isLocalFileCover(): boolean {
+    const coverUrl = this.content?.coverUrl || '';
+    if (!coverUrl) return false;
+    return !coverUrl.startsWith('http://') && !coverUrl.startsWith('https://');
   }
   
   /**
@@ -2007,8 +2438,18 @@ export struct UnifiedDetailPage {
             .height(COVER_HEIGHT)
             .objectFit(ImageFit.Cover)
             .borderRadius(8)
+        } else if (this.content?.coverUrl && this.isLocalFileCover()) {
+          // 本地电子书封面：直接使用Image组件加载
+          Image(this.getCoverImageSource())
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(8)
+            .onError(() => {
+              logger.warn(TAG, `本地封面加载失败: ${this.content?.coverUrl}`);
+            })
         } else if (this.content?.coverUrl) {
-          // 备用：使用 AvifImage 组件加载
+          // 网络封面：使用 AvifImage 组件加载
           AvifImage({
             src: this.getCoverImageSource() as string,
             imageWidth: COVER_WIDTH,
@@ -2067,18 +2508,29 @@ export struct UnifiedDetailPage {
 
       // 信息区域
       Column({ space: 8 }) {
-        Text(this.stripHtmlTags(this.content?.title || '加载中...'))
+      Text(this.stripHtmlTags(this.content?.title || '加载中...'))
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .onClick(() => {
+            this.navigateToSearch(this.content?.title || '');
+          })
 
-        Text(this.stripHtmlTags(this.content?.author || ''))
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        if (this.content?.author) {
+          Text(this.stripHtmlTags(this.content.author))
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.navigateToSearch(this.content?.author || '');
+            })
+        } else {
+          Text('')
+            .fontSize(14)
+        }
 
         Row({ space: 8 }) {
           Text(this.getReadStatusText())
@@ -2150,6 +2602,65 @@ export struct UnifiedDetailPage {
     .padding(16)
   }
 
+  /**
+   * 简介文本选中后的自定义工具栏（长按选中触发）
+   * 具备主题背景、阴影、边框和按下反馈效果
+   */
+  @Builder
+  buildDescriptionSelectionMenu() {
+    Row({ space: 0 }) {
+      // 复制按钮
+      Button('复制', { type: ButtonType.Normal })
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .height(40)
+        .padding({ left: 20, right: 14 })
+        .backgroundColor(Color.Transparent)
+        .borderRadius(0)
+        .onClick(() => {
+          if (this.descriptionSelectedText) {
+            this.copyToClipboard(this.descriptionSelectedText);
+          }
+          this.descriptionSelectedText = '';
+        })
+
+      // 垂直分隔线
+      Column()
+        .width(0.5)
+        .height(18)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+
+      // 搜索按钮
+      Button('搜索', { type: ButtonType.Normal })
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .height(40)
+        .padding({ left: 14, right: 20 })
+        .backgroundColor(Color.Transparent)
+        .borderRadius(0)
+        .onClick(() => {
+          if (this.descriptionSelectedText) {
+            this.navigateToSearch(this.descriptionSelectedText);
+          }
+          this.descriptionSelectedText = '';
+        })
+    }
+    .height(40)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(10)
+    .border({
+      width: 0.5,
+      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+    })
+    .shadow({ radius: 20, color: 'rgba(0,0,0,0.18)', offsetX: 0, offsetY: 4 })
+    .clip(true)
+  }
+
   @Builder
   buildDescription() {
     Column({ space: 12 }) {
@@ -2174,6 +2685,9 @@ export struct UnifiedDetailPage {
                 .height(26)
                 .borderRadius(13)
                 .margin({ right: 8, bottom: 8 })
+                .onClick(() => {
+                  this.navigateToSearch(genre);
+                })
             }, (genre: string, index: number) => `genre_${index}_${genre}`)
             
             // 显示tags
@@ -2187,6 +2701,9 @@ export struct UnifiedDetailPage {
                 .height(26)
                 .borderRadius(13)
                 .margin({ right: 8, bottom: 8 })
+                .onClick(() => {
+                  this.navigateToSearch(tag);
+                })
             }, (tag: string, index: number) => `tag_${index}_${tag}`)
           }
         }
@@ -2208,8 +2725,15 @@ export struct UnifiedDetailPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           .maxLines(this.showFullDescription ? undefined : 3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .onClick(() => {
-            this.showFullDescription = !this.showFullDescription;
+          .copyOption(CopyOptions.InApp)
+          .onTextSelectionChange((start: number, end: number) => {
+            const fullText = this.stripHtmlTags(this.content?.description || '');
+            if (start >= 0 && end > start) {
+              this.descriptionSelectedText = fullText.substring(start, end);
+            }
+          })
+          .bindSelectionMenu(TextSpanType.TEXT, this.buildDescriptionSelectionMenu, TextResponseType.LONG_PRESS, {
+            onDisappear: () => { this.descriptionSelectedText = ''; }
           })
 
         if (this.content?.description && this.content.description.length > 100) {
@@ -3787,6 +4311,110 @@ export struct UnifiedDetailPage {
     });
   }
 
+  /**
+   * 智能推荐区域
+   * 在内容加载完成后异步填充，显示横向可滚动的推荐卡片列表
+   * 仅在有推荐内容或正在加载时渲染
+   */
+  @Builder
+  buildRecommendationSection() {
+    if (this.isLoadingRecommendations || this.recommendedItems.length > 0) {
+      Column({ space: 12 }) {
+        // 标题行
+        Row() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.diamond'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('相关推荐')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          }
+          Blank()
+          if (this.isLoadingRecommendations) {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+
+        // 推荐卡片横向列表
+        if (this.recommendedItems.length > 0) {
+          Scroll() {
+            Row({ space: 12 }) {
+              ForEach(this.recommendedItems, (item: RecommendationItem) => {
+                Column({ space: 6 }) {
+                  // 封面图片
+                  Stack() {
+                    if (item.coverUrl && (item.coverUrl.startsWith('http://') || item.coverUrl.startsWith('https://'))) {
+                      AvifImage({
+                        src: item.coverUrl,
+                        imageWidth: RECOMMEND_CARD_COVER_W,
+                        imageHeight: RECOMMEND_CARD_COVER_H,
+                        objectFit: ImageFit.Cover,
+                        imageBorderRadius: 6
+                      })
+                    } else if (item.coverUrl) {
+                      Image(`file://${item.coverUrl}`)
+                        .width(RECOMMEND_CARD_COVER_W)
+                        .height(RECOMMEND_CARD_COVER_H)
+                        .objectFit(ImageFit.Cover)
+                        .borderRadius(6)
+                    } else {
+                      Column() {
+                        SymbolGlyph($r('sys.symbol.text_book_closed'))
+                          .fontSize(32)
+                          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                      }
+                      .width(RECOMMEND_CARD_COVER_W)
+                      .height(RECOMMEND_CARD_COVER_H)
+                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                      .borderRadius(6)
+                      .justifyContent(FlexAlign.Center)
+                    }
+
+                    // 内容类型角标
+                    Text(item.contentType === UnifiedContentType.MANGA ? '漫画'
+                      : item.contentType === UnifiedContentType.EBOOK ? '电子书' : '小说')
+                      .fontSize(9)
+                      .fontColor(Color.White)
+                      .backgroundColor('rgba(0,0,0,0.55)')
+                      .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+                      .borderRadius(3)
+                      .position({ x: 4, y: 4 })
+                  }
+
+                  // 标题
+                  Text(item.title)
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width(RECOMMEND_CARD_COVER_W)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .onClick(() => this.navigateToRecommendedItem(item))
+              }, (item: RecommendationItem) => item.id)
+            }
+            .padding({ left: 4, right: 4 })
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(12)
+    }
+  }
+
   @Builder
   buildChapterList() {
     // 电子书特殊处理：如果有章节则显示章节列表，否则显示阅读进度信息
@@ -4672,6 +5300,313 @@ export struct UnifiedDetailPage {
     }
   }
 
+  // ==================== 横屏布局 ====================
+
+  /**
+   * 横屏布局 - 左侧面板
+   * 包含：封面图片、标题/作者、标签、简介、书架按钮
+   */
+  @Builder
+  buildLandscapeLeftPanel() {
+    Scroll() {
+      Column({ space: 16 }) {
+        // 封面图片
+        Stack() {
+          if (this.coverPixelMap) {
+            Image(this.coverPixelMap)
+              .width('100%')
+              .aspectRatio(COVER_WIDTH / COVER_HEIGHT)
+              .objectFit(ImageFit.Cover)
+              .borderRadius(12)
+          } else if (this.content?.coverUrl) {
+            AvifImage({
+              src: this.getCoverImageSource() as string,
+              imageWidth: '100%',
+              imageHeight: undefined,
+              objectFit: ImageFit.Cover,
+              imageBorderRadius: 12
+            })
+              .aspectRatio(COVER_WIDTH / COVER_HEIGHT)
+          } else {
+            Column() {
+              SymbolGlyph($r('sys.symbol.text_book_closed'))
+                .fontSize(48)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            }
+            .width('100%')
+            .aspectRatio(COVER_WIDTH / COVER_HEIGHT)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(12)
+            .justifyContent(FlexAlign.Center)
+          }
+
+          // 内容类型标签
+          Text(this.getContentTypeName())
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor('rgba(0,0,0,0.6)')
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(4)
+            .position({ x: 8, y: 8 })
+
+          // 在线漫画封面刷新按钮
+          if (this.isOnlineManga()) {
+            Button() {
+              if (this.isRefetchingCover) {
+                LoadingProgress()
+                  .width(16)
+                  .height(16)
+                  .color(Color.White)
+              } else {
+                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                  .fontSize(14)
+                  .fontColor([Color.White])
+              }
+            }
+            .width(28)
+            .height(28)
+            .backgroundColor('rgba(0,0,0,0.5)')
+            .borderRadius(14)
+            .position({ right: 4, bottom: 4 })
+            .enabled(!this.isRefetchingCover)
+            .onClick(() => this.refetchCoverImage())
+          }
+        }
+        .id(`cover_${this.componentId}`)
+        .width('100%')
+        .onClick(() => this.openCoverPreview())
+
+        // 标题和作者
+        Column({ space: 6 }) {
+          Text(this.stripHtmlTags(this.content?.title || '加载中...'))
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .onClick(() => {
+              this.navigateToSearch(this.content?.title || '');
+            })
+
+          Text(this.stripHtmlTags(this.content?.author || ''))
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .onClick(() => {
+              this.navigateToSearch(this.content?.author || '');
+            })
+
+          Row({ space: 8 }) {
+            Text(this.getReadStatusText())
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Text(`${this.content?.totalChapters || 0}章`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+
+          if (this.content?.sourceName) {
+            Text(`来源: ${this.content.sourceName}`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        // 标签区域
+        if (this.content && ((this.content.genres && this.content.genres.length > 0) || (this.content.tags && this.content.tags.length > 0))) {
+          Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+            ForEach(this.content.genres || [], (genre: string) => {
+              Text(this.stripHtmlTags(genre))
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+                .padding({ left: 8, right: 8 })
+                .height(24)
+                .borderRadius(12)
+                .margin({ right: 6, bottom: 6 })
+                .onClick(() => {
+                  this.navigateToSearch(genre);
+                })
+            }, (genre: string, index: number) => `ls_genre_${index}_${genre}`)
+
+            ForEach(this.content.tags || [], (tag: string) => {
+              Text(this.stripHtmlTags(tag))
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+                .padding({ left: 8, right: 8 })
+                .height(24)
+                .borderRadius(12)
+                .margin({ right: 6, bottom: 6 })
+                .onClick(() => {
+                  this.navigateToSearch(tag);
+                })
+            }, (tag: string, index: number) => `ls_tag_${index}_${tag}`)
+          }
+          .width('100%')
+        }
+
+        // 简介
+        Column({ space: 6 }) {
+          Text('简介')
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          Text(this.stripHtmlTags(this.content?.description || '暂无简介'))
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(this.showFullDescription ? undefined : 4)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .copyOption(CopyOptions.InApp)
+            .onTextSelectionChange((start: number, end: number) => {
+              const fullText = this.stripHtmlTags(this.content?.description || '');
+              if (start >= 0 && end > start) {
+                this.descriptionSelectedText = fullText.substring(start, end);
+              }
+            })
+            .bindSelectionMenu(TextSpanType.TEXT, this.buildDescriptionSelectionMenu, TextResponseType.LONG_PRESS, {
+              onDisappear: () => { this.descriptionSelectedText = ''; }
+            })
+
+          if (this.content?.description && this.content.description.length > 80) {
+            Text(this.showFullDescription ? '收起' : '展开')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .onClick(() => {
+                this.showFullDescription = !this.showFullDescription;
+              })
+          }
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        // 书架按钮
+        if (this.isFromChangeSource && this.originalBookInfo) {
+          Button('替换原小说')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme))
+            .fontColor(Color.White)
+            .height(36)
+            .width('100%')
+            .borderRadius(18)
+            .onClick(() => this.openReplaceBookDialog())
+        } else {
+          Button(this.isInShelf ? (this.currentShelfName ? `在「${this.currentShelfName}」书架中` : '在书架中') : '添加书架')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(this.isInShelf
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) + '20'
+              : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .fontColor(this.isInShelf
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .height(36)
+            .width('100%')
+            .borderRadius(18)
+            .onClick(() => this.showAddToShelfSelection())
+        }
+
+        // 智能推荐
+        this.buildRecommendationSection()
+
+        Blank().height(16)
+      }
+      .width('100%')
+      .padding(16)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  /**
+   * 横屏布局 - 右侧面板
+   * 包含：工具栏、缓存状态卡片、章节列表，右下角浮动阅读按钮
+   */
+  @Builder
+  buildLandscapeRightPanel() {
+    Stack() {
+      // 主内容区
+      Column({ space: 12 }) {
+        // 工具栏
+        this.buildActionBar()
+
+        // 缓存状态卡片
+        this.buildCacheStatusCard()
+
+        // 章节列表（占满剩余空间）
+        Column() {
+          this.buildChapterList()
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: 8, right: 16, top: 16, bottom: 16 })
+
+      // 右下角浮动阅读按钮
+      Button((this.content?.lastReadChapterIndex ?? -1) >= 0 ? '继续阅读' : '开始阅读')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .fontColor(Color.White)
+        .height(44)
+        .padding({ left: 24, right: 24 })
+        .borderRadius(22)
+        .shadow({
+          radius: 12,
+          color: 'rgba(0,0,0,0.15)',
+          offsetX: 0,
+          offsetY: 4
+        })
+        .position({ right: 24, bottom: 24 })
+        .onClick(() => this.continueReading())
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /**
+   * 横屏布局 - 主容器
+   * 左侧封面信息 + 右侧章节列表
+   */
+  @Builder
+  buildLandscapeLayout() {
+    Row() {
+      // 左侧面板（封面、标签、简介、书架按钮）
+      Column() {
+        this.buildLandscapeLeftPanel()
+      }
+      .width('38%')
+      .height('100%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) + '80')
+      .borderRadius({ topRight: 16, bottomRight: 16 })
+
+      // 右侧面板（工具栏、章节列表、阅读按钮）
+      Column() {
+        this.buildLandscapeRightPanel()
+      }
+      .layoutWeight(1)
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   build() {
     NavDestination() {
       Stack() {
@@ -4739,7 +5674,11 @@ export struct UnifiedDetailPage {
           this.buildLoadingView()
         } else if (this.errorMessage) {
           this.buildErrorView()
+        } else if (this.responsive_isLandscape) {
+          // 横屏布局：左侧封面信息 + 右侧章节列表
+          this.buildLandscapeLayout()
         } else {
+          // 竖屏布局：垂直滚动
           Refresh({ refreshing: $$this.isRefreshing }) {
             Scroll(this.scroller) {
               Column({ space: 16 }) {
@@ -4755,6 +5694,7 @@ export struct UnifiedDetailPage {
                 this.buildDescription()
                 this.buildActionBar()
                 this.buildCacheStatusCard()
+                this.buildRecommendationSection()
                 this.buildChapterList()
 
                 Blank().height(40)

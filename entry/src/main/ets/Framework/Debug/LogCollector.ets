@@ -48,7 +48,7 @@ export interface LogStats {
 export class LogCollector {
   private static instance: LogCollector;
   private logs: LogEntry[] = [];
-  private maxLogCount: number = 1000; // 最大日志条数
+  private maxLogCount: number = 5000; // 最大日志条数（增大以支持错误上下文导出）
   private nextId: number = 1;
   private isEnabled: boolean = true;
   private listeners: ((entry: LogEntry) => void)[] = [];

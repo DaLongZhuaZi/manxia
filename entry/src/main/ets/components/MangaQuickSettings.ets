@@ -216,65 +216,6 @@ export struct MangaQuickSettings {
   }
 
   /**
-   * 更新条漫左边距
-   */
-  private updateWebtoonLeftMargin(value: number): void {
-    const newSettings = this.createNewSettings();
-    newSettings.webtoonLeftMargin = value;
-    
-    // 如果同步调整开启，同时更新右边距
-    if (newSettings.webtoonMarginSync) {
-      newSettings.webtoonRightMargin = value;
-    }
-    
-    if (this.callbacks.onSettingsChange) {
-      this.callbacks.onSettingsChange(newSettings);
-    }
-  }
-
-  /**
-   * 更新条漫右边距
-   */
-  private updateWebtoonRightMargin(value: number): void {
-    const newSettings = this.createNewSettings();
-    newSettings.webtoonRightMargin = value;
-    
-    // 如果同步调整开启，同时更新左边距
-    if (newSettings.webtoonMarginSync) {
-      newSettings.webtoonLeftMargin = value;
-    }
-    
-    if (this.callbacks.onSettingsChange) {
-      this.callbacks.onSettingsChange(newSettings);
-    }
-  }
-
-  /**
-   * 更新条漫边距同步设置
-   */
-  private updateWebtoonMarginSync(enabled: boolean): void {
-    const newSettings = this.createNewSettings();
-    newSettings.webtoonMarginSync = enabled;
-    
-    // 如果开启同步，将右边距设置为与左边距相同
-    if (enabled) {
-      newSettings.webtoonRightMargin = newSettings.webtoonLeftMargin;
-    }
-    
-    if (this.callbacks.onSettingsChange) {
-      this.callbacks.onSettingsChange(newSettings);
-    }
-  }
-
-  /**
-   * 判断是否为条漫模式
-   */
-  private isWebtoonMode(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
-      this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
-  }
-
-  /**
    * 判断是否禁用从上到下阅读方向（双页模式下不支持）
    */
   private isTTBDisabled(): boolean {
@@ -306,7 +247,7 @@ export struct MangaQuickSettings {
       Text('阅读模式')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
 
       // 第一行：单页、双页、连续滚动
@@ -339,18 +280,18 @@ export struct MangaQuickSettings {
         Text('阅读方向')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         
         if (this.isTTBDisabled()) {
           Text('双页模式不支持从上到下')
             .fontSize(10)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontColor($r('app.color.text_secondary'))
         }
         if (this.isHorizontalDirectionDisabled()) {
           Text('条漫模式仅支持从上到下')
             .fontSize(10)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .fontColor($r('app.color.text_secondary'))
         }
       }
       .width('100%')
@@ -375,7 +316,7 @@ export struct MangaQuickSettings {
       Text('双页竖屏组合')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
 
       Row({ space: 8 }) {
@@ -383,13 +324,13 @@ export struct MangaQuickSettings {
           Text('上下组合')
             .fontSize(12)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL ?
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
         }
         .layoutWeight(1)
         .padding(10)
         .backgroundColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL ?
-          ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+          $r('app.color.accent_background') :
           Color.Transparent)
         .borderRadius(8)
         .onClick(() => this.updateDoublePagePortraitLayout(DoublePagePortraitLayout.VERTICAL))
@@ -398,13 +339,13 @@ export struct MangaQuickSettings {
           Text('左右组合')
             .fontSize(12)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ?
-              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
         }
         .layoutWeight(1)
         .padding(10)
         .backgroundColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ?
-          ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme) :
+          $r('app.color.accent_background') :
           Color.Transparent)
         .borderRadius(8)
         .onClick(() => this.updateDoublePagePortraitLayout(DoublePagePortraitLayout.HORIZONTAL))
@@ -423,107 +364,16 @@ export struct MangaQuickSettings {
     Row() {
       Text('音量键翻页')
         .fontSize(14)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
       
       Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.volumeKeyNavigation })
-        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .selectedColor($r('app.color.accent'))
         .onChange((isOn: boolean) => {
           this.updateVolumeKeyNavigation(isOn);
         })
     }
     .width('100%')
-    .margin({ bottom: 16 })
-  }
-
-  /**
-   * 构建条漫边距调整（竖屏版本）
-   */
-  @Builder
-  buildWebtoonMarginSelector() {
-    Column({ space: 8 }) {
-      Text('边距调整')
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .width('100%')
-
-      // 同步调整开关
-      Row() {
-        Text('左右同步')
-          .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .layoutWeight(1)
-        
-        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.webtoonMarginSync ?? true })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
-            this.updateWebtoonMarginSync(isOn);
-          })
-      }
-      .width('100%')
-      .margin({ bottom: 4 })
-
-      // 左边距滑块
-      Column({ space: 4 }) {
-        Row() {
-          Text('左边距')
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          Blank()
-          Text(`${Math.round(this.readingSettings.webtoonLeftMargin ?? 0)}%`)
-            .fontSize(12)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        }
-        .width('100%')
-
-        Slider({
-          value: this.readingSettings.webtoonLeftMargin ?? 0,
-          min: 0,
-          max: 40,
-          step: 1
-        })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-          .onChange((value: number) => {
-            this.updateWebtoonLeftMargin(value);
-          })
-      }
-      .width('100%')
-
-      // 右边距滑块（仅在非同步模式下显示）
-      if (!(this.readingSettings.webtoonMarginSync ?? true)) {
-        Column({ space: 4 }) {
-          Row() {
-            Text('右边距')
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            Blank()
-            Text(`${Math.round(this.readingSettings.webtoonRightMargin ?? 0)}%`)
-              .fontSize(12)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-          .width('100%')
-
-          Slider({
-            value: this.readingSettings.webtoonRightMargin ?? 0,
-            min: 0,
-            max: 40,
-            step: 1
-          })
-            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-            .onChange((value: number) => {
-              this.updateWebtoonRightMargin(value);
-            })
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .padding(12)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-    .borderRadius(8)
     .margin({ bottom: 16 })
   }
 
@@ -536,14 +386,14 @@ export struct MangaQuickSettings {
       Text(label)
         .fontSize(12)
         .fontColor(this.readingSettings.readingMode === mode ? 
-          ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) : 
-          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          $r('app.color.accent') : 
+          $r('app.color.text_secondary'))
     }
     .layoutWeight(1)
     .padding(10)
     .backgroundColor(this.readingSettings.readingMode === mode ? 
-      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-      ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+      $r('app.color.accent_background') : 
+      Color.Transparent)
     .borderRadius(8)
     .onClick(() => this.updateReadingMode(mode))
   }
@@ -557,16 +407,16 @@ export struct MangaQuickSettings {
       Text(label)
         .fontSize(12)
         .fontColor(disabled ?
-          ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+          $r('app.color.text_secondary') :
           (this.readingSettings.readingDirection === direction ? 
-            ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) : 
-            ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)))
+            $r('app.color.accent') : 
+            $r('app.color.text_secondary')))
     }
     .layoutWeight(1)
     .padding(10)
     .backgroundColor(this.readingSettings.readingDirection === direction && !disabled ? 
-      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-      ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+      $r('app.color.accent_background') : 
+      Color.Transparent)
     .borderRadius(8)
     .opacity(disabled ? 0.5 : 1.0)
     .onClick(() => {
@@ -587,14 +437,14 @@ export struct MangaQuickSettings {
         Text('阅读模式快捷设置')
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
 
         Button() {
           Image($r('app.media.ic_close'))
             .width(20)
             .height(20)
-            .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .fillColor($r('app.color.text_secondary'))
         }
         .width(36)
         .height(36)
@@ -616,11 +466,6 @@ export struct MangaQuickSettings {
           // 双页竖屏组合
           this.buildDoublePageLayoutSelector()
           
-          // 条漫边距调整（仅在条漫模式下显示）
-          if (this.isWebtoonMode()) {
-            this.buildWebtoonMarginSelector()
-          }
-          
           // 音量键翻页
           this.buildVolumeKeyToggle()
         }
@@ -633,8 +478,8 @@ export struct MangaQuickSettings {
       Row() {
         Button('完成')
           .fontSize(14)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor($r('app.color.text_on_accent'))
+          .backgroundColor($r('app.color.accent'))
           .layoutWeight(1)
           .height(40)
           .onClick(() => this.hidePanel())
@@ -673,14 +518,14 @@ export struct MangaQuickSettings {
           Text('快捷设置')
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
 
           Button() {
             Image($r('app.media.ic_close'))
               .width(18)
               .height(18)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .fillColor($r('app.color.text_secondary'))
           }
           .width(32)
           .height(32)
@@ -702,11 +547,6 @@ export struct MangaQuickSettings {
             // 双页竖屏组合（紧凑版）
             this.buildLandscapeDoublePageLayout()
             
-            // 条漫边距调整（仅在条漫模式下显示）
-            if (this.isWebtoonMode()) {
-              this.buildLandscapeWebtoonMarginSelector()
-            }
-            
             // 音量键翻页
             this.buildLandscapeVolumeKeyToggle()
           }
@@ -718,8 +558,8 @@ export struct MangaQuickSettings {
         // 底部按钮
         Button('完成')
           .fontSize(12)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor($r('app.color.text_on_accent'))
+          .backgroundColor($r('app.color.accent'))
           .width('100%')
           .height(36)
           .onClick(() => this.hidePanel())
@@ -746,7 +586,7 @@ export struct MangaQuickSettings {
       Text('阅读模式')
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
         .margin({ bottom: 6 })
 
@@ -778,7 +618,7 @@ export struct MangaQuickSettings {
       Text('阅读方向')
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
         .margin({ bottom: 6 })
 
@@ -802,7 +642,7 @@ export struct MangaQuickSettings {
       Text('双页竖屏组合')
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .width('100%')
         .margin({ bottom: 6 })
 
@@ -811,14 +651,14 @@ export struct MangaQuickSettings {
           Text('上下')
             .fontSize(10)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL ?
-              ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
         }
         .layoutWeight(1)
         .padding(8)
         .backgroundColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.VERTICAL ?
-          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-          ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          $r('app.color.accent_background') :
+          Color.Transparent)
         .borderRadius(6)
         .onClick(() => this.updateDoublePagePortraitLayout(DoublePagePortraitLayout.VERTICAL))
 
@@ -826,14 +666,14 @@ export struct MangaQuickSettings {
           Text('左右')
             .fontSize(10)
             .fontColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ?
-              ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) :
-              ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              $r('app.color.accent') :
+              $r('app.color.text_secondary'))
         }
         .layoutWeight(1)
         .padding(8)
         .backgroundColor(this.readingSettings.doublePagePortraitLayout === DoublePagePortraitLayout.HORIZONTAL ?
-          ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
-          ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          $r('app.color.accent_background') :
+          Color.Transparent)
         .borderRadius(6)
         .onClick(() => this.updateDoublePagePortraitLayout(DoublePagePortraitLayout.HORIZONTAL))
       }
@@ -851,107 +691,16 @@ export struct MangaQuickSettings {
     Row() {
       Text('音量键翻页')
         .fontSize(12)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
       
       Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.volumeKeyNavigation })
-        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .selectedColor($r('app.color.accent'))
         .onChange((isOn: boolean) => {
           this.updateVolumeKeyNavigation(isOn);
         })
     }
     .width('100%')
-    .margin({ bottom: 12 })
-  }
-
-  /**
-   * 构建横屏条漫边距调整
-   */
-  @Builder
-  buildLandscapeWebtoonMarginSelector() {
-    Column({ space: 6 }) {
-      Row() {
-        Text('边距调整')
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .layoutWeight(1)
-        
-        Text('同步')
-          .fontSize(10)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .margin({ right: 4 })
-        
-        Toggle({ type: ToggleType.Switch, isOn: this.readingSettings.webtoonMarginSync ?? true })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .onChange((isOn: boolean) => {
-            this.updateWebtoonMarginSync(isOn);
-          })
-      }
-      .width('100%')
-
-      // 左边距
-      Row() {
-        Text('左')
-          .fontSize(10)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .width(20)
-        
-        Slider({
-          value: this.readingSettings.webtoonLeftMargin ?? 0,
-          min: 0,
-          max: 40,
-          step: 1
-        })
-          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-          .layoutWeight(1)
-          .onChange((value: number) => {
-            this.updateWebtoonLeftMargin(value);
-          })
-        
-        Text(`${Math.round(this.readingSettings.webtoonLeftMargin ?? 0)}%`)
-          .fontSize(10)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .width(30)
-          .textAlign(TextAlign.End)
-      }
-      .width('100%')
-
-      // 右边距（仅在非同步模式下显示）
-      if (!(this.readingSettings.webtoonMarginSync ?? true)) {
-        Row() {
-          Text('右')
-            .fontSize(10)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .width(20)
-          
-          Slider({
-            value: this.readingSettings.webtoonRightMargin ?? 0,
-            min: 0,
-            max: 40,
-            step: 1
-          })
-            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .trackColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-            .layoutWeight(1)
-            .onChange((value: number) => {
-              this.updateWebtoonRightMargin(value);
-            })
-          
-          Text(`${Math.round(this.readingSettings.webtoonRightMargin ?? 0)}%`)
-            .fontSize(10)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .width(30)
-            .textAlign(TextAlign.End)
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .padding(10)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
-    .borderRadius(6)
     .margin({ bottom: 12 })
   }
 
@@ -964,14 +713,14 @@ export struct MangaQuickSettings {
       Text(label)
         .fontSize(10)
         .fontColor(this.readingSettings.readingMode === mode ? 
-          ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) : 
-          ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          $r('app.color.accent') : 
+          $r('app.color.text_secondary'))
     }
     .layoutWeight(1)
     .padding(8)
     .backgroundColor(this.readingSettings.readingMode === mode ? 
-      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-      ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+      $r('app.color.accent_background') : 
+      Color.Transparent)
     .borderRadius(6)
     .onClick(() => this.updateReadingMode(mode))
   }
@@ -985,16 +734,16 @@ export struct MangaQuickSettings {
       Text(label)
         .fontSize(10)
         .fontColor(disabled ?
-          ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+          $r('app.color.text_secondary') :
           (this.readingSettings.readingDirection === direction ? 
-            ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme) : 
-            ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)))
+            $r('app.color.accent') : 
+            $r('app.color.text_secondary')))
     }
     .layoutWeight(1)
     .padding(8)
     .backgroundColor(this.readingSettings.readingDirection === direction && !disabled ? 
-      ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) : 
-      ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+      $r('app.color.accent_background') : 
+      Color.Transparent)
     .borderRadius(6)
     .opacity(disabled ? 0.5 : 1.0)
     .onClick(() => {

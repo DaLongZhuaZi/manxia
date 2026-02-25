@@ -373,11 +373,13 @@ export struct MangaReaderPage {
   @State autoPageTurnSettingsOpacity: number = 0;
   @State autoPageTurnSettingsScale: number = 0.95;
   @State autoPageTurnSettingsTranslateY: number = 20;
+  @State autoPageTurnSettingsTranslateX: number = 320;
   // 翻页动画设置面板状态
   @State showPageTurnAnimationSettings: boolean = false;
   @State pageTurnAnimationSettingsOpacity: number = 0;
   @State pageTurnAnimationSettingsScale: number = 0.95;
   @State pageTurnAnimationSettingsTranslateY: number = 20;
+  @State pageTurnAnimationSettingsTranslateX: number = 320;
   // 跳转页面对话框状态
   @State showJumpToPageDialog: boolean = false;
   @State jumpToPageInput: string = '';
@@ -390,6 +392,8 @@ export struct MangaReaderPage {
   // 组件实际渲染尺寸（通过onAreaChange获取）
   @State componentWidth: number = 0;
   @State componentHeight: number = 0;
+  // 横竖屏状态（用于对话框布局自适应）
+  @State private isLandscapeMode: boolean = false;
   // 沉浸式安全区高度（遵循沉浸式显示规范）
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
@@ -405,6 +409,9 @@ export struct MangaReaderPage {
   // 条漫模式相邻章节（用于无缝章节切换）
   @State prevChapterForWebtoon: MangaChapter | undefined = undefined;
   @State nextChapterForWebtoon: MangaChapter | undefined = undefined;
+  // [修复] 章节边界状态：使用@State确保条漫模式下章节切换时能正确更新MangaViewer
+  @State isFirstChapterState: boolean = false;
+  @State isLastChapterState: boolean = false;
   
   // [修复] 阅读器初始化完成标志，用于阻止初始化期间的错误阅读进度保存
   // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，覆盖正确的阅读进度
@@ -527,6 +534,14 @@ export struct MangaReaderPage {
     
     
     logger.lifecycle(TAG, '漫画阅读器页面显示完成');
+  }
+
+  onPageHide() {
+    logger.lifecycle(TAG, '漫画阅读器页面隐藏（进入后台）');
+    // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
+    this.saveReadingProgressInternal('onPageHide').catch((error: Error) => {
+      logger.error(TAG, '页面隐藏时保存阅读进度失败', error.message);
+    });
   }
 
   onReady() {
@@ -1052,21 +1067,24 @@ export struct MangaReaderPage {
     this.autoPageTurnSettingsOpacity = 0;
     this.autoPageTurnSettingsScale = 0.95;
     this.autoPageTurnSettingsTranslateY = 20;
+    this.autoPageTurnSettingsTranslateX = 320;
     this.showAutoPageTurnSettings = true;
     
     if (this.uiContext) {
       this.uiContext.animateTo({
-        duration: 200,
+        duration: 250,
         curve: Curve.EaseOut
       }, () => {
         this.autoPageTurnSettingsOpacity = 1;
         this.autoPageTurnSettingsScale = 1;
         this.autoPageTurnSettingsTranslateY = 0;
+        this.autoPageTurnSettingsTranslateX = 0;
       });
     } else {
       this.autoPageTurnSettingsOpacity = 1;
       this.autoPageTurnSettingsScale = 1;
       this.autoPageTurnSettingsTranslateY = 0;
+      this.autoPageTurnSettingsTranslateX = 0;
     }
   }
   
@@ -1076,7 +1094,7 @@ export struct MangaReaderPage {
   private hideAutoPageTurnSettingsWithAnimation(): void {
     if (this.uiContext) {
       this.uiContext.animateTo({
-        duration: 150,
+        duration: 200,
         curve: Curve.EaseIn,
         onFinish: () => {
           this.showAutoPageTurnSettings = false;
@@ -1085,6 +1103,7 @@ export struct MangaReaderPage {
         this.autoPageTurnSettingsOpacity = 0;
         this.autoPageTurnSettingsScale = 0.95;
         this.autoPageTurnSettingsTranslateY = 20;
+        this.autoPageTurnSettingsTranslateX = 320;
       });
     } else {
       this.showAutoPageTurnSettings = false;
@@ -1748,15 +1767,18 @@ export struct MangaReaderPage {
         }
         
         if (chapters && chapters.length > 0) {
-          // 转换章节信息为MangaChapter格式，并加载页面信息
+          // [性能优化] 批量获取所有章节的页面信息，替代逐章节N+1查询
+          const allPagesMap: Map<string, PageInfo[] | OnlinePageInfo[]> = hasSourceId
+            ? await DataManager.getInstance().getAllOnlinePagesByComicId(params.mangaId)
+            : await DataManager.getInstance().getAllLocalPagesByComicId(params.mangaId);
+          logger.info(TAG, `📄 批量加载页面完成，共 ${allPagesMap.size} 个章节有页面数据`);
+          
+          // 转换章节信息为MangaChapter格式
           const mangaChapters: MangaChapter[] = [];
           
           for (const chapterInfo of chapters) {
-            // [重构] 根据是否为在线漫画选择页面加载方法
-            logger.debug(TAG, `📄 加载章节页面信息: ${chapterInfo.title} (ID: ${chapterInfo.id})`);
-            const pageInfos: PageInfo[] | OnlinePageInfo[] = hasSourceId 
-              ? await DataManager.getInstance().getOnlineChapterPages(chapterInfo.id)
-              : await DataManager.getInstance().getChapterPages(chapterInfo.id);
+            // [性能优化] 从批量查询结果中获取页面，无需再逐个查询
+            const pageInfos: PageInfo[] | OnlinePageInfo[] = (allPagesMap.get(chapterInfo.id) || []) as PageInfo[] | OnlinePageInfo[];
             
             // 转换页面信息为MangaPage格式
             // [修复] 使用数组索引而不是pageNumber/index，确保index是0-indexed
@@ -1937,6 +1959,9 @@ export struct MangaReaderPage {
         logger.error(TAG, `错误详情: ${JSON.stringify(errorDetails, null, 2)}`);
         this.readerState.errorMessage = `漫画"${manga.title}"没有可用章节\n章节总数: ${manga.chapters.length}\n${params.chapterId ? `指定章节ID: ${params.chapterId}` : '未指定章节'}`;
         this.readerState.isLoading = false;
+        // [修复] 提前返回时也要通知过渡动画，防止覆盖层阻止交互
+        setReaderReady();
+        logger.info(TAG, '📤 无可用章节，通知过渡动画阅读器就绪（允许用户返回）');
         return;
       }
 
@@ -2166,10 +2191,12 @@ export struct MangaReaderPage {
           
           // 转换SourcePageInfo为MangaPage
           const pagesToConvert = validPages;
+          const currentChapterId = this.readerState.currentChapter.id;
           const mangaPages: MangaPage[] = pagesToConvert.map((pageInfo: SourcePageInfo, index: number) => {
             // [重构] 在线未下载漫画直接使用网络URL，不查找本地文件
+            // [修复] 使用章节ID+页码作为唯一ID，避免不同章节的页面ID冲突导致PixelMap缓存返回错误图片
             const page: MangaPage = {
-              id: `page_${pageInfo.page}`,
+              id: `${currentChapterId}_page_${pageInfo.page}`,
               index: index,
               sourceType: ImageSourceType.NETWORK,
               imagePath: pageInfo.imageUrl || '', // 占位页面可能为空
@@ -2249,6 +2276,9 @@ export struct MangaReaderPage {
           logger.error(TAG, `❌ 动态加载页面列表失败: ${String(error)}`);
           this.readerState.errorMessage = `加载章节页面失败: ${String(error)}`;
           this.readerState.isLoading = false;
+          // [修复] 提前返回时也要通知过渡动画，防止覆盖层阻止交互
+          setReaderReady();
+          logger.info(TAG, '📤 动态加载页面列表失败，通知过渡动画阅读器就绪（允许用户返回）');
           return;
         }
         didDynamicPageList = true;
@@ -2329,6 +2359,9 @@ export struct MangaReaderPage {
         logger.error(TAG, `❌ 当前章节没有页面数据`);
         this.readerState.errorMessage = `章节"${this.readerState.currentChapter.title}"没有页面数据`;
         this.readerState.isLoading = false;
+        // [修复] 提前返回时也要通知过渡动画，防止覆盖层阻止交互
+        setReaderReady();
+        logger.info(TAG, '📤 章节无页面数据，通知过渡动画阅读器就绪（允许用户返回）');
         return;
       }
       
@@ -2353,9 +2386,9 @@ export struct MangaReaderPage {
         logger.debug(TAG, `  - 图片URL: ${currentPage.imageUrl}`);
       }
 
-      // 加载阅读设置
+      // 加载阅读设置（异步从数据库加载，确保获取最新保存的设置）
       logger.debug(TAG, '⚙️ 开始加载阅读设置');
-      this.loadReadingSettings();
+      await this.loadReadingSettings();
 
       // [新增] 此时章节已确定，强制刷新一次 Headers 以确保 Referer 正确
       this.updateNetworkHeadersForChapter(); 
@@ -2557,9 +2590,10 @@ export struct MangaReaderPage {
 
   /**
    * 加载阅读设置
-   * 现在Manga对象已经从数据库加载了完整的阅读设置，直接使用即可
+   * [修复] 始终从数据库加载最新的阅读设置，避免params.manga传入的对象设置过时
+   * 设置优先级：数据库保存的设置 > Manga对象上的设置 > 默认值
    */
-  private loadReadingSettings(): void {
+  private async loadReadingSettings(): Promise<void> {
     logger.debug(TAG, '⚙️ 开始加载阅读设置');
     
     try {
@@ -2578,18 +2612,30 @@ export struct MangaReaderPage {
       const mangaId = this.readerState.currentManga.id;
       logger.debug(TAG, `📖 加载漫画ID=${mangaId}的阅读设置`);
 
-      // Manga对象的readingSettings已经在convertComicInfoToMangaAsync中从数据库加载
-      // 直接使用即可，无需再从AppStorage或其他地方加载
-      const settings = this.readerState.currentManga.readingSettings;
+      // [修复] 始终从数据库加载最新设置，而不是依赖Manga对象上可能过时的设置
+      // 原因：params.manga由详情页传入，可能在阅读器中修改设置后未同步回详情页的Manga对象
+      // 下次从详情页进入不同章节时，Manga对象上的设置仍是旧的/默认的
+      const sourceIdStr = this.currentSourceId > 0 ? String(this.currentSourceId) : undefined;
+      let settings: ReadingSettings;
+      try {
+        settings = await ComicConverter.loadReadingSettings(mangaId, 'default_user', sourceIdStr);
+        logger.info(TAG, `✅ 从数据库加载阅读设置成功: mode=${settings.readingMode}, direction=${settings.readingDirection}`);
+      } catch (dbError) {
+        const dbMsg = dbError instanceof Error ? dbError.message : String(dbError);
+        logger.warn(TAG, `⚠️ 从数据库加载阅读设置失败: ${dbMsg}，回退使用Manga对象设置`);
+        settings = this.readerState.currentManga.readingSettings;
+      }
       
-      logger.debug(TAG, `📖 从漫画对象加载设置（已从数据库加载）:`);
+      logger.debug(TAG, `📖 最终使用的阅读设置:`);
       logger.debug(TAG, `  - 阅读模式: ${settings.readingMode}`);
       logger.debug(TAG, `  - 阅读方向: ${settings.readingDirection}`);
       logger.debug(TAG, `  - 亮度: ${settings.brightness}`);
       logger.debug(TAG, `  - 保持屏幕常亮: ${settings.keepScreenOn}`);
       
-      // 直接引用漫画对象的设置（避免不必要的复制）
+      // 应用设置
       this.readingSettings = settings;
+      // 同步更新Manga对象上的设置，确保后续保存时基于最新设置
+      this.readerState.currentManga.readingSettings = settings;
       this.isReadingSettingsReady = true;
       
       logger.info(TAG, '✅ 阅读设置加载完成（来自数据库），准备显示交互提示Overlay');
@@ -2924,8 +2970,17 @@ export struct MangaReaderPage {
   }
 
   /**
+   * 判断当前屏幕是否为横屏模式
+   */
+  private isLandscapeScreen(): boolean {
+    return this.isLandscapeMode;
+  }
+
+  /**
    * 判断当前阅读模式是否支持卷页动画
-   * 卷页动画只支持：单页模式 + 从左到右/从右到左阅读方向
+   * 卷页动画支持：
+   * - 单页模式 + 从左到右/从右到左阅读方向
+   * - 双页模式 + 横屏
    */
   private isCurlAnimationSupported(): boolean {
     const mode = this.readingSettings.readingMode;
@@ -2940,6 +2995,11 @@ export struct MangaReaderPage {
     if (mode === ReadingMode.SINGLE_PAGE) {
       return direction === ReadingDirection.LEFT_TO_RIGHT || 
              direction === ReadingDirection.RIGHT_TO_LEFT;
+    }
+    
+    // 双页模式 + 横屏
+    if (mode === ReadingMode.DOUBLE_PAGE && this.isLandscapeScreen()) {
+      return true;
     }
     
     return false;
@@ -3225,21 +3285,24 @@ export struct MangaReaderPage {
     this.showChapterList = false;
     this.handleMenusVisibilityChange();
     
+    this.pageTurnAnimationSettingsTranslateX = 320;
     this.showPageTurnAnimationSettings = true;
     this.handleMenusVisibilityChange();
     if (this.uiContext) {
       setTimeout(() => {
-        const animateOptions: AnimationConfig = { duration: 200, curve: Curve.EaseOut };
+        const animateOptions: AnimationConfig = { duration: 250, curve: Curve.EaseOut };
         this.uiContext!.animateTo(animateOptions, () => {
           this.pageTurnAnimationSettingsOpacity = 1;
           this.pageTurnAnimationSettingsScale = 1;
           this.pageTurnAnimationSettingsTranslateY = 0;
+          this.pageTurnAnimationSettingsTranslateX = 0;
         });
       }, 0);
     } else {
       this.pageTurnAnimationSettingsOpacity = 1;
       this.pageTurnAnimationSettingsScale = 1;
       this.pageTurnAnimationSettingsTranslateY = 0;
+      this.pageTurnAnimationSettingsTranslateX = 0;
     }
   }
 
@@ -3377,19 +3440,21 @@ export struct MangaReaderPage {
    */
   private hidePageTurnAnimationSettingsWithAnimation(): void {
     if (this.uiContext) {
-      const animateOptions: AnimationConfig = { duration: 160, curve: Curve.EaseIn };
+      const animateOptions: AnimationConfig = { duration: 200, curve: Curve.EaseIn };
       this.uiContext.animateTo(animateOptions, () => {
         this.pageTurnAnimationSettingsOpacity = 0;
         this.pageTurnAnimationSettingsScale = 0.95;
         this.pageTurnAnimationSettingsTranslateY = 20;
+        this.pageTurnAnimationSettingsTranslateX = 320;
       });
       setTimeout(() => {
         this.showPageTurnAnimationSettings = false;
-      }, 160);
+      }, 200);
     } else {
       this.pageTurnAnimationSettingsOpacity = 0;
       this.pageTurnAnimationSettingsScale = 0.95;
       this.pageTurnAnimationSettingsTranslateY = 20;
+      this.pageTurnAnimationSettingsTranslateX = 320;
       this.showPageTurnAnimationSettings = false;
     }
   }
@@ -3652,6 +3717,9 @@ export struct MangaReaderPage {
     if (!manga || !chapter) {
       this.prevChapterForWebtoon = undefined;
       this.nextChapterForWebtoon = undefined;
+      // [修复] 数据不完整时设置为false，允许尝试加载章节
+      this.isFirstChapterState = false;
+      this.isLastChapterState = false;
       return;
     }
 
@@ -3659,8 +3727,15 @@ export struct MangaReaderPage {
     if (currentIndex < 0) {
       this.prevChapterForWebtoon = undefined;
       this.nextChapterForWebtoon = undefined;
+      this.isFirstChapterState = false;
+      this.isLastChapterState = false;
       return;
     }
+
+    // [修复] 更新章节边界状态，确保条漫模式下能正确触发章节加载
+    this.isFirstChapterState = currentIndex === 0;
+    this.isLastChapterState = currentIndex >= manga.chapters.length - 1;
+    logger.info(TAG, `📊 章节边界状态更新: currentChapter=${chapter.title}, index=${currentIndex}/${manga.chapters.length - 1}, isFirst=${this.isFirstChapterState}, isLast=${this.isLastChapterState}`);
 
     // 获取前一章
     if (currentIndex > 0) {
@@ -3668,12 +3743,14 @@ export struct MangaReaderPage {
       // 检查前一章是否有页面信息
       if (prevChapter.pages && prevChapter.pages.length > 0) {
         this.prevChapterForWebtoon = prevChapter;
-        logger.debug(TAG, `条漫前一章: ${prevChapter.title}, ${prevChapter.pages.length}页`);
+        logger.info(TAG, `条漫前一章(已加载): ${prevChapter.title}, ${prevChapter.pages.length}页`);
       } else {
         this.prevChapterForWebtoon = undefined;
+        logger.info(TAG, `条漫前一章(未加载): ${prevChapter.title}`);
       }
     } else {
       this.prevChapterForWebtoon = undefined;
+      logger.debug(TAG, `条漫前一章: 无（已是第一章）`);
     }
 
     // 获取下一章
@@ -3682,43 +3759,59 @@ export struct MangaReaderPage {
       // 检查下一章是否有页面信息
       if (nextChapter.pages && nextChapter.pages.length > 0) {
         this.nextChapterForWebtoon = nextChapter;
-        logger.debug(TAG, `条漫下一章: ${nextChapter.title}, ${nextChapter.pages.length}页`);
+        logger.info(TAG, `条漫下一章(已加载): ${nextChapter.title}, ${nextChapter.pages.length}页`);
       } else {
         this.nextChapterForWebtoon = undefined;
+        logger.info(TAG, `条漫下一章(未加载): ${nextChapter.title}`);
       }
     } else {
       this.nextChapterForWebtoon = undefined;
+      logger.debug(TAG, `条漫下一章: 无（已是最后一章）`);
     }
   }
 
   /**
    * 检查当前章节是否是第一章
+   * [修复] 数据不完整时返回 false，允许尝试加载相邻章节
    */
   private isCurrentChapterFirst(): boolean {
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
     
+    // [修复] 数据不完整时返回 false，而不是 true
+    // 这样可以允许条漫模式尝试触发章节加载
     if (!manga || !chapter || !manga.chapters || manga.chapters.length === 0) {
-      return true; // 安全默认：没有数据时认为是第一章
+      return false;
     }
     
     const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
-    return currentIndex <= 0;
+    // 找不到索引时返回 false，允许尝试加载
+    if (currentIndex < 0) {
+      return false;
+    }
+    return currentIndex === 0;
   }
 
   /**
    * 检查当前章节是否是最后一章
+   * [修复] 数据不完整时返回 false，允许尝试加载相邻章节
    */
   private isCurrentChapterLast(): boolean {
     const manga = this.readerState.currentManga;
     const chapter = this.readerState.currentChapter;
     
+    // [修复] 数据不完整时返回 false，而不是 true
+    // 这样可以允许条漫模式尝试触发章节加载
     if (!manga || !chapter || !manga.chapters || manga.chapters.length === 0) {
-      return true; // 安全默认：没有数据时认为是最后一章
+      return false;
     }
     
     const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
-    return currentIndex < 0 || currentIndex >= manga.chapters.length - 1;
+    // 找不到索引时返回 false，允许尝试加载
+    if (currentIndex < 0) {
+      return false;
+    }
+    return currentIndex >= manga.chapters.length - 1;
   }
 
   /**
@@ -3734,13 +3827,25 @@ export struct MangaReaderPage {
       return;
     }
 
-    const currentIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
-    if (currentIndex < 0) {
-      logger.warn(TAG, '无法找到当前章节索引');
+    // [修复2] 条漫边界请求时，应基于已加载的最远章节而非当前章节来查找下一个要加载的章节
+    // 例如：当前在Ch2，已加载了Ch3作为nextChapter，则下一次应请求Ch4而不Ch3
+    let anchorIndex: number;
+    if (direction === 'next' && this.nextChapterForWebtoon) {
+      const nextIdx = manga.chapters.findIndex(ch => ch.id === this.nextChapterForWebtoon!.id);
+      anchorIndex = nextIdx >= 0 ? nextIdx : manga.chapters.findIndex(ch => ch.id === chapter.id);
+    } else if (direction === 'prev' && this.prevChapterForWebtoon) {
+      const prevIdx = manga.chapters.findIndex(ch => ch.id === this.prevChapterForWebtoon!.id);
+      anchorIndex = prevIdx >= 0 ? prevIdx : manga.chapters.findIndex(ch => ch.id === chapter.id);
+    } else {
+      anchorIndex = manga.chapters.findIndex(ch => ch.id === chapter.id);
+    }
+    
+    if (anchorIndex < 0) {
+      logger.warn(TAG, '无法找到锚点章节索引');
       return;
     }
 
-    const targetIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
+    const targetIndex = direction === 'prev' ? anchorIndex - 1 : anchorIndex + 1;
     if (targetIndex < 0 || targetIndex >= manga.chapters.length) {
       logger.info(TAG, `已达到${direction === 'prev' ? '第一' : '最后'}一章`);
       return;
@@ -3782,9 +3887,22 @@ export struct MangaReaderPage {
         logger.info(TAG, `✅ ${direction === 'prev' ? '前' : '后'}一章加载完成: ${targetChapter.title}, ${targetChapter.pages.length}页`);
       } else {
         logger.warn(TAG, `⚠️ ${direction === 'prev' ? '前' : '后'}一章加载后仍无页面数据: ${targetChapter.title}`);
+        // [修复] 加载后无页面数据，通过设置undefined触发MangaViewer重置请求标志
+        if (direction === 'prev') {
+          this.prevChapterForWebtoon = undefined;
+        } else {
+          this.nextChapterForWebtoon = undefined;
+        }
       }
     } catch (error) {
       logger.error(TAG, `❌ 加载${direction === 'prev' ? '前' : '后'}一章失败: ${String(error)}`);
+      // [修复] 加载失败时，通过设置undefined触发MangaViewer重置请求标志，允许后续重试
+      if (direction === 'prev') {
+        // 先设置为一个临时值再设置为undefined，确保触发prop变化
+        this.prevChapterForWebtoon = undefined;
+      } else {
+        this.nextChapterForWebtoon = undefined;
+      }
     }
   }
 
@@ -3828,7 +3946,28 @@ export struct MangaReaderPage {
       return;
     }
     
-    logger.info(TAG, `条漫章节切换: ${currentChapter.title} -> ${chapterTitle}, 页码=${pageIndex + 1}`);
+    // [修复B2] 确保新章节有有效的页面数据
+    // 如果章节对象的pages为空，尝试从已加载的条漫相邻章节中获取页面数据
+    if (!newChapter.pages || newChapter.pages.length === 0) {
+      // 从条漫相邻章节中查找
+      if (this.prevChapterForWebtoon && this.prevChapterForWebtoon.id === chapterId && 
+          this.prevChapterForWebtoon.pages && this.prevChapterForWebtoon.pages.length > 0) {
+        newChapter.pages = this.prevChapterForWebtoon.pages;
+        logger.info(TAG, `[修复B2] 从条漫上一章复制页面数据: ${newChapter.title}, ${newChapter.pages.length}页`);
+      } else if (this.nextChapterForWebtoon && this.nextChapterForWebtoon.id === chapterId &&
+                 this.nextChapterForWebtoon.pages && this.nextChapterForWebtoon.pages.length > 0) {
+        newChapter.pages = this.nextChapterForWebtoon.pages;
+        logger.info(TAG, `[修复B2] 从条漫下一章复制页面数据: ${newChapter.title}, ${newChapter.pages.length}页`);
+      } else {
+        logger.warn(TAG, `条漫章节切换: 章节 ${chapterTitle} 无页面数据，工具栏可能显示不正确`);
+      }
+    }
+    
+    // [修复B2] 确保pageIndex在有效范围内
+    const totalPages = newChapter.pages ? newChapter.pages.length : 0;
+    const safePageIndex = totalPages > 0 ? Math.min(pageIndex, totalPages - 1) : 0;
+    
+    logger.info(TAG, `条漫章节切换: ${currentChapter.title} -> ${chapterTitle}, 页码=${safePageIndex + 1}/${totalPages}`);
     
     // 先保存旧章节的阅读进度
     this.saveReadingProgressInternal('webtoonChapterSwitch').catch((error: Error) => {
@@ -3839,7 +3978,7 @@ export struct MangaReaderPage {
     this.readerState = {
       currentManga: this.readerState.currentManga,
       currentChapter: newChapter,
-      currentPageIndex: pageIndex,
+      currentPageIndex: safePageIndex,
       isFullscreen: this.readerState.isFullscreen,
       showControls: this.readerState.showControls,
       isLoading: this.readerState.isLoading,
@@ -3852,10 +3991,69 @@ export struct MangaReaderPage {
     this.lastProgressSaveTime = 0;
     this.lastSavedPageIndex = -1;
     
-    // 更新相邻章节信息
-    this.updateAdjacentChaptersForWebtoon();
+    // [修复] 条漫滚动切换章节时，不调用 updateAdjacentChaptersForWebtoon（它会导致MangaViewer全量重建数据列表）
+    // 只更新章节边界标志，并异步加载新的相邻章节
+    const newChapterIndex = manga.chapters.findIndex(ch => ch.id === chapterId);
+    if (newChapterIndex >= 0) {
+      this.isFirstChapterState = newChapterIndex === 0;
+      this.isLastChapterState = newChapterIndex >= manga.chapters.length - 1;
+      logger.info(TAG, `条漫章节边界更新: index=${newChapterIndex}/${manga.chapters.length - 1}, isFirst=${this.isFirstChapterState}, isLast=${this.isLastChapterState}`);
+      
+      // [修复] 异步加载新的相邻章节（不立即触发@State更新级联）
+      // 只有当相邻章节页面加载完成后，才更新 prevChapterForWebtoon/nextChapterForWebtoon
+      // 这样MangaViewer只会在有新数据时才触发增量更新
+      this.loadNewAdjacentChaptersForWebtoon(newChapterIndex);
+    } else {
+      // 找不到章节索引，回退到全量更新
+      this.updateAdjacentChaptersForWebtoon();
+    }
     
-    logger.info(TAG, `条漫章节切换完成: ${newChapter.title}, 页码=${pageIndex + 1}/${newChapter.pages.length}`);
+    logger.info(TAG, `条漫章节切换完成: ${newChapter.title}, 页码=${safePageIndex + 1}/${totalPages}`);
+  }
+  
+  /**
+   * [新增] 条漫模式滚动切换章节后，异步加载新的相邻章节
+   * 与 updateAdjacentChaptersForWebtoon 不同，此方法不会立即更新 prevChapterForWebtoon/nextChapterForWebtoon
+   * 而是先加载页面数据，加载完成后再更新，避免触发MangaViewer的全量重建
+   */
+  private loadNewAdjacentChaptersForWebtoon(currentIndex: number): void {
+    const manga = this.readerState.currentManga;
+    if (!manga) return;
+    
+    // 检查下一章是否需要加载
+    if (currentIndex < manga.chapters.length - 1) {
+      const nextChapter = manga.chapters[currentIndex + 1];
+      // 如果下一章已有页面，直接更新（会触发MangaViewer增量更新）
+      if (nextChapter.pages && nextChapter.pages.length > 0) {
+        // 检查是否已经是同一个引用，避免不必要的@State触发
+        if (this.nextChapterForWebtoon?.id !== nextChapter.id) {
+          this.nextChapterForWebtoon = nextChapter;
+          logger.info(TAG, `[条漫滚动切换] 下一章已加载: ${nextChapter.title}`);
+        }
+      } else {
+        // 下一章无页面，异步加载，加载完成后更新
+        this.nextChapterForWebtoon = undefined;
+        logger.info(TAG, `[条漫滚动切换] 下一章未加载，异步触发: ${nextChapter.title}`);
+      }
+    } else {
+      this.nextChapterForWebtoon = undefined;
+    }
+    
+    // 检查上一章是否需要加载
+    if (currentIndex > 0) {
+      const prevChapter = manga.chapters[currentIndex - 1];
+      if (prevChapter.pages && prevChapter.pages.length > 0) {
+        if (this.prevChapterForWebtoon?.id !== prevChapter.id) {
+          this.prevChapterForWebtoon = prevChapter;
+          logger.info(TAG, `[条漫滚动切换] 上一章已加载: ${prevChapter.title}`);
+        }
+      } else {
+        this.prevChapterForWebtoon = undefined;
+        logger.info(TAG, `[条漫滚动切换] 上一章未加载: ${prevChapter.title}`);
+      }
+    } else {
+      this.prevChapterForWebtoon = undefined;
+    }
   }
 
   /**
@@ -3866,11 +4064,14 @@ export struct MangaReaderPage {
     try {
       const dataManager = DataManager.getInstance();
       
-      // 从user_settings表读取设置
-      const preloadCountRecord = await dataManager.getSourceUserSetting(sourceId, 'readerPreloadCount');
-      const preloadCurrentRecord = await dataManager.getSourceUserSetting(sourceId, 'preloadCurrentChapter');
-      const preloadNextRecord = await dataManager.getSourceUserSetting(sourceId, 'preloadNextChapter');
-      const downloadWhileReadingRecord = await dataManager.getSourceUserSetting(sourceId, 'downloadWhileReading');
+      // [性能优化] 使用批量查询，单次 getSourcePkgById + 单条 SQL 替代 4×2=8 次数据库查询
+      const settingsMap = await dataManager.getSourceUserSettings(sourceId, [
+        'readerPreloadCount', 'preloadCurrentChapter', 'preloadNextChapter', 'downloadWhileReading'
+      ]);
+      
+      const preloadCountRecord = settingsMap.get('readerPreloadCount');
+      const preloadCurrentRecord = settingsMap.get('preloadCurrentChapter');
+      const preloadNextRecord = settingsMap.get('preloadNextChapter');
       
       const settings: SourcePreloadSettings = {
         preloadCurrentChapter: preloadCurrentRecord?.settingValue === '1' || preloadCurrentRecord?.settingValue === undefined,
@@ -3898,20 +4099,17 @@ export struct MangaReaderPage {
       logger.debug(TAG, `🗑️ 删除章节 ${chapterId} 的旧页面数据`);
       await dataManager.deleteOnlineChapterPages(chapterId);
       
-      // 批量插入新的页面数据
-      for (let i = 0; i < pages.length; i++) {
-        const pageInfo = pages[i];
-        const onlinePageInput: OnlinePageInfoInput = {
-          chapterId: chapterId,
-          pageNumber: i,
-          imageUrl: pageInfo.imageUrl,
-          width: pageInfo.width || 0,
-          height: pageInfo.height || 0,
-          fileSize: 0
-        };
-        
-        await dataManager.addOnlinePageInfo(onlinePageInput);
-      }
+      // [性能优化] 使用事务批量插入，替代逐条 addOnlinePageInfo
+      const pageInputs: OnlinePageInfoInput[] = pages.map((pageInfo: SourcePageInfo, i: number): OnlinePageInfoInput => ({
+        chapterId: chapterId,
+        pageNumber: i,
+        imageUrl: pageInfo.imageUrl,
+        width: pageInfo.width || 0,
+        height: pageInfo.height || 0,
+        fileSize: 0
+      }));
+      
+      await dataManager.batchAddOnlinePages(chapterId, pageInputs);
       
       logger.info(TAG, `✅ 已保存章节 ${chapterId} 的 ${pages.length} 个页面信息到数据库`);
     } catch (error) {
@@ -4080,9 +4278,10 @@ export struct MangaReaderPage {
       }
       
       // 转换为MangaPage格式
+      // [修复] 使用章节ID+页码作为唯一ID，避免不同章节的页面ID冲突导致PixelMap缓存返回错误图片
       const mangaPages: MangaPage[] = pagesToPreload.map((pageInfo: SourcePageInfo, index: number) => {
         return {
-          id: `page_${pageInfo.page}`,
+          id: `${chapter.id}_page_${pageInfo.page}`,
           index: index,
           sourceType: ImageSourceType.NETWORK,
           imagePath: pageInfo.imageUrl,
@@ -4328,7 +4527,13 @@ export struct MangaReaderPage {
         this.lastProgressSaveTime = 0;
         this.lastSavedPageIndex = -1;
         
-        logger.info(TAG, `切换到章节: ${targetChapter.title}`);
+        // [修复B1] 触发章节变化通知，让MangaViewer重新加载
+        this.chapterTick = this.chapterTick + 1;
+        
+        // [修复B1] 更新条漫模式相邻章节状态
+        this.updateAdjacentChaptersForWebtoon();
+        
+        logger.info(TAG, `切换到章节: ${targetChapter.title}, chapterTick=${this.chapterTick}`);
       }).catch((error: Error) => {
         logger.error(TAG, '切换章节前保存进度失败', error.message);
         // 即使保存失败也继续切换（但不加载页面，避免错误）
@@ -4337,6 +4542,9 @@ export struct MangaReaderPage {
         this.sessionStartTimestamp = Date.now();
         this.lastProgressSaveTime = 0;
         this.lastSavedPageIndex = -1;
+        // [修复B1] 即使保存失败也需要更新chapterTick和条漫状态
+        this.chapterTick = this.chapterTick + 1;
+        this.updateAdjacentChaptersForWebtoon();
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -4699,33 +4907,33 @@ export struct MangaReaderPage {
       const mangaId = this.readerState.currentManga?.id || '';
       const coverComponentId = mangaId ? `cover_manga_lib_${mangaId}` : '';
       
+      // [修复] 先保存阅读进度，再启动动画，避免导航和动画纯在竞争
+      try {
+        await this.saveReadingProgressInternal('goBack');
+      } catch (saveError) {
+        logger.error(TAG, '返回前保存阅读进度失败', saveError instanceof Error ? saveError.message : String(saveError));
+      }
+      
       // 触发关闭过渡动画（带截图和动态封面位置）
+      // [修复] 在 onComplete 回调中执行导航，确保动画完成后再离开页面
+      // 这样 aboutToDisappear() 中的 cancelTransition() 只会在未正常完成时作为安全清理才触发
       logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
       await startBookCloseTransitionWithComponentId(
         'manga_reader_root',
         coverComponentId,
         () => {
-          logger.info(TAG, '关闭过渡动画完成');
+          // 动画完成后执行页面返回
+          logger.info(TAG, '关闭过渡动画完成，执行页面返回');
+          this.pathStack.pop();
         }
       );
       
-      this.saveReadingProgressInternal('goBack').then(() => {
-        // 延迟返回，让动画先开始
-        setTimeout(() => {
-          this.pathStack.pop();
-          logger.info(TAG, '返回上一页');
-        }, 50);
-      }).catch((error: Error) => {
-        logger.error(TAG, '返回前保存阅读进度失败', error.message);
-        setTimeout(() => {
-          this.pathStack.pop();
-          logger.info(TAG, '返回上一页（忽略保存失败）');
-        }, 50);
-      });
+      // [说明] 不再在此处 pop，而是在动画完成的回调中执行
+      // 威居区屏幕展示动画且不锁定页面交互
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(TAG, '返回上一页失败', errorMessage);
-      // [修复] 确保在异常情况下也能返回，重置过渡动画状态
+      // 异常情况下强制重置过渡状态并返回
       cancelTransition();
       this.pathStack.pop();
     }
@@ -5569,8 +5777,9 @@ export struct MangaReaderPage {
           // 条漫模式多章节支持
           prevChapter: this.prevChapterForWebtoon,
           nextChapter: this.nextChapterForWebtoon,
-          isFirstChapter: this.isCurrentChapterFirst(),
-          isLastChapter: this.isCurrentChapterLast(),
+          // [修复] 使用@State响应式变量，确保条漫模式下章节切换时能正确更新
+          isFirstChapter: this.isFirstChapterState,
+          isLastChapter: this.isLastChapterState,
           onRequestAdjacentChapter: (direction: 'prev' | 'next') => {
             this.handleWebtoonAdjacentChapterRequest(direction);
           },
@@ -5658,20 +5867,24 @@ export struct MangaReaderPage {
                 logger.info(TAG, `🔧 [修复] 页面索引一致，无需跳转`);
               }
               
+              // [修复] 条漫模式初始化时跳转到阅读记录位置
+              // 注意：此时 onComponentReady 在 aboutToAppear 中触发，Scroll 组件尚未渲染，
+              // 因此直接调用 jumpToPageImmediate 无效。使用 setTimeout 延迟到渲染完成后。
+              // MangaViewer.aboutToAppear 中已有同样的 setTimeout 逻辑，这里作为额外保障。
               if (chapter && this.isWebtoonMode() && expectedIndex > 0) {
-                let savedPos: number = 0;
-                const key = `webtoon_scroll_${chapter.id}`;
-                try {
-                  const value = AppStorage.get<number>(key);
-                  if (typeof value === 'number') {
-                    savedPos = value as number;
+                setTimeout(() => {
+                  if (component.jumpToPageImmediate) {
+                    const success = component.jumpToPageImmediate(expectedIndex);
+                    if (success) {
+                      logger.info(TAG, `✅ 条漫模式直接跳转到页面: ${expectedIndex + 1}`);
+                    } else {
+                      logger.warn(TAG, `条漫模式直接跳转失败，回退到平滑滚动`);
+                      this.scrollToWebtoonPage(expectedIndex);
+                    }
+                  } else {
+                    this.scrollToWebtoonPage(expectedIndex);
                   }
-                } catch (_e) {
-                  savedPos = 0;
-                }
-                if (!(savedPos > 0)) {
-                  this.scrollToWebtoonPage(expectedIndex);
-                }
+                }, 150);
               }
               
               // [修复] 延迟设置初始化完成标志，确保 MangaViewer 完全初始化后才允许保存阅读进度
@@ -5703,7 +5916,9 @@ export struct MangaReaderPage {
         if (widthVp > 0 && heightVp > 0) {
           this.componentWidth = widthVp;
           this.componentHeight = heightVp;
-          logger.debug(TAG, `📐 组件尺寸更新: ${widthVp.toFixed(0)}x${heightVp.toFixed(0)}vp`);
+          // 更新横竖屏状态
+          this.isLandscapeMode = widthVp > heightVp;
+          logger.debug(TAG, `📐 组件尺寸更新: ${widthVp.toFixed(0)}x${heightVp.toFixed(0)}vp, 横屏=${this.isLandscapeMode}`);
         }
       })
     }
@@ -5843,7 +6058,7 @@ export struct MangaReaderPage {
           .zIndex(1000)
         }
 
-        // 自动翻页设置面板（居中弹窗样式，类似翻页动画设置）
+        // 自动翻页设置面板
         if (this.showAutoPageTurnSettings) {
           Stack() {
             // 遮罩
@@ -5856,90 +6071,190 @@ export struct MangaReaderPage {
                 this.hideAutoPageTurnSettingsWithAnimation();
               })
 
-            // 面板
-            Column() {
-              // 标题
+            if (this.isLandscapeMode) {
+              // 横屏：右侧贴边面板
               Row() {
-                Text('自动翻页设置')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.text_primary'))
+                // 左侧空白（点击关闭）
+                Column()
                   .layoutWeight(1)
-                  .fontFamily(this.appFontFamily)
+                  .height('100%')
+                  .onClick(() => {
+                    this.hideAutoPageTurnSettingsWithAnimation();
+                  })
 
-                Button() {
-                  Image($r('app.media.ic_close'))
-                    .width(20)
-                    .height(20)
-                    .fillColor($r('app.color.text_secondary'))
+                // 右侧面板
+                Column() {
+                  // 标题
+                  Row() {
+                    Text('自动翻页设置')
+                      .fontSize(18)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
+                      .fontFamily(this.appFontFamily)
+
+                    Button() {
+                      Image($r('app.media.ic_close'))
+                        .width(20)
+                        .height(20)
+                        .fillColor($r('app.color.text_secondary'))
+                    }
+                    .width(36)
+                    .height(36)
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => {
+                      this.hideAutoPageTurnSettingsWithAnimation();
+                    })
+                  }
+                  .width('100%')
+                  .margin({ bottom: 16 })
+
+                  // 间隔设置
+                  Text('翻页间隔')
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_secondary'))
+                    .width('100%')
+                    .margin({ bottom: 8 })
+                    .fontFamily(this.appFontFamily)
+
+                  Row() {
+                    Text(`${this.autoPageTurnIntervalSeconds}秒`)
+                      .fontSize(16)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.accent'))
+                      .width(50)
+                      .fontFamily(this.appFontFamily)
+
+                    Slider({
+                      value: this.autoPageTurnIntervalSeconds,
+                      min: 1,
+                      max: 10,
+                      step: 1
+                    })
+                      .layoutWeight(1)
+                      .trackColor($r('app.color.divider'))
+                      .selectedColor($r('app.color.accent'))
+                      .onChange((v: number) => {
+                        this.setAutoPageTurnIntervalSeconds(Math.round(v));
+                      })
+                  }
+                  .width('100%')
+                  .margin({ bottom: 16 })
+
+                  // 启用开关
+                  Row() {
+                    Text('启用自动翻页')
+                      .fontSize(14)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
+                      .fontFamily(this.appFontFamily)
+
+                    Toggle({ type: ToggleType.Switch, isOn: this.autoPageTurnEnabled })
+                      .selectedColor($r('app.color.accent'))
+                      .onChange((isOn: boolean) => {
+                        this.setAutoPageTurnEnabled(isOn);
+                      })
+                  }
+                  .width('100%')
                 }
-                .width(36)
-                .height(36)
-                .backgroundColor(Color.Transparent)
-                .onClick(() => {
-                  this.hideAutoPageTurnSettingsWithAnimation();
-                })
+                .width(320)
+                .height('100%')
+                .padding(16)
+                .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+                .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+                .borderRadius({ topLeft: 16, bottomLeft: 16 })
+                .opacity(this.autoPageTurnSettingsOpacity)
+                .translate({ x: this.autoPageTurnSettingsTranslateX })
+                .hitTestBehavior(HitTestMode.Default)
               }
               .width('100%')
-              .margin({ bottom: 16 })
+              .height('100%')
+            } else {
+              // 竖屏：居中弹窗
+              Column() {
+                // 标题
+                Row() {
+                  Text('自动翻页设置')
+                    .fontSize(18)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+                    .fontFamily(this.appFontFamily)
 
-              // 间隔设置
-              Text('翻页间隔')
-                .fontSize(14)
-                .fontColor($r('app.color.text_secondary'))
+                  Button() {
+                    Image($r('app.media.ic_close'))
+                      .width(20)
+                      .height(20)
+                      .fillColor($r('app.color.text_secondary'))
+                  }
+                  .width(36)
+                  .height(36)
+                  .backgroundColor(Color.Transparent)
+                  .onClick(() => {
+                    this.hideAutoPageTurnSettingsWithAnimation();
+                  })
+                }
                 .width('100%')
-                .margin({ bottom: 8 })
-                .fontFamily(this.appFontFamily)
+                .margin({ bottom: 16 })
 
-              Row() {
-                Text(`${this.autoPageTurnIntervalSeconds}秒`)
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.accent'))
-                  .width(50)
-                  .fontFamily(this.appFontFamily)
-
-                Slider({
-                  value: this.autoPageTurnIntervalSeconds,
-                  min: 1,
-                  max: 10,
-                  step: 1
-                })
-                  .layoutWeight(1)
-                  .trackColor($r('app.color.divider'))
-                  .selectedColor($r('app.color.accent'))
-                  .onChange((v: number) => {
-                    this.setAutoPageTurnIntervalSeconds(Math.round(v));
-                  })
-              }
-              .width('100%')
-              .margin({ bottom: 16 })
-
-              // 启用开关
-              Row() {
-                Text('启用自动翻页')
+                // 间隔设置
+                Text('翻页间隔')
                   .fontSize(14)
-                  .fontColor($r('app.color.text_primary'))
-                  .layoutWeight(1)
+                  .fontColor($r('app.color.text_secondary'))
+                  .width('100%')
+                  .margin({ bottom: 8 })
                   .fontFamily(this.appFontFamily)
 
-                Toggle({ type: ToggleType.Switch, isOn: this.autoPageTurnEnabled })
-                  .selectedColor($r('app.color.accent'))
-                  .onChange((isOn: boolean) => {
-                    this.setAutoPageTurnEnabled(isOn);
+                Row() {
+                  Text(`${this.autoPageTurnIntervalSeconds}秒`)
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.accent'))
+                    .width(50)
+                    .fontFamily(this.appFontFamily)
+
+                  Slider({
+                    value: this.autoPageTurnIntervalSeconds,
+                    min: 1,
+                    max: 10,
+                    step: 1
                   })
+                    .layoutWeight(1)
+                    .trackColor($r('app.color.divider'))
+                    .selectedColor($r('app.color.accent'))
+                    .onChange((v: number) => {
+                      this.setAutoPageTurnIntervalSeconds(Math.round(v));
+                    })
+                }
+                .width('100%')
+                .margin({ bottom: 16 })
+
+                // 启用开关
+                Row() {
+                  Text('启用自动翻页')
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+                    .fontFamily(this.appFontFamily)
+
+                  Toggle({ type: ToggleType.Switch, isOn: this.autoPageTurnEnabled })
+                    .selectedColor($r('app.color.accent'))
+                    .onChange((isOn: boolean) => {
+                      this.setAutoPageTurnEnabled(isOn);
+                    })
+                }
+                .width('100%')
               }
-              .width('100%')
+              .width('90%')
+              .constraintSize({ maxWidth: 400 })
+              .padding(20)
+              .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+              .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+              .borderRadius(16)
+              .opacity(this.autoPageTurnSettingsOpacity)
+              .scale({ x: this.autoPageTurnSettingsScale, y: this.autoPageTurnSettingsScale })
+              .translate({ y: this.autoPageTurnSettingsTranslateY })
             }
-            .width('90%')
-            .constraintSize({ maxWidth: 400 })
-            .padding(20)
-            .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-            .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-            .borderRadius(16)
-            .opacity(this.autoPageTurnSettingsOpacity)
-            .scale({ x: this.autoPageTurnSettingsScale, y: this.autoPageTurnSettingsScale })
-            .translate({ y: this.autoPageTurnSettingsTranslateY })
           }
           .width('100%')
           .height('100%')
@@ -5964,71 +6279,151 @@ export struct MangaReaderPage {
           .zIndex(1000)
         }
 
-        // 悬浮式"更多选项"菜单（移动到主Stack内部，顶部右侧）
+        // 悬浮式"更多选项"菜单
         if (this.showMoreMenu) {
           Stack() {
             // 点击遮罩关闭
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor(Color.Transparent)
+              .backgroundColor(this.isLandscapeMode ? $r('app.color.background_overlay') : Color.Transparent)
+              .opacity(this.isLandscapeMode ? 0.5 : 1)
               .onClick(() => {
                 this.hideMoreMenuWithAnimation();
               })
 
-            // 菜单面板
-            Column() {
-              // 跳转到页面
+            if (this.isLandscapeMode) {
+              // 横屏：右侧贴边面板
               Row() {
-                Text('跳转到页面')
-                  .fontColor($r('app.color.text_primary'))
-                  .fontSize(16)
-                  .fontFamily(this.appFontFamily)
-                Blank().layoutWeight(1)
-                Text(`${this.readerState.currentPageIndex + 1}/${this.readerState.currentChapter?.pages.length || 0}`)
-                  .fontColor($r('app.color.text_secondary'))
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-              }
-              .height(44)
-              .padding({ left: 16, right: 16 })
-              .onClick(() => {
-                logger.info(TAG, 'MoreMenu: 跳转到页面');
-                this.hideMoreMenuWithAnimation();
-                setTimeout(() => {
-                  this.showJumpToPageDialogWithAnimation();
-                }, 200);
-              })
+                Column()
+                  .layoutWeight(1)
+                  .height('100%')
+                  .onClick(() => { this.hideMoreMenuWithAnimation(); })
 
-              Divider().color($r('app.color.divider'))
+                Column() {
+                  // 标题
+                  Row() {
+                    Text('更多选项')
+                      .fontSize(16)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
+                      .fontFamily(this.appFontFamily)
 
-              // 保存本页到图库
-              Row() {
-                Text('保存本页到图库')
-                  .fontColor($r('app.color.text_primary'))
-                  .fontSize(16)
-                  .fontFamily(this.appFontFamily)
-                Blank().layoutWeight(1)
+                    Button() {
+                      Image($r('app.media.ic_close'))
+                        .width(18)
+                        .height(18)
+                        .fillColor($r('app.color.text_secondary'))
+                    }
+                    .width(32)
+                    .height(32)
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => { this.hideMoreMenuWithAnimation(); })
+                  }
+                  .width('100%')
+                  .margin({ bottom: 16 })
+
+                  // 跳转到页面
+                  Row() {
+                    Text('跳转到页面')
+                      .fontColor($r('app.color.text_primary'))
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                    Blank().layoutWeight(1)
+                    Text(`${this.readerState.currentPageIndex + 1}/${this.readerState.currentChapter?.pages.length || 0}`)
+                      .fontColor($r('app.color.text_secondary'))
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                  }
+                  .height(44)
+                  .width('100%')
+                  .onClick(() => {
+                    logger.info(TAG, 'MoreMenu: 跳转到页面');
+                    this.hideMoreMenuWithAnimation();
+                    setTimeout(() => { this.showJumpToPageDialogWithAnimation(); }, 200);
+                  })
+
+                  Divider().color($r('app.color.divider'))
+
+                  // 保存本页到图库
+                  Row() {
+                    Text('保存本页到图库')
+                      .fontColor($r('app.color.text_primary'))
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                    Blank().layoutWeight(1)
+                  }
+                  .height(44)
+                  .width('100%')
+                  .onClick(() => {
+                    logger.info(TAG, 'MoreMenu: 保存本页到图库');
+                    this.hideMoreMenuWithAnimation();
+                    this.saveCurrentPageToGallery();
+                  })
+                }
+                .width(320)
+                .height('100%')
+                .padding(16)
+                .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+                .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+                .borderRadius({ topLeft: 16, bottomLeft: 16 })
+                .opacity(this.moreMenuOpacity)
+                .hitTestBehavior(HitTestMode.Default)
               }
-              .height(44)
-              .padding({ left: 16, right: 16 })
-              .onClick(() => {
-                logger.info(TAG, 'MoreMenu: 保存本页到图库');
-                this.hideMoreMenuWithAnimation();
-                this.saveCurrentPageToGallery();
-              })
+              .width('100%')
+              .height('100%')
+            } else {
+              // 竖屏：顶部右侧下拉菜单
+              Column() {
+                Row() {
+                  Text('跳转到页面')
+                    .fontColor($r('app.color.text_primary'))
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                  Blank().layoutWeight(1)
+                  Text(`${this.readerState.currentPageIndex + 1}/${this.readerState.currentChapter?.pages.length || 0}`)
+                    .fontColor($r('app.color.text_secondary'))
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                }
+                .height(44)
+                .padding({ left: 16, right: 16 })
+                .onClick(() => {
+                  logger.info(TAG, 'MoreMenu: 跳转到页面');
+                  this.hideMoreMenuWithAnimation();
+                  setTimeout(() => { this.showJumpToPageDialogWithAnimation(); }, 200);
+                })
+
+                Divider().color($r('app.color.divider'))
+
+                Row() {
+                  Text('保存本页到图库')
+                    .fontColor($r('app.color.text_primary'))
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                  Blank().layoutWeight(1)
+                }
+                .height(44)
+                .padding({ left: 16, right: 16 })
+                .onClick(() => {
+                  logger.info(TAG, 'MoreMenu: 保存本页到图库');
+                  this.hideMoreMenuWithAnimation();
+                  this.saveCurrentPageToGallery();
+                })
+              }
+              .backgroundColor(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).backgroundColorResource)
+              .backgroundBlurStyle(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).blurStyle)
+              .borderRadius(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).radius)
+              .shadow({ radius: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).radius, color: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).shadowColor, offsetX: 0, offsetY: 4 })
+              .opacity(this.moreMenuOpacity)
+              .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
+              .translate({ y: this.moreMenuTranslateY })
+              .align(Alignment.TopEnd)
+              .margin({ top: this.statusBarHeight + 56 + 8, right: 12 })
+              .constraintSize({ maxWidth: 260 })
+              .zIndex(1100)
             }
-            .backgroundColor(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).backgroundColorResource)
-            .backgroundBlurStyle(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).blurStyle)
-            .borderRadius(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).radius)
-            .shadow({ radius: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).radius, color: ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).shadowColor, offsetX: 0, offsetY: 4 })
-            .opacity(this.moreMenuOpacity)
-            .scale({ x: this.moreMenuScale, y: this.moreMenuScale })
-            .translate({ y: this.moreMenuTranslateY })
-            .align(Alignment.TopEnd)
-            .margin({ top: this.statusBarHeight + 56 + 8, right: 12 })
-            .constraintSize({ maxWidth: 260 })
-            .zIndex(1100)
           }
           .width('100%')
           .height('100%')
@@ -6048,64 +6443,157 @@ export struct MangaReaderPage {
                 this.hideJumpToPageDialogWithAnimation();
               })
 
-            // 对话框
-            Column({ space: 16 }) {
-              Text('跳转到页面')
-                .fontSize(18)
-                .fontFamily(this.appFontFamily)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('app.color.text_primary'))
-
-              Text(`当前: ${this.readerState.currentPageIndex + 1} / ${this.readerState.currentChapter?.pages.length || 0}`)
-                .fontSize(14)
-                .fontColor($r('app.color.text_secondary'))
-                .fontFamily(this.appFontFamily)
-
-              TextInput({ placeholder: '输入页码', text: this.jumpToPageInput })
-                .type(InputType.Number)
-                .width('100%')
-                .height(44)
-                .fontSize(16)
-                .onChange((value: string) => {
-                  this.jumpToPageInput = value;
-                })
-
-              Row({ space: 12 }) {
-                Button('取消')
+            if (this.isLandscapeMode) {
+              // 横屏：右侧贴边面板
+              Row() {
+                Column()
                   .layoutWeight(1)
-                  .height(40)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor($r('app.color.text_secondary'))
-                  .backgroundColor($r('app.color.background_secondary'))
+                  .height('100%')
                   .onClick(() => {
                     this.hideJumpToPageDialogWithAnimation();
                   })
 
-                Button('跳转')
-                  .layoutWeight(1)
-                  .height(40)
-                  .fontSize(14)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor($r('app.color.text_on_accent'))
-                  .backgroundColor($r('app.color.accent'))
-                  .onClick(() => {
-                    const pageNum = parseInt(this.jumpToPageInput);
-                    if (!isNaN(pageNum)) {
-                      this.jumpToPage(pageNum);
+                Column() {
+                  // 标题栏
+                  Row() {
+                    Text('跳转到页面')
+                      .fontSize(18)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
+                      .fontFamily(this.appFontFamily)
+
+                    Button() {
+                      Image($r('app.media.ic_close'))
+                        .width(20)
+                        .height(20)
+                        .fillColor($r('app.color.text_secondary'))
                     }
-                  })
+                    .width(36)
+                    .height(36)
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => {
+                      this.hideJumpToPageDialogWithAnimation();
+                    })
+                  }
+                  .width('100%')
+                  .margin({ bottom: 16 })
+
+                  Text(`当前: ${this.readerState.currentPageIndex + 1} / ${this.readerState.currentChapter?.pages.length || 0}`)
+                    .fontSize(14)
+                    .fontColor($r('app.color.text_secondary'))
+                    .fontFamily(this.appFontFamily)
+                    .margin({ bottom: 16 })
+
+                  TextInput({ placeholder: '输入页码', text: this.jumpToPageInput })
+                    .type(InputType.Number)
+                    .width('100%')
+                    .height(44)
+                    .fontSize(16)
+                    .onChange((value: string) => {
+                      this.jumpToPageInput = value;
+                    })
+                    .margin({ bottom: 16 })
+
+                  Row({ space: 12 }) {
+                    Button('取消')
+                      .layoutWeight(1)
+                      .height(40)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor($r('app.color.text_secondary'))
+                      .backgroundColor($r('app.color.background_secondary'))
+                      .onClick(() => {
+                        this.hideJumpToPageDialogWithAnimation();
+                      })
+
+                    Button('跳转')
+                      .layoutWeight(1)
+                      .height(40)
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor($r('app.color.text_on_accent'))
+                      .backgroundColor($r('app.color.accent'))
+                      .onClick(() => {
+                        const pageNum = parseInt(this.jumpToPageInput);
+                        if (!isNaN(pageNum)) {
+                          this.jumpToPage(pageNum);
+                        }
+                      })
+                  }
+                  .width('100%')
+                }
+                .width(320)
+                .height('100%')
+                .padding(16)
+                .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+                .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+                .borderRadius({ topLeft: 16, bottomLeft: 16 })
+                .opacity(this.jumpToPageDialogOpacity)
+                .hitTestBehavior(HitTestMode.Default)
               }
               .width('100%')
+              .height('100%')
+            } else {
+              // 竖屏：居中对话框
+              Column({ space: 16 }) {
+                Text('跳转到页面')
+                  .fontSize(18)
+                  .fontFamily(this.appFontFamily)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.text_primary'))
+
+                Text(`当前: ${this.readerState.currentPageIndex + 1} / ${this.readerState.currentChapter?.pages.length || 0}`)
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_secondary'))
+                  .fontFamily(this.appFontFamily)
+
+                TextInput({ placeholder: '输入页码', text: this.jumpToPageInput })
+                  .type(InputType.Number)
+                  .width('100%')
+                  .height(44)
+                  .fontSize(16)
+                  .onChange((value: string) => {
+                    this.jumpToPageInput = value;
+                  })
+
+                Row({ space: 12 }) {
+                  Button('取消')
+                    .layoutWeight(1)
+                    .height(40)
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor($r('app.color.text_secondary'))
+                    .backgroundColor($r('app.color.background_secondary'))
+                    .onClick(() => {
+                      this.hideJumpToPageDialogWithAnimation();
+                    })
+
+                  Button('跳转')
+                    .layoutWeight(1)
+                    .height(40)
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor($r('app.color.text_on_accent'))
+                    .backgroundColor($r('app.color.accent'))
+                    .onClick(() => {
+                      const pageNum = parseInt(this.jumpToPageInput);
+                      if (!isNaN(pageNum)) {
+                        this.jumpToPage(pageNum);
+                      }
+                    })
+                }
+                .width('100%')
+              }
+              .width('80%')
+              .constraintSize({ maxWidth: 320 })
+              .padding(20)
+              .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+              .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+              .borderRadius(16)
+              .opacity(this.jumpToPageDialogOpacity)
+              .scale({ x: this.jumpToPageDialogScale, y: this.jumpToPageDialogScale })
             }
-            .width('80%')
-            .constraintSize({ maxWidth: 320 })
-            .padding(20)
-            .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-            .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-            .borderRadius(16)
-            .opacity(this.jumpToPageDialogOpacity)
-            .scale({ x: this.jumpToPageDialogScale, y: this.jumpToPageDialogScale })
           }
           .width('100%')
           .height('100%')
@@ -6125,141 +6613,292 @@ export struct MangaReaderPage {
                 this.hidePageTurnAnimationSettingsWithAnimation();
               })
 
-            // 面板
-            Column() {
-              // 标题
+            if (this.isLandscapeMode) {
+              // 横屏：右侧贴边面板
               Row() {
-                Text('翻页动画设置')
-                  .fontSize(18)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.text_primary'))
+                Column()
                   .layoutWeight(1)
-                  .fontFamily(this.appFontFamily)
+                  .height('100%')
+                  .onClick(() => {
+                    this.hidePageTurnAnimationSettingsWithAnimation();
+                  })
 
-                Button() {
-                  Image($r('app.media.ic_close'))
-                    .width(20)
-                    .height(20)
-                    .fillColor($r('app.color.text_secondary'))
-                }
-                .width(36)
-                .height(36)
-                .backgroundColor(Color.Transparent)
-                .onClick(() => {
-                  this.hidePageTurnAnimationSettingsWithAnimation();
-                })
-              }
-              .width('100%')
-              .margin({ bottom: 16 })
-
-              // 动画类型选择
-              Text('基础动画')
-                .fontSize(14)
-                .fontColor($r('app.color.text_secondary'))
-                .width('100%')
-                .margin({ bottom: 8 })
-                .fontFamily(this.appFontFamily)
-
-              // 第一行：基础动画
-              Row() {
-                this.buildAnimButton('无', PageTurnAnimationType.NONE)
-                this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
-                this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.SpaceBetween)
-              .margin({ bottom: 8 })
-
-              // 第二行：3D动画
-              Row() {
-                this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
-                this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
-                this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.SpaceBetween)
-              .margin({ bottom: 16 })
-
-              // 拟真动画分类
-              Text('拟真动画')
-                .fontSize(14)
-                .fontColor($r('app.color.text_secondary'))
-                .width('100%')
-                .margin({ bottom: 8 })
-                .fontFamily(this.appFontFamily)
-
-              // 拟真动画：卷页效果（只有单页LTR/RTL模式可用）
-              Row() {
-                if (this.isCurlAnimationSupported()) {
-                  this.buildAnimButton('卷页', PageTurnAnimationType.CURL)
-                } else {
-                  // 禁用状态的卷页按钮
-                  Column() {
-                    Text('卷页')
-                      .fontSize(13)
-                      .fontColor($r('app.color.text_secondary'))
-                      .fontFamily(this.appFontFamily)
-                    Text('(仅单页左右翻页)')
-                      .fontSize(10)
-                      .fontColor($r('app.color.text_secondary'))
-                      .margin({ top: 2 })
-                      .fontFamily(this.appFontFamily)
-                  }
-                  .width(100)
-                  .height(50)
-                  .backgroundColor($r('app.color.background_secondary'))
-                  .borderRadius(8)
-                  .justifyContent(FlexAlign.Center)
-                  .opacity(0.5)
-                }
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Start)
-              
-              // 卷页透明度设置（仅在选择卷页动画且模式支持时显示）
-              if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
                 Column() {
+                  // 标题
                   Row() {
-                    Text('卷页背面透明度')
-                      .fontSize(14)
-                      .fontColor($r('app.color.text_secondary'))
+                    Text('翻页动画设置')
+                      .fontSize(18)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
                       .fontFamily(this.appFontFamily)
-                    Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
-                      .fontSize(14)
-                      .fontColor($r('app.color.accent'))
-                      .fontFamily(this.appFontFamily)
+
+                    Button() {
+                      Image($r('app.media.ic_close'))
+                        .width(20)
+                        .height(20)
+                        .fillColor($r('app.color.text_secondary'))
+                    }
+                    .width(36)
+                    .height(36)
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => {
+                      this.hidePageTurnAnimationSettingsWithAnimation();
+                    })
                   }
                   .width('100%')
-                  .justifyContent(FlexAlign.SpaceBetween)
-                  .margin({ top: 16, bottom: 8 })
-                  
-                  Slider({
-                    value: this.readingSettings.curlBackOpacity ?? 90,
-                    min: 0,
-                    max: 100,
-                    step: 5,
-                    style: SliderStyle.OutSet
+                  .margin({ bottom: 16 })
+
+                  Scroll() {
+                    Column() {
+                      // 基础动画
+                      Text('基础动画')
+                        .fontSize(14)
+                        .fontColor($r('app.color.text_secondary'))
+                        .width('100%')
+                        .margin({ bottom: 8 })
+                        .fontFamily(this.appFontFamily)
+
+                      Row() {
+                        this.buildAnimButton('无', PageTurnAnimationType.NONE)
+                        this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
+                        this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
+                      }
+                      .width('100%')
+                      .justifyContent(FlexAlign.SpaceBetween)
+                      .margin({ bottom: 8 })
+
+                      Row() {
+                        this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
+                        this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
+                        this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
+                      }
+                      .width('100%')
+                      .justifyContent(FlexAlign.SpaceBetween)
+                      .margin({ bottom: 16 })
+
+                      // 拟真动画
+                      Text('拟真动画')
+                        .fontSize(14)
+                        .fontColor($r('app.color.text_secondary'))
+                        .width('100%')
+                        .margin({ bottom: 8 })
+                        .fontFamily(this.appFontFamily)
+
+                      Row() {
+                        if (this.isCurlAnimationSupported()) {
+                          this.buildAnimButton('卷页', PageTurnAnimationType.CURL)
+                        } else {
+                          Column() {
+                            Text('卷页')
+                              .fontSize(13)
+                              .fontColor($r('app.color.text_secondary'))
+                              .fontFamily(this.appFontFamily)
+                            Text('(单页/双页横屏)')
+                              .fontSize(10)
+                              .fontColor($r('app.color.text_secondary'))
+                              .margin({ top: 2 })
+                              .fontFamily(this.appFontFamily)
+                          }
+                          .width(100)
+                          .height(50)
+                          .backgroundColor($r('app.color.background_secondary'))
+                          .borderRadius(8)
+                          .justifyContent(FlexAlign.Center)
+                          .opacity(0.5)
+                        }
+                      }
+                      .width('100%')
+                      .justifyContent(FlexAlign.Start)
+
+                      if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
+                        Column() {
+                          Row() {
+                            Text('卷页背面透明度')
+                              .fontSize(14)
+                              .fontColor($r('app.color.text_secondary'))
+                              .fontFamily(this.appFontFamily)
+                            Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                              .fontSize(14)
+                              .fontColor($r('app.color.accent'))
+                              .fontFamily(this.appFontFamily)
+                          }
+                          .width('100%')
+                          .justifyContent(FlexAlign.SpaceBetween)
+                          .margin({ top: 16, bottom: 8 })
+
+                          Slider({
+                            value: this.readingSettings.curlBackOpacity ?? 90,
+                            min: 0,
+                            max: 100,
+                            step: 5,
+                            style: SliderStyle.OutSet
+                          })
+                            .blockColor($r('app.color.accent'))
+                            .trackColor($r('app.color.background_secondary'))
+                            .selectedColor($r('app.color.accent'))
+                            .onChange((value: number) => {
+                              this.readingSettings.curlBackOpacity = value;
+                              this.handleSettingsChange(this.readingSettings);
+                            })
+                        }
+                        .width('100%')
+                      }
+                    }
+                    .width('100%')
+                  }
+                  .layoutWeight(1)
+                  .scrollBar(BarState.Off)
+                }
+                .width(320)
+                .height('100%')
+                .padding(16)
+                .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+                .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+                .borderRadius({ topLeft: 16, bottomLeft: 16 })
+                .opacity(this.pageTurnAnimationSettingsOpacity)
+                .translate({ x: this.pageTurnAnimationSettingsTranslateX })
+                .hitTestBehavior(HitTestMode.Default)
+              }
+              .width('100%')
+              .height('100%')
+            } else {
+              // 竖屏：居中面板
+              Column() {
+                // 标题
+                Row() {
+                  Text('翻页动画设置')
+                    .fontSize(18)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+                    .fontFamily(this.appFontFamily)
+
+                  Button() {
+                    Image($r('app.media.ic_close'))
+                      .width(20)
+                      .height(20)
+                      .fillColor($r('app.color.text_secondary'))
+                  }
+                  .width(36)
+                  .height(36)
+                  .backgroundColor(Color.Transparent)
+                  .onClick(() => {
+                    this.hidePageTurnAnimationSettingsWithAnimation();
                   })
-                    .blockColor($r('app.color.accent'))
-                    .trackColor($r('app.color.background_secondary'))
-                    .selectedColor($r('app.color.accent'))
-                    .onChange((value: number) => {
-                      this.readingSettings.curlBackOpacity = value;
-                      this.handleSettingsChange(this.readingSettings);
-                    })
                 }
                 .width('100%')
+                .margin({ bottom: 16 })
+
+                // 动画类型选择
+                Text('基础动画')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_secondary'))
+                  .width('100%')
+                  .margin({ bottom: 8 })
+                  .fontFamily(this.appFontFamily)
+
+                // 第一行：基础动画
+                Row() {
+                  this.buildAnimButton('无', PageTurnAnimationType.NONE)
+                  this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
+                  this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.SpaceBetween)
+                .margin({ bottom: 8 })
+
+                // 第二行：3D动画
+                Row() {
+                  this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
+                  this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
+                  this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.SpaceBetween)
+                .margin({ bottom: 16 })
+
+                // 拟真动画分类
+                Text('拟真动画')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_secondary'))
+                  .width('100%')
+                  .margin({ bottom: 8 })
+                  .fontFamily(this.appFontFamily)
+
+                // 拟真动画：卷页效果（只有单页LTR/RTL模式可用）
+                Row() {
+                  if (this.isCurlAnimationSupported()) {
+                    this.buildAnimButton('卷页', PageTurnAnimationType.CURL)
+                  } else {
+                    // 禁用状态的卷页按钮
+                    Column() {
+                      Text('卷页')
+                        .fontSize(13)
+                        .fontColor($r('app.color.text_secondary'))
+                        .fontFamily(this.appFontFamily)
+                      Text('(单页/双页横屏)')
+                        .fontSize(10)
+                        .fontColor($r('app.color.text_secondary'))
+                        .margin({ top: 2 })
+                        .fontFamily(this.appFontFamily)
+                    }
+                    .width(100)
+                    .height(50)
+                    .backgroundColor($r('app.color.background_secondary'))
+                    .borderRadius(8)
+                    .justifyContent(FlexAlign.Center)
+                    .opacity(0.5)
+                  }
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Start)
+                
+                // 卷页透明度设置（仅在选择卷页动画且模式支持时显示）
+                if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
+                  Column() {
+                    Row() {
+                      Text('卷页背面透明度')
+                        .fontSize(14)
+                        .fontColor($r('app.color.text_secondary'))
+                        .fontFamily(this.appFontFamily)
+                      Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                        .fontSize(14)
+                        .fontColor($r('app.color.accent'))
+                        .fontFamily(this.appFontFamily)
+                    }
+                    .width('100%')
+                    .justifyContent(FlexAlign.SpaceBetween)
+                    .margin({ top: 16, bottom: 8 })
+                    
+                    Slider({
+                      value: this.readingSettings.curlBackOpacity ?? 90,
+                      min: 0,
+                      max: 100,
+                      step: 5,
+                      style: SliderStyle.OutSet
+                    })
+                      .blockColor($r('app.color.accent'))
+                      .trackColor($r('app.color.background_secondary'))
+                      .selectedColor($r('app.color.accent'))
+                      .onChange((value: number) => {
+                        this.readingSettings.curlBackOpacity = value;
+                        this.handleSettingsChange(this.readingSettings);
+                      })
+                  }
+                  .width('100%')
+                }
               }
+              .width('90%')
+              .constraintSize({ maxWidth: 400 })
+              .padding(20)
+              .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
+              .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
+              .borderRadius(16)
+              .opacity(this.pageTurnAnimationSettingsOpacity)
+              .scale({ x: this.pageTurnAnimationSettingsScale, y: this.pageTurnAnimationSettingsScale })
+              .translate({ y: this.pageTurnAnimationSettingsTranslateY })
             }
-            .width('90%')
-            .constraintSize({ maxWidth: 400 })
-            .padding(20)
-            .backgroundColor(ThemeManager.getInstance().getGlassBackgroundResource())
-            .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
-            .borderRadius(16)
-            .opacity(this.pageTurnAnimationSettingsOpacity)
-            .scale({ x: this.pageTurnAnimationSettingsScale, y: this.pageTurnAnimationSettingsScale })
-            .translate({ y: this.pageTurnAnimationSettingsTranslateY })
           }
           .width('100%')
           .height('100%')

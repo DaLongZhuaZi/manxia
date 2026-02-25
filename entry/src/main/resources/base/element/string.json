@@ -33,6 +33,10 @@
       "value": "应用需要通知权限来展示下载刮削封面、文字的进度。"
     },
     {
+      "name": "background_running_reason",
+      "value": "应用需要在后台继续执行书源校验、章节下载等任务，以免被系统挂起后中断。"
+    },
+    {
       "name": "get_vibrate_reason",
       "value": "应用需要震动权限来增强用户交互体验"
     },

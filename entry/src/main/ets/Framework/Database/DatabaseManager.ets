@@ -82,6 +82,8 @@ export class DatabaseManager {
   private static instance: DatabaseManager | null = null;
   private store: relationalStore.RdbStore | null = null;
   private isInitialized: boolean = false;
+  // [性能优化] 列名→setter函数的映射表，替代130+ if-else链，实现O(1)查找
+  private columnSetterMap: Map<string, (record: GenericQueryRecord, value: DatabaseValue) => void> | null = null;
 
   private constructor() {}
 
@@ -522,11 +524,24 @@ export class DatabaseManager {
       const resultSet = await store.querySql(sql, bindArgs);
       const results: T[] = [];
       
+      // [性能优化] 采用与 querySql() 相同的列类型缓存策略
+      // 只在第一行获取一次列名和列类型，避免每行都调用异步的 getColumnType
+      const columnNames = resultSet.columnNames;
+      const columnCount = columnNames.length;
+      let columnTypes: relationalStore.ColumnType[] = [];
+      let hasFirstRow = false;
+      
       while (resultSet.goToNextRow()) {
-        const record = await this.createRecordFromResultSet(tableName, resultSet);
-        if (record) {
-          results.push(record as T);
+        if (!hasFirstRow) {
+          columnTypes = [];
+          for (let i = 0; i < columnCount; i++) {
+            columnTypes.push(await resultSet.getColumnType(i));
+          }
+          hasFirstRow = true;
         }
+        
+        const record = this.createGenericRecordFromResultSetFast(resultSet, columnNames, columnTypes);
+        results.push(record as T);
       }
       
       resultSet.close();
@@ -1113,9 +1128,182 @@ export class DatabaseManager {
   }
 
   /**
+   * [性能优化] 懒初始化列名→setter函数的映射表
+   * 将130+ if-else字符串比较替换为 O(1) Map查找
+   */
+  private getColumnSetterMap(): Map<string, (record: GenericQueryRecord, value: DatabaseValue) => void> {
+    if (this.columnSetterMap) {
+      return this.columnSetterMap;
+    }
+    const m = new Map<string, (record: GenericQueryRecord, value: DatabaseValue) => void>();
+    // 通用字段
+    m.set('id', (r: GenericQueryRecord, v: DatabaseValue): void => { r.id = v; });
+    m.set('comicId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.comicId = v; });
+    m.set('externalId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.externalId = v; });
+    m.set('chapterId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterId = v; });
+    m.set('userId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.userId = v; });
+    m.set('pageNumber', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageNumber = v; });
+    m.set('readTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.readTime = v; });
+    m.set('duration', (r: GenericQueryRecord, v: DatabaseValue): void => { r.duration = v; });
+    m.set('createTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.createTime = v; });
+    m.set('updateTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.updateTime = v; });
+    // user_settings 字段
+    m.set('settingKey', (r: GenericQueryRecord, v: DatabaseValue): void => { r.settingKey = v; });
+    m.set('settingValue', (r: GenericQueryRecord, v: DatabaseValue): void => { r.settingValue = v; });
+    m.set('settingType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.settingType = v; });
+    // comic_info 字段
+    m.set('title', (r: GenericQueryRecord, v: DatabaseValue): void => { r.title = v; });
+    m.set('author', (r: GenericQueryRecord, v: DatabaseValue): void => { r.author = v; });
+    m.set('description', (r: GenericQueryRecord, v: DatabaseValue): void => { r.description = v; });
+    m.set('coverUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.coverUrl = v; });
+    m.set('sourceId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.sourceId = v; });
+    m.set('status', (r: GenericQueryRecord, v: DatabaseValue): void => { r.status = v; });
+    m.set('tags', (r: GenericQueryRecord, v: DatabaseValue): void => { r.tags = v; });
+    m.set('rating', (r: GenericQueryRecord, v: DatabaseValue): void => { r.rating = v; });
+    m.set('chapterCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterCount = v; });
+    m.set('lastUpdateTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.lastUpdateTime = v; });
+    m.set('addTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.addTime = v; });
+    // chapter 字段
+    m.set('chapterIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterIndex = v; });
+    m.set('chapterNumber', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterNumber = v; });
+    m.set('pageCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageCount = v; });
+    m.set('isDownloaded', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isDownloaded = v; });
+    m.set('downloadPath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.downloadPath = v; });
+    m.set('publishTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.publishTime = v; });
+    m.set('url', (r: GenericQueryRecord, v: DatabaseValue): void => { r.url = v; });
+    // page 字段
+    m.set('index', (r: GenericQueryRecord, v: DatabaseValue): void => { r.index = v; });
+    m.set('imageUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.imageUrl = v; });
+    m.set('localPath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.localPath = v; });
+    m.set('width', (r: GenericQueryRecord, v: DatabaseValue): void => { r.width = v; });
+    m.set('height', (r: GenericQueryRecord, v: DatabaseValue): void => { r.height = v; });
+    m.set('fileSize', (r: GenericQueryRecord, v: DatabaseValue): void => { r.fileSize = v; });
+    // comic_source 字段
+    m.set('name', (r: GenericQueryRecord, v: DatabaseValue): void => { r.name = v; });
+    m.set('baseUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.baseUrl = v; });
+    m.set('pluginId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pluginId = v; });
+    m.set('isEnabled', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isEnabled = v; });
+    m.set('priority', (r: GenericQueryRecord, v: DatabaseValue): void => { r.priority = v; });
+    m.set('config', (r: GenericQueryRecord, v: DatabaseValue): void => { r.config = v; });
+    m.set('configJson', (r: GenericQueryRecord, v: DatabaseValue): void => { r.configJson = v; });
+    m.set('userAgent', (r: GenericQueryRecord, v: DatabaseValue): void => { r.userAgent = v; });
+    m.set('enableJavaScript', (r: GenericQueryRecord, v: DatabaseValue): void => { r.enableJavaScript = v; });
+    m.set('enableImages', (r: GenericQueryRecord, v: DatabaseValue): void => { r.enableImages = v; });
+    m.set('timeout', (r: GenericQueryRecord, v: DatabaseValue): void => { r.timeout = v; });
+    m.set('cookies', (r: GenericQueryRecord, v: DatabaseValue): void => { r.cookies = v; });
+    m.set('pkg', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pkg = v; });
+    m.set('iconPath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.iconPath = v; });
+    m.set('type', (r: GenericQueryRecord, v: DatabaseValue): void => { r.type = v; });
+    m.set('requireProxy', (r: GenericQueryRecord, v: DatabaseValue): void => { r.requireProxy = v; });
+    m.set('sourcePkg', (r: GenericQueryRecord, v: DatabaseValue): void => { r.sourcePkg = v; });
+    m.set('version', (r: GenericQueryRecord, v: DatabaseValue): void => { r.version = v; });
+    // 隐私/NSFW
+    m.set('isNSFW', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isNSFW = v; });
+    m.set('isPrivate', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isPrivate = v; });
+    // favorite 字段
+    m.set('favoriteType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.favoriteType = v; });
+    m.set('favoriteTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.favoriteTime = v; });
+    m.set('sortOrder', (r: GenericQueryRecord, v: DatabaseValue): void => { r.sortOrder = v; });
+    // download_task 字段
+    m.set('taskType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.taskType = v; });
+    m.set('targetId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.targetId = v; });
+    m.set('targetTitle', (r: GenericQueryRecord, v: DatabaseValue): void => { r.targetTitle = v; });
+    m.set('totalSize', (r: GenericQueryRecord, v: DatabaseValue): void => { r.totalSize = v; });
+    m.set('downloadedSize', (r: GenericQueryRecord, v: DatabaseValue): void => { r.downloadedSize = v; });
+    m.set('progress', (r: GenericQueryRecord, v: DatabaseValue): void => { r.progress = v; });
+    m.set('statusCode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.statusCode = v; });
+    m.set('errorMessage', (r: GenericQueryRecord, v: DatabaseValue): void => { r.errorMessage = v; });
+    m.set('startTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.startTime = v; });
+    m.set('endTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.endTime = v; });
+    // plugin 字段
+    m.set('enabled', (r: GenericQueryRecord, v: DatabaseValue): void => { r.enabled = v; });
+    m.set('configData', (r: GenericQueryRecord, v: DatabaseValue): void => { r.configData = v; });
+    m.set('installTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.installTime = v; });
+    // webview 字段
+    m.set('enableCookie', (r: GenericQueryRecord, v: DatabaseValue): void => { r.enableCookie = v; });
+    m.set('cookieData', (r: GenericQueryRecord, v: DatabaseValue): void => { r.cookieData = v; });
+    m.set('enableCache', (r: GenericQueryRecord, v: DatabaseValue): void => { r.enableCache = v; });
+    m.set('cacheMode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.cacheMode = v; });
+    m.set('customHeaders', (r: GenericQueryRecord, v: DatabaseValue): void => { r.customHeaders = v; });
+    m.set('proxyConfig', (r: GenericQueryRecord, v: DatabaseValue): void => { r.proxyConfig = v; });
+    m.set('pageIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageIndex = v; });
+    m.set('originalUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.originalUrl = v; });
+    m.set('finalUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.finalUrl = v; });
+    m.set('mimeType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.mimeType = v; });
+    m.set('contentLength', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentLength = v; });
+    m.set('loadTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.loadTime = v; });
+    m.set('cacheStatus', (r: GenericQueryRecord, v: DatabaseValue): void => { r.cacheStatus = v; });
+    m.set('captureTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.captureTime = v; });
+    m.set('requestType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.requestType = v; });
+    m.set('requestUrl', (r: GenericQueryRecord, v: DatabaseValue): void => { r.requestUrl = v; });
+    m.set('requestMethod', (r: GenericQueryRecord, v: DatabaseValue): void => { r.requestMethod = v; });
+    m.set('statusText', (r: GenericQueryRecord, v: DatabaseValue): void => { r.statusText = v; });
+    m.set('responseSize', (r: GenericQueryRecord, v: DatabaseValue): void => { r.responseSize = v; });
+    m.set('responseTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.responseTime = v; });
+    m.set('errorCode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.errorCode = v; });
+    m.set('requestTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.requestTime = v; });
+    // 电子书字段
+    m.set('content', (r: GenericQueryRecord, v: DatabaseValue): void => { r.content = v; });
+    m.set('bookId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.bookId = v; });
+    m.set('startPosition', (r: GenericQueryRecord, v: DatabaseValue): void => { r.startPosition = v; });
+    m.set('endPosition', (r: GenericQueryRecord, v: DatabaseValue): void => { r.endPosition = v; });
+    m.set('wordCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.wordCount = v; });
+    m.set('format', (r: GenericQueryRecord, v: DatabaseValue): void => { r.format = v; });
+    m.set('filePath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.filePath = v; });
+    m.set('publisher', (r: GenericQueryRecord, v: DatabaseValue): void => { r.publisher = v; });
+    m.set('publishDate', (r: GenericQueryRecord, v: DatabaseValue): void => { r.publishDate = v; });
+    m.set('isbn', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isbn = v; });
+    m.set('language', (r: GenericQueryRecord, v: DatabaseValue): void => { r.language = v; });
+    m.set('coverImagePath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.coverImagePath = v; });
+    m.set('isFavorite', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isFavorite = v; });
+    m.set('totalWordCount', (r: GenericQueryRecord, v: DatabaseValue): void => { r.totalWordCount = v; });
+    // 电子书阅读进度
+    m.set('currentChapterId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.currentChapterId = v; });
+    m.set('currentChapterIndex', (r: GenericQueryRecord, v: DatabaseValue): void => { r.currentChapterIndex = v; });
+    m.set('currentPosition', (r: GenericQueryRecord, v: DatabaseValue): void => { r.currentPosition = v; });
+    m.set('domPos', (r: GenericQueryRecord, v: DatabaseValue): void => { r.domPos = v; });
+    m.set('lastReadTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.lastReadTime = v; });
+    m.set('totalReadingTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.totalReadingTime = v; });
+    // 电子书阅读设置
+    m.set('fontSize', (r: GenericQueryRecord, v: DatabaseValue): void => { r.fontSize = v; });
+    m.set('lineHeight', (r: GenericQueryRecord, v: DatabaseValue): void => { r.lineHeight = v; });
+    m.set('fontFamily', (r: GenericQueryRecord, v: DatabaseValue): void => { r.fontFamily = v; });
+    m.set('fontPath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.fontPath = v; });
+    m.set('fontWeight', (r: GenericQueryRecord, v: DatabaseValue): void => { r.fontWeight = v; });
+    m.set('backgroundColor', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundColor = v; });
+    m.set('textColor', (r: GenericQueryRecord, v: DatabaseValue): void => { r.textColor = v; });
+    m.set('themeBgImage', (r: GenericQueryRecord, v: DatabaseValue): void => { r.themeBgImage = v; });
+    m.set('nightMode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.nightMode = v; });
+    m.set('followSystemTheme', (r: GenericQueryRecord, v: DatabaseValue): void => { r.followSystemTheme = v; });
+    m.set('pageMargin', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageMargin = v; });
+    m.set('pageMode', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageMode = v; });
+    m.set('brightness', (r: GenericQueryRecord, v: DatabaseValue): void => { r.brightness = v; });
+    m.set('autoSave', (r: GenericQueryRecord, v: DatabaseValue): void => { r.autoSave = v; });
+    m.set('saveInterval', (r: GenericQueryRecord, v: DatabaseValue): void => { r.saveInterval = v; });
+    // 纯文本阅读器设置
+    m.set('letterSpacing', (r: GenericQueryRecord, v: DatabaseValue): void => { r.letterSpacing = v; });
+    m.set('paragraphSpacing', (r: GenericQueryRecord, v: DatabaseValue): void => { r.paragraphSpacing = v; });
+    m.set('firstLineIndent', (r: GenericQueryRecord, v: DatabaseValue): void => { r.firstLineIndent = v; });
+    m.set('textAlignment', (r: GenericQueryRecord, v: DatabaseValue): void => { r.textAlignment = v; });
+    m.set('pageTurnAnimation', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageTurnAnimation = v; });
+    m.set('tapToTurn', (r: GenericQueryRecord, v: DatabaseValue): void => { r.tapToTurn = v; });
+    m.set('volumeKeyNavigation', (r: GenericQueryRecord, v: DatabaseValue): void => { r.volumeKeyNavigation = v; });
+    m.set('keepScreenOn', (r: GenericQueryRecord, v: DatabaseValue): void => { r.keepScreenOn = v; });
+    m.set('showPageNumber', (r: GenericQueryRecord, v: DatabaseValue): void => { r.showPageNumber = v; });
+    m.set('showProgress', (r: GenericQueryRecord, v: DatabaseValue): void => { r.showProgress = v; });
+    m.set('showTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.showTime = v; });
+    m.set('showBattery', (r: GenericQueryRecord, v: DatabaseValue): void => { r.showBattery = v; });
+    m.set('backgroundType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundType = v; });
+    m.set('backgroundImagePath', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundImagePath = v; });
+    m.set('backgroundImageOpacity', (r: GenericQueryRecord, v: DatabaseValue): void => { r.backgroundImageOpacity = v; });
+    this.columnSetterMap = m;
+    return m;
+  }
+
+  /**
    * [性能优化] 快速创建通用记录对象
    * 使用预先获取的列类型数组，避免每行都调用异步的getColumnType
-   * 性能提升：从 O(rows × columns) 次异步调用 降低到 O(columns) 次
+   * 使用Map O(1)查找替代130+ if-else链
    */
   private createGenericRecordFromResultSetFast(
     resultSet: relationalStore.ResultSet,
@@ -1123,9 +1311,9 @@ export class DatabaseManager {
     columnTypes: relationalStore.ColumnType[]
   ): DatabaseRecord {
     const record: GenericQueryRecord = {};
+    const setterMap = this.getColumnSetterMap();
     
     for (let i = 0; i < columnNames.length; i++) {
-      const columnName = columnNames[i];
       const columnType = columnTypes[i];
       let value: DatabaseValue = null;
       
@@ -1147,110 +1335,10 @@ export class DatabaseManager {
           break;
       }
       
-      // 直接设置属性，绕过setRecordProperty的类型转换问题
-      if (columnName === 'id') {
-        record.id = value;
-      } else if (columnName === 'comicId') {
-        record.comicId = value;
-      } else if (columnName === 'externalId') {
-        record.externalId = value;
-      } else if (columnName === 'chapterId') {
-        record.chapterId = value;
-      } else if (columnName === 'userId') {
-        record.userId = value;
-      } else if (columnName === 'pageNumber') {
-        record.pageNumber = value;
-      } else if (columnName === 'readTime') {
-        record.readTime = value;
-      } else if (columnName === 'duration') {
-        record.duration = value;
-      } else if (columnName === 'createTime') {
-        record.createTime = value;
-      } else if (columnName === 'settingKey') {
-        record.settingKey = value;
-      } else if (columnName === 'settingValue') {
-        record.settingValue = value;
-      } else if (columnName === 'settingType') {
-        record.settingType = value;
-      } else if (columnName === 'updateTime') {
-        record.updateTime = value;
-      } else if (columnName === 'title') {
-        record.title = value;
-      } else if (columnName === 'author') {
-        record.author = value;
-      } else if (columnName === 'description') {
-        record.description = value;
-      } else if (columnName === 'coverUrl') {
-        record.coverUrl = value;
-      } else if (columnName === 'sourceId') {
-        record.sourceId = value;
-      } else if (columnName === 'status') {
-        record.status = value;
-      } else if (columnName === 'tags') {
-        record.tags = value;
-      } else if (columnName === 'rating') {
-        record.rating = value;
-      } else if (columnName === 'chapterCount') {
-        record.chapterCount = value;
-      } else if (columnName === 'lastUpdateTime') {
-        record.lastUpdateTime = value;
-      } else if (columnName === 'addTime') {
-        record.addTime = value;
-      } else if (columnName === 'chapterIndex') {
-        record.chapterIndex = value;
-      } else if (columnName === 'pageCount') {
-        record.pageCount = value;
-      } else if (columnName === 'isDownloaded') {
-        record.isDownloaded = value;
-      } else if (columnName === 'downloadPath') {
-        record.downloadPath = value;
-      } else if (columnName === 'publishTime') {
-        record.publishTime = value;
-      } else if (columnName === 'index') {
-        record.index = value;
-      } else if (columnName === 'imageUrl') {
-        record.imageUrl = value;
-      } else if (columnName === 'localPath') {
-        record.localPath = value;
-      } else if (columnName === 'width') {
-        record.width = value;
-      } else if (columnName === 'height') {
-        record.height = value;
-      } else if (columnName === 'fileSize') {
-        record.fileSize = value;
-      } else if (columnName === 'name') {
-        record.name = value;
-      } else if (columnName === 'baseUrl') {
-        record.baseUrl = value;
-      } else if (columnName === 'pluginId') {
-        record.pluginId = value;
-      } else if (columnName === 'isEnabled') {
-        record.isEnabled = value;
-      } else if (columnName === 'priority') {
-        record.priority = value;
-      } else if (columnName === 'config') {
-        record.config = value;
-      } else if (columnName === 'configJson') {
-        record.configJson = value;
-      } else if (columnName === 'chapterNumber') {
-        record.chapterNumber = value;
-      } else if (columnName === 'url') {
-        // [懒加载] 添加url字段支持
-        record.url = value;
-      } else if (columnName === 'sourcePkg') {
-        record.sourcePkg = value;
-      } else if (columnName === 'isNSFW') {
-        record.isNSFW = value;
-      } else if (columnName === 'isPrivate') {
-        record.isPrivate = value;
-      } else if (columnName === 'pkg') {
-        record.pkg = value;
-      } else if (columnName === 'version') {
-        record.version = value;
-      } else if (columnName === 'iconPath') {
-        record.iconPath = value;
+      const setter = setterMap.get(columnNames[i]);
+      if (setter) {
+        setter(record, value);
       }
-      // 其他不常用字段可以在需要时添加
     }
     
     return record;

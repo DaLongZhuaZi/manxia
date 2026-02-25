@@ -17,12 +17,15 @@ import { LegadoChapter, LegadoBook, LegadoBookSourceType } from '../Framework/No
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { NovelBook, NovelReadStatus } from '../Models/NovelModels';
 import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
-import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
+import { TextFontSettingsPanel } from '../components/TextFontSettingsPanel';
+import { TextBackgroundSettingsPanel } from '../components/TextBackgroundSettingsPanel';
+import { TextReadingSettingsPanel2 } from '../components/TextReadingSettingsPanel2';
 import { 
   TextReaderSettings, 
   DEFAULT_TEXT_READER_SETTINGS,
   DEFAULT_TEXT_STYLE,
   TextChapter,
+  TextReadingMode,
   BackgroundType,
   PageMargins,
   TextAlignment
@@ -70,13 +73,19 @@ export struct NovelReaderPage {
   @State showTopToolbar: boolean = false;
   @State showBottomToolbar: boolean = false;
   @State toolbarOpacity: number = 0.0;
-  @State showSettingsPanel: boolean = false;
   @State showChapterList: boolean = false;
+  // 3个独立设置面板
+  @State showFontSettings: boolean = false;
+  @State showBackgroundSettings: boolean = false;
+  @State showReadingSettings: boolean = false;
 
   // 动画状态
-  @State settingsPanelOpacity: number = 0;
-  @State settingsPanelScale: number = 0.95;
   @State chapterListOpacity: number = 0;
+  
+  // 组件重建控制（用于双页模式切换时强制重新加载组件）
+  @State readerKey: number = 0;
+  // 上一次的阅读模式（用于检测变化）
+  private lastReadingMode: TextReadingMode = TextReadingMode.PAGE;
   
   // 百科搜索对话框状态
   @State showEncyclopediaDialog: boolean = false;
@@ -129,8 +138,16 @@ export struct NovelReaderPage {
     this.saveReadProgress();
     // 恢复正常显示模式
     this.restoreNormalMode();
+    // 离开页面时恢复自动旋转（防止双页模式强制横屏残留）
+    WindowManager.setPreferredOrientationAuto(this.uiContext ?? undefined);
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
     cancelTransition();
+  }
+
+  onPageHide(): void {
+    logger.lifecycle(TAG, '小说阅读器页面隐藏（进入后台）');
+    // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
+    this.saveReadProgress();
   }
 
   /**
@@ -276,33 +293,33 @@ export struct NovelReaderPage {
   }
 
   /**
-   * 显示设置面板（带动画）
+   * 显示字体设置面板
    */
-  private showSettingsPanelWithAnimation(): void {
-    this.showSettingsPanel = true;
-    animateTo({
-      duration: 250,
-      curve: curves.springMotion(0.5, 0.8)
-    }, () => {
-      this.settingsPanelOpacity = 1;
-      this.settingsPanelScale = 1;
-    });
+  private showFontSettingsPanel(): void {
+    this.hideToolbarWithAnimation();
+    this.showBackgroundSettings = false;
+    this.showReadingSettings = false;
+    this.showFontSettings = true;
   }
 
   /**
-   * 隐藏设置面板（带动画）
+   * 显示背景设置面板
    */
-  private hideSettingsPanelWithAnimation(): void {
-    animateTo({
-      duration: 200,
-      curve: Curve.EaseOut
-    }, () => {
-      this.settingsPanelOpacity = 0;
-      this.settingsPanelScale = 0.95;
-    });
-    setTimeout(() => {
-      this.showSettingsPanel = false;
-    }, 200);
+  private showBackgroundSettingsPanel(): void {
+    this.hideToolbarWithAnimation();
+    this.showFontSettings = false;
+    this.showReadingSettings = false;
+    this.showBackgroundSettings = true;
+  }
+
+  /**
+   * 显示阅读设置面板
+   */
+  private showReadingSettingsPanel(): void {
+    this.hideToolbarWithAnimation();
+    this.showFontSettings = false;
+    this.showBackgroundSettings = false;
+    this.showReadingSettings = true;
   }
 
   async loadSettings(): Promise<void> {
@@ -513,11 +530,51 @@ export struct NovelReaderPage {
   }
 
   onSettingsChange(newSettings: TextReaderSettings): void {
+    const oldMode = this.lastReadingMode;
+    const newMode = newSettings.readingMode;
+    
     // 直接更新settings状态，触发UI响应式更新
     this.settings = newSettings;
     // 异步保存设置（不阻塞UI）
     this.saveSettings();
     logger.debug(TAG, `设置已更新并保存`);
+    
+    // 检测阅读模式变化，处理双页模式的横屏切换和组件重载
+    if (oldMode !== newMode) {
+      this.lastReadingMode = newMode;
+      this.handleReadingModeChange(oldMode, newMode);
+    }
+  }
+  
+  /**
+   * 处理阅读模式变化：双页模式需要强制横屏并重载组件
+   */
+  private handleReadingModeChange(oldMode: TextReadingMode, newMode: TextReadingMode): void {
+    try {
+      if (!this.uiContext) {
+        this.uiContext = this.getUIContext();
+      }
+      
+      if (newMode === TextReadingMode.DUAL_PAGE) {
+        // 进入双页模式：强制横屏 + 重载组件
+        logger.info(TAG, '切换到双页模式，强制横屏并重载组件');
+        WindowManager.setPreferredOrientationLandscape(this.uiContext ?? undefined);
+        // 延迟重载组件，等待横屏旋转完成
+        setTimeout(() => {
+          this.readerKey++;
+        }, 300);
+      } else if (oldMode === TextReadingMode.DUAL_PAGE) {
+        // 离开双页模式：恢复自动旋转 + 重载组件
+        logger.info(TAG, '离开双页模式，恢复自动旋转并重载组件');
+        WindowManager.setPreferredOrientationAuto(this.uiContext ?? undefined);
+        // 延迟重载组件，等待旋转完成
+        setTimeout(() => {
+          this.readerKey++;
+        }, 300);
+      }
+    } catch (error) {
+      logger.error(TAG, `处理阅读模式变化失败: ${String(error)}`);
+    }
   }
   
   /**
@@ -921,9 +978,55 @@ export struct NovelReaderPage {
           this.buildChapterListPanel()
         }
 
-        // 设置面板
-        if (this.showSettingsPanel) {
-          this.buildSettingsPanel()
+        // 字体设置面板
+        if (this.showFontSettings) {
+          TextFontSettingsPanel({
+            settings: this.settings,
+            isVisible: this.showFontSettings,
+            callbacks: {
+              onSettingsChange: (newSettings: TextReaderSettings) => {
+                this.onSettingsChange(newSettings);
+              },
+              onClose: () => {
+                this.showFontSettings = false;
+              }
+            }
+          })
+            .zIndex(1000)
+        }
+
+        // 背景设置面板
+        if (this.showBackgroundSettings) {
+          TextBackgroundSettingsPanel({
+            settings: this.settings,
+            isVisible: this.showBackgroundSettings,
+            callbacks: {
+              onSettingsChange: (newSettings: TextReaderSettings) => {
+                this.onSettingsChange(newSettings);
+              },
+              onClose: () => {
+                this.showBackgroundSettings = false;
+              }
+            }
+          })
+            .zIndex(1000)
+        }
+
+        // 阅读设置面板
+        if (this.showReadingSettings) {
+          TextReadingSettingsPanel2({
+            settings: this.settings,
+            isVisible: this.showReadingSettings,
+            callbacks: {
+              onSettingsChange: (newSettings: TextReaderSettings) => {
+                this.onSettingsChange(newSettings);
+              },
+              onClose: () => {
+                this.showReadingSettings = false;
+              }
+            }
+          })
+            .zIndex(1000)
         }
         
         // 百科搜索对话框
@@ -994,6 +1097,7 @@ export struct NovelReaderPage {
 
   /**
    * 构建阅读器视图
+   * 使用 readerKey 控制组件重建，切换双页模式时强制重新创建组件触发重新排版
    */
   @Builder
   buildReaderView() {
@@ -1017,6 +1121,7 @@ export struct NovelReaderPage {
     })
       .width('100%')
       .height('100%')
+      .id(`novel_reader_component_${this.readerKey}`)
   }
 
   /**
@@ -1108,10 +1213,9 @@ export struct NovelReaderPage {
         // 目录按钮
         Button() {
           SymbolGlyph($r('sys.symbol.list_bullet'))
-            .fontSize(24)
-            .fontColor([$r('app.color.text_primary')])
+
         }
-        .width(64)
+        .width(48)
         .height(48)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
@@ -1121,18 +1225,44 @@ export struct NovelReaderPage {
 
         Blank()
 
-        // 设置按钮
+        // 字体设置按钮
         Button() {
-          SymbolGlyph($r('sys.symbol.sun_max'))
-            .fontSize(24)
-            .fontColor([$r('app.color.text_primary')])
+          SymbolGlyph($r('sys.symbol.textformat'))
+
         }
-        .width(64)
+        .width(48)
         .height(48)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          this.hideToolbarWithAnimation();
-          this.showSettingsPanelWithAnimation();
+          this.showFontSettingsPanel();
+        })
+
+        Blank()
+
+        // 背景设置按钮
+        Button() {
+          SymbolGlyph($r('sys.symbol.paintbrush'))
+
+        }
+        .width(48)
+        .height(48)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.showBackgroundSettingsPanel();
+        })
+
+        Blank()
+
+        // 阅读设置按钮
+        Button() {
+          SymbolGlyph($r('sys.symbol.gearshape'))
+
+        }
+        .width(48)
+        .height(48)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.showReadingSettingsPanel();
         })
       }
       .width('100%')
@@ -1217,54 +1347,6 @@ export struct NovelReaderPage {
     .height('100%')
   }
 
-  /**
-   * 构建设置面板
-   */
-  @Builder
-  buildSettingsPanel() {
-    Stack() {
-      // 遮罩层 - 使用轻微模糊效果而非压暗
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('rgba(0,0,0,0.15)')
-        .opacity(this.settingsPanelOpacity)
-        .onClick(() => {
-          this.hideSettingsPanelWithAnimation();
-        })
-      
-      // 设置面板 - 使用磨砂效果
-      Column() {
-        TextReaderSettingsPanel({
-          settings: this.settings,
-          onClose: () => {
-            this.hideSettingsPanelWithAnimation();
-          },
-          onSettingsChange: (newSettings: TextReaderSettings) => {
-            this.onSettingsChange(newSettings);
-          }
-        })
-      }
-      .width('95%')
-      .height('80%')
-      .constraintSize({ maxWidth: 450, minWidth: 320 })
-      .backgroundColor($r('app.color.settings_panel_background'))
-      .backdropBlur(20)
-      .borderRadius(16)
-      .opacity(this.settingsPanelOpacity)
-      .scale({ x: this.settingsPanelScale, y: this.settingsPanelScale })
-      .clip(true)
-      .shadow({
-        radius: 20,
-        color: 'rgba(0,0,0,0.15)',
-        offsetX: 0,
-        offsetY: 4
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .alignContent(Alignment.Center)
-  }
 
   toggleNightMode(): void {
     // 防御性检查：确保background对象存在

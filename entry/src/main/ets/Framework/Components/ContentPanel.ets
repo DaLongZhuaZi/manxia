@@ -486,6 +486,8 @@ interface ContentPanelThemeState {
 @Component
 export struct ContentPanelOverlay {
   @Prop themeState: ContentPanelThemeState = { currentTheme: ThemeType.DARK };
+  // 帮助中心导航回调（由宿主页面提供）
+  onNavigateToHelpCenter?: () => void;
   @State private mode: PanelMode = PanelMode.HIDDEN;
   @State private tabs: ContentTab[] = [];
   @State private activeTabId: string = '';
@@ -789,6 +791,19 @@ export struct ContentPanelOverlay {
         }
 
         Blank()
+
+        // 帮助中心按钮
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
+          SymbolGlyph($r('sys.symbol.questionmark_circle')).fontSize(14).fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+        }
+        .width(28).height(28)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .onClick(() => {
+          if (this.onNavigateToHelpCenter) {
+            this.minimizeWithAnimation();
+            this.onNavigateToHelpCenter();
+          }
+        })
 
         // 刷新按钮
         Button({ type: ButtonType.Circle, stateEffect: true }) {

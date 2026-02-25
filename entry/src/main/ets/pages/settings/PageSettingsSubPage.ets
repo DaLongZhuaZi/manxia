@@ -103,6 +103,7 @@ export struct PageSettingsSubPage {
   @State mangaDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State ebookDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State novelDetailPageType: DetailPageType = DetailPageType.DEFAULT;
+  @State recommendationEnabled: boolean = true;
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -204,8 +205,9 @@ export struct PageSettingsSubPage {
     this.mangaDetailPageType = mangaType as DetailPageType;
     this.ebookDetailPageType = ebookType as DetailPageType;
     this.novelDetailPageType = novelType as DetailPageType;
+    this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
 
-    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}`);
+    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}`);
   }
 
   /**
@@ -215,8 +217,9 @@ export struct PageSettingsSubPage {
     this.settingsManager.setString(PageSettingKeys.MANGA_DETAIL_PAGE_TYPE, this.mangaDetailPageType);
     this.settingsManager.setString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, this.ebookDetailPageType);
     this.settingsManager.setString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, this.novelDetailPageType);
+    this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
 
-    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}`);
+    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}`);
 
     promptAction.showToast({
       message: '设置已保存',
@@ -756,6 +759,41 @@ export struct PageSettingsSubPage {
                   this.saveSettings();
                 }
               )
+
+              // 相关推荐开关
+              Row() {
+                Column({ space: 4 }) {
+                  Text('相关推荐')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('在统一详情页内展示根据内容属性匹配的推荐内容')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.recommendationEnabled })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.recommendationEnabled = isOn;
+                    this.saveSettings();
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(12)
+              .onClick(() => {
+                this.recommendationEnabled = !this.recommendationEnabled;
+                this.saveSettings();
+              })
             }
             .width('100%')
             .alignItems(HorizontalAlign.Start)

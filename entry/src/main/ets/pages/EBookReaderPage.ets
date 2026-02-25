@@ -210,6 +210,14 @@ struct EBookReaderPage {
     cancelTransition();
   }
 
+  onPageHide(): void {
+    logger.lifecycle(TAG, '电子书阅读器页面隐藏（进入后台）');
+    // 累加当前阅读时间段，确保不丢失
+    this.accumulateReadingTime();
+    // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
+    this.saveReadingProgress();
+  }
+
   /**
    * 开始阅读时间追踪
    * 使用定时器每1秒累加一次阅读时间

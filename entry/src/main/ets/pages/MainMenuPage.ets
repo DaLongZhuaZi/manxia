@@ -38,6 +38,7 @@ import { ReadingSettingsSubPage } from './settings/ReadingSettingsSubPage';
 import { NetworkSettingsSubPage } from './settings/NetworkSettingsSubPage';
 import { NotificationSettingsSubPage } from './settings/NotificationSettingsSubPage';
 import { AdvancedSettingsSubPage } from './settings/AdvancedSettingsSubPage';
+import { ErrorManagementSubPage } from './settings/ErrorManagementSubPage';
 import { InteractionSettingsSubPage } from './settings/InteractionSettingsSubPage';
 import { AnimationSettingsSubPage } from './settings/AnimationSettingsSubPage';
 import { isMainPageBottomBarAnimationEnabled } from '../Framework/Animation/AnimationSettingsManager';
@@ -104,6 +105,7 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { UnifiedDetailPage } from './UnifiedDetailPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
+import { AvifImage } from '../components/AvifImage';
 
 // 测试页面导入已移除
 // import { ReaderKitTestPage } from './ReaderKitTestPage';
@@ -461,6 +463,7 @@ struct MainMenuPage {
   @State mangaList: Manga[] = [];
   @State isLoadingMangaList: boolean = false;
   @State isRefreshing: boolean = false;
+  @State isRefreshingHome: boolean = false; // 首页下拉刷新状态
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
   @State recentCoverAspectInfos: CoverAspectInfo[] = [];
@@ -706,6 +709,8 @@ struct MainMenuPage {
   // 底栏跟手滑动相关状态
   @State private bottomBarOffsetY: number = 0; // 底栏 Y轴偏移量（0=显示，>0=隐藏）
   private readonly BOTTOM_BAR_HIDE_THRESHOLD: number = 80; // 底栏完全隐藏的阈值
+  private bottomBarScrollAccumulator: number = 0; // 累计同方向滚动量，用于速度判断
+  private bottomBarLastScrollDirection: number = 0; // 上次滚动方向（1=下，-1=上）
 
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -782,13 +787,17 @@ struct MainMenuPage {
   @State private initializationProgress: string = '正在初始化...';
 
   // 版本信息
-  @State public appVersion: string = '0.0.6';
+  @State public appVersion: string = '0.0.7';
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
   @StorageLink('advanced_mode_enabled') @Watch('onAdvancedModeChanged') private advancedModeEnabled: boolean = true;
   @StorageProp('force_tablet_mode') private forceTabletMode: boolean = false;
   @StorageProp('force_landscape_mode') private forceLandscapeMode: boolean = false;
+  // Bug 1 fix: onNewWant通知机制——解决app在前台时onPageShow不触发的问题
+  @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
+  // Bug 3 fix: 防止aboutToAppear/onPageShow/@Watch三路同时触发重复导入调度
+  private fileImportScheduled: boolean = false;
 
   // 导航标签配置
   private tabConfigs: TabConfig[] = [
@@ -1615,6 +1624,93 @@ struct MainMenuPage {
     this.sourceManager.clearCache();
     await this.loadSources();
     this.showToast('图源列表已刷新');
+  }
+
+  /**
+   * 增量更新图源列表（避免全量替换导致列表闪烁）
+   * 通过ID对比进行增删改，只更新变化的属性
+   */
+  private incrementalUpdateSourceList(newList: SourceInfo[]): void {
+    const currentIds = new Set(this.sourceList.map((s: SourceInfo) => s.id));
+    const newIds = new Set(newList.map((s: SourceInfo) => s.id));
+    const newSourceMap = new Map<number, SourceInfo>();
+    for (const s of newList) {
+      newSourceMap.set(s.id, s);
+    }
+
+    // 删除已不存在的图源（从后向前删除）
+    const toRemoveIndices: number[] = [];
+    for (let i = 0; i < this.sourceList.length; i++) {
+      if (!newIds.has(this.sourceList[i].id)) {
+        toRemoveIndices.push(i);
+      }
+    }
+    for (let i = toRemoveIndices.length - 1; i >= 0; i--) {
+      this.sourceList.splice(toRemoveIndices[i], 1);
+    }
+
+    // 更新现有图源的属性（不替换整个对象引用，保持稳定）
+    for (const existing of this.sourceList) {
+      const newSource = newSourceMap.get(existing.id);
+      if (newSource) {
+        if (existing.name !== newSource.name) {
+          existing.name = newSource.name;
+        }
+        if (existing.type !== newSource.type) {
+          existing.type = newSource.type;
+        }
+        if (existing.baseUrl !== newSource.baseUrl) {
+          existing.baseUrl = newSource.baseUrl;
+        }
+        if (existing.version !== newSource.version) {
+          existing.version = newSource.version;
+        }
+        if (existing.description !== newSource.description) {
+          existing.description = newSource.description;
+        }
+        if (existing.isEnabled !== newSource.isEnabled) {
+          existing.isEnabled = newSource.isEnabled;
+        }
+        if (existing.isPinned !== newSource.isPinned) {
+          existing.isPinned = newSource.isPinned;
+        }
+        if (existing.priority !== newSource.priority) {
+          existing.priority = newSource.priority;
+        }
+        if (existing.iconPath !== newSource.iconPath) {
+          existing.iconPath = newSource.iconPath;
+        }
+        if (existing.requireProxy !== newSource.requireProxy) {
+          existing.requireProxy = newSource.requireProxy;
+        }
+        if (existing.lastUpdateTime !== newSource.lastUpdateTime) {
+          existing.lastUpdateTime = newSource.lastUpdateTime;
+        }
+      }
+    }
+
+    // 添加新图源
+    for (const newSource of newList) {
+      if (!currentIds.has(newSource.id)) {
+        this.sourceList.push(newSource);
+      }
+    }
+  }
+
+  /**
+   * 静默刷新图源列表（增量更新，避免闪屏）
+   * 从图源管理页修改后返回时调用，只更新变化的数据
+   */
+  private async silentRefreshSources(): Promise<void> {
+    try {
+      logger.debug(TAG, '静默刷新图源列表（增量更新）');
+      const newSourceList = await this.sourceManager.getEnabledSourcesSortedByPinned();
+      this.incrementalUpdateSourceList(newSourceList);
+      this.applySourceFilters();
+      logger.debug(TAG, `静默刷新图源完成: ${this.sourceList.length} 个图源`);
+    } catch (error) {
+      logger.warn(TAG, `静默刷新图源列表失败: ${String(error)}`);
+    }
   }
 
   /**
@@ -2838,19 +2934,33 @@ struct MainMenuPage {
         GridItem() {
           Column({ space: 8 }) {
             Stack() {
-              Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
-                .width('100%')
-                .aspectRatio(0.7)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(8)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .onError(() => {
-                  logger.warn('MainMenuPage', `封面加载失败: ${manga.id}`);
+              if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+                AvifImage({
+                  src: manga.coverImagePath,
+                  imageWidth: '100%',
+                  imageHeight: '100%',
+                  objectFit: ImageFit.Cover,
+                  imageBorderRadius: this.getGlassRadius(),
                 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .id(`cover_manga_home_${manga.id}`)
+              } else {
+                Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(this.getGlassRadius())
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  .onError(() => {
+                    logger.warn('MainMenuPage', `封面加载失败: ${manga.id}`);
+                  })
+                  .id(`cover_manga_home_${manga.id}`)
+              }
             }
+            .width('100%')
+            .aspectRatio(0.7)
             .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
-            .borderRadius(8)
+            .borderRadius(this.getGlassRadius())
             .onClick(() => {
               // 点击封面直接开始阅读（带翻开动画）
               this.openMangaReaderWithAnimation(manga, `cover_manga_home_${manga.id}`);
@@ -2875,19 +2985,37 @@ struct MainMenuPage {
         GridItem() {
           Column({ space: 8 }) {
             Stack() {
-              Image(this.normalizeDisplayPathForEBook(ebook) || $r('app.media.mangabook'))
-                .width('100%')
-                .aspectRatio(0.7)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(8)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .onError(() => {
-                  logger.warn('MainMenuPage', `电子书封面加载失败: ${ebook.id}`);
+          if (this.isNetworkUrl(ebook.metadata?.coverImagePath)) {
+                AvifImage({
+                  src: this.normalizeDisplayPathForEBook(ebook),
+                  imageWidth: '100%',
+                  imageHeight: '100%',
+                  objectFit: ImageFit.Cover,
+                  imageBorderRadius: this.getGlassRadius(),
                 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .id(`cover_ebook_home_${ebook.id}`)
+              } else {
+                Image(this.normalizeDisplayPathForEBook(ebook) || $r('app.media.mangabook'))
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(this.getGlassRadius())
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  .onError((event) => {
+                    const errMsg = event ? JSON.stringify(event) : 'unknown';
+                    logger.warn(TAG, `[封面诊断] 首页电子书封面加载失败: id=${ebook.id}, path='${ebook.metadata?.coverImagePath}', normalized='${this.normalizeDisplayPathForEBook(ebook)}', error=${errMsg}`);
+                  })
+                  .onComplete(() => {
+                    logger.info(TAG, `[封面诊断] 首页电子书封面加载成功: id=${ebook.id}`);
+                  })
+                  .id(`cover_ebook_home_${ebook.id}`)
+              }
             }
+            .width('100%')
+            .aspectRatio(0.7)
             .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
-            .borderRadius(8)
+            .borderRadius(this.getGlassRadius())
             .onClick(() => {
               // 点击封面直接开始阅读（带翻开动画）
               this.openEBookReaderFromHome(ebook);
@@ -2912,16 +3040,28 @@ struct MainMenuPage {
         GridItem() {
           Column({ space: 8 }) {
             Stack() {
-              Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || $r('app.media.mangabook'))
-                .width('100%')
-                .aspectRatio(0.7)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(8)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-                .onError(() => {
-                  logger.warn('MainMenuPage', `小说封面加载失败: ${novel.id}`);
+              if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+                AvifImage({
+                  src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+                  imageWidth: '100%',
+                  imageHeight: '100%',
+                  objectFit: ImageFit.Cover,
+                  imageBorderRadius: this.getGlassRadius(),
                 })
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .id(`cover_novel_home_${novel.id}`)
+              } else {
+                Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || $r('app.media.mangabook'))
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(this.getGlassRadius())
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+                  .onError(() => {
+                    logger.warn('MainMenuPage', `小说封面加载失败: ${novel.id}`);
+                  })
+                  .id(`cover_novel_home_${novel.id}`)
+              }
               
               // 小说标识
               Text('小说')
@@ -2933,8 +3073,10 @@ struct MainMenuPage {
                 .borderRadius(4)
                 .position({ x: 4, y: 4 })
             }
+            .width('100%')
+            .aspectRatio(0.7)
             .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
-            .borderRadius(8)
+            .borderRadius(this.getGlassRadius())
             .onClick(() => {
               // 点击封面打开小说详情页
               this.openNovelDetail(novel);
@@ -2994,6 +3136,21 @@ struct MainMenuPage {
 
       this.ebookList = ebookList;
       this.pdfEbookList = pdfEbooks;
+
+      // [诊断] 输出每本电子书的封面路径信息
+      for (const eb of ebookList) {
+        const coverPath = eb.metadata?.coverImagePath || '';
+        let fileExists = false;
+        if (coverPath.length > 0 && coverPath.startsWith('/')) {
+          try {
+            fileExists = fs.accessSync(coverPath);
+          } catch (e) {
+            fileExists = false;
+          }
+        }
+        logger.info(TAG, `[封面诊断] 电子书="${eb.metadata?.title}", id=${eb.id}, coverImagePath="${coverPath}", 路径长度=${coverPath.length}, 文件存在=${fileExists}`);
+      }
+
       this.applyEBookFilter(); // 应用筛选
 
     } catch (error) {
@@ -3967,6 +4124,15 @@ struct MainMenuPage {
   }
 
   /**
+   * @Watch回调：响应EntryAbility.onNewWant设置的文件打开触发器
+   * 修复：app在前台时用户从openNewWant打开文件，但onPageShow不会重新触发
+   */
+  private onFileOpenNewWantTrigger(): void {
+    logger.info(TAG, `📣 收到onNewWant文件打开通知，检查待处理文件`);
+    this.checkPendingFileImport();
+  }
+
+  /**
    * 检查并处理待导入的文件
    */
   private checkPendingFileImport(): void {
@@ -3989,12 +4155,15 @@ struct MainMenuPage {
       const pendingBackupUri = AppStorage.get<string>('pendingBackupUri');
       if (pendingBackupUri) {
         logger.info(TAG, `💾 检测到待导入的备份文件: ${pendingBackupUri}`);
-        // 不清除标记，让BackupPage读取
-        AppStorage.setOrCreate('backupImportPending', true);
-        // 导航到备份恢复页面
-        setTimeout(() => {
-          this.navigateToBackupPage();
-        }, 500);
+        if (!this.fileImportScheduled) {
+          this.fileImportScheduled = true;
+          // 不清除标记，让BackupPage读取
+          AppStorage.setOrCreate('backupImportPending', true);
+          // 导航到备份恢复页面
+          setTimeout(() => {
+            this.navigateToBackupPage();
+          }, 500);
+        }
         return;
       }
 
@@ -4054,8 +4223,11 @@ struct MainMenuPage {
           hasShareFiles = true;
         }
         if (hasShareFiles) {
-          logger.info(TAG, `📤 检测到系统分享文件`);
-          this.checkPendingShareImport();
+          if (!this.fileImportScheduled) {
+            logger.info(TAG, `📤 检测到系统分享文件`);
+            this.fileImportScheduled = true;
+            this.checkPendingShareImport();
+          }
           return;
         }
       }
@@ -4067,15 +4239,15 @@ struct MainMenuPage {
 
       if (pendingFileUri) {
         logger.info(TAG, `📁 检测到待导入文件: ${pendingFileUri}, 类型: ${pendingFileType}, 分类: ${pendingFileCategory}`);
-
-        // 不清除标记，让DataManagementPage读取
-        // 使用新的key存储已经处理的标记
-        AppStorage.setOrCreate('fileImportPending', true);
-
-        // 直接导航到DataManagementPage
-        setTimeout(() => {
-          this.navigateToDataManagement();
-        }, 500);
+        if (!this.fileImportScheduled) {
+          this.fileImportScheduled = true;
+          // 不清除标记，让DataManagementPage读取
+          AppStorage.setOrCreate('fileImportPending', true);
+          // 直接导航到DataManagementPage
+          setTimeout(() => {
+            this.navigateToDataManagement();
+          }, 500);
+        }
       }
     } catch (error) {
       logger.error(TAG, '检查待导入文件失败', String(error));
@@ -4088,8 +4260,9 @@ struct MainMenuPage {
   private navigateToBackupPage(): void {
     try {
       logger.info(TAG, '导航到备份恢复页面');
-      // 切换到设置标签页
-      this.currentTabIndex = 3;
+      this.fileImportScheduled = false; // 重置调度标志，允许下次文件打开
+      // Bug 4 fix: 切换到设置标签页（原来错误地用了3，应为TabIndex.SETTINGS=6）
+      this.currentTabIndex = TabIndex.SETTINGS;
       // 延迟导航到备份页面
       setTimeout(() => {
         this.pathStack.pushPathByName('BackupPage', undefined);
@@ -4390,12 +4563,14 @@ struct MainMenuPage {
         // AVIF文件：跳转到AVIF查看器
         const avifParams: AvifTestPageParams = { fileUri: pendingShareFiles[0] };
         setTimeout(() => {
+          this.fileImportScheduled = false; // 重置调度标志，允许下次文件打开
           this.pathStack.pushPathByName('AvifTestPage', avifParams);
         }, 500);
       } else if (pendingShareType === 'image' && pendingShareFiles.length > 0) {
         // 普通图片：也可以用AVIF查看器查看
         const avifParams: AvifTestPageParams = { fileUri: pendingShareFiles[0] };
         setTimeout(() => {
+          this.fileImportScheduled = false; // 重置调度标志，允许下次文件打开
           this.pathStack.pushPathByName('AvifTestPage', avifParams);
         }, 500);
       } else {
@@ -4422,6 +4597,7 @@ struct MainMenuPage {
   private navigateToDataManagement(): void {
     try {
       logger.info(TAG, '导航到数据管理页面');
+      this.fileImportScheduled = false; // 重置调度标志，允许下次文件打开
 
       // 切换到设置标签页
       this.currentTabIndex = TabIndex.SETTINGS;
@@ -4437,55 +4613,6 @@ struct MainMenuPage {
       logger.info(TAG, '✅ 已导航到数据管理页面');
     } catch (error) {
       logger.error(TAG, '导航到数据管理页面失败', String(error));
-    }
-  }
-
-  /**
-   * 处理文件导入
-   */
-  private handleFileImport(fileUri: string, fileType: string): void {
-    try {
-      logger.info(TAG, `开始处理文件导入: ${fileUri}, 类型: ${fileType}`);
-
-      // 从URI中提取文件扩展名（如果fileType为空）
-      let actualFileType = fileType;
-      if (!actualFileType || actualFileType.trim() === '') {
-        // 解码URI并提取文件扩展名
-        const decodedUri = decodeURIComponent(fileUri);
-        logger.debug(TAG, `解码后的URI: ${decodedUri}`);
-
-        const lastDotIndex = decodedUri.lastIndexOf('.');
-        if (lastDotIndex > 0) {
-          const extension = decodedUri.substring(lastDotIndex).toLowerCase();
-          logger.info(TAG, `从URI提取到文件扩展名: ${extension}`);
-          actualFileType = extension;
-        }
-      }
-
-      logger.info(TAG, `实际文件类型: ${actualFileType}`);
-
-      // 根据文件类型判断导入目标
-      const lowerType = actualFileType.toLowerCase();
-      if (lowerType.includes('cbz') || lowerType.includes('.cbz') ||
-      lowerType.includes('zip') || lowerType.includes('.zip')) {
-        // 漫画文件 - 导航到数据管理页面并传递文件URI
-        logger.info(TAG, '准备导入漫画文件到数据管理页面');
-        // 通过EventBus发送文件导入事件
-        const payload = new FileImportRequestedPayload(fileUri, 'comic');
-        eventBus.publish(GameEvent.FILE_IMPORT_REQUESTED, payload);
-      } else if (lowerType.includes('epub') || lowerType.includes('.epub') ||
-      lowerType.includes('pdf') || lowerType.includes('.pdf') ||
-      lowerType.includes('txt') || lowerType.includes('.txt')) {
-        // 电子书文件
-        logger.info(TAG, '准备导入电子书文件到数据管理页面');
-        const payload = new FileImportRequestedPayload(fileUri, 'ebook');
-        eventBus.publish(GameEvent.FILE_IMPORT_REQUESTED, payload);
-      } else {
-        logger.warn(TAG, `不支持的文件类型: ${actualFileType}`);
-        logger.warn(TAG, `完整URI: ${fileUri}`);
-      }
-    } catch (error) {
-      logger.error(TAG, '处理文件导入失败', String(error));
     }
   }
 
@@ -4660,6 +4787,14 @@ struct MainMenuPage {
       case TabIndex.DISCOVER:
         // 发现页：静默刷新发现页数据
         this.silentRefreshDiscoverData();
+        break;
+      case TabIndex.SOURCE:
+        // 图源页：静默刷新图源列表
+        this.silentRefreshSources();
+        break;
+      case TabIndex.BOOK_SOURCE:
+        // 书源页：确保初始化并加载书源列表
+        this.initializeAndLoadBookSources();
         break;
       default:
         break;
@@ -5668,20 +5803,39 @@ struct MainMenuPage {
     return this.normalizeDisplayPathForManga(mg);
   }
 
+  /**
+   * 检查漫画封面是否为网络URL
+   */
+  private isMangaNetworkCover(manga: Manga): boolean {
+    const raw = manga?.coverImagePath || '';
+    return raw.startsWith('http://') || raw.startsWith('https://');
+  }
+
+  /**
+   * 检查URL是否为网络地址
+   */
+  private isNetworkUrl(url: string | undefined): boolean {
+    if (!url) return false;
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+
   private normalizeDisplayPathForEBook(ebook: EBook): string {
     const raw: string = ebook && ebook.metadata && ebook.metadata.coverImagePath ? ebook.metadata.coverImagePath : '';
     if (raw.length === 0) {
+      logger.info(TAG, `[封面诊断] normalizeDisplayPathForEBook: coverImagePath为空, id=${ebook?.id}`);
       return '';
     }
 
     // [修复] 检查是否为资源引用字符串，返回空字符串让调用方使用默认资源
     if (raw.indexOf('app.media.') === 0 || raw.indexOf('$r(') === 0) {
-      logger.debug('MainMenuPage', `检测到EBook资源引用字符串，返回空字符串使用默认资源: raw='${raw}'`);
+      logger.info(TAG, `[封面诊断] normalizeDisplayPathForEBook: 资源引用字符串, raw='${raw}', id=${ebook?.id}`);
       return '';
     }
 
     const hasScheme: boolean = raw.indexOf('file://') === 0 || raw.indexOf('http://') === 0 || raw.indexOf('https://') === 0;
-    return hasScheme ? raw : 'file://' + raw;
+    const result = hasScheme ? raw : 'file://' + raw;
+    logger.info(TAG, `[封面诊断] normalizeDisplayPathForEBook: raw='${raw}', result='${result}', id=${ebook?.id}`);
+    return result;
   }
 
   /**
@@ -5689,7 +5843,9 @@ struct MainMenuPage {
    */
   private hasValidEBookCover(ebook: EBook): boolean {
     const raw = ebook?.metadata?.coverImagePath || '';
-    return raw.length > 0;
+    const valid = raw.length > 0;
+    logger.info(TAG, `[封面诊断] hasValidEBookCover: id=${ebook?.id}, raw='${raw}', valid=${valid}`);
+    return valid;
   }
 
   /**
@@ -5699,11 +5855,13 @@ struct MainMenuPage {
   private getEBookCoverSource(ebook: EBook): ResourceStr {
     const raw = ebook?.metadata?.coverImagePath || '';
     if (raw.length === 0) {
+      logger.info(TAG, `[封面诊断] getEBookCoverSource: 路径为空, 返回系统符号, id=${ebook?.id}`);
       return $r('sys.symbol.doc_plaintext_fill');
     }
 
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
+      logger.info(TAG, `[封面诊断] getEBookCoverSource: app.media资源, raw='${raw}', id=${ebook?.id}`);
       // 根据资源名称返回对应的资源引用
       const resourceName = raw.substring('app.media.'.length);
       if (resourceName === 'mangabook') {
@@ -5719,10 +5877,12 @@ struct MainMenuPage {
 
     // 本地文件路径
     if (raw.startsWith('/')) {
+      logger.info(TAG, `[封面诊断] getEBookCoverSource: 本地路径, raw='${raw}', result='file://${raw}', id=${ebook?.id}`);
       return `file://${raw}`;
     }
 
     // 已有协议前缀的路径直接返回
+    logger.info(TAG, `[封面诊断] getEBookCoverSource: 已有前缀, raw='${raw}', id=${ebook?.id}`);
     return raw;
   }
 
@@ -7097,18 +7257,27 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         // 封面图片
         Column() {
-          Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-            .onError(() => {
-              logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
+          if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+            AvifImage({
+              src: manga.coverImagePath,
+              imageWidth: '100%',
+              imageHeight: '100%',
+              objectFit: ImageFit.Cover,
             })
+          } else {
+            Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .onError(() => {
+                logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
+              })
+          }
         }
         .width(80)
         .height(120)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
@@ -7619,13 +7788,25 @@ struct MainMenuPage {
           // 有内容且有有效封面：中间大两边小的布局
           Row({ space: 2 }) {
             ForEach(coverImages, (coverPath: string, index: number) => {
-              Image(coverPath)
-                .width(index === 0 ? 40 : 30)
-                .height(index === 0 ? 56 : 42)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(2)
+              if (this.isNetworkUrl(coverPath)) {
+                AvifImage({
+                  src: coverPath,
+                  imageWidth: index === 0 ? 40 : 30,
+                  imageHeight: index === 0 ? 56 : 42,
+                  objectFit: ImageFit.Cover,
+                  imageBorderRadius: 2,
+                })
                 .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                 .zIndex(index === 0 ? 10 : 5)
+              } else {
+                Image(coverPath)
+                  .width(index === 0 ? 40 : 30)
+                  .height(index === 0 ? 56 : 42)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(2)
+                  .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
+                  .zIndex(index === 0 ? 10 : 5)
+              }
             }, (cover: string, index: number) => `${shelfType}_cover_${index}`)
           }
           .justifyContent(FlexAlign.Center)
@@ -7730,13 +7911,25 @@ struct MainMenuPage {
           // 有内容：中间大两边小的布局
           Row({ space: 2 }) {
             ForEach(this.getCategoryCoverImages(category), (coverPath: string, index: number) => {
-              Image(this.normalizeCoverPath(coverPath))
-                .width(index === 0 ? 40 : 30)
-                .height(index === 0 ? 56 : 42)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(2)
+              if (this.isNetworkUrl(coverPath)) {
+                AvifImage({
+                  src: this.normalizeCoverPath(coverPath),
+                  imageWidth: index === 0 ? 40 : 30,
+                  imageHeight: index === 0 ? 56 : 42,
+                  objectFit: ImageFit.Cover,
+                  imageBorderRadius: 2,
+                })
                 .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                 .zIndex(index === 0 ? 10 : 5)
+              } else {
+                Image(this.normalizeCoverPath(coverPath))
+                  .width(index === 0 ? 40 : 30)
+                  .height(index === 0 ? 56 : 42)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(2)
+                  .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
+                  .zIndex(index === 0 ? 10 : 5)
+              }
             }, (cover: string, index: number) => `${category.id}_cover_${index}`)
           }
           .justifyContent(FlexAlign.Center)
@@ -10112,21 +10305,38 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 封面图片
       Stack() {
-        Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
-          .width('100%')
-          .aspectRatio(0.7)
-          .objectFit(ImageFit.Cover)
-          .borderRadius(8)
+        if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+          AvifImage({
+            src: manga.coverImagePath,
+            imageWidth: '100%',
+            imageHeight: '100%',
+            objectFit: ImageFit.Cover,
+            imageBorderRadius: this.getGlassRadius(),
+          })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .shadow({
             radius: 8,
             color: AppColors.getShadowColor(4),
             offsetY: 4
           })
-          .onError(() => {
-            logger.warn('MainMenuPage', `主页网格封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
-          })
           .id(`library_manga_${manga.id}`)
+        } else {
+          Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
+            .width('100%')
+            .aspectRatio(0.7)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(this.getGlassRadius())
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .shadow({
+              radius: 8,
+              color: AppColors.getShadowColor(4),
+              offsetY: 4
+            })
+            .onError(() => {
+              logger.warn('MainMenuPage', `主页网格封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
+            })
+            .id(`library_manga_${manga.id}`)
+        }
 
         // 多选模式蒙版层
         if (this.isMultiSelectMode) {
@@ -10137,7 +10347,7 @@ struct MainMenuPage {
             .backgroundColor(this.selectedMangaIds.has(manga.id) 
               ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
               : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
-            .borderRadius(8)
+            .borderRadius(this.getGlassRadius())
             .animation({ duration: 200, curve: Curve.EaseOut })
           
           // 选中/未选中指示器（右上角圆形勾选框）
@@ -10813,17 +11023,33 @@ struct MainMenuPage {
   buildDiscoverMangaGridCard(manga: Manga) {
     Column({ space: 8 }) {
       // 封面图片
-      Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
-        .width('100%')
-        .aspectRatio(0.7)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-        .shadow({
-          radius: 8,
-          color: AppColors.getShadowColor(4),
-          offsetY: 4
-        })
+      Stack() {
+        if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+          AvifImage({
+            src: manga.coverImagePath,
+            imageWidth: '100%',
+            imageHeight: '100%',
+            objectFit: ImageFit.Cover,
+            imageBorderRadius: this.getGlassRadius(),
+          })
+        } else {
+          Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .borderRadius(this.getGlassRadius())
+        }
+      }
+      .width('100%')
+      .aspectRatio(0.7)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+      .borderRadius(this.getGlassRadius())
+      .shadow({
+        radius: 8,
+        color: AppColors.getShadowColor(4),
+        offsetY: 4
+      })
+      .clip(true)
 
       // 漫画标题
       Text(manga.title)
@@ -10855,17 +11081,33 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 封面图片
       Stack() {
-        Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || $r('app.media.mangabook'))
-          .width('100%')
-          .aspectRatio(0.7)
-          .objectFit(ImageFit.Cover)
-          .borderRadius(8)
+        if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+          AvifImage({
+            src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+            imageWidth: '100%',
+            imageHeight: '100%',
+            objectFit: ImageFit.Cover,
+            imageBorderRadius: this.getGlassRadius(),
+          })
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .shadow({
             radius: 8,
             color: AppColors.getShadowColor(4),
             offsetY: 4
           })
+        } else {
+          Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || $r('app.media.mangabook'))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .borderRadius(this.getGlassRadius())
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .shadow({
+              radius: 8,
+              color: AppColors.getShadowColor(4),
+              offsetY: 4
+            })
+        }
         
         // 小说标识
         Text('小说')
@@ -10877,6 +11119,9 @@ struct MainMenuPage {
           .borderRadius(4)
           .position({ x: 4, y: 4 })
       }
+      .width('100%')
+      .aspectRatio(0.7)
+      .borderRadius(this.getGlassRadius())
 
       // 小说标题
       Text(novel.name)
@@ -10931,23 +11176,41 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         // 封面图片
         Column() {
-          if (this.hasValidEBookCover(ebook)) {
+          if (this.isNetworkUrl(ebook.metadata?.coverImagePath)) {
+            AvifImage({
+              src: this.normalizeDisplayPathForEBook(ebook),
+              imageWidth: '100%',
+              imageHeight: '100%',
+              objectFit: ImageFit.Cover,
+            })
+          } else if (this.hasValidEBookCover(ebook)) {
             Image(this.getEBookCoverSource(ebook))
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
+              .onError((event) => {
+                const errMsg = event ? JSON.stringify(event) : 'unknown';
+                logger.warn(TAG, `[封面诊断] 列表卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getEBookCoverSource(ebook)}', error=${errMsg}`);
+              })
+              .onComplete(() => {
+                logger.info(TAG, `[封面诊断] 列表卡片封面加载成功: id=${ebook.id}`);
+              })
           } else {
             Image(this.getEBookCoverSource(ebook))
               .width(50)
               .height(50)
               .objectFit(ImageFit.Cover)
               .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .onAppear(() => {
+                logger.info(TAG, `[封面诊断] 列表卡片走fallback分支(无封面): id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}'`);
+              })
           }
         }
         .width(80)
         .height(120)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .borderRadius(this.getGlassRadius())
+        .clip(true)
         .justifyContent(FlexAlign.Center)
         .shadow({
           radius: 8,
@@ -11716,26 +11979,43 @@ struct MainMenuPage {
         // 封面区域
         Stack() {
           Column() {
-            if (this.hasValidEBookCover(ebook)) {
+            if (this.isNetworkUrl(ebook.metadata?.coverImagePath)) {
+              AvifImage({
+                src: this.normalizeDisplayPathForEBook(ebook),
+                imageWidth: '100%',
+                imageHeight: '100%',
+                objectFit: ImageFit.Cover,
+              })
+            } else if (this.hasValidEBookCover(ebook)) {
               Image(this.getEBookCoverSource(ebook))
                 .width('100%')
                 .height('100%')
                 .objectFit(ImageFit.Cover)
+                .onError((event) => {
+                  const errMsg = event ? JSON.stringify(event) : 'unknown';
+                  logger.warn(TAG, `[封面诊断] 网格卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getEBookCoverSource(ebook)}', error=${errMsg}`);
+                })
+                .onComplete(() => {
+                  logger.info(TAG, `[封面诊断] 网格卡片封面加载成功: id=${ebook.id}`);
+                })
             } else {
               Image(this.getEBookCoverSource(ebook))
                 .width(60)
                 .height(60)
                 .objectFit(ImageFit.Cover)
                 .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .onAppear(() => {
+                  logger.info(TAG, `[封面诊断] 网格卡片走fallback分支(无封面): id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}'`);
+                })
             }
           }
-          .width('100%')
-          .height(140)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(8)
-          .clip(true)
-          .justifyContent(FlexAlign.Center)
-          .shadow({
+        .width('100%')
+        .aspectRatio(0.7)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(this.getGlassRadius())
+        .clip(true)
+        .justifyContent(FlexAlign.Center)
+        .shadow({
             radius: 8,
             color: AppColors.getShadowColor(4),
             offsetY: 4
@@ -11750,7 +12030,7 @@ struct MainMenuPage {
               .backgroundColor(this.selectedEBookIds.has(ebook.id) 
                 ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
                 : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
-              .borderRadius(8)
+              .borderRadius(this.getGlassRadius())
               .animation({ duration: 200, curve: Curve.EaseOut })
             
             // 选中/未选中指示器（右上角圆形勾选框）
@@ -11787,7 +12067,7 @@ struct MainMenuPage {
           }
         }
         .width('100%')
-        .height(140)
+        .aspectRatio(0.7)
 
         // 书籍信息
         Column({ space: 4 }) {
@@ -11891,7 +12171,14 @@ struct MainMenuPage {
       Row({ space: 12 }) {
         // 封面图片
         Column() {
-          if (novel.coverUrl || novel.coverLocalPath) {
+          if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+            AvifImage({
+              src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+              imageWidth: '100%',
+              imageHeight: '100%',
+              objectFit: ImageFit.Cover,
+            })
+          } else if (novel.coverUrl || novel.coverLocalPath) {
             Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || '')
               .width('100%')
               .height('100%')
@@ -11906,7 +12193,7 @@ struct MainMenuPage {
         .width(80)
         .height(120)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
@@ -11989,7 +12276,14 @@ struct MainMenuPage {
       // 封面区域
       Stack() {
         Column() {
-          if (novel.coverUrl || novel.coverLocalPath) {
+          if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+            AvifImage({
+              src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+              imageWidth: '100%',
+              imageHeight: '100%',
+              objectFit: ImageFit.Cover,
+            })
+          } else if (novel.coverUrl || novel.coverLocalPath) {
             Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || '')
               .width('100%')
               .height('100%')
@@ -12002,9 +12296,9 @@ struct MainMenuPage {
           }
         }
         .width('100%')
-        .height(140)
+        .aspectRatio(0.7)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .borderRadius(8)
+        .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
@@ -12030,7 +12324,7 @@ struct MainMenuPage {
             .backgroundColor(this.selectedNovelIds.has(novel.id) 
               ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
               : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
-            .borderRadius(8)
+            .borderRadius(this.getGlassRadius())
             .animation({ duration: 200, curve: Curve.EaseOut })
           
           // 选中/未选中指示器（右上角圆形勾选框）
@@ -12067,7 +12361,8 @@ struct MainMenuPage {
         }
       }
       .width('100%')
-      .height(140)
+      .aspectRatio(0.7)
+      .borderRadius(this.getGlassRadius())
       .clip(true)
 
       // 小说标题
@@ -12204,15 +12499,25 @@ struct MainMenuPage {
     Row({ space: 12 }) {
       // 封面图片
       Column() {
-        Image(this.getCoverImageSource(manga) || $r('sys.symbol.doc_plaintext_fill'))
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
+        if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+          AvifImage({
+            src: manga.coverImagePath,
+            imageWidth: '100%',
+            imageHeight: '100%',
+            objectFit: ImageFit.Cover,
+          })
+        } else {
+          Image(this.getCoverImageSource(manga) || $r('sys.symbol.doc_plaintext_fill'))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+        }
       }
       .width(80)
       .height(120)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-      .borderRadius(8)
+      .borderRadius(this.getGlassRadius())
+      .clip(true)
       .justifyContent(FlexAlign.Center)
       .shadow({
         radius: 8,
@@ -12314,15 +12619,25 @@ struct MainMenuPage {
         // 封面区域
         Stack() {
           Column() {
-            Image(this.getCoverImageSource(manga) || $r('sys.symbol.doc_plaintext_fill'))
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
+            if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+              AvifImage({
+                src: manga.coverImagePath,
+                imageWidth: '100%',
+                imageHeight: '100%',
+                objectFit: ImageFit.Cover,
+              })
+            } else {
+              Image(this.getCoverImageSource(manga) || $r('sys.symbol.doc_plaintext_fill'))
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+            }
           }
           .width('100%')
-          .height(140)
+          .aspectRatio(0.7)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-          .borderRadius(8)
+          .borderRadius(this.getGlassRadius())
+          .clip(true)
           .justifyContent(FlexAlign.Center)
           .shadow({
             radius: 8,
@@ -12754,16 +13069,8 @@ struct MainMenuPage {
 
   private async determineResumeTarget(manga: Manga): Promise<ResumeTarget | null> {
     try {
-      const historyList: ReadHistory[] = await this.dataManager.getReadHistoryByComic(manga.id, 'default_user', 1000);
-      let latest: ReadHistory | null = null;
-      let latestTime: number = 0;
-      for (let i: number = 0; i < historyList.length; i++) {
-        const h: ReadHistory = historyList[i] as ReadHistory;
-        if (h.readTime > latestTime) {
-          latestTime = h.readTime;
-          latest = h;
-        }
-      }
+      // [性能优化] 使用 getLatestReadHistory 单条 SQL 获取最新记录，替代 getReadHistoryByComic(limit=1000)
+      const latest: ReadHistory | null = await this.dataManager.getLatestReadHistory(manga.id, 'default_user');
 
       if (latest) {
         const latestSafe: ReadHistory = latest as ReadHistory;
@@ -13286,20 +13593,11 @@ struct MainMenuPage {
         .padding({ left: 16, right: 16, top: 12, bottom: 16 })
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
-        .onScroll((_scrollOffset: number, scrollState: ScrollState) => {
-          // List的onScroll回调参数与Scroll不同，使用scrollState判断滚动方向
-          if (scrollState === ScrollState.Scroll) {
-            // 滚动中，隐藏底栏
-            if (this.bottomBarOffsetY < this.BOTTOM_BAR_HIDE_THRESHOLD) {
-              this.bottomBarOffsetY = Math.min(this.bottomBarOffsetY + 5, this.BOTTOM_BAR_HIDE_THRESHOLD);
-            }
-          }
-        })
         .onScrollStop(() => {
           this.handleScrollEndForBottomBar();
         })
         .onScrollFrameBegin((offset: number, _state: ScrollState) => {
-          // 使用onScrollFrameBegin获取滚动方向
+          // 使用onScrollFrameBegin获取滚动方向（移除了onScroll中的重复+5逻辑）
           this.handleScrollForBottomBar(offset);
           return { offsetRemain: offset };
         })
@@ -17175,6 +17473,22 @@ struct MainMenuPage {
             };
             this.pathStack.pushPath(navigationPath);
           })
+          this.buildSettingItem('帮助中心', '查看功能说明和常见问题', $r('sys.symbol.questionmark_circle'), () => {
+            try {
+              const navigationPath: NavigationPath = {
+                name: 'HelpCenterPage',
+                param: {
+                  fromPage: 'MainMenuPage',
+                  timestamp: Date.now()
+                }
+              };
+              this.pathStack.pushPath(navigationPath);
+              logger.info(TAG, '导航到帮助中心页面');
+            } catch (error) {
+              logger.error(TAG, '导航到帮助中心页面失败', String(error));
+              this.showToast('打开帮助中心页面失败');
+            }
+          })
           this.buildSettingItem('关于应用', `版本 ${this.appVersion}`, $r('sys.symbol.info_circle'), () => {
             try {
               const navigationPath: NavigationPath = {
@@ -17334,6 +17648,8 @@ struct MainMenuPage {
       NotificationSettingsSubPage()
     } else if (name === 'AdvancedSettingsSubPage') {
       AdvancedSettingsSubPage()
+    } else if (name === 'ErrorManagementSubPage') {
+      ErrorManagementSubPage()
     } else if (name === 'InteractionSettingsSubPage') {
       InteractionSettingsSubPage()
     } else if (name === 'AnimationSettingsSubPage') {
@@ -17475,15 +17791,24 @@ struct MainMenuPage {
   @Builder
   buildTabContentForIndex(tabIndex: number) {
     if (tabIndex === TabIndex.HOME) {
-      // 首页标签
-      Scroll() { this.buildHomeContent() }
-        .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
-        .onScroll((_xOffset: number, yOffset: number) => {
-          this.handleScrollForBottomBar(yOffset);
-        })
-        .onScrollStop(() => {
-          this.handleScrollEndForBottomBar();
-        })
+      // 首页标签（支持下拉刷新）
+      Refresh({ refreshing: $$this.isRefreshingHome }) {
+        Scroll() { this.buildHomeContent() }
+          .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
+          .onScroll((_xOffset: number, yOffset: number) => {
+            this.handleScrollForBottomBar(yOffset);
+          })
+          .onScrollStop(() => {
+            this.handleScrollEndForBottomBar();
+          })
+      }
+      .onRefreshing(async () => {
+        await this.silentRefreshRecentReadingList();
+        this.isRefreshingHome = false;
+      })
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
     } else if (tabIndex === TabIndex.LIBRARY) {
       // 书库标签
       Refresh({ refreshing: this.isRefreshing }) {
@@ -17765,13 +18090,39 @@ struct MainMenuPage {
       return;
     }
     
-    // 忽略微小的滚动（避免抢动）
-    if (Math.abs(deltaY) < 1) {
+    // 忽略微小的滚动（避免抖动）
+    if (Math.abs(deltaY) < 0.5) {
       return;
     }
     
-    // 计算新的偏移量：向下滚动时增加偏移（隐藏底栏），向上滚动时减少偏移（显示底栏）
-    let newOffset = this.bottomBarOffsetY + deltaY * 0.8; // 0.8系数让动画更平滑
+    // 判断当前滚动方向
+    const currentDirection = deltaY > 0 ? 1 : -1;
+    
+    // 累计同方向滚动量（用于速度判断）
+    if (currentDirection === this.bottomBarLastScrollDirection) {
+      this.bottomBarScrollAccumulator += Math.abs(deltaY);
+    } else {
+      // 方向变化时重置累计量
+      this.bottomBarScrollAccumulator = Math.abs(deltaY);
+      this.bottomBarLastScrollDirection = currentDirection;
+    }
+    
+    // 快速滚动时直接完成动画（累计超过阈值的60%视为快速滚动）
+    if (this.bottomBarScrollAccumulator > this.BOTTOM_BAR_HIDE_THRESHOLD * 0.6) {
+      const targetOffset = currentDirection > 0 ? this.BOTTOM_BAR_HIDE_THRESHOLD : 0;
+      if (this.bottomBarOffsetY !== targetOffset) {
+        animateTo({
+          duration: 150,
+          curve: Curve.FastOutSlowIn
+        }, () => {
+          this.bottomBarOffsetY = targetOffset;
+        });
+      }
+      return;
+    }
+    
+    // 常规跟手：使用1.5倍系数让底栏更灵敏地跟随手指
+    let newOffset = this.bottomBarOffsetY + deltaY * 1.5;
     
     // 限制偏移量范围：0 ~ BOTTOM_BAR_HIDE_THRESHOLD
     newOffset = Math.max(0, Math.min(newOffset, this.BOTTOM_BAR_HIDE_THRESHOLD));
@@ -17789,18 +18140,27 @@ struct MainMenuPage {
       return;
     }
     
-    // 如果偏移量超过一半，则完全隐藏；否则完全显示
-    if (this.bottomBarOffsetY > this.BOTTOM_BAR_HIDE_THRESHOLD / 2) {
+    // 重置速度追踪状态
+    this.bottomBarScrollAccumulator = 0;
+    this.bottomBarLastScrollDirection = 0;
+    
+    // 已经在终点位置，无需动画
+    if (this.bottomBarOffsetY === 0 || this.bottomBarOffsetY === this.BOTTOM_BAR_HIDE_THRESHOLD) {
+      return;
+    }
+    
+    // 使用35%阈值（偏向显示底栏，更易恢复）
+    if (this.bottomBarOffsetY > this.BOTTOM_BAR_HIDE_THRESHOLD * 0.35) {
       animateTo({
-        duration: 200,
-        curve: Curve.EaseOut
+        duration: 150,
+        curve: Curve.FastOutSlowIn
       }, () => {
         this.bottomBarOffsetY = this.BOTTOM_BAR_HIDE_THRESHOLD;
       });
     } else {
       animateTo({
-        duration: 200,
-        curve: Curve.EaseOut
+        duration: 150,
+        curve: Curve.FastOutSlowIn
       }, () => {
         this.bottomBarOffsetY = 0;
       });
@@ -17903,6 +18263,10 @@ struct MainMenuPage {
                 case TabIndex.DISCOVER:
                   // 发现页：静默刷新发现页数据
                   this.silentRefreshDiscoverData();
+                  break;
+                case TabIndex.SOURCE:
+                  // 图源页：静默刷新图源列表（增量更新，避免闪烁）
+                  this.silentRefreshSources();
                   break;
                 case TabIndex.BOOK_SOURCE:
                   // 书源标签：确保初始化并加载书源列表
@@ -18042,7 +18406,17 @@ struct MainMenuPage {
     BookTransitionOverlay()
     
     // 全局帮助面板覆盖层
-    HelpPanelOverlayV2({ themeState: this.themeState })
+    HelpPanelOverlayV2({
+      themeState: this.themeState,
+      onNavigateToHelpCenter: () => {
+        try {
+          this.pathStack.pushPathByName('HelpCenterPage', undefined);
+          logger.info(TAG, '从内容面板导航到帮助中心');
+        } catch (error) {
+          logger.error(TAG, '从内容面板导航到帮助中心失败', String(error));
+        }
+      }
+    })
     
     // 后台模糊遮罩层（当应用进入后台且启用了模糊遮罩时显示）
     BackgroundBlurOverlay({
@@ -18055,6 +18429,13 @@ struct MainMenuPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  // 页面过渡动画：从 SplashPage 进入时淡入
+  pageTransition() {
+    // MainMenuPage 从透明淡入，视觉上等同于 SplashPage 淡出
+    PageTransitionEnter({ duration: 350, curve: Curve.EaseOut })
+      .opacity(0) // 从透明开始淡入
   }
 }
 

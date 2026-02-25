@@ -109,6 +109,14 @@ export struct PageCurlEffectV2 {
   private touchCurrentX: number = 0;
   private touchCurrentY: number = 0;
   
+  // 弹簧平滑状态（掀角位置 + 速度）
+  private smoothPeelX: number = -1;
+  private smoothPeelY: number = -1;
+  private springVelocityX: number = 0;
+  private springVelocityY: number = 0;
+  // 锚点角落缓存（拖拽期间固定，避免手指移动时角落突变）
+  private anchorAY: number = -1;
+  
   // 动画相关
   private animationTimer: number = -1;
   
@@ -191,23 +199,21 @@ export struct PageCurlEffectV2 {
     // 从PixelMap创建新的ImageBitmap
     if (this.currentPixelMap) {
       try {
-        // 先检查PixelMap的信息
+        // 【修复】先验证 PixelMap 是否仍然有效（可能已被外部释放）
         const pmInfo = this.currentPixelMap.getImageInfoSync();
-        logger.info(TAG, `[updateImageBitmaps] 当前页PixelMap信息: ${pmInfo.size.width}x${pmInfo.size.height}, format=${pmInfo.pixelFormat}`);
-        
-        // 创建ImageBitmap
-        const bitmap = new ImageBitmap(this.currentPixelMap);
-        logger.info(TAG, `[updateImageBitmaps] 当前页ImageBitmap创建完成, typeof=${typeof bitmap}, bitmap=${bitmap}`);
-        
-        // 检查bitmap是否有效
-        if (bitmap) {
-          this.currentImageBitmap = bitmap;
-          // 安全访问width/height
-          const w = this.currentImageBitmap?.width;
-          const h = this.currentImageBitmap?.height;
-          logger.info(TAG, `[updateImageBitmaps] 当前页ImageBitmap尺寸: w=${w}, h=${h}`);
+        if (!pmInfo || !pmInfo.size || pmInfo.size.width <= 0) {
+          logger.error(TAG, `[updateImageBitmaps] 当前页PixelMap已失效（getImageInfoSync返回无效信息）`);
+          this.currentImageBitmap = null;
         } else {
-          logger.error(TAG, `[updateImageBitmaps] 当前页ImageBitmap创建返回null/undefined`);
+          logger.info(TAG, `[updateImageBitmaps] 当前页PixelMap信息: ${pmInfo.size.width}x${pmInfo.size.height}, format=${pmInfo.pixelFormat}`);
+          const bitmap = new ImageBitmap(this.currentPixelMap);
+          if (bitmap) {
+            this.currentImageBitmap = bitmap;
+            logger.info(TAG, `[updateImageBitmaps] 当前页ImageBitmap创建完成: w=${bitmap.width}, h=${bitmap.height}`);
+          } else {
+            logger.error(TAG, `[updateImageBitmaps] 当前页ImageBitmap创建返回null/undefined`);
+            this.currentImageBitmap = null;
+          }
         }
       } catch (e) {
         logger.error(TAG, `[updateImageBitmaps] 当前页ImageBitmap创建失败: ${e}`);
@@ -219,23 +225,21 @@ export struct PageCurlEffectV2 {
     
     if (this.nextPixelMap) {
       try {
-        // 先检查PixelMap的信息
+        // 【修复】先验证 PixelMap 是否仍然有效
         const pmInfo = this.nextPixelMap.getImageInfoSync();
-        logger.info(TAG, `[updateImageBitmaps] 下一页PixelMap信息: ${pmInfo.size.width}x${pmInfo.size.height}, format=${pmInfo.pixelFormat}`);
-        
-        // 创建ImageBitmap
-        const bitmap = new ImageBitmap(this.nextPixelMap);
-        logger.info(TAG, `[updateImageBitmaps] 下一页ImageBitmap创建完成, typeof=${typeof bitmap}, bitmap=${bitmap}`);
-        
-        // 检查bitmap是否有效
-        if (bitmap) {
-          this.nextImageBitmap = bitmap;
-          // 安全访问width/height
-          const w = this.nextImageBitmap?.width;
-          const h = this.nextImageBitmap?.height;
-          logger.info(TAG, `[updateImageBitmaps] 下一页ImageBitmap尺寸: w=${w}, h=${h}`);
+        if (!pmInfo || !pmInfo.size || pmInfo.size.width <= 0) {
+          logger.error(TAG, `[updateImageBitmaps] 下一页PixelMap已失效（getImageInfoSync返回无效信息）`);
+          this.nextImageBitmap = null;
         } else {
-          logger.error(TAG, `[updateImageBitmaps] 下一页ImageBitmap创建返回null/undefined`);
+          logger.info(TAG, `[updateImageBitmaps] 下一页PixelMap信息: ${pmInfo.size.width}x${pmInfo.size.height}, format=${pmInfo.pixelFormat}`);
+          const bitmap = new ImageBitmap(this.nextPixelMap);
+          if (bitmap) {
+            this.nextImageBitmap = bitmap;
+            logger.info(TAG, `[updateImageBitmaps] 下一页ImageBitmap创建完成: w=${bitmap.width}, h=${bitmap.height}`);
+          } else {
+            logger.error(TAG, `[updateImageBitmaps] 下一页ImageBitmap创建返回null/undefined`);
+            this.nextImageBitmap = null;
+          }
         }
       } catch (e) {
         logger.error(TAG, `[updateImageBitmaps] 下一页ImageBitmap创建失败: ${e}`);
@@ -287,7 +291,12 @@ export struct PageCurlEffectV2 {
       return;
     }
     
-    const duration: number = this.config.animationDuration * progressDelta;
+    // 弹簧动画：完成翻页时带过冲回弹，取消时直接缓出
+    const isComplete: boolean = targetProgress > startProgress;
+    // 完成动画稍长以容纳弹簧振荡
+    const duration: number = isComplete
+      ? this.config.animationDuration * progressDelta * 1.6
+      : this.config.animationDuration * progressDelta;
     const startTime: number = Date.now();
     let lastFrameTime: number = startTime;
     
@@ -295,7 +304,14 @@ export struct PageCurlEffectV2 {
       const now: number = Date.now();
       const elapsed: number = now - startTime;
       const t: number = Math.min(elapsed / Math.max(duration, 50), 1.0);
-      const eased: number = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      let eased: number;
+      if (isComplete) {
+        // 弹簧过冲缓动：先超调到 ~1.08 再回落到 1.0
+        eased = this.springEaseOut(t);
+      } else {
+        // 回弹取消用更柔和的缓出
+        eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      }
       
       this.curlProgress = startProgress + (targetProgress - startProgress) * eased;
       this.renderCurlEffect();
@@ -320,6 +336,20 @@ export struct PageCurlEffectV2 {
   }
   
   /**
+   * 弹簧过冲缓动函数
+   * 模拟阻尼弹簧系统：快速冲到目标，小幅过冲后回弹稳定
+   * @param t 归一化时间 0~1
+   * @returns 缓动值，会短暂超过 1.0 再回落
+   */
+  private springEaseOut(t: number): number {
+    // 阻尼振荡：e^(-bt) * cos(wt)
+    // b=4.5 阻尼系数，w=3.5π 角频率（约1.75个振荡周期）
+    const decay: number = Math.exp(-4.5 * t);
+    const oscillation: number = Math.cos(3.5 * Math.PI * t);
+    return 1 - decay * oscillation;
+  }
+
+  /**
    * 停止动画
    */
   private stopAnimation(): void {
@@ -330,17 +360,10 @@ export struct PageCurlEffectV2 {
   }
 
   /**
-   * 渲染卷页效果
+   * 渲染翻页效果
    * 
-   * 核心理念：当前页图片本身在卷曲变形，不是覆盖一个新的3D组件
-   * 
-   * 渲染顺序（从底到顶）：
-   * 1. 背景色（画布外围）
-   * 2. 下一页图片（完整显示，作为底层）
-   * 3. 当前页图片（通过条带变形实现卷曲效果）
-   *    - 左侧未卷起部分：正常显示
-   *    - 右侧卷起部分：条带变形 + 透视收缩
-   * 4. 阴影和高光（增强立体感）
+   * 核心理念：垂直平分线折叠模型——沿锚点角落到拖拽位置的垂直平分线折叠
+   * 页面被分为平面侧（显示当前页）和翻起侧（镜像显示背面）
    */
   private renderCurlEffect(): void {
     const ctx = this.canvasContext;
@@ -376,8 +399,13 @@ export struct PageCurlEffectV2 {
       return;
     }
 
-    // 进度为0时显示当前页
+    // 进度为0时显示当前页，并重置阻尼状态
     if (progress < 0.01) {
+      this.smoothPeelX = -1;
+      this.smoothPeelY = -1;
+      this.springVelocityX = 0;
+      this.springVelocityY = 0;
+      this.anchorAY = -1;
       try {
         ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih);
       } catch (e) { /* ignore */ }
@@ -389,207 +417,246 @@ export struct PageCurlEffectV2 {
   }
   
   /**
-   * 自由点翻页渲染 - 支持从任意点开始翻页
-   * 根据触摸起始点位置动态计算折叠效果
+   * 真实翻页效果（垂直平分线折叠模型）
+   *
+   * 核心算法：
+   * 1. 确定被掀起的角落 A（锚点）
+   * 2. 根据 progress 计算角落被拖拽到的位置 P
+   * 3. 折叠线 = A→P 的垂直平分线
+   * 4. 页面矩形沿折叠线分为 “平面” 和 “翻起” 两个多边形
+   * 5. 平面侧显示当前页，翻起侧沿折叠线镜像显示背面
    */
   private renderFreeCurl(ctx: CanvasRenderingContext2D, ix: number, iy: number, iw: number, ih: number, progress: number, isLeftSide: boolean): void {
+    if (progress < 0.005) return;
     const cw: number = this.componentWidth;
     const ch: number = this.componentHeight;
-    
-    // 计算触摸点在图片区域内的相对位置 (0-1)
-    const touchRelX: number = Math.max(0, Math.min(1, (this.curlTouchX - ix) / iw));
+
+    // === 1. 确定锚点角落 ===
     const touchRelY: number = Math.max(0, Math.min(1, (this.curlTouchY - iy) / ih));
-    
-    // 根据翻页方向确定起始边缘
-    const startEdgeX: number = isLeftSide ? ix : ix + iw;
-    
-    // 计算折叠线的位置
-    // 折叠线从触摸点的Y位置开始，X位置随进度移动
-    const maxFoldDist: number = iw;  // 最大折叠距离
-    const foldDist: number = maxFoldDist * progress;
-    
-    // 折叠线X位置
-    const foldX: number = isLeftSide ? 
-      ix + foldDist : 
-      ix + iw - foldDist;
-    
-    // 触摸点Y位置决定折叠的"倾斜程度"
-    // 如果触摸点在中间，折叠线垂直；如果在上下边缘，折叠线倾斜
-    const touchYNorm: number = (touchRelY - 0.5) * 2;  // -1 到 1，0表示中间
-    const tiltFactor: number = Math.abs(touchYNorm);   // 倾斜因子 0-1
-    const tiltDirection: number = touchYNorm > 0 ? 1 : -1;  // 倾斜方向
-    
-    // 计算折叠线的倾斜（让折叠线通过触摸点）
-    const tiltAmount: number = tiltFactor * foldDist * 0.5;  // 倾斜量
-    
-    // 折叠线的两个端点
-    let foldTopY: number = iy;
-    let foldBottomY: number = iy + ih;
-    let foldTopX: number = foldX;
-    let foldBottomX: number = foldX;
-    
-    if (tiltFactor > 0.1) {
-      // 有明显倾斜时，调整折叠线端点
-      if (tiltDirection > 0) {
-        // 触摸点偏下，上端向外倾斜
-        foldTopX = foldX + (isLeftSide ? -tiltAmount : tiltAmount);
-      } else {
-        // 触摸点偏上，下端向外倾斜
-        foldBottomX = foldX + (isLeftSide ? -tiltAmount : tiltAmount);
-      }
-      // 限制在图片范围内
-      foldTopX = Math.max(ix, Math.min(ix + iw, foldTopX));
-      foldBottomX = Math.max(ix, Math.min(ix + iw, foldBottomX));
+    const ax: number = isLeftSide ? ix : ix + iw;
+    // 锚点Y在拖拽开始时固定，避免手指上下移动时角落突变
+    if (this.anchorAY < 0) {
+      this.anchorAY = touchRelY >= 0.5 ? iy + ih : iy;
     }
-    
-    // 绘制下一页底层
+    const ay: number = this.anchorAY;
+
+    // === 2. 计算角落被拖拽到的位置 ===
+    const dir: number = isLeftSide ? 1 : -1;
+    let px: number = ax + dir * 2 * progress * iw;
+    // Y方向：跟随当前手指Y位置，动态改变折叠角度
+    const currentY: number = this.curlTouchY;
+    const yDisp: number = (currentY - ay) * Math.min(progress * 2.5, 0.8);
+    let py: number = ay + yDisp;
+
+    // 弹性平滑：带阻尼弹簧的惯性跟随，产生Q弹拖拽手感
+    if (this.smoothPeelX < 0) {
+      this.smoothPeelX = px;
+      this.smoothPeelY = py;
+      this.springVelocityX = 0;
+      this.springVelocityY = 0;
+    } else {
+      // 弹簧参数
+      const stiffness: number = 0.15;    // 刚度 — 值越大跟随越紧
+      const damping: number = 0.72;      // 阻尼 — 值越小振荡越多
+      // 弹力 = 目标差值 * 刚度
+      const forceX: number = (px - this.smoothPeelX) * stiffness;
+      const forceY: number = (py - this.smoothPeelY) * stiffness;
+      // 速度 = 旧速度 * 阻尼 + 弹力
+      this.springVelocityX = this.springVelocityX * damping + forceX;
+      this.springVelocityY = this.springVelocityY * damping + forceY;
+      this.smoothPeelX += this.springVelocityX;
+      this.smoothPeelY += this.springVelocityY;
+    }
+    px = this.smoothPeelX;
+    py = this.smoothPeelY;
+
+    // === 3. 折叠线 = A→P 的垂直平分线 ===
+    const fmx: number = (ax + px) / 2;
+    const fmy: number = (ay + py) / 2;
+    const fdx: number = px - ax;
+    const fdy: number = py - ay;
+    const flen: number = Math.sqrt(fdx * fdx + fdy * fdy);
+    if (flen < 1) return;
+    // 法线方向（A→P）
+    const nx: number = fdx / flen;
+    const ny: number = fdy / flen;
+
+    // === 4. 矩形角点分类 & 多边形分割 ===
+    const rc: number[][] = [
+      [ix, iy], [ix + iw, iy], [ix + iw, iy + ih], [ix, iy + ih]
+    ];
+    // 各角点到折叠线的有符号距离 (>0 = P侧/平面, <0 = A侧/翻起)
+    const sd: number[] = rc.map(c => nx * (c[0] - fmx) + ny * (c[1] - fmy));
+
+    // 构建两侧有序多边形
+    const flatPoly: number[][] = [];
+    const curlPoly: number[][] = [];
+    for (let i = 0; i < 4; i++) {
+      const j: number = (i + 1) % 4;
+      if (sd[i] >= 0) flatPoly.push(rc[i]);
+      if (sd[i] < 0) curlPoly.push(rc[i]);
+      if (sd[i] * sd[j] < 0) {
+        const t: number = sd[i] / (sd[i] - sd[j]);
+        const ip: number[] = [
+          rc[i][0] + t * (rc[j][0] - rc[i][0]),
+          rc[i][1] + t * (rc[j][1] - rc[i][1])
+        ];
+        flatPoly.push(ip);
+        curlPoly.push(ip);
+      }
+    }
+
+    // === 5. 绘制下一页底层 ===
     this.drawNextPageBase(ctx, cw, ch);
-    
-    // 绘制当前页（裁剪掉被折叠的部分）
-    ctx.save();
-    ctx.globalAlpha = 1.0;
-    ctx.beginPath();
-    if (isLeftSide) {
-      // 左侧翻页：保留折叠线右侧的部分
-      ctx.moveTo(foldTopX, foldTopY);
-      ctx.lineTo(foldBottomX, foldBottomY);
-      ctx.lineTo(ix + iw, iy + ih);
-      ctx.lineTo(ix + iw, iy);
-      ctx.closePath();
-    } else {
-      // 右侧翻页：保留折叠线左侧的部分
-      ctx.moveTo(foldTopX, foldTopY);
-      ctx.lineTo(foldBottomX, foldBottomY);
-      ctx.lineTo(ix, iy + ih);
-      ctx.lineTo(ix, iy);
-      ctx.closePath();
-    }
-    ctx.clip();
-    
-    if (this.currentImageBitmap) {
-      try {
-        ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih);
-      } catch (e) { /* ignore */ }
-    }
-    ctx.restore();
-    
-    // 绘制翻起的书页背面
-    this.renderFreeFlip(ctx, ix, iy, iw, ih, progress, isLeftSide, foldTopX, foldTopY, foldBottomX, foldBottomY, tiltAmount, tiltDirection);
-  }
-  
-  /**
-   * 自由点翻页的书页背面渲染
-   */
-  private renderFreeFlip(
-    ctx: CanvasRenderingContext2D,
-    ix: number, iy: number, iw: number, ih: number,
-    progress: number, isLeftSide: boolean,
-    foldTopX: number, foldTopY: number,
-    foldBottomX: number, foldBottomY: number,
-    tiltAmount: number, tiltDirection: number
-  ): void {
-    if (progress < 0.01) return;
-    
-    // 计算翻起的宽度
-    const flipWidth: number = isLeftSide ?
-      Math.max(foldTopX, foldBottomX) - ix :
-      ix + iw - Math.min(foldTopX, foldBottomX);
-    
-    if (flipWidth < 3) return;
-    
-    // 计算翻起区域的四个顶点
-    const edgeX: number = isLeftSide ? ix : ix + iw;
-    
-    // 翻起后的位置（镜像）
-    const flippedTopX: number = isLeftSide ?
-      foldTopX + (foldTopX - edgeX) :
-      foldTopX - (edgeX - foldTopX);
-    const flippedBottomX: number = isLeftSide ?
-      foldBottomX + (foldBottomX - edgeX) :
-      foldBottomX - (edgeX - foldBottomX);
-    
-    // 限制在合理范围内
-    const clampedFlipTopX: number = Math.max(ix, Math.min(ix + iw, flippedTopX));
-    const clampedFlipBottomX: number = Math.max(ix, Math.min(ix + iw, flippedBottomX));
-    
-    // 绘制翻起的区域
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(foldTopX, foldTopY);
-    ctx.lineTo(foldBottomX, foldBottomY);
-    ctx.lineTo(clampedFlipBottomX, foldBottomY);
-    ctx.lineTo(clampedFlipTopX, foldTopY);
-    ctx.closePath();
-    ctx.clip();
-    
-    // 绘制镜像图片
-    if (this.currentImageBitmap) {
-      // 计算折叠线中点
-      const foldMidX: number = (foldTopX + foldBottomX) / 2;
-      const foldMidY: number = (foldTopY + foldBottomY) / 2;
-      
-      // 计算折叠线角度
-      const foldDx: number = foldBottomX - foldTopX;
-      const foldDy: number = foldBottomY - foldTopY;
-      const foldAngle: number = Math.atan2(foldDy, foldDx);
-      
-      // 镜像变换：关于折叠线进行镜像
-      // 1. 移动到折叠线中点
-      // 2. 旋转使折叠线与X轴平行
-      // 3. Y轴镜像（翻转到折叠线另一侧）
-      // 4. 反向旋转
-      // 5. 移回原位
-      ctx.translate(foldMidX, foldMidY);
-      ctx.rotate(foldAngle);
-      ctx.scale(1, -1);  // 关于折叠线镜像（Y轴翻转）
-      ctx.rotate(-foldAngle);
-      ctx.translate(-foldMidX, -foldMidY);
-      
-      // 使用可配置的透明度（0-100 转换为 0-1）
-      ctx.globalAlpha = this.curlBackOpacity / 100;
-      try {
-        ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih);
-      } catch (e) { /* ignore */ }
-      
-      // 添加纸张背面效果（透明度较低时减少遮罩效果）
-      const overlayAlpha: number = 0.2 * (this.curlBackOpacity / 100);
-      ctx.globalAlpha = overlayAlpha;
-      ctx.fillStyle = '#f0ebe3';
-      ctx.fill();
-    } else {
-      ctx.fillStyle = '#e8e3db';
-      ctx.fill();
-    }
-    
-    ctx.restore();
-    
-    // 合并高光和阴影渲染，减少 save/restore 开销
-    // 只在进度足够时绘制效果
-    if (progress > 0.05) {
-      // 阴影（先绘制，在高光下面）
-      if (this.config.enableShadow && progress > 0.1) {
-        ctx.globalAlpha = 0.12 * progress;
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = flipWidth * 0.12;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(foldTopX, foldTopY);
-        ctx.lineTo(foldBottomX, foldBottomY);
-        ctx.stroke();
-      }
-      
-      // 高光
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
+
+    // === 6. 当前页（平面侧） ===
+    if (flatPoly.length >= 3 && this.currentImageBitmap) {
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(foldTopX, foldTopY);
-      ctx.lineTo(foldBottomX, foldBottomY);
-      ctx.stroke();
-      
-      // 重置透明度
+      ctx.moveTo(flatPoly[0][0], flatPoly[0][1]);
+      for (let i = 1; i < flatPoly.length; i++) {
+        ctx.lineTo(flatPoly[i][0], flatPoly[i][1]);
+      }
+      ctx.closePath();
+      ctx.clip();
       ctx.globalAlpha = 1.0;
+      try { ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih); } catch (e) {}
+      ctx.restore();
     }
+
+    // === 7. 翻起背面（反射到折叠线另一侧） ===
+    // 将 curlPoly 各顶点沿折叠线镜像反射，得到翻起后的真实位置
+    if (curlPoly.length >= 3 && this.currentImageBitmap) {
+      const foldAngle: number = Math.atan2(nx, -ny);
+
+      // 计算反射多边形：每个顶点沿折叠线镜像
+      const reflCurl: number[][] = curlPoly.map(p => {
+        const vx: number = p[0] - fmx;
+        const vy: number = p[1] - fmy;
+        const proj: number = vx * nx + vy * ny;
+        return [p[0] - 2 * proj * nx, p[1] - 2 * proj * ny];
+      });
+
+      // 7a. 在反射位置绘制镜像图片（书页背面）
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(reflCurl[0][0], reflCurl[0][1]);
+      for (let i = 1; i < reflCurl.length; i++) {
+        ctx.lineTo(reflCurl[i][0], reflCurl[i][1]);
+      }
+      ctx.closePath();
+      ctx.clip();
+      // 反射变换：平移到折叠中点 → 旋转对齐 → 翻转 → 旋转回 → 平移回
+      ctx.translate(fmx, fmy);
+      ctx.rotate(foldAngle);
+      ctx.scale(1, -1);
+      ctx.rotate(-foldAngle);
+      ctx.translate(-fmx, -fmy);
+      ctx.globalAlpha = this.curlBackOpacity / 100;
+      try { ctx.drawImage(this.currentImageBitmap, ix, iy, iw, ih); } catch (e) {}
+      ctx.restore();
+
+      // 7b. 纸张背面覆盖色
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(reflCurl[0][0], reflCurl[0][1]);
+      for (let i = 1; i < reflCurl.length; i++) {
+        ctx.lineTo(reflCurl[i][0], reflCurl[i][1]);
+      }
+      ctx.closePath();
+      ctx.clip();
+      ctx.globalAlpha = 0.08 * (this.curlBackOpacity / 100);
+      ctx.fillStyle = '#f5f0e8';
+      ctx.fill();
+      ctx.restore();
+
+      // 7c. 折叠处内侧阴影（模拟纸张弯曲，在反射区域内靠近折叠线处）
+      if (this.config.enableShadow) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(reflCurl[0][0], reflCurl[0][1]);
+        for (let i = 1; i < reflCurl.length; i++) {
+          ctx.lineTo(reflCurl[i][0], reflCurl[i][1]);
+        }
+        ctx.closePath();
+        ctx.clip();
+        const innerSw: number = Math.min(35, iw * 0.05) * Math.sqrt(progress);
+        // 阴影从折叠线向P侧（反射区域内部）扩散
+        const g2: CanvasGradient = ctx.createLinearGradient(
+          fmx, fmy, fmx + nx * innerSw, fmy + ny * innerSw
+        );
+        g2.addColorStop(0, 'rgba(0,0,0,0.18)');
+        g2.addColorStop(0.4, 'rgba(0,0,0,0.04)');
+        g2.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g2;
+        ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
+        ctx.restore();
+      }
+    }
+
+    // === 8. 折叠线阴影（仅投射到揭开区域，不影响平面侧） ===
+    if (this.config.enableShadow && progress > 0.02 && curlPoly.length >= 3) {
+      const sw: number = Math.min(40, iw * 0.06) * Math.sqrt(progress);
+      const sa: number = Math.min(0.3, 0.22 * Math.sqrt(progress));
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(curlPoly[0][0], curlPoly[0][1]);
+      for (let i = 1; i < curlPoly.length; i++) {
+        ctx.lineTo(curlPoly[i][0], curlPoly[i][1]);
+      }
+      ctx.closePath();
+      ctx.clip();
+      // 阴影从fold向A侧（curlPoly/下一页区域）扩散，模拟翻起页的投影
+      const g1: CanvasGradient = ctx.createLinearGradient(
+        fmx + nx * 2, fmy + ny * 2,
+        fmx - nx * sw, fmy - ny * sw
+      );
+      g1.addColorStop(0, `rgba(0,0,0,${sa})`);
+      g1.addColorStop(0.2, `rgba(0,0,0,${sa * 0.35})`);
+      g1.addColorStop(0.5, `rgba(0,0,0,${sa * 0.08})`);
+      g1.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g1;
+      ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
+      ctx.restore();
+    }
+
+    // === 9. 折叠边缘线 ===
+    const edgePts: number[][] = [];
+    for (let i = 0; i < 4; i++) {
+      const j: number = (i + 1) % 4;
+      if (sd[i] * sd[j] < 0) {
+        const t: number = sd[i] / (sd[i] - sd[j]);
+        edgePts.push([
+          rc[i][0] + t * (rc[j][0] - rc[i][0]),
+          rc[i][1] + t * (rc[j][1] - rc[i][1])
+        ]);
+      }
+    }
+    if (edgePts.length === 2 && progress > 0.015) {
+      ctx.save();
+      ctx.globalAlpha = 0.12 + 0.1 * progress;
+      ctx.strokeStyle = '#999999';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(edgePts[0][0], edgePts[0][1]);
+      ctx.lineTo(edgePts[1][0], edgePts[1][1]);
+      ctx.stroke();
+      ctx.restore();
+
+      // 折叠线高光（纸张边缘反光）
+      if (this.config.enableHighlight) {
+        ctx.save();
+        ctx.globalAlpha = 0.2 + 0.15 * progress;
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(edgePts[0][0] - nx * 1, edgePts[0][1] - ny * 1);
+        ctx.lineTo(edgePts[1][0] - nx * 1, edgePts[1][1] - ny * 1);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1.0;
   }
 
   /**

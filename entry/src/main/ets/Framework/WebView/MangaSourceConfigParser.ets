@@ -33,7 +33,8 @@ import {
   HTTPRequestAction,
   ExtractConfig,
   BaseAction,
-  AuthenticationConfig
+  AuthenticationConfig,
+  APIPaginationConfig
 } from './MangaSourceTypes';
 
 const TAG = 'MangaSourceConfigParser';
@@ -1025,7 +1026,8 @@ export class MangaSourceConfigParser {
           params: apiAction.params,
           headers: apiAction.headers,
           body: apiAction.body,
-          extract: apiAction.extract
+          extract: apiAction.extract,
+          pagination: apiAction.pagination
         };
         return clonedAPI;
 
@@ -1681,6 +1683,18 @@ export class MangaSourceConfigParser {
       }
     }
     
+    // 解析分页配置
+    let pagination: APIPaginationConfig | undefined = undefined;
+    if (workflowObj.pagination && typeof workflowObj.pagination === 'object') {
+      const paginationObj = workflowObj.pagination as Record<string, Object>;
+      pagination = {
+        enabled: !!paginationObj['enabled'],
+        type: paginationObj['type'] as string | undefined,
+        pageParam: paginationObj['pageParam'] as string | undefined,
+        hasMorePath: paginationObj['hasMorePath'] as string | undefined
+      };
+    }
+
     const apiAction: APIRequestAction = {
       type: ActionType.API_REQUEST,
       method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -1689,7 +1703,8 @@ export class MangaSourceConfigParser {
       headers: headers,
       body: workflowObj.body as ESObject,
       extract: workflowObj.extract as ExtractConfig,
-      description: (workflowObj.description as string) || 'API请求'
+      description: (workflowObj.description as string) || 'API请求',
+      pagination: pagination
     };
     
     logger.debug(TAG, `解析后的API操作: method=${apiAction.method}, url=${apiAction.url}, hasParams=${!!apiAction.params}`);

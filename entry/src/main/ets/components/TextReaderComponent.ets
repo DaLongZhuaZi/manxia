@@ -25,6 +25,7 @@ import {
   DEFAULT_TEXT_READER_SETTINGS
 } from '../Models/TextReaderModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
+import { DualPageCurlEffect } from './DualPageCurlEffect';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
 
 
@@ -144,6 +145,17 @@ export struct TextReaderComponent {
   private static readonly ANIMATION_TIMEOUT_MS: number = 3000;  // 动画超时时间(3秒)
   private pagePixelMapCache: Map<number, image.PixelMap> = new Map();  // 页面 PixelMap 缓存
   private isGeneratingPixelMap: boolean = false;  // 是否正在生成 PixelMap
+  private panStartTime: number = 0;  // 拖拽起始时间戳（用于快速翻页速度检测）
+  // 小说专用卷页配置：针对全屏场景优化动画曲线
+  private novelCurlConfig: PageCurlConfigV2 = {
+    stripCount: 24,
+    maxCurlHeight: 120,
+    shadowIntensity: 0.5,
+    animationDuration: 350,  // 全屏页面较大，动画时长稍长以保证流畅感
+    enableShadow: true,
+    enableHighlight: true,
+    flipThreshold: 0.28       // 全屏场景降低阈值，更容易触发翻页
+  };
   private isPaginating: boolean = false;  // 是否正在分页
   private paginationVersion: number = 0;  // 分页版本号，用于取消旧的分页任务
   private paginationRetryCount: number = 0;  // 分页重试次数
@@ -180,6 +192,33 @@ export struct TextReaderComponent {
   @State private currentTime: string = '';
   @State private batteryLevel: number = 0;
   private timeUpdateInterval: number = -1;
+  
+  // ========== 双页模式状态 ==========
+  /** 双页模式左页内容 */
+  @State private dualLeftPageContent: string = '';
+  /** 双页模式右页内容 */
+  @State private dualRightPageContent: string = '';
+  /** 双页模式左页索引 */
+  @State private dualLeftPageIndex: number = 0;
+  /** 双页模式右页索引 */
+  @State private dualRightPageIndex: number = 1;
+  /** 双页模式当前展开页基础索引（始终为偶数） */
+  private dualPageBaseIndex: number = 0;
+  // ========== 双页卷页动画 PixelMap ==========
+  @State private dualCurlLeftPM: image.PixelMap | null = null;
+  @State private dualCurlRightPM: image.PixelMap | null = null;
+  @State private dualCurlNextLeftPM: image.PixelMap | null = null;
+  @State private dualCurlNextRightPM: image.PixelMap | null = null;
+  /** 双页模式翻页动画作用侧：'left' 或 'right' */
+  @State private dualAnimSide: string = 'right';
+  /** 双页模式翻页动画偏移 */
+  @State private dualSlideOffset: number = 0;
+  /** 双页模式翻页动画下方页面内容（左侧） */
+  @State private dualUnderLeftContent: string = '';
+  /** 双页模式翻页动画下方页面内容（右侧） */
+  @State private dualUnderRightContent: string = '';
+  /** 双页卷页动画定时器（父组件驱动模式） */
+  private dualCurlAnimTimer: number = -1;
   
   // ========== 生命周期 ==========
   aboutToAppear(): void {
@@ -243,10 +282,15 @@ export struct TextReaderComponent {
       this.currentPixelMap = null;
       this.nextPixelMap = null;
       this.prevPixelMap = null;
+      this.dualCurlLeftPM = null;
+      this.dualCurlRightPM = null;
+      this.dualCurlNextLeftPM = null;
+      this.dualCurlNextRightPM = null;
       
       // 停止正在进行的动画
       this.stopCurlAnimation();
       this.isAnimating = false;
+      this.showCurlEffect = false;
       
       // 异步分页
       this.paginateContentAsync();
@@ -318,7 +362,13 @@ export struct TextReaderComponent {
       
       // 检查是否需要跳转到最后一页（返回上一章节时）
       if (this.shouldJumpToLastPage && this.totalPages > 0) {
-        this.currentPageIndex = this.totalPages - 1;
+        if (this.isDualPageMode()) {
+          // 双页模式：跳转到最后一对页面（偶数索引）
+          this.dualPageBaseIndex = this.totalPages - 1 - ((this.totalPages - 1) % 2);
+          this.currentPageIndex = this.dualPageBaseIndex;
+        } else {
+          this.currentPageIndex = this.totalPages - 1;
+        }
         this.lastExternalPageIndex = this.currentPageIndex;
         this.shouldJumpToLastPage = false;
         logger.info(TAG, `分页完成，跳转到最后一页: ${this.currentPageIndex + 1}/${this.totalPages}`);
@@ -358,6 +408,12 @@ export struct TextReaderComponent {
   private onPageIndexChange(): void {
     // 防止内部翻页触发重复更新
     if (this.lastExternalPageIndex === this.currentPageIndex) {
+      return;
+    }
+    
+    // 动画进行中不处理外部页面索引变化，避免破坏卷页动画状态
+    if (this.isAnimating || this.showCurlEffect) {
+      logger.debug(TAG, `外部页面索引变化被跳过（动画中）: ${this.lastExternalPageIndex} -> ${this.currentPageIndex}`);
       return;
     }
     
@@ -428,6 +484,7 @@ export struct TextReaderComponent {
     this.curlProgress = 0;
     this.curlAnimateTarget = -1;
     this.isDragging = false;
+    this.dualSlideOffset = 0;
     this.clearAnimationTimeout();
     logger.info(TAG, '动画状态已强制重置');
   }
@@ -532,11 +589,19 @@ export struct TextReaderComponent {
     
     if (keyCode === KeyCode.KEYCODE_VOLUME_UP) {
       logger.info(TAG, '音量键翻页: 上一页');
-      this.goToPrevPage();
+      if (this.isDualPageMode()) {
+        this.goToPrevDualPage();
+      } else {
+        this.goToPrevPage();
+      }
       return true;
     } else if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN) {
       logger.info(TAG, '音量键翻页: 下一页');
-      this.goToNextPage();
+      if (this.isDualPageMode()) {
+        this.goToNextDualPage();
+      } else {
+        this.goToNextPage();
+      }
       return true;
     }
     
@@ -966,6 +1031,11 @@ export struct TextReaderComponent {
     this.currentPageContent = this.pages[safeIndex]?.content || '';
     this.prevPageContent = safeIndex > 0 ? this.pages[safeIndex - 1]?.content || '' : '';
     this.nextPageContent = safeIndex < this.pages.length - 1 ? this.pages[safeIndex + 1]?.content || '' : '';
+    
+    // 双页模式同步更新左右页内容
+    if (this.isDualPageMode()) {
+      this.updateDualPageContents();
+    }
   }
   
   // ========== 翻页逻辑 ==========
@@ -1520,6 +1590,25 @@ export struct TextReaderComponent {
       return;
     }
     
+    if (this.isDualPageMode()) {
+      // 双页模式：预加载当前展开页 + 下一对 + 上一对（6 页）
+      const base = this.dualPageBaseIndex;
+      const pagesToPreload = [base, base + 1, base + 2, base + 3, base - 2, base - 1];
+      
+      for (const idx of pagesToPreload) {
+        if (idx >= 0 && idx < this.totalPages && !this.pagePixelMapCache.has(idx)) {
+          this.renderPageToPixelMap(idx).then(pm => {
+            if (pm) {
+              this.pagePixelMapCache.set(idx, pm);
+            }
+          });
+        }
+      }
+      
+      this.cleanupPixelMapCache(base, 5);
+      return;
+    }
+    
     const currentIdx = this.currentPageIndex;
     const prevIdx = currentIdx - 1;
     const nextIdx = currentIdx + 1;
@@ -1594,7 +1683,7 @@ export struct TextReaderComponent {
     }
     
     const pageContent = this.pages[pageIndex]?.content || '';
-    const width = Math.round(this.componentWidth);
+    const width = Math.round(this.isDualPageMode() ? this.getDualPageWidth() : this.componentWidth);
     // 使用整个组件高度，通过 padding 避让底部信息栏（与实际显示一致）
     const height = Math.round(this.componentHeight);
     
@@ -1606,8 +1695,9 @@ export struct TextReaderComponent {
     try {
       // 使用 componentSnapshot.createFromBuilder 截取页面
       // 参数：builder 函数, delay(可选), checkImageStatus(可选), options(可选)
+      // 传递 pageIndex 以便在 PixelMap 中渲染页码
       const pixelMap: image.PixelMap = await componentSnapshot.createFromBuilder(
-        () => { this.buildPageForSnapshot(pageContent, width, height); }
+        () => { this.buildPageForSnapshot(pageContent, width, height, pageIndex); }
       );
       
       logger.info(TAG, `页面 ${pageIndex} PixelMap 生成成功`);
@@ -1621,9 +1711,13 @@ export struct TextReaderComponent {
   /**
    * 构建用于截图的页面内容
    * 注意：需要指定固定尺寸，因为 createFromBuilder 需要知道组件大小
+   * @param content 页面文本内容
+   * @param width 页面宽度
+   * @param height 页面高度
+   * @param pageIndex 页码索引（用于在 PixelMap 中渲染页码）
    */
   @Builder
-  buildPageForSnapshot(content: string, width: number, height: number) {
+  buildPageForSnapshot(content: string, width: number, height: number, pageIndex: number = -1) {
     Stack() {
       // 背景层 - 始终显示底色
       Column()
@@ -1660,6 +1754,22 @@ export struct TextReaderComponent {
         })
         .width(width)
         .height(height)
+      
+      // 页码层 - 渲染在 PixelMap 底部
+      if (pageIndex >= 0) {
+        Row() {
+          Text(`${pageIndex + 1} / ${this.totalPages}`)
+            .fontSize(12)
+            .fontColor(this.settings.textStyle.textColor)
+            .opacity(0.5)
+            .fontWeight(FontWeight.Medium)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ left: 16, right: 16, bottom: 8 })
+        .position({ x: 0, y: '100%' })
+        .translate({ y: '-100%' })
+      }
     }
     .width(width)
     .height(height)
@@ -1845,7 +1955,13 @@ export struct TextReaderComponent {
     this.onPageChange(this.currentPageIndex, this.totalPages);
     
     // 计算阅读进度
-    const progress = this.totalPages > 0 ? (this.currentPageIndex + 1) / this.totalPages * 100 : 0;
+    let progress: number;
+    if (this.isDualPageMode()) {
+      const effectivePage = Math.min(this.dualPageBaseIndex + 2, this.totalPages);
+      progress = this.totalPages > 0 ? effectivePage / this.totalPages * 100 : 0;
+    } else {
+      progress = this.totalPages > 0 ? (this.currentPageIndex + 1) / this.totalPages * 100 : 0;
+    }
     this.onProgressChange(progress);
     
     // 预加载相邻页面的 PixelMap（用于卷页动画）
@@ -1913,6 +2029,7 @@ export struct TextReaderComponent {
     // 记录卷曲触摸点（用于从触摸位置开始卷曲）
     this.curlTouchX = event.fingerList[0]?.localX || event.offsetX;
     this.curlTouchY = event.fingerList[0]?.localY || event.offsetY;
+    this.panStartTime = Date.now();
     this.isDragging = true;
   }
   
@@ -1933,6 +2050,8 @@ export struct TextReaderComponent {
         if (this.isAnimating && !this.showCurlEffect) {
           return;
         }
+        // 动态更新手指Y坐标，让折叠角度跟随手指移动
+        this.curlTouchY = event.fingerList[0]?.localY || this.curlTouchY;
         this.updateCurlProgress(deltaX);
         return;
       }
@@ -1947,6 +2066,16 @@ export struct TextReaderComponent {
         this.slideOffset = Math.max(-maxOffset, Math.min(maxOffset, deltaX));
         logger.debug(TAG, `handlePanUpdate: slideOffset=${this.slideOffset.toFixed(2)}`);
       }
+    }
+    
+    // 双页模式卷页拖拽
+    if (this.settings.readingMode === TextReadingMode.DUAL_PAGE &&
+        this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL) {
+      if (this.isAnimating && !this.showCurlEffect) {
+        return;
+      }
+      this.curlTouchY = event.fingerList[0]?.localY || this.curlTouchY;
+      this.updateDualCurlProgress(deltaX);
     }
   }
   
@@ -1965,7 +2094,7 @@ export struct TextReaderComponent {
     
     const deltaX = event.offsetX - this.initialTouchX;
     const threshold = this.componentWidth * 0.2;
-    const flipThreshold = 0.35;  // 卷页翻页阈值
+    const flipThreshold = this.novelCurlConfig.flipThreshold;  // 使用小说专用卷页阈值
     
     logger.info(TAG, `handlePanEnd: deltaX=${deltaX.toFixed(2)}, threshold=${threshold.toFixed(2)}, componentWidth=${this.componentWidth}, animation=${this.settings.pageTurnAnimation}, readingMode=${this.settings.readingMode}`);
     
@@ -1977,11 +2106,19 @@ export struct TextReaderComponent {
     
     // 卷页动画模式 - 正在显示卷页效果
     if (this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL && this.showCurlEffect) {
-      if (this.curlProgress >= flipThreshold) {
-        // 超过阈值，完成翻页
+      // 快速翻页检测：小范围快速滑动也能触发翻页
+      const elapsed: number = Math.max(Date.now() - this.panStartTime, 1);
+      const swipeDist: number = Math.abs(event.offsetX - this.initialTouchX);
+      const velocity: number = swipeDist / elapsed;  // px/ms
+      const isQuickFlip: boolean = velocity > 0.35 && swipeDist > 25 && this.curlProgress > 0.02;
+      if (this.curlProgress >= flipThreshold || isQuickFlip) {
+        // 超过阈值 或 快速滑动，完成翻页
+        if (isQuickFlip && this.curlProgress < flipThreshold) {
+          logger.info(TAG, `小说快速翻页: velocity=${velocity.toFixed(2)}px/ms, dist=${swipeDist.toFixed(0)}, progress=${this.curlProgress.toFixed(2)}`);
+        }
         this.animateCurlToComplete();
       } else {
-        // 未超过阈值，回弹
+        // 未超过阈值且非快速滑动，回弹
         this.animateCurlToCancel();
       }
       return;
@@ -2171,6 +2308,530 @@ export struct TextReaderComponent {
     }
   }
   
+  /**
+   * 是否为双页模式
+   */
+  private isDualPageMode(): boolean {
+    return this.settings.readingMode === TextReadingMode.DUAL_PAGE;
+  }
+  
+  /**
+   * 获取双页模式下单页宽度
+   */
+  private getDualPageWidth(): number {
+    return Math.floor(this.componentWidth / 2);
+  }
+  
+  /**
+   * 更新双页模式左右页内容
+   */
+  private updateDualPageContents(): void {
+    if (this.pages.length === 0) {
+      this.dualLeftPageContent = '';
+      this.dualRightPageContent = '';
+      return;
+    }
+    
+    // 确保 baseIndex 为偶数
+    this.dualPageBaseIndex = Math.max(0, this.dualPageBaseIndex - (this.dualPageBaseIndex % 2));
+    
+    const isRTL = this.settings.readingDirection === TextReadingDirection.HORIZONTAL;
+    // LTR: 左=baseIndex, 右=baseIndex+1 (default, like a real book in CJK)
+    // RTL方向暂不考虑，默认 LTR
+    this.dualLeftPageIndex = this.dualPageBaseIndex;
+    this.dualRightPageIndex = this.dualPageBaseIndex + 1;
+    
+    this.dualLeftPageContent = this.dualLeftPageIndex < this.pages.length
+      ? (this.pages[this.dualLeftPageIndex]?.content || '') : '';
+    this.dualRightPageContent = this.dualRightPageIndex < this.pages.length
+      ? (this.pages[this.dualRightPageIndex]?.content || '') : '';
+    
+    // 同步 currentPageIndex 为 baseIndex（便于外部进度记录）
+    this.currentPageIndex = this.dualPageBaseIndex;
+    this.lastExternalPageIndex = this.currentPageIndex;
+    
+    logger.debug(TAG, `双页内容更新: left=${this.dualLeftPageIndex}, right=${this.dualRightPageIndex}, total=${this.totalPages}`);
+  }
+  
+  /**
+   * 双页模式翻到下一对页面
+   */
+  private goToNextDualPage(): void {
+    if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
+    
+    const nextBase = this.dualPageBaseIndex + 2;
+    if (nextBase >= this.totalPages) {
+      // 已是最后一对，尝试章节切换
+      if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
+        this.switchToNextChapter();
+      } else {
+        this.provideBoundaryFeedback();
+      }
+      return;
+    }
+    
+    this.isForward = true;
+    this.dualAnimSide = 'right';
+    this.performDualPageTurn(nextBase);
+  }
+  
+  /**
+   * 双页模式翻到上一对页面
+   */
+  private goToPrevDualPage(): void {
+    if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
+    
+    const prevBase = this.dualPageBaseIndex - 2;
+    if (prevBase < 0) {
+      // 已是第一对，尝试章节切换
+      if (this.currentChapterIndex > 0) {
+        this.shouldJumpToLastPage = true;
+        this.switchToPrevChapter();
+      } else {
+        this.provideBoundaryFeedback();
+      }
+      return;
+    }
+    
+    this.isForward = false;
+    this.dualAnimSide = 'left';
+    this.performDualPageTurn(prevBase);
+  }
+  
+  /**
+   * 执行双页翻页动画
+   */
+  private performDualPageTurn(targetBase: number): void {
+    const animation = this.settings.pageTurnAnimation;
+    const halfWidth = this.getDualPageWidth();
+    
+    if (animation === TextPageTurnAnimation.SLIDE) {
+      // 滑动动画
+      this.isAnimating = true;
+      this.startAnimationTimeout();
+      
+      // 准备动画下方层的内容（即目标页对内容）
+      this.dualUnderLeftContent = targetBase < this.pages.length ? (this.pages[targetBase]?.content || '') : '';
+      this.dualUnderRightContent = (targetBase + 1) < this.pages.length ? (this.pages[targetBase + 1]?.content || '') : '';
+      
+      const targetOffset = this.isForward ? -halfWidth : halfWidth;
+      
+      animateTo({
+        duration: 300,
+        curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
+      }, () => {
+        this.dualSlideOffset = targetOffset;
+      });
+      
+      setTimeout(() => {
+        this.dualPageBaseIndex = targetBase;
+        this.updateDualPageContents();
+        this.dualSlideOffset = 0;
+        this.isAnimating = false;
+        this.clearAnimationTimeout();
+        this.notifyPageChange();
+      }, 300);
+    } else if (animation === TextPageTurnAnimation.FADE) {
+      // 淡入淡出动画
+      this.isAnimating = true;
+      this.startAnimationTimeout();
+      
+      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        this.slideOpacity = 0;
+      });
+      
+      setTimeout(() => {
+        this.dualPageBaseIndex = targetBase;
+        this.updateDualPageContents();
+        animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+          this.slideOpacity = 1;
+        });
+        setTimeout(() => {
+          this.isAnimating = false;
+          this.clearAnimationTimeout();
+          this.notifyPageChange();
+        }, 150);
+      }, 150);
+    } else if (animation === TextPageTurnAnimation.CURL) {
+      // 双页卷页动画
+      this.performDualCurlAnimation(targetBase);
+    } else {
+      // 无动画
+      this.dualPageBaseIndex = targetBase;
+      this.updateDualPageContents();
+      this.notifyPageChange();
+    }
+  }
+  
+  /**
+   * 双页模式手势点击处理
+   */
+  private handleDualPageTap(x: number, _y: number): void {
+    const halfWidth = this.getDualPageWidth();
+    const isLeftSide = x < halfWidth;
+    
+    if (isLeftSide) {
+      // 左半区域
+      const leftThird = halfWidth / 3;
+      if (x < leftThird) {
+        // 左页左侧1/3：上一页对
+        this.goToPrevDualPage();
+      } else if (x > halfWidth - leftThird) {
+        // 左页右侧1/3（靠近中缝）：显示工具栏
+        this.onTapSimple();
+      } else {
+        this.onTapSimple();
+      }
+    } else {
+      // 右半区域
+      const rightX = x - halfWidth;
+      const rightThird = halfWidth / 3;
+      if (rightX > halfWidth - rightThird) {
+        // 右页右侧1/3：下一页对
+        this.goToNextDualPage();
+      } else if (rightX < rightThird) {
+        // 右页左侧1/3（靠近中缝）：显示工具栏
+        this.onTapSimple();
+      } else {
+        this.onTapSimple();
+      }
+    }
+  }
+  
+  /**
+   * 双页模式滑动手势结束处理
+   */
+  private handleDualPagePanEnd(deltaX: number): void {
+    // 双页卷页动画完成/取消
+    if (this.showCurlEffect && this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL) {
+      const flipThreshold = this.novelCurlConfig.flipThreshold;
+      const elapsed = Math.max(Date.now() - this.panStartTime, 1);
+      const swipeDist = Math.abs(deltaX);
+      const velocity = swipeDist / elapsed;
+      const isQuickFlip = velocity > 0.35 && swipeDist > 25 && this.curlProgress > 0.02;
+      
+      if (this.curlProgress >= flipThreshold || isQuickFlip) {
+        this.animateDualCurlToComplete();
+      } else {
+        // 回弹取消：父组件驱动动画回弹到 0，完成后重置双页卷页状态
+        this.animateDualCurlProgressTo(0, () => {
+          this.resetDualCurlState();
+        });
+      }
+      return;
+    }
+    
+    const halfWidth = this.getDualPageWidth();
+    const threshold = halfWidth * 0.2;
+    
+    if (Math.abs(deltaX) > threshold) {
+      if (deltaX < 0) {
+        this.goToNextDualPage();
+      } else {
+        this.goToPrevDualPage();
+      }
+    }
+  }
+  
+  /**
+   * 双页滑动动画（提取公用 + 卷页降级备用）
+   */
+  private performDualSlideAnimation(targetBase: number): void {
+    const halfWidth = this.getDualPageWidth();
+    this.isAnimating = true;
+    this.startAnimationTimeout();
+    
+    this.dualUnderLeftContent = targetBase < this.pages.length ? (this.pages[targetBase]?.content || '') : '';
+    this.dualUnderRightContent = (targetBase + 1) < this.pages.length ? (this.pages[targetBase + 1]?.content || '') : '';
+    
+    const targetOffset = this.isForward ? -halfWidth : halfWidth;
+    
+    animateTo({
+      duration: 300,
+      curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1)
+    }, () => {
+      this.dualSlideOffset = targetOffset;
+    });
+    
+    setTimeout(() => {
+      this.dualPageBaseIndex = targetBase;
+      this.updateDualPageContents();
+      this.dualSlideOffset = 0;
+      this.isAnimating = false;
+      this.clearAnimationTimeout();
+      this.notifyPageChange();
+    }, 300);
+  }
+  
+  /**
+   * 停止双页卷页动画定时器
+   */
+  private stopDualCurlAnimation(): void {
+    if (this.dualCurlAnimTimer !== -1) {
+      clearTimeout(this.dualCurlAnimTimer);
+      this.dualCurlAnimTimer = -1;
+    }
+  }
+  
+  /**
+   * 父组件驱动的双页卷页动画
+   * 直接更新 curlProgress（映射到子组件的 externalProgress），完全绕过 @Watch/onReady 竞态
+   */
+  private animateDualCurlProgressTo(target: number, onComplete: () => void): void {
+    this.stopDualCurlAnimation();
+    
+    const start: number = this.curlProgress;
+    const delta: number = Math.abs(target - start);
+    
+    if (delta < 0.01) {
+      this.curlProgress = target;
+      onComplete();
+      return;
+    }
+    
+    const isForwardAnim: boolean = target > start;
+    // 双页卷页动画需要更长时间：
+    // - 第一阶段(0→0.5)：页面从边缘翻到书脊
+    // - 第二阶段(0.5→1.0)：页面从书脊继续翻转落下
+    // 设置最小时长确保动画可见
+    const minDuration: number = isForwardAnim ? 450 : 250;
+    const rawDuration: number = isForwardAnim
+      ? this.novelCurlConfig.animationDuration * delta * 2.0  // 增加系数
+      : this.novelCurlConfig.animationDuration * delta;
+    const duration: number = Math.max(minDuration, rawDuration);
+    const startTime: number = Date.now();
+    
+    const animate = (): void => {
+      const elapsed: number = Date.now() - startTime;
+      const t: number = Math.min(elapsed / Math.max(duration, 50), 1.0);
+      let eased: number;
+      if (isForwardAnim) {
+        // 弹簧过冲缓动
+        const decay: number = Math.exp(-4.5 * t);
+        const oscillation: number = Math.cos(3.5 * Math.PI * t);
+        eased = 1 - decay * oscillation;
+      } else {
+        eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      }
+      
+      this.curlProgress = start + (target - start) * eased;
+      
+      if (t < 1.0) {
+        const frameProcessTime: number = Date.now() - (startTime + elapsed);
+        this.dualCurlAnimTimer = setTimeout(animate, Math.max(1, 16 - frameProcessTime));
+      } else {
+        this.curlProgress = target;
+        this.dualCurlAnimTimer = -1;
+        onComplete();
+      }
+    };
+    
+    animate();
+  }
+  
+  /**
+   * 双页卷页动画（tap 触发的自动播放）
+   * 生成 4 张 PixelMap：当前左/右 + 目标左/右
+   * 动画由父组件定时器驱动 curlProgress，而非子组件内部 @Watch
+   */
+  private performDualCurlAnimation(targetBase: number): void {
+    logger.info(TAG, `[双页卷页] 开始: base=${this.dualPageBaseIndex}, target=${targetBase}, forward=${this.isForward}, size=${this.componentWidth}x${this.componentHeight}`);
+    
+    // 提前设置 isAnimating，防止 PixelMap 生成期间用户重复触发翻页
+    this.isAnimating = true;
+    this.checkAndInvalidatePixelMapCache();
+    this.curlTouchY = this.componentHeight / 2;
+    
+    this.generateDualCurlPixelMaps(this.dualPageBaseIndex, targetBase).then(ok => {
+      logger.info(TAG, `[双页卷页] PixelMap结果: ok=${ok}, L=${this.dualCurlLeftPM !== null}, R=${this.dualCurlRightPM !== null}, NL=${this.dualCurlNextLeftPM !== null}, NR=${this.dualCurlNextRightPM !== null}`);
+      
+      if (!ok || this.pages.length === 0 || this.isPaginating || this.isLoading) {
+        logger.warn(TAG, `[双页卷页] 降级滑动: ok=${ok}, pages=${this.pages.length}, paging=${this.isPaginating}, loading=${this.isLoading}`);
+        this.isAnimating = false;
+        this.performDualSlideAnimation(targetBase);
+        return;
+      }
+      
+      this.showCurlEffect = true;
+      this.curlPendingPageIndex = targetBase;
+      this.curlProgress = 0;
+      
+      logger.info(TAG, `[双页卷页] showCurlEffect=true, 延迟50ms启动动画`);
+      
+      // 延迟启动动画定时器，确保 DualPageCurlEffect Canvas 已挂载并触发 onReady
+      // 如果立即启动，curlProgress @State 每16ms变化一次会触发父组件频繁重渲染，
+      // 可能阻塞 UI 线程导致 Canvas onReady 延迟甚至无法触发
+      setTimeout(() => {
+        logger.info(TAG, `[双页卷页] 启动动画定时器, curlProgress=${this.curlProgress}`);
+        this.animateDualCurlProgressTo(1.0, () => {
+          logger.info(TAG, `[双页卷页] 动画完成`);
+          this.onDualCurlAnimationComplete();
+        });
+      }, 50);
+    }).catch((err: Error) => {
+      logger.error(TAG, `[双页卷页] 异常: ${err}`);
+      this.isAnimating = false;
+      this.performDualSlideAnimation(targetBase);
+    });
+  }
+  
+  /**
+   * 生成双页卷页所需的 4 张 PixelMap
+   */
+  private async generateDualCurlPixelMaps(currentBase: number, targetBase: number): Promise<boolean> {
+    const indices = [currentBase, currentBase + 1, targetBase, targetBase + 1];
+    const results: (image.PixelMap | null)[] = [];
+    
+    for (const idx of indices) {
+      if (idx < 0 || idx >= this.totalPages) {
+        results.push(null);
+        continue;
+      }
+      
+      const cached = this.pagePixelMapCache.get(idx);
+      if (cached) {
+        results.push(cached);
+      } else {
+        const pm = await this.renderPageToPixelMap(idx);
+        if (pm) {
+          this.pagePixelMapCache.set(idx, pm);
+        }
+        results.push(pm);
+      }
+    }
+    
+    this.dualCurlLeftPM = results[0];
+    this.dualCurlRightPM = results[1];
+    this.dualCurlNextLeftPM = results[2];
+    this.dualCurlNextRightPM = results[3];
+    
+    // 至少需要当前翻起页的 PixelMap
+    const turningPM = this.isForward ? this.dualCurlRightPM : this.dualCurlLeftPM;
+    return turningPM !== null;
+  }
+  
+  /**
+   * 双页卷页拖拽进度更新
+   */
+  private updateDualCurlProgress(deltaX: number): void {
+    const halfWidth = this.getDualPageWidth();
+    const dragForward = deltaX < 0;
+    const dragDistance = Math.abs(deltaX);
+    
+    const nextBase = dragForward ? this.dualPageBaseIndex + 2 : this.dualPageBaseIndex - 2;
+    const canFlip = dragForward ? nextBase < this.totalPages : nextBase >= 0;
+    
+    if (!canFlip) return;
+    
+    this.isForward = dragForward;
+    this.dualAnimSide = dragForward ? 'right' : 'left';
+    
+    let progress = dragDistance / halfWidth;
+    progress = Math.max(0, Math.min(0.95, progress));
+    
+    const showThreshold = 10;
+    if (dragDistance > showThreshold) {
+      if (!this.showCurlEffect) {
+        this.checkAndInvalidatePixelMapCache();
+        this.curlPendingPageIndex = nextBase;
+        this.isAnimating = true;
+        this.showCurlEffect = true;
+        
+        // 异步生成 4 张 PixelMap
+        this.generateDualCurlPixelMaps(this.dualPageBaseIndex, nextBase).then(ok => {
+          if (ok) {
+            logger.debug(TAG, `双页卷页 PixelMap 生成完成`);
+          }
+        });
+      }
+      
+      if (this.showCurlEffect) {
+        this.curlProgress = progress;
+      }
+    } else {
+      if (this.showCurlEffect) {
+        this.resetDualCurlState();
+      }
+    }
+  }
+  
+  /**
+   * 双页卷页动画完成回调
+   * 
+   * 时序关键：必须在同一帧内完成以下操作：
+   * 1. 先更新页面内容（dualLeftPageContent/dualRightPageContent）
+   * 2. 然后关闭动画层（showCurlEffect = false）
+   * 
+   * 这样当 Canvas 层被移除时，底层 UI 已经显示新页面内容，不会闪烁。
+   */
+  private onDualCurlAnimationComplete(): void {
+    const targetBase = this.curlPendingPageIndex;
+    logger.info(TAG, `[onDualCurlAnimationComplete] 开始: targetBase=${targetBase}, showCurlEffect=${this.showCurlEffect}, isAnimating=${this.isAnimating}`);
+    
+    // 1. 先更新页面内容（此时 Canvas 层仍然覆盖在上面，用户看不到底层变化）
+    if (targetBase >= 0) {
+      logger.info(TAG, `[onDualCurlAnimationComplete] 1.更新页面内容: base ${this.dualPageBaseIndex} -> ${targetBase}`);
+      this.dualPageBaseIndex = targetBase;
+      this.updateDualPageContents();
+      this.notifyPageChange();
+    }
+    
+    // 2. 然后关闭动画层（底层已显示新内容，无缝过渡）
+    logger.info(TAG, `[onDualCurlAnimationComplete] 2.关闭动画层`);
+    this.showCurlEffect = false;
+    this.curlProgress = 0;
+    this.stopDualCurlAnimation();
+    
+    // 3. 完整重置状态
+    logger.info(TAG, `[onDualCurlAnimationComplete] 3.重置状态`);
+    this.curlAnimateTarget = -1;
+    this.curlAnimateFrom = 0;
+    this.curlPendingPageIndex = -1;
+    this.isAnimating = false;
+    
+    // 4. 清除双页卷页 PixelMap 引用
+    this.dualCurlLeftPM = null;
+    this.dualCurlRightPM = null;
+    this.dualCurlNextLeftPM = null;
+    this.dualCurlNextRightPM = null;
+    logger.info(TAG, `[onDualCurlAnimationComplete] 完成`);
+  }
+  
+  /**
+   * 双页卷页完成动画（松手后继续翻到底）
+   */
+  private animateDualCurlToComplete(): void {
+    this.stopDualCurlAnimation();
+    
+    // 注意：不要在这里立即更新页面内容！
+    // 如果在动画开始前就更新 dualPageBaseIndex/dualLeftPageContent，
+    // 底层 Row 会立即显示新页内容，导致用户看到“直接翻页”而不是卷曲动画。
+    // 页面内容应该在动画完成后由 onDualCurlAnimationComplete 统一更新。
+    
+    // 父组件驱动动画继续到 1.0
+    this.animateDualCurlProgressTo(1.0, () => {
+      this.onDualCurlAnimationComplete();
+    });
+  }
+  
+  /**
+   * 重置双页卷页状态（清理 4 张 PixelMap 引用）
+   */
+  private resetDualCurlState(): void {
+    this.stopDualCurlAnimation();
+    this.showCurlEffect = false;
+    this.curlProgress = 0;
+    this.curlAnimateTarget = -1;
+    this.curlAnimateFrom = 0;
+    this.curlPendingPageIndex = -1;
+    this.isAnimating = false;
+    // 清除双页卷页 PixelMap 引用（不释放缓存，由 cache 管理生命周期）
+    this.dualCurlLeftPM = null;
+    this.dualCurlRightPM = null;
+    this.dualCurlNextLeftPM = null;
+    this.dualCurlNextRightPM = null;
+  }
+  
   // ========== UI构建 ==========
   build() {
     // 使用 Stack 布局：所有层叠加，底部信息栏使用 position 定位
@@ -2206,14 +2867,16 @@ export struct TextReaderComponent {
       } else if (this.settings.readingMode === TextReadingMode.SCROLL) {
         // 滚动模式
         this.buildScrollMode()
+      } else if (this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
+        // 双页模式
+        this.buildDualPageMode()
       } else {
         // 翻页模式
         this.buildPageMode()
       }
       
-      // 卷页效果层（当使用卷页动画时）
-      // 卷页动画需要基于文本区域（避让底部信息栏），而非整个组件
-      if (this.showCurlEffect && this.currentPixelMap) {
+      // 卷页效果层（单页模式）
+      if (this.showCurlEffect && this.currentPixelMap && !this.isDualPageMode()) {
         PageCurlEffectV2({
           currentPixelMap: this.currentPixelMap,
           nextPixelMap: this.nextPixelMap,
@@ -2223,6 +2886,7 @@ export struct TextReaderComponent {
           imageDisplayY: 0,
           imageDisplayWidth: this.componentWidth,
           imageDisplayHeight: this.componentHeight,
+          config: this.novelCurlConfig,
           isForward: this.isForward,
           curlStartPosition: this.curlStartPosition,
           curlTouchX: this.curlTouchX,
@@ -2230,9 +2894,8 @@ export struct TextReaderComponent {
           externalProgress: this.curlProgress,
           animateToTarget: this.curlAnimateTarget,
           animateFromProgress: this.curlAnimateFrom,
-          curlBackOpacity: 100,  // 被卷起的页面完全不透明
+          curlBackOpacity: 100,
           onAnimationComplete: () => {
-            // 内部动画完成回调
             if (this.curlAnimateTarget >= 1.0) {
               this.onCurlAnimationComplete();
             } else if (this.curlAnimateTarget <= 0) {
@@ -2242,8 +2905,31 @@ export struct TextReaderComponent {
         })
       }
       
+      // 双页卷页效果层（必须放在主 build() 中，与 PageCurlEffectV2 同级；
+      // 如果放在 @Builder buildDualPageMode() 内，Canvas 绘制调用产生的内容不可见）
+      if (this.isDualPageMode() && this.showCurlEffect && (this.dualCurlLeftPM || this.dualCurlRightPM)) {
+        DualPageCurlEffect({
+          currentLeftPixelMap: this.dualCurlLeftPM,
+          currentRightPixelMap: this.dualCurlRightPM,
+          nextLeftPixelMap: this.dualCurlNextLeftPM,
+          nextRightPixelMap: this.dualCurlNextRightPM,
+          componentWidth: this.componentWidth,
+          componentHeight: this.componentHeight,
+          config: this.novelCurlConfig,
+          isForward: this.isForward,
+          curlTouchY: this.curlTouchY,
+          curlBackOpacity: 100,
+          externalProgress: this.curlProgress,
+          animateToTarget: -1,
+          animateFromProgress: 0,
+          onAnimationComplete: () => {}
+        })
+      }
+      
       // 底部信息栏（使用 position 定位在底部）
-      if (this.settings.showPageNumber || this.settings.showProgress || this.settings.showTime || this.settings.showBattery) {
+      // 双页模式不显示（页码已在各自页面组件内 + PixelMap 中）
+      if ((this.settings.showPageNumber || this.settings.showProgress || this.settings.showTime || this.settings.showBattery)
+          && !this.isDualPageMode()) {
         this.buildPageInfo()
       }
     }
@@ -2252,7 +2938,9 @@ export struct TextReaderComponent {
     .onAreaChange((_, newArea) => {
       this.componentWidth = newArea.width as number;
       this.componentHeight = newArea.height as number;
-      const newContentWidth = this.componentWidth - this.settings.pageMargins.left - this.settings.pageMargins.right;
+      // 双页模式下每页宽度为半屏
+      const baseWidth = this.isDualPageMode() ? Math.floor(this.componentWidth / 2) : this.componentWidth;
+      const newContentWidth = baseWidth - this.settings.pageMargins.left - this.settings.pageMargins.right;
       // 内容区域高度 = 组件高度 - 上下页边距 - 底部状态栏高度
       const bottomBarHeight = this.getEffectiveBottomBarHeight();
       const newContentHeight = this.componentHeight - this.settings.pageMargins.top - this.settings.pageMargins.bottom - bottomBarHeight;
@@ -2285,15 +2973,26 @@ export struct TextReaderComponent {
       GestureGroup(GestureMode.Exclusive,
         TapGesture({ count: 1 })
           .onAction((event: GestureEvent) => {
-            // 简化处理：直接从手势事件获取坐标
             const x = event.fingerList[0]?.localX || 0;
             const y = event.fingerList[0]?.localY || 0;
-            this.handleTapAtPosition(x, y);
+            if (this.isDualPageMode()) {
+              this.handleDualPageTap(x, y);
+            } else {
+              this.handleTapAtPosition(x, y);
+            }
           }),
         PanGesture({ direction: PanDirection.Horizontal })
           .onActionStart((event: GestureEvent) => this.handlePanStart(event))
           .onActionUpdate((event: GestureEvent) => this.handlePanUpdate(event))
-          .onActionEnd((event: GestureEvent) => this.handlePanEnd(event))
+          .onActionEnd((event: GestureEvent) => {
+            if (this.isDualPageMode()) {
+              this.isDragging = false;
+              const deltaX = event.offsetX - this.initialTouchX;
+              this.handleDualPagePanEnd(deltaX);
+            } else {
+              this.handlePanEnd(event);
+            }
+          })
       )
     )
     .onKeyEvent((event: KeyEvent) => {
@@ -2446,78 +3145,13 @@ export struct TextReaderComponent {
             }
           })
         
-        // 卷曲效果叠加层
-        if (this.showCurlEffect && this.curlProgress > 0) {
-            // 页面内侧阴影（模拟纸张弯曲产生的阴影）
-            Column()
-              .width(80 * this.curlProgress)
-              .height('100%')
-              .position({ x: this.isForward ? '100%' : 0, y: 0 })
-              .translate({ x: this.isForward ? -80 * this.curlProgress : 0 })
-              .linearGradient({
-                angle: this.isForward ? 90 : 270,
-                colors: [
-                  ['rgba(0,0,0,0.4)', 0],
-                  ['rgba(0,0,0,0.15)', 0.3],
-                  ['rgba(0,0,0,0)', 1]
-                ]
-              })
-            
-            // 页面翻起边缘高光（模拟纸张边缘的反光）
-            Column()
-              .width(3)
-              .height('100%')
-              .position({ x: this.isForward ? '100%' : 0, y: 0 })
-              .translate({ x: this.isForward ? -3 : 0 })
-              .linearGradient({
-                angle: this.isForward ? 90 : 270,
-                colors: [
-                  ['rgba(255,255,255,0.6)', 0],
-                  ['rgba(255,255,255,0.2)', 0.5],
-                  ['rgba(255,255,255,0)', 1]
-                ]
-              })
-              .opacity(this.curlProgress * 0.7)
-            
-            // 纸张背面渐变（模拟翻起页面的背面）
-            if (this.curlProgress > 0.2) {
-              Column()
-                .width(50 * this.curlProgress)
-                .height('100%')
-                .position({ x: this.isForward ? '100%' : 0, y: 0 })
-                .translate({ x: this.isForward ? -50 * this.curlProgress - 3 : 3 })
-                .linearGradient({
-                  angle: this.isForward ? 270 : 90,
-                  colors: [
-                    ['rgba(240,235,220,0.9)', 0],
-                    ['rgba(220,215,200,0.7)', 0.5],
-                    ['rgba(200,195,180,0.4)', 1]
-                  ]
-                })
-                .opacity(Math.min((this.curlProgress - 0.2) * 1.25, 0.8))
-            }
-          }
+        // 卷曲效果由 Canvas 层 PageCurlEffectV2 统一渲染（包含3D卷曲、光影、背面）
+        // 无需额外的 ArkUI 叠加层
         }
         .width('100%')
         .height('100%')
         .translate({ x: this.slideOffset })
         .opacity(this.slideOpacity)
-        // 卷曲动画时添加更明显的3D透视效果
-        .rotate({
-          x: 0,
-          y: 1,
-          z: 0,
-          angle: this.showCurlEffect ? this.curlProgress * (this.isForward ? -25 : 25) : 0,
-          centerX: this.isForward ? '100%' : '0%',
-          centerY: '50%'
-        })
-        // 添加轻微的缩放效果模拟透视
-        .scale({
-          x: this.showCurlEffect ? 1 - this.curlProgress * 0.02 : 1,
-          y: this.showCurlEffect ? 1 - this.curlProgress * 0.01 : 1,
-          centerX: this.isForward ? '0%' : '100%',
-          centerY: '50%'
-        })
     }
     .width('100%')
     .height('100%')
@@ -2525,98 +3159,444 @@ export struct TextReaderComponent {
   }
   
   /**
+   * 构建双页模式视图
+   * Stack 包裹：底层 Row（左右两页）+ 卷页动画层（横跨全宽）
+   */
+  @Builder
+  buildDualPageMode() {
+    Stack() {
+      // === 底层：左右两页内容 ===
+      Row() {
+        // === 左侧书页 ===
+        Stack() {
+          // 左页背景
+          if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('#F5F0E1')
+            Image(this.settings.background.imagePath.startsWith('/')
+              ? 'file://' + this.settings.background.imagePath
+              : this.settings.background.imagePath)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .opacity(this.settings.background.imageOpacity ?? 1)
+          } else {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.getBackgroundColor())
+          }
+          
+          // 底层内容：滑动动画期间显示目标页内容
+          if (this.dualSlideOffset !== 0 && this.dualAnimSide === 'left') {
+            Stack() {
+              // 底层背景
+              if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
+                Column()
+                  .width('100%')
+                  .height('100%')
+                  .backgroundColor('#F5F0E1')
+                Image(this.settings.background.imagePath.startsWith('/')
+                  ? 'file://' + this.settings.background.imagePath
+                  : this.settings.background.imagePath)
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Cover)
+                  .opacity(this.settings.background.imageOpacity ?? 1)
+              } else {
+                Column()
+                  .width('100%')
+                  .height('100%')
+                  .backgroundColor(this.getBackgroundColor())
+              }
+              Text(this.dualUnderLeftContent)
+                .fontSize(this.settings.textStyle.fontSize)
+                .fontColor(this.settings.textStyle.textColor)
+                .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+                .letterSpacing(this.settings.textStyle.letterSpacing)
+                .fontWeight(this.settings.textStyle.fontWeight)
+                .fontFamily(this.settings.textStyle.fontFamily)
+                .textAlign(this.getTextAlign())
+                .padding({
+                  top: this.settings.pageMargins.top,
+                  bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
+                  left: this.settings.pageMargins.left,
+                  right: this.settings.pageMargins.right
+                })
+                .width('100%')
+                .height('100%')
+            }
+            .width('100%')
+            .height('100%')
+          }
+          
+          // 左页当前内容
+          Stack() {
+            if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
+              Column()
+                .width('100%')
+                .height('100%')
+                .backgroundColor('#F5F0E1')
+              Image(this.settings.background.imagePath.startsWith('/')
+                ? 'file://' + this.settings.background.imagePath
+                : this.settings.background.imagePath)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .opacity(this.settings.background.imageOpacity ?? 1)
+            } else {
+              Column()
+                .width('100%')
+                .height('100%')
+                .backgroundColor(this.getBackgroundColor())
+            }
+            Text(this.dualLeftPageContent)
+              .fontSize(this.settings.textStyle.fontSize)
+              .fontColor(this.settings.textStyle.textColor)
+              .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+              .letterSpacing(this.settings.textStyle.letterSpacing)
+              .fontWeight(this.settings.textStyle.fontWeight)
+              .fontFamily(this.settings.textStyle.fontFamily)
+              .textAlign(this.getTextAlign())
+              .padding({
+                top: this.settings.pageMargins.top,
+                bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
+                left: this.settings.pageMargins.left,
+                right: this.settings.pageMargins.right
+              })
+              .width('100%')
+              .height('100%')
+            // 左页页码指示器
+            if (this.settings.showPageNumber) {
+              Row() {
+                Text(`${this.dualLeftPageIndex + 1} / ${this.totalPages}`)
+                  .fontSize(12)
+                  .fontColor(this.settings.textStyle.textColor)
+                  .opacity(0.5)
+                  .fontWeight(FontWeight.Medium)
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 16, right: 16, bottom: 8 })
+              .position({ x: 0, y: '100%' })
+              .translate({ y: '-100%' })
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .translate({ x: this.dualAnimSide === 'left' ? this.dualSlideOffset : 0 })
+          .opacity(this.slideOpacity)
+        }
+        .layoutWeight(1)
+        .height('100%')
+        .clip(true)
+        
+        // === 右侧书页 ===
+        Stack() {
+          // 右页背景
+          if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor('#F5F0E1')
+            Image(this.settings.background.imagePath.startsWith('/')
+              ? 'file://' + this.settings.background.imagePath
+              : this.settings.background.imagePath)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .opacity(this.settings.background.imageOpacity ?? 1)
+          } else {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.getBackgroundColor())
+          }
+          
+          // 底层内容：滑动动画期间显示目标页内容
+          if (this.dualSlideOffset !== 0 && this.dualAnimSide === 'right') {
+            Stack() {
+              // 底层背景
+              if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
+                Column()
+                  .width('100%')
+                  .height('100%')
+                  .backgroundColor('#F5F0E1')
+                Image(this.settings.background.imagePath.startsWith('/')
+                  ? 'file://' + this.settings.background.imagePath
+                  : this.settings.background.imagePath)
+                  .width('100%')
+                  .height('100%')
+                  .objectFit(ImageFit.Cover)
+                  .opacity(this.settings.background.imageOpacity ?? 1)
+              } else {
+                Column()
+                  .width('100%')
+                  .height('100%')
+                  .backgroundColor(this.getBackgroundColor())
+              }
+              Text(this.dualUnderRightContent)
+                .fontSize(this.settings.textStyle.fontSize)
+                .fontColor(this.settings.textStyle.textColor)
+                .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+                .letterSpacing(this.settings.textStyle.letterSpacing)
+                .fontWeight(this.settings.textStyle.fontWeight)
+                .fontFamily(this.settings.textStyle.fontFamily)
+                .textAlign(this.getTextAlign())
+                .padding({
+                  top: this.settings.pageMargins.top,
+                  bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
+                  left: this.settings.pageMargins.left,
+                  right: this.settings.pageMargins.right
+                })
+                .width('100%')
+                .height('100%')
+            }
+            .width('100%')
+            .height('100%')
+          }
+          
+          // 右页当前内容
+          Stack() {
+            if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
+              Column()
+                .width('100%')
+                .height('100%')
+                .backgroundColor('#F5F0E1')
+              Image(this.settings.background.imagePath.startsWith('/')
+                ? 'file://' + this.settings.background.imagePath
+                : this.settings.background.imagePath)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .opacity(this.settings.background.imageOpacity ?? 1)
+            } else {
+              Column()
+                .width('100%')
+                .height('100%')
+                .backgroundColor(this.getBackgroundColor())
+            }
+            Text(this.dualRightPageContent)
+              .fontSize(this.settings.textStyle.fontSize)
+              .fontColor(this.settings.textStyle.textColor)
+              .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+              .letterSpacing(this.settings.textStyle.letterSpacing)
+              .fontWeight(this.settings.textStyle.fontWeight)
+              .fontFamily(this.settings.textStyle.fontFamily)
+              .textAlign(this.getTextAlign())
+              .padding({
+                top: this.settings.pageMargins.top,
+                bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
+                left: this.settings.pageMargins.left,
+                right: this.settings.pageMargins.right
+              })
+              .width('100%')
+              .height('100%')
+            // 右页页码指示器
+            if (this.settings.showPageNumber && this.dualRightPageIndex < this.totalPages) {
+              Row() {
+                Text(`${this.dualRightPageIndex + 1} / ${this.totalPages}`)
+                  .fontSize(12)
+                  .fontColor(this.settings.textStyle.textColor)
+                  .opacity(0.5)
+                  .fontWeight(FontWeight.Medium)
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ left: 16, right: 16, bottom: 8 })
+              .position({ x: 0, y: '100%' })
+              .translate({ y: '-100%' })
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .translate({ x: this.dualAnimSide === 'right' ? this.dualSlideOffset : 0 })
+          .opacity(this.slideOpacity)
+        }
+        .layoutWeight(1)
+        .height('100%')
+        .clip(true)
+      }
+      .width('100%')
+      .height('100%')
+      
+    }
+    .width('100%')
+    .height('100%')
+  }
+  
+  /**
    * 构建页码信息视图
-   * 布局：左下角(电量) | 中央(时间) | 右下角(页码或进度)
+   * 单页布局：左下角(电量) | 中央(时间) | 右下角(页码或进度)
+   * 双页布局：左下角(左页页码) | 中央(电量+时间) | 右下角(右页页码)
    */
   @Builder
   buildPageInfo() {
-    Row() {
-      // 左侧容器（固定宽度，确保中间内容居中）
+    if (this.isDualPageMode()) {
+      // 双页模式布局
       Row() {
-        // 左下角：电量显示（精美的电池图标设计）
-        if (this.settings.showBattery) {
-          Row({ space: 6 }) {
-            // 精美电池图标
-            Stack({ alignContent: Alignment.Start }) {
-              // 电池外框（圆角矩形）
-              Row()
-                .width(22)
-                .height(11)
-                .borderRadius(3)
-                .border({ width: 1.5, color: this.settings.textStyle.textColor })
+        // 左下角：左页页码（双页模式始终显示）
+        Row() {
+          Text(`${this.dualLeftPageIndex + 1} / ${this.totalPages}`)
+            .fontSize(12)
+            .fontColor(this.settings.textStyle.textColor)
+            .opacity(0.5)
+            .fontWeight(FontWeight.Medium)
+        }
+        .width(80)
+        .justifyContent(FlexAlign.Start)
+        
+        // 中央：电量 + 时间
+        Row({ space: 12 }) {
+          if (this.settings.showBattery) {
+            Row({ space: 6 }) {
+              Stack({ alignContent: Alignment.Start }) {
+                Row()
+                  .width(22)
+                  .height(11)
+                  .borderRadius(3)
+                  .border({ width: 1.5, color: this.settings.textStyle.textColor })
+                  .opacity(0.5)
+                Row()
+                  .width(Math.max(2, 17 * this.batteryLevel / 100))
+                  .height(7)
+                  .borderRadius(1.5)
+                  .position({ x: 2, y: 2 })
+                  .linearGradient({
+                    angle: 90,
+                    colors: this.batteryLevel > 20 
+                      ? [[this.getBatteryColor(this.batteryLevel), 0], [this.getBatteryColorEnd(this.batteryLevel), 1]]
+                      : [['#FF4444', 0], ['#FF6666', 1]]
+                  })
+                Row()
+                  .width(2.5)
+                  .height(5)
+                  .backgroundColor(this.settings.textStyle.textColor)
+                  .opacity(0.5)
+                  .borderRadius({ topRight: 1, bottomRight: 1 })
+                  .position({ x: 22, y: 3 })
+              }
+              .width(26)
+              .height(11)
+              
+              Text(`${this.batteryLevel}%`)
+                .fontSize(11)
+                .fontColor(this.settings.textStyle.textColor)
                 .opacity(0.5)
-              // 电池电量填充（渐变色）
-              Row()
-                .width(Math.max(2, 17 * this.batteryLevel / 100))
-                .height(7)
-                .borderRadius(1.5)
-                .position({ x: 2, y: 2 })
-                .linearGradient({
-                  angle: 90,
-                  colors: this.batteryLevel > 20 
-                    ? [[this.getBatteryColor(this.batteryLevel), 0], [this.getBatteryColorEnd(this.batteryLevel), 1]]
-                    : [['#FF4444', 0], ['#FF6666', 1]]
-                })
-              // 电池正极头（圆角）
-              Row()
-                .width(2.5)
-                .height(5)
-                .backgroundColor(this.settings.textStyle.textColor)
-                .opacity(0.5)
-                .borderRadius({ topRight: 1, bottomRight: 1 })
-                .position({ x: 22, y: 3 })
+                .fontWeight(FontWeight.Medium)
             }
-            .width(26)
-            .height(11)
-            
-            Text(`${this.batteryLevel}%`)
-              .fontSize(11)
+          }
+          if (this.settings.showTime) {
+            Text(this.currentTime)
+              .fontSize(12)
               .fontColor(this.settings.textStyle.textColor)
               .opacity(0.5)
               .fontWeight(FontWeight.Medium)
           }
         }
-      }
-      .width(80)
-      .justifyContent(FlexAlign.Start)
-      
-      // 中央：时间显示（使用 layoutWeight 确保居中）
-      Row() {
-        if (this.settings.showTime) {
-          Text(this.currentTime)
-            .fontSize(12)
-            .fontColor(this.settings.textStyle.textColor)
-            .opacity(0.5)
-            .fontWeight(FontWeight.Medium)
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        
+        // 右下角：右页页码（双页模式始终显示）
+        Row() {
+          if (this.dualRightPageIndex < this.totalPages) {
+            Text(`${this.dualRightPageIndex + 1} / ${this.totalPages}`)
+              .fontSize(12)
+              .fontColor(this.settings.textStyle.textColor)
+              .opacity(0.5)
+              .fontWeight(FontWeight.Medium)
+          }
         }
+        .width(80)
+        .justifyContent(FlexAlign.End)
       }
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-      
-      // 右侧容器（固定宽度，确保中间内容居中）
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 8 })
+      .position({ x: 0, y: '100%' })
+      .translate({ y: '-100%' })
+    } else {
+      // 单页模式布局
       Row() {
-        // 右下角：页码或进度（二选一）
-        if (this.settings.showPageNumber) {
-          Text(`${this.currentPageIndex + 1} / ${this.totalPages}`)
-            .fontSize(12)
-            .fontColor(this.settings.textStyle.textColor)
-            .opacity(0.5)
-            .fontWeight(FontWeight.Medium)
-        } else if (this.settings.showProgress) {
-          Text(`${this.totalPages > 0 ? Math.round((this.currentPageIndex + 1) / this.totalPages * 100) : 0}%`)
-            .fontSize(12)
-            .fontColor(this.settings.textStyle.textColor)
-            .opacity(0.5)
-            .fontWeight(FontWeight.Medium)
+        Row() {
+          if (this.settings.showBattery) {
+            Row({ space: 6 }) {
+              Stack({ alignContent: Alignment.Start }) {
+                Row()
+                  .width(22)
+                  .height(11)
+                  .borderRadius(3)
+                  .border({ width: 1.5, color: this.settings.textStyle.textColor })
+                  .opacity(0.5)
+                Row()
+                  .width(Math.max(2, 17 * this.batteryLevel / 100))
+                  .height(7)
+                  .borderRadius(1.5)
+                  .position({ x: 2, y: 2 })
+                  .linearGradient({
+                    angle: 90,
+                    colors: this.batteryLevel > 20 
+                      ? [[this.getBatteryColor(this.batteryLevel), 0], [this.getBatteryColorEnd(this.batteryLevel), 1]]
+                      : [['#FF4444', 0], ['#FF6666', 1]]
+                  })
+                Row()
+                  .width(2.5)
+                  .height(5)
+                  .backgroundColor(this.settings.textStyle.textColor)
+                  .opacity(0.5)
+                  .borderRadius({ topRight: 1, bottomRight: 1 })
+                  .position({ x: 22, y: 3 })
+              }
+              .width(26)
+              .height(11)
+              
+              Text(`${this.batteryLevel}%`)
+                .fontSize(11)
+                .fontColor(this.settings.textStyle.textColor)
+                .opacity(0.5)
+                .fontWeight(FontWeight.Medium)
+            }
+          }
         }
+        .width(80)
+        .justifyContent(FlexAlign.Start)
+        
+        Row() {
+          if (this.settings.showTime) {
+            Text(this.currentTime)
+              .fontSize(12)
+              .fontColor(this.settings.textStyle.textColor)
+              .opacity(0.5)
+              .fontWeight(FontWeight.Medium)
+          }
+        }
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        
+        Row() {
+          if (this.settings.showPageNumber) {
+            Text(`${this.currentPageIndex + 1} / ${this.totalPages}`)
+              .fontSize(12)
+              .fontColor(this.settings.textStyle.textColor)
+              .opacity(0.5)
+              .fontWeight(FontWeight.Medium)
+          } else if (this.settings.showProgress) {
+            Text(`${this.totalPages > 0 ? Math.round((this.currentPageIndex + 1) / this.totalPages * 100) : 0}%`)
+              .fontSize(12)
+              .fontColor(this.settings.textStyle.textColor)
+              .opacity(0.5)
+              .fontWeight(FontWeight.Medium)
+          }
+        }
+        .width(80)
+        .justifyContent(FlexAlign.End)
       }
-      .width(80)
-      .justifyContent(FlexAlign.End)
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 8 })
+      .position({ x: 0, y: '100%' })
+      .translate({ y: '-100%' })
     }
-    .width('100%')
-    .padding({ left: 16, right: 16, bottom: 8 })
-    .position({ x: 0, y: '100%' })
-    .translate({ y: '-100%' })
   }
   
   /**

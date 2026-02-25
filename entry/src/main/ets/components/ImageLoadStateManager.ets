@@ -202,6 +202,20 @@ export class ImageLoadStateManager {
   }
 
   /**
+   * 获取当前正在加载的数量（O(1)复杂度）
+   * 避免每次调用时遍历所有页面
+   */
+  getLoadingCount(): number {
+    let count = 0;
+    this.loadStates.forEach(state => {
+      if (state === ImageLoadState.LOADING) {
+        count++;
+      }
+    });
+    return count;
+  }
+
+  /**
    * 清除页面状态
    */
   clearPage(pageId: string): void {

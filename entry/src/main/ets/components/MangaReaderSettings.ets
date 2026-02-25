@@ -77,6 +77,7 @@ export struct MangaReaderSettings {
   };
   @State private panelOpacity: number = 0;
   @State private panelTranslateY: number = 300;
+  @State private panelTranslateX: number = 320;
   @State private backdropOpacity: number = 0;
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private isLandscape: boolean = false;
@@ -181,16 +182,31 @@ export struct MangaReaderSettings {
       this.backdropOpacity = 0.5;
     });
 
-    const slideInOptions: AnimateParam = { 
-      duration: 300, 
-      curve: curves.initCurve(Curve.EaseOut),
-      iterations: 1,
-      playMode: PlayMode.Normal
-    };
-    this.uiContext.animateTo(slideInOptions, () => {
-      this.panelOpacity = 1;
-      this.panelTranslateY = 0;
-    });
+    if (this.isLandscape) {
+      // 横屏：从右侧滑入
+      const slideInOptions: AnimateParam = { 
+        duration: 250, 
+        curve: curves.initCurve(Curve.EaseOut),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideInOptions, () => {
+        this.panelOpacity = 1;
+        this.panelTranslateX = 0;
+      });
+    } else {
+      // 竖屏：从底部滑入
+      const slideInOptions: AnimateParam = { 
+        duration: 300, 
+        curve: curves.initCurve(Curve.EaseOut),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideInOptions, () => {
+        this.panelOpacity = 1;
+        this.panelTranslateY = 0;
+      });
+    }
   }
 
   /**
@@ -204,16 +220,31 @@ export struct MangaReaderSettings {
     
     // 播放淡出动画（仅用于视觉效果）
     if (this.uiContext) {
-    const slideOutOptions: AnimateParam = { 
-      duration: 300, 
-      curve: curves.initCurve(Curve.EaseInOut),
-      iterations: 1,
-      playMode: PlayMode.Normal
-    };
-    this.uiContext.animateTo(slideOutOptions, () => {
-      this.panelOpacity = 0;
-      this.panelTranslateY = 300;
-    });
+    if (this.isLandscape) {
+      // 横屏：向右滑出
+      const slideOutOptions: AnimateParam = { 
+        duration: 200, 
+        curve: curves.initCurve(Curve.EaseIn),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideOutOptions, () => {
+        this.panelOpacity = 0;
+        this.panelTranslateX = 320;
+      });
+    } else {
+      // 竖屏：向下滑出
+      const slideOutOptions: AnimateParam = { 
+        duration: 300, 
+        curve: curves.initCurve(Curve.EaseInOut),
+        iterations: 1,
+        playMode: PlayMode.Normal
+      };
+      this.uiContext.animateTo(slideOutOptions, () => {
+        this.panelOpacity = 0;
+        this.panelTranslateY = 300;
+      });
+    }
 
     const fadeOutOptions: AnimateParam = { 
       duration: 200, 
@@ -1524,6 +1555,7 @@ export struct MangaReaderSettings {
       .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
       .borderRadius({ topLeft: 16, bottomLeft: 16 })
       .opacity(this.panelOpacity)
+      .translate({ x: this.panelTranslateX })
       .hitTestBehavior(HitTestMode.Default)
     }
     .width('100%')

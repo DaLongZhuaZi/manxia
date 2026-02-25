@@ -813,7 +813,9 @@ struct MangaSettingsPage {
   
   /**
    * 判断当前阅读模式是否支持卷页动画
-   * 卷页动画只支持：单页模式 + 从左到右/从右到左阅读方向
+   * 卷页动画支持：
+   * - 单页模式 + 从左到右/从右到左阅读方向
+   * - 双页模式（设置页面允许选择，实际效果由阅读器根据横屏状态决定）
    */
   private isCurlAnimationSupported(): boolean {
     const mode = this.readingSettings.readingMode;
@@ -828,6 +830,11 @@ struct MangaSettingsPage {
     if (mode === ReadingMode.SINGLE_PAGE) {
       return direction === ReadingDirection.LEFT_TO_RIGHT || 
              direction === ReadingDirection.RIGHT_TO_LEFT;
+    }
+    
+    // 双页模式（在设置页面允许选择，实际运行时会根据横屏状态决定）
+    if (mode === ReadingMode.DOUBLE_PAGE) {
+      return true;
     }
     
     return false;
@@ -2057,7 +2064,7 @@ struct MangaSettingsPage {
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  Text('(仅单页左右)')
+                  Text('(单页/双页横屏)')
                     .fontSize(9)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))

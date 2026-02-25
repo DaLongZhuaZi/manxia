@@ -113,6 +113,8 @@ export class EBookDataManager {
       rating: 0
     };
 
+    logger.info(TAG, `[封面诊断] saveEBookInfo: id=${ebook.id}, coverImagePath='${metadata.coverImagePath}'`);
+
     const params = [
       ebook.id,
       ebook.format,

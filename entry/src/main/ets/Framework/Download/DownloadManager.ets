@@ -15,6 +15,7 @@ import { DataManager, DownloadTask, DownloadTaskInput, DownloadTaskUpdate } from
 import { DatabaseManager } from '../Database/DatabaseManager';
 import { UpdateRecordData } from '../Database/DatabaseTypes';
 import { DownloadStatus } from '../Types/StatusEnums';
+import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 
 const TAG = 'DownloadManager';
 
@@ -414,6 +415,12 @@ export class MangaDownloadManager {
    * 处理下载队列
    */
   private async processQueue(): Promise<void> {
+    // 有待处理任务时确保后台长时任务已申请
+    // await 确保任务注册完成后再派发下载，避免 APP 恰好在此期间进入后台
+    if (this.context && (this.downloadQueue.length > 0 || this.activeDownloads.size > 0)) {
+      await BackgroundTaskHelper.startDataTransferTask(this.context);
+    }
+
     // 检查是否有空闲槽位
     while (this.activeDownloads.size < this.config.maxConcurrent && this.downloadQueue.length > 0) {
       const taskId = this.downloadQueue.shift();
@@ -433,6 +440,13 @@ export class MangaDownloadManager {
           }
         }
       }
+    }
+
+    // 队列清空且无活跃下载时停止后台长时任务
+    if (this.context && this.downloadQueue.length === 0 && this.activeDownloads.size === 0) {
+      BackgroundTaskHelper.stopDataTransferTask(this.context).catch((err: Error) => {
+        logger.warn(TAG, `停止后台长时任务失败: ${err.message}`);
+      });
     }
   }
 
@@ -578,7 +592,7 @@ export class MangaDownloadManager {
       // 从活动下载中移除
       this.activeDownloads.delete(taskId);
       
-      // 继续处理队列
+      // 继续处理队列（内部会自动判断是否停止后台任务）
       this.processQueue();
     }
   }
@@ -617,6 +631,70 @@ export class MangaDownloadManager {
       logger.error(TAG, `创建下载任务失败: ${err.message}`);
       throw error  as Error;
     }
+  }
+
+  /**
+   * 使用系统代理后台下载文件（场景 B-1：仅下载，无需处理）
+   *
+   * 优势：
+   *  - APP 可被挂起，下载由系统 SA 进程托管，不依赖 DATA_TRANSFER 长时任务
+   *  - 适合直接下载章节压缩包、单文件等无需中间处理的场景
+   *
+   * @param url        下载地址
+   * @param saveas     保存路径（沙箱相对路径或绝对路径）
+   * @param headers    自定义请求头
+   * @param onProgress 进度回调 (received, total)
+   */
+  public async downloadFileWithAgent(
+    url: string,
+    saveas: string,
+    headers?: Record<string, string>,
+    onProgress?: (received: number, total: number) => void
+  ): Promise<void> {
+    if (!this.context) {
+      throw new Error('应用上下文未设置');
+    }
+
+    const defaultHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36'
+    };
+    const agentConfig: request.agent.Config = {
+      action: request.agent.Action.DOWNLOAD,
+      url: url,
+      saveas: saveas,
+      title: '漫匣下载',
+      description: '正在后台下载内容...',
+      headers: headers ?? defaultHeaders,
+      overwrite: true,
+      network: request.agent.Network.ANY,
+      // BACKGROUND 模式：APP 被挂起后由系统 SA 进程继续下载
+      mode: request.agent.Mode.BACKGROUND
+    };
+
+    const agentTask = await request.agent.create(this.context, agentConfig);
+
+    if (onProgress) {
+      agentTask.on('progress', (progress: request.agent.Progress) => {
+        const total = (progress.sizes && progress.sizes.length > 0) ? progress.sizes[0] : 0;
+        onProgress(progress.processed, total);
+      });
+    }
+
+    await agentTask.start();
+
+    return new Promise<void>((resolve, reject) => {
+      agentTask.on('completed', () => {
+        agentTask.off('completed');
+        agentTask.off('failed');
+        logger.debug(TAG, `系统代理下载完成: ${saveas}`);
+        resolve();
+      });
+      agentTask.on('failed', (progress: request.agent.Progress) => {
+        agentTask.off('completed');
+        agentTask.off('failed');
+        reject(new Error(`系统代理下载失败: ${JSON.stringify(progress)}`));
+      });
+    });
   }
 
   /**
