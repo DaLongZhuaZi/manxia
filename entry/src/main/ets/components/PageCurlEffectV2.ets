@@ -90,6 +90,7 @@ export struct PageCurlEffectV2 {
   // 当设置为 true 时，组件内部控制动画循环，避免每帧更新 @Prop 的开销
   @Prop @Watch('onAnimateToTargetChange') animateToTarget: number = -1;  // 目标进度，-1 表示不使用内部动画
   @Prop animateFromProgress: number = 0;  // 动画起始进度
+  @Prop animateVelocity: number = 0;      // 脱手速度（progress/ms），用于速度延续动画；0 = 使用默认时长
   
   // ========== 回调 ==========
   // 翻页完成回调
@@ -119,6 +120,8 @@ export struct PageCurlEffectV2 {
   
   // 动画相关
   private animationTimer: number = -1;
+  // 动画期间弹簧软化标记
+  private isReleaseAnimating: boolean = false;
   
   // ImageBitmap缓存（用于Canvas绘制）
   private currentImageBitmap: ImageBitmap | null = null;
@@ -268,6 +271,10 @@ export struct PageCurlEffectV2 {
   /**
    * 内部动画控制：当 animateToTarget 变化时触发
    * 高性能模式：动画循环完全在组件内部执行，避免每帧更新 @Prop
+   *
+   * 动画时长由脱手速度（animateVelocity）决定，使动画无缝延续用户的翻页力度：
+   *  - 有速度时：duration = 3 * Δ / v（easeOutCubic 初始斜率=3 → 动画开始速度 = 用户脱手速度）
+   *  - 无速度时：使用基于进度的默认时长
    */
   onAnimateToTargetChange(): void {
     if (this.animateToTarget < 0 || !this.isReady) {
@@ -277,13 +284,12 @@ export struct PageCurlEffectV2 {
     // 停止之前的动画
     this.stopAnimation();
     
-    // 使用当前组件内部的 curlProgress 作为起始进度
-    // 这确保动画从用户松手时的实际进度继续，而不是从头开始
+    // 使用组件内部的 curlProgress 作为起始进度（上一帧拖拽的最终位置）
     const startProgress: number = this.curlProgress;
     const targetProgress: number = this.animateToTarget;
     const progressDelta: number = Math.abs(targetProgress - startProgress);
     
-    // 如果进度已经很接近目标，直接完成
+    // 进度已接近目标，直接完成
     if (progressDelta < 0.01) {
       this.curlProgress = targetProgress;
       this.renderCurlEffect();
@@ -291,62 +297,72 @@ export struct PageCurlEffectV2 {
       return;
     }
     
-    // 弹簧动画：完成翻页时带过冲回弹，取消时直接缓出
     const isComplete: boolean = targetProgress > startProgress;
-    // 完成动画稍长以容纳弹簧振荡
-    const duration: number = isComplete
-      ? this.config.animationDuration * progressDelta * 1.6
-      : this.config.animationDuration * progressDelta;
+    const velocity: number = this.animateVelocity;  // progress/ms，由 MangaViewer 传入
+    
+    let duration: number;
+    // 缓动类型: 0=重力落下(取消回弹), 1=速度延续+微过冲(完成有速度), 2=重力辅助(完成无速度)
+    let easingType: number;
+    
+    if (!isComplete) {
+      // ① 取消回弹 — 重力加速 + 微弹跳
+      // 时长增加至 max(280, ...) 使物理感更充分
+      duration = Math.max(280, this.config.animationDuration * progressDelta * 1.8 * 1.2);
+      easingType = 0;
+    } else if (velocity > 0.0003) {
+      // ② 完成翻页（有速度）— 速度延续 + 末尾微过冲
+      // easeOutCubic 的归一化初始斜率 = 3
+      // 令 3 * Δ / T = v  →  T = 3 * Δ / v
+      // 这样动画第一帧的实际速度恰好等于用户脱手时的速度，实现无缝衔接
+      const physDuration: number = 3.0 * progressDelta / velocity;
+      duration = Math.min(420, Math.max(100, physDuration));
+      easingType = 1;
+    } else {
+      // ③ 完成翻页（无速度）— 重力辅助 easeInOutCubic
+      // 先加速再减速，感觉更像页面在重力下翻过去
+      duration = Math.max(160, this.config.animationDuration * progressDelta * 1.2);
+      easingType = 2;
+    }
+    
+    // 2d. 释放后弹簧参数软化：stiffness 从 0.15 临时降低到 0.08
+    this.isReleaseAnimating = true;
+    
     const startTime: number = Date.now();
-    let lastFrameTime: number = startTime;
     
     const animate = (): void => {
       const now: number = Date.now();
       const elapsed: number = now - startTime;
       const t: number = Math.min(elapsed / Math.max(duration, 50), 1.0);
+      
+      // 根据场景选择缓动函数
       let eased: number;
-      if (isComplete) {
-        // 弹簧过冲缓动：先超调到 ~1.08 再回落到 1.0
-        eased = this.springEaseOut(t);
+      if (easingType === 0) {
+        eased = this.easeGravityDrop(t);
+      } else if (easingType === 1) {
+        eased = this.easeOutCubicWithOvershoot(t);
       } else {
-        // 回弹取消用更柔和的缓出
-        eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+        eased = this.easeInOutCubic(t);
       }
       
       this.curlProgress = startProgress + (targetProgress - startProgress) * eased;
       this.renderCurlEffect();
       
       if (t < 1.0) {
-        // 动态计算下一帧延迟，补偿本帧处理时间
+        // 动态补偿帧处理时间，维持接近 60fps
         const frameTime: number = Date.now() - now;
-        const targetInterval: number = 16; // ~60fps
-        const nextDelay: number = Math.max(1, targetInterval - frameTime);
+        const nextDelay: number = Math.max(1, 16 - frameTime);
         this.animationTimer = setTimeout(animate, nextDelay);
-        lastFrameTime = now;
       } else {
         this.curlProgress = targetProgress;
         this.renderCurlEffect();
         this.animationTimer = -1;
+        this.isReleaseAnimating = false;  // 恢复弹簧参数
         this.onAnimationComplete();
       }
     };
     
-    // 立即开始第一帧
+    // 立即执行第一帧（同步），避免 setTimeout 引入额外延迟
     animate();
-  }
-  
-  /**
-   * 弹簧过冲缓动函数
-   * 模拟阻尼弹簧系统：快速冲到目标，小幅过冲后回弹稳定
-   * @param t 归一化时间 0~1
-   * @returns 缓动值，会短暂超过 1.0 再回落
-   */
-  private springEaseOut(t: number): number {
-    // 阻尼振荡：e^(-bt) * cos(wt)
-    // b=4.5 阻尼系数，w=3.5π 角频率（约1.75个振荡周期）
-    const decay: number = Math.exp(-4.5 * t);
-    const oscillation: number = Math.cos(3.5 * Math.PI * t);
-    return 1 - decay * oscillation;
   }
 
   /**
@@ -456,7 +472,7 @@ export struct PageCurlEffectV2 {
       this.springVelocityY = 0;
     } else {
       // 弹簧参数
-      const stiffness: number = 0.15;    // 刚度 — 值越大跟随越紧
+      const stiffness: number = this.isReleaseAnimating ? 0.08 : 0.15;    // 释放动画期间软化，拖拽时紧跟
       const damping: number = 0.72;      // 阻尼 — 值越小振荡越多
       // 弹力 = 目标差值 * 刚度
       const forceX: number = (px - this.smoothPeelX) * stiffness;
@@ -592,12 +608,71 @@ export struct PageCurlEffectV2 {
         ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
         ctx.restore();
       }
+
+      // 7d. 翻起页外沿阴影（反射多边形远离折叠线的边缘薄阴影）
+      if (this.config.enableShadow && progress > 0.08) {
+        ctx.save();
+        // 找到反射多边形中离折叠线最远的点，沿其外侧绘制细窄阴影
+        let maxDist: number = 0;
+        let farIdx: number = 0;
+        for (let i = 0; i < reflCurl.length; i++) {
+          const d: number = Math.abs(nx * (reflCurl[i][0] - fmx) + ny * (reflCurl[i][1] - fmy));
+          if (d > maxDist) { maxDist = d; farIdx = i; }
+        }
+        if (maxDist > 5) {
+          // 外沿阴影：沿反射多边形远端绘制一条渐变阴影
+          const edgeSw: number = Math.min(12, 6 + progress * 8);
+          const edgeAlpha: number = Math.min(0.12, 0.06 + progress * 0.06);
+          const fp: number[] = reflCurl[farIdx];
+          // 阴影方向：从反射区域向外扩散
+          const outDirX: number = nx;  // 法线方向即为远离折叠线的方向
+          const outDirY: number = ny;
+          const gEdge: CanvasGradient = ctx.createLinearGradient(
+            fp[0] - outDirX * 2, fp[1] - outDirY * 2,
+            fp[0] + outDirX * edgeSw, fp[1] + outDirY * edgeSw
+          );
+          gEdge.addColorStop(0, `rgba(0,0,0,${edgeAlpha})`);
+          gEdge.addColorStop(0.4, `rgba(0,0,0,${edgeAlpha * 0.4})`);
+          gEdge.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = gEdge;
+          ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
+        }
+        ctx.restore();
+      }
     }
 
     // === 8. 折叠线阴影（仅投射到揭开区域，不影响平面侧） ===
     if (this.config.enableShadow && progress > 0.02 && curlPoly.length >= 3) {
-      const sw: number = Math.min(40, iw * 0.06) * Math.sqrt(progress);
-      const sa: number = Math.min(0.3, 0.22 * Math.sqrt(progress));
+      // 8a. 页面悬浮投影 — 更宽更柔的阴影层（底层），模拟翻起页在下方的整体投影
+      if (progress > 0.06) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(curlPoly[0][0], curlPoly[0][1]);
+        for (let i = 1; i < curlPoly.length; i++) {
+          ctx.lineTo(curlPoly[i][0], curlPoly[i][1]);
+        }
+        ctx.closePath();
+        ctx.clip();
+        const wideSw: number = Math.min(80, iw * 0.12) * progress;
+        const wideAlpha: number = Math.min(0.15, 0.03 + progress * progress * 0.12);
+        // 从折叠线向锚点侧扩散的宽幅柔和投影
+        const gWide: CanvasGradient = ctx.createLinearGradient(
+          fmx, fmy,
+          fmx - nx * wideSw, fmy - ny * wideSw
+        );
+        gWide.addColorStop(0, `rgba(0,0,0,${wideAlpha})`);
+        gWide.addColorStop(0.15, `rgba(0,0,0,${wideAlpha * 0.7})`);
+        gWide.addColorStop(0.35, `rgba(0,0,0,${wideAlpha * 0.4})`);
+        gWide.addColorStop(0.6, `rgba(0,0,0,${wideAlpha * 0.15})`);
+        gWide.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gWide;
+        ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
+        ctx.restore();
+      }
+
+      // 8b. 主折叠阴影 — 动态宽度，6-stop高斯式衰减（上层，覆盖在悬浮投影之上）
+      const sw: number = Math.min(50, iw * (0.04 + 0.04 * progress)) * Math.sqrt(progress);
+      const sa: number = Math.min(0.35, 0.24 * Math.sqrt(progress));
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(curlPoly[0][0], curlPoly[0][1]);
@@ -606,14 +681,25 @@ export struct PageCurlEffectV2 {
       }
       ctx.closePath();
       ctx.clip();
-      // 阴影从fold向A侧（curlPoly/下一页区域）扩散，模拟翻起页的投影
+      // 极窄接触面阴影带(3px)：模拟纸张贴合面
+      const gContact: CanvasGradient = ctx.createLinearGradient(
+        fmx + nx * 1, fmy + ny * 1,
+        fmx - nx * 3, fmy - ny * 3
+      );
+      gContact.addColorStop(0, `rgba(0,0,0,${Math.min(0.4, sa * 1.3)})`);
+      gContact.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = gContact;
+      ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
+      // 主阴影：6-stop平滑衰减
       const g1: CanvasGradient = ctx.createLinearGradient(
         fmx + nx * 2, fmy + ny * 2,
         fmx - nx * sw, fmy - ny * sw
       );
       g1.addColorStop(0, `rgba(0,0,0,${sa})`);
-      g1.addColorStop(0.2, `rgba(0,0,0,${sa * 0.35})`);
-      g1.addColorStop(0.5, `rgba(0,0,0,${sa * 0.08})`);
+      g1.addColorStop(0.1, `rgba(0,0,0,${sa * 0.6})`);
+      g1.addColorStop(0.25, `rgba(0,0,0,${sa * 0.3})`);
+      g1.addColorStop(0.45, `rgba(0,0,0,${sa * 0.12})`);
+      g1.addColorStop(0.7, `rgba(0,0,0,${sa * 0.03})`);
       g1.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g1;
       ctx.fillRect(ix - 50, iy - 50, iw + 100, ih + 100);
@@ -1287,6 +1373,52 @@ export struct PageCurlEffectV2 {
    */
   private easeOutCubic(t: number): number {
     return 1 - Math.pow(1 - t, 3);
+  }
+  
+  /**
+   * 重力落下缓动：模拟页面在重力下落回 + 微弹跳
+   * 前60%: 加速相 easeInQuad（模拟重力加速）
+   * 60%-90%: 减速相，略微过冲(~3%)（模拟落地微弹）
+   * 90%-100%: 平滑回归安定
+   */
+  private easeGravityDrop(t: number): number {
+    if (t < 0.6) {
+      // 加速相：easeInQuad
+      const nt: number = t / 0.6;
+      return 0.6 * nt * nt;
+    } else if (t < 0.9) {
+      // 减速 + 过冲：从 0.6 到 1.03
+      const nt: number = (t - 0.6) / 0.3;
+      const ease: number = nt * (2 - nt);  // easeOutQuad on this segment
+      return 0.6 + 0.43 * ease;
+    } else {
+      // 回归安定：从 1.03 到 1.0
+      const nt: number = (t - 0.9) / 0.1;
+      return 1.03 - 0.03 * nt * nt;
+    }
+  }
+  
+  /**
+   * easeOutCubic + 末尾微过冲：速度延续翻页用
+   * t > 0.95 时混入 ~1.5% overshoot，模拟惯性超调
+   */
+  private easeOutCubicWithOvershoot(t: number): number {
+    const base: number = 1 - Math.pow(1 - t, 3);
+    if (t > 0.95) {
+      const ot: number = (t - 0.95) / 0.05;
+      const overshoot: number = Math.sin(ot * Math.PI) * 0.015;
+      return base + overshoot;
+    }
+    return base;
+  }
+  
+  /**
+   * easeInOutCubic：先加速再减速，模拟重力辅助翻页
+   */
+  private easeInOutCubic(t: number): number {
+    return t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2;
   }
   
   /**

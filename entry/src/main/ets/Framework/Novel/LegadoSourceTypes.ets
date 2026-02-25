@@ -268,6 +268,8 @@ export interface LegadoBookSource {
   ruleContent?: LegadoContentRule;
   /** 段评规则 */
   ruleReview?: LegadoReviewRule;
+  /** 是否为NSFW源 */
+  isNSFW?: boolean;
 }
 
 /**

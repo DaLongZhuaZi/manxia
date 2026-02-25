@@ -23,7 +23,7 @@ const TAG = 'ErrorManagementSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /** 过滤类型 */
-type FilterType = 'all' | 'runtime' | 'crash';
+type FilterType = 'all' | 'runtime' | 'crash' | 'network';
 
 @Component
 export struct ErrorManagementSubPage {
@@ -49,7 +49,7 @@ export struct ErrorManagementSubPage {
   private errorRecordManager: ErrorRecordManager = ErrorRecordManager.getInstance();
   @State allRecords: ErrorRecord[] = [];
   @State filteredRecords: ErrorRecord[] = [];
-  @State summary: ErrorSummary = { total: 0, runtimeErrors: 0, crashes: 0, topTags: [], firstTime: 0, lastTime: 0 };
+  @State summary: ErrorSummary = { total: 0, runtimeErrors: 0, crashes: 0, networkErrors: 0, topTags: [], firstTime: 0, lastTime: 0 };
   @State filterType: FilterType = 'all';
   @State searchText: string = '';
 
@@ -131,6 +131,8 @@ export struct ErrorManagementSubPage {
       records = records.filter((r: ErrorRecord) => r.source === ErrorSource.RUNTIME_ERROR);
     } else if (this.filterType === 'crash') {
       records = records.filter((r: ErrorRecord) => r.source === ErrorSource.CRASH);
+    } else if (this.filterType === 'network') {
+      records = records.filter((r: ErrorRecord) => r.source === ErrorSource.NETWORK_ERROR);
     }
     if (this.searchText.length > 0) {
       const kw = this.searchText.toLowerCase();
@@ -267,13 +269,19 @@ export struct ErrorManagementSubPage {
   }
 
   private getSourceLabel(source: ErrorSource): string {
-    return source === ErrorSource.CRASH ? '闪退' : '运行时';
+    if (source === ErrorSource.CRASH) return '闪退';
+    if (source === ErrorSource.NETWORK_ERROR) return '网络';
+    return '运行时';
   }
 
   private getSourceColor(source: ErrorSource): ResourceColor {
-    return source === ErrorSource.CRASH
-      ? ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme)
-      : ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+    if (source === ErrorSource.CRASH) {
+      return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
+    }
+    if (source === ErrorSource.NETWORK_ERROR) {
+      return ThemeAwareHelper.getTestManagementThemedColor('button_purple', this.themeState.currentTheme);
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
   }
 
   private themeColor(key: 'background' | 'text_primary' | 'text_secondary' | 'button_background' |
@@ -310,6 +318,7 @@ export struct ErrorManagementSubPage {
       Row({ space: 8 }) {
         this.buildStatBadge(`${this.summary.total}`, '总计', 'accent_blue')
         this.buildStatBadge(`${this.summary.runtimeErrors}`, '运行时', 'accent_orange')
+        this.buildStatBadge(`${this.summary.networkErrors}`, '网络', 'button_purple')
         this.buildStatBadge(`${this.summary.crashes}`, '闪退', 'button_danger')
       }
       .width('100%')
@@ -410,6 +419,7 @@ export struct ErrorManagementSubPage {
       Row({ space: 8 }) {
         this.buildFilterBtn('全部', 'all')
         this.buildFilterBtn('运行时', 'runtime')
+        this.buildFilterBtn('网络', 'network')
         this.buildFilterBtn('闪退', 'crash')
 
         Blank()

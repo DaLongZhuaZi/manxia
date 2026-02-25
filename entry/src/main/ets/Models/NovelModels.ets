@@ -119,6 +119,8 @@ export interface NovelSearchResult {
   coverUrl?: string;
   latestChapterTitle?: string;
   wordCount?: string;
+  /** 是否为NSFW内容（从源级别继承） */
+  isNSFW?: boolean;
 }
 
 /**

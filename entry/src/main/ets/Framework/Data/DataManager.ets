@@ -1241,13 +1241,22 @@ export class DataManager {
       // 【NSFW自动继承】从图源和标签自动判断
       let isNSFW = false;
       
-      // 1. 从图源继承
+      // 1. 从图源继承（受作用域开关控制）
       try {
         const sourceId = Number(comicData.sourceId);
         const source = await this.getComicSourceById(sourceId);
         if (source && source.isNSFW === 1) {
-          isNSFW = true;
-          logger.debug(TAG, `漫画从图源继承NSFW标记: ${comicData.title}`);
+          try {
+            const cfmModule = await import('../Managers/ContentFilterManager');
+            const filterManager = cfmModule.ContentFilterManager.getInstance();
+            if (filterManager.isNsfwScopeImageSourceEnabled()) {
+              isNSFW = true;
+              logger.debug(TAG, `漫画从图源继承NSFW标记: ${comicData.title}`);
+            }
+          } catch (e) {
+            isNSFW = true;
+            logger.debug(TAG, `漫画从图源继承NSFW标记(默认): ${comicData.title}`);
+          }
         }
       } catch (error) {
         logger.warn(TAG, `获取图源NSFW状态失败: ${error}`);
@@ -1740,25 +1749,31 @@ export class DataManager {
   }
 
   /**
-   * [性能优化] 通用：使用 UNION ALL 单条 SQL 检测内容类型
+   * 通用：通过逐表查询检测内容类型
+   * [修复] HarmonyOS RDB 的 UNION ALL 查询不保留列别名，改为逐表 COUNT 查询
    * @returns 'comic' | 'online' | 'ebook' | 'novel' | null
    */
   private async detectContentType(contentId: string): Promise<string | null> {
     try {
-      const sql = `
-        SELECT 'comic' as _type FROM comic_info WHERE id = ?
-        UNION ALL
-        SELECT 'online' as _type FROM online_comic_info WHERE id = ?
-        UNION ALL
-        SELECT 'ebook' as _type FROM ebook_info WHERE id = ?
-        UNION ALL
-        SELECT 'novel' as _type FROM novel_book WHERE id = ?
-        LIMIT 1
-      `;
-      const result = await this.databaseManager.querySql(sql, [contentId, contentId, contentId, contentId]);
-      if (result && result.length > 0) {
-        return (result[0] as ESObject)._type as string;
+      // 按优先级顺序检查各表
+      const tables: [string, string][] = [
+        ['comic_info', 'comic'],
+        ['online_comic_info', 'online'],
+        ['ebook_info', 'ebook'],
+        ['novel_book', 'novel']
+      ];
+      for (const entry of tables) {
+        const tableName = entry[0];
+        const typeName = entry[1];
+        const result = await this.databaseManager.querySql(
+          `SELECT id FROM ${tableName} WHERE id = ? LIMIT 1`, [contentId]
+        );
+        if (result && result.length > 0) {
+          logger.debug(TAG, `detectContentType: id=${contentId}, type=${typeName} (找到于 ${tableName})`);
+          return typeName;
+        }
       }
+      logger.debug(TAG, `detectContentType: id=${contentId}, 未在任何表中找到`);
       return null;
     } catch (error) {
       logger.error(TAG, `检测内容类型失败: ${contentId}`, String(error));
@@ -4265,9 +4280,10 @@ export class DataManager {
         // 更新现有图源（保留 Cookie）
         const now = Date.now();
         const sourceType = metadata.type as string || 'manga';
+        const isNSFW = (metadata.nsfw === true || metadata.nsfw === 1) ? 1 : 0;
         const updateSql = `UPDATE comic_source 
                           SET name = ?, baseUrl = ?, version = ?, description = ?, 
-                              language = ?, type = ?, lastUpdateTime = ?, configJson = ?, requireProxy = ? 
+                              language = ?, type = ?, lastUpdateTime = ?, configJson = ?, requireProxy = ?, isNSFW = ? 
                           WHERE pkg = ?`;
         
         await this.databaseManager.executeSql(updateSql, [
@@ -4280,6 +4296,7 @@ export class DataManager {
           now,
           jsonContent,
           requireProxy,
+          isNSFW,
           pkg
         ]);
         
@@ -4448,6 +4465,22 @@ export class DataManager {
   }
   
   /**
+   * 更新图源的NSFW状态
+   * @param sourceId 图源ID
+   * @param isNSFW 是否为NSFW图源
+   */
+  async updateSourceNSFW(sourceId: number, isNSFW: boolean): Promise<void> {
+    try {
+      const sql = 'UPDATE comic_source SET isNSFW = ?, lastUpdateTime = ? WHERE id = ?';
+      await this.databaseManager.executeSql(sql, [isNSFW ? 1 : 0, Date.now(), sourceId]);
+      logger.info(TAG, `图源NSFW状态已更新: id=${sourceId}, isNSFW=${isNSFW}`);
+    } catch (error) {
+      logger.error(TAG, `更新图源NSFW状态失败: id=${sourceId}`, String(error));
+      throw new Error(`更新图源NSFW状态失败: ${String(error)}`);
+    }
+  }
+
+  /**
    * 更新图源的代理设置
    * @param sourceId 图源ID
    * @param requireProxy 是否需要代理
@@ -4505,18 +4538,16 @@ export class DataManager {
         logger.info(TAG, `📝 [SQL] 使用传递的图源包名: "${sourcePkgVal}"`);
       }
       
-      // 2. 如果没有传递，从comic_source表查询
-      if (!sourceNameVal || !sourcePkgVal) {
-        const srcRecord: ComicSourceDatabaseRecord | null = await this.getComicSourceById(sourceId);
-        if (srcRecord) {
-          if (!sourceNameVal && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
-            sourceNameVal = srcRecord.name;
-            logger.info(TAG, `📝 [SQL] 从comic_source表获取图源名称: "${sourceNameVal}"`);
-          }
-          if (!sourcePkgVal && srcRecord.pkg && typeof srcRecord.pkg === 'string' && srcRecord.pkg.length > 0) {
-            sourcePkgVal = srcRecord.pkg;
-            logger.info(TAG, `📝 [SQL] 从comic_source表获取图源包名: "${sourcePkgVal}"`);
-          }
+      // 2. 从comic_source表查询图源信息（也用于NSFW继承判断）
+      const srcRecord: ComicSourceDatabaseRecord | null = await this.getComicSourceById(sourceId);
+      if (srcRecord) {
+        if (!sourceNameVal && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
+          sourceNameVal = srcRecord.name;
+          logger.info(TAG, `📝 [SQL] 从comic_source表获取图源名称: "${sourceNameVal}"`);
+        }
+        if (!sourcePkgVal && srcRecord.pkg && typeof srcRecord.pkg === 'string' && srcRecord.pkg.length > 0) {
+          sourcePkgVal = srcRecord.pkg;
+          logger.info(TAG, `📝 [SQL] 从comic_source表获取图源包名: "${sourcePkgVal}"`);
         }
       }
       
@@ -4527,9 +4558,30 @@ export class DataManager {
       }
       
       // 使用INSERT OR REPLACE，基于主键id
+      // [修复] 添加 isNSFW 列，确保在线漫画的 NSFW 标记能正确保存
       const sql = `INSERT OR REPLACE INTO online_comic_info 
-                   (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isPrivate) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                   (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isPrivate, isNSFW) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      
+      // [修复] 读取 comicData 中的 isNSFW 值，支持 boolean 和 number 类型
+      const isNSFWRaw: boolean | number = comicData.isNSFW as boolean | number;
+      let isNSFWVal: number = (isNSFWRaw === true || isNSFWRaw === 1) ? 1 : 0;
+      
+      // 【NSFW作用域】从图源继承NSFW状态：如果图源是NSFW且作用域开关开启，则其内容自动继承
+      if (isNSFWVal === 0 && srcRecord && srcRecord.isNSFW === 1) {
+        try {
+          const cfmModule = await import('../Managers/ContentFilterManager');
+          const filterManager = cfmModule.ContentFilterManager.getInstance();
+          if (filterManager.isNsfwScopeImageSourceEnabled()) {
+            isNSFWVal = 1;
+            logger.debug(TAG, `📝 [NSFW作用域] 在线漫画从图源继承NSFW标记: ${comicData.title}`);
+          }
+        } catch (e) {
+          // ContentFilterManager未初始化时默认继承
+          isNSFWVal = 1;
+          logger.debug(TAG, `📝 [NSFW作用域] 在线漫画从图源继承NSFW标记(默认): ${comicData.title}`);
+        }
+      }
       
       const params = [
         comicId,
@@ -4547,7 +4599,8 @@ export class DataManager {
         now,
         sourceNameVal,
         sourcePkgVal,
-        0  // isPrivate默认为0（普通内容）
+        0,  // isPrivate默认为0（普通内容）
+        isNSFWVal  // isNSFW：从comicData读取或默认为0
       ];
       
       logger.debug(TAG, `📝 [SQL] 执行SQL: ${sql}`);

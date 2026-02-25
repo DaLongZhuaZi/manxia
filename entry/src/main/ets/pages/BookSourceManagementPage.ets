@@ -41,6 +41,7 @@ interface BookSourceInfo {
   createTime: number;
   group?: string;
   iconPath?: string;
+  isNSFW?: boolean;  // 是否为NSFW书源
 }
 
 @Component
@@ -64,6 +65,10 @@ export struct BookSourceManagementPage {
   @State importStage: string = '';             // 当前阶段描述
   @State importDetail: string = '';            // 详细进度信息
   @State showProgressDialog: boolean = false;  // 是否显示进度对话框
+  
+  // 多选模式状态
+  @State isMultiSelectMode: boolean = false;
+  @State selectedSourceIds: Set<string> = new Set<string>();
   
   // 分页加载状态
   private currentPage: number = 0;
@@ -112,7 +117,8 @@ export struct BookSourceManagementPage {
           lastUpdateTime: source.lastUpdateTime || 0,
           createTime: Date.now(),
           group: source.group,
-          iconPath: undefined
+          iconPath: undefined,
+          isNSFW: source.isNSFW || false
         };
       });
       
@@ -214,6 +220,94 @@ export struct BookSourceManagementPage {
       logger.info(TAG, `书源"${source.name}"已${newState ? '启用' : '禁用'}`);
     } catch (error) {
       logger.error(TAG, `切换书源状态失败: ${source.name}`, String(error));
+    }
+  }
+
+  /**
+   * 切换书源NSFW状态
+   */
+  private async toggleSourceNSFW(source: BookSourceInfo): Promise<void> {
+    try {
+      const newState = !source.isNSFW;
+      await this.sourceManager.setSourceNSFW(source.id, newState);
+      
+      source.isNSFW = newState;
+      // 触发UI刷新
+      this.applyFilter();
+      
+      logger.info(TAG, `书源"${source.name}"已${newState ? '标记' : '取消'}NSFW`);
+      promptAction.showToast({ message: `已${newState ? '标记为NSFW' : '取消NSFW标记'}` });
+    } catch (error) {
+      logger.error(TAG, `切换书源NSFW状态失败: ${source.name}`, String(error));
+      promptAction.showToast({ message: '操作失败' });
+    }
+  }
+
+  /**
+   * 切换多选模式
+   */
+  private toggleMultiSelectMode(): void {
+    this.isMultiSelectMode = !this.isMultiSelectMode;
+    if (!this.isMultiSelectMode) {
+      this.selectedSourceIds = new Set<string>();
+    }
+  }
+
+  /**
+   * 切换单个书源的选中状态
+   */
+  private toggleSourceSelection(sourceId: string): void {
+    const newSet = new Set<string>(this.selectedSourceIds);
+    if (newSet.has(sourceId)) {
+      newSet.delete(sourceId);
+    } else {
+      newSet.add(sourceId);
+    }
+    this.selectedSourceIds = newSet;
+  }
+
+  /**
+   * 全选/反选
+   */
+  private toggleSelectAll(): void {
+    if (this.selectedSourceIds.size === this.filteredSources.length) {
+      // 已全选，取消全选
+      this.selectedSourceIds = new Set<string>();
+    } else {
+      // 全选
+      const newSet = new Set<string>();
+      for (const source of this.filteredSources) {
+        newSet.add(source.id);
+      }
+      this.selectedSourceIds = newSet;
+    }
+  }
+
+  /**
+   * 批量NSFW标记
+   */
+  private async batchSetNSFW(isNSFW: boolean): Promise<void> {
+    try {
+      const ids = Array.from(this.selectedSourceIds);
+      if (ids.length === 0) {
+        promptAction.showToast({ message: '请先选择书源' });
+        return;
+      }
+
+      for (const id of ids) {
+        await this.sourceManager.setSourceNSFW(id, isNSFW);
+        const source = this.allSources.find((s: BookSourceInfo) => s.id === id);
+        if (source) {
+          source.isNSFW = isNSFW;
+        }
+      }
+
+      this.applyFilter();
+      promptAction.showToast({ message: `已${isNSFW ? '标记' : '取消'}${ids.length}个书源的NSFW` });
+      logger.info(TAG, `批量${isNSFW ? '标记' : '取消'}NSFW: ${ids.length}个书源`);
+    } catch (error) {
+      logger.error(TAG, '批量NSFW操作失败', String(error));
+      promptAction.showToast({ message: '操作失败' });
     }
   }
 
@@ -458,6 +552,10 @@ export struct BookSourceManagementPage {
         this.buildSourceList()
       }
       
+      if (this.isMultiSelectMode) {
+        this.buildMultiSelectToolbar()
+      }
+      
       if (this.showImportDialog) {
         this.buildImportDialog()
       }
@@ -482,6 +580,15 @@ export struct BookSourceManagementPage {
             this.searchSources(value);
           })
         
+        Button(this.isMultiSelectMode ? '取消' : '多选')
+          .fontSize(14)
+          .backgroundColor(this.isMultiSelectMode
+            ? ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .onClick(() => {
+            this.toggleMultiSelectMode();
+          })
+        
         Button('导入')
           .fontSize(14)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
@@ -500,6 +607,13 @@ export struct BookSourceManagementPage {
           .fontSize(14)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
           .margin({ left: 16 })
+        
+        if (this.isMultiSelectMode) {
+          Text(`已选${this.selectedSourceIds.size}个`)
+            .fontSize(14)
+            .fontColor('#FF4444')
+            .margin({ left: 16 })
+        }
       }
       .width('100%')
     }
@@ -578,6 +692,15 @@ export struct BookSourceManagementPage {
   buildSourceCard(source: BookSourceInfo) {
     Column({ space: 12 }) {
       Row({ space: 12 }) {
+        if (this.isMultiSelectMode) {
+          Checkbox()
+            .select(this.selectedSourceIds.has(source.id))
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange((isChecked: boolean) => {
+              this.toggleSourceSelection(source.id);
+            })
+        }
+        
         Column() {
           Text(source.name.charAt(0).toUpperCase())
             .fontSize(20)
@@ -592,10 +715,21 @@ export struct BookSourceManagementPage {
         .alignItems(HorizontalAlign.Center)
         
         Column({ space: 4 }) {
-          Text(source.name)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Row({ space: 6 }) {
+            Text(source.name)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            
+            if (source.isNSFW) {
+              Text('NSFW')
+                .fontSize(10)
+                .fontColor('#FF4444')
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .borderRadius(4)
+                .backgroundColor('#FF444420')
+            }
+          }
           
           Text(source.url)
             .fontSize(12)
@@ -645,6 +779,15 @@ export struct BookSourceManagementPage {
             promptAction.showToast({ message: '测试功能开发中' });
           })
         
+        Button(source.isNSFW ? '取消NSFW' : 'NSFW')
+          .fontSize(12)
+          .layoutWeight(1)
+          .fontColor(source.isNSFW ? '#FF4444' : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(source.isNSFW ? '#FF444420' : ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+          .onClick(async () => {
+            await this.toggleSourceNSFW(source);
+          })
+        
         Button('编辑')
           .fontSize(12)
           .layoutWeight(1)
@@ -670,6 +813,43 @@ export struct BookSourceManagementPage {
     .borderRadius(12)
     .border({
       width: 1,
+      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+    })
+  }
+
+  @Builder
+  buildMultiSelectToolbar() {
+    Row({ space: 8 }) {
+      Button(this.selectedSourceIds.size === this.filteredSources.length ? '取消全选' : '全选')
+        .fontSize(13)
+        .layoutWeight(1)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .onClick(() => {
+          this.toggleSelectAll();
+        })
+      
+      Button('标记NSFW')
+        .fontSize(13)
+        .layoutWeight(1)
+        .fontColor('#FF4444')
+        .backgroundColor('#FF444420')
+        .onClick(async () => {
+          await this.batchSetNSFW(true);
+        })
+      
+      Button('取消NSFW')
+        .fontSize(13)
+        .layoutWeight(1)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+        .onClick(async () => {
+          await this.batchSetNSFW(false);
+        })
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .border({
+      width: { top: 1 },
       color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
     })
   }

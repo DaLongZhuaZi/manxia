@@ -19,6 +19,7 @@ export interface NovelSourceTable {
   lastUpdateTime: number;
   respondTime: number;
   configJson: string;
+  isNSFW: number;
   createTime: number;
   updateTime: number;
 }
@@ -183,6 +184,7 @@ export const NOVEL_CREATE_TABLE_SQL: NovelCreateTableSql = {
       lastUpdateTime INTEGER DEFAULT 0,
       respondTime INTEGER DEFAULT 180000,
       configJson TEXT NOT NULL,
+      isNSFW INTEGER DEFAULT 0,
       createTime INTEGER NOT NULL,
       updateTime INTEGER NOT NULL
     )
