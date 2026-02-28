@@ -473,12 +473,25 @@ export struct TrackingSettingsSubPage {
         Scroll(this.scroller) {
           Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Flex({
+              wrap: FlexWrap.Wrap,
+              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+            }) {
+              // 进度记录列表
+              Column() {
+                this.buildTrackerSection()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
 
-            // 进度记录列表
-            this.buildTrackerSection()
-
-            // 说明信息
-            this.buildInfoSection()
+              // 说明信息
+              Column() {
+                this.buildInfoSection()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+            }
+            .width('100%')
 
             Blank().height(40)
           }

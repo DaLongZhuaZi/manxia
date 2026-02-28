@@ -823,7 +823,7 @@ A: 不会，原文件保持不变。`;
                 Blank().height(20)
               }
               .width('100%')
-              .padding({ left: 16, right: 16, top: 8 })
+              .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -854,7 +854,7 @@ A: 不会，原文件保持不变。`;
                 Blank().height(20)
               }
               .width('100%')
-              .padding({ left: 16, right: 16, top: 8 })
+              .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -885,7 +885,6 @@ A: 不会，原文件保持不变。`;
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
         .padding({
           top: this.statusBarHeight,
-          bottom: this.navigationBarHeight,
           left: this.responsive_contentPadding,
           right: this.responsive_contentPadding
         })

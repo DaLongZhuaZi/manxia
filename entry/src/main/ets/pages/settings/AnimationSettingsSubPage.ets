@@ -440,15 +440,32 @@ export struct AnimationSettingsSubPage {
         Scroll(this.scroller) {
           Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Flex({
+              wrap: FlexWrap.Wrap,
+              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+            }) {
+              // 书籍动画设置
+              Column() {
+                this.buildBookAnimationSettings()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+              
+              // 主页面动画设置
+              Column() {
+                this.buildMainPageAnimationSettings()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
 
-            // 书籍动画设置
-            this.buildBookAnimationSettings()
-            
-            // 主页面动画设置
-            this.buildMainPageAnimationSettings()
-
-            // 重置按钮
-            this.buildResetSection()
+              // 重置按钮
+              Column() {
+                this.buildResetSection()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+            }
+            .width('100%')
 
             Blank().height(40)
           }

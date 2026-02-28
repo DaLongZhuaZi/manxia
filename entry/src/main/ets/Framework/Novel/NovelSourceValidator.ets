@@ -12,6 +12,7 @@ import { LegadoBookSource, LegadoBook, LegadoChapter, LegadoSearchBook } from '.
 import { NovelSourceExecutor, SearchErrorType } from './NovelSourceExecutor';
 import { getNovelSourceManager, NovelSourceManager } from './NovelSourceManager';
 import { AppNotificationManager } from '../Managers/NotificationManager';
+import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 import { BackgroundTaskHelper } from '../Task/BackgroundTaskHelper';
 import { common } from '@kit.AbilityKit';
 
@@ -28,6 +29,7 @@ export interface ValidationConfig {
   checkCategory: boolean;    // 校验目录
   checkContent: boolean;     // 校验正文
   keyword: string;           // 搜索关键词
+  concurrency: number;       // 校验并发数
 }
 
 /**
@@ -40,7 +42,8 @@ export const DEFAULT_VALIDATION_CONFIG: ValidationConfig = {
   checkInfo: true,
   checkCategory: true,
   checkContent: true,
-  keyword: '我的'
+  keyword: '我的',
+  concurrency: 10
 };
 
 /**
@@ -171,6 +174,15 @@ export interface BatchValidationResult {
  * 书源校验器
  */
 export class NovelSourceValidator {
+  private static readonly DEFAULT_VALIDATION_CONCURRENCY = 10;
+  private static readonly MIN_VALIDATION_CONCURRENCY = 1;
+  private static readonly MAX_VALIDATION_CONCURRENCY = 50;
+  private static readonly MAX_LIGHT_VALIDATION_CONCURRENCY = 16;
+  private static readonly MAX_HEAVY_VALIDATION_CONCURRENCY = 8;
+  private static readonly EVENT_LOOP_YIELD_INTERVAL = 2;
+  private static readonly VALIDATION_SEARCH_MAX_RESULTS = 1;
+  private static readonly VALIDATION_SEARCH_MAX_ELEMENT_SCAN = 300;
+
   private static instance: NovelSourceValidator | null = null;
   private isValidating: boolean = false;
   private shouldCancel: boolean = false;
@@ -190,12 +202,14 @@ export class NovelSourceValidator {
       checkInfo: DEFAULT_VALIDATION_CONFIG.checkInfo,
       checkCategory: DEFAULT_VALIDATION_CONFIG.checkCategory,
       checkContent: DEFAULT_VALIDATION_CONFIG.checkContent,
-      keyword: DEFAULT_VALIDATION_CONFIG.keyword
+      keyword: DEFAULT_VALIDATION_CONFIG.keyword,
+      concurrency: this.getValidationConcurrencyFromSettings()
     };
     return cfg;
   }
 
   private mergeConfig(config?: Partial<ValidationConfig>): ValidationConfig {
+    const settingsConcurrency = this.getValidationConcurrencyFromSettings();
     const result: ValidationConfig = {
       timeout: config?.timeout !== undefined ? config.timeout : this.config.timeout,
       checkSearch: config?.checkSearch !== undefined ? config.checkSearch : this.config.checkSearch,
@@ -203,7 +217,10 @@ export class NovelSourceValidator {
       checkInfo: config?.checkInfo !== undefined ? config.checkInfo : this.config.checkInfo,
       checkCategory: config?.checkCategory !== undefined ? config.checkCategory : this.config.checkCategory,
       checkContent: config?.checkContent !== undefined ? config.checkContent : this.config.checkContent,
-      keyword: config?.keyword !== undefined ? config.keyword : this.config.keyword
+      keyword: config?.keyword !== undefined ? config.keyword : this.config.keyword,
+      concurrency: this.normalizeValidationConcurrency(
+        config?.concurrency !== undefined ? config.concurrency : settingsConcurrency
+      )
     };
     return result;
   }
@@ -238,6 +255,9 @@ export class NovelSourceValidator {
     if (config.checkCategory !== undefined) this.config.checkCategory = config.checkCategory;
     if (config.checkContent !== undefined) this.config.checkContent = config.checkContent;
     if (config.keyword !== undefined) this.config.keyword = config.keyword;
+    if (config.concurrency !== undefined) {
+      this.config.concurrency = this.normalizeValidationConcurrency(config.concurrency);
+    }
   }
 
   /**
@@ -251,7 +271,8 @@ export class NovelSourceValidator {
       checkInfo: this.config.checkInfo,
       checkCategory: this.config.checkCategory,
       checkContent: this.config.checkContent,
-      keyword: this.config.keyword
+      keyword: this.config.keyword,
+      concurrency: this.config.concurrency
     };
     return cfg;
   }
@@ -399,7 +420,11 @@ export class NovelSourceValidator {
       } else {
         this.removeErrorGroup(result, ValidationErrorType.SEARCH_EMPTY);
         try {
-          const searchResult = await executor.searchWithError(config.keyword, 1);
+          const searchResult = await executor.searchWithError(config.keyword, 1, {
+            maxResults: NovelSourceValidator.VALIDATION_SEARCH_MAX_RESULTS,
+            maxElementScan: NovelSourceValidator.VALIDATION_SEARCH_MAX_ELEMENT_SCAN,
+            disableItemDomBridge: true
+          });
           result.bookCount = searchResult.books.length;
           
           if (searchResult.books.length === 0) {
@@ -536,7 +561,8 @@ export class NovelSourceValidator {
       checkInfo: false,
       checkCategory: false,
       checkContent: false,
-      keyword: testKeyword
+      keyword: testKeyword,
+      concurrency: this.getValidationConcurrencyFromSettings()
     });
   }
 
@@ -567,10 +593,12 @@ export class NovelSourceValidator {
     this.lastNotificationTime = 0;
 
     const validationConfig = this.mergeConfig(config);
-    const results: SourceValidationResult[] = [];
+    const resultsByIndex: Array<SourceValidationResult | undefined> = new Array(sourceIds.length);
     let valid = 0;
     let invalid = 0;
     let completedCount = 0;
+    let nextIndex = 0;
+    const workerCount = this.calculateRuntimeConcurrency(validationConfig, sourceIds.length);
 
     // 有上下文时申请 DATA_TRANSFER 后台长时任务
     if (this.context) {
@@ -583,77 +611,59 @@ export class NovelSourceValidator {
     }
 
     try {
-      for (let i = 0; i < sourceIds.length; i++) {
-        if (this.shouldCancel) {
-          logger.info(TAG, '校验已取消');
-          // 发送取消通知
-          if (showNotification) {
-            await this.notificationManager.sendValidationCancelledNotification(
-              this.currentValidationTaskId,
-              completedCount,
-              sourceIds.length
-            );
+      const worker = async (): Promise<void> => {
+        while (true) {
+          if (this.shouldCancel) {
+            return;
           }
-          break;
-        }
 
-        const sourceId = sourceIds[i];
-        const source = this.sourceManager.getSource(sourceId);
-        
-        if (!source) {
-          const result: SourceValidationResult = {
-            sourceId,
-            sourceName: '未知书源',
-            isValid: false,
-            error: '书源不存在',
-            errorGroups: ['书源不存在'],
-            checkedItems: []
-          };
-          results.push(result);
-          invalid++;
+          const currentIndex = nextIndex;
+          nextIndex++;
+          if (currentIndex >= sourceIds.length) {
+            return;
+          }
+
+          const result = await this.validateSourceById(
+            sourceIds[currentIndex],
+            validationConfig,
+            autoUpdateGroups
+          );
+          resultsByIndex[currentIndex] = result;
           completedCount++;
-          onProgress?.(i + 1, sourceIds.length, result);
-          
-          // 更新通知
+
+          if (result.isValid) {
+            valid++;
+          } else {
+            invalid++;
+          }
+
+          onProgress?.(completedCount, sourceIds.length, result);
+
           if (showNotification) {
             await this.sendProgressNotification(completedCount, sourceIds.length, valid, invalid);
           }
-          continue;
-        }
 
-        const result = await this.validateSource(source, validationConfig);
-        results.push(result);
-        completedCount++;
-        
-        if (result.isValid) {
-          valid++;
-          // 校验成功，移除所有错误分组
-          if (autoUpdateGroups) {
-            await this.removeAllErrorGroups(source);
-          }
-        } else {
-          invalid++;
-          // 校验失败，添加错误分组
-          if (autoUpdateGroups) {
-            await this.updateSourceErrorGroups(source, result.errorGroups);
+          // 主动让出事件循环，避免并发校验导致主线程长期饥饿
+          if (completedCount % NovelSourceValidator.EVENT_LOOP_YIELD_INTERVAL === 0) {
+            await this.delay(0);
           }
         }
+      };
 
-        // 更新书源响应时间
-        if (result.searchTime !== undefined) {
-          await this.sourceManager.updateSourceRespondTime(sourceId, result.searchTime);
-        }
+      const workers: Promise<void>[] = [];
+      for (let i = 0; i < workerCount; i++) {
+        workers.push(worker());
+      }
+      await Promise.all(workers);
 
-        onProgress?.(i + 1, sourceIds.length, result);
-        
-        // 更新通知（限制更新频率）
+      if (this.shouldCancel) {
+        logger.info(TAG, '校验已取消');
         if (showNotification) {
-          await this.sendProgressNotification(completedCount, sourceIds.length, valid, invalid);
-        }
-
-        // 添加小延迟避免请求过快
-        if (i < sourceIds.length - 1) {
-          await this.delay(300);
+          await this.notificationManager.sendValidationCancelledNotification(
+            this.currentValidationTaskId,
+            completedCount,
+            sourceIds.length
+          );
         }
       }
     } finally {
@@ -661,6 +671,13 @@ export class NovelSourceValidator {
       // 校验完成（无论正常结束还是异常）后停止后台长时任务
       if (this.context) {
         await BackgroundTaskHelper.stopDataTransferTask(this.context);
+      }
+    }
+
+    const results: SourceValidationResult[] = [];
+    for (const item of resultsByIndex) {
+      if (item !== undefined) {
+        results.push(item);
       }
     }
 
@@ -681,8 +698,47 @@ export class NovelSourceValidator {
       );
     }
 
-    logger.info(TAG, `批量校验完成: ${valid}/${sourceIds.length} 有效`);
+    logger.info(
+      TAG,
+      `批量校验完成: ${valid}/${sourceIds.length} 有效, 并发数(请求/运行): ${validationConfig.concurrency}/${workerCount}`
+    );
     return batchResult;
+  }
+
+  private async validateSourceById(
+    sourceId: string,
+    config: ValidationConfig,
+    autoUpdateGroups: boolean
+  ): Promise<SourceValidationResult> {
+    const source = this.sourceManager.getSource(sourceId);
+    if (!source) {
+      return {
+        sourceId,
+        sourceName: '未知书源',
+        isValid: false,
+        error: '书源不存在',
+        errorGroups: ['书源不存在'],
+        checkedItems: []
+      };
+    }
+
+    const result = await this.validateSource(source, config);
+
+    if (result.isValid) {
+      if (autoUpdateGroups) {
+        await this.removeAllErrorGroups(source);
+      }
+    } else {
+      if (autoUpdateGroups) {
+        await this.updateSourceErrorGroups(source, result.errorGroups);
+      }
+    }
+
+    if (result.searchTime !== undefined) {
+      await this.sourceManager.updateSourceRespondTime(sourceId, result.searchTime);
+    }
+
+    return result;
   }
   
   /**
@@ -826,6 +882,40 @@ export class NovelSourceValidator {
    */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private normalizeValidationConcurrency(value: number): number {
+    if (!Number.isFinite(value)) {
+      return NovelSourceValidator.DEFAULT_VALIDATION_CONCURRENCY;
+    }
+    const roundedValue = Math.floor(value);
+    return Math.max(
+      NovelSourceValidator.MIN_VALIDATION_CONCURRENCY,
+      Math.min(NovelSourceValidator.MAX_VALIDATION_CONCURRENCY, roundedValue)
+    );
+  }
+
+  private calculateRuntimeConcurrency(config: ValidationConfig, totalSources: number): number {
+    const requested = this.normalizeValidationConcurrency(config.concurrency);
+    const hasHeavySteps = config.checkInfo || config.checkCategory || config.checkContent;
+    const runtimeCap = hasHeavySteps
+      ? NovelSourceValidator.MAX_HEAVY_VALIDATION_CONCURRENCY
+      : NovelSourceValidator.MAX_LIGHT_VALIDATION_CONCURRENCY;
+
+    const capped = Math.min(requested, runtimeCap);
+    const safeTotal = totalSources > 0 ? totalSources : 1;
+    return Math.max(
+      NovelSourceValidator.MIN_VALIDATION_CONCURRENCY,
+      Math.min(capped, safeTotal)
+    );
+  }
+
+  private getValidationConcurrencyFromSettings(): number {
+    const configured = SettingsManager.getInstance().getNumber(
+      SettingKeys.NOVEL_SOURCE_VALIDATION_CONCURRENCY,
+      NovelSourceValidator.DEFAULT_VALIDATION_CONCURRENCY
+    );
+    return this.normalizeValidationConcurrency(configured);
   }
 
   /**

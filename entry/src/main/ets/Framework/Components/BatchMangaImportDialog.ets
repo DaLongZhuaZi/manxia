@@ -197,6 +197,9 @@ export struct BatchMangaImportDialog {
   // 文件列表多选状态
   @State selectedFileIndices: number[] = [];
   @State isMultiSelectMode: boolean = false;
+  // 标签页横向滑动切换
+  @State private swipeStartX: number = 0;
+  @State private swipeOffsetX: number = 0;
   // 入场动画状态
   @State private animOpacity: number = 0.0;
   @State private animTranslateY: number = 20;
@@ -880,6 +883,19 @@ export struct BatchMangaImportDialog {
         .width('100%')
         .layoutWeight(1)
         .visibility(this.currentTab === 0 ? Visibility.Visible : Visibility.None)
+        .gesture(
+          PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+            .onActionStart((event: GestureEvent) => {
+              this.swipeStartX = event.offsetX;
+              this.swipeOffsetX = 0;
+            })
+            .onActionUpdate((event: GestureEvent) => {
+              this.swipeOffsetX = event.offsetX - this.swipeStartX;
+            })
+            .onActionEnd(() => {
+              this.handleTabSwipe();
+            })
+        )
         
         Column() {
           this.buildFilesListView()
@@ -887,6 +903,19 @@ export struct BatchMangaImportDialog {
         .width('100%')
         .layoutWeight(1)
         .visibility(this.currentTab === 1 ? Visibility.Visible : Visibility.None)
+        .gesture(
+          PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
+            .onActionStart((event: GestureEvent) => {
+              this.swipeStartX = event.offsetX;
+              this.swipeOffsetX = 0;
+            })
+            .onActionUpdate((event: GestureEvent) => {
+              this.swipeOffsetX = event.offsetX - this.swipeStartX;
+            })
+            .onActionEnd(() => {
+              this.handleTabSwipe();
+            })
+        )
         
         // 操作按钮
         this.buildActionButtons()
@@ -968,7 +997,7 @@ export struct BatchMangaImportDialog {
   @Builder
   buildTabBar() {
     Row({ space: 0 }) {
-      this.buildTabItem('分组视图', 0, `${this.groups.length} 部漫画`)
+      this.buildTabItem('分组视图', 0, `${this.getEnabledGroupCount()} 部漫画`)
       this.buildTabItem('文件列表', 1, `${this.files.length} 个文件`)
     }
     .width('100%')
@@ -1008,12 +1037,29 @@ export struct BatchMangaImportDialog {
     .layoutWeight(1)
     .padding({ top: 12, bottom: 8 })
     .onClick(() => {
-      if (index === 0) {
-        // 切换回分组视图前递增 tick，使 ForEach key 全部失效，强制重建分组卡片
-        this.groupViewRefreshTick++;
-      }
-      this.currentTab = index;
+      this.switchTab(index);
     })
+  }
+
+  private switchTab(index: number): void {
+    if (index < 0 || index > 1 || index === this.currentTab) {
+      return;
+    }
+    if (index === 0) {
+      // 切换回分组视图前递增 tick，使 ForEach key 全部失效，强制重建分组卡片
+      this.groupViewRefreshTick++;
+    }
+    this.currentTab = index;
+  }
+
+  private handleTabSwipe(): void {
+    const swipeThreshold = 80;
+    if (this.swipeOffsetX < -swipeThreshold) {
+      this.switchTab(this.currentTab + 1);
+    } else if (this.swipeOffsetX > swipeThreshold) {
+      this.switchTab(this.currentTab - 1);
+    }
+    this.swipeOffsetX = 0;
   }
 
   /**
@@ -1035,7 +1081,7 @@ export struct BatchMangaImportDialog {
   buildGroupsView() {
     Scroll() {
       Column({ space: 12 }) {
-        ForEach(this.groups, (group: MangaGroup) => {
+        ForEach(this.groups.filter((group: MangaGroup) => this.hasEnabledFiles(group)), (group: MangaGroup) => {
           this.buildGroupCardById(group.groupId)
         }, (group: MangaGroup) => `r${this.groupViewRefreshTick}_v${this.dataVersion}_${group.groupId}_${group.isExpanded}_${group.mergeToExisting}_${group.targetMangaId}_${group.title}_${group.importMode}_${group.status}_${group.isNSFW}_${group.selectedCoverIndex}_${group.files.length}_${group.files.filter((f: BatchFileInfo) => f.enabled).length}_${group.chapters.length}_${group.files.map((f: BatchFileInfo) => f.contentType).join(',')}`)
       }
@@ -2088,11 +2134,8 @@ export struct BatchMangaImportDialog {
             ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
           .onClick(() => {
             if (!this.isMultiSelectMode) {
-              file.enabled = !file.enabled;
-              this.dataVersion++;
-              this.files = this.files.slice();
-              // 深度更新 groups：重建包含此文件的分组的 chapters 数组
-              this.rebuildGroupsChapters(file);
+              this.setFileEnabled(file, !file.enabled);
+              // setFileEnabled 内部会同步 files/groups 并触发刷新
             }
           })
       }
@@ -2159,7 +2202,11 @@ export struct BatchMangaImportDialog {
    * 获取文件在 this.files 中的索引
    */
   private getFileIndex(file: BatchFileInfo): number {
-    return this.files.indexOf(file);
+    const index = this.files.indexOf(file);
+    if (index >= 0) {
+      return index;
+    }
+    return this.files.findIndex((item: BatchFileInfo) => item.fileUri === file.fileUri);
   }
 
   /**
@@ -2294,20 +2341,152 @@ export struct BatchMangaImportDialog {
    * 批量设置选中文件的启用/禁用状态
    */
   private batchToggleEnabled(enabled: boolean): void {
+    let hasChanges = false;
     for (const idx of this.selectedFileIndices) {
       if (idx >= 0 && idx < this.files.length) {
-        this.files[idx].enabled = enabled;
+        if (this.setFileEnabled(this.files[idx], enabled, false)) {
+          hasChanges = true;
+        }
       }
     }
-    this.dataVersion++;
-    this.files = this.files.slice();
-    // 深度更新所有 groups 的 chapters
-    this.rebuildAllGroupsChapters();
+    if (hasChanges) {
+      this.dataVersion++;
+      this.files = this.files.slice();
+      this.groups = this.groups.slice();
+    }
+    // setFileEnabled(false) already syncs chapter arrays; commit batched state here.
   }
   
   /**
    * 深度更新包含指定文件的分组的 chapters 数组（触发响应式更新）
    */
+  private setFileEnabled(file: BatchFileInfo, enabled: boolean, triggerUpdate: boolean = true): boolean {
+    const fileIndex = this.getFileIndex(file);
+    if (fileIndex < 0) {
+      return false;
+    }
+
+    const targetUri = this.files[fileIndex].fileUri;
+    let hasChanges = false;
+
+    if (this.files[fileIndex].enabled !== enabled) {
+      this.files[fileIndex].enabled = enabled;
+      hasChanges = true;
+    }
+
+    for (let i = 0; i < this.groups.length; i++) {
+      let groupChanged = false;
+      for (const groupFile of this.groups[i].files) {
+        if (groupFile.fileUri === targetUri && groupFile.enabled !== enabled) {
+          groupFile.enabled = enabled;
+          groupChanged = true;
+          hasChanges = true;
+        }
+      }
+      if (groupChanged) {
+        this.rebuildGroupFromEnabledFiles(this.groups[i]);
+      }
+    }
+
+    if (triggerUpdate && hasChanges) {
+      this.dataVersion++;
+      this.files = this.files.slice();
+      this.groups = this.groups.slice();
+    }
+    return hasChanges;
+  }
+  
+  private rebuildGroupFromEnabledFiles(group: MangaGroup): void {
+    const enabledFiles = group.files.filter((f: BatchFileInfo) => f.enabled && !f.parseError);
+    if (enabledFiles.length === 0) {
+      group.chapters = [];
+      return;
+    }
+
+    const existingChaptersByFile = new Map<string, BatchChapterInfo[]>();
+    for (const chapter of group.chapters) {
+      const fileUri = chapter.file.fileUri;
+      const existing = existingChaptersByFile.get(fileUri) || [];
+      existing.push(chapter);
+      existingChaptersByFile.set(fileUri, existing);
+    }
+
+    let chapters: BatchChapterInfo[] = [];
+    if (enabledFiles.length > 1 && enabledFiles.every((f: BatchFileInfo) => f.contentType === FileContentType.CHAPTER)) {
+      const sortedFiles = enabledFiles.slice().sort((a: BatchFileInfo, b: BatchFileInfo) => {
+        if (a.inferredVolumeNumber !== b.inferredVolumeNumber) {
+          return a.inferredVolumeNumber - b.inferredVolumeNumber;
+        }
+        return a.inferredChapterNumber - b.inferredChapterNumber;
+      });
+      chapters = sortedFiles.map((f: BatchFileInfo, index: number) => {
+        const existing = existingChaptersByFile.get(f.fileUri)?.[0];
+        return {
+          number: existing?.number ?? (f.inferredChapterNumber || (index + 1)),
+          title: existing?.title || f.prefilledInfo?.title || f.inferredTitle,
+          file: f,
+          pageCount: existing?.pageCount ?? (f.parsedStructure?.totalImageCount || 0),
+          mayExist: existing?.mayExist
+        } as BatchChapterInfo;
+      });
+      group.importMode = MangaImportMode.SINGLE_CHAPTER;
+    } else {
+      for (const enabledFile of enabledFiles) {
+        const existing = existingChaptersByFile.get(enabledFile.fileUri);
+        if (existing && existing.length > 0) {
+          chapters.push(...existing.map((chapter: BatchChapterInfo) => ({
+            number: chapter.number,
+            title: chapter.title,
+            file: enabledFile,
+            pageCount: chapter.pageCount,
+            mayExist: chapter.mayExist
+          } as BatchChapterInfo)));
+        } else {
+          chapters.push(...this.inferChaptersFromFile(enabledFile));
+        }
+      }
+      chapters.sort((a: BatchChapterInfo, b: BatchChapterInfo) => a.number - b.number);
+      group.importMode = enabledFiles.length === 1
+        ? this.contentTypeToImportMode(enabledFiles[0].contentType)
+        : MangaImportMode.MULTI_CHAPTER;
+    }
+
+    group.chapters = chapters;
+    group.coverCandidates = this.initCoverCandidatesForGroup(enabledFiles);
+    if (group.selectedCoverIndex >= group.coverCandidates.length) {
+      group.selectedCoverIndex = 0;
+    }
+  }
+
+  private inferChaptersFromFile(file: BatchFileInfo): BatchChapterInfo[] {
+    if (file.contentType === FileContentType.MULTI_CHAPTER &&
+      file.parsedStructure?.detectedChapters &&
+      file.parsedStructure.detectedChapters.length > 1) {
+      return file.parsedStructure.detectedChapters.map((chapter: ChapterInfo) => ({
+        number: chapter.number,
+        title: chapter.title,
+        file: file,
+        pageCount: chapter.pageCount
+      } as BatchChapterInfo));
+    }
+
+    if (file.contentType === FileContentType.VOLUME) {
+      return [{
+        number: file.inferredVolumeNumber || 1,
+        title: file.prefilledInfo?.title || file.inferredTitle,
+        file: file,
+        pageCount: file.parsedStructure?.totalImageCount || 0
+      }];
+    }
+
+    return [{
+      number: file.inferredChapterNumber || 1,
+      title: file.prefilledInfo?.title || file.inferredTitle,
+      file: file,
+      pageCount: file.parsedStructure?.totalImageCount || 0
+    }];
+  }
+
   private rebuildGroupsChapters(file: BatchFileInfo): void {
     for (let i = 0; i < this.groups.length; i++) {
       const group = this.groups[i];
@@ -2388,7 +2567,20 @@ export struct BatchMangaImportDialog {
    * 获取分组总页数
    */
   private getTotalPages(group: MangaGroup): number {
-    return group.chapters.reduce((sum, chapter) => sum + chapter.pageCount, 0);
+    return group.chapters
+      .filter((chapter: BatchChapterInfo) => chapter.file.enabled)
+      .reduce((sum, chapter) => sum + chapter.pageCount, 0);
+  }
+  
+  /**
+   * 分组是否存在可参与导入的启用文件
+   */
+  private hasEnabledFiles(group: MangaGroup): boolean {
+    return group.files.some((file: BatchFileInfo) => file.enabled && !file.parseError);
+  }
+  
+  private getEnabledGroupCount(): number {
+    return this.groups.filter((group: MangaGroup) => this.hasEnabledFiles(group)).length;
   }
   
   /**

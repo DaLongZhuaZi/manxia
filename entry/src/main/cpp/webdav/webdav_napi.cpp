@@ -10,6 +10,7 @@
 #include "webdav_client.h"
 #include <string>
 #include <memory>
+#include <mutex>
 
 #undef LOG_DOMAIN
 #undef LOG_TAG
@@ -18,6 +19,20 @@
 
 // 全局WebDAV客户端实例（简化实现，实际应该使用实例管理）
 static std::unique_ptr<webdav::WebDAVClient> g_client = nullptr;
+static std::mutex g_clientMutex;
+
+static bool GetOptionalNamedProperty(napi_env env, napi_value obj, const char* name, napi_value* out) {
+    bool hasProperty = false;
+    if (napi_has_named_property(env, obj, name, &hasProperty) != napi_ok || !hasProperty) {
+        napi_get_undefined(env, out);
+        return false;
+    }
+    if (napi_get_named_property(env, obj, name, out) != napi_ok) {
+        napi_get_undefined(env, out);
+        return false;
+    }
+    return true;
+}
 
 // 辅助函数：从napi_value获取字符串（带类型检查）
 static std::string GetStringFromNapi(napi_env env, napi_value value) {
@@ -162,12 +177,12 @@ static napi_value InitClient(napi_env env, napi_callback_info info) {
     
     napi_value serverUrlVal, usernameVal, passwordVal, basePathVal, timeoutVal, verifySSLVal;
     
-    napi_get_named_property(env, args[0], "serverUrl", &serverUrlVal);
-    napi_get_named_property(env, args[0], "username", &usernameVal);
-    napi_get_named_property(env, args[0], "password", &passwordVal);
-    napi_get_named_property(env, args[0], "basePath", &basePathVal);
-    napi_get_named_property(env, args[0], "timeoutMs", &timeoutVal);
-    napi_get_named_property(env, args[0], "verifySSL", &verifySSLVal);
+    GetOptionalNamedProperty(env, args[0], "serverUrl", &serverUrlVal);
+    GetOptionalNamedProperty(env, args[0], "username", &usernameVal);
+    GetOptionalNamedProperty(env, args[0], "password", &passwordVal);
+    GetOptionalNamedProperty(env, args[0], "basePath", &basePathVal);
+    GetOptionalNamedProperty(env, args[0], "timeoutMs", &timeoutVal);
+    GetOptionalNamedProperty(env, args[0], "verifySSL", &verifySSLVal);
     
     config.serverUrl = GetStringFromNapi(env, serverUrlVal);
     config.username = GetStringFromNapi(env, usernameVal);
@@ -186,10 +201,16 @@ static napi_value InitClient(napi_env env, napi_callback_info info) {
         config.verifySSL = GetBoolFromNapi(env, verifySSLVal);
     }
     
+    if (config.serverUrl.empty()) {
+        OH_LOG_ERROR(LOG_APP, "WebDAV Init failed: serverUrl is empty");
+        return CreateBoolNapi(env, false);
+    }
+
     OH_LOG_INFO(LOG_APP, "WebDAV Init: serverUrl=%{public}s, basePath=%{public}s", 
         config.serverUrl.c_str(), config.basePath.c_str());
     
     try {
+        std::lock_guard<std::mutex> lock(g_clientMutex);
         g_client = std::make_unique<webdav::WebDAVClient>(config);
         OH_LOG_INFO(LOG_APP, "WebDAV client initialized successfully");
         return CreateBoolNapi(env, true);
@@ -205,6 +226,7 @@ static napi_value InitClient(napi_env env, napi_callback_info info) {
  */
 static napi_value TestConnection(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "WebDAV TestConnection called");
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     
     if (!g_client) {
         webdav::Result result;
@@ -230,6 +252,7 @@ static napi_value Exists(napi_env env, napi_callback_info info) {
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 1) {
         webdav::Result result;
         result.success = false;
@@ -255,6 +278,7 @@ static napi_value List(napi_env env, napi_callback_info info) {
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 1) {
         webdav::ListResult result;
         result.success = false;
@@ -293,6 +317,7 @@ static napi_value CreateDirectory(napi_env env, napi_callback_info info) {
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 1) {
         webdav::Result result;
         result.success = false;
@@ -316,6 +341,7 @@ static napi_value CreateDirectoryRecursive(napi_env env, napi_callback_info info
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 1) {
         webdav::Result result;
         result.success = false;
@@ -339,6 +365,7 @@ static napi_value DeleteResource(napi_env env, napi_callback_info info) {
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 1) {
         webdav::Result result;
         result.success = false;
@@ -362,6 +389,7 @@ static napi_value PutFileContents(napi_env env, napi_callback_info info) {
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 2) {
         webdav::Result result;
         result.success = false;
@@ -387,6 +415,7 @@ static napi_value GetFileContents(napi_env env, napi_callback_info info) {
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 1) {
         webdav::Result result;
         result.success = false;
@@ -412,6 +441,7 @@ static napi_value UploadFile(napi_env env, napi_callback_info info) {
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 2) {
         webdav::Result result;
         result.success = false;
@@ -440,6 +470,7 @@ static napi_value DownloadFile(napi_env env, napi_callback_info info) {
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 2) {
         webdav::Result result;
         result.success = false;
@@ -468,6 +499,7 @@ static napi_value CopyFile(napi_env env, napi_callback_info info) {
     napi_value args[3];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 2) {
         webdav::Result result;
         result.success = false;
@@ -502,6 +534,7 @@ static napi_value MoveFile(napi_env env, napi_callback_info info) {
     napi_value args[3];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client || argc < 2) {
         webdav::Result result;
         result.success = false;
@@ -532,6 +565,7 @@ static napi_value MoveFile(napi_env env, napi_callback_info info) {
  * getQuota(): {success, usedBytes, availableBytes, message}
  */
 static napi_value GetQuota(napi_env env, napi_callback_info info) {
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     if (!g_client) {
         napi_value obj;
         napi_create_object(env, &obj);
@@ -560,6 +594,7 @@ static napi_value GetQuota(napi_env env, napi_callback_info info) {
  */
 static napi_value Destroy(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "WebDAV Destroy called");
+    std::lock_guard<std::mutex> lock(g_clientMutex);
     g_client.reset();
     
     napi_value undefined;

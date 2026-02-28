@@ -75,6 +75,19 @@ interface HttpRequestResult {
 }
 
 /**
+ * 搜索解析选项
+ * 用于在高并发校验场景下降低主线程解析压力
+ */
+interface SearchParseOptions {
+  /** 最多保留多少条搜索结果（<=0 时表示不限制） */
+  maxResults?: number;
+  /** 最多扫描多少个候选元素（<=0 时表示不限制） */
+  maxElementScan?: number;
+  /** 是否禁用 item 级 DOM bridge（改用字符串解析） */
+  disableItemDomBridge?: boolean;
+}
+
+/**
  * 小说源执行器类
  */
 export class NovelSourceExecutor {
@@ -112,7 +125,11 @@ export class NovelSourceExecutor {
    * 搜索书籍（带详细错误信息）
    * 用于校验时获取详细的错误类型
    */
-  async searchWithError(keyword: string, page: number = 1): Promise<SearchResultWithError> {
+  async searchWithError(
+    keyword: string,
+    page: number = 1,
+    parseOptions?: SearchParseOptions
+  ): Promise<SearchResultWithError> {
     if (!this.source.searchUrl) {
       logger.warn(TAG, `[书源:${this.source.bookSourceName}] 没有配置搜索URL`);
       return { books: [], errorType: SearchErrorType.NONE, errorMessage: '搜索链接规则为空' };
@@ -159,7 +176,7 @@ export class NovelSourceExecutor {
         return { books: [], errorType: SearchErrorType.NETWORK_ERROR, errorMessage: '无响应数据' };
       }
 
-      const results = await this.parseSearchResultAsync(requestResult.response, request.url);
+      const results = await this.parseSearchResultAsync(requestResult.response, request.url, parseOptions);
       if (results.length === 0) {
         logger.debug(TAG, `[书源:${this.source.bookSourceName}] 搜索结果为空，可能是解析规则不匹配`);
         return { books: [], errorType: SearchErrorType.PARSE_ERROR, errorMessage: '解析规则不匹配' };
@@ -794,7 +811,11 @@ export class NovelSourceExecutor {
   /**
    * 解析搜索结果（异步版本，支持JS规则）
    */
-  private async parseSearchResultAsync(html: string, baseUrl: string): Promise<LegadoSearchBook[]> {
+  private async parseSearchResultAsync(
+    html: string,
+    baseUrl: string,
+    parseOptions?: SearchParseOptions
+  ): Promise<LegadoSearchBook[]> {
     const results: LegadoSearchBook[] = [];
     const rule = this.source.ruleSearch;
     
@@ -810,16 +831,25 @@ export class NovelSourceExecutor {
       logger.debug(TAG, `[书源:${this.source.bookSourceName}] 响应片段: ${htmlSnippet}`);
     }
 
+    const maxResults = parseOptions?.maxResults && parseOptions.maxResults > 0
+      ? Math.floor(parseOptions.maxResults)
+      : Number.MAX_SAFE_INTEGER;
+    const maxElementScan = parseOptions?.maxElementScan && parseOptions.maxElementScan > 0
+      ? Math.floor(parseOptions.maxElementScan)
+      : Number.MAX_SAFE_INTEGER;
+    const disableItemDomBridge = parseOptions?.disableItemDomBridge === true;
+
     const analyzer = new LegadoRuleAnalyzer();
     analyzer.setContent(html, baseUrl);
 
     // 使用异步方法获取元素，支持JS规则
     const bookElements = await analyzer.getElementsAsync(rule.bookList);
     logger.debug(TAG, `[书源:${this.source.bookSourceName}] bookList解析结果: ${bookElements.length} 个元素`);
-    
-    for (let i = 0; i < bookElements.length; i++) {
+
+    const scanLimit = Math.min(bookElements.length, maxElementScan);
+    for (let i = 0; i < scanLimit && results.length < maxResults; i++) {
       const itemAnalyzer = new LegadoRuleAnalyzer();
-      itemAnalyzer.setContent(bookElements[i], baseUrl);
+      itemAnalyzer.setContent(bookElements[i], baseUrl, disableItemDomBridge);
 
       const name = itemAnalyzer.getString(rule.name);
       // 性能优化：仅在第一个元素时输出调试信息
@@ -857,10 +887,26 @@ export class NovelSourceExecutor {
       };
 
       results.push(searchBook);
+
+      // 分段让出事件循环，避免在大量结果时长时间占用主线程
+      if ((i + 1) % 20 === 0) {
+        await this.yieldToEventLoop();
+      }
+    }
+
+    if (scanLimit < bookElements.length) {
+      logger.debug(TAG, `[书源:${this.source.bookSourceName}] 搜索元素扫描已截断: ${scanLimit}/${bookElements.length}`);
     }
 
     logger.info(TAG, `搜索结果: ${results.length} 本书`);
     return results;
+  }
+
+  /**
+   * 主动让出事件循环，降低长任务阻塞风险
+   */
+  private async yieldToEventLoop(): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 0));
   }
 
   /**

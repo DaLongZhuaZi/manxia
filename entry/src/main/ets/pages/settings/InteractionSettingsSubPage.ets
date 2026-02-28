@@ -299,6 +299,7 @@ export struct InteractionSettingsSubPage {
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
   @Builder
@@ -336,6 +337,7 @@ export struct InteractionSettingsSubPage {
       }
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(12)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
     }
     .width('100%')
   }
@@ -346,55 +348,78 @@ export struct InteractionSettingsSubPage {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        Scroll() {
+        Scroll(this.scroller) {
           Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
-
-            // 全局开关
-            Column() {
-              this.buildSettingItem(
-                '启用震动反馈',
-                '关闭后所有震动效果将被禁用',
-                this.vibrationEnabled,
-                async (value: boolean) => {
-                  this.vibrationEnabled = value;
-                  await this.interactionManager.setVibrationEnabled(value);
-                  if (value) {
-                    this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
-                  }
+            Flex({
+              wrap: FlexWrap.Wrap,
+              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+            }) {
+              // 全局开关
+              Column() {
+                Column() {
+                  this.buildSettingItem(
+                    '启用震动反馈',
+                    '关闭后所有震动效果将被禁用',
+                    this.vibrationEnabled,
+                    async (value: boolean) => {
+                      this.vibrationEnabled = value;
+                      await this.interactionManager.setVibrationEnabled(value);
+                      if (value) {
+                        this.interactionManager.vibrate(VibrationScene.TOGGLE_SWITCH);
+                      }
+                    }
+                  )
                 }
-              )
-            }
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-            .borderRadius(12)
-
-            if (this.vibrationEnabled) {
-              // 震动强度
-              this.buildIntensitySelector()
-
-              // 场景设置
-              ForEach(this.getSceneGroups(), (group: SceneGroup) => {
-                this.buildSceneGroup(group)
-              })
-
-              // 重置按钮
-              Button('恢复默认设置')
-                .width('100%')
-                .height(44)
-                .fontSize(14)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
-                .onClick(async () => {
-                  await this.interactionManager.resetToDefault();
-                  this.loadSettings();
-                  this.interactionManager.vibrate(VibrationScene.SUCCESS);
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+
+              if (this.vibrationEnabled) {
+                // 震动强度
+                Column() {
+                  this.buildIntensitySelector()
+                }
+                .width(this.responsive_isLandscape ? '48%' : '100%')
+                .margin({ bottom: 16 })
+
+                // 场景设置
+                ForEach(this.getSceneGroups(), (group: SceneGroup) => {
+                  Column() {
+                    this.buildSceneGroup(group)
+                  }
+                  .width(this.responsive_isLandscape ? '48%' : '100%')
+                  .margin({ bottom: 16 })
                 })
+
+                // 重置按钮
+                Column() {
+                  Button('恢复默认设置')
+                    .width('100%')
+                    .height(44)
+                    .fontSize(14)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                    .borderRadius(12)
+                    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                    .onClick(async () => {
+                      await this.interactionManager.resetToDefault();
+                      this.loadSettings();
+                      this.interactionManager.vibrate(VibrationScene.SUCCESS);
+                    })
+                }
+                .width(this.responsive_isLandscape ? '48%' : '100%')
+                .margin({ bottom: 16 })
+              }
             }
+            .width('100%')
 
             Blank().height(40)
           }

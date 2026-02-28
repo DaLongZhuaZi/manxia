@@ -252,7 +252,7 @@ export class LegadoRuleAnalyzer {
    * 设置要解析的内容
    * 对于大型HTML（>100KB），跳过DOM解析以避免ANR
    */
-  setContent(content: string, baseUrl?: string): LegadoRuleAnalyzer {
+  setContent(content: string, baseUrl?: string, disableHtmlBridge: boolean = false): LegadoRuleAnalyzer {
     this.content = content;
     if (baseUrl) {
       this.baseUrl = baseUrl;
@@ -264,7 +264,7 @@ export class LegadoRuleAnalyzer {
     const HTML_SIZE_THRESHOLD = 100000; // 100KB
     
     // 如果不是JSON，且内容不太大，初始化HTML解析桥接
-    if (!this.isJSON && content.trim()) {
+    if (!disableHtmlBridge && !this.isJSON && content.trim()) {
       if (content.length <= HTML_SIZE_THRESHOLD) {
         this.htmlBridge = createLegadoHtmlBridge(content);
         // 性能优化：减少日志输出

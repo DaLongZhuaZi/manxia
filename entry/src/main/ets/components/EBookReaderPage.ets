@@ -13,8 +13,8 @@ import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookP
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { PdfViewerComponent } from '../Framework/Components/PdfViewerComponent';
-import { ReaderKitViewerComponent, ReaderKitViewerController } from '../Framework/Components/ReaderKitViewerComponent';
 import { PdfKitViewerComponent, PdfViewerCallbacks } from '../Framework/Components/PdfKitViewerComponent';
+import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeatureGate';
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
@@ -38,6 +38,12 @@ import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 
 const TAG = 'EBookReaderPage';
+
+interface ReaderKitViewerControllerLike {
+  isControllerReady(): boolean;
+  applyReadingSettings(settings: EBookReadingSettings, force: boolean): void;
+  goToChapter(chapterIndex: number, domPos: string): Promise<void>;
+}
 
 /**
  * 阅读器页面参数
@@ -124,7 +130,7 @@ struct EBookReaderPage {
   private uiContext: UIContext | undefined = undefined;
   
   // Reader Kit 阅读器控制器（用于实时应用设置和跳转章节）
-  private readerKitController: ReaderKitViewerController | null = null;
+  private readerKitController: ReaderKitViewerControllerLike | null = null;
 
   // 阅读时间记录相关
   private readingSessionStartTime: number = 0;  // 阅读会话开始时间
@@ -1506,7 +1512,7 @@ struct EBookReaderPage {
       EBookFormat.AZW,
       EBookFormat.AZW3
     ];
-    return supportedFormats.includes(format);
+    return isReaderKitEnabled() && supportedFormats.includes(format);
   }
 
   /**
@@ -1527,36 +1533,17 @@ struct EBookReaderPage {
   @Builder
   buildReaderKitView() {
     if (this.ebook) {
-      // Reader Kit 阅读器组件 - 占满全屏
-      ReaderKitViewerComponent({
-        ebook: this.ebook,
-        currentChapterIndex: this.currentChapterIndex,
-        initialDomPos: this.currentDomPos,
-        readingSettings: this.ebook.readingSettings,
-        onChapterChange: (index: number) => {
-          this.currentChapterIndex = index;
-          this.currentChapter = this.ebook ? this.ebook.chapters[index] : null;
-          // 章节切换时不清空 domPos，也不立即保存
-          // 让 onProgressChange 回调来处理保存，这样可以保留完整的 domPos 信息
-          logger.info(TAG, `章节切换: index=${index}, 等待 pageShow 事件更新 domPos`);
-        },
-        onProgressChange: (progress: number, domPos: string) => {
-          logger.debug(TAG, `阅读进度更新: ${progress}%, domPos=${domPos}`);
-          this.handleProgressChange(progress, domPos);
-        },
-        onSettingsChange: (settings: EBookReadingSettings) => {
-          if (this.ebook) {
-            this.ebook.readingSettings = settings;
-            this.ebookDataManager.saveReadingSettings(this.ebook.id, settings);
-          }
-        },
-        onControllerReady: (controller: ReaderKitViewerController) => {
-          this.readerKitController = controller;
-          logger.info(TAG, 'Reader Kit 控制器已就绪');
-        }
-      })
+      Column() {
+        Text('ReaderKit 已临时屏蔽，模拟器不加载该能力')
+          .fontSize(16)
+          .fontColor('#666666')
+          .textAlign(TextAlign.Center)
+          .width('90%')
+      }
       .width('100%')
       .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
   }
 

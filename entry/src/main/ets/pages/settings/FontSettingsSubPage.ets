@@ -188,6 +188,7 @@ export struct FontSettingsSubPage {
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(this.expandedSection === sectionId ? { topLeft: 12, topRight: 12 } : 12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
     .animation({ duration: 250, curve: Curve.EaseInOut })
     .onClick(() => {
       animateTo({
@@ -346,6 +347,7 @@ export struct FontSettingsSubPage {
         }
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
         .margin({ top: -12 })
         .transition(TransitionEffect.asymmetric(
           TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
@@ -377,6 +379,7 @@ export struct FontSettingsSubPage {
         }
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
         .margin({ top: -12 })
         .transition(TransitionEffect.asymmetric(
           TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
@@ -408,6 +411,7 @@ export struct FontSettingsSubPage {
         }
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
         .margin({ top: -12 })
         .transition(TransitionEffect.asymmetric(
           TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
@@ -441,6 +445,7 @@ export struct FontSettingsSubPage {
       .padding(16)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(12)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
 
       if (this.customFonts.length === 0) {
         Text('暂无自定义字体，点击上方按钮导入')
@@ -470,6 +475,7 @@ export struct FontSettingsSubPage {
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(12)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
       .onClick(async () => {
         await this.fontManager.resetToDefault();
         this.settings = this.fontManager.getSettings();
@@ -483,27 +489,52 @@ export struct FontSettingsSubPage {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll(this.scroller) {
           Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Flex({
+              wrap: FlexWrap.Wrap,
+              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+            }) {
+              // 自定义字体管理
+              Column() {
+                this.buildCustomFontManagement()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
 
-            // 自定义字体管理
-            this.buildCustomFontManagement()
+              // 界面字体设置
+              Column() {
+                this.buildAppFontSection()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
 
-            // 界面字体设置
-            this.buildAppFontSection()
+              // 小说字体设置
+              Column() {
+                this.buildNovelFontSection()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
 
-            // 小说字体设置
-            this.buildNovelFontSection()
+              // 电子书字体设置
+              Column() {
+                this.buildEbookFontSection()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
 
-            // 电子书字体设置
-            this.buildEbookFontSection()
-
-            // 重置按钮
-            this.buildResetButton()
+              // 重置按钮
+              Column() {
+                this.buildResetButton()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+            }
+            .width('100%')
 
             Blank().height(40)
           }

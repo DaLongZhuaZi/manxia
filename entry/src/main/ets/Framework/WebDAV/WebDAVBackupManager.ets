@@ -92,6 +92,8 @@ export class WebDAVBackupManager {
           const testResult = await this.nativeClient.testConnection();
           if (testResult.success) {
             logger.info(TAG, 'WebDAV Native客户端配置成功');
+            // 预创建ArkTS客户端作为降级兜底，避免Native异常时无可用通道
+            this.client = new WebDAVClient(config);
             // 确保备份目录存在
             await this.ensureBackupDirectory();
             return;
@@ -150,6 +152,9 @@ export class WebDAVBackupManager {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
+    if (this.syncStatus.isUploading || this.syncStatus.isDownloading) {
+      throw new Error('同步任务正在执行，请稍后重试');
+    }
 
     try {
       this.syncStatus.isUploading = true;
@@ -169,9 +174,17 @@ export class WebDAVBackupManager {
       if (this.nativeClient) {
         const result = await this.nativeClient.uploadFile(localBackupPath, remotePath);
         if (!result.success) {
-          throw new Error(result.message);
+          logger.warn(TAG, `Native上传失败，尝试ArkTS回退: ${result.message}`);
+          if (this.client) {
+            await this.client.upload(localBackupPath, remotePath, (progress) => {
+              this.syncStatus.uploadProgress = progress;
+            });
+          } else {
+            throw new Error(result.message);
+          }
+        } else {
+          this.syncStatus.uploadProgress = 100;
         }
-        this.syncStatus.uploadProgress = 100;
       } else if (this.client) {
         await this.client.upload(localBackupPath, remotePath, (progress) => {
           this.syncStatus.uploadProgress = progress;
@@ -208,6 +221,9 @@ export class WebDAVBackupManager {
       const errorMsg = 'WebDAV未配置';
       throw new Error(errorMsg);
     }
+    if (this.syncStatus.isUploading || this.syncStatus.isDownloading) {
+      throw new Error('同步任务正在执行，请稍后重试');
+    }
 
     try {
       this.syncStatus.isDownloading = true;
@@ -227,9 +243,17 @@ export class WebDAVBackupManager {
       if (this.nativeClient) {
         const result = await this.nativeClient.downloadFile(remoteBackupInfo.remotePath, localPath);
         if (!result.success) {
-          throw new Error(result.message);
+          logger.warn(TAG, `Native下载失败，尝试ArkTS回退: ${result.message}`);
+          if (this.client) {
+            await this.client.download(remoteBackupInfo.remotePath, localPath, (progress) => {
+              this.syncStatus.downloadProgress = progress;
+            });
+          } else {
+            throw new Error(result.message);
+          }
+        } else {
+          this.syncStatus.downloadProgress = 100;
         }
-        this.syncStatus.downloadProgress = 100;
       } else if (this.client) {
         await this.client.download(remoteBackupInfo.remotePath, localPath, (progress) => {
           this.syncStatus.downloadProgress = progress;
