@@ -157,6 +157,9 @@ struct BackupPage {
   @Local ftpConnectionName: string = '';
   
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
+  private webdavInitPromise: Promise<boolean> | null = null;
+  private webdavConfigKey: string = '';
+  private cloudSyncTimer: number | undefined = undefined;
   
   /**
    * 切换到下一个标签页（支持循环）
@@ -183,7 +186,60 @@ struct BackupPage {
    */
   private onTabChanged(): void {
     if (this.currentTab === 'cloud' && this.webdavSettings.enabled && this.cloudBackups.length === 0) {
+      this.scheduleLoadCloudBackups(80);
+    }
+  }
+
+  private getWebDAVConfigKey(settings: WebDAVSettings): string {
+    return `${settings.serverUrl}|${settings.username}|${settings.basePath}|${settings.enabled}|${settings.connectionStatus}`;
+  }
+
+  private scheduleLoadCloudBackups(delayMs: number = 0): void {
+    if (this.cloudSyncTimer !== undefined) {
+      clearTimeout(this.cloudSyncTimer);
+      this.cloudSyncTimer = undefined;
+    }
+    this.cloudSyncTimer = setTimeout(() => {
+      this.cloudSyncTimer = undefined;
       this.loadCloudBackups();
+    }, delayMs) as number;
+  }
+
+  private async ensureWebDAVReady(forceReconfigure: boolean = false): Promise<boolean> {
+    if (!this.webdavSettings.enabled || this.webdavSettings.connectionStatus !== 'success') {
+      return false;
+    }
+
+    const configKey = this.getWebDAVConfigKey(this.webdavSettings);
+    if (!forceReconfigure && this.webdavManager.isConfigured() && this.webdavConfigKey === configKey) {
+      return true;
+    }
+
+    if (this.webdavInitPromise) {
+      return await this.webdavInitPromise;
+    }
+
+    this.webdavInitPromise = (async (): Promise<boolean> => {
+      try {
+        const config: WebDAVConfig = {
+          serverUrl: this.webdavSettings.serverUrl,
+          username: this.webdavSettings.username,
+          password: this.webdavSettings.password,
+          basePath: this.webdavSettings.basePath
+        };
+        await this.webdavManager.configure(config);
+        this.webdavConfigKey = configKey;
+        return true;
+      } catch (error) {
+        logger.error(TAG, `初始化WebDAV连接失败: ${error}`);
+        return false;
+      }
+    })();
+
+    try {
+      return await this.webdavInitPromise;
+    } finally {
+      this.webdavInitPromise = null;
     }
   }
   
@@ -337,6 +393,11 @@ struct BackupPage {
   }
   
   aboutToDisappear(): void {
+    if (this.cloudSyncTimer !== undefined) {
+      clearTimeout(this.cloudSyncTimer);
+      this.cloudSyncTimer = undefined;
+    }
+
     // 移除主题监听器
     if (this.themeChangeCallback) {
       this.themeManager.offThemeChange(this.themeChangeCallback);
@@ -456,17 +517,11 @@ struct BackupPage {
       this.webdavSettings = savedSettings;
       logger.info(TAG, `已加载WebDAV配置: enabled=${savedSettings.enabled}, status=${savedSettings.connectionStatus}`);
       
-      // 如果已启用且连接成功，配置WebDAV管理器
-      if (savedSettings.enabled && savedSettings.connectionStatus === 'success') {
-        const config: WebDAVConfig = {
-          serverUrl: savedSettings.serverUrl,
-          username: savedSettings.username,
-          password: savedSettings.password,
-          basePath: savedSettings.basePath
-        };
-        
-        await this.webdavManager.configure(config);
-        await this.loadCloudBackups();
+      // 记录配置签名，只有在需要云操作时才真正连接WebDAV，避免页面进入卡顿
+      this.webdavConfigKey = this.getWebDAVConfigKey(savedSettings);
+
+      if (savedSettings.enabled && savedSettings.connectionStatus === 'success' && this.currentTab === 'cloud') {
+        this.scheduleLoadCloudBackups(120);
       }
     } else {
       // 使用默认配置
@@ -485,28 +540,32 @@ struct BackupPage {
         lastTestMessage: '',
         needCreateDir: false
       };
+      this.webdavConfigKey = '';
     }
   }
   
   async loadCloudBackups(): Promise<void> {
-    if (!this.webdavManager.isConfigured()) {
-      logger.warn(TAG, 'WebDAV未配置');
+    if (this.isLoadingCloud) {
+      return;
+    }
+
+    const isReady = await this.ensureWebDAVReady();
+    if (!isReady) {
+      logger.warn(TAG, 'WebDAV未就绪，跳过云端备份加载');
       return;
     }
     
     try {
       this.isLoadingCloud = true;
-      
-      // 检查索引文件是否存在
-      const indexExists = await this.webdavManager.checkIndexExists();
-      if (!indexExists) {
-        logger.info(TAG, '云端索引文件不存在，需要初始化');
-        this.showInitCloudDialog = true;
-        this.cloudBackups = [];
-        return;
-      }
-      
+
+      // 先读取索引列表，避免重复发起两次相同请求
       this.cloudBackups = await this.webdavManager.listRemoteBackups();
+      if (this.cloudBackups.length === 0) {
+        const indexExists = await this.webdavManager.checkIndexExists();
+        this.showInitCloudDialog = !indexExists;
+      } else {
+        this.showInitCloudDialog = false;
+      }
       logger.info(TAG, `加载了 ${this.cloudBackups.length} 个云端备份`);
     } catch (error) {
       logger.error(TAG, `加载云端备份失败: ${error}`);
@@ -524,6 +583,11 @@ struct BackupPage {
    */
   async initializeCloudBackup(): Promise<void> {
     try {
+      const isReady = await this.ensureWebDAVReady();
+      if (!isReady) {
+        throw new Error('WebDAV未配置或连接不可用');
+      }
+
       this.showInitCloudDialog = false;
       
       this.getUIContext().getPromptAction().showToast({
@@ -559,6 +623,11 @@ struct BackupPage {
   
   async uploadToCloud(localBackup: BackupFileInfo): Promise<void> {
     try {
+      const isReady = await this.ensureWebDAVReady();
+      if (!isReady) {
+        throw new Error('WebDAV未配置或连接不可用');
+      }
+
       await this.webdavManager.uploadBackup(localBackup.filePath);
       this.getUIContext().getPromptAction().showToast({
         message: '上传成功',
@@ -576,6 +645,11 @@ struct BackupPage {
   
   async downloadFromCloud(remoteBackup: RemoteBackupInfo): Promise<void> {
     try {
+      const isReady = await this.ensureWebDAVReady();
+      if (!isReady) {
+        throw new Error('WebDAV未配置或连接不可用');
+      }
+
       const localPath = await this.webdavManager.downloadBackup(remoteBackup);
       this.getUIContext().getPromptAction().showToast({
         message: '下载成功',
@@ -593,6 +667,11 @@ struct BackupPage {
   
   async deleteCloudBackup(remoteBackup: RemoteBackupInfo): Promise<void> {
     try {
+      const isReady = await this.ensureWebDAVReady();
+      if (!isReady) {
+        throw new Error('WebDAV未配置或连接不可用');
+      }
+
       await this.webdavManager.deleteRemoteBackup(remoteBackup);
       this.getUIContext().getPromptAction().showToast({
         message: '删除成功',
@@ -636,10 +715,14 @@ struct BackupPage {
         
         logger.info(TAG, '开始配置WebDAV管理器');
         await this.webdavManager.configure(config);
+        this.webdavConfigKey = this.getWebDAVConfigKey(settings);
         logger.info(TAG, 'WebDAV管理器配置完成');
-        await this.loadCloudBackups();
+        if (this.currentTab === 'cloud') {
+          this.scheduleLoadCloudBackups(80);
+        }
       } else {
         logger.warn(TAG, `跳过WebDAV管理器配置: enabled=${settings.enabled}, status=${settings.connectionStatus}`);
+        this.webdavConfigKey = '';
       }
       
       // 保存配置到本地存储（无论测试结果如何都保存）
@@ -1224,6 +1307,10 @@ struct BackupPage {
   async uploadBackupToCloud(localFilePath: string): Promise<void> {
     try {
       logger.info(TAG, `开始上传备份到云端: ${localFilePath}`);
+      const isReady = await this.ensureWebDAVReady();
+      if (!isReady) {
+        throw new Error('WebDAV未配置或连接不可用');
+      }
       
       this.getUIContext().getPromptAction().showToast({
         message: '正在上传到云端...',
@@ -1711,6 +1798,7 @@ struct BackupPage {
         }
       }
     })
+    .backgroundColor(Color.Transparent)
   }
   
   /**
@@ -1788,7 +1876,7 @@ struct BackupPage {
         .onClick(() => {
           this.currentTab = 'cloud';
           if (this.webdavSettings.enabled && this.cloudBackups.length === 0) {
-            this.loadCloudBackups();
+            this.scheduleLoadCloudBackups(80);
           }
         })
         .animation({ duration: 150 })
@@ -2296,7 +2384,7 @@ struct BackupPage {
                   this.webdavSettings.enabled = isOn;
                   this.persistWebDAVSettings(this.webdavSettings);
                   if (isOn && this.webdavSettings.connectionStatus === 'success') {
-                    this.loadCloudBackups();
+                    this.scheduleLoadCloudBackups(80);
                   }
                 })
             }
@@ -2442,7 +2530,7 @@ struct BackupPage {
           .margin({ left: 8 })
           .fontFamily(this.appFontFamily)
         
-        Text(`${Math.round((this.syncStatus.isUploading ? this.syncStatus.uploadProgress : this.syncStatus.downloadProgress) * 100)}%`)
+        Text(`${Math.round(Math.max(0, Math.min(100, this.syncStatus.isUploading ? this.syncStatus.uploadProgress : this.syncStatus.downloadProgress)))}%`)
           .fontSize(12)
           .fontColor('#FFFFFF')
           .margin({ left: 8 })

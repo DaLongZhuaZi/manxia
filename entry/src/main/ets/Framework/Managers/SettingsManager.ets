@@ -84,11 +84,12 @@ export class SettingKeys {
   static readonly NOVEL_READER_SETTINGS = 'novel_reader_settings';
   // 小说搜索设置
   static readonly NOVEL_SEARCH_MAX_SOURCES = 'novel_search_max_sources';
-  // 书源校验并发线程数（默认 10，范围 1-20）
+  // 书源校验并发线程数（默认 10，范围 1-50）
   static readonly NOVEL_SOURCE_VALIDATION_CONCURRENCY = 'novel_source_validation_concurrency';
   
   // 底部导航栏自定义设置
   static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
+  static readonly MAIN_MENU_TABLET_TOP_BAR_POSITION = 'main_menu_tablet_top_bar_position';
   
   // 内容过滤设置
   static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）

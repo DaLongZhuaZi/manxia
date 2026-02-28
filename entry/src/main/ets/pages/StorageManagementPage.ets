@@ -841,6 +841,7 @@ export struct StorageManagementPage {
         }
       }
     })
+    .backgroundColor(Color.Transparent)
   }
 
   private showStorageHelp(): void {

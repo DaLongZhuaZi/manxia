@@ -934,6 +934,18 @@ export default class EntryAbility extends UIAbility {
 
   // 在Ability销毁时的清理工作（游戏引擎已移除）
   onDestroy(): void {
-    logger.info('EntryAbility', 'onDestroy: 应用正在销毁...');
+    logger.info('EntryAbility', 'onDestroy: app is being destroyed');
+
+    try {
+      getErrorMonitorService().stop();
+    } catch (error) {
+      logger.warn('EntryAbility', `stop ErrorMonitorService failed: ${String(error)}`);
+    }
+
+    try {
+      getCrashRecorderService().dispose();
+    } catch (error) {
+      logger.warn('EntryAbility', `dispose CrashRecorderService failed: ${String(error)}`);
+    }
   }
 }

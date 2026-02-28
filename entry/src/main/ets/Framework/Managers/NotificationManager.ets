@@ -52,6 +52,7 @@ export class AppNotificationManager {
   private hasPermission: boolean = false;
   private isChecking: boolean = false;
   private notificationIdCounter: number = 1000;
+  private supportDownloadTemplate: boolean | null = null;
 
   private constructor() {
     logger.info(TAG, '通知管理器初始化');
@@ -145,16 +146,48 @@ export class AppNotificationManager {
         actionButtons: []
       };
 
-      // 如果有进度信息，使用进度条样式
+      // 如果有进度信息，优先使用系统模板进度通知
       if (config.progress) {
-        notificationRequest.content = {
-          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
-          normal: {
-            title: config.title,
-            text: config.text,
-            additionalText: config.additionalText || ''
-          }
-        };
+        const progressPercent = this.calculateProgressPercent(config.progress.current, config.progress.max);
+        const canUseTemplate = await this.ensureDownloadTemplateSupport();
+        if (canUseTemplate) {
+          notificationRequest.template = {
+            name: 'downloadTemplate',
+            data: {
+              title: config.title,
+              fileName: config.text,
+              progressValue: progressPercent
+            }
+          };
+        } else {
+          notificationRequest.content = {
+            notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+            normal: {
+              title: config.title,
+              text: config.text,
+              additionalText: config.additionalText || `${progressPercent}%`
+            }
+          };
+        }
+
+        if (
+          config.type === NotificationType.DOWNLOAD_PROGRESS ||
+          config.type === NotificationType.VALIDATION_PROGRESS
+        ) {
+          notificationRequest.isOngoing = true;
+          notificationRequest.isAlertOnce = true;
+        }
+      } else {
+        notificationRequest.isOngoing = false;
+      }
+
+      if (
+        config.type === NotificationType.DOWNLOAD_COMPLETE ||
+        config.type === NotificationType.DOWNLOAD_FAILED ||
+        config.type === NotificationType.VALIDATION_COMPLETE ||
+        config.type === NotificationType.VALIDATION_CANCELLED
+      ) {
+        notificationRequest.isOngoing = false;
       }
 
       // 发送通知
@@ -168,6 +201,28 @@ export class AppNotificationManager {
     }
   }
 
+  private async ensureDownloadTemplateSupport(): Promise<boolean> {
+    if (this.supportDownloadTemplate !== null) {
+      return this.supportDownloadTemplate;
+    }
+    try {
+      this.supportDownloadTemplate = await notificationManager.isSupportTemplate('downloadTemplate');
+    } catch (error) {
+      const err = error as BusinessError;
+      logger.warn(TAG, `检测通知模板能力失败: ${err.code}, ${err.message}`);
+      this.supportDownloadTemplate = false;
+    }
+    return this.supportDownloadTemplate;
+  }
+
+  private calculateProgressPercent(current: number, total: number): number {
+    if (total <= 0) {
+      return 0;
+    }
+    const progress = Math.floor((current / total) * 100);
+    return Math.max(0, Math.min(100, progress));
+  }
+
   /**
    * 发送下载进度通知
    */
@@ -177,7 +232,7 @@ export class AppNotificationManager {
     current: number,
     total: number
   ): Promise<boolean> {
-    const progress = Math.floor((current / total) * 100);
+    const progress = this.calculateProgressPercent(current, total);
     const progressInfo: ProgressInfo = { current: current, max: total };
     const config: NotificationConfig = {
       id: this.getNotificationId(taskId),
@@ -290,7 +345,7 @@ export class AppNotificationManager {
     validCount: number,
     invalidCount: number
   ): Promise<boolean> {
-    const progress = Math.floor((current / total) * 100);
+    const progress = this.calculateProgressPercent(current, total);
     const config: NotificationConfig = {
       id: this.getNotificationId(taskId),
       title: '书源校验中',

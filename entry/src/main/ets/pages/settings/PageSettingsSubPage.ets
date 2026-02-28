@@ -74,6 +74,8 @@ enum TabIndex {
   SETTINGS = 6
 }
 
+type TabletTopBarPosition = 'top' | 'bottom' | 'left' | 'right';
+
 /**
  * 设置键常量
  */
@@ -129,6 +131,8 @@ export struct PageSettingsSubPage {
   // 底栏自定义状态
   @State visibleTabIndices: number[] = [];
   @State tempVisibleTabIndices: number[] = [];
+  @State tabletTopBarPosition: TabletTopBarPosition = 'top';
+  private tabletTopBarPositions: TabletTopBarPosition[] = ['top', 'bottom', 'left', 'right'];
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -202,12 +206,15 @@ export struct PageSettingsSubPage {
     const mangaType = this.settingsManager.getString(PageSettingKeys.MANGA_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
     const ebookType = this.settingsManager.getString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
     const novelType = this.settingsManager.getString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
+    const tabletTopBarPosition = this.settingsManager.getString(SettingKeys.MAIN_MENU_TABLET_TOP_BAR_POSITION, 'left');
 
     this.mangaDetailPageType = mangaType as DetailPageType;
     this.ebookDetailPageType = ebookType as DetailPageType;
     this.novelDetailPageType = novelType as DetailPageType;
     this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
     this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
+    this.tabletTopBarPosition = this.normalizeTabletTopBarPosition(tabletTopBarPosition);
+    AppStorage.setOrCreate('main_menu_tablet_top_bar_position', this.tabletTopBarPosition);
 
     logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
   }
@@ -215,6 +222,111 @@ export struct PageSettingsSubPage {
   /**
    * 保存设置
    */
+  private normalizeTabletTopBarPosition(value: string): TabletTopBarPosition {
+    switch (value) {
+      case 'top':
+      case 'bottom':
+      case 'left':
+      case 'right':
+        return value;
+      default:
+        return 'top';
+    }
+  }
+
+  private isTabletDevice(): boolean {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    return deviceInfo.isTablet || deviceInfo.isFoldable;
+  }
+
+  private isFoldableDevice(): boolean {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    return deviceInfo.isFoldable;
+  }
+
+  private getAdaptiveTopBarSettingsTitle(): string {
+    if (this.isFoldableDevice()) {
+      return '折叠屏导航模式';
+    }
+    return '平板横屏顶栏位置';
+  }
+
+  private getAdaptiveTopBarSettingsDescription(): string {
+    if (this.isFoldableDevice()) {
+      return '折叠屏独立逻辑：选择“上/下”使用常规手机顶栏+底栏；选择“左/右”使用平板模式侧顶栏。';
+    }
+    return '可将平板横屏模式的“顶栏”放在上/下/左/右，修改后建议重启 APP';
+  }
+
+  private getAdaptiveTopBarPositionLabel(position: TabletTopBarPosition): string {
+    if (!this.isFoldableDevice()) {
+      return this.getTabletTopBarPositionLabel(position);
+    }
+    switch (position) {
+      case 'top':
+        return '上（手机模式）';
+      case 'bottom':
+        return '下（手机模式）';
+      case 'left':
+        return '左（平板模式）';
+      case 'right':
+        return '右（平板模式）';
+      default:
+        return '上（手机模式）';
+    }
+  }
+
+  private getTabletTopBarPositionLabel(position: TabletTopBarPosition): string {
+    switch (position) {
+      case 'top':
+        return '上';
+      case 'bottom':
+        return '下';
+      case 'left':
+        return '左';
+      case 'right':
+        return '右';
+      default:
+        return '上';
+    }
+  }
+
+  private async saveTabletTopBarPosition(position: TabletTopBarPosition): Promise<void> {
+    const normalized = this.normalizeTabletTopBarPosition(position);
+    if (normalized === this.tabletTopBarPosition) {
+      return;
+    }
+
+    this.tabletTopBarPosition = normalized;
+
+    try {
+      await this.settingsManager.setString(SettingKeys.MAIN_MENU_TABLET_TOP_BAR_POSITION, normalized);
+      AppStorage.setOrCreate('main_menu_tablet_top_bar_position', normalized);
+      const dialogMessage = this.isFoldableDevice()
+        ? '折叠屏导航模式已更新，需要重启APP后生效。\n\n是否立即重启？'
+        : '平板横屏顶栏位置已更新，需要重启APP后生效。\n\n是否立即重启？';
+
+      promptAction.showDialog({
+        title: '配置已保存',
+        message: dialogMessage,
+        buttons: [
+          { text: '稍后重启', color: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) },
+          { text: '立即重启', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+        ]
+      }).then((result) => {
+        if (result.index === 1) {
+          this.restartApp();
+        }
+      });
+    } catch (error) {
+      logger.error(TAG, '保存平板顶栏位置失败', String(error));
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
+    }
+  }
+
   private saveSettings(): void {
     this.settingsManager.setString(PageSettingKeys.MANGA_DETAIL_PAGE_TYPE, this.mangaDetailPageType);
     this.settingsManager.setString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, this.ebookDetailPageType);
@@ -486,6 +598,7 @@ export struct PageSettingsSubPage {
     .padding({ left: 16, right: 16, top: 4, bottom: 12 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
   @Builder
@@ -697,8 +810,127 @@ export struct PageSettingsSubPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  @Builder
+  buildTabletTopBarPositionSettings() {
+    Column({ space: 8 }) {
+      Text('平板横屏顶栏位置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .padding({ left: 4 })
+
+      Text('可将平板横屏模式的“顶栏”放在上/下/左/右，修改后建议重启 APP')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .padding({ left: 4, bottom: 8 })
+
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.tabletTopBarPositions, (position: TabletTopBarPosition) => {
+          Row({ space: 8 }) {
+            Text(this.getTabletTopBarPositionLabel(position))
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.tabletTopBarPosition === position
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            if (this.tabletTopBarPosition === position) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            }
+          }
+          .height(42)
+          .padding({ left: 14, right: 14 })
+          .margin({ right: 8, bottom: 8 })
+          .borderRadius(10)
+          .backgroundColor(this.tabletTopBarPosition === position
+            ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+            : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderWidth(this.tabletTopBarPosition === position ? 1.5 : 1)
+          .borderColor(this.tabletTopBarPosition === position
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
+          .onClick(() => {
+            this.saveTabletTopBarPosition(position);
+          })
+        }, (position: TabletTopBarPosition) => position)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  @Builder
+  buildAdaptiveTopBarPositionSettings() {
+    Column({ space: 8 }) {
+      Text(this.getAdaptiveTopBarSettingsTitle())
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .padding({ left: 4 })
+
+      Text(this.getAdaptiveTopBarSettingsDescription())
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .padding({ left: 4, bottom: 8 })
+
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(this.tabletTopBarPositions, (position: TabletTopBarPosition) => {
+          Row({ space: 8 }) {
+            Text(this.getAdaptiveTopBarPositionLabel(position))
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.tabletTopBarPosition === position
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            if (this.tabletTopBarPosition === position) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            }
+          }
+          .height(42)
+          .padding({ left: 14, right: 14 })
+          .margin({ right: 8, bottom: 8 })
+          .borderRadius(10)
+          .backgroundColor(this.tabletTopBarPosition === position
+            ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+            : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .borderWidth(this.tabletTopBarPosition === position ? 1.5 : 1)
+          .borderColor(this.tabletTopBarPosition === position
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
+          .onClick(() => {
+            this.saveTabletTopBarPosition(position);
+          })
+        }, (position: TabletTopBarPosition) => position)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
   }
 
   build() {
@@ -711,8 +943,12 @@ export struct PageSettingsSubPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll(this.scroller) {
-          Column({ space: 20 }) {
+          Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT)
+            Flex({
+              wrap: FlexWrap.Wrap,
+              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+            }) {
 
             // 详情页设置部分
             Column({ space: 8 }) {
@@ -793,6 +1029,7 @@ export struct PageSettingsSubPage {
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
               .borderRadius(12)
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
               .onClick(() => {
                 this.recommendationEnabled = !this.recommendationEnabled;
                 this.saveSettings();
@@ -828,13 +1065,15 @@ export struct PageSettingsSubPage {
               .padding({ left: 16, right: 16, top: 14, bottom: 14 })
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
               .borderRadius(12)
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
               .onClick(() => {
                 this.shelfContentEnabled = !this.shelfContentEnabled;
                 this.saveSettings();
               })
             }
-            .width('100%')
+            .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
 
             // 底栏自定义部分
             Column({ space: 8 }) {
@@ -855,11 +1094,27 @@ export struct PageSettingsSubPage {
               // 底栏标签自定义
               this.buildTabCustomization()
             }
-            .width('100%')
+            .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
+
+            if (this.isTabletDevice()) {
+              Column() {
+                this.buildAdaptiveTopBarPositionSettings()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+            }
 
             // 恢复默认按钮
-            this.buildResetButton()
+            Column() {
+              this.buildResetButton()
+            }
+            .width(this.responsive_isLandscape ? '48%' : '100%')
+            .margin({ bottom: 16 })
+
+            }
+            .width('100%')
 
             Blank().height(40)
           }

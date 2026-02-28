@@ -24,12 +24,13 @@ import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
-import { getNovelSourceValidator, ValidationConfig, DEFAULT_VALIDATION_CONFIG, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
+import { getNovelSourceValidator, ValidationConfig, NovelSourceValidator, SourceValidationResult, SPECIAL_GROUP_NAMES } from '../Framework/Novel/NovelSourceValidator';
 import { getNovelLoginManager } from '../Framework/Novel/NovelLoginManager';
 import { NovelSourceInfo } from '../Models/NovelModels';
 import { LegadoSourceImportResult, LegadoBookSource } from '../Framework/Novel/LegadoSourceTypes';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { NovelSourceManagementPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { NovelSourceLoginPageParams } from './NovelSourceLoginPage';
@@ -44,6 +45,9 @@ const TAG = 'NovelSourceManagementPage';
 // 分页加载常量
 const PAGE_SIZE = 100;  // 每次加载数量
 const PRELOAD_THRESHOLD = 60;  // 预加载触发阈值（当显示到第60-70个时开始加载下一批）
+const VALIDATION_CONCURRENCY_DEFAULT = 10;
+const VALIDATION_CONCURRENCY_MAX = 50;
+const VALIDATION_CONCURRENCY_OPTIONS: [number, number, number, number, number, number] = [10, 15, 20, 30, 40, 50];
 
 /**
  * 书源操作菜单项
@@ -103,6 +107,7 @@ export struct NovelSourceManagementPage {
   private hasMoreData: boolean = true;
   private isLoadingMore: boolean = false;
   private sourceManager: NovelSourceManager = getNovelSourceManager();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private listScroller: Scroller = new Scroller();
   // 校验进度对话框
   private validationProgressController: ValidationProgressController | null = null;
@@ -1945,6 +1950,55 @@ export struct NovelSourceManagementPage {
     this.pathStack.pushPathByName('NovelSourceLoginPage', params);
   }
 
+  private normalizeValidationConcurrency(value: number): number {
+    if (!Number.isFinite(value)) {
+      return VALIDATION_CONCURRENCY_DEFAULT;
+    }
+    const integerValue = Math.floor(value);
+    return Math.max(1, Math.min(VALIDATION_CONCURRENCY_MAX, integerValue));
+  }
+
+  private getValidationConcurrency(): number {
+    const value = this.settingsManager.getNumber(
+      SettingKeys.NOVEL_SOURCE_VALIDATION_CONCURRENCY,
+      VALIDATION_CONCURRENCY_DEFAULT
+    );
+    return this.normalizeValidationConcurrency(value);
+  }
+
+  private async saveValidationConcurrency(concurrency: number): Promise<void> {
+    const normalized = this.normalizeValidationConcurrency(concurrency);
+    try {
+      await this.settingsManager.setNumber(SettingKeys.NOVEL_SOURCE_VALIDATION_CONCURRENCY, normalized);
+    } catch (error) {
+      logger.warn(TAG, `保存校验并发数失败: ${String(error)}`);
+    }
+  }
+
+  private showValidationConcurrencyDialog(config: Partial<ValidationConfig>, sourceIds?: string[]): void {
+    const currentConcurrency = this.getValidationConcurrency();
+    promptAction.showActionMenu({
+      title: `选择校验并发数（当前 ${currentConcurrency}）`,
+      buttons: [
+        { text: '10 线程', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '15 线程', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '20 线程', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '30 线程', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '40 线程', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '50 线程', color: $r('sys.color.ohos_id_color_text_primary') }
+      ]
+    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
+      if (result.index < 0 || result.index >= VALIDATION_CONCURRENCY_OPTIONS.length) {
+        return;
+      }
+      const selectedConcurrency = VALIDATION_CONCURRENCY_OPTIONS[result.index];
+      config.concurrency = selectedConcurrency;
+      await this.saveValidationConcurrency(selectedConcurrency);
+      promptAction.showToast({ message: `校验并发已设置为 ${selectedConcurrency} 线程` });
+      this.showKeywordInputDialog(config, sourceIds);
+    }).catch(() => {});
+  }
+
   /**
    * 显示校验配置对话框
    */
@@ -1994,8 +2048,8 @@ export struct NovelSourceManagementPage {
           return; // 取消
       }
       
-      // 显示关键词输入对话框
-      this.showKeywordInputDialog(config, sourceIds);
+      // 选择校验并发
+      this.showValidationConcurrencyDialog(config, sourceIds);
     }).catch(() => {});
   }
 
@@ -2011,7 +2065,10 @@ export struct NovelSourceManagementPage {
       checkInfo: config.checkInfo,
       checkCategory: config.checkCategory,
       checkContent: config.checkContent,
-      keyword: '我的'
+      keyword: '我的',
+      concurrency: config.concurrency !== undefined
+        ? this.normalizeValidationConcurrency(config.concurrency)
+        : this.getValidationConcurrency()
     };
     this.doValidateSources(sourceIds, mergedConfig);
   }
@@ -2049,9 +2106,22 @@ export struct NovelSourceManagementPage {
     let invalidCount = 0;
     
     try {
+      const validationConfig: Partial<ValidationConfig> = {
+        timeout: config?.timeout,
+        checkSearch: config?.checkSearch,
+        checkDiscovery: config?.checkDiscovery,
+        checkInfo: config?.checkInfo,
+        checkCategory: config?.checkCategory,
+        checkContent: config?.checkContent,
+        keyword: config?.keyword,
+        concurrency: config?.concurrency !== undefined
+          ? this.normalizeValidationConcurrency(config.concurrency)
+          : this.getValidationConcurrency()
+      };
+
       const result = await validator.validateSources(
         idsToValidate, 
-        config,
+        validationConfig,
         (current: number, total: number, res: SourceValidationResult) => {
           // 更新统计
           if (res.isValid) {

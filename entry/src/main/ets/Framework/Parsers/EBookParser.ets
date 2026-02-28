@@ -8,12 +8,59 @@ import { EBook, EBookFormat, EBookMetadata, EBookChapter, EBookStatus, EBookPage
 import { logger } from '../../Utils/Logger';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { bookParser } from '@kit.ReaderKit';
 import { image } from '@kit.ImageKit';
 import { pdfService } from '@kit.PDFKit';
 import { TxtMetadataExtractor } from './TxtMetadataExtractor';
+import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 
 const TAG = 'EBookParser';
+
+interface ReaderKitBookParserHandler {
+  getBookInfo(): Promise<Object>;
+  getCatalogList(): Promise<Object>;
+  getResourceContent(spineIndex: number, resourcePath: string): ArrayBuffer;
+}
+
+interface ReaderKitBookParserApi {
+  getDefaultHandler(path: string): Promise<ReaderKitBookParserHandler | null>;
+}
+
+interface ReaderKitDynamicModule {
+  bookParser?: ReaderKitBookParserApi;
+}
+
+let cachedBookParser: ReaderKitBookParserApi | null = null;
+let readerKitLoadAttempted: boolean = false;
+
+async function getReaderKitBookParser(): Promise<ReaderKitBookParserApi | null> {
+  if (!isReaderKitEnabled()) {
+    return null;
+  }
+
+  if (cachedBookParser) {
+    return cachedBookParser;
+  }
+
+  if (readerKitLoadAttempted) {
+    return null;
+  }
+
+  readerKitLoadAttempted = true;
+  try {
+    const readerKitModule = await import('@kit.ReaderKit');
+    const parser = (readerKitModule as Object as ReaderKitDynamicModule).bookParser;
+    if (!parser) {
+      logger.error(TAG, 'Reader Kit module loaded but bookParser is missing');
+      return null;
+    }
+    cachedBookParser = parser;
+    logger.info(TAG, 'Reader Kit bookParser loaded lazily');
+    return cachedBookParser;
+  } catch (error) {
+    logger.error(TAG, `Failed to lazy-load Reader Kit: ${String(error instanceof Error ? error.message : error)}`);
+    return null;
+  }
+}
 
 // 章节标题正则表达式（支持多种格式）
 const CHAPTER_PATTERNS = [
@@ -116,6 +163,10 @@ class ReaderKitEBookParser extends EBookParser {
 
   public async parse(): Promise<EBook> {
     try {
+      if (!isReaderKitEnabled()) {
+        logger.warn(TAG, `Reader Kit temporarily disabled, fallback parser will be used: ${this.filePath}`);
+        return this.parseFallback();
+      }
       logger.info(TAG, `开始使用 Reader Kit 解析电子书: ${this.filePath}, 格式: ${this.format}`);
       const fileBuffer = await this.readFileBuffer(this.filePath);
       const bookInfo = await this.parseWithReaderKit(fileBuffer);
@@ -174,6 +225,10 @@ class ReaderKitEBookParser extends EBookParser {
       let candidatePath: string = this.filePath;
       logger.info(TAG, `[ReaderKit] 开始解析，路径: ${candidatePath}`);
       
+      const bookParser = await getReaderKitBookParser();
+      if (!bookParser) {
+        throw new Error('Reader Kit is unavailable in current environment');
+      }
       const parserHandler = await bookParser.getDefaultHandler(candidatePath);
       if (!parserHandler) {
         throw new Error('无法获取 BookParserHandler');
@@ -435,7 +490,21 @@ export class EBookCoverExtractor {
         return await EBookCoverExtractor.extractPdfCover(filePath, savePath);
       }
 
+      if (!isReaderKitEnabled()) {
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit temporarily disabled, skip cover extraction: ${filePath}`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'Reader Kit is temporarily disabled'
+        };
+      }
+
       // 获取 Reader Kit Handler（用于非 PDF 格式）
+      const bookParser = await getReaderKitBookParser();
+      if (!bookParser) {
+        throw new Error('Reader Kit is unavailable in current environment');
+      }
       const parserHandler = await bookParser.getDefaultHandler(filePath);
       if (!parserHandler) {
         throw new Error('无法获取 BookParserHandler');
@@ -706,7 +775,7 @@ export class EBookParserFactory {
     }
 
     // 优先使用 Reader Kit 解析支持的格式（除了 TXT，TXT 我们有自定义实现）
-    if (ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT) {
+    if (isReaderKitEnabled() && ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT) {
       logger.info(TAG, `使用 Reader Kit 解析: ${format}`);
       return new ReaderKitEBookParser(filePath, format);
     }

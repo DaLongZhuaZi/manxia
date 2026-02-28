@@ -73,6 +73,7 @@ interface RGBColor {
 @Component
 export struct ThemeSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  private scroller: Scroller = new Scroller();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
@@ -1851,6 +1852,43 @@ export struct ThemeSettingsPage {
     });
   }
 
+  /**
+   * 显示“关闭自定义主题”确认对话框
+   * 仅关闭当前应用，不删除已保存的自定义主题
+   */
+  private showDisableCustomThemeConfirmDialog(): void {
+    if (!this.uiContext) {
+      logger.warn(TAG, 'UIContext 未初始化，无法显示关闭自定义主题确认对话框');
+      return;
+    }
+
+    this.uiContext.getPromptAction().showDialog({
+      title: '关闭自定义主题',
+      message: '关闭后将不再使用任何自定义主题，并恢复到纯色主题。已保存的自定义主题不会被删除。是否继续？',
+      buttons: [
+        { text: '取消', color: '#999999' },
+        { text: '确认关闭', color: '#FF3B30' }
+      ]
+    }).then(async (result) => {
+      if (result.index !== 1) {
+        return;
+      }
+
+      try {
+        await this.themeManager.clearCustomTheme();
+        this.currentCustomThemeId = '';
+        promptAction.showToast({ message: '已关闭自定义主题，已恢复纯色主题' });
+        logger.info(TAG, '已关闭自定义主题，保留已保存主题列表');
+      } catch (error) {
+        const errorMsg: string = error instanceof Error ? error.message : String(error);
+        logger.error(TAG, `关闭自定义主题失败: ${errorMsg}`);
+        promptAction.showToast({ message: '关闭失败，请稍后重试' });
+      }
+    }).catch((err: Error) => {
+      logger.error(TAG, `显示关闭自定义主题确认对话框失败: ${err.message}`);
+    });
+  }
+
   build() {
     HdsNavDestination() {
       Stack({ alignContent: Alignment.TopStart }) {
@@ -1867,8 +1905,14 @@ export struct ThemeSettingsPage {
           // Blank().height(56)
 
           // 内容区域
-          Scroll() {
-            Column({ space: 16 }) {
+          Scroll(this.scroller) {
+            Flex({
+              wrap: FlexWrap.Wrap,
+              justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+            }) {
+              Blank()
+                .height(56)
+                .width('100%')
               // 主题商店（列表 + 创建入口）
               if (!this.isCreatingCustomTheme) {
                 Column({ space: 12 }) {
@@ -2004,11 +2048,24 @@ export struct ThemeSettingsPage {
                     .fontFamily(this.appFontFamily)
                     .backgroundColor($r('app.color.accent_primary'))
                     .onClick(() => { this.isCreatingCustomTheme = true; })
+
+                  Button('关闭自定义主题')
+                    .width('100%')
+                    .height(48)
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor('#FFFFFF')
+                    .backgroundColor($r('app.color.color_error'))
+                    .enabled(this.currentCustomThemeId.length > 0)
+                    .opacity(this.currentCustomThemeId.length > 0 ? 1 : 0.55)
+                    .onClick(() => { this.showDisableCustomThemeConfirmDialog(); })
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
                 
                 // 透明度设置面板（应用实时预览）
                 Column({ space: 12 }) {
@@ -2168,10 +2225,12 @@ export struct ThemeSettingsPage {
                       })
                   }
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
                 
                 // 特效设置面板
                 Column({ space: 12 }) {
@@ -2329,10 +2388,12 @@ export struct ThemeSettingsPage {
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                     .onClick(() => { this.resetEffectsToDefault(); })
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
               }
 
               // 图片预览区域（创建模式）
@@ -2376,10 +2437,12 @@ export struct ThemeSettingsPage {
                   }
                   .width('100%')
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
               } else if (this.isCreatingCustomTheme && this.selectedImagePixelMap) {
                 Column() {
                   Text('原始图片')
@@ -2396,21 +2459,24 @@ export struct ThemeSettingsPage {
                     .objectFit(ImageFit.Cover)
                     .borderRadius(12)
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
               }
 
               // 选择图片按钮（背景）仅创建模式
               if (this.isCreatingCustomTheme) {
                 Button('选择背景图片')
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .height(48)
                 .fontSize(16)
                   .fontFamily(this.appFontFamily)
                 .backgroundColor($r('app.color.accent_primary'))
                 .onClick(() => this.selectImage())
+                .margin({ bottom: 16 })
               }
 
               // 选择开屏图片按钮（仅创建模式）
@@ -2432,7 +2498,8 @@ export struct ThemeSettingsPage {
                     .width('100%')
                     .textAlign(TextAlign.Center)
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
+                .margin({ bottom: 16 })
               }
 
               // 参数调节区域（选择图片后显示）
@@ -2509,10 +2576,12 @@ export struct ThemeSettingsPage {
                   }
 
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
               }
 
               // 开屏图片预览区域（仅创建模式）
@@ -2532,10 +2601,12 @@ export struct ThemeSettingsPage {
                     .objectFit(ImageFit.Cover)
                     .borderRadius(12)
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+                .margin({ bottom: 16 })
               }
 
               // 主题色选择（仅创建模式）
@@ -2614,10 +2685,11 @@ export struct ThemeSettingsPage {
                   }
                   .width('100%')
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
+                .margin({ bottom: 16 })
               }
 
               // 主题名称输入（仅创建模式）
@@ -2633,8 +2705,9 @@ export struct ThemeSettingsPage {
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                     .onChange((value: string) => { this.newThemeName = value; })
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
+                .margin({ bottom: 16 })
               }
 
               // 已保存的主题列表，不再显示
@@ -2643,14 +2716,14 @@ export struct ThemeSettingsPage {
               // 底部保存按钮（固定在页面底部，仅创建模式）
               if (this.isCreatingCustomTheme) {
                 Button('保存并应用主题')
-                  .width('100%')
+                  .width(this.responsive_isLandscape ? '48%' : '100%')
                   .height(48)
                   .fontSize(16)
                   .fontFamily(this.appFontFamily)
                   .backgroundColor($r('app.color.color_success'))
                   .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
                   .onClick(() => this.saveAndApplyTheme())
-                  .margin({ top: 12 })
+                  .margin({ top: 12, bottom: 16 })
               }
 
               // 处理进度提示
@@ -2674,28 +2747,33 @@ export struct ThemeSettingsPage {
                     .width('100%')
                     .color($r('app.color.accent_primary'))
                 }
-                .width('100%')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(24)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
+                .margin({ bottom: 16 })
               }
             }
             .width('100%')
-            .constraintSize({ maxWidth: this.responsive_maxContentWidth }) // 响应式最大宽度
-            .padding(this.responsive_contentPadding)
+            .constraintSize({ maxWidth: this.responsive_isLandscape ? 100000 : this.responsive_maxContentWidth }) // 横屏放开最大宽度限制，避免右侧留白
+            .padding({
+              left: this.responsive_contentPadding,
+              right: this.responsive_contentPadding,
+              top: this.responsive_contentPadding,
+              bottom: this.responsive_contentPadding + this.navigationBarHeight
+            })
           }
           .width('100%')
           .height('100%')
           .align(Alignment.TopStart) // 响应式：大屏居中对齐
           .layoutWeight(1)
-          .scrollBar(BarState.Off)
+          .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
       }
       .width('100%')
       .height('100%')
@@ -2783,4 +2861,3 @@ export struct ThemeSettingsPage {
     .backgroundColor(Color.Transparent)
   }
 }
-

@@ -31,7 +31,6 @@ import fs from '@ohos.file.fs';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { image } from '@kit.ImageKit';
 import { ImageCacheManager, LoadOptions, RequestHeaders } from '../Framework/Cache/ImageCacheManager';
-import { OnlineImageLoader } from '../Framework/Cache/OnlineImageLoader';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 import { DualPageCurlEffect } from './DualPageCurlEffect';
 // 新增：预加载管理系统
@@ -237,6 +236,17 @@ interface ChapterBoundary {
 }
 
 /**
+ * 条漫页面引用信息（多章节统一索引）
+ */
+interface WebtoonPageRef {
+  page: MangaPage;
+  chapterId: string;
+  chapterPageIndex: number; // 在所属章节内的页码（0-based）
+  itemIndex: number;        // 在 webtoonDataItems 中的索引（含分隔符）
+  orderIndex: number;       // 仅按页面计数的连续索引（不含分隔符）
+}
+
+/**
  * 条漫多章节懒加载数据源
  * 实现 IDataSource 接口，供 LazyForEach 使用
  * 支持增量更新，避免全量重建导致的性能问题
@@ -357,6 +367,9 @@ export struct MangaViewer {
   // [新增] 条漫多章节状态
   @State private webtoonDataItems: WebtoonDataItem[] = []; // 合并的多章节数据项
   @State private chapterBoundaries: ChapterBoundary[] = []; // 章节边界信息
+  private webtoonPageRefById: Map<string, WebtoonPageRef> = new Map();
+  private webtoonOrderedPageIds: string[] = [];
+  private webtoonVisibleItemIndices: number[] = [];
   @State private currentChapterId: string = ''; // 当前显示的章节ID
   @State private isPrevChapterLoading: boolean = false; // 前一章节加载中
   @State private isNextChapterLoading: boolean = false; // 后一章节加载中
@@ -458,10 +471,30 @@ export struct MangaViewer {
   @State showWebtoonProgress: boolean = true; // 显示条漫进度
   @State webtoonScrollProgress: number = 0; // 条漫滚动进度 (0-1)
   private scrollTimer: number = -1;
+  private pendingWebtoonSwitchNotifyTimer: number = -1; // 条漫章节切换通知防抖
+  private webtoonStopCleanupTimer: number = -1; // 条漫滚动停止后延迟清理，减少闪烁
   private lastUpdateTime: number = 0;
   private scrollPositionKey: string = ''; // 滚动位置存储键
   private lastHeavyUpdateTime: number = 0; // [性能优化] 重型操作的上次执行时间
-  private readonly HEAVY_UPDATE_THROTTLE_MS: number = 200; // [性能优化] 重型操作节流间隔
+  private readonly WEBTOON_HEAVY_UPDATE_THROTTLE_LOCAL_MS: number = 160;
+  private readonly WEBTOON_HEAVY_UPDATE_THROTTLE_ONLINE_MS: number = 260;
+  private readonly WEBTOON_SWITCH_STABLE_MS_LOCAL: number = 90;
+  private readonly WEBTOON_SWITCH_STABLE_MS_ONLINE: number = 220;
+  private readonly WEBTOON_SWITCH_COOLDOWN_MS_LOCAL: number = 180;
+  private readonly WEBTOON_SWITCH_COOLDOWN_MS_ONLINE: number = 420;
+  private readonly WEBTOON_SWITCH_HYSTERESIS_RATIO: number = 0.18;
+  private readonly WEBTOON_SWITCH_HYSTERESIS_MIN_PX: number = 120;
+  private readonly WEBTOON_SWITCH_HYSTERESIS_MAX_PX: number = 320;
+  private pendingWebtoonChapterCandidateId: string = '';
+  private pendingWebtoonChapterCandidateSince: number = 0;
+  private pendingWebtoonChapterCandidatePageIndex: number = 0;
+  private lastCommittedWebtoonChapterSwitchAt: number = 0;
+  private lastNotifiedWebtoonChapterId: string = '';
+  private lastNotifiedWebtoonPageIndex: number = -1;
+  private lastPrevAdjacentRequestAt: number = 0;
+  private lastNextAdjacentRequestAt: number = 0;
+  private webtoonBoundaryCacheProtectUntil: number = 0;
+  private lastBoundaryPrewarmAt: Map<string, number> = new Map();
   // [性能优化] 条漫项位置缓存，避免每次滚动都重新计算
   private webtoonItemPositionCache: number[] = [];
   private webtoonPositionCacheValid: boolean = false;
@@ -693,6 +726,21 @@ export struct MangaViewer {
     this.pagePixelMaps.clear();
     this.imageLoadStates.clear();
     this.pixelMapEpochByPage.clear();
+    this.preloadManager.clearAll();
+    this.imageLoadStateManager.clearAll();
+    this.webtoonPageRefById.clear();
+    this.webtoonOrderedPageIds = [];
+    this.webtoonVisibleItemIndices = [];
+    this.pendingNetworkLoads = [];
+    this.priorityLoadQueue = [];
+    this.clearPendingWebtoonSwitchCandidate();
+    this.lastCommittedWebtoonChapterSwitchAt = 0;
+    this.lastNotifiedWebtoonChapterId = '';
+    this.lastNotifiedWebtoonPageIndex = -1;
+    this.lastPrevAdjacentRequestAt = 0;
+    this.lastNextAdjacentRequestAt = 0;
+    this.webtoonBoundaryCacheProtectUntil = 0;
+    this.lastBoundaryPrewarmAt.clear();
 
     // 重置条漫多章节状态
     this.webtoonDataItems = [];
@@ -707,10 +755,19 @@ export struct MangaViewer {
       clearTimeout(this.prevChapterSwipeConfirmTimer);
       this.prevChapterSwipeConfirmTimer = -1;
     }
+    if (this.processPreloadQueueTimer !== -1) {
+      clearTimeout(this.processPreloadQueueTimer);
+      this.processPreloadQueueTimer = -1;
+    }
 
     // 重新加载当前页和相邻页
     if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
       logger.info(TAG, `🔄 重新加载章节: ${this.chapter.title}，页面数: ${this.chapter.pages.length}`);
+      this.preloadManager.setPageInfo(this.currentPageIndex, this.chapter.pages.length);
+      this.chapter.pages.forEach((page, index) => {
+        this.imageLoadStateManager.initPage(page.id, index);
+      });
+      this.initializeImageStates();
 
       // 关键修复：先更新显示变量为实际URL（而不是占位图）
       // 这样Image组件会立即使用新章节的URL
@@ -933,6 +990,21 @@ export struct MangaViewer {
       clearTimeout(this.processPreloadQueueTimer);
       this.processPreloadQueueTimer = -1;
     }
+    if (this.pendingWebtoonSwitchNotifyTimer !== -1) {
+      clearTimeout(this.pendingWebtoonSwitchNotifyTimer);
+      this.pendingWebtoonSwitchNotifyTimer = -1;
+    }
+    if (this.webtoonStopCleanupTimer !== -1) {
+      clearTimeout(this.webtoonStopCleanupTimer);
+      this.webtoonStopCleanupTimer = -1;
+    }
+    this.clearPendingWebtoonSwitchCandidate();
+    this.lastBoundaryPrewarmAt.clear();
+    this.webtoonBoundaryCacheProtectUntil = 0;
+    this.lastPrevAdjacentRequestAt = 0;
+    this.lastNextAdjacentRequestAt = 0;
+    this.lastNotifiedWebtoonChapterId = '';
+    this.lastNotifiedWebtoonPageIndex = -1;
 
     // 清理双页卷页动画定时器
     this.stopDualCurlAnimation();
@@ -1098,6 +1170,27 @@ export struct MangaViewer {
       }
     }
 
+    // 本地+条漫专用：优先页仅做本地缓存预热，避免走通用 PixelMap 链路引发切源闪烁
+    if (this.isWebtoonMode()) {
+      const chapterId = this.chapter.id;
+      for (let i = 0; i < priorityPages.length; i++) {
+        const page = priorityPages[i];
+        if (page.sourceType === ImageSourceType.LOCAL) {
+          const pageIndex = page.index !== undefined ? page.index : this.getPageIndexById(page.id);
+          this.triggerLocalImageLoad(page, chapterId, pageIndex);
+          continue;
+        }
+        if (page.sourceType === ImageSourceType.NETWORK) {
+          this.queueWebtoonNetworkPageLoad(page);
+          continue;
+        }
+        if (!this.pagePixelMaps.has(page.id)) {
+          this.ensurePixelMapLoaded(page).catch((_e: Error) => {});
+        }
+      }
+      return;
+    }
+
     // 异步加载所有高优先级页面
     Promise.all(priorityPages.map(page => {
       if (!this.pagePixelMaps.has(page.id)) {
@@ -1200,6 +1293,20 @@ export struct MangaViewer {
       // 设置为 loading 状态，但**不**调用 cacheManager
       this.imageLoadStates.set(page.id, { isLoading: true, isLoaded: false });
       return; // 直接返回，等待 onNetworkHeadersChange 触发
+    }
+
+    // 本地+条漫专用：不走通用 PixelMap 加载链路，避免 file/PixelMap 切换闪烁
+    if (this.isWebtoonMode() && page.sourceType === ImageSourceType.LOCAL) {
+      const chapterId = this.chapter ? this.chapter.id : '';
+      const pageIndex = page.index !== undefined ? page.index : this.getPageIndexById(page.id);
+      this.triggerLocalImageLoad(page, chapterId, pageIndex);
+      return;
+    }
+
+    // 在线条漫专用：网络图仅通过预加载队列加载，避免双通路并发
+    if (this.isWebtoonMode() && page.sourceType === ImageSourceType.NETWORK) {
+      this.queueWebtoonNetworkPageLoad(page);
+      return;
     }
 
     this.invalidatePixelMapIfSourceChanged(page);
@@ -4632,11 +4739,13 @@ export struct MangaViewer {
       })
       .onScrollStart(() => {
         this.isScrolling = true;
+        this.cancelWebtoonStopCleanup();
       })
       .onScrollStop(() => {
         this.isScrolling = false;
         this.updateVisiblePages();
         this.triggerWebtoonPreload();
+        this.scheduleWebtoonStopCleanup();
       })
       .gesture(
         GestureGroup(GestureMode.Exclusive,
@@ -5414,10 +5523,103 @@ export struct MangaViewer {
   }
 
   private getPageById(pageId: string): MangaPage | undefined {
+    const webtoonRef = this.webtoonPageRefById.get(pageId);
+    if (webtoonRef && webtoonRef.page) {
+      return webtoonRef.page;
+    }
     if (!this.chapter || !this.chapter.pages) { return undefined; }
     const idx: number = this.getPageIndexById(pageId);
     if (idx >= 0 && idx < this.chapter.pages.length) { return this.chapter.pages[idx]; }
     return undefined;
+  }
+
+  private rebuildWebtoonPageRefIndex(): void {
+    if (!this.isWebtoonMode() || this.webtoonDataItems.length === 0) {
+      this.webtoonPageRefById.clear();
+      this.webtoonOrderedPageIds = [];
+      this.webtoonVisibleItemIndices = [];
+      return;
+    }
+
+    const pageRefById: Map<string, WebtoonPageRef> = new Map();
+    const orderedPageIds: string[] = [];
+    let orderIndex = 0;
+    let imageStateChanged = false;
+
+    for (let i = 0; i < this.webtoonDataItems.length; i++) {
+      const item = this.webtoonDataItems[i];
+      if (item.type !== 'page' || !item.page || !item.page.id) {
+        continue;
+      }
+
+      const page = item.page;
+      const chapterId = item.chapterId || this.chapter.id;
+      const chapterPageIndex = item.pageIndex !== undefined ? item.pageIndex : orderIndex;
+      pageRefById.set(page.id, {
+        page: page,
+        chapterId: chapterId,
+        chapterPageIndex: chapterPageIndex,
+        itemIndex: i,
+        orderIndex: orderIndex
+      } as WebtoonPageRef);
+      orderedPageIds.push(page.id);
+      orderIndex++;
+
+      // 确保多章节页面在状态管理器中可追踪
+      this.imageLoadStateManager.initPage(page.id, i);
+      if (!this.imageLoadStates.has(page.id)) {
+        this.imageLoadStates.set(page.id, {
+          isLoading: false,
+          isLoaded: false
+        } as ImageLoadState);
+        imageStateChanged = true;
+      }
+    }
+
+    this.webtoonPageRefById = pageRefById;
+    this.webtoonOrderedPageIds = orderedPageIds;
+    if (imageStateChanged) {
+      this.imageLoadStates = new Map(this.imageLoadStates);
+    }
+  }
+
+  private resolvePreloadIndexForPage(page: MangaPage): number {
+    if (this.isWebtoonMode()) {
+      const ref = this.webtoonPageRefById.get(page.id);
+      if (ref) {
+        return ref.itemIndex;
+      }
+    }
+    if (page.index !== undefined) {
+      return page.index;
+    }
+    return this.getPageIndexById(page.id);
+  }
+
+  private getCurrentWebtoonItemIndexForPreload(): number {
+    if (this.webtoonVisibleItemIndices.length > 0) {
+      const middle = Math.floor(this.webtoonVisibleItemIndices.length / 2);
+      return this.webtoonVisibleItemIndices[middle];
+    }
+    const currentPage = (this.chapter && this.chapter.pages && this.viewCurrentPageIndex >= 0 &&
+      this.viewCurrentPageIndex < this.chapter.pages.length)
+      ? this.chapter.pages[this.viewCurrentPageIndex]
+      : undefined;
+    if (currentPage) {
+      const ref = this.webtoonPageRefById.get(currentPage.id);
+      if (ref) {
+        return ref.itemIndex;
+      }
+    }
+    return 0;
+  }
+
+  private getWebtoonVisibleItemIndicesForPreload(): number[] {
+    if (this.webtoonVisibleItemIndices.length > 0) {
+      return this.webtoonVisibleItemIndices;
+    }
+    const fallbackIndex = this.getCurrentWebtoonItemIndexForPreload();
+    return fallbackIndex >= 0 ? [fallbackIndex] : [];
   }
 
   /**
@@ -5437,6 +5639,28 @@ export struct MangaViewer {
       // 其他情况：保持完整显示，按宽度适配
       return ImageFit.Contain;
     }
+  }
+
+  private cancelWebtoonStopCleanup(): void {
+    if (this.webtoonStopCleanupTimer !== -1) {
+      clearTimeout(this.webtoonStopCleanupTimer);
+      this.webtoonStopCleanupTimer = -1;
+    }
+  }
+
+  private scheduleWebtoonStopCleanup(delayMs?: number): void {
+    this.cancelWebtoonStopCleanup();
+    const finalDelay = delayMs !== undefined
+      ? delayMs
+      : (this.isOnlineWebtoonContent() ? 900 : 500);
+    this.webtoonStopCleanupTimer = setTimeout(() => {
+      this.webtoonStopCleanupTimer = -1;
+      if (this.isScrolling) {
+        return;
+      }
+      this.cleanupInvisiblePixelMaps();
+      this.cleanupDistantChapterResources();
+    }, finalDelay);
   }
 
   /**
@@ -5459,7 +5683,7 @@ export struct MangaViewer {
               this.buildChapterDivider(item)
             } else if (item.type === 'page' && item.page) {
               // 页面图片（使用章节ID+页面ID作为唯一标识）
-              this.buildOptimizedImageForWebtoon(item.page, item.chapterId || '', item.pageIndex || index)
+              this.buildOptimizedImageForWebtoon(item.page, item.chapterId || '', item.pageIndex !== undefined ? item.pageIndex : index)
             }
           }, (item: WebtoonDataItem, index: number) => {
             // 生成唯一key：章节分隔用direction+chapterId，页面用chapterId+pageId
@@ -5499,12 +5723,14 @@ export struct MangaViewer {
     })
     .onScrollStart(() => {
       this.isScrolling = true;
+      this.cancelWebtoonStopCleanup();
     })
     .onScrollStop(() => {
       this.isScrolling = false;
       this.updateVisiblePages();
       // 条漫模式使用专用的预加载方法
       this.triggerWebtoonPreload();
+      this.scheduleWebtoonStopCleanup();
     })
     .gesture(
       // 使用Exclusive模式：双指缩放优先于单指滑动
@@ -5550,7 +5776,7 @@ export struct MangaViewer {
     Stack() {
       // [修复①③] 真实图片只设宽度，不设高度，让图片按原始比例等宽自适应高度
       // 之前设固定 height + ImageFit.Contain 导致图片居中产生上下空白
-      if (this.pagePixelMaps.has(page.id)) {
+      if (page.sourceType !== ImageSourceType.LOCAL && this.pagePixelMaps.has(page.id)) {
         Image(this.pagePixelMaps.get(page.id))
           .width('100%')
           .draggable(false)
@@ -5563,19 +5789,8 @@ export struct MangaViewer {
             this.triggerWebtoonImageLoadIfNeeded(page, chapterId, pageIndex);
           })
       } else if (page.sourceType === ImageSourceType.LOCAL) {
-        // [性能修复] 统一为单个 Image 组件 + 计算函数，避免 if/else 分支切换导致组件销毁重建闪烁
-        Image(this.getLocalWebtoonImageSource(page))
-          .width('100%')
-          .draggable(false)
-          .onAppear(() => {
-            this.triggerLocalImageLoad(page, chapterId, pageIndex);
-          })
-          .onComplete(() => {
-            this.handleWebtoonImageLoad(page, chapterId, pageIndex);
-          })
-          .onError((error: ImageError) => {
-            this.handleWebtoonImageError(page, chapterId, pageIndex);
-          })
+        // 本地+条漫专用路径：保持 file:// 数据源稳定，避免 file/cache 源切换闪烁
+        this.buildStableLocalImageForWebtoon(page, chapterId, pageIndex)
       } else if (page.sourceType === ImageSourceType.NETWORK) {
         // 网络图片占位：保留预估高度占位
         Image($r('app.media.ic_image'))
@@ -5645,24 +5860,23 @@ export struct MangaViewer {
     .width('100%')
   }
 
-  /**
-   * [性能修复] 条漫模式本地图片统一数据源
-   * 按优先级返回：pagePixelMaps > localImageCache > file:// 路径
-   * 避免 if/else 分支导致 Image 组件销毁重建
-   */
-  private getLocalWebtoonImageSource(page: MangaPage): Resource | string | image.PixelMap {
-    // 优先使用网络加载的 PixelMap（可能经过解密/解扰等处理）
-    const pm = this.pagePixelMaps.get(page.id);
-    if (pm) {
-      return pm;
-    }
-    // 其次使用本地降采样缓存
-    const cached = this.localImageCache.get(page.id);
-    if (cached) {
-      return cached;
-    }
-    // 回退到 file:// 路径，让 Image 组件直接加载
-    return this.getImageResource(page);
+  @Builder
+  private buildStableLocalImageForWebtoon(page: MangaPage, chapterId: string, pageIndex: number) {
+    Image(this.getImageResource(page))
+      .key(`local_webtoon_${page.id}`)
+      .width('100%')
+      .draggable(false)
+      .onAppear(() => {
+        // 本地缓存仅用于后台预热，不回写到当前条目渲染源
+        this.triggerLocalImageLoad(page, chapterId, pageIndex);
+      })
+      .onComplete(() => {
+        this.handleWebtoonImageLoad(page, chapterId, pageIndex);
+      })
+      .onError((_error: ImageError) => {
+        this.handleWebtoonImageError(page, chapterId, pageIndex);
+      })
+      .transition(TransitionEffect.IDENTITY)
   }
 
   /**
@@ -5688,15 +5902,59 @@ export struct MangaViewer {
     if (this.pagePixelMaps.has(page.id)) {
       return;
     }
-    
-    // 检查是否已在加载中
-    const loadState = this.imageLoadStates.get(page.id);
-    if (loadState && loadState.isLoading) {
+
+    // 在线条漫统一走预加载队列，避免与 ensurePixelMapLoaded 并发竞争
+    if (this.isWebtoonMode() && page.sourceType === ImageSourceType.NETWORK) {
+      this.queueWebtoonNetworkPageLoad(page, pageIndex);
       return;
     }
-    
-    // 触发加载
+
+    // 其他类型仍沿用原逻辑
     this.loadImage(page);
+  }
+
+  private queueWebtoonNetworkPageLoad(page: MangaPage, pageIndexHint: number = -1): void {
+    if (!this.isWebtoonMode() || page.sourceType !== ImageSourceType.NETWORK) {
+      return;
+    }
+    if (!page.imageUrl || page.imageUrl.length === 0) {
+      return;
+    }
+    if (this.pagePixelMaps.has(page.id)) {
+      return;
+    }
+    if (this.imageLoadStateManager.isLoading(page.id) || this.imageLoadStateManager.isCompleted(page.id)) {
+      return;
+    }
+
+    const ref = this.webtoonPageRefById.get(page.id);
+    const preloadIndex = ref ? ref.itemIndex : (pageIndexHint >= 0 ? pageIndexHint : this.resolvePreloadIndexForPage(page));
+    if (preloadIndex < 0) {
+      return;
+    }
+
+    this.imageLoadStateManager.initPage(page.id, preloadIndex);
+    const prev = this.imageLoadStates.get(page.id);
+    this.imageLoadStates.set(page.id, {
+      isLoading: true,
+      isLoaded: false,
+      dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+      error: undefined
+    } as ImageLoadState);
+    this.imageLoadStates = new Map(this.imageLoadStates);
+
+    const currentIndex = this.getCurrentWebtoonItemIndexForPreload();
+    const dist = Math.abs(preloadIndex - currentIndex);
+    const priority = dist === 0 ? 10 : Math.max(1, 10 - dist);
+    const task: PreloadTaskItem = {
+      pageIndex: preloadIndex,
+      pageId: page.id,
+      url: page.imageUrl,
+      priority: priority
+    };
+
+    this.preloadManager.addBatch([task]);
+    this.scheduleProcessPreloadQueue(0);
   }
 
   /**
@@ -5728,11 +5986,8 @@ export struct MangaViewer {
       if (pixelMap) {
         logger.debug(TAG, `本地图片缓存加载成功: ${page.id}`);
         if (this.isWebtoonMode()) {
-          // [性能修复] 条漫模式：精准刷新单个 LazyForEach 项，避免 renderEpoch 全树重建
-          const dataIndex = this.findWebtoonDataIndex(page.id);
-          if (dataIndex >= 0) {
-            this.webtoonDataSource.notifyDataChange(dataIndex);
-          }
+          // 本地+条漫专用：缓存只做预热，不触发条目重渲染，避免闪烁
+          return;
         } else {
           // 非条漫模式：保留原有 renderEpoch 防抖逻辑
           if (this.localImageRenderDebounceTimer !== -1) {
@@ -5775,12 +6030,8 @@ export struct MangaViewer {
     if (page.sourceType === ImageSourceType.LOCAL) {
       // 检查 LocalImageCacheManager 中是否已有缓存（可能是 Image 组件的 file:// 加载失败，但缓存已就绪）
       if (this.localImageCache.has(page.id)) {
-        // [性能修复] 缓存已就绪，精准刷新该项而非全树重建
-        logger.debug(TAG, `本地图片 file:// 加载失败但缓存已就绪，精准刷新: ${page.id}`);
-        const dataIndex = this.findWebtoonDataIndex(page.id);
-        if (dataIndex >= 0) {
-          this.webtoonDataSource.notifyDataChange(dataIndex);
-        }
+        // 本地+条漫专用：不触发条目刷新，保持渲染源稳定避免闪烁
+        logger.debug(TAG, `本地图片 file:// 加载失败但缓存已就绪: ${page.id}`);
         return;
       }
 
@@ -5824,7 +6075,7 @@ export struct MangaViewer {
             if (item.type === 'chapter_divider') {
               this.buildChapterDivider(item)
             } else if (item.type === 'page' && item.page) {
-              this.buildOptimizedImageForWebtoon(item.page, item.chapterId || '', item.pageIndex || index)
+              this.buildOptimizedImageForWebtoon(item.page, item.chapterId || '', item.pageIndex !== undefined ? item.pageIndex : index)
             }
           }, (item: WebtoonDataItem, index: number) => {
             if (item.type === 'chapter_divider') {
@@ -5863,12 +6114,14 @@ export struct MangaViewer {
     })
     .onScrollStart(() => {
       this.isScrolling = true;
+      this.cancelWebtoonStopCleanup();
     })
     .onScrollStop(() => {
       this.isScrolling = false;
       this.updateVisiblePages();
       // 条漫模式使用专用的预加载方法
       this.triggerWebtoonPreload();
+      this.scheduleWebtoonStopCleanup();
     })
   }
 
@@ -5927,6 +6180,10 @@ export struct MangaViewer {
     
     // [优化] 本地图片特殊处理：检查LocalImageCacheManager
     if (page.sourceType === ImageSourceType.LOCAL) {
+      // 条漫模式下本地图不显示加载层，避免滚动时频繁闪烁
+      if (this.isWebtoonMode()) {
+        return false;
+      }
       // 本地图片如果在缓存中，不显示加载动画
       if (this.localImageCache.has(page.id)) {
         return false;
@@ -6189,6 +6446,10 @@ export struct MangaViewer {
       this.pagePixelMapMeta.delete(page.id);
       this.incrementPixelMapEpoch(page.id);
     }
+    if (this.isWebtoonMode() && page.sourceType === ImageSourceType.NETWORK) {
+      this.queueWebtoonNetworkPageLoad(page);
+      return;
+    }
     if (page.sourceType === ImageSourceType.LOCAL) {
       const fsPath: string | undefined = this.getFsPathFromPage(page);
       if (!fsPath) {
@@ -6211,8 +6472,7 @@ export struct MangaViewer {
         });
         
         if (pm) {
-          this.pagePixelMaps.set(page.id, pm);
-          this.pagePixelMaps = new Map(this.pagePixelMaps);
+          this.commitPagePixelMap(page.id, pm);
           this.incrementPixelMapEpoch(page.id);
           const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
           const newState: ImageLoadState = {
@@ -6276,8 +6536,7 @@ export struct MangaViewer {
         logger.debug('MangaViewer', `开始网络加载: url=${page.imageUrl}, ua=${uaLog}, langLen=${langStr.length}, cookieLen=${cookieStr.length}, referer=${refererStr}`);
         const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
         if (pm) {
-          this.pagePixelMaps.set(page.id, pm);
-          this.pagePixelMaps = new Map(this.pagePixelMaps);
+          this.commitPagePixelMap(page.id, pm);
           this.incrementPixelMapEpoch(page.id);
           const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
           const newState: ImageLoadState = {
@@ -6320,9 +6579,8 @@ export struct MangaViewer {
         this.networkLoadInProgress = Math.max(0, this.networkLoadInProgress - 1);
         if (this.pendingNetworkLoads.length > 0) {
           const nextId: string = this.pendingNetworkLoads.shift() as string;
-          const idx: number = this.getPageIndexById(nextId);
-          if (idx >= 0 && this.chapter && this.chapter.pages && idx < this.chapter.pages.length) {
-            const nextPage: MangaPage = this.chapter.pages[idx];
+          const nextPage = this.getPageById(nextId);
+          if (nextPage) {
             this.ensurePixelMapLoaded(nextPage).catch((_e: Error) => {});
           }
         }
@@ -6354,8 +6612,7 @@ export struct MangaViewer {
       } as LoadOptions;
       const pm: image.PixelMap | null = await cacheManager.loadImage(page.imageUrl, opts);
       if (pm) {
-        this.pagePixelMaps.set(page.id, pm);
-        this.pagePixelMaps = new Map(this.pagePixelMaps);
+        this.commitPagePixelMap(page.id, pm);
         this.incrementPixelMapEpoch(page.id);
         const prev: ImageLoadState | undefined = this.imageLoadStates.get(page.id);
         const newState: ImageLoadState = {
@@ -6395,9 +6652,8 @@ export struct MangaViewer {
       this.networkLoadInProgress = Math.max(0, this.networkLoadInProgress - 1);
       if (this.pendingNetworkLoads.length > 0) {
         const nextId: string = this.pendingNetworkLoads.shift() as string;
-        const idx: number = this.getPageIndexById(nextId);
-        if (idx >= 0 && this.chapter && this.chapter.pages && idx < this.chapter.pages.length) {
-          const nextPage: MangaPage = this.chapter.pages[idx];
+        const nextPage = this.getPageById(nextId);
+        if (nextPage) {
           this.ensurePixelMapLoaded(nextPage).catch((_e: Error) => {});
         }
       }
@@ -6407,7 +6663,12 @@ export struct MangaViewer {
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
-    const totalPagesCount: number = this.chapter.pages.length;
+    // 条漫滚动期间避免频繁扫描/清理，改为滚动停止后集中处理
+    if (this.isWebtoonMode() && this.isScrolling) {
+      return;
+    }
+    const isWebtoonMultiChapter = this.isWebtoonMode() && this.webtoonDataItems.length > 0;
+    const totalPagesCount: number = isWebtoonMultiChapter ? this.webtoonDataItems.length : this.chapter.pages.length;
     let threshold: number = Math.floor(totalPagesCount / 5);
     if (threshold < 10) { threshold = 10; }
     if (this.pagePixelMaps.size < threshold) { return; }
@@ -6418,17 +6679,20 @@ export struct MangaViewer {
 
     // 【条漫模式修复】条漫模式需要更大的保护范围，防止滚动时图片被清理
     if (this.isWebtoonMode()) {
-      // 保护所有可见页面
-      for (let i = 0; i < this.visiblePageIndices.length; i++) {
-        protectedIndices.add(this.visiblePageIndices[i]);
+      const visibleItemIndices = this.webtoonVisibleItemIndices.length > 0
+        ? this.webtoonVisibleItemIndices
+        : this.getWebtoonVisibleItemIndicesForPreload();
+      // 保护所有可见条目
+      for (let i = 0; i < visibleItemIndices.length; i++) {
+        protectedIndices.add(visibleItemIndices[i]);
       }
       
       // 额外保护可见区域前后各8页作为缓冲（用于预加载）
-      const minVisible = this.visiblePageIndices.length > 0 
-        ? Math.min(...this.visiblePageIndices) 
+      const minVisible = visibleItemIndices.length > 0 
+        ? Math.min(...visibleItemIndices) 
         : currentIndex;
-      const maxVisible = this.visiblePageIndices.length > 0 
-        ? Math.max(...this.visiblePageIndices) 
+      const maxVisible = visibleItemIndices.length > 0 
+        ? Math.max(...visibleItemIndices) 
         : currentIndex;
       
       for (let i = Math.max(0, minVisible - 8);
@@ -6450,7 +6714,13 @@ export struct MangaViewer {
     let cleanedCount = 0;
     for (let i = 0; i < keys.length; i++) {
       const id: string = keys[i];
-      const idx: number = this.getPageIndexById(id);
+      let idx: number;
+      if (isWebtoonMultiChapter) {
+        const ref = this.webtoonPageRefById.get(id);
+        idx = ref ? ref.itemIndex : -1;
+      } else {
+        idx = this.getPageIndexById(id);
+      }
       if (idx < 0) {
         continue;
       }
@@ -6460,7 +6730,10 @@ export struct MangaViewer {
         continue;
       }
 
-      const p: MangaPage = this.chapter.pages[idx];
+      const p: MangaPage | undefined = this.getPageById(id);
+      if (!p) {
+        continue;
+      }
       const visible: boolean = this.isPageCurrentlyVisible(p);
       if (!visible) {
         // 【修复】不再调用 pm.release()，因为同一个 PixelMap 对象也存在于
@@ -6530,7 +6803,13 @@ export struct MangaViewer {
    * 如果加载的是当前可见页面，立即刷新UI
    */
   private notifyPixelMapLoaded(page: MangaPage): void {
-    const pageIdx = this.getPageIndexById(page.id);
+    let pageIdx = this.getPageIndexById(page.id);
+    if (pageIdx < 0 && this.isWebtoonMode()) {
+      const ref = this.webtoonPageRefById.get(page.id);
+      if (ref) {
+        pageIdx = ref.itemIndex;
+      }
+    }
     if (pageIdx < 0) {
       return;
     }
@@ -6546,6 +6825,14 @@ export struct MangaViewer {
     }
 
     logger.info(TAG, `PixelMap加载完成且页面可见，刷新UI: id=${page.id}, idx=${pageIdx}`);
+
+    if (this.isWebtoonMode()) {
+      const dataIndex = this.findWebtoonDataIndex(page.id);
+      if (dataIndex >= 0) {
+        this.webtoonDataSource.notifyDataChange(dataIndex);
+      }
+      return;
+    }
 
     // 根据阅读模式刷新对应的显示
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
@@ -6653,20 +6940,52 @@ export struct MangaViewer {
     return -1;
   }
 
-  private isPageCurrentlyVisible(page: MangaPage): boolean {
-    const idx: number = this.getPageIndexById(page.id);
-    if (idx < 0) {
-      return false;
+  /**
+   * 提交页面 PixelMap。
+   * 条漫模式下优先做行级刷新，避免每张图都触发整树响应式重算。
+   */
+  private commitPagePixelMap(pageId: string, pixelMap: image.PixelMap): void {
+    this.pagePixelMaps.set(pageId, pixelMap);
+    if (this.isWebtoonMode()) {
+      const dataIndex = this.findWebtoonDataIndex(pageId);
+      if (dataIndex >= 0) {
+        this.webtoonDataSource.notifyDataChange(dataIndex);
+        return;
+      }
     }
+    this.pagePixelMaps = new Map(this.pagePixelMaps);
+  }
+
+  private isPageCurrentlyVisible(page: MangaPage): boolean {
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+      const idx: number = this.getPageIndexById(page.id);
+      if (idx < 0) {
+        return false;
+      }
       return idx === this.leftPageIndex || idx === this.rightPageIndex;
     }
     if (this.isWebtoonMode()) {
+      const ref = this.webtoonPageRefById.get(page.id);
+      if (ref) {
+        for (let i = 0; i < this.webtoonVisibleItemIndices.length; i++) {
+          if (this.webtoonVisibleItemIndices[i] === ref.itemIndex) {
+            return true;
+          }
+        }
+      }
+      const idx: number = this.getPageIndexById(page.id);
+      if (idx < 0) {
+        return false;
+      }
       for (let i = 0; i < this.visiblePageIndices.length; i++) {
         if (this.visiblePageIndices[i] === idx) {
           return true;
         }
       }
+      return false;
+    }
+    const idx: number = this.getPageIndexById(page.id);
+    if (idx < 0) {
       return false;
     }
     return idx === this.viewCurrentPageIndex;
@@ -7168,7 +7487,8 @@ export struct MangaViewer {
    */
   private throttledWebtoonHeavyOperations(): void {
     const now = Date.now();
-    if (now - this.lastHeavyUpdateTime < this.HEAVY_UPDATE_THROTTLE_MS) {
+    const throttleMs = this.getWebtoonHeavyUpdateThrottleMs();
+    if (now - this.lastHeavyUpdateTime < throttleMs) {
       return; // 还在节流间隔内，跳过
     }
     this.lastHeavyUpdateTime = now;
@@ -7194,7 +7514,49 @@ export struct MangaViewer {
     const scrollTop = this.scrollPosition;
     const scrollBottom = scrollTop + containerHeight;
 
-    // 累计计算每个页面的实际位置（考虑不同页面高度）
+    if (this.isWebtoonMode() && this.webtoonDataItems.length > 0) {
+      const visibleItemIndices: number[] = [];
+      const activeChapterId = (this.currentChapterId && this.chapterBoundaries.some((b: ChapterBoundary) => b.chapterId === this.currentChapterId))
+        ? this.currentChapterId
+        : this.chapter.id;
+      let currentTop = 0;
+
+      for (let i = 0; i < this.webtoonDataItems.length; i++) {
+        const item = this.webtoonDataItems[i];
+        if (!item) {
+          continue;
+        }
+        if (item.type === 'page' && item.page) {
+          const ph: number = this.getEstimatedImageHeight(item.page);
+          const itemTop = currentTop;
+          const itemBottom = itemTop + ph;
+          if (itemBottom >= scrollTop - containerHeight && itemTop <= scrollBottom + containerHeight) {
+            visibleItemIndices.push(i);
+            const itemChapterId = item.chapterId || this.chapter.id;
+            if (itemChapterId === activeChapterId) {
+              visibleIndices.push(item.pageIndex !== undefined ? item.pageIndex : 0);
+            }
+          }
+          currentTop = itemBottom + spacing;
+        } else if (item.type === 'chapter_divider') {
+          currentTop += 120 + spacing;
+        }
+      }
+
+      if (visibleIndices.length === 0 && visibleItemIndices.length > 0) {
+        const firstVisible = this.webtoonDataItems[visibleItemIndices[0]];
+        if (firstVisible && firstVisible.type === 'page') {
+          visibleIndices.push(firstVisible.pageIndex !== undefined ? firstVisible.pageIndex : 0);
+        }
+      }
+
+      this.webtoonVisibleItemIndices = visibleItemIndices;
+      this.visiblePageIndices = visibleIndices;
+      this.updateWebtoonProgress();
+      return;
+    }
+
+    // 单章节回退
     let currentTop = 0;
     for (let i = 0; i < this.chapter.pages.length; i++) {
       const page: MangaPage = this.chapter.pages[i];
@@ -7202,16 +7564,15 @@ export struct MangaViewer {
       const itemTop = currentTop;
       const itemBottom = itemTop + ph;
 
-      // 检查是否在可见区域内（包含一定的缓冲区）
       if (itemBottom >= scrollTop - containerHeight && itemTop <= scrollBottom + containerHeight) {
         visibleIndices.push(i);
       }
 
-      // 累加当前页面高度和间距
       currentTop += ph + spacing;
     }
 
     this.visiblePageIndices = visibleIndices;
+    this.webtoonVisibleItemIndices = visibleIndices;
 
     // [性能优化] 章节检测和边界检查已经在 throttledWebtoonHeavyOperations 中节流执行
     // 不再在这里重复调用，避免性能问题
@@ -7590,6 +7951,11 @@ export struct MangaViewer {
       return;
     }
 
+    if (this.isWebtoonMode()) {
+      this.triggerWebtoonPreload();
+      return;
+    }
+
     const currentIndex = this.viewCurrentPageIndex;
     const totalPages = this.chapter.pages.length;
     const range = this.getDynamicPreloadRange();
@@ -7642,7 +8008,7 @@ export struct MangaViewer {
     const loadingCount = this.imageLoadStateManager.getLoadingCount();
 
     // 获取可用的加载槽位数量
-    const isOnline = this.contentType === 'OnlineUndownloaded';
+    const isOnline = this.contentType === 'OnlineUndownloaded' || this.contentType === 'OnlineDownloaded';
     const availableSlots = this.preloadManager.getAvailableLoadSlots(isOnline, loadingCount);
 
     if (availableSlots <= 0) {
@@ -7662,10 +8028,42 @@ export struct MangaViewer {
         continue;
       }
 
-      const page = this.chapter.pages[task.pageIndex];
-      if (page) {
-        this.loadImageWithNewManager(page, task.pageIndex);
+      let page: MangaPage | undefined;
+      if (this.isWebtoonMode()) {
+        const ref = this.webtoonPageRefById.get(task.pageId);
+        if (ref) {
+          page = ref.page;
+        } else if (task.pageIndex >= 0 && task.pageIndex < this.webtoonDataItems.length) {
+          const item = this.webtoonDataItems[task.pageIndex];
+          if (item && item.type === 'page' && item.page) {
+            page = item.page;
+          }
+        }
+        if (!page) {
+          page = this.getPageById(task.pageId);
+        }
+      } else {
+        page = this.chapter.pages[task.pageIndex];
       }
+
+      if (!page) {
+        this.preloadManager.clearPage(task.pageIndex);
+        this.imageLoadStateManager.clearPage(task.pageId);
+        const staleState = this.imageLoadStates.get(task.pageId);
+        if (staleState && staleState.isLoading && !staleState.isLoaded) {
+          staleState.isLoading = false;
+          staleState.error = '页面已失效';
+          this.imageLoadStates.set(task.pageId, staleState);
+          this.imageLoadStates = new Map(this.imageLoadStates);
+        }
+        continue;
+      }
+
+      const loadQueueIndex = task.pageIndex;
+      this.imageLoadStateManager.initPage(task.pageId, loadQueueIndex);
+      this.loadImageWithNewManager(page, loadQueueIndex).catch((error: Error) => {
+        logger.warn(TAG, `预加载任务执行异常: pageId=${task.pageId}, error=${error.message}`);
+      });
     }
   }
 
@@ -7690,7 +8088,25 @@ export struct MangaViewer {
    */
   private async loadImageWithNewManager(page: MangaPage, pageIndex: number): Promise<void> {
     const pageId = page.id;
-    const url = page.imageUrl || '';
+    const pageRef = this.webtoonPageRefById.get(pageId);
+    const chapterIdForCache = pageRef ? pageRef.chapterId : (this.chapter ? this.chapter.id : '');
+    const chapterPageIndex = pageRef
+      ? pageRef.chapterPageIndex
+      : (page.index !== undefined ? page.index : this.getPageIndexById(pageId));
+    const requestUrl = page.sourceType === ImageSourceType.LOCAL
+      ? (this.getFsPathFromPage(page) || page.imageUrl || '')
+      : (page.imageUrl || '');
+    const loadOptions: LoadOptions = {
+      width: page.width,
+      height: page.height,
+      headers: this.networkHeaders,
+      sourceId: this.sourceId,
+      mangaId: this.mangaId,
+      chapterId: chapterIdForCache,
+      pageIndex: chapterPageIndex >= 0 ? chapterPageIndex : undefined,
+      priority: page.priority || 1,
+      contentType: this.contentType
+    } as LoadOptions;
 
     // [性能修复] 本地图片在条漫模式下不应通过此路径加载
     // 因为 triggerLocalImageLoad 已经通过 LocalImageCacheManager 降采样加载
@@ -7699,12 +8115,47 @@ export struct MangaViewer {
       // 委托给 LocalImageCacheManager，不创建重复的全分辨率 PixelMap
       const chapterId = this.chapter ? this.chapter.id : '';
       this.triggerLocalImageLoad(page, chapterId, pageIndex);
+      const prev = this.imageLoadStates.get(pageId);
+      this.imageLoadStates.set(pageId, {
+        isLoading: false,
+        isLoaded: prev ? prev.isLoaded : false,
+        dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+        error: undefined
+      } as ImageLoadState);
+      this.imageLoadStates = new Map(this.imageLoadStates);
       // 标记为已完成（由 LocalImageCacheManager 处理实际加载）
       this.preloadManager.onLoadComplete(pageIndex, true);
       // [性能修复] 使用去重调度，避免递归洪泛导致 THREAD_BLOCK_6S
       this.scheduleProcessPreloadQueue(50);
       return;
     }
+
+    if (!requestUrl || requestUrl.length === 0) {
+      const errorMsg = '图片URL为空';
+      this.imageLoadStateManager.initPage(pageId, pageIndex);
+      this.imageLoadStateManager.onLoadError(pageId, errorMsg);
+      const prev = this.imageLoadStates.get(pageId);
+      this.imageLoadStates.set(pageId, {
+        isLoading: false,
+        isLoaded: false,
+        dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+        error: errorMsg
+      } as ImageLoadState);
+      this.imageLoadStates = new Map(this.imageLoadStates);
+      this.preloadManager.onLoadComplete(pageIndex, false, errorMsg);
+      this.scheduleProcessPreloadQueue(50);
+      return;
+    }
+
+    this.imageLoadStateManager.initPage(pageId, pageIndex);
+    const prevState = this.imageLoadStates.get(pageId);
+    this.imageLoadStates.set(pageId, {
+      isLoading: true,
+      isLoaded: false,
+      dimensions: prevState && prevState.dimensions ? prevState.dimensions : undefined,
+      error: undefined
+    } as ImageLoadState);
+    this.imageLoadStates = new Map(this.imageLoadStates);
 
     // 标记为加载中
     this.preloadManager.startLoad(pageIndex);
@@ -7717,75 +8168,70 @@ export struct MangaViewer {
         logger.debug(TAG, `[架构] 内存缓存命中: P${pageIndex + 1}`);
         this.preloadManager.markMemCacheHit(pageIndex);
         this.imageLoadStateManager.onLoadComplete(pageId, memCached);
+        const prev = this.imageLoadStates.get(pageId);
+        this.imageLoadStates.set(pageId, {
+          isLoading: false,
+          isLoaded: true,
+          dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+          error: undefined
+        } as ImageLoadState);
+        this.imageLoadStates = new Map(this.imageLoadStates);
+        this.notifyPixelMapLoaded(page);
         return;
       }
 
       // 2. 【核心】从统一缓存系统加载PixelMap
       const cacheManager = ImageCacheManager.getInstance();
-      // [修复] 传递contentType，让本地文件不经过OnlineImageLoader
-      const cachedPixelMap = await cacheManager.loadImage(url, { 
-        headers: this.networkHeaders,
-        contentType: this.contentType  // 关键：传递内容类型
-      });
+      const cachedPixelMap = await cacheManager.loadImage(requestUrl, loadOptions);
       
       if (cachedPixelMap) {
-        // 判断缓存来源（用于统计）
-        const onlineLoader = OnlineImageLoader.getInstance();
-        const stats = onlineLoader.getCacheStats();
+        logger.info(TAG, `[架构] 统一缓存加载成功: P${pageIndex + 1}`);
+        this.commitPagePixelMap(pageId, cachedPixelMap);
+        this.incrementPixelMapEpoch(pageId);
+        this.preloadManager.onLoadComplete(pageIndex, true);
         
-        if (stats.count > 0) {
-          logger.info(TAG, `[架构] OnlineImageLoader缓存命中: P${pageIndex + 1}`);
-          this.preloadManager.markMemCacheHit(pageIndex);
-        } else {
-          logger.info(TAG, `[架构] 磁盘缓存命中: P${pageIndex + 1}`);
-          this.preloadManager.markDiskCacheHit(pageIndex);
-        }
-        
-        // 【关键】同步PixelMap到pagePixelMaps
-        this.pagePixelMaps.set(pageId, cachedPixelMap);
-        this.pagePixelMaps = new Map(this.pagePixelMaps); // 触发响应式更新
-        
-        // 更新加载状态
         this.imageLoadStateManager.onLoadComplete(pageId, cachedPixelMap);
-        
-        // 【架构修复】如果是当前页，必须立即更新显示
-        // 否则用户会看到黑屏，因为网络图片没有PixelMap时返回占位图
-        if (pageIndex === this.viewCurrentPageIndex) {
-          logger.info(TAG, `[架构] 当前页PixelMap已就绪，立即更新显示: P${pageIndex + 1}`);
-          // 关键：调用updateSinglePageDisplay()重新获取ImageInput
-          // 此时getDisplayImageInput()会返回PixelMap而不是占位图
-          this.updateSinglePageDisplay();
-        } else {
-          logger.debug(TAG, `[架构] 预加载页PixelMap已就绪: P${pageIndex + 1}`);
-        }
-        
-        // 加载完成后，继续处理队列中的下一批任务
-        this.scheduleProcessPreloadQueue(50);
+        const prev = this.imageLoadStates.get(pageId);
+        this.imageLoadStates.set(pageId, {
+          isLoading: false,
+          isLoaded: true,
+          dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+          error: undefined
+        } as ImageLoadState);
+        this.imageLoadStates = new Map(this.imageLoadStates);
+        this.notifyPixelMapLoaded(page);
+        this.cleanupInvisiblePixelMaps();
         
         return;
       }
 
-      // 3. 缓存未命中，需要网络加载
-      logger.info(TAG, `[架构] 缓存未命中，开始网络加载: P${pageIndex + 1}`);
-      this.preloadManager.markNetworkLoad(pageIndex);
-      
-      // 【重要】网络加载失败说明图片真的不可用
-      // ImageCacheManager.loadImage已经尝试了内存缓存、磁盘缓存和网络加载
-      // 如果还是返回null，说明加载失败
-      throw new Error('网络加载失败：所有缓存层级均未命中');
+      throw new Error('统一缓存加载失败：返回空PixelMap');
       
     } catch (error) {
       const errorMsg = String(error);
       logger.error(TAG, `[架构] 加载失败: P${pageIndex + 1}, error=${errorMsg}`);
       this.imageLoadStateManager.onLoadError(pageId, errorMsg);
       this.preloadManager.onLoadComplete(pageIndex, false, errorMsg);
+      const prev = this.imageLoadStates.get(pageId);
+      this.imageLoadStates.set(pageId, {
+        isLoading: false,
+        isLoaded: false,
+        dimensions: prev && prev.dimensions ? prev.dimensions : undefined,
+        error: errorMsg
+      } as ImageLoadState);
+      this.imageLoadStates = new Map(this.imageLoadStates);
       
-      // 【关键】如果是当前页加载失败，也要更新显示以显示错误提示
-      if (pageIndex === this.viewCurrentPageIndex) {
+      if (!this.isWebtoonMode() && pageIndex === this.viewCurrentPageIndex) {
         this.updateSinglePageDisplay();
       }
-      
-      // 即使加载失败，也要继续处理队列中的下一批任务
+
+      if (this.isWebtoonMode() && this.isPageCurrentlyVisible(page)) {
+        const dataIndex = this.findWebtoonDataIndex(pageId);
+        if (dataIndex >= 0) {
+          this.webtoonDataSource.notifyDataChange(dataIndex);
+        }
+      }
+    } finally {
       this.scheduleProcessPreloadQueue(50);
     }
   }
@@ -7794,23 +8240,90 @@ export struct MangaViewer {
    * 条漫模式专用：基于可见页面的统一预加载
    */
   private triggerWebtoonPreload(): void {
+    if (!this.isWebtoonMode()) {
+      return;
+    }
+
+    const range = 8;
+    if (this.webtoonDataItems.length > 0) {
+      const visibleItemIndices = this.getWebtoonVisibleItemIndicesForPreload();
+      if (visibleItemIndices.length === 0) {
+        return;
+      }
+
+      const preloadItemIndices = new Set<number>();
+      for (let i = 0; i < visibleItemIndices.length; i++) {
+        const visibleItemIndex = visibleItemIndices[i];
+        const startIndex = Math.max(0, visibleItemIndex - range);
+        const endIndex = Math.min(this.webtoonDataItems.length - 1, visibleItemIndex + range);
+        for (let j = startIndex; j <= endIndex; j++) {
+          const item = this.webtoonDataItems[j];
+          if (item && item.type === 'page' && item.page && item.page.sourceType === ImageSourceType.NETWORK) {
+            preloadItemIndices.add(j);
+          }
+        }
+      }
+
+      const tasks: PreloadTaskItem[] = [];
+      preloadItemIndices.forEach((itemIndex: number) => {
+        const item = this.webtoonDataItems[itemIndex];
+        if (!item || item.type !== 'page' || !item.page || !item.page.imageUrl) {
+          return;
+        }
+        let minDist = Number.MAX_SAFE_INTEGER;
+        for (let i = 0; i < visibleItemIndices.length; i++) {
+          const dist = Math.abs(itemIndex - visibleItemIndices[i]);
+          if (dist < minDist) {
+            minDist = dist;
+          }
+        }
+        const priority = minDist === 0 ? 10 : Math.max(1, 10 - minDist);
+        tasks.push({
+          pageIndex: itemIndex,
+          pageId: item.page.id,
+          url: item.page.imageUrl,
+          priority: priority
+        } as PreloadTaskItem);
+        this.imageLoadStateManager.initPage(item.page.id, itemIndex);
+      });
+
+      if (tasks.length > 0) {
+        this.preloadManager.setPageInfo(this.getCurrentWebtoonItemIndexForPreload(), this.webtoonDataItems.length);
+        this.preloadManager.setPreloadRange(range);
+        this.preloadManager.addBatch(tasks);
+        this.scheduleProcessPreloadQueue(0);
+        this.preloadManager.cleanupDistantCompletedForWebtoon();
+      }
+      return;
+    }
+
     if (!this.chapter || !this.chapter.pages) {
       return;
     }
 
-    // 使用 PreloadManager 的条漫模式方法生成任务
-    const tasks = this.preloadManager.buildWebtoonPreloadTasks(
-      this.visiblePageIndices,
-      this.chapter.pages,
-      8 // 预加载可见区域前后各8页
-    );
-    this.preloadManager.addBatch(tasks);
-
-    // 处理预加载队列
-    this.processPreloadQueue();
-
-    // 清理远离可见区域的已完成项
-    this.preloadManager.cleanupDistantCompletedForWebtoon();
+    // 回退：尚未构建多章节数据时，仅处理当前章节内的网络页
+    const tasks: PreloadTaskItem[] = [];
+    for (let i = 0; i < this.visiblePageIndices.length; i++) {
+      const visibleIndex = this.visiblePageIndices[i];
+      const startIndex = Math.max(0, visibleIndex - range);
+      const endIndex = Math.min(this.chapter.pages.length - 1, visibleIndex + range);
+      for (let j = startIndex; j <= endIndex; j++) {
+        const page = this.chapter.pages[j];
+        if (!page || page.sourceType !== ImageSourceType.NETWORK || !page.imageUrl) {
+          continue;
+        }
+        tasks.push({
+          pageIndex: j,
+          pageId: page.id,
+          url: page.imageUrl,
+          priority: Math.max(1, 10 - Math.abs(j - visibleIndex))
+        } as PreloadTaskItem);
+      }
+    }
+    if (tasks.length > 0) {
+      this.preloadManager.addBatch(tasks);
+      this.scheduleProcessPreloadQueue(0);
+    }
   }
 
   /**
@@ -8319,6 +8832,8 @@ export struct MangaViewer {
       // 全量重建：第一次初始化或章节结构变化太大
       this.doFullWebtoonRebuild();
     }
+
+    this.rebuildWebtoonPageRefIndex();
   }
 
   /**
@@ -8377,6 +8892,8 @@ export struct MangaViewer {
       this.rebuildWebtoonPositionCache();
       logger.info(TAG, `✅ [增量更新完成] 总项数=${this.webtoonDataItems.length}, 章节数=${this.chapterBoundaries.length}`);
     }
+
+    this.rebuildWebtoonPageRefIndex();
   }
 
   /**
@@ -8543,6 +9060,7 @@ export struct MangaViewer {
     
     // [性能优化] 重建位置缓存
     this.rebuildWebtoonPositionCache();
+    this.rebuildWebtoonPageRefIndex();
 
     logger.info(TAG, `✅ [全量重建完成] 总项数=${items.length}, 章节数=${boundaries.length}`);
     boundaries.forEach((b, idx) => {
@@ -8599,93 +9117,114 @@ export struct MangaViewer {
 
     const currentScrollY = this.scrollPosition;
     const containerHeight = this.screenHeight > 0 ? this.screenHeight : 800;
-    const preloadThreshold = containerHeight * 2; // 提前2屏开始预加载
+    const preloadThreshold = containerHeight * (this.isOnlineWebtoonContent() ? 3 : 2);
 
     // 计算总高度
     const totalHeight = this.calculateTotalWebtoonHeight();
     const maxScrollY = Math.max(0, totalHeight - containerHeight);
+    const nearBottom = currentScrollY >= maxScrollY - preloadThreshold;
+    const nearTop = currentScrollY <= preloadThreshold;
+
+    if (nearTop || nearBottom) {
+      this.markWebtoonBoundaryCacheProtection(containerHeight);
+      this.prewarmChapterObjectEdges(this.chapter);
+      if (nearTop) {
+        this.prewarmChapterObjectEdges(this.prevChapter);
+      }
+      if (nearBottom) {
+        this.prewarmChapterObjectEdges(this.nextChapter);
+      }
+    }
 
     // 检查是否接近底部（需要加载下一章）
-    if (currentScrollY >= maxScrollY - preloadThreshold) {
+    if (nearBottom) {
       // 如果是最后一章，不需要加载下一章
       if (this.isLastChapter) {
         this.isNextChapterLoading = false;
         logger.debug(TAG, `条漫边界检测：已是最后一章，不加载下一章`);
-        return;
-      }
-      // [修复2] 改进请求条件：如果nextChapter已在数据中，视为“未加载”以允许请求更远的章节
-      const nextAlreadyInData = !!(this.nextChapter && this.chapterBoundaries.some(b => b.chapterId === this.nextChapter!.id));
-      const canRequestNext = !this.nextChapterRequested && !this.isNextChapterLoading && (!this.nextChapter || nextAlreadyInData);
-      logger.debug(TAG, `条漫边界检测(底部): scrollY=${currentScrollY.toFixed(0)}, maxScrollY=${maxScrollY.toFixed(0)}, isLast=${this.isLastChapter}, requested=${this.nextChapterRequested}, loading=${this.isNextChapterLoading}, hasNext=${!!this.nextChapter}, nextInData=${nextAlreadyInData}, canRequest=${canRequestNext}`);
-      
-      if (canRequestNext) {
-        this.nextChapterRequested = true;
-        this.isNextChapterLoading = true;
-        logger.info(TAG, `条漫模式：接近底部，请求加载下一章`);
-        if (this.onRequestAdjacentChapter) {
-          this.onRequestAdjacentChapter('next');
-        } else if (this.callbacks.onChapterChange) {
-          // 兼容旧的回调方式
-          this.callbacks.onChapterChange('next');
+      } else {
+        // [修复2] 改进请求条件：如果nextChapter已在数据中，视为“未加载”以允许请求更远的章节
+        const nextAlreadyInData = !!(this.nextChapter && this.chapterBoundaries.some(b => b.chapterId === this.nextChapter!.id));
+        const canRequestNext = !this.nextChapterRequested && !this.isNextChapterLoading && (!this.nextChapter || nextAlreadyInData);
+        logger.debug(TAG, `条漫边界检测(底部): scrollY=${currentScrollY.toFixed(0)}, maxScrollY=${maxScrollY.toFixed(0)}, isLast=${this.isLastChapter}, requested=${this.nextChapterRequested}, loading=${this.isNextChapterLoading}, hasNext=${!!this.nextChapter}, nextInData=${nextAlreadyInData}, canRequest=${canRequestNext}`);
+        
+        if (canRequestNext) {
+          if (!this.canRequestAdjacentChapter('next')) {
+            logger.debug(TAG, `条漫边界检测(底部): 命中请求冷却，跳过下一章请求`);
+          } else {
+            this.nextChapterRequested = true;
+            this.isNextChapterLoading = true;
+            logger.info(TAG, `条漫模式：接近底部，请求加载下一章`);
+            if (this.onRequestAdjacentChapter) {
+              this.onRequestAdjacentChapter('next');
+            } else if (this.callbacks.onChapterChange) {
+              // 兼容旧的回调方式
+              this.callbacks.onChapterChange('next');
+            }
+          }
         }
       }
     }
 
     // 检查是否接近顶部（需要加载上一章）
-    if (currentScrollY <= preloadThreshold) {
+    if (nearTop) {
       // 如果是第一章，不需要加载上一章
       if (this.isFirstChapter) {
         this.isPrevChapterLoading = false;
         logger.debug(TAG, `条漫边界检测：已是第一章，不加载上一章`);
-        return;
-      }
-      // [修复2] 改进请求条件：如果prevChapter已在数据中，视为“未加载”以允许请求更远的章节
-      const prevAlreadyInData = !!(this.prevChapter && this.chapterBoundaries.some(b => b.chapterId === this.prevChapter!.id));
-      const canRequestPrev = !this.prevChapterRequested && !this.isPrevChapterLoading && (!this.prevChapter || prevAlreadyInData);
-      logger.debug(TAG, `条漫边界检测(顶部): scrollY=${currentScrollY.toFixed(0)}, isFirst=${this.isFirstChapter}, requested=${this.prevChapterRequested}, loading=${this.isPrevChapterLoading}, hasPrev=${!!this.prevChapter}, prevInData=${prevAlreadyInData}, canRequest=${canRequestPrev}`);
-      
-      if (canRequestPrev) {
-        // [修复②] 双重上滑确认机制：上一章不在缓存中时需要二次确认
-        const prevNotInData = !this.prevChapter;
+      } else {
+        // [修复2] 改进请求条件：如果prevChapter已在数据中，视为“未加载”以允许请求更远的章节
+        const prevAlreadyInData = !!(this.prevChapter && this.chapterBoundaries.some(b => b.chapterId === this.prevChapter!.id));
+        const canRequestPrev = !this.prevChapterRequested && !this.isPrevChapterLoading && (!this.prevChapter || prevAlreadyInData);
+        logger.debug(TAG, `条漫边界检测(顶部): scrollY=${currentScrollY.toFixed(0)}, isFirst=${this.isFirstChapter}, requested=${this.prevChapterRequested}, loading=${this.isPrevChapterLoading}, hasPrev=${!!this.prevChapter}, prevInData=${prevAlreadyInData}, canRequest=${canRequestPrev}`);
         
-        if (prevNotInData && !this.prevChapterSwipeConfirmPending) {
-          // 第一次上滑到顶：显示确认提示，不立即加载
-          this.prevChapterSwipeConfirmPending = true;
-          this.prevChapterSwipeConfirmTime = Date.now();
-          if (this.prevChapterSwipeConfirmTimer !== -1) {
-            clearTimeout(this.prevChapterSwipeConfirmTimer);
-          }
-          this.prevChapterSwipeConfirmTimer = setTimeout(() => {
-            this.prevChapterSwipeConfirmPending = false;
-            this.prevChapterSwipeConfirmTimer = -1;
-          }, 3000);
-          logger.info(TAG, `条漫模式：首次上滑到顶，等待二次确认`);
-          return;
-        }
-        
-        if (prevNotInData && this.prevChapterSwipeConfirmPending) {
-          // 检查是否已过最小等待时间（800ms）
-          const elapsed = Date.now() - this.prevChapterSwipeConfirmTime;
-          if (elapsed < 800) {
+        if (canRequestPrev) {
+          // [修复②] 双重上滑确认机制：上一章不在缓存中时需要二次确认
+          const prevNotInData = !this.prevChapter;
+          
+          if (prevNotInData && !this.prevChapterSwipeConfirmPending) {
+            // 第一次上滑到顶：显示确认提示，不立即加载
+            this.prevChapterSwipeConfirmPending = true;
+            this.prevChapterSwipeConfirmTime = Date.now();
+            if (this.prevChapterSwipeConfirmTimer !== -1) {
+              clearTimeout(this.prevChapterSwipeConfirmTimer);
+            }
+            this.prevChapterSwipeConfirmTimer = setTimeout(() => {
+              this.prevChapterSwipeConfirmPending = false;
+              this.prevChapterSwipeConfirmTimer = -1;
+            }, 3000);
+            logger.info(TAG, `条漫模式：首次上滑到顶，等待二次确认`);
             return;
           }
-        }
-        
-        // 清除确认状态，执行加载
-        this.prevChapterSwipeConfirmPending = false;
-        if (this.prevChapterSwipeConfirmTimer !== -1) {
-          clearTimeout(this.prevChapterSwipeConfirmTimer);
-          this.prevChapterSwipeConfirmTimer = -1;
-        }
-        
-        this.prevChapterRequested = true;
-        this.isPrevChapterLoading = true;
-        logger.info(TAG, `条漫模式：接近顶部，请求加载上一章`);
-        if (this.onRequestAdjacentChapter) {
-          this.onRequestAdjacentChapter('prev');
-        } else if (this.callbacks.onChapterChange) {
-          // 兼容旧的回调方式
-          this.callbacks.onChapterChange('prev');
+          
+          if (prevNotInData && this.prevChapterSwipeConfirmPending) {
+            // 检查是否已过最小等待时间（800ms）
+            const elapsed = Date.now() - this.prevChapterSwipeConfirmTime;
+            if (elapsed < 800) {
+              return;
+            }
+          }
+          
+          // 清除确认状态，执行加载
+          this.prevChapterSwipeConfirmPending = false;
+          if (this.prevChapterSwipeConfirmTimer !== -1) {
+            clearTimeout(this.prevChapterSwipeConfirmTimer);
+            this.prevChapterSwipeConfirmTimer = -1;
+          }
+          
+          if (!this.canRequestAdjacentChapter('prev')) {
+            logger.debug(TAG, `条漫边界检测(顶部): 命中请求冷却，跳过上一章请求`);
+            return;
+          }
+          this.prevChapterRequested = true;
+          this.isPrevChapterLoading = true;
+          logger.info(TAG, `条漫模式：接近顶部，请求加载上一章`);
+          if (this.onRequestAdjacentChapter) {
+            this.onRequestAdjacentChapter('prev');
+          } else if (this.callbacks.onChapterChange) {
+            // 兼容旧的回调方式
+            this.callbacks.onChapterChange('prev');
+          }
         }
       }
     }
@@ -8744,6 +9283,10 @@ export struct MangaViewer {
     
     // [性能优化] 如果正在滚动，不执行清理
     if (this.isScrolling) {
+      return;
+    }
+    // 跨章节边界保护期：避免刚切章就清理导致重新解码卡顿
+    if (this.isWebtoonBoundaryCleanupProtected()) {
       return;
     }
 
@@ -8817,16 +9360,61 @@ export struct MangaViewer {
       return;
     }
     
-    // 收集可见页面ID
-    const visiblePageIds: string[] = this.visiblePageIndices.map(idx => {
-      if (idx >= 0 && idx < this.chapter.pages.length) {
-        return this.chapter.pages[idx].id;
-      }
-      return '';
-    }).filter(id => id.length > 0);
+    const visiblePageIds: string[] = [];
+    const allPageIds: string[] = [];
     
-    // 收集所有页面ID
-    const allPageIds: string[] = this.chapter.pages.map(p => p.id);
+    // 多章节条漫：仅清理当前章节范围，避免误删邻章缓存导致抖动
+    if (this.isWebtoonMode() && this.chapterBoundaries.length > 0 && this.webtoonDataItems.length > 0) {
+      let currentBoundary: ChapterBoundary | undefined = undefined;
+      if (this.currentChapterId) {
+        currentBoundary = this.chapterBoundaries.find((b: ChapterBoundary) => b.chapterId === this.currentChapterId);
+      }
+      if (!currentBoundary) {
+        currentBoundary = this.chapterBoundaries.find((b: ChapterBoundary) => b.chapterId === this.chapter.id);
+      }
+
+      if (currentBoundary) {
+        const visibleIndexSet = new Set<number>(this.visiblePageIndices);
+        let pageIndexInChapter = 0;
+        for (let i = currentBoundary.startIndex; i <= currentBoundary.endIndex; i++) {
+          const item = this.webtoonDataItems[i];
+          if (item && item.type === 'page' && item.page) {
+            const pageId = item.page.id;
+            allPageIds.push(pageId);
+            if (visibleIndexSet.has(pageIndexInChapter)) {
+              visiblePageIds.push(pageId);
+            }
+            pageIndexInChapter++;
+          }
+        }
+
+        if (visiblePageIds.length === 0 && pageIndexInChapter > 0) {
+          const fallbackIndex = Math.max(0, Math.min(this.currentWebtoonPage, pageIndexInChapter - 1));
+          let seenPageIndex = 0;
+          for (let i = currentBoundary.startIndex; i <= currentBoundary.endIndex; i++) {
+            const fallbackItem = this.webtoonDataItems[i];
+            if (fallbackItem && fallbackItem.type === 'page' && fallbackItem.page) {
+              if (seenPageIndex === fallbackIndex) {
+                visiblePageIds.push(fallbackItem.page.id);
+                break;
+              }
+              seenPageIndex++;
+            }
+          }
+        }
+      }
+    }
+    
+    // 回退到单章节
+    if (allPageIds.length === 0) {
+      for (let i = 0; i < this.chapter.pages.length; i++) {
+        const page = this.chapter.pages[i];
+        allPageIds.push(page.id);
+        if (this.visiblePageIndices.indexOf(i) >= 0) {
+          visiblePageIds.push(page.id);
+        }
+      }
+    }
     
     // 调用本地缓存管理器的清理方法
     this.localImageCache.cleanupDistant(visiblePageIds, allPageIds, 15);
@@ -8937,6 +9525,175 @@ export struct MangaViewer {
     this.webtoonPositionCacheValid = false;
   }
 
+  private isOnlineWebtoonContent(): boolean {
+    return this.contentType === 'OnlineUndownloaded' || this.contentType === 'OnlineDownloaded';
+  }
+
+  private getWebtoonHeavyUpdateThrottleMs(): number {
+    return this.isOnlineWebtoonContent()
+      ? this.WEBTOON_HEAVY_UPDATE_THROTTLE_ONLINE_MS
+      : this.WEBTOON_HEAVY_UPDATE_THROTTLE_LOCAL_MS;
+  }
+
+  private getWebtoonSwitchStableMs(): number {
+    return this.isOnlineWebtoonContent()
+      ? this.WEBTOON_SWITCH_STABLE_MS_ONLINE
+      : this.WEBTOON_SWITCH_STABLE_MS_LOCAL;
+  }
+
+  private getWebtoonSwitchCooldownMs(): number {
+    return this.isOnlineWebtoonContent()
+      ? this.WEBTOON_SWITCH_COOLDOWN_MS_ONLINE
+      : this.WEBTOON_SWITCH_COOLDOWN_MS_LOCAL;
+  }
+
+  private getWebtoonAdjacentRequestIntervalMs(): number {
+    return this.isOnlineWebtoonContent() ? 1200 : 450;
+  }
+
+  private getWebtoonSwitchHysteresisPx(containerHeight: number): number {
+    const raw = containerHeight * this.WEBTOON_SWITCH_HYSTERESIS_RATIO;
+    const clamped = Math.max(this.WEBTOON_SWITCH_HYSTERESIS_MIN_PX, raw);
+    return Math.min(this.WEBTOON_SWITCH_HYSTERESIS_MAX_PX, clamped);
+  }
+
+  private clearPendingWebtoonSwitchCandidate(): void {
+    this.pendingWebtoonChapterCandidateId = '';
+    this.pendingWebtoonChapterCandidateSince = 0;
+    this.pendingWebtoonChapterCandidatePageIndex = 0;
+  }
+
+  private canRequestAdjacentChapter(direction: 'prev' | 'next'): boolean {
+    const now = Date.now();
+    const minInterval = this.getWebtoonAdjacentRequestIntervalMs();
+    if (direction === 'prev') {
+      if (now - this.lastPrevAdjacentRequestAt < minInterval) {
+        return false;
+      }
+      this.lastPrevAdjacentRequestAt = now;
+      return true;
+    }
+    if (now - this.lastNextAdjacentRequestAt < minInterval) {
+      return false;
+    }
+    this.lastNextAdjacentRequestAt = now;
+    return true;
+  }
+
+  private markWebtoonBoundaryCacheProtection(containerHeight: number): void {
+    const now = Date.now();
+    const baseMs = this.isOnlineWebtoonContent()
+      ? Math.max(1400, Math.floor(containerHeight * 2))
+      : 700;
+    const targetUntil = now + baseMs;
+    if (targetUntil > this.webtoonBoundaryCacheProtectUntil) {
+      this.webtoonBoundaryCacheProtectUntil = targetUntil;
+    }
+  }
+
+  private isWebtoonBoundaryCleanupProtected(): boolean {
+    return Date.now() < this.webtoonBoundaryCacheProtectUntil;
+  }
+
+  private prewarmPageListEdges(chapterId: string, pages: MangaPage[]): void {
+    if (!chapterId || pages.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    const minInterval = this.isOnlineWebtoonContent() ? 1200 : 500;
+    const last = this.lastBoundaryPrewarmAt.get(chapterId) || 0;
+    if (now - last < minInterval) {
+      return;
+    }
+    this.lastBoundaryPrewarmAt.set(chapterId, now);
+
+    const edgeWindow = this.isOnlineWebtoonContent() ? 5 : 3;
+    const targets: MangaPage[] = [];
+    const seen: Set<string> = new Set();
+    const pushTarget = (page: MangaPage | undefined) => {
+      if (!page || seen.has(page.id)) {
+        return;
+      }
+      seen.add(page.id);
+      targets.push(page);
+    };
+
+    const total = pages.length;
+    for (let i = 0; i < edgeWindow && i < total; i++) {
+      pushTarget(pages[i]);
+    }
+    for (let i = 0; i < edgeWindow && i < total; i++) {
+      pushTarget(pages[total - 1 - i]);
+    }
+
+    for (const page of targets) {
+      if (page.sourceType === ImageSourceType.LOCAL) {
+        const localIndex = page.index !== undefined ? page.index : this.getPageIndexById(page.id);
+        this.triggerLocalImageLoad(page, chapterId, localIndex >= 0 ? localIndex : 0);
+      } else if (page.sourceType === ImageSourceType.NETWORK) {
+        this.queueWebtoonNetworkPageLoad(page, -1);
+      }
+    }
+  }
+
+  private prewarmBoundaryEdgePages(boundary: ChapterBoundary | undefined): void {
+    if (!boundary) {
+      return;
+    }
+    const pages: MangaPage[] = [];
+    for (let i = boundary.startIndex; i <= boundary.endIndex && i < this.webtoonDataItems.length; i++) {
+      const item = this.webtoonDataItems[i];
+      if (item && item.type === 'page' && item.page) {
+        pages.push(item.page);
+      }
+    }
+    this.prewarmPageListEdges(boundary.chapterId, pages);
+  }
+
+  private prewarmChapterObjectEdges(chapter: MangaChapter | undefined): void {
+    if (!chapter || !chapter.pages || chapter.pages.length === 0) {
+      return;
+    }
+    this.prewarmPageListEdges(chapter.id, chapter.pages);
+  }
+
+  private prewarmBoundaryContext(boundary: ChapterBoundary, boundaryIndex: number, nearStart: boolean, nearEnd: boolean): void {
+    this.prewarmBoundaryEdgePages(boundary);
+    if (nearStart && boundaryIndex > 0) {
+      this.prewarmBoundaryEdgePages(this.chapterBoundaries[boundaryIndex - 1]);
+    }
+    if (nearEnd && boundaryIndex < this.chapterBoundaries.length - 1) {
+      this.prewarmBoundaryEdgePages(this.chapterBoundaries[boundaryIndex + 1]);
+    }
+  }
+
+  private scheduleWebtoonChapterSwitchNotify(chapterId: string, chapterTitle: string, pageIndex: number): void {
+    if (!this.callbacks.onWebtoonChapterSwitch) {
+      return;
+    }
+    if (this.lastNotifiedWebtoonChapterId === chapterId && this.lastNotifiedWebtoonPageIndex === pageIndex) {
+      return;
+    }
+    if (this.pendingWebtoonSwitchNotifyTimer !== -1) {
+      clearTimeout(this.pendingWebtoonSwitchNotifyTimer);
+      this.pendingWebtoonSwitchNotifyTimer = -1;
+    }
+    const notifyDelay = this.isOnlineWebtoonContent() ? 180 : 90;
+    this.pendingWebtoonSwitchNotifyTimer = setTimeout(() => {
+      this.pendingWebtoonSwitchNotifyTimer = -1;
+      // 定时器触发时如果章节已变化，丢弃过期通知
+      if (this.currentChapterId !== chapterId) {
+        return;
+      }
+      if (this.lastNotifiedWebtoonChapterId === chapterId && this.lastNotifiedWebtoonPageIndex === pageIndex) {
+        return;
+      }
+      this.lastNotifiedWebtoonChapterId = chapterId;
+      this.lastNotifiedWebtoonPageIndex = pageIndex;
+      this.callbacks.onWebtoonChapterSwitch?.(chapterId, chapterTitle, pageIndex);
+    }, notifyDelay);
+  }
+
   /**
    * 更新当前显示的章节ID（根据滚动位置）
    * [修复] 当滚动到其他章节时，通知父组件更新当前章节和页码
@@ -8949,35 +9706,84 @@ export struct MangaViewer {
     const currentScrollY = this.scrollPosition;
     const containerHeight = this.screenHeight > 0 ? this.screenHeight : 800;
     const viewCenter = currentScrollY + containerHeight / 2;
+    const now = Date.now();
 
-    // 找到视图中心所在的章节
-    for (const boundary of this.chapterBoundaries) {
+    let matchedBoundary: ChapterBoundary | undefined;
+    let matchedBoundaryIndex = -1;
+    let matchedStartY = 0;
+    let matchedEndY = 0;
+
+    for (let i = 0; i < this.chapterBoundaries.length; i++) {
+      const boundary = this.chapterBoundaries[i];
       const chapterStartY = this.calculateWebtoonItemScrollPosition(boundary.startIndex);
       const chapterEndY = this.calculateWebtoonItemScrollPosition(boundary.endIndex + 1);
 
       if (viewCenter >= chapterStartY && viewCenter < chapterEndY) {
-        if (this.currentChapterId !== boundary.chapterId) {
-          const oldChapterId = this.currentChapterId;
-          this.currentChapterId = boundary.chapterId;
-          logger.info(TAG, `条漫章节切换: ${oldChapterId} -> ${boundary.chapterId}`);
-
-          // [修复] 当切换到其他章节时，通知父组件更新当前章节和页码
-          // 计算当前在新章节中的页码
-          const pageIndexInChapter = this.calculateCurrentPageInChapter(boundary, currentScrollY, containerHeight);
-          
-          // 获取章节标题
-          const chapterTitle = this.getChapterTitleById(boundary.chapterId);
-          
-          logger.info(TAG, `条漫章节切换通知: chapterId=${boundary.chapterId}, title=${chapterTitle}, pageIndex=${pageIndexInChapter}`);
-          
-          // 通知父组件
-          if (this.callbacks.onWebtoonChapterSwitch) {
-            this.callbacks.onWebtoonChapterSwitch(boundary.chapterId, chapterTitle, pageIndexInChapter);
-          }
-        }
+        matchedBoundary = boundary;
+        matchedBoundaryIndex = i;
+        matchedStartY = chapterStartY;
+        matchedEndY = chapterEndY;
         break;
       }
     }
+    if (!matchedBoundary) {
+      return;
+    }
+
+    const hysteresisPx = this.getWebtoonSwitchHysteresisPx(containerHeight);
+    const nearStart = Math.abs(viewCenter - matchedStartY) <= hysteresisPx;
+    const nearEnd = Math.abs(matchedEndY - viewCenter) <= hysteresisPx;
+    if (nearStart || nearEnd) {
+      this.markWebtoonBoundaryCacheProtection(containerHeight);
+      this.prewarmBoundaryContext(matchedBoundary, matchedBoundaryIndex, nearStart, nearEnd);
+    }
+
+    if (this.currentChapterId === matchedBoundary.chapterId) {
+      this.clearPendingWebtoonSwitchCandidate();
+      return;
+    }
+
+    const inwardDistance = Math.min(viewCenter - matchedStartY, matchedEndY - viewCenter);
+    const pageIndexInChapter = this.calculateCurrentPageInChapter(matchedBoundary, currentScrollY, containerHeight);
+
+    // 边界保护区：避免在章节分隔附近来回抖动触发切换
+    if (inwardDistance < hysteresisPx) {
+      if (this.pendingWebtoonChapterCandidateId !== matchedBoundary.chapterId) {
+        this.pendingWebtoonChapterCandidateId = matchedBoundary.chapterId;
+        this.pendingWebtoonChapterCandidateSince = now;
+      }
+      this.pendingWebtoonChapterCandidatePageIndex = pageIndexInChapter;
+      return;
+    }
+
+    if (this.pendingWebtoonChapterCandidateId !== matchedBoundary.chapterId) {
+      this.pendingWebtoonChapterCandidateId = matchedBoundary.chapterId;
+      this.pendingWebtoonChapterCandidateSince = now;
+      this.pendingWebtoonChapterCandidatePageIndex = pageIndexInChapter;
+      return;
+    }
+
+    if (now - this.pendingWebtoonChapterCandidateSince < this.getWebtoonSwitchStableMs()) {
+      this.pendingWebtoonChapterCandidatePageIndex = pageIndexInChapter;
+      return;
+    }
+
+    if (now - this.lastCommittedWebtoonChapterSwitchAt < this.getWebtoonSwitchCooldownMs()) {
+      return;
+    }
+
+    const stablePageIndex = this.pendingWebtoonChapterCandidatePageIndex;
+    const oldChapterId = this.currentChapterId;
+    this.currentChapterId = matchedBoundary.chapterId;
+    this.lastCommittedWebtoonChapterSwitchAt = now;
+    this.clearPendingWebtoonSwitchCandidate();
+    this.markWebtoonBoundaryCacheProtection(containerHeight);
+    this.prewarmBoundaryContext(matchedBoundary, matchedBoundaryIndex, true, true);
+    logger.info(TAG, `条漫章节切换: ${oldChapterId} -> ${matchedBoundary.chapterId}`);
+
+    const chapterTitle = this.getChapterTitleById(matchedBoundary.chapterId);
+    logger.info(TAG, `条漫章节切换通知: chapterId=${matchedBoundary.chapterId}, title=${chapterTitle}, pageIndex=${stablePageIndex}`);
+    this.scheduleWebtoonChapterSwitchNotify(matchedBoundary.chapterId, chapterTitle, stablePageIndex);
   }
 
   /**

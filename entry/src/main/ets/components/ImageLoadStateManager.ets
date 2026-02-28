@@ -109,15 +109,6 @@ export class ImageLoadStateManager {
       return;
     }
 
-    // 清除旧的PixelMap
-    if (state.pixelMap) {
-      try {
-        state.pixelMap.release();
-      } catch (e) {
-        logger.warn(TAG, `释放旧PixelMap失败: ${e}`);
-      }
-    }
-
     state.loadState = ImageLoadState.COMPLETED;
     state.pixelMap = pixelMap;
     state.loadEndTime = Date.now();
@@ -139,15 +130,8 @@ export class ImageLoadStateManager {
       return;
     }
 
-    // 清除PixelMap（关键！防止显示旧图片）
-    if (state.pixelMap) {
-      try {
-        state.pixelMap.release();
-      } catch (e) {
-        logger.warn(TAG, `释放PixelMap失败: ${e}`);
-      }
-      state.pixelMap = null;
-    }
+    // 仅清理引用，不释放对象，避免释放共享 PixelMap 导致其他缓存引用失效
+    state.pixelMap = null;
 
     state.loadState = ImageLoadState.ERROR;
     state.error = error;
@@ -219,15 +203,6 @@ export class ImageLoadStateManager {
    * 清除页面状态
    */
   clearPage(pageId: string): void {
-    const state = this.pageStates.get(pageId);
-    if (state && state.pixelMap) {
-      try {
-        state.pixelMap.release();
-      } catch (e) {
-        logger.warn(TAG, `释放PixelMap失败: ${e}`);
-      }
-    }
-
     this.pageStates.delete(pageId);
     this.pixelMaps.delete(pageId);
     this.loadStates.delete(pageId);
@@ -237,17 +212,6 @@ export class ImageLoadStateManager {
    * 清除所有状态
    */
   clearAll(): void {
-    // 释放所有PixelMap
-    this.pageStates.forEach(state => {
-      if (state.pixelMap) {
-        try {
-          state.pixelMap.release();
-        } catch (e) {
-          logger.warn(TAG, `释放PixelMap失败: ${e}`);
-        }
-      }
-    });
-
     this.pageStates.clear();
     this.pixelMaps.clear();
     this.loadStates.clear();
@@ -270,12 +234,7 @@ export class ImageLoadStateManager {
     toRemove.forEach(pageId => {
       const state = this.pageStates.get(pageId);
       if (state && state.pixelMap) {
-        try {
-          state.pixelMap.release();
-          cleanedCount++;
-        } catch (e) {
-          logger.warn(TAG, `释放PixelMap失败: ${e}`);
-        }
+        cleanedCount++;
         state.pixelMap = null;
         this.pixelMaps.delete(pageId);
       }

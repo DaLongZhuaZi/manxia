@@ -328,6 +328,8 @@ enum TabIndex {
   SETTINGS = 6
 }
 
+type TabletTopBarPosition = 'top' | 'bottom' | 'left' | 'right';
+
 /**
  * 书库内容类型枚举
  */
@@ -734,6 +736,7 @@ struct MainMenuPage {
   @State responsive_gridGap: number = 12; // 响应式网格间距
   @State responsive_contentPadding: number = 16; // 响应式内容边距
   @State responsive_isLandscape: boolean = false; // 是否横屏
+  @State useTopTabsNavigation: boolean = false; // 是否使用顶部标签导航（与底栏显示互斥）
   @State responsive_tabBarPosition: BarPosition = BarPosition.End; // 响应式标签栏位置
   @State responsive_tabBarVertical: boolean = false; // 响应式标签栏是否垂直
   @State responsive_homeGridColumns: number = 2; // 首页网格列数（横屏：SM=4, MD=6, LG=10）
@@ -744,6 +747,11 @@ struct MainMenuPage {
   private readonly BOTTOM_BAR_MARGIN_BOTTOM: number = 24;
   private readonly BOTTOM_BAR_MARGIN_LEFT: number = 12;
   private readonly BOTTOM_BAR_MARGIN_RIGHT: number = 12;
+  private readonly TABLET_TOP_BAR_HORIZONTAL_MARGIN: number = 16;
+  private readonly TABLET_TOP_BAR_VERTICAL_MARGIN: number = 8;
+  private readonly NORMAL_TOP_BAR_HEIGHT_WITH_MARGIN: number = 88;
+  private readonly TABLET_TOP_BAR_HEIGHT_WITH_MARGIN: number = 72;
+  private readonly TABLET_SIDE_BAR_WIDTH: number = 84;
   
   // 底栏跟手滑动相关状态
   @State private bottomBarOffsetY: number = 0; // 底栏 Y轴偏移量（0=显示，>0=隐藏）
@@ -800,6 +808,26 @@ struct MainMenuPage {
   }
 
   // 轮播内容数据 - 使用深色渐变背景，避免与主题蓝色融合
+  private isFoldableCollapsed(deviceInfo: DeviceInfo): boolean {
+    return deviceInfo.isFoldable && deviceInfo.foldStatus === FoldStatus.FOLDED;
+  }
+
+  private shouldUseTabletLandscapeTopNavigation(deviceInfo: DeviceInfo): boolean {
+    // 折叠屏：完全折叠=手机逻辑；展开/半折叠按位置分流（左/右=平板侧顶栏，上/下=手机逻辑）
+    if (deviceInfo.isFoldable) {
+      if (this.isFoldableCollapsed(deviceInfo)) {
+        return false;
+      }
+      const topBarPosition = this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
+      return topBarPosition === 'left' || topBarPosition === 'right';
+    }
+    if (this.forceTabletMode) {
+      return true;
+    }
+    // 平板设备仅在横屏使用顶部导航
+    return deviceInfo.isTablet && deviceInfo.isLandscape;
+  }
+
   private bannerData: Array<bannerData> = [
     {
       title: '欢迎使用漫匣',
@@ -833,6 +861,7 @@ struct MainMenuPage {
   @StorageLink('advanced_mode_enabled') @Watch('onAdvancedModeChanged') private advancedModeEnabled: boolean = true;
   @StorageProp('force_tablet_mode') private forceTabletMode: boolean = false;
   @StorageProp('force_landscape_mode') private forceLandscapeMode: boolean = false;
+  @StorageProp('main_menu_tablet_top_bar_position') @Watch('onTabletTopBarPositionChanged') private tabletTopBarPosition: string = 'left';
   // Bug 1 fix: onNewWant通知机制——解决app在前台时onPageShow不触发的问题
   @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
   // Bug 3 fix: 防止aboutToAppear/onPageShow/@Watch三路同时触发重复导入调度
@@ -1247,11 +1276,64 @@ struct MainMenuPage {
     }
   }
 
+  private normalizeTabletTopBarPosition(value: string): TabletTopBarPosition {
+    switch (value) {
+      case 'top':
+      case 'bottom':
+      case 'left':
+      case 'right':
+        return value;
+      default:
+        return 'top';
+    }
+  }
+
+  private getEffectiveTabletTopBarPosition(): TabletTopBarPosition {
+    if (!this.useTopTabsNavigation) {
+      return 'top';
+    }
+    return this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
+  }
+
+  private shouldReserveTopBarSpace(): boolean {
+    return this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'top';
+  }
+
+  private onTabletTopBarPositionChanged(): void {
+    const normalized = this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
+    if (normalized !== this.tabletTopBarPosition) {
+      this.tabletTopBarPosition = normalized;
+      return;
+    }
+    this.barRenderKey++;
+    logger.info(TAG, `平板顶栏位置已更新: ${normalized}, barRenderKey=${this.barRenderKey}`);
+  }
+
+  private getTabletTopNavigationLeftInset(): number {
+    if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'left') {
+      return 0;
+    }
+    return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2 - 4;
+  }
+
+  private getTabletTopNavigationRightInset(): number {
+    if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'right') {
+      return 0;
+    }
+    return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2 - 4;
+  }
+
+  private getTabletTopNavigationBottomInset(): number {
+    return 0;
+  }
+
   /**
    * 更新响应式布局参数
    */
   private updateResponsiveParams(): void {
     const deviceInfo = this.deviceManager.getDeviceInfo();
+    const shouldUseTabletLandscapeTopNavigation = this.shouldUseTabletLandscapeTopNavigation(deviceInfo);
+    const shouldUseLandscapeStyleLayout = deviceInfo.isLandscape || shouldUseTabletLandscapeTopNavigation;
     const layoutParams = this.forceTabletMode
       ? ResponsiveLayoutHelper.getLayoutParamsForBreakpoint(Breakpoint.MD)
       : ResponsiveLayoutHelper.getLayoutParams();
@@ -1259,11 +1341,15 @@ struct MainMenuPage {
     this.responsive_gridColumns = layoutParams.gridColumns;
     this.responsive_gridGap = layoutParams.gridGap;
     this.responsive_contentPadding = layoutParams.contentPadding;
-    this.responsive_isLandscape = deviceInfo.isLandscape;
+    // 折叠屏展开态按“平板横屏逻辑”处理，保证布局与动画分支一致
+    this.responsive_isLandscape = shouldUseLandscapeStyleLayout;
 
     // 根据断点和横屏状态设置各页面的网格列数
-    const breakpoint = this.forceTabletMode ? Breakpoint.MD : deviceInfo.breakpoint;
-    if (deviceInfo.isLandscape || this.forceTabletMode) {
+
+    const breakpoint = (this.forceTabletMode && !deviceInfo.isFoldable)
+      ? Breakpoint.MD
+      : deviceInfo.breakpoint;
+    if (shouldUseLandscapeStyleLayout) {
       // 横屏模式下的列数配置
       switch (breakpoint) {
         case Breakpoint.SM:
@@ -1294,13 +1380,17 @@ struct MainMenuPage {
       this.responsive_discoverGridColumns = 3; // 发现：竖屏3列
     }
 
-    // 平板模式或横屏大屏设备：顶栏固定在顶部
-    if (this.forceTabletMode) {
-      this.responsive_tabBarPosition = BarPosition.Start;
-      this.responsive_tabBarVertical = false;
-    } else if (deviceInfo.isLandscape && (deviceInfo.breakpoint === Breakpoint.MD || deviceInfo.breakpoint === Breakpoint.LG)) {
-      this.responsive_tabBarPosition = BarPosition.Start;
-      this.responsive_tabBarVertical = false;
+    // 统一导航模式判定：顶部标签导航与底栏导航互斥
+    const useTopTabsNavigation = shouldUseTabletLandscapeTopNavigation;
+    this.useTopTabsNavigation = useTopTabsNavigation;
+
+    if (useTopTabsNavigation) {
+      const topBarPosition = this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
+      const isVerticalTopBar = topBarPosition === 'left' || topBarPosition === 'right';
+      this.responsive_tabBarPosition = (topBarPosition === 'bottom' || topBarPosition === 'right')
+        ? BarPosition.End
+        : BarPosition.Start;
+      this.responsive_tabBarVertical = isVerticalTopBar;
     } else {
       this.responsive_tabBarPosition = BarPosition.End;
       this.responsive_tabBarVertical = false;
@@ -1377,6 +1467,60 @@ struct MainMenuPage {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     const w: number = deviceInfo.screenWidth - this.BOTTOM_BAR_MARGIN_LEFT - this.BOTTOM_BAR_MARGIN_RIGHT;
     return w > 0 ? w : 0;
+  }
+
+  private getMainContentTopInset(): number {
+    return 0;
+  }
+
+  private shouldApplyTopOverlayInitialInset(): boolean {
+    if (!this.useTopTabsNavigation) {
+      return true;
+    }
+    return this.getEffectiveTabletTopBarPosition() === 'top';
+  }
+
+  private getInitialTopOverlaySpacerHeight(): number {
+    if (!this.shouldApplyTopOverlayInitialInset()) {
+      return 0;
+    }
+    return this.useTopTabsNavigation
+      ? this.TABLET_TOP_BAR_HEIGHT_WITH_MARGIN
+      : this.NORMAL_TOP_BAR_HEIGHT_WITH_MARGIN;
+  }
+
+  private getFloatingTopBarY(): number {
+    return 0;
+  }
+
+  private getFloatingBottomTopBarY(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const y: number = deviceInfo.screenHeight
+      - this.navigationBarHeight
+      - this.TABLET_TOP_BAR_HEIGHT_WITH_MARGIN
+      - this.BOTTOM_BAR_MARGIN_BOTTOM;
+    return y > 0 ? y : 0;
+  }
+
+  private getFloatingLeftSideBarY(): number {
+    return 0;
+  }
+
+  private getFloatingRightSideBarX(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const sideBarTotalWidth: number = this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
+    const x: number = deviceInfo.screenWidth - sideBarTotalWidth;
+    return x > 0 ? x : 0;
+  }
+
+  private getFloatingSideBarHeight(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const h: number = deviceInfo.screenHeight
+      - this.navigationBarHeight
+      - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN
+      - this.BOTTOM_BAR_MARGIN_BOTTOM
+      - this.TABLET_TOP_BAR_VERTICAL_MARGIN;
+    return h > 0 ? h : deviceInfo.screenHeight;
   }
 
   // ==================== 动画控制器绑定方法 ====================
@@ -3075,9 +3219,6 @@ struct MainMenuPage {
                     const errMsg = event ? JSON.stringify(event) : 'unknown';
                     logger.warn(TAG, `[封面诊断] 首页电子书封面加载失败: id=${ebook.id}, path='${ebook.metadata?.coverImagePath}', normalized='${this.normalizeDisplayPathForEBook(ebook)}', error=${errMsg}`);
                   })
-                  .onComplete(() => {
-                    logger.info(TAG, `[封面诊断] 首页电子书封面加载成功: id=${ebook.id}`);
-                  })
                   .id(`cover_ebook_home_${ebook.id}`)
               }
             }
@@ -3207,20 +3348,6 @@ struct MainMenuPage {
       this.ebookList = ebookList.filter((e: EBook): boolean => e.isFavorite);
       this.pdfEbookList = pdfEbooks.filter((m: Manga): boolean => m.isFavorite);
       logger.info(TAG, `过滤后保留 ${this.ebookList.length} 本收藏电子书（总共 ${ebookList.length} 本），${this.pdfEbookList.length} 本收藏PDF（总共 ${pdfEbooks.length} 本）`);
-
-      // [诊断] 输出每本电子书的封面路径信息
-      for (const eb of ebookList) {
-        const coverPath = eb.metadata?.coverImagePath || '';
-        let fileExists = false;
-        if (coverPath.length > 0 && coverPath.startsWith('/')) {
-          try {
-            fileExists = fs.accessSync(coverPath);
-          } catch (e) {
-            fileExists = false;
-          }
-        }
-        logger.info(TAG, `[封面诊断] 电子书="${eb.metadata?.title}", id=${eb.id}, coverImagePath="${coverPath}", 路径长度=${coverPath.length}, 文件存在=${fileExists}`);
-      }
 
       this.applyEBookFilter(); // 应用筛选
 
@@ -5086,6 +5213,7 @@ struct MainMenuPage {
   private onAdvancedModeChanged(): void {
     logger.info(TAG, `高级模式变化: ${this.advancedModeEnabled}`);
     this.updateCachedVisibleTabConfigs();
+    this.ensureCurrentTabIsVisible(false);
   }
 
   /**
@@ -5898,19 +6026,16 @@ struct MainMenuPage {
   private normalizeDisplayPathForEBook(ebook: EBook): string {
     const raw: string = ebook && ebook.metadata && ebook.metadata.coverImagePath ? ebook.metadata.coverImagePath : '';
     if (raw.length === 0) {
-      logger.info(TAG, `[封面诊断] normalizeDisplayPathForEBook: coverImagePath为空, id=${ebook?.id}`);
       return '';
     }
 
     // [修复] 检查是否为资源引用字符串，返回空字符串让调用方使用默认资源
     if (raw.indexOf('app.media.') === 0 || raw.indexOf('$r(') === 0) {
-      logger.info(TAG, `[封面诊断] normalizeDisplayPathForEBook: 资源引用字符串, raw='${raw}', id=${ebook?.id}`);
       return '';
     }
 
     const hasScheme: boolean = raw.indexOf('file://') === 0 || raw.indexOf('http://') === 0 || raw.indexOf('https://') === 0;
     const result = hasScheme ? raw : 'file://' + raw;
-    logger.info(TAG, `[封面诊断] normalizeDisplayPathForEBook: raw='${raw}', result='${result}', id=${ebook?.id}`);
     return result;
   }
 
@@ -5919,9 +6044,7 @@ struct MainMenuPage {
    */
   private hasValidEBookCover(ebook: EBook): boolean {
     const raw = ebook?.metadata?.coverImagePath || '';
-    const valid = raw.length > 0;
-    logger.info(TAG, `[封面诊断] hasValidEBookCover: id=${ebook?.id}, raw='${raw}', valid=${valid}`);
-    return valid;
+    return raw.length > 0;
   }
 
   /**
@@ -5931,13 +6054,11 @@ struct MainMenuPage {
   private getEBookCoverSource(ebook: EBook): ResourceStr {
     const raw = ebook?.metadata?.coverImagePath || '';
     if (raw.length === 0) {
-      logger.info(TAG, `[封面诊断] getEBookCoverSource: 路径为空, 返回系统符号, id=${ebook?.id}`);
       return $r('sys.symbol.doc_plaintext_fill');
     }
 
     // 检查是否为应用资源路径 (app.media.xxx)
     if (raw.startsWith('app.media.')) {
-      logger.info(TAG, `[封面诊断] getEBookCoverSource: app.media资源, raw='${raw}', id=${ebook?.id}`);
       // 根据资源名称返回对应的资源引用
       const resourceName = raw.substring('app.media.'.length);
       if (resourceName === 'mangabook') {
@@ -5953,12 +6074,10 @@ struct MainMenuPage {
 
     // 本地文件路径
     if (raw.startsWith('/')) {
-      logger.info(TAG, `[封面诊断] getEBookCoverSource: 本地路径, raw='${raw}', result='file://${raw}', id=${ebook?.id}`);
       return `file://${raw}`;
     }
 
     // 已有协议前缀的路径直接返回
-    logger.info(TAG, `[封面诊断] getEBookCoverSource: 已有前缀, raw='${raw}', id=${ebook?.id}`);
     return raw;
   }
 
@@ -6054,79 +6173,147 @@ struct MainMenuPage {
    */
   @Builder
   buildTabletTopBar() {
-    Row({ space: 12 }) {
-      Text(this.getPageTitle())
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .layoutWeight(1)
+    Column() {
+      Row({ space: 12 }) {
+        Text(this.getPageTitle())
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
 
-      Row({ space: 8 }) {
-        // 平板横屏顶栏标签按钮（使用缓存数组避免无限渲染）
-        ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
-          this.buildTopBarInlineTabButton(cfg)
-        })
-      }
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(24)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-      }
-      .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        try {
-          this.pathStack.pushPath({ name: 'GlobalSearchPage' });
-          logger.info(TAG, '导航到全局搜索页面');
-        } catch (error) {
-          const message: string = error instanceof Error ? error.message : String(error);
-          logger.error(TAG, '导航到搜索页面失败', message);
-          this.showToast('打开搜索页面失败');
+        Row({ space: 8 }) {
+          // 平板横屏顶栏标签按钮（使用缓存数组避免无限渲染）
+          ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
+            this.buildTopBarInlineTabButton(cfg)
+          })
         }
-      })
 
-      Button() {
-        SymbolGlyph($r('sys.symbol.ellipsis_circle'))
-          .fontSize(24)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        // 隐私书库入口（与常规顶栏保持一致）
+        Button() {
+          SymbolGlyph($r('sys.symbol.key_shield_fill'))
+            .fontSize(22)
+            .fontColor([this.isPrivacyMode ?
+              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.handlePrivacyModeAuth();
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(24)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          try {
+            this.pathStack.pushPath({ name: 'GlobalSearchPage' });
+            logger.info(TAG, '导航到全局搜索页面');
+          } catch (error) {
+            const message: string = error instanceof Error ? error.message : String(error);
+            logger.error(TAG, '导航到搜索页面失败', message);
+            this.showToast('打开搜索页面失败');
+          }
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+            .fontSize(24)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(40)
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.showMoreOptions();
+        })
+
       }
-      .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.showMoreOptions();
+      .width('100%')
+      .height(56)
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'bottom'
+        ? Color.Transparent
+        : this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .opacity(this.getNavBarOpacity())
+      .shadow({
+        radius: this.getGlassRadius(),
+        color: this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'bottom'
+          ? 'rgba(0, 0, 0, 0)'
+          : this.getGlassShadowColor()
       })
-
+      .margin({ left: 12, right: 12 })
+      .animation({ duration: 300, curve: Curve.Smooth })
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 16, right: 16 })
-    .backgroundColor(this.getGlassBackground())
-    .backgroundBlurStyle(this.getGlassBlur())
-    .borderRadius(this.getGlassRadius())
-    .opacity(this.getNavBarOpacity())
-    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor() })
-    .margin({ left: 12, right: 12 })
-    .animation({ duration: 300, curve: Curve.Smooth })
+    .padding({
+      left: this.TABLET_TOP_BAR_HORIZONTAL_MARGIN,
+      right: this.TABLET_TOP_BAR_HORIZONTAL_MARGIN,
+      top: this.TABLET_TOP_BAR_VERTICAL_MARGIN,
+      bottom: this.TABLET_TOP_BAR_VERTICAL_MARGIN
+    })
+  }
+
+  @Builder
+  buildSharedTabIcon(config: TabConfig) {
+    Stack() {
+      if (config.useSystemIcon && config.systemIcon) {
+        if (config.hasMultiColor && this.currentTabIndex === config.index) {
+          SymbolGlyph(config.systemIcon)
+            .fontSize(24)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+            .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.currentTabIndex === config.index)
+        } else {
+          SymbolGlyph(config.systemIcon)
+            .fontSize(24)
+            .fontColor([this.currentTabIndex === config.index
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            .renderingStrategy(SymbolRenderingStrategy.SINGLE)
+            .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.currentTabIndex === config.index)
+        }
+      } else {
+        Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
+          .width(24)
+          .height(24)
+          .fillColor(this.currentTabIndex === config.index
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+
+      if (config.index === TabIndex.SOURCE && this.hasSourceUpdate) {
+        Circle()
+          .width(8)
+          .height(8)
+          .fill('#FF4444')
+          .position({ x: 16, y: 0 })
+      }
+    }
+    .width(24)
+    .height(24)
   }
 
   @Builder
   buildTopBarInlineTabButton(config: TabConfig) {
     Column({ space: 2 }) {
-      Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
-        .width(22)
-        .height(22)
-        .fillColor(this.currentTabIndex === config.index
-          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      this.buildSharedTabIcon(config)
 
       Text(config.title)
         .fontSize(11)
+        .fontFamily(this.appFontFamily)
         .fontColor(this.currentTabIndex === config.index
           ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
           : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -6138,6 +6325,122 @@ struct MainMenuPage {
     .height(44)
     .justifyContent(FlexAlign.Center)
     .onClick(() => { this.handleTabButtonClick(config.index) })
+  }
+
+  @Builder
+  buildTabletSideTabButton(config: TabConfig) {
+    Column({ space: 4 }) {
+      this.buildSharedTabIcon(config)
+      Text(config.title)
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.currentTabIndex === config.index
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
+        .maxLines(2)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 4, right: 4 })
+    .borderRadius(10)
+    .backgroundColor(this.currentTabIndex === config.index
+      ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+      : Color.Transparent)
+    .onClick(() => { this.handleTabButtonClick(config.index) })
+  }
+
+  @Builder
+  buildTabletSideBar() {
+    Column({ space: 6 }) {
+      Text(this.getPageTitle())
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .maxLines(2)
+        .textAlign(TextAlign.Center)
+
+      Divider()
+        .strokeWidth(1)
+        .color(ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
+
+      Column({ space: 4 }) {
+        ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
+          this.buildTabletSideTabButton(cfg)
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Start)
+
+      Column({ space: 4 }) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.key_shield_fill'))
+            .fontSize(20)
+            .fontColor([this.isPrivacyMode
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(34)
+        .height(34)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.handlePrivacyModeAuth();
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(34)
+        .height(34)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          try {
+            this.pathStack.pushPath({ name: 'GlobalSearchPage' });
+            logger.info(TAG, '导航到全局搜索页面');
+          } catch (error) {
+            const message: string = error instanceof Error ? error.message : String(error);
+            logger.error(TAG, '导航到搜索页面失败', message);
+            this.showToast('打开搜索页面失败');
+          }
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+            .fontSize(20)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(34)
+        .height(34)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.showMoreOptions();
+        })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width(this.TABLET_SIDE_BAR_WIDTH)
+    .height(this.getFloatingSideBarHeight())
+    .padding({ top: 8, bottom: 8, left: 8, right: 8 })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .opacity(this.getNavBarOpacity())
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor() })
+    .margin({
+      left: this.TABLET_TOP_BAR_HORIZONTAL_MARGIN,
+      right: this.TABLET_TOP_BAR_HORIZONTAL_MARGIN,
+      top: this.TABLET_TOP_BAR_HORIZONTAL_MARGIN,
+      bottom: 0
+    })
+    .animation({ duration: 300, curve: Curve.Smooth })
   }
 
   /**
@@ -6230,10 +6533,12 @@ struct MainMenuPage {
         Image($r('app.media.legado'))
           .width(50)
           .height(50)
+          .backgroundColor(Color.Transparent)
       }
       .width(50)
       .height(50)
       .justifyContent(FlexAlign.Center)
+      .backgroundColor(Color.Transparent)
       
       Column() {
         Text('小说阅读')
@@ -6276,6 +6581,7 @@ struct MainMenuPage {
       Image($r('app.media.legado'))
         .width(40)
         .height(40)
+        .backgroundColor(Color.Transparent)
       
       Text('小说阅读')
         .fontSize(14)
@@ -12304,18 +12610,12 @@ struct MainMenuPage {
                 const errMsg = event ? JSON.stringify(event) : 'unknown';
                 logger.warn(TAG, `[封面诊断] 列表卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getEBookCoverSource(ebook)}', error=${errMsg}`);
               })
-              .onComplete(() => {
-                logger.info(TAG, `[封面诊断] 列表卡片封面加载成功: id=${ebook.id}`);
-              })
           } else {
             Image(this.getEBookCoverSource(ebook))
               .width(50)
               .height(50)
               .objectFit(ImageFit.Cover)
               .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .onAppear(() => {
-                logger.info(TAG, `[封面诊断] 列表卡片走fallback分支(无封面): id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}'`);
-              })
           }
         }
         .width(80)
@@ -13107,18 +13407,12 @@ struct MainMenuPage {
                   const errMsg = event ? JSON.stringify(event) : 'unknown';
                   logger.warn(TAG, `[封面诊断] 网格卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getEBookCoverSource(ebook)}', error=${errMsg}`);
                 })
-                .onComplete(() => {
-                  logger.info(TAG, `[封面诊断] 网格卡片封面加载成功: id=${ebook.id}`);
-                })
             } else {
               Image(this.getEBookCoverSource(ebook))
                 .width(60)
                 .height(60)
                 .objectFit(ImageFit.Cover)
                 .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .onAppear(() => {
-                  logger.info(TAG, `[封面诊断] 网格卡片走fallback分支(无封面): id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}'`);
-                })
             }
           }
         .width('100%')
@@ -14389,7 +14683,7 @@ struct MainMenuPage {
     Column({ space: 0 }) {
       // 顶部避让空间（为顶部导航栏留出空间）
       // 平板设备顶栏高度约56vp，加上margin需要更多空间
-      Blank().height(this.deviceManager.isTabletOrLarger() ? 72 : 0)
+      Blank().height(this.getInitialTopOverlaySpacerHeight())
 
       // 搜索栏（横屏时减小高度和padding）
       // Row() {
@@ -15711,7 +16005,7 @@ struct MainMenuPage {
   buildBookSourceContent() {
     Column({ space: 0 }) {
       // 顶部避让空间（为顶部导航栏留出空间）
-      Blank().height(this.deviceManager.isTabletOrLarger() ? 72 : 0)
+      Blank().height(this.getInitialTopOverlaySpacerHeight())
 
       // 搜索栏
       Row({ space: 8 }) {
@@ -16065,7 +16359,7 @@ struct MainMenuPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         .borderRadius(20)
         .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.15)', offsetY: 2 })
-        .position({ x: '50%', y: 8 })
+        .position({ x: '50%', y: this.getInitialTopOverlaySpacerHeight() + 8 })
         .translate({ x: '-50%' })
         .opacity(this.bookSourceRefreshHintVisible ? 1 : 0)
         .transition(TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut }))
@@ -16642,6 +16936,7 @@ struct MainMenuPage {
       // 主内容区域
       Column() {
         // 顶部工具栏
+      Blank().height(this.getInitialTopOverlaySpacerHeight())
       Row({ space: 8 }) {
         Search({ value: this.suwayomiSearchQuery, placeholder: this.suwayomiBrowseMode === 'library' ? '搜索漫画...' : '搜索图源...' })
           .layoutWeight(1)
@@ -17127,7 +17422,7 @@ struct MainMenuPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         .borderRadius(20)
         .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.15)', offsetY: 2 })
-        .position({ x: '50%', y: 8 })
+        .position({ x: '50%', y: this.getInitialTopOverlaySpacerHeight() + 8 })
         .translate({ x: '-50%' })
         .opacity(this.suwayomiRefreshHintVisible ? 1 : 0)
         .transition(TransitionEffect.OPACITY.animation({ duration: 250, curve: Curve.EaseOut }))
@@ -18536,6 +18831,7 @@ struct MainMenuPage {
   buildSettingsContent() {
     Scroll() {
       Column({ space: 0 }) {
+        Blank().height(this.getInitialTopOverlaySpacerHeight())
         // 用户信息区域
         Row() {
           Image($r('app.media.avatar_256'))
@@ -19110,7 +19406,13 @@ struct MainMenuPage {
     if (tabIndex === TabIndex.HOME) {
       // 首页标签（支持下拉刷新）
       Refresh({ refreshing: $$this.isRefreshingHome }) {
-        Scroll() { this.buildHomeContent() }
+        Scroll() {
+          Column({ space: 0 }) {
+            Blank().height(this.getInitialTopOverlaySpacerHeight())
+            this.buildHomeContent()
+          }
+          .width('100%')
+        }
           .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
           .onScroll((_xOffset: number, yOffset: number) => {
             this.handleScrollForBottomBar(yOffset);
@@ -19129,7 +19431,13 @@ struct MainMenuPage {
     } else if (tabIndex === TabIndex.LIBRARY) {
       // 书库标签
       Refresh({ refreshing: this.isRefreshing }) {
-        Scroll() { this.buildLibraryContent() }
+        Scroll() {
+          Column({ space: 0 }) {
+            Blank().height(this.getInitialTopOverlaySpacerHeight())
+            this.buildLibraryContent()
+          }
+          .width('100%')
+        }
           .width('100%').height('100%').scrollBar(BarState.Off).backgroundColor(Color.Transparent)
           .onScroll((_xOffset: number, yOffset: number) => {
             this.handleScrollForBottomBar(yOffset);
@@ -19258,48 +19566,7 @@ struct MainMenuPage {
   @Builder
   buildTabItem(config: TabConfig) {
     Column({ space: 4 }) {
-      // 图标容器（用于显示红点）
-      Stack() {
-        if (config.useSystemIcon && config.systemIcon) {
-          // 使用系统图标（SymbolGlyph）
-          if (config.hasMultiColor && this.currentTabIndex === config.index) {
-            // 多色效果（仅在选中时）
-            SymbolGlyph(config.systemIcon)
-              .fontSize(24)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-              .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
-              .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.currentTabIndex === config.index)
-          } else {
-            // 单色效果或未选中
-            SymbolGlyph(config.systemIcon)
-              .fontSize(24)
-              .fontColor([this.currentTabIndex === config.index
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-              .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-              .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.currentTabIndex === config.index)
-          }
-        } else {
-          // 使用传统图标
-          Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
-            .width(24)
-            .height(24)
-            .fillColor(this.currentTabIndex === config.index
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        }
-        
-        // 图源标签的红点提示
-        if (config.index === TabIndex.SOURCE && this.hasSourceUpdate) {
-          Circle()
-            .width(8)
-            .height(8)
-            .fill('#FF4444')
-            .position({ x: 16, y: 0 })
-        }
-      }
-      .width(24)
-      .height(24)
+      this.buildSharedTabIcon(config)
 
       Text(config.title)
         .fontSize(this.responsive_tabBarVertical ? 10 : 12)
@@ -19343,6 +19610,9 @@ struct MainMenuPage {
    * 获取玻璃效果模糊样式（根据当前主题返回不同的模糊样式）
    */
   private getGlassBlur(): BlurStyle | undefined {
+    if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'bottom') {
+      return BlurStyle.BACKGROUND_THIN;
+    }
     // 使用StorageLink绑定的用户配置
     if (!this.userThemeBlurEnabled) {
       return undefined;
@@ -19494,7 +19764,7 @@ struct MainMenuPage {
   build() {
     Stack() {
     Navigation(this.pathStack) {
-      Stack() {
+      Stack({ alignContent: Alignment.TopStart }) {
         // 背景层 - 自动显示自定义主题背景或默认背景色
         GlobalBackgroundLayer({
           defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
@@ -19504,17 +19774,6 @@ struct MainMenuPage {
         Column() {
           // 顶部标题栏：平板横屏显示专用顶栏，其他设备显示默认顶栏
           // 使用barRenderKey触发重新渲染（屏幕方向或折叠状态变化时）
-          Column() {
-            if (this.deviceManager.isTabletOrLarger()) {
-              // 平板横屏专用顶栏
-              this.buildTabletTopBar()
-            } else {
-              // 其他设备默认顶栏
-              this.buildTopBar()
-            }
-          }
-          .key(`topBar_${this.barRenderKey}`)
-
           // 主要内容区域包装器 - 包含底部导航栏避让
           Column() {
             // 主要内容区域 - 使用Tabs动态渲染可见标签页
@@ -19600,15 +19859,67 @@ struct MainMenuPage {
           }
           .layoutWeight(1)
           .width('100%')
+          .padding({
+            top: this.getMainContentTopInset(),
+            left: this.getTabletTopNavigationLeftInset(),
+            right: this.getTabletTopNavigationRightInset(),
+            bottom: this.getTabletTopNavigationBottomInset()
+          })
 
         }
         .width('100%')
         .height('100%')
         .backgroundColor(Color.Transparent) // 透明背景以显示全局背景层
 
+        if (!this.useTopTabsNavigation) {
+          Column() {
+            this.buildTopBar()
+          }
+          .width('100%')
+          .position({ x: 0, y: this.getFloatingTopBarY() })
+          .zIndex(10)
+          .key(`topBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'top') {
+          Column() {
+            this.buildTabletTopBar()
+          }
+          .width('100%')
+          .position({ x: 0, y: this.getFloatingTopBarY() })
+          .zIndex(10)
+          .key(`tabletTopTopBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'bottom') {
+          Column() {
+            this.buildTabletTopBar()
+          }
+          .width('100%')
+          .position({ x: 0, y: this.getFloatingBottomTopBarY() })
+          .key(`tabletBottomTopBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'left') {
+          Column() {
+            this.buildTabletSideBar()
+          }
+          .position({ x: 0, y: this.getFloatingLeftSideBarY() })
+          .key(`tabletLeftTopBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'right') {
+          Column() {
+            this.buildTabletSideBar()
+          }
+          .position({ x: '100%', y: this.getFloatingLeftSideBarY() })
+          .translate({ x: -(this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2), y: 0 })
+          .key(`tabletRightTopBar_${this.barRenderKey}`)
+        }
+
         // 底栏：使用barRenderKey触发重新渲染（屏幕方向或折叠状态变化时）
         // 支持跟手滑动隐藏/显示
-        if (this.responsive_tabBarPosition === BarPosition.End) {
+        if (!this.useTopTabsNavigation) {
           Column() {
             this.buildHorizontalTabBar()
           }

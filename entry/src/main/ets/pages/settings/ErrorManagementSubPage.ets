@@ -17,13 +17,14 @@ import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
-import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount } from '../../Framework/Debug/ErrorRecordManager';
+import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount, CategoryCount } from '../../Framework/Debug/ErrorRecordManager';
 
 const TAG = 'ErrorManagementSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /** 过滤类型 */
 type FilterType = 'all' | 'runtime' | 'crash' | 'network';
+type CategoryFilterType = 'all' | 'network' | 'download' | 'storage' | 'data' | 'parser' | 'source' | 'webview' | 'auth' | 'sync' | 'ui' | 'system' | 'unknown';
 
 @Component
 export struct ErrorManagementSubPage {
@@ -49,8 +50,9 @@ export struct ErrorManagementSubPage {
   private errorRecordManager: ErrorRecordManager = ErrorRecordManager.getInstance();
   @State allRecords: ErrorRecord[] = [];
   @State filteredRecords: ErrorRecord[] = [];
-  @State summary: ErrorSummary = { total: 0, runtimeErrors: 0, crashes: 0, networkErrors: 0, topTags: [], firstTime: 0, lastTime: 0 };
+  @State summary: ErrorSummary = { total: 0, runtimeErrors: 0, crashes: 0, networkErrors: 0, categoryCounts: [], topTags: [], firstTime: 0, lastTime: 0 };
   @State filterType: FilterType = 'all';
+  @State categoryFilterType: CategoryFilterType = 'all';
   @State searchText: string = '';
 
   // 多选
@@ -127,6 +129,7 @@ export struct ErrorManagementSubPage {
 
   private applyFilter(): void {
     let records = this.allRecords;
+
     if (this.filterType === 'runtime') {
       records = records.filter((r: ErrorRecord) => r.source === ErrorSource.RUNTIME_ERROR);
     } else if (this.filterType === 'crash') {
@@ -134,14 +137,21 @@ export struct ErrorManagementSubPage {
     } else if (this.filterType === 'network') {
       records = records.filter((r: ErrorRecord) => r.source === ErrorSource.NETWORK_ERROR);
     }
+
+    if (this.categoryFilterType !== 'all') {
+      records = records.filter((r: ErrorRecord) => this.getRecordCategory(r) === this.categoryFilterType);
+    }
+
     if (this.searchText.length > 0) {
       const kw = this.searchText.toLowerCase();
       records = records.filter((r: ErrorRecord) =>
         r.message.toLowerCase().includes(kw) ||
         r.tag.toLowerCase().includes(kw) ||
-        r.timeStr.includes(kw)
+        r.timeStr.includes(kw) ||
+        this.getCategoryLabel(this.getRecordCategory(r)).toLowerCase().includes(kw)
       );
     }
+
     this.filteredRecords = records;
   }
 
@@ -251,7 +261,7 @@ export struct ErrorManagementSubPage {
       }
       fs.closeSync(src);
       fs.closeSync(dst);
-      logger.info(TAG, `错误报告已导出: ${targetUri}`);
+      logger.info(TAG, `错误报告已导出 ${targetUri}`);
     }
     fs.unlinkSync(tempPath);
   }
@@ -282,6 +292,66 @@ export struct ErrorManagementSubPage {
       return ThemeAwareHelper.getTestManagementThemedColor('button_purple', this.themeState.currentTheme);
     }
     return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+  }
+
+  private getRecordCategory(record: ErrorRecord): CategoryFilterType {
+    if (record.category) {
+      return record.category as CategoryFilterType;
+    }
+    if (record.source === ErrorSource.NETWORK_ERROR) {
+      return 'network';
+    }
+    if (record.source === ErrorSource.CRASH) {
+      return 'system';
+    }
+    return 'unknown';
+  }
+
+  private getCategoryLabel(category: CategoryFilterType): string {
+    switch (category) {
+      case 'network': return '网络';
+      case 'download': return '下载';
+      case 'storage': return '存储';
+      case 'data': return '数据';
+      case 'parser': return '解析';
+      case 'source': return '书源图源';
+      case 'webview': return 'WebView';
+      case 'auth': return '认证';
+      case 'sync': return '同步';
+      case 'ui': return '界面';
+      case 'system': return '系统';
+      case 'unknown': return '未分类';
+      default: return '全部';
+    }
+  }
+
+  private getCategoryColor(category: CategoryFilterType): ResourceColor {
+    switch (category) {
+      case 'network':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_purple', this.themeState.currentTheme);
+      case 'download':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme);
+      case 'storage':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_warning', this.themeState.currentTheme);
+      case 'data':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme);
+      case 'parser':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme);
+      case 'source':
+        return ThemeAwareHelper.getTestManagementThemedColor('brand', this.themeState.currentTheme);
+      case 'webview':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_info', this.themeState.currentTheme);
+      case 'auth':
+        return ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme);
+      case 'sync':
+        return ThemeAwareHelper.getTestManagementThemedColor('brand_secondary', this.themeState.currentTheme);
+      case 'ui':
+        return ThemeAwareHelper.getTestManagementThemedColor('accent_secondary', this.themeState.currentTheme);
+      case 'system':
+        return ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme);
+      default:
+        return ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme);
+    }
   }
 
   private themeColor(key: 'background' | 'text_primary' | 'text_secondary' | 'button_background' |
@@ -331,6 +401,29 @@ export struct ErrorManagementSubPage {
             .fontColor(this.themeColor('text_muted'))
         }
         .width('100%')
+
+        if (this.summary.categoryCounts.length > 0) {
+          Column({ space: 4 }) {
+            Text('分类分布')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.themeColor('text_secondary'))
+            Row({ space: 8 }) {
+              ForEach(this.summary.categoryCounts.slice(0, 4), (cc: CategoryCount) => {
+                Text(`${this.getCategoryLabel(cc.category as CategoryFilterType)} ${cc.count}`)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.themeColor('text_muted'))
+                  .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                  .backgroundColor(this.themeColor('comp_background_tertiary'))
+                  .borderRadius(6)
+              }, (cc: CategoryCount) => cc.category)
+            }
+            .width('100%')
+          }
+          .width('100%')
+        }
 
         if (this.summary.topTags.length > 0) {
           Column({ space: 4 }) {
@@ -407,7 +500,6 @@ export struct ErrorManagementSubPage {
   @Builder
   buildFilterBar() {
     Column({ space: 10 }) {
-      // 搜索框
       TextInput({ placeholder: '搜索错误信息...', text: this.searchText })
         .width('100%')
         .height(38)
@@ -415,7 +507,6 @@ export struct ErrorManagementSubPage {
         .borderRadius(8)
         .onChange((v: string) => { this.searchText = v; this.applyFilter(); })
 
-      // 过滤按钮行
       Row({ space: 8 }) {
         this.buildFilterBtn('全部', 'all')
         this.buildFilterBtn('运行时', 'runtime')
@@ -424,7 +515,6 @@ export struct ErrorManagementSubPage {
 
         Blank()
 
-        // 多选模式开关
         Button({ stateEffect: true }) {
           Text(this.isSelectMode ? '取消' : '选择')
             .fontSize(12)
@@ -441,6 +531,27 @@ export struct ErrorManagementSubPage {
             this.selectedIds = [];
           }
         })
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildCategoryFilterBtn('全部', 'all')
+        this.buildCategoryFilterBtn('网络', 'network')
+        this.buildCategoryFilterBtn('下载', 'download')
+        this.buildCategoryFilterBtn('存储', 'storage')
+        this.buildCategoryFilterBtn('数据', 'data')
+        this.buildCategoryFilterBtn('解析', 'parser')
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.buildCategoryFilterBtn('书源图源', 'source')
+        this.buildCategoryFilterBtn('WebView', 'webview')
+        this.buildCategoryFilterBtn('认证', 'auth')
+        this.buildCategoryFilterBtn('同步', 'sync')
+        this.buildCategoryFilterBtn('界面', 'ui')
+        this.buildCategoryFilterBtn('系统', 'system')
+        this.buildCategoryFilterBtn('未分类', 'unknown')
       }
       .width('100%')
     }
@@ -464,6 +575,25 @@ export struct ErrorManagementSubPage {
     )
     .borderRadius(6)
     .onClick(() => { this.filterType = type; this.applyFilter(); })
+  }
+
+  @Builder
+  buildCategoryFilterBtn(label: string, type: CategoryFilterType) {
+    Button({ stateEffect: true }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.themeColor('button_text_secondary'))
+    }
+    .height(28)
+    .padding({ left: 10, right: 10 })
+    .backgroundColor(
+      this.categoryFilterType === type
+        ? this.themeColor('brand_blue')
+        : this.themeColor('button_inactive')
+    )
+    .borderRadius(6)
+    .onClick(() => { this.categoryFilterType = type; this.applyFilter(); })
   }
 
   @Builder
@@ -577,6 +707,14 @@ export struct ErrorManagementSubPage {
           .fontColor(Color.White)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .backgroundColor(this.getSourceColor(record.source))
+          .borderRadius(4)
+
+        Text(this.getCategoryLabel(this.getRecordCategory(record)))
+          .fontSize(10)
+          .fontFamily(this.appFontFamily)
+          .fontColor(Color.White)
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .backgroundColor(this.getCategoryColor(this.getRecordCategory(record)))
           .borderRadius(4)
 
         // 级别

@@ -14,6 +14,7 @@
 #include <cstring>
 #include <regex>
 #include <iomanip>
+#include <cstdio>
 #include <hilog/log.h>
 
 #undef LOG_DOMAIN
@@ -114,6 +115,26 @@ static size_t readCallback(void* ptr, size_t size, size_t nmemb, void* userp) {
     return copySize;
 }
 
+// CURL文件读取回调（流式上传）
+static size_t fileReadCallback(void* ptr, size_t size, size_t nmemb, void* userp) {
+    FILE* file = static_cast<FILE*>(userp);
+    if (!file) {
+        return CURL_READFUNC_ABORT;
+    }
+    size_t readItems = fread(ptr, size, nmemb, file);
+    return readItems * size;
+}
+
+// CURL文件写入回调（流式下载）
+static size_t fileWriteCallback(void* ptr, size_t size, size_t nmemb, void* userp) {
+    FILE* file = static_cast<FILE*>(userp);
+    if (!file) {
+        return 0;
+    }
+    size_t writtenItems = fwrite(ptr, size, nmemb, file);
+    return writtenItems * size;
+}
+
 // CURL进度回调
 struct ProgressData {
     ProgressCallback callback;
@@ -149,6 +170,8 @@ public:
             // 设置超时
             curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, config.timeoutMs);
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, config.timeoutMs);
+            // 禁用信号，避免多线程/超时场景下崩溃风险
+            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
             
             // SSL验证
             if (!config.verifySSL) {
@@ -760,30 +783,36 @@ Result WebDAVClient::uploadFile(const std::string& localPath, const std::string&
                                 ProgressCallback progressCallback) {
     Result result;
     
-    // 读取本地文件
-    std::ifstream file(localPath, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
+    // 以流式方式读取本地文件，避免一次性载入内存导致OOM
+    FILE* file = fopen(localPath.c_str(), "rb");
+    if (!file) {
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to open local file";
         return result;
     }
-    
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    
-    std::vector<char> buffer(size);
-    if (!file.read(buffer.data(), size)) {
+
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
         result.success = false;
         result.statusCode = 0;
-        result.message = "Failed to read local file";
+        result.message = "Failed to seek local file";
         return result;
     }
-    file.close();
+    long fileSize = ftell(file);
+    if (fileSize < 0) {
+        fclose(file);
+        result.success = false;
+        result.statusCode = 0;
+        result.message = "Failed to get local file size";
+        return result;
+    }
+    rewind(file);
     
     // 上传
     CURL* curl = pImpl->createCurl();
     if (!curl) {
+        fclose(file);
         result.success = false;
         result.statusCode = 0;
         result.message = "Failed to initialize CURL";
@@ -794,20 +823,15 @@ Result WebDAVClient::uploadFile(const std::string& localPath, const std::string&
     struct curl_slist* headers = pImpl->createAuthHeaders();
     headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
     
-    ReadCallbackData readData;
-    readData.data = buffer.data();
-    readData.size = size;
-    readData.pos = 0;
-    
     ProgressData progressData;
     progressData.callback = progressCallback;
     
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-    curl_easy_setopt(curl, CURLOPT_READFUNCTION, readCallback);
-    curl_easy_setopt(curl, CURLOPT_READDATA, &readData);
-    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)size);
+    curl_easy_setopt(curl, CURLOPT_READFUNCTION, fileReadCallback);
+    curl_easy_setopt(curl, CURLOPT_READDATA, file);
+    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(fileSize));
     
     if (progressCallback) {
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, webdav::progressCallback);
@@ -816,6 +840,7 @@ Result WebDAVClient::uploadFile(const std::string& localPath, const std::string&
     }
     
     CURLcode res = curl_easy_perform(curl);
+    fclose(file);
     
     if (res != CURLE_OK) {
         result.success = false;
@@ -900,16 +925,24 @@ Result WebDAVClient::downloadFile(const std::string& remotePath, const std::stri
     }
     
     std::string url = getFullUrl(remotePath);
-    std::string response;
     struct curl_slist* headers = pImpl->createAuthHeaders();
+    FILE* file = fopen(localPath.c_str(), "wb");
+    if (!file) {
+        result.success = false;
+        result.statusCode = 0;
+        result.message = "Failed to open local file for write";
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return result;
+    }
     
     ProgressData progressData;
     progressData.callback = progressCallback;
     
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fileWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, file);
     
     if (progressCallback) {
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, webdav::progressCallback);
@@ -918,31 +951,25 @@ Result WebDAVClient::downloadFile(const std::string& remotePath, const std::stri
     }
     
     CURLcode res = curl_easy_perform(curl);
+    fclose(file);
     
     if (res != CURLE_OK) {
         result.success = false;
         result.statusCode = 0;
         result.message = curl_easy_strerror(res);
+        std::remove(localPath.c_str());
     } else {
         long httpCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
         result.statusCode = static_cast<int>(httpCode);
         
         if (httpCode == 200) {
-            // 写入本地文件
-            std::ofstream file(localPath, std::ios::binary);
-            if (file.is_open()) {
-                file.write(response.c_str(), response.size());
-                file.close();
-                result.success = true;
-                result.message = "Downloaded";
-            } else {
-                result.success = false;
-                result.message = "Failed to write local file";
-            }
+            result.success = true;
+            result.message = "Downloaded";
         } else {
             result.success = false;
             result.message = "Failed with status " + std::to_string(httpCode);
+            std::remove(localPath.c_str());
         }
     }
     
