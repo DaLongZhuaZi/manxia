@@ -396,6 +396,9 @@ export struct NovelReaderPage {
       if (settings.pageMargins.left === undefined || settings.pageMargins.left < 0) settings.pageMargins.left = 24;
       if (settings.pageMargins.right === undefined || settings.pageMargins.right < 0) settings.pageMargins.right = 24;
     }
+
+    if (settings.autoPageTurnEnabled === undefined) settings.autoPageTurnEnabled = false;
+    if (settings.autoPageTurnInterval === undefined || settings.autoPageTurnInterval <= 0) settings.autoPageTurnInterval = 8;
   }
 
   async loadContent(): Promise<void> {

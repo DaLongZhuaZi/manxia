@@ -1,14 +1,5 @@
-// 文件路径: src/main/ets/Framework/Debug/LogCollector.ets
-/**
- * 日志收集器
- * 用于收集和管理游戏内的日志输出
- */
- 
 import { LogLevel } from '../../Utils/Logger';
 
-/**
- * 日志条目接口
- */
 export interface LogEntry {
   id: number;
   timestamp: number;
@@ -16,12 +7,9 @@ export interface LogEntry {
   tag: string;
   message: string;
   args: (string | number | boolean)[];
-  details?: string; // 可选的详细信息
+  details?: string;
 }
 
-/**
- * 日志过滤器接口
- */
 export interface LogFilter {
   level?: LogLevel;
   tag?: string;
@@ -30,9 +18,6 @@ export interface LogFilter {
   endTime?: number;
 }
 
-/**
- * 日志统计接口
- */
 export interface LogStats {
   total: number;
   debug: number;
@@ -41,14 +26,15 @@ export interface LogStats {
   error: number;
 }
 
-/**
- * 日志收集器
- * 用于收集和管理游戏内的日志输出
- */
 export class LogCollector {
   private static instance: LogCollector;
+
+  // Ring buffer storage to avoid O(n) shift() on high-frequency logging.
   private logs: LogEntry[] = [];
-  private maxLogCount: number = 5000; // 最大日志条数（增大以支持错误上下文导出）
+  private maxLogCount: number = 5000;
+  private headIndex: number = 0;
+  private size: number = 0;
+
   private nextId: number = 1;
   private isEnabled: boolean = true;
   private listeners: ((entry: LogEntry) => void)[] = [];
@@ -62,9 +48,6 @@ export class LogCollector {
     return LogCollector.instance;
   }
 
-  /**
-   * 添加日志条目
-   */
   public addLog(level: LogLevel, tag: string, message: string, args: (string | number | boolean)[] = []): void {
     if (!this.isEnabled) {
       return;
@@ -79,115 +62,91 @@ export class LogCollector {
       args
     };
 
-    this.logs.push(entry);
-
-    // 限制日志数量
-    if (this.logs.length > this.maxLogCount) {
-      this.logs.shift();
-    }
-
-    // 通知监听器
+    this.pushEntry(entry);
     this.notifyListeners(entry);
   }
 
-  /**
-   * 获取所有日志
-   */
   public getAllLogs(): LogEntry[] {
-    const result: LogEntry[] = [];
-    for (let i = 0; i < this.logs.length; i++) {
-      result.push(this.logs[i]);
-    }
-    return result;
+    return this.getOrderedLogs();
   }
 
-  /**
-   * 根据过滤器获取日志
-   */
   public getFilteredLogs(filter: LogFilter): LogEntry[] {
+    const orderedLogs = this.getOrderedLogs();
     const result: LogEntry[] = [];
-    
-    for (let i = 0; i < this.logs.length; i++) {
-      const log: LogEntry = this.logs[i];
-      
-      // 级别过滤
+
+    const searchLower = filter.searchText ? filter.searchText.toLowerCase() : '';
+    const tagLower = filter.tag ? filter.tag.toLowerCase() : '';
+
+    for (let i = 0; i < orderedLogs.length; i++) {
+      const log = orderedLogs[i];
+
       if (filter.level !== undefined && log.level < filter.level) {
         continue;
       }
-      
-      // 标签过滤
-      if (filter.tag && !log.tag.toLowerCase().includes(filter.tag.toLowerCase())) {
+
+      if (tagLower.length > 0 && !log.tag.toLowerCase().includes(tagLower)) {
         continue;
       }
-      
-      // 搜索文本过滤
-      if (filter.searchText) {
-        const searchLower = filter.searchText.toLowerCase();
+
+      if (searchLower.length > 0) {
         const messageMatch = log.message.toLowerCase().includes(searchLower);
         const tagMatch = log.tag.toLowerCase().includes(searchLower);
         if (!messageMatch && !tagMatch) {
           continue;
         }
       }
-      
-      // 时间范围过滤
-      if (filter.startTime && log.timestamp < filter.startTime) {
+
+      if (filter.startTime !== undefined && log.timestamp < filter.startTime) {
         continue;
       }
-      if (filter.endTime && log.timestamp > filter.endTime) {
+      if (filter.endTime !== undefined && log.timestamp > filter.endTime) {
         continue;
       }
-      
+
       result.push(log);
     }
-    
+
     return result;
   }
 
-  /**
-   * 清空日志
-   */
   public clearLogs(): void {
     this.logs = [];
+    this.headIndex = 0;
+    this.size = 0;
     this.nextId = 1;
   }
 
-  /**
-   * 设置最大日志数量
-   */
   public setMaxLogCount(count: number): void {
-    this.maxLogCount = Math.max(100, count);
-    
-    // 如果当前日志数量超过新的限制，删除旧的日志
-    while (this.logs.length > this.maxLogCount) {
-      this.logs.shift();
+    const safeCount = Number.isFinite(count) ? Math.floor(count) : 100;
+    const normalizedCount = Math.max(100, safeCount);
+    if (normalizedCount === this.maxLogCount) {
+      return;
+    }
+
+    const oldLogs = this.getOrderedLogs();
+    this.maxLogCount = normalizedCount;
+    this.logs = [];
+    this.headIndex = 0;
+    this.size = 0;
+
+    const start = oldLogs.length > this.maxLogCount ? oldLogs.length - this.maxLogCount : 0;
+    for (let i = start; i < oldLogs.length; i++) {
+      this.pushEntry(oldLogs[i]);
     }
   }
 
-  /**
-   * 启用/禁用日志收集
-   */
   public setEnabled(enabled: boolean): void {
     this.isEnabled = enabled;
   }
 
-  /**
-   * 检查是否启用
-   */
   public isCollectorEnabled(): boolean {
     return this.isEnabled;
   }
 
-  /**
-   * 添加日志监听器
-   */
   public addListener(listener: (entry: LogEntry) => void): void {
     this.listeners.push(listener);
   }
 
-  /**
-   * 移除日志监听器
-   */
   public removeListener(listener: (entry: LogEntry) => void): void {
     const index = this.listeners.indexOf(listener);
     if (index >= 0) {
@@ -195,33 +154,18 @@ export class LogCollector {
     }
   }
 
-  /**
-   * 通知所有监听器
-   */
-  private notifyListeners(entry: LogEntry): void {
-    for (let i = 0; i < this.listeners.length; i++) {
-      try {
-        this.listeners[i](entry);
-      } catch (error) {
-        // 忽略监听器错误，避免影响日志收集
-      }
-    }
-  }
-
-  /**
-   * 获取日志统计信息
-   */
   public getLogStats(): LogStats {
+    const orderedLogs = this.getOrderedLogs();
     const stats: LogStats = {
-      total: this.logs.length,
+      total: orderedLogs.length,
       debug: 0,
       info: 0,
       warn: 0,
       error: 0
     };
 
-    for (let i = 0; i < this.logs.length; i++) {
-      const log: LogEntry = this.logs[i];
+    for (let i = 0; i < orderedLogs.length; i++) {
+      const log = orderedLogs[i];
       switch (log.level) {
         case LogLevel.DEBUG:
           stats.debug++;
@@ -240,7 +184,49 @@ export class LogCollector {
 
     return stats;
   }
+
+  private pushEntry(entry: LogEntry): void {
+    if (this.maxLogCount <= 0) {
+      return;
+    }
+
+    if (this.size < this.maxLogCount) {
+      const tailIndex = (this.headIndex + this.size) % this.maxLogCount;
+      this.logs[tailIndex] = entry;
+      this.size++;
+      return;
+    }
+
+    this.logs[this.headIndex] = entry;
+    this.headIndex = (this.headIndex + 1) % this.maxLogCount;
+  }
+
+  private getOrderedLogs(): LogEntry[] {
+    const result: LogEntry[] = [];
+    if (this.size === 0) {
+      return result;
+    }
+
+    for (let i = 0; i < this.size; i++) {
+      const index = (this.headIndex + i) % this.maxLogCount;
+      const log = this.logs[index];
+      if (log !== undefined) {
+        result.push(log);
+      }
+    }
+
+    return result;
+  }
+
+  private notifyListeners(entry: LogEntry): void {
+    for (let i = 0; i < this.listeners.length; i++) {
+      try {
+        this.listeners[i](entry);
+      } catch {
+        // Keep logging path resilient even if a listener fails.
+      }
+    }
+  }
 }
 
-// 导出单例实例
 export const logCollector = LogCollector.getInstance();

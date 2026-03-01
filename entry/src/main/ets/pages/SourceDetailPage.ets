@@ -3490,13 +3490,19 @@ export struct SourceDetailPage {
         .width('100%')
       }
       .width('90%')
+      .constraintSize({ maxWidth: 560, maxHeight: '86%' })
       .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-      .borderRadius(16)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(14)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+      .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
     .onClick(() => {
       this.showSearchDialog = false;
     })
@@ -3540,16 +3546,22 @@ export struct SourceDetailPage {
           })
       }
       .width('90%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-      .borderRadius(12)
+      .constraintSize({ maxWidth: 760, maxHeight: '90%' })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(14)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+      .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
       .onClick(() => {
         // 阻止事件冒泡，防止关闭对话框（通过空函数实现）
       })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#80000000')
+    .backgroundColor(Color.Transparent)
     .justifyContent(FlexAlign.Center)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
     .onClick(() => {
       // 点击背景关闭对话框
       this.showLoginDialog = false;
@@ -3622,17 +3634,23 @@ export struct SourceDetailPage {
             logger.info(TAG, 'CF验证页面加载完成');
           })
       }
-      .width('95%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
-      .borderRadius(12)
+      .width('90%')
+      .constraintSize({ maxWidth: 760, maxHeight: '90%' })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(14)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+      .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
       .onClick(() => {
         // 阻止事件冒泡
       })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#80000000')
+    .backgroundColor(Color.Transparent)
     .justifyContent(FlexAlign.Center)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   /**
@@ -3711,8 +3729,9 @@ export struct SourceDetailPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0, 0, 0, 0.5)')
+    .backgroundColor(Color.Transparent)
     .justifyContent(FlexAlign.Center)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
     .onClick(() => {
       // 点击背景不关闭对话框（需要用户主动取消）
     })
@@ -4278,7 +4297,7 @@ export struct SourceDetailPage {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor('#80000000')
+        .backgroundColor(Color.Transparent)
         .onClick(() => {
           this.showAmbiguousDialog = false;
         })
@@ -4341,8 +4360,12 @@ export struct SourceDetailPage {
     }
     .width('80%')
     .padding(24)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_primary', this.themeState.currentTheme))
-    .borderRadius(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(14)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
     .position({ x: '10%', y: '30%' })
   }
 

@@ -190,6 +190,8 @@ export struct TextReaderSettingsPanel {
       tapToTurn: this.settings.tapToTurn,
       volumeKeyNavigation: this.settings.volumeKeyNavigation,
       autoScrollSpeed: this.settings.autoScrollSpeed,
+      autoPageTurnEnabled: this.settings.autoPageTurnEnabled,
+      autoPageTurnInterval: this.settings.autoPageTurnInterval,
       curlBackOpacity: this.settings.curlBackOpacity
     };
     this.settings = newSettings;

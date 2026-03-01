@@ -61,7 +61,7 @@ export struct TextReaderComponent {
   /** 章节列表（可选） */
   @Prop chapters: TextChapter[] = [];
   /** 阅读设置 */
-  @Link settings: TextReaderSettings;
+  @Link @Watch('onSettingsChange') settings: TextReaderSettings;
   /** 当前章节索引 */
   @Link @Watch('onChapterIndexChange') currentChapterIndex: number;
   /** 当前页面索引 */
@@ -180,6 +180,14 @@ export struct TextReaderComponent {
   // ========== 滚动模式状态 ==========
   private scrollController: Scroller = new Scroller();
   @State private scrollOffset: number = 0;
+  private autoPageTurnTimer: number = -1;
+  private autoPageTurnBusy: boolean = false;
+  private isAutoScrollStepInProgress: boolean = false;
+  private autoScrollStepGuardTimer: number = -1;
+  private static readonly AUTO_SCROLL_STEP_RATIO: number = 0.85;
+  private static readonly AUTO_SCROLL_MIN_STEP_VP: number = 120;
+  private static readonly AUTO_SCROLL_MAX_STEP_VP: number = 720;
+  private static readonly AUTO_SCROLL_END_THRESHOLD_VP: number = 36;
   
   // ========== Canvas渲染上下文 ==========
   private renderingSettings: RenderingContextSettings = new RenderingContextSettings(true);
@@ -232,6 +240,7 @@ export struct TextReaderComponent {
     // 记录初始内容和章节索引
     this.lastContent = this.content;
     this.lastChapterIndex = this.currentChapterIndex;
+    this.syncAutoPageTurnState('component-appear');
   }
   
   /**
@@ -291,6 +300,7 @@ export struct TextReaderComponent {
       this.stopCurlAnimation();
       this.isAnimating = false;
       this.showCurlEffect = false;
+      this.clearAutoPageTurnTimer();
       
       // 异步分页
       this.paginateContentAsync();
@@ -396,7 +406,213 @@ export struct TextReaderComponent {
     if (this.currentChapterIndex !== this.lastChapterIndex) {
       logger.info(TAG, `章节索引变化: ${this.lastChapterIndex} -> ${this.currentChapterIndex}`);
       this.lastChapterIndex = this.currentChapterIndex;
+      this.clearAutoPageTurnTimer();
       // 章节变化时，页码会在 onContentChange 中重置
+    }
+  }
+
+  private onSettingsChange(): void {
+    this.syncAutoPageTurnState('settings-change');
+  }
+
+
+  private isAutoPageTurnActive(): boolean {
+    if (this.settings.autoPageTurnEnabled !== true) {
+      return false;
+    }
+    return this.getAutoPageTurnIntervalMs() > 0;
+  }
+
+  private getAutoPageTurnIntervalMs(): number {
+    const rawInterval = this.settings.autoPageTurnInterval;
+    if (typeof rawInterval !== 'number' || rawInterval <= 0) {
+      return 8000;
+    }
+    const seconds = Math.max(1, Math.min(60, Math.round(rawInterval)));
+    return seconds * 1000;
+  }
+
+  private clearAutoPageTurnTimer(): void {
+    if (this.autoPageTurnTimer !== -1) {
+      clearTimeout(this.autoPageTurnTimer);
+      this.autoPageTurnTimer = -1;
+    }
+  }
+
+  private clearAutoScrollStepGuard(): void {
+    if (this.autoScrollStepGuardTimer !== -1) {
+      clearTimeout(this.autoScrollStepGuardTimer);
+      this.autoScrollStepGuardTimer = -1;
+    }
+    this.isAutoScrollStepInProgress = false;
+  }
+
+  private syncAutoPageTurnState(reason: string): void {
+    if (!this.isAutoPageTurnActive()) {
+      this.clearAutoPageTurnTimer();
+      return;
+    }
+    this.scheduleAutoPageTurnTimer(reason);
+  }
+
+  private scheduleAutoPageTurnTimer(reason: string): void {
+    this.clearAutoPageTurnTimer();
+    if (!this.isAutoPageTurnActive()) {
+      return;
+    }
+    const intervalMs = this.getAutoPageTurnIntervalMs();
+    this.autoPageTurnTimer = setTimeout(() => {
+      this.autoPageTurnTimer = -1;
+      this.handleAutoPageTurnTick();
+    }, intervalMs);
+    logger.debug(TAG, `autoPageTurn scheduled: reason=${reason}, interval=${intervalMs}ms`);
+  }
+
+  private resetAutoPageTurnTimerForInteraction(reason: string): void {
+    if (!this.isAutoPageTurnActive()) {
+      return;
+    }
+    this.scheduleAutoPageTurnTimer(`interaction:${reason}`);
+  }
+
+  private trySwitchToNextChapterForAuto(): boolean {
+    if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
+      this.switchToNextChapter();
+      return true;
+    }
+    return false;
+  }
+
+  private getCurrentScrollOffsetY(): number {
+    try {
+      const offset = this.scrollController.currentOffset();
+      if (offset && typeof offset.yOffset === 'number' && Number.isFinite(offset.yOffset)) {
+        return Math.max(0, offset.yOffset);
+      }
+    } catch (_error) {
+      // ignore
+    }
+    return Math.max(0, this.scrollOffset);
+  }
+
+  private getEstimatedScrollEndOffsetY(): number {
+    const pageHeight = Math.max(1, this.contentAreaHeight);
+    return Math.max(0, (this.totalPages - 1) * pageHeight);
+  }
+
+  private getAutoScrollStepDistance(): number {
+    const baseDistance = this.contentAreaHeight * TextReaderComponent.AUTO_SCROLL_STEP_RATIO;
+    return Math.max(
+      TextReaderComponent.AUTO_SCROLL_MIN_STEP_VP,
+      Math.min(TextReaderComponent.AUTO_SCROLL_MAX_STEP_VP, baseDistance)
+    );
+  }
+
+  private getAutoScrollAnimationDurationMs(): number {
+    const intervalMs = this.getAutoPageTurnIntervalMs();
+    return Math.max(180, Math.min(1200, intervalMs - 120));
+  }
+
+  private markAutoScrollStepInProgress(durationMs: number): void {
+    this.isAutoScrollStepInProgress = true;
+    this.clearAutoScrollStepGuard();
+    const guardDuration = Math.max(220, durationMs + 80);
+    this.autoScrollStepGuardTimer = setTimeout(() => {
+      this.isAutoScrollStepInProgress = false;
+      this.autoScrollStepGuardTimer = -1;
+    }, guardDuration);
+  }
+
+  private performAutoScrollStep(): 'continue' | 'chapter-switch' | 'end' {
+    const currentOffsetY = this.getCurrentScrollOffsetY();
+    const stepDistance = this.getAutoScrollStepDistance();
+    const targetOffsetY = currentOffsetY + stepDistance;
+    const estimatedEndY = this.getEstimatedScrollEndOffsetY();
+    const endThreshold = Math.max(TextReaderComponent.AUTO_SCROLL_END_THRESHOLD_VP, stepDistance * 0.2);
+
+    if (estimatedEndY <= TextReaderComponent.AUTO_SCROLL_END_THRESHOLD_VP) {
+      if (this.trySwitchToNextChapterForAuto()) {
+        return 'chapter-switch';
+      }
+      logger.info(TAG, 'autoPageTurn reached end of book in scroll mode');
+      this.clearAutoPageTurnTimer();
+      return 'end';
+    }
+
+    if (estimatedEndY > 0 && targetOffsetY >= estimatedEndY - endThreshold) {
+      if (this.trySwitchToNextChapterForAuto()) {
+        return 'chapter-switch';
+      }
+      logger.info(TAG, 'autoPageTurn reached end of book in scroll mode');
+      this.clearAutoPageTurnTimer();
+      return 'end';
+    }
+
+    const animationDuration = this.getAutoScrollAnimationDurationMs();
+    this.markAutoScrollStepInProgress(animationDuration);
+    try {
+      this.scrollController.scrollTo({
+        xOffset: 0,
+        yOffset: targetOffsetY,
+        animation: { duration: animationDuration }
+      });
+    } catch (error) {
+      logger.warn(TAG, `auto scroll failed: ${String(error)}`);
+      this.clearAutoScrollStepGuard();
+    }
+    return 'continue';
+  }
+
+  private handleAutoPageTurnTick(): void {
+    if (!this.isAutoPageTurnActive()) {
+      this.clearAutoPageTurnTimer();
+      return;
+    }
+
+    if (this.autoPageTurnBusy) {
+      this.scheduleAutoPageTurnTimer('tick-busy');
+      return;
+    }
+
+    if (this.isPaginating || this.isLoading || this.isAnimating || this.isChapterTransition) {
+      this.scheduleAutoPageTurnTimer('reader-busy');
+      return;
+    }
+
+    if (this.totalPages <= 0) {
+      this.scheduleAutoPageTurnTimer('no-pages');
+      return;
+    }
+
+    this.autoPageTurnBusy = true;
+    try {
+      if (this.settings.readingMode === TextReadingMode.SCROLL) {
+        const scrollResult = this.performAutoScrollStep();
+        if (scrollResult === 'continue') {
+          this.scheduleAutoPageTurnTimer('auto-scroll-step');
+        }
+        return;
+      }
+
+      if (this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
+        const nextBase = this.dualPageBaseIndex + 2;
+        if (nextBase < this.totalPages) {
+          this.goToNextDualPage();
+        } else if (!this.trySwitchToNextChapterForAuto()) {
+          logger.info(TAG, 'autoPageTurn reached end of book in dual-page mode');
+          this.clearAutoPageTurnTimer();
+        }
+        return;
+      }
+
+      if (this.currentPageIndex < this.totalPages - 1) {
+        this.goToNextPage();
+      } else if (!this.trySwitchToNextChapterForAuto()) {
+        logger.info(TAG, 'autoPageTurn reached end of book in page mode');
+        this.clearAutoPageTurnTimer();
+      }
+    } finally {
+      this.autoPageTurnBusy = false;
     }
   }
 
@@ -446,6 +662,8 @@ export struct TextReaderComponent {
       clearTimeout(this.areaChangeDebounceTimer);
       this.areaChangeDebounceTimer = -1;
     }
+    this.clearAutoPageTurnTimer();
+    this.clearAutoScrollStepGuard();
   }
   
   /**
@@ -594,6 +812,7 @@ export struct TextReaderComponent {
       } else {
         this.goToPrevPage();
       }
+      this.resetAutoPageTurnTimerForInteraction('volume-key');
       return true;
     } else if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN) {
       logger.info(TAG, '音量键翻页: 下一页');
@@ -602,6 +821,7 @@ export struct TextReaderComponent {
       } else {
         this.goToNextPage();
       }
+      this.resetAutoPageTurnTimerForInteraction('volume-key');
       return true;
     }
     
@@ -1966,6 +2186,7 @@ export struct TextReaderComponent {
     
     // 预加载相邻页面的 PixelMap（用于卷页动画）
     this.preloadAdjacentPagePixelMaps();
+    this.syncAutoPageTurnState('notify-page-change');
   }
   
   // ========== 手势处理 ==========
@@ -2015,6 +2236,7 @@ export struct TextReaderComponent {
   private onTapSimple(): void {
     // 直接调用外部回调，不传递事件对象
     // TextReaderComponent 内部已经处理了点击区域判断，外部只需要知道"用户点击了中间区域"
+    this.resetAutoPageTurnTimerForInteraction('tap-center');
     this.onTapCenter();
   }
   
@@ -2031,6 +2253,7 @@ export struct TextReaderComponent {
     this.curlTouchY = event.fingerList[0]?.localY || event.offsetY;
     this.panStartTime = Date.now();
     this.isDragging = true;
+    this.resetAutoPageTurnTimerForInteraction('pan-start');
   }
   
   /**
@@ -3044,6 +3267,9 @@ export struct TextReaderComponent {
     .edgeEffect(EdgeEffect.Spring)
     .onScroll((xOffset: number, yOffset: number) => {
       this.scrollOffset += yOffset;
+      if (!this.isAutoScrollStepInProgress) {
+        this.resetAutoPageTurnTimerForInteraction('manual-scroll');
+      }
     })
   }
   

@@ -491,9 +491,9 @@ export class OnlineImageLoader {
         const msg = (error as Record<string, Object>)['message'];
         if (typeof msg === 'object') {
           try {
-            errMsg = JSON.stringify(msg);
+            errMsg = JSON.stringify(error as Object);
           } catch (e) {
-            errMsg = '[object Object]';
+            errMsg = String(error);
           }
         } else {
           errMsg = String(msg || error);
