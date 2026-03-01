@@ -20,6 +20,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { http } from '@kit.NetworkKit';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
@@ -32,6 +33,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
+import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { NovelSourceManagementPageParams, NovelSearchPageParams } from './NovelBookshelfPage';
 import { NovelSourceLoginPageParams } from './NovelSourceLoginPage';
 import { ValidationProgressDialog, ValidationProgressController, ValidationProgressInfo } from '../Framework/Components/ValidationProgressDialog';
@@ -48,6 +50,7 @@ const PRELOAD_THRESHOLD = 60;  // 预加载触发阈值（当显示到第60-70�
 const VALIDATION_CONCURRENCY_DEFAULT = 10;
 const VALIDATION_CONCURRENCY_MAX = 50;
 const VALIDATION_CONCURRENCY_OPTIONS: [number, number, number, number, number, number] = [10, 15, 20, 30, 40, 50];
+type ImportErrorValue = Object | string | number | boolean | null | undefined;
 
 /**
  * 书源操作菜单项
@@ -79,7 +82,9 @@ export struct NovelSourceManagementPage {
   @State filteredSources: NovelSourceInfo[] = [];
   @State isLoading: boolean = true;
   @State showImportDialog: boolean = false;
+  @State showImportUrlDialog: boolean = false;
   @State importText: string = '';
+  @State importUrl: string = '';
   @State isImporting: boolean = false;
   @State isValidating: boolean = false;
   @State validationProgress: string = '';
@@ -365,6 +370,10 @@ export struct NovelSourceManagementPage {
         // 导入对话框
         if (this.showImportDialog) {
           this.buildImportDialog()
+        }
+
+        if (this.showImportUrlDialog) {
+          this.buildImportUrlDialog()
         }
         
         // 操作加载遮罩层
@@ -795,13 +804,16 @@ export struct NovelSourceManagementPage {
       title: '导入书源',
       buttons: [
         { text: '从文件导入', color: $r('sys.color.ohos_id_color_text_primary') },
-        { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') }
+        { text: '从剪贴板导入', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '网络导入', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then((result: promptAction.ActionMenuSuccessResponse) => {
       if (result.index === 0) {
         this.importFromFile();
       } else if (result.index === 1) {
         this.showImportDialog = true;
+      } else if (result.index === 2) {
+        this.showImportUrlDialog = true;
       }
     }).catch(() => {});
   }
@@ -1072,15 +1084,19 @@ export struct NovelSourceManagementPage {
           .margin({ top: 16 })
       }
       .padding(32)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .shadow({ radius: 20, color: 'rgba(0,0,0,0.2)' })
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .borderRadius(14)
+      .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+      .shadow({ radius: 16, color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme), offsetY: 6 })
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor(Color.Transparent)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
   }
 
   @Builder
@@ -1533,64 +1549,60 @@ export struct NovelSourceManagementPage {
 
   @Builder
   buildImportDialog() {
-    Column() {
-      // 遮罩
-      Column()
-        .width('100%')
-        .layoutWeight(1)
-        .backgroundColor('rgba(0,0,0,0.5)')
-        .onClick(() => {
-          if (!this.isImporting) {
-            this.showImportDialog = false;
-          }
-        })
-      
-      // 对话框
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        if (!this.isImporting) {
+          this.showImportDialog = false;
+        }
+      }
+    }) {
       Column() {
         Text('导入书源')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-          .margin({ top: 20 })
-        
+
         Text('粘贴Legado书源JSON')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
           .margin({ top: 8 })
-        
+
         TextArea({ placeholder: '粘贴书源JSON...', text: this.importText })
           .width('100%')
           .height(200)
           .margin({ top: 16 })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .borderRadius(8)
           .onChange((value: string) => {
             this.importText = value;
           })
-        
+
         Row() {
           Button('从剪贴板粘贴')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-            .borderRadius(20)
+            .borderRadius(8)
+            .height(34)
             .layoutWeight(1)
             .margin({ right: 8 })
             .onClick(() => this.pasteFromClipboard())
-          
+
           Button(this.isImporting ? '导入中...' : '导入')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor('#FFFFFF')
-            .backgroundColor(this.isImporting ? 
-              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) : 
+            .backgroundColor(this.isImporting ?
+              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .borderRadius(20)
+            .borderRadius(8)
+            .height(34)
             .layoutWeight(1)
             .margin({ left: 8 })
             .enabled(!this.isImporting)
@@ -1598,28 +1610,95 @@ export struct NovelSourceManagementPage {
         }
         .width('100%')
         .margin({ top: 16 })
-        
+
         Button('取消')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-          .borderRadius(20)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+          .borderRadius(8)
+          .height(34)
           .width('100%')
-          .margin({ top: 12, bottom: 20 })
+          .margin({ top: 12 })
           .onClick(() => {
             this.showImportDialog = false;
             this.importText = '';
           })
       }
-      .width('90%')
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
-      .borderRadius(16)
-      .padding({ left: 20, right: 20 })
+      .width('100%')
     }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  buildImportUrlDialog() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        if (!this.isImporting) {
+          this.showImportUrlDialog = false;
+        }
+      }
+    }) {
+      Column() {
+        Text('网络导入书源')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+        Text('输入 JSON 链接，下载后按文件方式导入')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .margin({ top: 8 })
+
+        TextInput({ placeholder: '请输入 http/https 链接', text: this.importUrl })
+          .width('100%')
+          .height(44)
+          .margin({ top: 16 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .borderRadius(8)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.importUrl = value;
+          })
+
+        Row() {
+          Button('取消')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .borderRadius(8)
+            .height(34)
+            .layoutWeight(1)
+            .margin({ right: 8 })
+            .enabled(!this.isImporting)
+            .onClick(() => {
+              this.showImportUrlDialog = false;
+            })
+
+          Button(this.isImporting ? '导入中...' : '下载并导入')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor('#FFFFFF')
+            .backgroundColor(this.isImporting ?
+              ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme) :
+              ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .borderRadius(8)
+            .height(34)
+            .layoutWeight(1)
+            .margin({ left: 8 })
+            .enabled(!this.isImporting)
+            .onClick(() => this.importFromNetwork())
+        }
+        .width('100%')
+        .margin({ top: 20 })
+      }
+      .width('100%')
+    }
   }
 
   async pasteFromClipboard(): Promise<void> {
@@ -1642,6 +1721,195 @@ export struct NovelSourceManagementPage {
     await this.pasteFromClipboard();
     if (this.importText) {
       this.showImportDialog = true;
+    }
+  }
+
+  private resolveImportErrorText(error: ImportErrorValue): string {
+    if (error === undefined || error === null) {
+      return '未知错误';
+    }
+    if (typeof error === 'string' || typeof error === 'number' || typeof error === 'boolean') {
+      return String(error);
+    }
+    if (error instanceof Error) {
+      const message = error.message ? error.message.trim() : '';
+      if (message.length > 0) {
+        return message;
+      }
+      return error.name ? error.name : 'Error';
+    }
+
+    const objectError = error as Object;
+    const entries = Object.entries(objectError) as [string, Object][];
+    let message = '';
+    let code = '';
+    for (let i = 0; i < entries.length; i++) {
+      const key = entries[i][0];
+      const value = String(entries[i][1]);
+      if (message.length === 0 && (key === 'message' || key === 'msg' || key === 'error' || key === 'detail')) {
+        message = value;
+      }
+      if (code.length === 0 && (key === 'code' || key === 'statusCode' || key === 'status' || key === 'errno')) {
+        code = value;
+      }
+    }
+    if (message.length > 0 && code.length > 0) {
+      return `${message} (code=${code})`;
+    }
+    if (message.length > 0) {
+      return message;
+    }
+    if (code.length > 0) {
+      return `错误码 ${code}`;
+    }
+    try {
+      const fallback = JSON.stringify(objectError);
+      if (fallback && fallback.length > 0 && fallback !== '{}') {
+        return fallback;
+      }
+    } catch (_error) {
+    }
+    return String(objectError);
+  }
+
+  private isHttpUrl(url: string): boolean {
+    return /^https?:\/\/.+/i.test(url);
+  }
+
+  private async importSingleFilePath(fileUri: string, fileProcessed: number, fileCount: number): Promise<[number, number]> {
+    this.operatingMessage = `正在处理文件 ${fileProcessed}/${fileCount}...`;
+    logger.info(TAG, `处理文件 ${fileProcessed}/${fileCount}: ${fileUri}`);
+
+    const file: fs.File = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
+    try {
+      const stat: fs.Stat = fs.statSync(file.fd);
+      const fileSize: number = stat.size;
+      logger.info(TAG, `文件大小: ${fileSize} 字节`);
+
+      const maxBufferSize = 50 * 1024 * 1024;
+      const bufferSize = Math.min(fileSize, maxBufferSize);
+      const buffer = new ArrayBuffer(bufferSize);
+      const readLen: number = fs.readSync(file.fd, buffer);
+      if (readLen < fileSize) {
+        logger.warn(TAG, `文件过大，只读取了 ${readLen}/${fileSize} 字节`);
+      }
+      if (readLen <= 0) {
+        throw new Error('文件读取失败或内容为空');
+      }
+
+      const uint8Array = new Uint8Array(buffer, 0, readLen);
+      const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
+      const jsonContent = decoder.decode(uint8Array);
+
+      logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
+      this.operatingMessage = `正在导入文件 ${fileProcessed}/${fileCount} 的书源...`;
+
+      const results = await this.sourceManager.importFromJSON(jsonContent);
+      const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
+      const failCount = results.filter((r: LegadoSourceImportResult) => !r.success).length;
+      logger.info(TAG, `文件 ${fileProcessed} 导入完成: 成功${successCount}个, 失败${failCount}个`);
+      return [successCount, failCount];
+    } finally {
+      fs.closeSync(file);
+    }
+  }
+
+  async importFromNetwork(): Promise<void> {
+    const url = this.importUrl.trim();
+    if (url.length === 0) {
+      promptAction.showToast({ message: '请输入网络导入链接' });
+      return;
+    }
+    if (!this.isHttpUrl(url)) {
+      promptAction.showToast({ message: '链接格式不正确，请输入 http 或 https 链接' });
+      return;
+    }
+
+    let tempFilePath: string = '';
+    let request: http.HttpRequest | null = null;
+    this.isOperating = true;
+    this.isImporting = true;
+    this.operatingMessage = '正在下载网络书源...';
+
+    try {
+      logger.info(TAG, `开始网络导入书源: url=${url}`);
+      request = http.createHttp();
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000,
+        header: {
+          'Accept': 'application/json,text/plain,*/*'
+        }
+      });
+
+      const statusCode: number = response.responseCode;
+      if (statusCode < 200 || statusCode >= 300) {
+        throw new Error(`HTTP请求失败: ${statusCode}`);
+      }
+
+      const responseText = (response.result as string).trim();
+      if (responseText.length === 0) {
+        throw new Error('网络导入内容为空');
+      }
+      logger.info(TAG, `网络下载完成: status=${statusCode}, length=${responseText.length}`);
+
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!context || !context.cacheDir) {
+        throw new Error('无法获取应用缓存目录');
+      }
+
+      this.operatingMessage = '正在写入临时文件...';
+      tempFilePath = `${context.cacheDir}/novel_source_import_${Date.now()}.json`;
+      const tempFile = fs.openSync(tempFilePath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      try {
+        fs.writeSync(tempFile.fd, responseText);
+      } finally {
+        fs.closeSync(tempFile);
+      }
+      logger.info(TAG, `网络导入临时文件已写入: ${tempFilePath}`);
+
+      const result = await this.importSingleFilePath(tempFilePath, 1, 1);
+      const successCount = result[0];
+      const failCount = result[1];
+
+      this.showImportUrlDialog = false;
+      this.importUrl = '';
+      if (successCount > 0) {
+        this.loadSources();
+        promptAction.showToast({
+          message: `成功导入 ${successCount} 个书源${failCount > 0 ? `，${failCount} 个失败` : ''}`
+        });
+      } else {
+        promptAction.showToast({ message: '导入失败，请检查JSON内容' });
+      }
+      logger.info(TAG, `网络导入书源完成: 成功${successCount}个, 失败${failCount}个`);
+    } catch (error) {
+      const errorText = this.resolveImportErrorText(error as ImportErrorValue);
+      logger.error(TAG, `网络导入书源失败: ${errorText}`);
+      promptAction.showToast({ message: `网络导入失败: ${errorText}` });
+    } finally {
+      if (request) {
+        try {
+          request.destroy();
+        } catch (destroyError) {
+          logger.warn(TAG, `网络请求资源释放失败: ${this.resolveImportErrorText(destroyError as ImportErrorValue)}`);
+        }
+      }
+
+      if (tempFilePath.length > 0) {
+        try {
+          fs.unlinkSync(tempFilePath);
+          logger.info(TAG, `网络导入临时文件已删除: ${tempFilePath}`);
+        } catch (cleanupError) {
+          logger.warn(TAG, `网络导入临时文件删除失败: ${tempFilePath}, ${this.resolveImportErrorText(cleanupError as ImportErrorValue)}`);
+        }
+      }
+
+      this.isImporting = false;
+      this.isOperating = false;
+      this.operatingMessage = '';
     }
   }
 
@@ -1750,6 +2018,7 @@ export struct NovelSourceManagementPage {
       
       // 显示加载状态
       this.isOperating = true;
+      this.isImporting = true;
       this.operatingMessage = `正在读取 ${fileCount} 个文件...`;
       
       let totalSuccessCount = 0;
@@ -1759,49 +2028,13 @@ export struct NovelSourceManagementPage {
       // 逐个处理选中的文件
       for (const fileUri of selectResult) {
         fileProcessed++;
-        this.operatingMessage = `正在处理文件 ${fileProcessed}/${fileCount}...`;
-        logger.info(TAG, `处理文件 ${fileProcessed}/${fileCount}: ${fileUri}`);
-        
         try {
-          // 读取文件内容
-          const file: fs.File = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
-          const stat: fs.Stat = fs.statSync(file.fd);
-          const fileSize: number = stat.size;
-          logger.info(TAG, `文件大小: ${fileSize} 字节`);
-          
-          // 根据文件大小动态分配缓冲区（最大50MB）
-          const maxBufferSize = 50 * 1024 * 1024;
-          const bufferSize = Math.min(fileSize, maxBufferSize);
-          const buffer = new ArrayBuffer(bufferSize);
-          const readLen: number = fs.readSync(file.fd, buffer);
-          fs.closeSync(file);
-          
-          if (readLen < fileSize) {
-            logger.warn(TAG, `文件过大，只读取了 ${readLen}/${fileSize} 字节`);
-          }
-          
-          // 使用TextDecoder正确解码UTF-8
-          const uint8Array = new Uint8Array(buffer, 0, readLen);
-          const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
-          const jsonContent = decoder.decode(uint8Array);
-          
-          logger.debug(TAG, `读取到JSON内容，长度: ${jsonContent.length}`);
-          
-          // 更新加载状态
-          this.operatingMessage = `正在导入文件 ${fileProcessed}/${fileCount} 的书源...`;
-          
-          // 导入书源
-          const results = await this.sourceManager.importFromJSON(jsonContent);
-          
-          const successCount = results.filter((r: LegadoSourceImportResult) => r.success).length;
-          const failCount = results.filter((r: LegadoSourceImportResult) => !r.success).length;
-          
-          totalSuccessCount += successCount;
-          totalFailCount += failCount;
-          
-          logger.info(TAG, `文件 ${fileProcessed} 导入完成: 成功${successCount}个, 失败${failCount}个`);
+          const result = await this.importSingleFilePath(fileUri, fileProcessed, fileCount);
+          totalSuccessCount += result[0];
+          totalFailCount += result[1];
         } catch (fileError) {
-          logger.error(TAG, `处理文件 ${fileUri} 失败: ${String(fileError)}`);
+          totalFailCount++;
+          logger.error(TAG, `处理文件 ${fileUri} 失败: ${this.resolveImportErrorText(fileError as ImportErrorValue)}`);
           // 继续处理下一个文件
         }
       }
@@ -1823,10 +2056,12 @@ export struct NovelSourceManagementPage {
         logger.error(TAG, '书源导入失败: 没有成功导入任何书源');
       }
     } catch (error) {
-      logger.error(TAG, `从文件导入书源失败: ${String(error)}`);
-      promptAction.showToast({ message: '导入失败: ' + String(error) });
+      const errorText = this.resolveImportErrorText(error as ImportErrorValue);
+      logger.error(TAG, `从文件导入书源失败: ${errorText}`);
+      promptAction.showToast({ message: '导入失败: ' + errorText });
     }
     
+    this.isImporting = false;
     this.isOperating = false;
     this.operatingMessage = '';
   }

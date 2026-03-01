@@ -92,6 +92,10 @@ import { NovelSettingsPage } from './NovelSettingsPage';
 import { NovelSourceDebugPage } from './NovelSourceDebugPage';
 import { NovelTxtTocRulePage } from './NovelTxtTocRulePage';
 import { NovelDictRulePage } from './NovelDictRulePage';
+import { RssSubscriptionPage } from './RssSubscriptionPage';
+import { RssFavoritesPage } from './RssFavoritesPage';
+import { RssSubscriptionManagementPage } from './RssSubscriptionManagementPage';
+import { RssSourceDebugPage } from './RssSourceDebugPage';
 import { JsvmPlaygroundPage } from './JsvmPlaygroundPage';
 import { LifecycleMonitorPage } from './LifecycleMonitorPage';
 import { FileEditorPage, FileEditorParams } from './FileEditorPage';
@@ -15365,6 +15369,9 @@ struct MainMenuPage {
   @Builder
   buildSourceContent() {
     Column({ space: 0 }) {
+      // 顶部避让空间（为顶部导航栏留出空间）
+      Blank().height(this.getInitialTopOverlaySpacerHeight())
+
       // 搜索栏
       Row({ space: 8 }) {
         Search({ value: this.sourceSearchKeyword, placeholder: '可使用前缀格式 pixiv//id//作品ID' })
@@ -19341,6 +19348,14 @@ struct MainMenuPage {
       NovelSettingsPage()
     } else if (name === 'NovelSourceDebugPage') {
       NovelSourceDebugPage()
+    } else if (name === 'RssSubscriptionPage') {
+      RssSubscriptionPage()
+    } else if (name === 'RssFavoritesPage') {
+      RssFavoritesPage()
+    } else if (name === 'RssSubscriptionManagementPage') {
+      RssSubscriptionManagementPage()
+    } else if (name === 'RssSourceDebugPage') {
+      RssSourceDebugPage()
     } else if (name === 'NovelTxtTocRulePage') {
       NovelTxtTocRulePage()
     } else if (name === 'NovelDictRulePage') {

@@ -182,6 +182,10 @@ export interface TextReaderSettings {
   volumeKeyNavigation: boolean;
   /** 自动滚动速度（像素/秒） */
   autoScrollSpeed: number;
+  /** Auto page turn switch */
+  autoPageTurnEnabled?: boolean;
+  /** Auto page turn interval in seconds */
+  autoPageTurnInterval?: number;
   /** 卷页背面透明度（0-100） */
   curlBackOpacity: number;
 }
@@ -239,6 +243,8 @@ export const DEFAULT_TEXT_READER_SETTINGS: TextReaderSettings = {
   tapToTurn: true,
   volumeKeyNavigation: true,
   autoScrollSpeed: 50,
+  autoPageTurnEnabled: false,
+  autoPageTurnInterval: 8,
   curlBackOpacity: 90
 };
 

@@ -92,6 +92,34 @@ export struct NovelSettingsPage {
       route: 'NovelSourceManagementPage'
     },
     {
+      title: '订阅源',
+      subtitle: '查看 RSS 订阅内容',
+      icon: $r('sys.symbol.list_bullet'),
+      iconColor: '#009688',
+      route: 'RssSubscriptionPage'
+    },
+    {
+      title: 'RSS收藏',
+      subtitle: '查看已收藏的订阅条目',
+      icon: $r('sys.symbol.star'),
+      iconColor: '#FF9800',
+      route: 'RssFavoritesPage'
+    },
+    {
+      title: '订阅源管理',
+      subtitle: '新增、编辑、刷新 RSS 源',
+      icon: $r('sys.symbol.gearshape'),
+      iconColor: '#3F51B5',
+      route: 'RssSubscriptionManagementPage'
+    },
+    {
+      title: '订阅源调试',
+      subtitle: '调试订阅源解析与刷新流程',
+      icon: $r('sys.symbol.wrench_and_screwdriver'),
+      iconColor: '#5C6BC0',
+      route: 'RssSourceDebugPage'
+    },
+    {
       title: '替换净化规则',
       subtitle: '内容替换与净化',
       icon: $r('sys.symbol.arrow_left_arrow_right'),

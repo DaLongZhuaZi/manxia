@@ -7,6 +7,7 @@
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { SourceDialogScaffold } from '../Framework/Components/SourceDialogScaffold';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
@@ -64,6 +65,8 @@ export struct BookSourceManagementPage {
   @State importProgress: number = 0;           // 导入进度百分比 0-100
   @State importStage: string = '';             // 当前阶段描述
   @State importDetail: string = '';            // 详细进度信息
+  @State importCurrentCount: number = 0;
+  @State importTotalCount: number = 0;
   @State showProgressDialog: boolean = false;  // 是否显示进度对话框
   
   // 多选模式状态
@@ -379,6 +382,8 @@ export struct BookSourceManagementPage {
       this.showProgressDialog = true;
       this.importStage = '读取文件...';
       this.importProgress = 10;
+      this.importCurrentCount = 0;
+      this.importTotalCount = 0;
       
       const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
       const stat = fs.statSync(filePath);
@@ -422,6 +427,8 @@ export struct BookSourceManagementPage {
       this.importStage = '准备导入大文件...';
       this.importDetail = `文件大小: ${NovelSourceManager.formatFileSize(fileSize)}`;
       this.importProgress = 0;
+      this.importCurrentCount = 0;
+      this.importTotalCount = 0;
       
       const result = await this.sourceManager.importFromLargeFile(filePath, {
         onFileReadProgress: (percent, bytesRead, totalBytes) => {
@@ -431,13 +438,17 @@ export struct BookSourceManagementPage {
         },
         onParseProgress: (parsedCount, currentSourceName) => {
           this.importStage = '解析书源...';
-          this.importProgress = 30 + Math.min(parsedCount / 100, 30);  // 解析占30%
+          this.importProgress = Math.min(59, 30 + Math.floor(parsedCount / 10));  // 解析阶段平滑推进
           this.importDetail = `已解析: ${parsedCount} 个 - ${currentSourceName}`;
+          this.importCurrentCount = parsedCount;
+          this.importTotalCount = 0;
         },
         onImportProgress: (importedCount, totalCount, currentSourceName) => {
           this.importStage = '导入书源...';
           this.importProgress = 60 + Math.round((importedCount / totalCount) * 40);  // 导入占40%
           this.importDetail = `${importedCount} / ${totalCount} - ${currentSourceName}`;
+          this.importCurrentCount = importedCount;
+          this.importTotalCount = totalCount;
         },
         onStageChange: (stage) => {
           switch (stage) {
@@ -453,6 +464,9 @@ export struct BookSourceManagementPage {
             case 'complete':
               this.importStage = '导入完成！';
               this.importProgress = 100;
+              if (this.importTotalCount > 0) {
+                this.importCurrentCount = this.importTotalCount;
+              }
               break;
           }
         },
@@ -487,6 +501,8 @@ export struct BookSourceManagementPage {
     this.importProgress = 0;
     this.importStage = '';
     this.importDetail = '';
+    this.importCurrentCount = 0;
+    this.importTotalCount = 0;
   }
 
   /**
@@ -515,8 +531,17 @@ export struct BookSourceManagementPage {
   private async importSourcesFromJson(jsonStr: string): Promise<void> {
     try {
       this.isImporting = true;
-      
-      const results = await this.sourceManager.importFromJSON(jsonStr);
+
+      const results = await this.sourceManager.importFromJSONWithProgress(
+        jsonStr,
+        (current: number, total: number, sourceName: string) => {
+          this.importStage = '导入书源...';
+          this.importProgress = 50 + Math.round((current / Math.max(total, 1)) * 50);
+          this.importDetail = `${current} / ${total} - ${sourceName}`;
+          this.importCurrentCount = current;
+          this.importTotalCount = total;
+        }
+      );
       
       const successCount = results.filter(r => r.success).length;
       const failedCount = results.filter(r => !r.success).length;
@@ -856,31 +881,43 @@ export struct BookSourceManagementPage {
 
   @Builder
   buildImportDialog() {
-    Column() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      onMaskTap: () => {
+        this.showImportDialog = false;
+        this.importText = '';
+      }
+    }) {
       Column({ space: 16 }) {
         Text('导入书源')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
+
         TextArea({ placeholder: '粘贴书源JSON...', text: this.importText })
           .height(200)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(8)
           .onChange((value: string) => {
             this.importText = value;
           })
-        
+
         Row({ space: 12 }) {
           Button('取消')
             .layoutWeight(1)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
+            .height(34)
+            .borderRadius(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
             .onClick(() => {
               this.showImportDialog = false;
               this.importText = '';
             })
-          
+
           Button(this.isImporting ? '导入中...' : '确定')
             .layoutWeight(1)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .height(34)
+            .borderRadius(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .enabled(!this.isImporting)
             .onClick(async () => {
               await this.importSourcesFromJson(this.importText);
@@ -888,50 +925,47 @@ export struct BookSourceManagementPage {
         }
         .width('100%')
       }
-      .width('80%')
-      .padding(24)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(12)
+      .width('100%')
     }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('rgba(0, 0, 0, 0.5)')
-    .justifyContent(FlexAlign.Center)
-    .onClick(() => {
-      this.showImportDialog = false;
-      this.importText = '';
-    })
   }
 
   @Builder
   buildProgressDialog() {
-    Column() {
+    SourceDialogScaffold({
+      themeState: this.themeState,
+      closeOnMaskTap: false
+    }) {
       Column({ space: 20 }) {
-        // 标题
         Text('导入书源')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
-        // 阶段描述
+
         Text(this.importStage)
           .fontSize(16)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
-        // 进度条
+
         Progress({ value: this.importProgress, total: 100, type: ProgressType.Linear })
           .width('100%')
           .height(8)
-          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
-        
-        // 进度百分比
+
         Text(`${this.importProgress}%`)
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-        
-        // 详细信息
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+        if (this.importTotalCount > 0) {
+          Text(`书源进度: ${this.importCurrentCount} / ${this.importTotalCount}`)
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        } else if (this.importCurrentCount > 0) {
+          Text(`已处理: ${this.importCurrentCount}`)
+            .fontSize(13)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
+
         if (this.importDetail) {
           Text(this.importDetail)
             .fontSize(14)
@@ -940,23 +974,15 @@ export struct BookSourceManagementPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .textAlign(TextAlign.Center)
         }
-        
-        // 提示信息
+
         Text('正在处理大文件，请耐心等待...')
           .fontSize(12)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
           .margin({ top: 8 })
       }
-      .width('85%')
-      .padding(28)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
+      .width('100%')
       .alignItems(HorizontalAlign.Center)
     }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('rgba(0, 0, 0, 0.6)')
-    .justifyContent(FlexAlign.Center)
   }
 
   private showImportOptions(): void {

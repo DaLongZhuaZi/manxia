@@ -18,6 +18,9 @@ import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount, CategoryCount } from '../../Framework/Debug/ErrorRecordManager';
+import { getErrorMonitorService } from '../../Framework/Debug/ErrorMonitorService';
+import { getCrashRecorderService } from '../../Framework/Debug/CrashRecorderService';
+import { DownloadDirManager } from '../../Framework/Storage/DownloadDirManager';
 
 const TAG = 'ErrorManagementSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -25,6 +28,26 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 /** 过滤类型 */
 type FilterType = 'all' | 'runtime' | 'crash' | 'network';
 type CategoryFilterType = 'all' | 'network' | 'download' | 'storage' | 'data' | 'parser' | 'source' | 'webview' | 'auth' | 'sync' | 'ui' | 'system' | 'unknown';
+
+class KnownLogDirs {
+  errorLogsDir: string = '';
+  crashLogsDir: string = '';
+  downloadLogsDir: string = '';
+}
+
+class DeleteExecutionStats {
+  mode: string = 'range';
+  targetedRecords: number = 0;
+  targetedLogFileNames: number = 0;
+  attemptedDeletes: number = 0;
+  successfulDeletes: number = 0;
+  failedDeletes: number = 0;
+  errorLogsAttempts: number = 0;
+  crashLogsAttempts: number = 0;
+  downloadLogsAttempts: number = 0;
+  residualAttempts: number = 0;
+  failedSamples: string[] = [];
+}
 
 @Component
 export struct ErrorManagementSubPage {
@@ -64,6 +87,20 @@ export struct ErrorManagementSubPage {
 
   // 详情展开
   @State expandedId: string = '';
+  @State recordsListOpacity: number = 1;
+  @State recordsListScale: number = 1;
+  @State showClearRangePanel: boolean = false;
+  @State clearPanelOpacity: number = 0;
+  @State clearPanelScale: number = 0.92;
+  @State clearRangeMinTime: number = 0;
+  @State clearRangeMaxTime: number = 0;
+  @State clearRangeStartPercent: number = 0;
+  @State clearRangeEndPercent: number = 100;
+  @State clearRangeStartTime: number = 0;
+  @State clearRangeEndTime: number = 0;
+  @State clearRangeSelectedCount: number = 0;
+  @State isClearing: boolean = false;
+  private clearPanelCloseTimer: number = -1;
 
   onPageShow(): void {
     try {
@@ -90,6 +127,10 @@ export struct ErrorManagementSubPage {
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
+    if (this.clearPanelCloseTimer >= 0) {
+      clearTimeout(this.clearPanelCloseTimer);
+      this.clearPanelCloseTimer = -1;
+    }
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
@@ -183,8 +224,351 @@ export struct ErrorManagementSubPage {
   }
 
   private clearAll(): void {
-    this.errorRecordManager.clearAll();
-    this.loadData();
+    this.openClearRangePanel();
+  }
+
+  private openClearRangePanel(): void {
+    if (this.allRecords.length === 0 || this.isClearing) {
+      return;
+    }
+    if (this.clearPanelCloseTimer >= 0) {
+      clearTimeout(this.clearPanelCloseTimer);
+      this.clearPanelCloseTimer = -1;
+    }
+    let minTime = Number.MAX_SAFE_INTEGER;
+    let maxTime = 0;
+    for (let i = 0; i < this.allRecords.length; i++) {
+      const ts = this.allRecords[i].timestamp;
+      if (ts < minTime) {
+        minTime = ts;
+      }
+      if (ts > maxTime) {
+        maxTime = ts;
+      }
+    }
+    if (minTime === Number.MAX_SAFE_INTEGER) {
+      return;
+    }
+    if (minTime >= maxTime) {
+      const padding = 60 * 1000;
+      minTime = Math.max(0, minTime - padding);
+      maxTime = maxTime + padding;
+    }
+    this.clearRangeMinTime = minTime;
+    this.clearRangeMaxTime = maxTime;
+    this.clearRangeStartPercent = 0;
+    this.clearRangeEndPercent = 100;
+    this.clearRangeStartTime = minTime;
+    this.clearRangeEndTime = maxTime;
+    this.clearRangeSelectedCount = this.allRecords.length;
+    this.showClearRangePanel = true;
+    this.clearPanelOpacity = 0;
+    this.clearPanelScale = 0.92;
+    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.clearPanelOpacity = 1;
+      this.clearPanelScale = 1;
+    });
+  }
+
+  private closeClearRangePanel(): void {
+    if (this.clearPanelCloseTimer >= 0) {
+      clearTimeout(this.clearPanelCloseTimer);
+      this.clearPanelCloseTimer = -1;
+    }
+    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
+      this.clearPanelOpacity = 0;
+      this.clearPanelScale = 0.92;
+    });
+    this.clearPanelCloseTimer = setTimeout(() => {
+      this.showClearRangePanel = false;
+      this.clearPanelCloseTimer = -1;
+    }, 180);
+  }
+
+  private onClearRangeStartChange(value: number): void {
+    const safeValue = Math.max(0, Math.min(value, this.clearRangeEndPercent));
+    this.clearRangeStartPercent = safeValue;
+    this.updateClearRangeTimeByPercent();
+  }
+
+  private onClearRangeEndChange(value: number): void {
+    const safeValue = Math.min(100, Math.max(value, this.clearRangeStartPercent));
+    this.clearRangeEndPercent = safeValue;
+    this.updateClearRangeTimeByPercent();
+  }
+
+  private updateClearRangeTimeByPercent(): void {
+    this.clearRangeStartTime = this.percentToTimestamp(this.clearRangeStartPercent);
+    this.clearRangeEndTime = this.percentToTimestamp(this.clearRangeEndPercent);
+    this.clearRangeSelectedCount = this.getSelectedRangeDeleteCount();
+  }
+
+  private percentToTimestamp(percent: number): number {
+    const span = this.clearRangeMaxTime - this.clearRangeMinTime;
+    if (span <= 0) {
+      return this.clearRangeMinTime;
+    }
+    const safePercent = Math.max(0, Math.min(100, percent));
+    return Math.round(this.clearRangeMinTime + span * (safePercent / 100));
+  }
+
+  private isRecordInSelectedRange(timestamp: number): boolean {
+    return timestamp >= this.clearRangeStartTime && timestamp <= this.clearRangeEndTime;
+  }
+
+  private getSelectedRangeDeleteCount(): number {
+    let count = 0;
+    for (let i = 0; i < this.allRecords.length; i++) {
+      if (this.isRecordInSelectedRange(this.allRecords[i].timestamp)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private isFullRangeSelected(): boolean {
+    return this.clearRangeStartPercent <= 0 && this.clearRangeEndPercent >= 100;
+  }
+
+  private confirmClearByRange(): void {
+    if (this.isClearing) {
+      return;
+    }
+    const targetRecords = this.allRecords.filter((r: ErrorRecord) => this.isRecordInSelectedRange(r.timestamp));
+    if (targetRecords.length === 0) {
+      this.closeClearRangePanel();
+      return;
+    }
+    const deleteAll = targetRecords.length === this.allRecords.length || this.isFullRangeSelected();
+    logger.info(
+      TAG,
+      `开始删除错误日志 mode=${deleteAll ? 'full' : 'range'}, records=${targetRecords.length}, range=${this.formatFullTime(this.clearRangeStartTime)}~${this.formatFullTime(this.clearRangeEndTime)}`
+    );
+    this.isClearing = true;
+    this.closeClearRangePanel();
+
+    animateTo({ duration: 180, curve: Curve.EaseInOut }, () => {
+      this.recordsListOpacity = 0;
+      this.recordsListScale = 0.98;
+    });
+
+    setTimeout(() => {
+      try {
+        const deleteStats = this.applyRangeDelete(targetRecords, deleteAll);
+        this.logDeleteSummary(deleteStats);
+        this.selectedIds = [];
+        this.isSelectMode = false;
+        this.expandedId = '';
+        this.loadData();
+      } catch (error) {
+        logger.error(TAG, `按时间区间删除错误记录失败: ${String(error)}`);
+      }
+
+      this.recordsListOpacity = 0;
+      this.recordsListScale = 1.02;
+      animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.recordsListOpacity = 1;
+        this.recordsListScale = 1;
+      });
+      this.isClearing = false;
+    }, 190);
+  }
+
+  private applyRangeDelete(targetRecords: ErrorRecord[], deleteAll: boolean): DeleteExecutionStats {
+    const stats = new DeleteExecutionStats();
+    stats.mode = deleteAll ? 'full' : 'range';
+    stats.targetedRecords = targetRecords.length;
+    const fileNameSet: Set<string> = new Set<string>();
+    for (let i = 0; i < targetRecords.length; i++) {
+      const fileName = targetRecords[i].logFileName;
+      if (fileName && fileName.length > 0) {
+        fileNameSet.add(fileName);
+      }
+    }
+    stats.targetedLogFileNames = fileNameSet.size;
+
+    if (deleteAll) {
+      this.errorRecordManager.clearAll();
+    } else {
+      for (let i = 0; i < targetRecords.length; i++) {
+        this.errorRecordManager.deleteRecord(targetRecords[i].id);
+      }
+    }
+
+    this.deleteLogFilesByName(fileNameSet, stats);
+    if (deleteAll) {
+      this.deleteResidualLogFiles(stats);
+    }
+    return stats;
+  }
+
+  private deleteLogFilesByName(fileNameSet: Set<string>, stats: DeleteExecutionStats): void {
+    if (fileNameSet.size === 0) {
+      return;
+    }
+    const dirs = this.resolveKnownLogDirs();
+
+    fileNameSet.forEach((rawFileName: string) => {
+      const fileName = this.normalizeLogFileName(rawFileName);
+      if (!fileName) {
+        return;
+      }
+      if (dirs.errorLogsDir.length > 0) {
+        this.safeDeleteFile(`${dirs.errorLogsDir}/${fileName}`, stats, 'error_logs');
+      }
+      if (dirs.crashLogsDir.length > 0) {
+        this.safeDeleteFile(`${dirs.crashLogsDir}/${fileName}`, stats, 'crash_logs');
+      }
+      if (dirs.downloadLogsDir.length > 0) {
+        this.safeDeleteFile(`${dirs.downloadLogsDir}/${fileName}`, stats, 'download_logs');
+      }
+    });
+  }
+
+  private deleteResidualLogFiles(stats: DeleteExecutionStats): void {
+    const dirs = this.resolveKnownLogDirs();
+
+    if (dirs.errorLogsDir.length > 0) {
+      this.deleteFilesByMatcher(
+        dirs.errorLogsDir,
+        (name: string) => name.startsWith('error_') && name.endsWith('.txt'),
+        stats,
+        'residual_error_logs'
+      );
+    }
+    if (dirs.crashLogsDir.length > 0) {
+      this.deleteFilesByMatcher(
+        dirs.crashLogsDir,
+        (name: string) => name.startsWith('crash_') && name.endsWith('.txt'),
+        stats,
+        'residual_crash_logs'
+      );
+      this.safeDeleteFile(`${dirs.crashLogsDir}/last_crash_summary.json`, stats, 'residual_crash_logs');
+    }
+
+    if (dirs.downloadLogsDir.length > 0) {
+      this.deleteFilesByMatcher(
+        dirs.downloadLogsDir,
+        (name: string) => (name.startsWith('error_') || name.startsWith('crash_')) && name.endsWith('.txt'),
+        stats,
+        'residual_download_logs'
+      );
+    }
+  }
+
+  private resolveKnownLogDirs(): KnownLogDirs {
+    const filesDir = this.getSandboxFilesDir();
+    let errorLogsDir = getErrorMonitorService().getErrorLogsDir();
+    let crashLogsDir = getCrashRecorderService().getCrashLogsDir();
+    if (!errorLogsDir && filesDir.length > 0) {
+      errorLogsDir = `${filesDir}/error_logs`;
+    }
+    if (!crashLogsDir && filesDir.length > 0) {
+      crashLogsDir = `${filesDir}/crash_logs`;
+    }
+    const downloadDirManager = DownloadDirManager.getInstance();
+    const downloadLogsDir = downloadDirManager.isReady() ? `${downloadDirManager.getPath()}/logs` : '';
+    const dirs: KnownLogDirs = new KnownLogDirs();
+    dirs.errorLogsDir = errorLogsDir;
+    dirs.crashLogsDir = crashLogsDir;
+    dirs.downloadLogsDir = downloadLogsDir;
+    return dirs;
+  }
+
+  private getSandboxFilesDir(): string {
+    try {
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (context && context.filesDir) {
+        return context.filesDir;
+      }
+    } catch {
+      // ignore
+    }
+    return '';
+  }
+
+  private normalizeLogFileName(fileName: string): string {
+    if (!fileName) {
+      return '';
+    }
+    const normalized = fileName.replace(/\\/g, '/');
+    const parts = normalized.split('/');
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  private deleteFilesByMatcher(
+    dirPath: string,
+    matcher: (name: string) => boolean,
+    stats: DeleteExecutionStats,
+    scope: string
+  ): void {
+    if (!dirPath) {
+      return;
+    }
+    const files = this.safeListFiles(dirPath);
+    for (let i = 0; i < files.length; i++) {
+      const fileName = files[i];
+      if (matcher(fileName)) {
+        this.safeDeleteFile(`${dirPath}/${fileName}`, stats, scope);
+      }
+    }
+  }
+
+  private safeListFiles(dirPath: string): string[] {
+    if (!dirPath) {
+      return [];
+    }
+    try {
+      return fs.listFileSync(dirPath);
+    } catch {
+      return [];
+    }
+  }
+
+  private safeDeleteFile(filePath: string, stats: DeleteExecutionStats, scope: string): void {
+    if (!filePath) {
+      return;
+    }
+    this.increaseDeleteScopeCount(stats, scope);
+    stats.attemptedDeletes++;
+    try {
+      fs.unlinkSync(filePath);
+      stats.successfulDeletes++;
+    } catch (error) {
+      stats.failedDeletes++;
+      if (stats.failedSamples.length < 8) {
+        stats.failedSamples.push(`[${scope}] ${filePath} :: ${String(error)}`);
+      }
+    }
+  }
+
+  private increaseDeleteScopeCount(stats: DeleteExecutionStats, scope: string): void {
+    if (scope === 'error_logs') {
+      stats.errorLogsAttempts++;
+      return;
+    }
+    if (scope === 'crash_logs') {
+      stats.crashLogsAttempts++;
+      return;
+    }
+    if (scope === 'download_logs') {
+      stats.downloadLogsAttempts++;
+      return;
+    }
+    stats.residualAttempts++;
+  }
+
+  private logDeleteSummary(stats: DeleteExecutionStats): void {
+    logger.info(
+      TAG,
+      `删除完成 mode=${stats.mode}, records=${stats.targetedRecords}, mappedFiles=${stats.targetedLogFileNames}, attempt=${stats.attemptedDeletes}, success=${stats.successfulDeletes}, failed=${stats.failedDeletes}, scope(error=${stats.errorLogsAttempts},crash=${stats.crashLogsAttempts},download=${stats.downloadLogsAttempts},residual=${stats.residualAttempts})`
+    );
+    if (stats.failedDeletes > 0) {
+      logger.warn(
+        TAG,
+        `删除存在失败 failed=${stats.failedDeletes}, samples=${stats.failedSamples.length}: ${stats.failedSamples.join(' | ')}`
+      );
+    }
   }
 
   // ─── 导出 ───
@@ -276,6 +660,18 @@ export struct ErrorManagementSubPage {
     const h = d.getHours().toString().padStart(2, '0');
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${M}-${D} ${h}:${m}`;
+  }
+
+  private formatFullTime(ts: number): string {
+    if (ts === 0) return '-';
+    const d = new Date(ts);
+    const Y = d.getFullYear();
+    const M = (d.getMonth() + 1).toString().padStart(2, '0');
+    const D = d.getDate().toString().padStart(2, '0');
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
+    const s = d.getSeconds().toString().padStart(2, '0');
+    return `${Y}-${M}-${D} ${h}:${m}:${s}`;
   }
 
   private getSourceLabel(source: ErrorSource): string {
@@ -534,17 +930,13 @@ export struct ErrorManagementSubPage {
       }
       .width('100%')
 
-      Row({ space: 8 }) {
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
         this.buildCategoryFilterBtn('全部', 'all')
         this.buildCategoryFilterBtn('网络', 'network')
         this.buildCategoryFilterBtn('下载', 'download')
         this.buildCategoryFilterBtn('存储', 'storage')
         this.buildCategoryFilterBtn('数据', 'data')
         this.buildCategoryFilterBtn('解析', 'parser')
-      }
-      .width('100%')
-
-      Row({ space: 8 }) {
         this.buildCategoryFilterBtn('书源图源', 'source')
         this.buildCategoryFilterBtn('WebView', 'webview')
         this.buildCategoryFilterBtn('认证', 'auth')
@@ -593,6 +985,7 @@ export struct ErrorManagementSubPage {
         : this.themeColor('button_inactive')
     )
     .borderRadius(6)
+    .margin({ right: 8, bottom: 8 })
     .onClick(() => { this.categoryFilterType = type; this.applyFilter(); })
   }
 
@@ -671,7 +1064,7 @@ export struct ErrorManagementSubPage {
         .height(34)
         .backgroundColor(this.themeColor('button_danger'))
         .borderRadius(8)
-        .enabled(this.allRecords.length > 0)
+        .enabled(this.allRecords.length > 0 && !this.isClearing)
         .onClick(() => { this.clearAll(); })
       }
     }
@@ -859,6 +1252,155 @@ export struct ErrorManagementSubPage {
     .alignItems(HorizontalAlign.Center)
   }
 
+  @Builder
+  buildClearRangePanel() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .opacity(this.clearPanelOpacity)
+        .onClick(() => {
+          if (!this.isClearing) {
+            this.closeClearRangePanel();
+          }
+        })
+
+      Column({ space: 12 }) {
+        Text('删除错误日志')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.themeColor('text_primary'))
+          .width('100%')
+
+        Text('请选择起止时间区间，仅删除区间内的错误记录与对应的日志文件。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.themeColor('text_muted'))
+          .width('100%')
+
+        Row({ space: 8 }) {
+          Text(`起始: ${this.formatFullTime(this.clearRangeStartTime)}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.themeColor('text_secondary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(`结束: ${this.formatFullTime(this.clearRangeEndTime)}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.themeColor('text_secondary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textAlign(TextAlign.End)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+
+        Text(`将删除 ${this.clearRangeSelectedCount} 条错误记录`)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.themeColor('button_danger'))
+          .width('100%')
+
+        Column({ space: 6 }) {
+          Text('起始时间进度')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.themeColor('text_muted'))
+            .width('100%')
+          Slider({ value: this.clearRangeStartPercent, min: 0, max: 100, step: 1, style: SliderStyle.OutSet })
+            .blockColor(this.themeColor('accent_blue'))
+            .trackColor(this.themeColor('panel_border'))
+            .selectedColor(this.themeColor('accent_blue'))
+            .showTips(false)
+            .onChange((value: number, _mode: SliderChangeMode) => {
+              this.onClearRangeStartChange(value);
+            })
+            .width('100%')
+        }
+        .width('100%')
+
+        Column({ space: 6 }) {
+          Text('结束时间进度')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.themeColor('text_muted'))
+            .width('100%')
+          Slider({ value: this.clearRangeEndPercent, min: 0, max: 100, step: 1, style: SliderStyle.OutSet })
+            .blockColor(this.themeColor('button_danger'))
+            .trackColor(this.themeColor('panel_border'))
+            .selectedColor(this.themeColor('button_danger'))
+            .showTips(false)
+            .onChange((value: number, _mode: SliderChangeMode) => {
+              this.onClearRangeEndChange(value);
+            })
+            .width('100%')
+        }
+        .width('100%')
+
+        Row() {
+          Text(this.formatShortTime(this.clearRangeMinTime))
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.themeColor('text_tertiary'))
+            .layoutWeight(1)
+          Text(this.formatShortTime(this.clearRangeMaxTime))
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.themeColor('text_tertiary'))
+        }
+        .width('100%')
+
+        Row({ space: 10 }) {
+          Button({ stateEffect: true }) {
+            Text('取消')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.themeColor('button_text_secondary'))
+          }
+          .layoutWeight(1)
+          .height(34)
+          .backgroundColor(this.themeColor('button_inactive'))
+          .borderRadius(8)
+          .enabled(!this.isClearing)
+          .onClick(() => { this.closeClearRangePanel(); })
+
+          Button({ stateEffect: true }) {
+            Text(this.isClearing ? '删除中...' : '确认删除')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(this.themeColor('button_text_secondary'))
+          }
+          .layoutWeight(1)
+          .height(34)
+          .backgroundColor(this.themeColor('button_danger'))
+          .borderRadius(8)
+          .enabled(!this.isClearing && this.clearRangeSelectedCount > 0)
+          .onClick(() => { this.confirmClearByRange(); })
+        }
+        .width('100%')
+      }
+      .width('90%')
+      .constraintSize({ maxWidth: 560 })
+      .padding(16)
+      .backgroundColor(this.themeColor('panel_background'))
+      .borderRadius(14)
+      .border({ width: 1, color: this.themeColor('panel_border') })
+      .shadow({ radius: 16, color: this.themeColor('shadow_black'), offsetY: 6 })
+      .opacity(this.clearPanelOpacity)
+      .scale({ x: this.clearPanelScale, y: this.clearPanelScale })
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(3000)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
+      .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
+  }
+
   build() {
     HdsNavDestination() {
       Stack() {
@@ -881,23 +1423,29 @@ export struct ErrorManagementSubPage {
             // 操作按钮
             this.buildActionButtons()
 
-            // 错误列表
-            if (this.filteredRecords.length === 0) {
-              this.buildEmptyState()
-            } else {
-              Column({ space: 8 }) {
-                Text(`共 ${this.filteredRecords.length} 条`)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(this.themeColor('text_muted'))
-                  .width('100%')
+            // 错误列表（清空时淡出/淡入）
+            Column() {
+              if (this.filteredRecords.length === 0) {
+                this.buildEmptyState()
+              } else {
+                Column({ space: 8 }) {
+                  Text(`共 ${this.filteredRecords.length} 条`)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(this.themeColor('text_muted'))
+                    .width('100%')
 
-                ForEach(this.filteredRecords, (record: ErrorRecord) => {
-                  this.buildErrorItem(record)
-                }, (record: ErrorRecord) => record.id)
+                  ForEach(this.filteredRecords, (record: ErrorRecord) => {
+                    this.buildErrorItem(record)
+                  }, (record: ErrorRecord) => record.id)
+                }
+                .width('100%')
               }
-              .width('100%')
             }
+            .width('100%')
+            .opacity(this.recordsListOpacity)
+            .scale({ x: this.recordsListScale, y: this.recordsListScale })
+            .animation({ duration: 220, curve: Curve.EaseOut })
 
             Blank().height(40)
           }
@@ -910,6 +1458,10 @@ export struct ErrorManagementSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+
+        if (this.showClearRangePanel) {
+          this.buildClearRangePanel()
+        }
       }
     }
     .titleBar({

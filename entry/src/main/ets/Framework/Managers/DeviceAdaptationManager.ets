@@ -372,10 +372,14 @@ export class DeviceAdaptationManager {
     
     const density = this.displayObj.densityDPI / 160;
     const widthVp = this.displayObj.width / density;
-    
-    if (widthVp >= 1024) {
+    const heightVp = this.displayObj.height / density;
+    // Use short edge to avoid misclassifying landscape phones as tablets.
+    const shortSideVp = Math.min(widthVp, heightVp);
+    const longSideVp = Math.max(widthVp, heightVp);
+
+    if (shortSideVp >= 840 || longSideVp >= 1280) {
       return DeviceType.TWO_IN_ONE;
-    } else if (widthVp >= 600) {
+    } else if (shortSideVp >= 600) {
       return DeviceType.TABLET;
     } else {
       return DeviceType.PHONE;
@@ -464,7 +468,7 @@ export class DeviceAdaptationManager {
    */
   public isTabletOrLarger(): boolean {
     const info = this.getDeviceInfo();
-    return info.isTablet || info.isFoldable;
+    return info.isTablet || (info.isFoldable && info.foldStatus !== FoldStatus.FOLDED);
   }
 
   /**

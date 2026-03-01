@@ -154,6 +154,32 @@ export struct TextReadingSettingsPanel2 {
     }
   }
 
+  private getAutoPageTurnEnabled(): boolean {
+    return this.settings.autoPageTurnEnabled === true;
+  }
+
+  private getAutoPageTurnInterval(): number {
+    const rawInterval = this.settings.autoPageTurnInterval;
+    if (typeof rawInterval !== 'number' || rawInterval <= 0) {
+      return 8;
+    }
+    return Math.max(1, Math.min(60, Math.round(rawInterval)));
+  }
+
+  private setAutoPageTurnEnabled(enabled: boolean): void {
+    this.settings.autoPageTurnEnabled = enabled;
+    if (typeof this.settings.autoPageTurnInterval !== 'number' || this.settings.autoPageTurnInterval <= 0) {
+      this.settings.autoPageTurnInterval = 8;
+    }
+    this.notifyChange();
+  }
+
+  private setAutoPageTurnInterval(value: number): void {
+    const interval = Math.max(1, Math.min(60, Math.round(value)));
+    this.settings.autoPageTurnInterval = interval;
+    this.notifyChange();
+  }
+
   // ==================== 竖屏面板 ====================
   @Builder
   buildPortraitPanel() {
@@ -386,6 +412,49 @@ export struct TextReadingSettingsPanel2 {
       }
       .width('100%')
     }
+
+    Column({ space: 10 }) {
+      Text('自动翻页')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      Row() {
+        Text('启用自动翻页')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.getAutoPageTurnEnabled() })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.setAutoPageTurnEnabled(isOn);
+          })
+      }
+      .width('100%')
+
+      Text(`翻页间隔：${this.getAutoPageTurnInterval()} 秒`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      Slider({
+        value: this.getAutoPageTurnInterval(),
+        min: 1,
+        max: 60,
+        step: 1
+      })
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.End) {
+            this.setAutoPageTurnInterval(value);
+          }
+        })
+    }
+    .width('100%')
 
     Divider().color($r('app.color.divider'))
 
@@ -625,6 +694,53 @@ export struct TextReadingSettingsPanel2 {
       }
       .width('100%')
     }
+
+    Column() {
+      Text('自动翻页')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      Row() {
+        Text('启用')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.getAutoPageTurnEnabled() })
+          .selectedColor($r('app.color.accent'))
+          .onChange((isOn: boolean) => {
+            this.setAutoPageTurnEnabled(isOn);
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 6 })
+
+      Text(`${this.getAutoPageTurnInterval()} 秒/次`)
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+
+      Slider({
+        value: this.getAutoPageTurnInterval(),
+        min: 1,
+        max: 60,
+        step: 1
+      })
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.End) {
+            this.setAutoPageTurnInterval(value);
+          }
+        })
+    }
+    .width('100%')
 
     Divider().color($r('app.color.divider'))
 

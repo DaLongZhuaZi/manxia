@@ -26,6 +26,41 @@ export struct AvifImage {
   @State private isAvif: boolean = false;
   
   private currentSrc: string = '';
+
+  private resolveErrorText(error: Object | string | number | boolean | null | undefined): string {
+    if (error === undefined || error === null) {
+      return '未知错误';
+    }
+    if (typeof error === 'string' || typeof error === 'number' || typeof error === 'boolean') {
+      return String(error);
+    }
+    if (error instanceof Error) {
+      const message = error.message ? error.message.trim() : '';
+      if (message.length > 0) {
+        return message;
+      }
+    }
+    const objectError = error as Object;
+    const messageValue = (objectError as Record<string, Object>)['message'];
+    if (messageValue !== undefined && messageValue !== null) {
+      const messageText = String(messageValue).trim();
+      if (messageText.length > 0 && messageText !== '[object Object]') {
+        return messageText;
+      }
+    }
+    const codeValue = (objectError as Record<string, Object>)['code'];
+    if (codeValue !== undefined && codeValue !== null) {
+      return `错误码 ${String(codeValue)}`;
+    }
+    try {
+      const jsonText = JSON.stringify(objectError);
+      if (jsonText && jsonText.length > 0 && jsonText !== '{}') {
+        return jsonText;
+      }
+    } catch (_error) {
+    }
+    return String(error);
+  }
   
   aboutToAppear() {
     this.loadImage();
@@ -72,7 +107,9 @@ export struct AvifImage {
       // 下载图片数据
       const buffer = await this.downloadImage(this.src);
       if (!buffer) {
-        this.loadError = true;
+        logger.warn(TAG, `图片下载失败，回退系统 Image 组件加载: ${this.src.substring(0, 80)}...`);
+        this.loadError = false;
+        this.isAvif = false;
         this.isLoading = false;
         return;
       }
@@ -102,11 +139,14 @@ export struct AvifImage {
       }
       
       if (!this.pixelMap) {
-        this.loadError = true;
+        logger.warn(TAG, `图片解码失败，回退系统 Image 组件渲染: ${this.src.substring(0, 80)}...`);
+        this.loadError = false;
+        this.isAvif = false;
       }
     } catch (e) {
-      logger.error(TAG, `加载图片失败: ${e}`);
-      this.loadError = true;
+      logger.error(TAG, `加载图片失败: ${this.resolveErrorText(e as Object | string | number | boolean | null | undefined)}`);
+      this.loadError = false;
+      this.isAvif = false;
     } finally {
       this.isLoading = false;
     }
@@ -136,7 +176,7 @@ export struct AvifImage {
       logger.warn(TAG, `下载图片失败: HTTP ${response.responseCode}`);
       return null;
     } catch (e) {
-      logger.error(TAG, `下载图片异常: ${e}`);
+      logger.error(TAG, `下载图片异常: ${this.resolveErrorText(e as Object | string | number | boolean | null | undefined)}`);
       return null;
     }
   }
@@ -148,7 +188,7 @@ export struct AvifImage {
       imageSource.release();
       return pixelMap;
     } catch (e) {
-      logger.error(TAG, `系统解码失败: ${e}`);
+      logger.error(TAG, `系统解码失败: ${this.resolveErrorText(e as Object | string | number | boolean | null | undefined)}`);
       return null;
     }
   }

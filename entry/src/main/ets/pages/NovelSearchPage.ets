@@ -1509,22 +1509,25 @@ export struct NovelSearchPage {
       .width('90%')
       .constraintSize({ maxWidth: 480, maxHeight: '85%' })
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-      .borderRadius(16)
+      .borderRadius(14)
+      .border({
+        width: 1,
+        color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      })
       .shadow({
-        radius: 20,
-        color: 'rgba(0, 0, 0, 0.3)',
-        offsetX: 0,
-        offsetY: 4
+        radius: 16,
+        color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme),
+        offsetY: 6
       })
       .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut })
-        .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }).animation({ duration: 200, curve: Curve.EaseOut })))
+        .combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }).animation({ duration: 200, curve: Curve.EaseOut })))
       .onClick(() => {})  // 阻止点击事件冒泡
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0, 0, 0, 0.5)')
+    .backgroundColor(Color.Transparent)
     .justifyContent(FlexAlign.Center)
-    .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseOut }))
+    .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
     .onClick(() => {
       this.showSourceSelector = false;
     })

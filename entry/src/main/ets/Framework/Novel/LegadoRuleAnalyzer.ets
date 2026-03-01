@@ -240,6 +240,8 @@ class LegadoRuleChainAnalyzer {
  * 负责解析Legado规则语法并从内容中提取数据
  */
 export class LegadoRuleAnalyzer {
+  // Hot-path selector tracing is disabled by default to prevent UI thread stalls.
+  private static readonly ENABLE_SELECTOR_TRACE: boolean = false;
   private content: string = '';
   private baseUrl: string = '';
   private isJSON: boolean = false;
@@ -247,6 +249,13 @@ export class LegadoRuleAnalyzer {
   private htmlBridge: LegadoHtmlBridge | null = null;
 
   constructor() {}
+
+  private selectorTrace(messageBuilder: () => string): void {
+    if (!LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+      return;
+    }
+    logger.debug(TAG, messageBuilder());
+  }
 
   /**
    * 设置要解析的内容
@@ -2060,7 +2069,7 @@ export class LegadoRuleAnalyzer {
     
     // 性能优化：减少大型内容时的日志输出
     if (searchContent.length < 10000) {
-      logger.debug(TAG, `findElementsByClass: 查找class="${className}", contentLen=${searchContent.length}`);
+      this.selectorTrace((): string => `findElementsByClass: 查找class="${className}", contentLen=${searchContent.length}`);
     }
     
     // 方法1: 使用正则表达式直接匹配（更可靠）
@@ -2185,15 +2194,15 @@ export class LegadoRuleAnalyzer {
         classMatch = classRegex.exec(searchContent);
       }
       if (allClasses.length > 0) {
-        logger.debug(TAG, `findElementsByClass: 未找到class="${className}", HTML中存在的class: ${allClasses.slice(0, 10).join(', ')}...`);
+        this.selectorTrace((): string => `findElementsByClass: 未找到class="${className}", HTML中存在的class: ${allClasses.slice(0, 10).join(', ')}...`);
       } else {
-        logger.debug(TAG, `findElementsByClass: 未找到class="${className}", HTML中没有任何class属性`);
+        this.selectorTrace((): string => `findElementsByClass: 未找到class="${className}", HTML中没有任何class属性`);
       }
     }
     
     // 性能优化：减少日志输出
     if (content.length < 10000) {
-      logger.debug(TAG, `findElementsByClass: 找到${results.length}个元素`);
+      this.selectorTrace((): string => `findElementsByClass: 找到${results.length}个元素`);
     }
     return results;
   }
@@ -2212,7 +2221,7 @@ export class LegadoRuleAnalyzer {
     
     // 性能优化：减少大型内容时的日志输出
     if (searchContent.length < 10000) {
-      logger.debug(TAG, `findElementsById: 查找id="${idName}", contentLen=${searchContent.length}`);
+      this.selectorTrace((): string => `findElementsById: 查找id="${idName}", contentLen=${searchContent.length}`);
     }
     
     // 方法1: 使用正则表达式直接匹配（更可靠）
@@ -2230,7 +2239,7 @@ export class LegadoRuleAnalyzer {
         const element = this.extractElement(searchContent, match.index, tagName);
         if (element && !results.includes(element)) {
           results.push(element);
-          logger.debug(TAG, `findElementsById: 找到元素 <${tagName} id="${idName}">`);
+          this.selectorTrace((): string => `findElementsById: 找到元素 <${tagName} id="${idName}">`);
         }
         match = pattern.exec(searchContent);
       }
@@ -2316,15 +2325,15 @@ export class LegadoRuleAnalyzer {
         idMatch = idRegex.exec(searchContent);
       }
       if (allIds.length > 0) {
-        logger.debug(TAG, `findElementsById: 未找到id="${idName}", HTML中存在的id: ${allIds.join(', ')}`);
+        this.selectorTrace((): string => `findElementsById: 未找到id="${idName}", HTML中存在的id: ${allIds.join(', ')}`);
       } else {
-        logger.debug(TAG, `findElementsById: 未找到id="${idName}", HTML中没有任何id属性`);
+        this.selectorTrace((): string => `findElementsById: 未找到id="${idName}", HTML中没有任何id属性`);
       }
     }
     
     // 性能优化：减少日志输出
     if (content.length < 10000) {
-      logger.debug(TAG, `findElementsById: 找到${results.length}个元素`);
+      this.selectorTrace((): string => `findElementsById: 找到${results.length}个元素`);
     }
     return results;
   }
@@ -2419,7 +2428,7 @@ export class LegadoRuleAnalyzer {
           }
         }
       }
-      logger.debug(TAG, `getElementsByCSS: &&操作符，合并结果数量=${allResults.length}`);
+      this.selectorTrace((): string => `getElementsByCSS: &&操作符，合并结果数量=${allResults.length}`);
       return allResults;
     }
     
@@ -2483,7 +2492,7 @@ export class LegadoRuleAnalyzer {
     } else {
       parts = selector.split('@');
     }
-    logger.debug(TAG, `getElementsByCSSChain: selector=${selector}, parts=${parts.length}`);
+    this.selectorTrace((): string => `getElementsByCSSChain: selector=${selector}, parts=${parts.length}`);
     
     let currentElements: string[] = [this.content];
     
@@ -2497,7 +2506,7 @@ export class LegadoRuleAnalyzer {
         // 这是属性+JS组合，提取属性值并执行JS
         const attrName = attrJsMatch[1].toLowerCase();
         const jsCode = attrJsMatch[2];
-        logger.debug(TAG, `getElementsByCSSChain: 属性+JS组合, attr=${attrName}`);
+        this.selectorTrace((): string => `getElementsByCSSChain: 属性+JS组合, attr=${attrName}`);
         
         const newElements: string[] = [];
         for (const element of currentElements) {
@@ -2521,7 +2530,7 @@ export class LegadoRuleAnalyzer {
         }
         currentElements = newElements;
       }
-      logger.debug(TAG, `getElementsByCSSChain: part[${i}]=${part.substring(0, 50)}, found=${currentElements.length}`);
+      this.selectorTrace((): string => `getElementsByCSSChain: part[${i}]=${part.substring(0, 50)}, found=${currentElements.length}`);
       
       if (currentElements.length === 0) {
         break;
@@ -2622,7 +2631,7 @@ export class LegadoRuleAnalyzer {
     
     if ((isCssClassSelector || isCssIdSelector) && !hasDescendant) {
       // 简单的CSS选择器（不含后代选择器），直接使用findElementsBySimpleSelector处理
-      logger.debug(TAG, `findElementsBySingleSelector: 简单CSS选择器=${selector}, htmlLen=${html.length}`);
+      this.selectorTrace((): string => `findElementsBySingleSelector: 简单CSS选择器=${selector}, htmlLen=${html.length}`);
       return this.findElementsBySimpleSelector(html, selector);
     }
     
@@ -2630,7 +2639,7 @@ export class LegadoRuleAnalyzer {
     const indexResult = this.parseIndexSelector(selector);
     selector = indexResult.selector;
     
-    logger.debug(TAG, `findElementsBySingleSelector: selector=${selector}, htmlLen=${html.length}, startsWithId=${selector.startsWith('id.')}, startsWithClass=${selector.startsWith('class.')}`);
+    this.selectorTrace((): string => `findElementsBySingleSelector: selector=${selector}, htmlLen=${html.length}, startsWithId=${selector.startsWith('id.')}, startsWithClass=${selector.startsWith('class.')}`);
     
     // 处理Legado特殊选择器格式
     // class.xxx - 按类名查找
@@ -2667,9 +2676,9 @@ export class LegadoRuleAnalyzer {
     // id.xxx - 按ID查找
     if (selector.startsWith('id.')) {
       const idName = selector.substring(3);
-      logger.debug(TAG, `id.xxx选择器: idName=${idName}`);
+      this.selectorTrace((): string => `id.xxx选择器: idName=${idName}`);
       const results = this.findElementsById(html, idName);
-      logger.debug(TAG, `id.xxx选择器结果: ${results.length}个`);
+      this.selectorTrace((): string => `id.xxx选择器结果: ${results.length}个`);
       return indexResult.hasIndex ? this.applyIndexFilter(results, indexResult) : results;
     }
     
@@ -2692,7 +2701,7 @@ export class LegadoRuleAnalyzer {
     let results: string[] = [];
     if (selectorParts.length > 1) {
       // 多级选择器，递归处理
-      logger.debug(TAG, `findElementsBySingleSelector: 多级选择器, parts=${JSON.stringify(selectorParts)}`);
+      this.selectorTrace((): string => `findElementsBySingleSelector: 多级选择器, parts=${JSON.stringify(selectorParts)}`);
       let currentElements: string[] = [html];
       for (const part of selectorParts) {
         const newElements: string[] = [];
@@ -2701,11 +2710,11 @@ export class LegadoRuleAnalyzer {
           let found: string[] = [];
           if (part === 'tbody') {
             found = this.findElementsByTag(element, 'tbody');
-            logger.debug(TAG, `findElementsBySingleSelector: tbody查找, found=${found.length}`);
+            this.selectorTrace((): string => `findElementsBySingleSelector: tbody查找, found=${found.length}`);
             if (found.length === 0) {
               // 没有显式tbody，尝试在table中查找
               const tables = this.findElementsByTag(element, 'table');
-              logger.debug(TAG, `findElementsBySingleSelector: table查找, found=${tables.length}`);
+              this.selectorTrace((): string => `findElementsBySingleSelector: table查找, found=${tables.length}`);
               if (tables.length > 0) {
                 found = tables;
               } else {
@@ -2715,7 +2724,7 @@ export class LegadoRuleAnalyzer {
             }
           } else {
             found = this.findElementsBySimpleSelector(element, part);
-            logger.debug(TAG, `findElementsBySingleSelector: part=${part}, found=${found.length}`);
+            this.selectorTrace((): string => `findElementsBySingleSelector: part=${part}, found=${found.length}`);
           }
           for (const f of found) {
             newElements.push(f);
@@ -2723,7 +2732,7 @@ export class LegadoRuleAnalyzer {
         }
         currentElements = newElements;
         if (currentElements.length === 0) {
-          logger.debug(TAG, `findElementsBySingleSelector: part=${part}后结果为空，停止`);
+          this.selectorTrace((): string => `findElementsBySingleSelector: part=${part}后结果为空，停止`);
           break;
         }
       }
