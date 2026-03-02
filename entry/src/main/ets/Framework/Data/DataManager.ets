@@ -4848,9 +4848,24 @@ export class DataManager {
   public async batchUpdateOnlinePageCacheStatus(
     updates: Array<PageCacheUpdate>
   ): Promise<void> {
+    if (updates.length === 0) {
+      return;
+    }
+
     try {
-      for (const update of updates) {
-        await this.updateOnlinePageCacheStatus(update.imageUrl, update.localPath, update.fileSize);
+      const sql = `UPDATE online_page 
+                   SET localPath = ?, fileSize = ? 
+                   WHERE imageUrl = ?`;
+
+      await this.databaseManager.beginTransaction();
+      try {
+        for (const update of updates) {
+          await this.databaseManager.executeSql(sql, [update.localPath, update.fileSize, update.imageUrl]);
+        }
+        await this.databaseManager.commit();
+      } catch (txError) {
+        await this.databaseManager.rollBack();
+        throw txError as Error;
       }
       logger.info(TAG, `批量更新页面缓存状态: ${updates.length}条`);
     } catch (error) {

@@ -2,6 +2,7 @@
 // 职责: 漫画阅读应用主入口页面，采用底部导航栏设计，参考Mihon、komikku等现代漫画阅读软件
 
 import { logger } from '../Utils/Logger';
+import { widgetDataSync } from '../Utils/WidgetDataSync';
 import { common } from '@kit.AbilityKit';
 import { deviceInfo, BusinessError } from '@kit.BasicServicesKit';
 import { CommonModifier, LengthMetrics, promptAction, router } from '@kit.ArkUI';
@@ -311,6 +312,11 @@ interface ExploreKind {
   url: string;
 }
 
+interface BookSourceLoadOptions {
+  loadBooks?: boolean;
+  silent?: boolean;
+}
+
 /**
  * Suwayomi漫画详情页参数接口
  */
@@ -402,6 +408,12 @@ interface GeneratedTypeLiteralInterface_1 {
 
 interface ActionMenuResult {
   index: number;
+}
+
+interface RecentShortcutCandidate {
+  type: 'manga' | 'ebook' | 'novel';
+  id: string;
+  lastReadTime: number;
 }
 
 /**
@@ -702,6 +714,8 @@ struct MainMenuPage {
   @State bookSourceRefreshHintVisible: boolean = false; // 书源刷新提示是否可见
   private bookSourceRefreshHintTimer: number = -1; // 刷新提示自动隐藏定时器
   private bookSourceListScroller: Scroller = new Scroller();
+  private sideTabListScroller: Scroller = new Scroller();
+  private sideTabCenterTimer: number = -1;
 
   // Suwayomi Tab相关状态
   @State suwayomiMangas: SuwayomiComicInfo[] = []; // Suwayomi漫画列表
@@ -830,6 +844,16 @@ struct MainMenuPage {
     }
     // 平板设备仅在横屏使用顶部导航
     return deviceInfo.isTablet && deviceInfo.isLandscape;
+  }
+
+  private shouldUsePhoneLandscapeSideNavigation(deviceInfo: DeviceInfo): boolean {
+    if (!deviceInfo.isLandscape) {
+      return false;
+    }
+    if (deviceInfo.isFoldable) {
+      return this.isFoldableCollapsed(deviceInfo);
+    }
+    return !deviceInfo.isTablet;
   }
 
   private bannerData: Array<bannerData> = [
@@ -1137,6 +1161,7 @@ struct MainMenuPage {
 
       if (targetPage === 'readingAnalytics') {
         const targetView = AppStorage.get<string>('widgetTargetView') || 'daily';
+        AppStorage.setOrCreate('widgetTargetView', '');
         
         // 延迟跳转，确保页面已加载完成
         setTimeout(() => {
@@ -1146,10 +1171,237 @@ struct MainMenuPage {
           this.pathStack.pushPathByName('ReadingAnalyticsPage', undefined);
           logger.info(TAG, `✅ 已跳转到阅读报告页面: viewMode=${targetView}`);
         }, 300);
+        return;
+      }
+
+      if (targetPage === 'continueRead') {
+        const contentType = AppStorage.get<string>('widgetContentType') || '';
+        const contentId = AppStorage.get<string>('widgetContentId') || '';
+        AppStorage.setOrCreate('widgetContentType', '');
+        AppStorage.setOrCreate('widgetContentId', '');
+
+        setTimeout(() => {
+          void this.navigateFromWidgetContinueRead(contentType, contentId);
+        }, 200);
+        return;
+      }
+
+      if (targetPage === 'continueReadLatest' || targetPage === 'continue_read_latest' || targetPage === 'open_recent_read') {
+        setTimeout(() => {
+          void this.navigateFromShortcutLatestRecentRead();
+        }, 200);
+        return;
+      }
+
+      if (targetPage === 'search' || targetPage === 'open_search') {
+        this.pathStack.pushPathByName('GlobalSearchPage', undefined);
+        return;
+      }
+
+      if (targetPage === 'downloads' || targetPage === 'open_downloads') {
+        this.pathStack.pushPathByName('DownloadManagerPage', undefined);
+        return;
+      }
+
+      if (targetPage === 'library' || targetPage === 'open_library') {
+        this.handleTabButtonClick(TabIndex.LIBRARY);
+        return;
       }
     } catch (error) {
       logger.error(TAG, `❌ 处理卡片跳转失败: ${error}`);
     }
+  }
+
+  private async navigateFromShortcutLatestRecentRead(): Promise<void> {
+    try {
+      let mangaList: Manga[] = this.recentReadingList;
+      let ebookList: EBook[] = this.recentEBookList;
+      let novelList: NovelBook[] = this.recentNovelList;
+
+      // 首页缓存可能尚未准备好，主动从数据层拉取一次，确保快捷方式可用
+      if (mangaList.length === 0 && ebookList.length === 0 && novelList.length === 0) {
+        const results = await Promise.all([
+          this.loadRecentMangaList(),
+          this.loadRecentEBookList(),
+          this.loadRecentNovelList()
+        ]);
+        mangaList = this.contentFilterManager.filterContentList(results[0] as Manga[]);
+        ebookList = this.contentFilterManager.filterContentList(results[1] as EBook[]);
+        novelList = this.contentFilterManager.filterContentList(results[2] as NovelBook[]);
+      }
+
+      const candidates: RecentShortcutCandidate[] = [];
+
+      const latestManga = mangaList.length > 0 ? mangaList[0] : null;
+      if (latestManga) {
+        const mangaReadTime = latestManga.readingProgress?.lastReadAt || 0;
+        if (mangaReadTime > 0 && latestManga.id) {
+          const mangaCandidate: RecentShortcutCandidate = {
+            type: 'manga',
+            id: latestManga.id,
+            lastReadTime: mangaReadTime
+          };
+          candidates.push(mangaCandidate);
+        }
+      }
+
+      const latestEBook = ebookList.length > 0 ? ebookList[0] : null;
+      if (latestEBook) {
+        const ebookReadTime = latestEBook.readingProgress?.lastReadTime || 0;
+        if (ebookReadTime > 0 && latestEBook.id) {
+          const ebookCandidate: RecentShortcutCandidate = {
+            type: 'ebook',
+            id: latestEBook.id,
+            lastReadTime: ebookReadTime
+          };
+          candidates.push(ebookCandidate);
+        }
+      }
+
+      const latestNovel = novelList.length > 0 ? novelList[0] : null;
+      if (latestNovel) {
+        const novelReadTime = latestNovel.lastReadTime || 0;
+        if (novelReadTime > 0 && latestNovel.id) {
+          const novelCandidate: RecentShortcutCandidate = {
+            type: 'novel',
+            id: latestNovel.id,
+            lastReadTime: novelReadTime
+          };
+          candidates.push(novelCandidate);
+        }
+      }
+
+      if (candidates.length === 0) {
+        logger.warn(TAG, '快捷方式继续阅读失败：没有可用的最近阅读记录');
+        this.showToast('暂无最近阅读内容，已打开书库');
+        this.fallbackWidgetContinueRead('');
+        return;
+      }
+
+      candidates.sort((a, b) => b.lastReadTime - a.lastReadTime);
+      const latest = candidates[0];
+      logger.info(TAG, `快捷方式继续阅读命中: type=${latest.type}, id=${latest.id}, time=${latest.lastReadTime}`);
+      await this.navigateFromWidgetContinueRead(latest.type, latest.id);
+    } catch (error) {
+      logger.error(TAG, `快捷方式继续阅读跳转失败: ${String(error)}`);
+      this.showToast('打开最近阅读失败，已打开书库');
+      this.fallbackWidgetContinueRead('');
+    }
+  }
+
+  private async navigateFromWidgetContinueRead(contentType: string, contentId: string): Promise<void> {
+    if (!contentType || !contentId) {
+      logger.warn(TAG, `卡片继续阅读参数缺失: type=${contentType}, id=${contentId}`);
+      return;
+    }
+
+    try {
+      if (contentType === 'manga') {
+        const manga = await this.resolveWidgetManga(contentId);
+        if (manga) {
+          await this.openMangaDetail(manga);
+          return;
+        }
+      } else if (contentType === 'ebook') {
+        const ebook = await this.resolveWidgetEBook(contentId);
+        if (ebook) {
+          this.openEBookDetail(ebook);
+          return;
+        }
+      } else if (contentType === 'novel') {
+        const novel = await this.resolveWidgetNovel(contentId);
+        if (novel) {
+          this.openNovelDetail(novel);
+          return;
+        }
+      }
+
+      logger.warn(TAG, `卡片继续阅读目标未找到: type=${contentType}, id=${contentId}`);
+      this.showToast('未找到对应内容，已打开书库');
+      this.fallbackWidgetContinueRead(contentType);
+    } catch (error) {
+      logger.error(TAG, `卡片继续阅读跳转失败: ${String(error)}`);
+      this.showToast('跳转失败，已打开书库');
+      this.fallbackWidgetContinueRead(contentType);
+    }
+  }
+
+  private async resolveWidgetManga(contentId: string): Promise<Manga | null> {
+    const filteredManga = this.getMangaById(contentId);
+    if (filteredManga) {
+      return filteredManga;
+    }
+    const listManga = this.mangaList.find((item: Manga) => item.id === contentId);
+    if (listManga) {
+      return listManga;
+    }
+
+    try {
+      const comicInfo = await this.dataManager.getComicById(contentId);
+      if (comicInfo) {
+        try {
+          return await ComicConverter.convertComicInfoToMangaAsync(comicInfo);
+        } catch (error) {
+          logger.warn(TAG, `convertComicInfoToMangaAsync失败，使用同步转换: ${String(error)}`);
+          return ComicConverter.convertComicInfoToManga(comicInfo);
+        }
+      }
+
+      const onlineComic = await this.dataManager.getOnlineComicInfoById(contentId);
+      if (onlineComic) {
+        return await ComicConverter.convertOnlineComicInfoToMangaAsync(onlineComic);
+      }
+    } catch (error) {
+      logger.warn(TAG, `resolveWidgetManga失败: ${String(error)}`);
+    }
+
+    return null;
+  }
+
+  private async resolveWidgetEBook(contentId: string): Promise<EBook | null> {
+    const filteredEBook = this.getEBookById(contentId);
+    if (filteredEBook) {
+      return filteredEBook;
+    }
+    const listEBook = this.ebookList.find((item: EBook) => item.id === contentId) || null;
+    if (listEBook) {
+      return listEBook;
+    }
+
+    try {
+      return await this.ebookDataManager.getEBookById(contentId);
+    } catch (error) {
+      logger.warn(TAG, `resolveWidgetEBook失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async resolveWidgetNovel(contentId: string): Promise<NovelBook | null> {
+    const filteredNovel = this.getNovelById(contentId);
+    if (filteredNovel) {
+      return filteredNovel;
+    }
+    const listNovel = this.novelList.find((item: NovelBook) => item.id === contentId) || null;
+    if (listNovel) {
+      return listNovel;
+    }
+
+    try {
+      if (!this.novelDataManager) {
+        this.novelDataManager = getNovelDataManager();
+      }
+      if (!this.novelDataManager) {
+        return null;
+      }
+      return await this.novelDataManager.getBook(contentId);
+    } catch (error) {
+      logger.warn(TAG, `resolveWidgetNovel失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private fallbackWidgetContinueRead(_contentType: string): void {
+    this.handleTabButtonClick(TabIndex.LIBRARY);
   }
 
   /**
@@ -1296,6 +1548,10 @@ struct MainMenuPage {
     if (!this.useTopTabsNavigation) {
       return 'top';
     }
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    if (this.shouldUsePhoneLandscapeSideNavigation(deviceInfo)) {
+      return 'right';
+    }
     return this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
   }
 
@@ -1337,6 +1593,7 @@ struct MainMenuPage {
   private updateResponsiveParams(): void {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     const shouldUseTabletLandscapeTopNavigation = this.shouldUseTabletLandscapeTopNavigation(deviceInfo);
+    const shouldUsePhoneLandscapeSideNavigation = this.shouldUsePhoneLandscapeSideNavigation(deviceInfo);
     const shouldUseLandscapeStyleLayout = deviceInfo.isLandscape || shouldUseTabletLandscapeTopNavigation;
     const layoutParams = this.forceTabletMode
       ? ResponsiveLayoutHelper.getLayoutParamsForBreakpoint(Breakpoint.MD)
@@ -1353,7 +1610,11 @@ struct MainMenuPage {
     const breakpoint = (this.forceTabletMode && !deviceInfo.isFoldable)
       ? Breakpoint.MD
       : deviceInfo.breakpoint;
-    if (shouldUseLandscapeStyleLayout) {
+    if (shouldUsePhoneLandscapeSideNavigation) {
+      this.responsive_homeGridColumns = 3;
+      this.responsive_libraryGridColumns = 4;
+      this.responsive_discoverGridColumns = 4;
+    } else if (shouldUseLandscapeStyleLayout) {
       // 横屏模式下的列数配置
       switch (breakpoint) {
         case Breakpoint.SM:
@@ -1385,20 +1646,27 @@ struct MainMenuPage {
     }
 
     // 统一导航模式判定：顶部标签导航与底栏导航互斥
-    const useTopTabsNavigation = shouldUseTabletLandscapeTopNavigation;
+    const useTopTabsNavigation = shouldUseTabletLandscapeTopNavigation || shouldUsePhoneLandscapeSideNavigation;
     this.useTopTabsNavigation = useTopTabsNavigation;
 
     if (useTopTabsNavigation) {
-      const topBarPosition = this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
-      const isVerticalTopBar = topBarPosition === 'left' || topBarPosition === 'right';
-      this.responsive_tabBarPosition = (topBarPosition === 'bottom' || topBarPosition === 'right')
-        ? BarPosition.End
-        : BarPosition.Start;
-      this.responsive_tabBarVertical = isVerticalTopBar;
+      if (shouldUsePhoneLandscapeSideNavigation) {
+        this.responsive_tabBarPosition = BarPosition.End;
+        this.responsive_tabBarVertical = true;
+      } else {
+        const topBarPosition = this.normalizeTabletTopBarPosition(this.tabletTopBarPosition);
+        const isVerticalTopBar = topBarPosition === 'left' || topBarPosition === 'right';
+        this.responsive_tabBarPosition = (topBarPosition === 'bottom' || topBarPosition === 'right')
+          ? BarPosition.End
+          : BarPosition.Start;
+        this.responsive_tabBarVertical = isVerticalTopBar;
+      }
     } else {
       this.responsive_tabBarPosition = BarPosition.End;
       this.responsive_tabBarVertical = false;
     }
+
+    this.scrollSideTabToCenter(this.currentTabIndex);
 
     logger.debug(TAG, `响应式参数更新: 列数=${this.responsive_gridColumns}, 首页列数=${this.responsive_homeGridColumns}, 书库列数=${this.responsive_libraryGridColumns}, 发现列数=${this.responsive_discoverGridColumns}, 间距=${this.responsive_gridGap}`);
   }
@@ -1521,9 +1789,7 @@ struct MainMenuPage {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     const h: number = deviceInfo.screenHeight
       - this.navigationBarHeight
-      - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN
-      - this.BOTTOM_BAR_MARGIN_BOTTOM
-      - this.TABLET_TOP_BAR_VERTICAL_MARGIN;
+      - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
     return h > 0 ? h : deviceInfo.screenHeight;
   }
 
@@ -3178,6 +3444,7 @@ struct MainMenuPage {
             .aspectRatio(0.7)
             .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
             .borderRadius(this.getGlassRadius())
+            .clip(true)
             .onClick(() => {
               // 点击封面直接开始阅读（带翻开动画）
               this.openMangaReaderWithAnimation(manga, `cover_manga_home_${manga.id}`);
@@ -3230,6 +3497,7 @@ struct MainMenuPage {
             .aspectRatio(0.7)
             .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
             .borderRadius(this.getGlassRadius())
+            .clip(true)
             .onClick(() => {
               // 点击封面直接开始阅读（带翻开动画）
               this.openEBookReaderFromHome(ebook);
@@ -3291,6 +3559,7 @@ struct MainMenuPage {
             .aspectRatio(0.7)
             .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
             .borderRadius(this.getGlassRadius())
+            .clip(true)
             .onClick(() => {
               // 点击封面打开小说详情页
               this.openNovelDetail(novel);
@@ -4915,6 +5184,11 @@ struct MainMenuPage {
   aboutToDisappear() {
     logger.lifecycle(TAG, '应用主页面即将销毁');
 
+    if (this.sideTabCenterTimer >= 0) {
+      clearTimeout(this.sideTabCenterTimer);
+      this.sideTabCenterTimer = -1;
+    }
+
     // 移除隐私模式监听器
     if (this.privacyModeListener) {
       this.privacyModeManager.removeListener(this.privacyModeListener);
@@ -4979,6 +5253,8 @@ struct MainMenuPage {
     
     // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
     this.handleWidgetNavigationIfPresent();
+
+    void widgetDataSync.syncAllDataThrottled();
 
     // 根据当前标签页静默刷新对应数据（不显示加载状态，避免闪屏）
     switch (this.currentTabIndex) {
@@ -5209,6 +5485,7 @@ struct MainMenuPage {
     
     this.cachedVisibleTabConfigs = orderedConfigs;
     logger.info(TAG, `更新可见标签缓存: ${this.cachedVisibleTabConfigs.length} 个标签，顺序: ${orderedConfigs.map((c: TabConfig) => c.title).join(', ')}`);
+    this.scrollSideTabToCenter(this.currentTabIndex);
   }
 
   /**
@@ -6346,7 +6623,7 @@ struct MainMenuPage {
         .textAlign(TextAlign.Center)
     }
     .width('100%')
-    .padding({ top: 6, bottom: 6, left: 4, right: 4 })
+    .padding({ top: 4, bottom: 4, left: 4, right: 4 })
     .borderRadius(10)
     .backgroundColor(this.currentTabIndex === config.index
       ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
@@ -6369,14 +6646,20 @@ struct MainMenuPage {
         .strokeWidth(1)
         .color(ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
 
-      Column({ space: 4 }) {
+      List({ scroller: this.sideTabListScroller, space: 2 }) {
         ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
-          this.buildTabletSideTabButton(cfg)
+          ListItem() {
+            this.buildTabletSideTabButton(cfg)
+          }
         })
       }
       .width('100%')
       .layoutWeight(1)
-      .justifyContent(FlexAlign.Start)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .onAppear(() => {
+        this.scrollSideTabToCenter(this.currentTabIndex);
+      })
 
       Column({ space: 4 }) {
         Button() {
@@ -15709,7 +15992,7 @@ struct MainMenuPage {
       
       // 有书源列表但没有书籍数据，只加载书籍
       if (this.bookSourceList.length > 0 && this.bookSourceBooks.length === 0 && this.selectedBookSourceId) {
-        logger.debug(TAG, '书源列表已缓存，加载书籍数据');
+        logger.debug(TAG, '书源列表缓存命中，补全当前分类书籍');
         await this.loadBookSourceExploreKinds();
         return;
       }
@@ -15758,12 +16041,224 @@ struct MainMenuPage {
   }
 
   /**
+   * 增量更新书源列表（避免全量替换导致UI闪烁）
+   * @returns 是否发生变化
+   */
+  private incrementalUpdateBookSourceList(newList: NovelSourceInfo[]): boolean {
+    const currentIds = new Set(this.bookSourceList.map((s: NovelSourceInfo) => s.id));
+    const newIds = new Set(newList.map((s: NovelSourceInfo) => s.id));
+    const newMap = new Map<string, NovelSourceInfo>();
+    for (const source of newList) {
+      newMap.set(source.id, source);
+    }
+
+    let hasChanges = false;
+
+    // 删除不存在的书源（从后往前删，避免索引错位）
+    const removeIndices: number[] = [];
+    for (let i = 0; i < this.bookSourceList.length; i++) {
+      if (!newIds.has(this.bookSourceList[i].id)) {
+        removeIndices.push(i);
+      }
+    }
+    if (removeIndices.length > 0) {
+      hasChanges = true;
+      for (let i = removeIndices.length - 1; i >= 0; i--) {
+        this.bookSourceList.splice(removeIndices[i], 1);
+      }
+    }
+
+    // 更新已有书源的属性
+    for (const existing of this.bookSourceList) {
+      const next = newMap.get(existing.id);
+      if (!next) {
+        continue;
+      }
+      if (existing.name !== next.name) {
+        existing.name = next.name;
+        hasChanges = true;
+      }
+      if (existing.url !== next.url) {
+        existing.url = next.url;
+        hasChanges = true;
+      }
+      if (existing.group !== next.group) {
+        existing.group = next.group;
+        hasChanges = true;
+      }
+      if (existing.enabled !== next.enabled) {
+        existing.enabled = next.enabled;
+        hasChanges = true;
+      }
+      if (existing.weight !== next.weight) {
+        existing.weight = next.weight;
+        hasChanges = true;
+      }
+      if (existing.customOrder !== next.customOrder) {
+        existing.customOrder = next.customOrder;
+        hasChanges = true;
+      }
+      if (existing.lastUpdateTime !== next.lastUpdateTime) {
+        existing.lastUpdateTime = next.lastUpdateTime;
+        hasChanges = true;
+      }
+      if (existing.respondTime !== next.respondTime) {
+        existing.respondTime = next.respondTime;
+        hasChanges = true;
+      }
+      if (existing.searchable !== next.searchable) {
+        existing.searchable = next.searchable;
+        hasChanges = true;
+      }
+      if (existing.hasExplore !== next.hasExplore) {
+        existing.hasExplore = next.hasExplore;
+        hasChanges = true;
+      }
+      if (existing.isTop !== next.isTop) {
+        existing.isTop = next.isTop;
+        hasChanges = true;
+      }
+      if (existing.isNSFW !== next.isNSFW) {
+        existing.isNSFW = next.isNSFW;
+        hasChanges = true;
+      }
+    }
+
+    // 添加新增书源
+    for (const source of newList) {
+      if (!currentIds.has(source.id)) {
+        this.bookSourceList.push(source);
+        hasChanges = true;
+      }
+    }
+
+    // 按新列表顺序重排（保留对象引用，减少重绘）
+    const currentMap = new Map<string, NovelSourceInfo>();
+    for (const source of this.bookSourceList) {
+      currentMap.set(source.id, source);
+    }
+    const reordered: NovelSourceInfo[] = [];
+    for (const source of newList) {
+      const existing = currentMap.get(source.id);
+      if (existing) {
+        reordered.push(existing);
+      }
+    }
+    if (reordered.length === this.bookSourceList.length) {
+      let orderChanged = false;
+      for (let i = 0; i < reordered.length; i++) {
+        if (this.bookSourceList[i].id !== reordered[i].id) {
+          hasChanges = true;
+          orderChanged = true;
+          break;
+        }
+      }
+      if (orderChanged) {
+        this.bookSourceList.splice(0, this.bookSourceList.length, ...reordered);
+      }
+    }
+
+    return hasChanges;
+  }
+
+  /**
+   * 增量更新当前书源书籍列表（避免全量替换导致UI闪烁）
+   * @returns 是否发生变化
+   */
+  private incrementalUpdateBookSourceBooks(newList: NovelSearchResult[]): boolean {
+    const getKey = (item: NovelSearchResult): string => `${item.sourceId}::${item.bookUrl}`;
+
+    const existingMap = new Map<string, NovelSearchResult>();
+    for (const item of this.bookSourceBooks) {
+      existingMap.set(getKey(item), item);
+    }
+
+    let hasChanges = this.bookSourceBooks.length !== newList.length;
+    const merged: NovelSearchResult[] = [];
+
+    for (const next of newList) {
+      const key = getKey(next);
+      const existing = existingMap.get(key);
+      if (existing) {
+        if (existing.sourceName !== next.sourceName) {
+          existing.sourceName = next.sourceName;
+          hasChanges = true;
+        }
+        if (existing.name !== next.name) {
+          existing.name = next.name;
+          hasChanges = true;
+        }
+        if (existing.author !== next.author) {
+          existing.author = next.author;
+          hasChanges = true;
+        }
+        if (existing.kind !== next.kind) {
+          existing.kind = next.kind;
+          hasChanges = true;
+        }
+        if (existing.intro !== next.intro) {
+          existing.intro = next.intro;
+          hasChanges = true;
+        }
+        if (existing.coverUrl !== next.coverUrl) {
+          existing.coverUrl = next.coverUrl;
+          hasChanges = true;
+        }
+        if (existing.latestChapterTitle !== next.latestChapterTitle) {
+          existing.latestChapterTitle = next.latestChapterTitle;
+          hasChanges = true;
+        }
+        if (existing.wordCount !== next.wordCount) {
+          existing.wordCount = next.wordCount;
+          hasChanges = true;
+        }
+        if (existing.isNSFW !== next.isNSFW) {
+          existing.isNSFW = next.isNSFW;
+          hasChanges = true;
+        }
+        merged.push(existing);
+        existingMap.delete(key);
+      } else {
+        merged.push(next);
+        hasChanges = true;
+      }
+    }
+
+    if (existingMap.size > 0) {
+      hasChanges = true;
+    }
+
+    if (!hasChanges && merged.length === this.bookSourceBooks.length) {
+      for (let i = 0; i < merged.length; i++) {
+        if (getKey(this.bookSourceBooks[i]) !== getKey(merged[i])) {
+          hasChanges = true;
+          break;
+        }
+      }
+    }
+
+    if (hasChanges) {
+      this.bookSourceBooks.splice(0, this.bookSourceBooks.length, ...merged);
+    }
+    return hasChanges;
+  }
+
+  /**
    * 刷新书源内容
    */
   private async refreshBookSourceContent(): Promise<void> {
     try {
-      await this.initializeAndLoadBookSources();
-      if (this.selectedBookSourceId) {
+      // 首次进入时仍走初始化流程；已初始化时走静默增量刷新流程
+      if (!this.bookSourceModuleInitialized) {
+        await this.initializeAndLoadBookSources();
+      } else {
+        const refreshOptions: BookSourceLoadOptions = {
+          loadBooks: false,
+          silent: true
+        };
+        await this.loadBookSourceList(refreshOptions);
+      }
+      if (this.selectedBookSourceId && this.bookSourceExploreKinds.length > 0) {
         await this.loadBookSourceBooks(true);
       }
     } catch (error) {
@@ -15775,34 +16270,64 @@ struct MainMenuPage {
   /**
    * 加载书源列表
    */
-  private async loadBookSourceList(): Promise<void> {
+  private async loadBookSourceList(options?: BookSourceLoadOptions): Promise<void> {
+    const loadBooks = options?.loadBooks ?? true;
+    const silent = options?.silent ?? false;
     try {
       const sourceManager = getNovelSourceManager();
       // 获取所有启用且支持发现功能的书源
       const allSources = sourceManager.getExploreSources();
       // 应用NSFW过滤（SFW模式下隐藏NSFW书源）
-      this.bookSourceList = this.contentFilterManager.filterContentList(allSources);
-      this.filteredBookSourceList = this.bookSourceList;
-      
-      logger.info(TAG, `加载书源列表完成，共 ${this.bookSourceList.length} 个支持发现功能的书源`);
-      
-      if (this.bookSourceList.length > 0 && !this.selectedBookSourceId) {
+      const newList = this.contentFilterManager.filterContentList(allSources);
+
+      let sourceListChanged = false;
+      if (this.bookSourceList.length === 0) {
+        this.bookSourceList = newList;
+        sourceListChanged = newList.length > 0;
+      } else {
+        sourceListChanged = this.incrementalUpdateBookSourceList(newList);
+      }
+      // 保留当前搜索关键词对应的筛选结果
+      this.filterBookSourceList(this.bookSourceSearchKeyword);
+
+      if (silent) {
+        if (sourceListChanged) {
+          logger.debug(TAG, `书源列表静默刷新完成：有变化，共 ${this.bookSourceList.length} 个`);
+        } else {
+          logger.debug(TAG, `书源列表静默刷新完成：无变化，共 ${this.bookSourceList.length} 个`);
+        }
+      } else {
+        logger.info(TAG, `加载书源列表完成，共 ${this.bookSourceList.length} 个支持发现功能的书源`);
+      }
+
+      if (this.bookSourceList.length === 0) {
+        this.selectedBookSourceId = '';
+        this.selectedBookSourceName = '';
+        this.bookSourceExploreKinds = [];
+        this.selectedBookSourceKindIndex = 0;
+        this.bookSourceBooks = [];
+        this.bookSourceHasMore = false;
+        return;
+      }
+
+      if (!this.selectedBookSourceId) {
         this.selectedBookSourceId = this.bookSourceList[0].id;
         this.selectedBookSourceName = this.bookSourceList[0].name;
-        await this.loadBookSourceExploreKinds();
-      } else if (this.selectedBookSourceId) {
-        const source = this.bookSourceList.find(s => s.id === this.selectedBookSourceId);
-        if (source) {
-          this.selectedBookSourceName = source.name;
-          await this.loadBookSourceExploreKinds();
-        } else {
-          // 之前选中的书源不存在了，选择第一个
-          if (this.bookSourceList.length > 0) {
-            this.selectedBookSourceId = this.bookSourceList[0].id;
-            this.selectedBookSourceName = this.bookSourceList[0].name;
-            await this.loadBookSourceExploreKinds();
-          }
-        }
+        await this.loadBookSourceExploreKinds(loadBooks);
+        return;
+      }
+
+      const selectedSource = this.bookSourceList.find(s => s.id === this.selectedBookSourceId);
+      if (selectedSource) {
+        this.selectedBookSourceName = selectedSource.name;
+        await this.loadBookSourceExploreKinds(loadBooks);
+      } else {
+        // 之前选中的书源不存在，切换到第一个
+        this.selectedBookSourceId = this.bookSourceList[0].id;
+        this.selectedBookSourceName = this.bookSourceList[0].name;
+        this.selectedBookSourceKindIndex = 0;
+        this.bookSourceBooks = [];
+        await this.loadBookSourceExploreKinds(loadBooks);
       }
     } catch (error) {
       logger.error(TAG, `加载书源列表失败: ${String(error)}`);
@@ -15852,7 +16377,7 @@ struct MainMenuPage {
    * 加载书源发现分类
    * 保留缓存的分类索引：如果新加载的分类列表包含当前索引，则保留，否则重置为 0
    */
-  private async loadBookSourceExploreKinds(): Promise<void> {
+  private async loadBookSourceExploreKinds(loadBooks: boolean = true): Promise<void> {
     if (!this.selectedBookSourceId) return;
     try {
       const sourceManager = getNovelSourceManager();
@@ -15866,7 +16391,7 @@ struct MainMenuPage {
       } else {
         this.selectedBookSourceKindIndex = 0;
       }
-      if (this.bookSourceExploreKinds.length > 0) {
+      if (loadBooks && this.bookSourceExploreKinds.length > 0) {
         await this.loadBookSourceBooks(true);
       }
     } catch (error) {
@@ -15897,10 +16422,14 @@ struct MainMenuPage {
       const kind = this.bookSourceExploreKinds[this.selectedBookSourceKindIndex];
       const results = await sourceManager.explore(this.selectedBookSourceId, kind.url, this.bookSourceCurrentPage);
       if (reset) {
-        this.bookSourceBooks = results;
-        // 静默刷新完成，显示刷新提示
-        if (hasCachedData && results.length > 0) {
-          this.showBookSourceRefreshHint();
+        if (hasCachedData) {
+          const changed = this.incrementalUpdateBookSourceBooks(results);
+          // 仅在内容发生变化时显示刷新提示，避免“假刷新”提示
+          if (changed) {
+            this.showBookSourceRefreshHint();
+          }
+        } else {
+          this.bookSourceBooks = results;
         }
       } else {
         this.bookSourceBooks = [...this.bookSourceBooks, ...results];
@@ -16763,12 +17292,14 @@ struct MainMenuPage {
    */
   private async cacheSuwayomiSourceIcons(): Promise<void> {
     if (!DownloadDirManager.isReady()) return;
-    const serverUrl = this.suwayomiExecutor.getServerUrl();
     const headers = this.suwayomiExecutor.getImageHeaders();
     for (const source of this.suwayomiSources) {
       if (source.iconUrl && !this.suwayomiSourceIconCachePaths.has(source.id)) {
         // 构建完整URL
-        const fullIconUrl = `${serverUrl}${source.iconUrl}`;
+        const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
+        if (!fullIconUrl) {
+          continue;
+        }
         const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
         if (cachedPath) {
           this.suwayomiSourceIconCachePaths.set(source.id, cachedPath);
@@ -16777,11 +17308,65 @@ struct MainMenuPage {
             if (path) {
               this.suwayomiSourceIconCachePaths.set(source.id, path);
               this.suwayomiSourceIconCachePaths = new Map(this.suwayomiSourceIconCachePaths);
+            } else {
+              logger.warn(TAG, `Suwayomi图标缓存失败: sourceId=${source.id}, iconUrl=${fullIconUrl.substring(0, 120)}`);
             }
+          }).catch((error: Object | string | number | boolean) => {
+            logger.warn(TAG, `Suwayomi图标缓存异常: sourceId=${source.id}, error=${String(error)}`);
           });
         }
       }
     }
+  }
+
+  /**
+   * 将 Suwayomi 资源路径（可能是相对路径）转为完整 URL
+   */
+  private isSuwayomiHostLikeUrlWithoutScheme(url: string): boolean {
+    const slashIndex = url.indexOf('/');
+    const hostPart = slashIndex >= 0 ? url.substring(0, slashIndex) : url;
+    const pathPart = slashIndex >= 0 ? url.substring(slashIndex) : '';
+    if (!hostPart) {
+      return false;
+    }
+    const isIpv4Host = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(hostPart);
+    const isNamedHost = /^(localhost|[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?::\d+)?$/.test(hostPart);
+    if (!isIpv4Host && !isNamedHost) {
+      return false;
+    }
+    return hostPart.includes(':') || pathPart.startsWith('/');
+  }
+
+  private resolveSuwayomiAssetUrl(rawUrl: string): string {
+    const url = (rawUrl || '').trim();
+    if (!url) {
+      return '';
+    }
+    if (url.includes('://') || url.startsWith('data:') || url.startsWith('file:')) {
+      return url;
+    }
+
+    const serverUrlRaw = (this.suwayomiExecutor.getServerUrl() || '').trim();
+    if (!serverUrlRaw) {
+      return url;
+    }
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(serverUrlRaw);
+    const normalizedServerUrl = hasScheme ? serverUrlRaw : `http://${serverUrlRaw}`;
+    const serverUrl = normalizedServerUrl.endsWith('/') ?
+      normalizedServerUrl.substring(0, normalizedServerUrl.length - 1) :
+      normalizedServerUrl;
+    const protocol = serverUrl.startsWith('https://') ? 'https:' : 'http:';
+
+    if (url.startsWith('//')) {
+      return `${protocol}${url}`;
+    }
+    if (this.isSuwayomiHostLikeUrlWithoutScheme(url)) {
+      return `${protocol}//${url}`;
+    }
+    if (url.startsWith('/')) {
+      return `${serverUrl}${url}`;
+    }
+    return `${serverUrl}/${url}`;
   }
 
   /**
@@ -16793,7 +17378,7 @@ struct MainMenuPage {
       return `file://${cachedPath}`;
     }
     if (source.iconUrl) {
-      return `${this.suwayomiExecutor.getServerUrl()}${source.iconUrl}`;
+      return this.resolveSuwayomiAssetUrl(source.iconUrl);
     }
     return '';
   }
@@ -19539,6 +20124,44 @@ struct MainMenuPage {
     InteractionManager.getInstance().vibrate(VibrationScene.BUTTON_CLICK);
   }
 
+  private isSideTabNavigationActive(): boolean {
+    if (!this.useTopTabsNavigation) {
+      return false;
+    }
+    const effectivePosition = this.getEffectiveTabletTopBarPosition();
+    return effectivePosition === 'left' || effectivePosition === 'right';
+  }
+
+  private scrollSideTabToCenter(tabIndex: number): void {
+    if (this.sideTabCenterTimer >= 0) {
+      clearTimeout(this.sideTabCenterTimer);
+      this.sideTabCenterTimer = -1;
+    }
+
+    if (!this.isSideTabNavigationActive()) {
+      return;
+    }
+    if (this.cachedVisibleTabConfigs.length === 0) {
+      return;
+    }
+
+    const selectedIndex = this.cachedVisibleTabConfigs.findIndex((cfg: TabConfig) => cfg.index === tabIndex);
+    if (selectedIndex < 0) {
+      return;
+    }
+
+    // 延迟到下一帧附近，确保列表节点和布局已完成。
+    this.sideTabCenterTimer = setTimeout(() => {
+      try {
+        this.sideTabListScroller.scrollToIndex(selectedIndex, true, ScrollAlign.CENTER);
+      } catch (error) {
+        logger.debug(TAG, `侧边栏居中滚动失败: ${String(error)}`);
+      } finally {
+        this.sideTabCenterTimer = -1;
+      }
+    }, 80);
+  }
+
   /**
    * 底栏按钮点击处理：将 TabIndex 转换为实际 Tabs 组件位置
    * @param tabIndex TabIndex 枚举值（如 TabIndex.HOME = 0）
@@ -19553,6 +20176,7 @@ struct MainMenuPage {
       if (actualIndex >= 0) {
         this.currentTabIndex = tabIndex; // 保存的是 TabIndex 枚举值
         this.tabsController.changeIndex(actualIndex); // Tabs 组件使用实际位置索引
+        this.scrollSideTabToCenter(tabIndex);
       } else {
         logger.warn(TAG, `标签 ${tabIndex} 不可见，无法切换`);
       }
@@ -19812,6 +20436,7 @@ struct MainMenuPage {
               const previousTabIndex = this.currentTabIndex;
               const tabIndex = this.getTabIndexForActualTabsIndex(actualIndex);
               this.currentTabIndex = tabIndex;
+              this.scrollSideTabToCenter(tabIndex);
               logger.info(TAG, `标签页切换: 实际位置=${actualIndex}, TabIndex=${tabIndex}`);
               
               // 切换标签时重置底栏滚动状态

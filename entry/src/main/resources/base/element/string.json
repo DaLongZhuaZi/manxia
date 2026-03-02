@@ -59,6 +59,18 @@
     {
       "name": "widget_desc",
       "value": "显示漫画、电子书、小说的每日阅读目标进度"
+    },
+    {
+      "name": "shortcut_reading_analytics",
+      "value": "阅读报告"
+    },
+    {
+      "name": "shortcut_search",
+      "value": "全局搜索"
+    },
+    {
+      "name": "shortcut_continue_read",
+      "value": "继续阅读"
     }
   ]
 }

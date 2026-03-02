@@ -12,6 +12,10 @@ import { ProxyManager } from '../Network/ProxyManager';
 import { DataManager } from '../Data/DataManager';
 
 const TAG = 'SourceRepositoryManager';
+const REPOSITORY_PROXY_GH: string = 'https://gh-proxy.org/';
+const REPOSITORY_PROXY_HK_GH: string = 'https://hk.gh-proxy.org/';
+const REPOSITORY_CONNECT_TIMEOUT_MS: number = 2500;
+const REPOSITORY_READ_TIMEOUT_MS: number = 2500;
 
 /**
  * 图源子条目
@@ -57,6 +61,8 @@ export interface SourceRepositoryIndex {
  * 已保存的仓库配置
  */
 export interface SavedRepository {
+  originalUrl?: string;
+  lastEffectiveUrl?: string;
   id: string;             // 仓库ID
   name: string;           // 仓库名称
   url: string;            // 仓库URL
@@ -87,6 +93,42 @@ export interface SyncProgressCallback {
 interface SourceIconInfo {
   data: ArrayBuffer;
   ext: string;
+}
+
+type RepositoryCandidateKind = 'origin' | 'ghProxy' | 'hkGhProxy';
+type RepositoryRouteLogCallback = (level: 'info' | 'warn' | 'error', message: string) => void;
+
+interface RepositoryRouteCandidate {
+  kind: RepositoryCandidateKind;
+  url: string;
+}
+
+interface RepositoryConnectivityCheckResult {
+  reachable: boolean;
+  responseCode: number;
+  errorMessage: string;
+}
+
+interface RepositoryProbeResult {
+  candidate: RepositoryRouteCandidate;
+  check: RepositoryConnectivityCheckResult;
+}
+
+interface RepositoryRouteResult {
+  originalUrl: string;
+  effectiveUrl: string;
+  usedProxy: boolean;
+  proxyPrefix: string;
+}
+
+interface RepositoryProxyUnwrapResult {
+  proxyPrefix: string;
+  rawUrl: string;
+}
+
+interface RepositoryUrlSplitResult {
+  baseUrl: string;
+  query: string;
 }
 
 /**
@@ -292,10 +334,24 @@ export class SourceRepositoryManager {
     };
     
     try {
-      log('info', `开始同步仓库: ${url}`);
+      const normalizedInputUrl = this.normalizeRepositoryUrl(url);
+      if (!normalizedInputUrl) {
+        throw new Error('仓库地址不能为空');
+      }
+
+      const route = await this.resolveBestRepositoryUrl(normalizedInputUrl, log);
+      const syncUrl = route.effectiveUrl;
+      log('info', `开始同步仓库: ${normalizedInputUrl}`);
       progressCallback?.onProgress(0, 100, '正在连接仓库...');
 
       // 下载仓库索引文件（超时10秒）
+      if (route.usedProxy) {
+        log('warn', `原始仓库不可达，切换到代理地址: ${syncUrl}`);
+      } else {
+        log('info', '仓库连通性检测通过，使用原始地址同步');
+      }
+      progressCallback?.onProgress(5, 100, '连通性检测完成，开始下载仓库索引...');
+
       const httpRequest = http.createHttp();
       const requestOptions: http.HttpRequestOptions = {
         method: http.RequestMethod.GET,
@@ -313,7 +369,7 @@ export class SourceRepositoryManager {
         log('info', '使用代理连接图源仓库');
       }
       
-      const response = await httpRequest.request(url, requestOptions);
+      const response = await httpRequest.request(syncUrl, requestOptions);
 
       if (response.responseCode !== 200) {
         throw new Error(`HTTP请求失败: ${response.responseCode}`);
@@ -333,11 +389,13 @@ export class SourceRepositoryManager {
       
       for (const entry of repositoryData) {
         processedSources++;
-        const progressPercent = 10 + Math.floor((processedSources / totalSources) * 60);
+        const progressPercent = totalSources > 0
+          ? 10 + Math.floor((processedSources / totalSources) * 60)
+          : 70;
         progressCallback?.onProgress(progressPercent, 100, `下载图源配置 (${processedSources}/${totalSources}): ${entry.name}`);
         
         // 下载图源配置文件（超时5秒）
-        const sourceConfigUrl = this.resolveSourceConfigUrl(url, entry.pkg);
+        const sourceConfigUrl = this.resolveSourceConfigUrl(syncUrl, entry.pkg);
         try {
           const configOptions: http.HttpRequestOptions = {
             method: http.RequestMethod.GET,
@@ -371,7 +429,7 @@ export class SourceRepositoryManager {
           for (const ext of iconFormats) {
             if (iconDownloaded) break;
             
-            const iconUrl = this.resolveSourceIconUrl(url, entry.pkg, ext);
+            const iconUrl = this.resolveSourceIconUrl(syncUrl, entry.pkg, ext);
             try {
               const iconOptions: http.HttpRequestOptions = {
                 method: http.RequestMethod.GET,
@@ -436,7 +494,7 @@ export class SourceRepositoryManager {
       await this.saveIndexFile(currentIndex);
 
       // 保存仓库配置
-      await this.saveRepositoryConfig(url, repositoryName || this.deriveRepositoryName(url), repositoryData.length);
+      await this.saveRepositoryConfig(route, repositoryName || this.deriveRepositoryName(route.originalUrl), repositoryData.length);
 
       progressCallback?.onProgress(75, 100, '正在保存图源文件...');
       // 保存各个图源的JSON文件和图标
@@ -646,19 +704,32 @@ export class SourceRepositoryManager {
   /**
    * 保存仓库配置
    */
-  private async saveRepositoryConfig(url: string, name: string, sourceCount: number): Promise<void> {
+  private async saveRepositoryConfig(route: RepositoryRouteResult, name: string, sourceCount: number): Promise<void> {
     try {
       const savedRepos = await this.getSavedRepositories();
       
       // 生成仓库ID
-      const repoId = this.generateRepositoryId(url);
+      const normalizedOriginalUrl = this.normalizeRepositoryUrl(route.originalUrl || route.effectiveUrl);
+      const normalizedEffectiveUrl = this.normalizeRepositoryUrl(route.effectiveUrl || route.originalUrl);
+      const repoId = this.generateRepositoryId(normalizedOriginalUrl);
       
       // 检查是否已存在
-      const existingIndex = savedRepos.findIndex(r => r.id === repoId);
+      let existingIndex = savedRepos.findIndex(r => r.id === repoId);
+      if (existingIndex === -1) {
+        existingIndex = savedRepos.findIndex(r => this.normalizeRepositoryUrl(r.url) === normalizedOriginalUrl);
+      }
+      if (existingIndex === -1) {
+        existingIndex = savedRepos.findIndex(r => this.normalizeRepositoryUrl(r.originalUrl ?? '') === normalizedOriginalUrl);
+      }
+      if (existingIndex === -1 && normalizedEffectiveUrl.length > 0) {
+        existingIndex = savedRepos.findIndex(r => this.normalizeRepositoryUrl(r.url) === normalizedEffectiveUrl);
+      }
       const newRepo: SavedRepository = {
         id: repoId,
         name: name,
-        url: url,
+        url: normalizedOriginalUrl,
+        originalUrl: normalizedOriginalUrl,
+        lastEffectiveUrl: normalizedEffectiveUrl,
         lastSync: Date.now(),
         sourceCount: sourceCount
       };
@@ -829,19 +900,257 @@ export class SourceRepositoryManager {
    * - 新格式（文件夹）: base/pkg/source.json
    * - 旧格式（扁平）: base/pkg.json
    */
-  private resolveSourceConfigUrl(indexUrl: string, pkg: string): string {
+  private normalizeRepositoryUrl(url: string): string {
+    if (!url) {
+      return '';
+    }
+    return url.trim();
+  }
+
+  private splitRepositoryUrlQuery(url: string): RepositoryUrlSplitResult {
+    const queryIndex = url.indexOf('?');
+    if (queryIndex < 0) {
+      return {
+        baseUrl: url,
+        query: ''
+      };
+    }
+
+    return {
+      baseUrl: url.substring(0, queryIndex),
+      query: url.substring(queryIndex)
+    };
+  }
+
+  private getRepositoryProxyPrefixes(): string[] {
+    return [REPOSITORY_PROXY_GH, REPOSITORY_PROXY_HK_GH];
+  }
+
+  private unwrapRepositoryProxyUrl(url: string): RepositoryProxyUnwrapResult {
+    const normalizedUrl = this.normalizeRepositoryUrl(url);
+    const proxyPrefixes = this.getRepositoryProxyPrefixes();
+    for (const prefix of proxyPrefixes) {
+      if (normalizedUrl.startsWith(prefix)) {
+        return {
+          proxyPrefix: prefix,
+          rawUrl: normalizedUrl.substring(prefix.length)
+        };
+      }
+    }
+
+    return {
+      proxyPrefix: '',
+      rawUrl: normalizedUrl
+    };
+  }
+
+  private buildRepositoryProxyUrl(proxyPrefix: string, rawUrl: string): string {
+    if (!proxyPrefix || !rawUrl) {
+      return rawUrl;
+    }
+    if (rawUrl.startsWith(proxyPrefix)) {
+      return rawUrl;
+    }
+    return `${proxyPrefix}${rawUrl}`;
+  }
+
+  private getRepositoryCandidateKindByPrefix(prefix: string): RepositoryCandidateKind {
+    if (prefix === REPOSITORY_PROXY_HK_GH) {
+      return 'hkGhProxy';
+    }
+    return 'ghProxy';
+  }
+
+  private getRepositoryCandidateLabel(kind: RepositoryCandidateKind): string {
+    if (kind === 'origin') {
+      return 'origin';
+    }
+    if (kind === 'ghProxy') {
+      return 'gh-proxy';
+    }
+    return 'hk-gh-proxy';
+  }
+
+  private addRepositoryRouteCandidate(candidates: RepositoryRouteCandidate[], seen: Set<string>, candidate: RepositoryRouteCandidate): void {
+    const normalizedCandidateUrl = this.normalizeRepositoryUrl(candidate.url);
+    if (!normalizedCandidateUrl || seen.has(normalizedCandidateUrl)) {
+      return;
+    }
+
+    seen.add(normalizedCandidateUrl);
+    candidates.push({
+      kind: candidate.kind,
+      url: normalizedCandidateUrl
+    });
+  }
+
+  private buildRepositoryRouteCandidates(url: string): RepositoryRouteCandidate[] {
+    const normalizedInputUrl = this.normalizeRepositoryUrl(url);
+    if (!normalizedInputUrl) {
+      return [];
+    }
+
+    const splitResult = this.splitRepositoryUrlQuery(normalizedInputUrl);
+    const unwrapped = this.unwrapRepositoryProxyUrl(splitResult.baseUrl);
+    const originalUrl = `${unwrapped.rawUrl}${splitResult.query}`;
+
+    const candidates: RepositoryRouteCandidate[] = [];
+    const seen = new Set<string>();
+
+    this.addRepositoryRouteCandidate(candidates, seen, {
+      kind: 'origin',
+      url: originalUrl
+    });
+
+    const proxyPrefixes = this.getRepositoryProxyPrefixes();
+    for (const proxyPrefix of proxyPrefixes) {
+      this.addRepositoryRouteCandidate(candidates, seen, {
+        kind: this.getRepositoryCandidateKindByPrefix(proxyPrefix),
+        url: this.buildRepositoryProxyUrl(proxyPrefix, originalUrl)
+      });
+    }
+
+    return candidates;
+  }
+
+  private async quickCheckRepositoryConnectivity(url: string): Promise<RepositoryConnectivityCheckResult> {
+    const request = http.createHttp();
+    try {
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        connectTimeout: REPOSITORY_CONNECT_TIMEOUT_MS,
+        readTimeout: REPOSITORY_READ_TIMEOUT_MS,
+        header: {
+          'Accept': 'application/json,text/plain,*/*'
+        }
+      };
+
+      const proxyManager = ProxyManager.getInstance();
+      if (proxyManager.isEnabled()) {
+        options.usingProxy = true;
+      }
+
+      const response = await request.request(url, options);
+      return {
+        reachable: response.responseCode >= 200 && response.responseCode < 400,
+        responseCode: response.responseCode,
+        errorMessage: ''
+      };
+    } catch (error) {
+      let errorMessage = 'unknown error';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        const errObj = error as Record<string, string | number | boolean>;
+        if (typeof errObj.message === 'string' && errObj.message.length > 0) {
+          errorMessage = errObj.message;
+        } else if (errObj.code !== undefined) {
+          errorMessage = `code: ${String(errObj.code)}`;
+        } else {
+          try {
+            errorMessage = JSON.stringify(error);
+          } catch (_) {
+            errorMessage = String(error);
+          }
+        }
+      } else {
+        errorMessage = String(error);
+      }
+
+      return {
+        reachable: false,
+        responseCode: 0,
+        errorMessage: errorMessage
+      };
+    } finally {
+      try {
+        request.destroy();
+      } catch (_) {
+        // ignore destroy errors
+      }
+    }
+  }
+
+  private async probeRepositoryCandidate(candidate: RepositoryRouteCandidate): Promise<RepositoryProbeResult> {
+    const check = await this.quickCheckRepositoryConnectivity(candidate.url);
+    return {
+      candidate: candidate,
+      check: check
+    };
+  }
+
+  private async resolveBestRepositoryUrl(url: string, log?: RepositoryRouteLogCallback): Promise<RepositoryRouteResult> {
+    const candidates = this.buildRepositoryRouteCandidates(url);
+    if (candidates.length === 0) {
+      throw new Error('仓库地址无效');
+    }
+
+    const probeTasks: Promise<RepositoryProbeResult>[] = [];
+    for (const candidate of candidates) {
+      probeTasks.push(this.probeRepositoryCandidate(candidate));
+    }
+    const probeResults = await Promise.all(probeTasks);
+
+    for (const probeResult of probeResults) {
+      const label = this.getRepositoryCandidateLabel(probeResult.candidate.kind);
+      if (probeResult.check.reachable) {
+        log?.('info', `仓库连通性通过(${label}): ${probeResult.candidate.url}`);
+      } else {
+        const detail = probeResult.check.responseCode > 0
+          ? `HTTP ${probeResult.check.responseCode}`
+          : probeResult.check.errorMessage;
+        log?.('warn', `仓库连通性失败(${label}): ${probeResult.candidate.url} (${detail})`);
+      }
+    }
+
+    let selected: RepositoryRouteCandidate | null = null;
+    for (const candidate of candidates) {
+      const matched = probeResults.find(result => result.candidate.url === candidate.url);
+      if (matched && matched.check.reachable) {
+        selected = candidate;
+        break;
+      }
+    }
+
+    if (!selected) {
+      throw new Error('原始地址和加速代理均不可连通');
+    }
+
+    const splitResult = this.splitRepositoryUrlQuery(this.normalizeRepositoryUrl(url));
+    const unwrappedOriginal = this.unwrapRepositoryProxyUrl(splitResult.baseUrl);
+    const originalUrl = `${unwrappedOriginal.rawUrl}${splitResult.query}`;
+
+    const selectedUnwrapped = this.unwrapRepositoryProxyUrl(selected.url);
+    return {
+      originalUrl: originalUrl,
+      effectiveUrl: selected.url,
+      usedProxy: selected.kind !== 'origin',
+      proxyPrefix: selectedUnwrapped.proxyPrefix
+    };
+  }
+
+  private resolveRepositoryAssetUrl(indexUrl: string, relativePath: string): string {
     if (!indexUrl) {
-      return `${pkg}/source.json`;
+      return relativePath;
     }
-    const queryIndex = indexUrl.indexOf('?');
-    const cleanUrl = queryIndex >= 0 ? indexUrl.substring(0, queryIndex) : indexUrl;
-    const lastSlashIndex = cleanUrl.lastIndexOf('/');
-    if (lastSlashIndex === -1) {
-      return `${cleanUrl}/${pkg}/source.json`;
+
+    const splitResult = this.splitRepositoryUrlQuery(indexUrl);
+    const unwrapped = this.unwrapRepositoryProxyUrl(splitResult.baseUrl);
+    const cleanInnerIndexUrl = unwrapped.rawUrl;
+    const lastSlashIndex = cleanInnerIndexUrl.lastIndexOf('/');
+    const rawBaseUrl = lastSlashIndex >= 0
+      ? cleanInnerIndexUrl.substring(0, lastSlashIndex + 1)
+      : `${cleanInnerIndexUrl}/`;
+
+    const rawAssetUrl = `${rawBaseUrl}${relativePath}`;
+    if (!unwrapped.proxyPrefix) {
+      return rawAssetUrl;
     }
-    const base = cleanUrl.substring(0, lastSlashIndex + 1);
-    // 优先使用新格式（文件夹结构）
-    return `${base}${pkg}/source.json`;
+    return this.buildRepositoryProxyUrl(unwrapped.proxyPrefix, rawAssetUrl);
+  }
+
+  private resolveSourceConfigUrl(indexUrl: string, pkg: string): string {
+    return this.resolveRepositoryAssetUrl(indexUrl, `${pkg}/source.json`);
   }
 
   /**
@@ -850,17 +1159,7 @@ export class SourceRepositoryManager {
    * 支持的格式: png, jpg, webp
    */
   private resolveSourceIconUrl(indexUrl: string, pkg: string, ext: string = 'webp'): string {
-    if (!indexUrl) {
-      return `${pkg}/icon.${ext}`;
-    }
-    const queryIndex = indexUrl.indexOf('?');
-    const cleanUrl = queryIndex >= 0 ? indexUrl.substring(0, queryIndex) : indexUrl;
-    const lastSlashIndex = cleanUrl.lastIndexOf('/');
-    if (lastSlashIndex === -1) {
-      return `${cleanUrl}/${pkg}/icon.${ext}`;
-    }
-    const base = cleanUrl.substring(0, lastSlashIndex + 1);
-    return `${base}${pkg}/icon.${ext}`;
+    return this.resolveRepositoryAssetUrl(indexUrl, `${pkg}/icon.${ext}`);
   }
 
   private deriveRepositoryName(url: string): string {

@@ -253,7 +253,12 @@ export struct SuwayomiBrowsePage {
             if (path) {
               this.coverCachePaths.set(manga.id, path);
               this.coverCachePaths = new Map(this.coverCachePaths); // 触发UI更新
+            } else {
+              const coverUrl = manga.coverUrl || '';
+              logger.warn(TAG, `封面缓存失败: mangaId=${manga.id}, coverUrl=${coverUrl.substring(0, 120)}`);
             }
+          }).catch((error: Object | string | number | boolean) => {
+            logger.warn(TAG, `封面缓存异常: mangaId=${manga.id}, error=${String(error)}`);
           });
         }
       }
@@ -267,11 +272,13 @@ export struct SuwayomiBrowsePage {
     if (!DownloadDirManager.isReady()) {
       return;
     }
-    const serverUrl = this.executor.getServerUrl();
     const headers = this.executor.getImageHeaders();
     for (const source of this.sources) {
       if (source.iconUrl && !this.sourceIconCachePaths.has(source.id)) {
-        const fullIconUrl = `${serverUrl}${source.iconUrl}`;
+        const fullIconUrl = this.resolveSuwayomiAssetUrl(source.iconUrl);
+        if (!fullIconUrl) {
+          continue;
+        }
         // 检查是否已缓存
         const cachedPath = SuwayomiCacheManager.getCachedSourceIconPath(source.id, fullIconUrl);
         if (cachedPath) {
@@ -282,7 +289,11 @@ export struct SuwayomiBrowsePage {
             if (path) {
               this.sourceIconCachePaths.set(source.id, path);
               this.sourceIconCachePaths = new Map(this.sourceIconCachePaths); // 触发UI更新
+            } else {
+              logger.warn(TAG, `图标缓存失败: sourceId=${source.id}, iconUrl=${fullIconUrl.substring(0, 120)}`);
             }
+          }).catch((error: Object | string | number | boolean) => {
+            logger.warn(TAG, `图标缓存异常: sourceId=${source.id}, error=${String(error)}`);
           });
         }
       }
@@ -301,6 +312,57 @@ export struct SuwayomiBrowsePage {
   }
 
   /**
+   * 将 Suwayomi 资源路径（可能是相对路径）转为完整 URL
+   */
+  private isHostLikeUrlWithoutScheme(url: string): boolean {
+    const slashIndex = url.indexOf('/');
+    const hostPart = slashIndex >= 0 ? url.substring(0, slashIndex) : url;
+    const pathPart = slashIndex >= 0 ? url.substring(slashIndex) : '';
+    if (!hostPart) {
+      return false;
+    }
+
+    const isIpv4Host = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(hostPart);
+    const isNamedHost = /^(localhost|[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?::\d+)?$/.test(hostPart);
+    if (!isIpv4Host && !isNamedHost) {
+      return false;
+    }
+    return hostPart.includes(':') || pathPart.startsWith('/');
+  }
+
+  private resolveSuwayomiAssetUrl(rawUrl: string): string {
+    const url = (rawUrl || '').trim();
+    if (!url) {
+      return '';
+    }
+    if (url.includes('://') || url.startsWith('data:') || url.startsWith('file:')) {
+      return url;
+    }
+
+    const serverUrlRaw = (this.executor.getServerUrl() || '').trim();
+    if (!serverUrlRaw) {
+      return url;
+    }
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(serverUrlRaw);
+    const normalizedServerUrl = hasScheme ? serverUrlRaw : `http://${serverUrlRaw}`;
+    const serverUrl = normalizedServerUrl.endsWith('/') ?
+      normalizedServerUrl.substring(0, normalizedServerUrl.length - 1) :
+      normalizedServerUrl;
+    const protocol = serverUrl.startsWith('https://') ? 'https:' : 'http:';
+
+    if (url.startsWith('//')) {
+      return `${protocol}${url}`;
+    }
+    if (this.isHostLikeUrlWithoutScheme(url)) {
+      return `${protocol}//${url}`;
+    }
+    if (url.startsWith('/')) {
+      return `${serverUrl}${url}`;
+    }
+    return `${serverUrl}/${url}`;
+  }
+
+  /**
    * 获取图源图标显示路径（优先使用缓存）
    */
   private getSourceIconUrl(source: SuwayomiExtensionSource): string {
@@ -309,7 +371,7 @@ export struct SuwayomiBrowsePage {
       return `file://${cachedPath}`;
     }
     if (source.iconUrl) {
-      return `${this.executor.getServerUrl()}${source.iconUrl}`;
+      return this.resolveSuwayomiAssetUrl(source.iconUrl);
     }
     return '';
   }
@@ -348,7 +410,12 @@ export struct SuwayomiBrowsePage {
       this.hasMore = result.hasMore;
       this.currentOffset += result.items.length;
 
-      logger.info(TAG, `加载库漫画: ${this.mangas.length}/${this.totalCount} 本`);
+      const coverCount = this.mangas.filter((manga: ComicInfo) => !!manga.coverUrl).length;
+      const sampleCover = this.mangas.find((manga: ComicInfo) => !!manga.coverUrl)?.coverUrl || '';
+      logger.info(
+        TAG,
+        `加载库漫画: ${this.mangas.length}/${this.totalCount} 本, 有封面字段: ${coverCount}/${this.mangas.length}${sampleCover ? `, 示例=${sampleCover.substring(0, 120)}` : ''}`
+      );
       // 缓存封面图片
       this.cacheMangaCovers();
     } catch (error) {

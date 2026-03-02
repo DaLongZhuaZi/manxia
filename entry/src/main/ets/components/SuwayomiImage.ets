@@ -28,7 +28,124 @@ export struct SuwayomiImage {
   @State private useDirectImage: boolean = false;
 
   private currentSrc: string = '';
+  private effectiveSrc: string = '';
   private loadingAborted: boolean = false;
+
+  private resolveErrorText(error: Object | string | number | boolean | null | undefined): string {
+    if (error === undefined || error === null) {
+      return '未知错误';
+    }
+    if (typeof error === 'string' || typeof error === 'number' || typeof error === 'boolean') {
+      return String(error);
+    }
+    if (error instanceof Error) {
+      const message = error.message ? error.message.trim() : '';
+      if (message.length > 0) {
+        return message;
+      }
+    }
+    const objectError = error as Object;
+    const messageValue = (objectError as Record<string, Object>)['message'];
+    if (messageValue !== undefined && messageValue !== null) {
+      const messageText = String(messageValue).trim();
+      if (messageText.length > 0 && messageText !== '[object Object]') {
+        return messageText;
+      }
+    }
+    const codeValue = (objectError as Record<string, Object>)['code'];
+    if (codeValue !== undefined && codeValue !== null) {
+      return `错误码 ${String(codeValue)}`;
+    }
+    try {
+      const jsonText = JSON.stringify(objectError);
+      if (jsonText && jsonText.length > 0 && jsonText !== '{}') {
+        return jsonText;
+      }
+    } catch (_error) {
+    }
+    return String(error);
+  }
+
+  private previewUrl(url: string): string {
+    if (!url) {
+      return '';
+    }
+    return url.length > 120 ? `${url.substring(0, 120)}...` : url;
+  }
+
+  private getAuthorizationHeader(): string {
+    try {
+      const executor = getSuwayomiSourceExecutor();
+      const authHeaders = executor.getImageHeaders();
+      return authHeaders['Authorization'] || '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  private getNormalizedServerUrl(): string {
+    try {
+      const executor = getSuwayomiSourceExecutor();
+      const serverUrlRaw = (executor.getServerUrl() || '').trim();
+      if (!serverUrlRaw) {
+        return '';
+      }
+      const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(serverUrlRaw);
+      const normalized = hasScheme ? serverUrlRaw : `http://${serverUrlRaw}`;
+      return normalized.endsWith('/') ? normalized.substring(0, normalized.length - 1) : normalized;
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  private isHostLikeUrlWithoutScheme(url: string): boolean {
+    const slashIndex = url.indexOf('/');
+    const hostPart = slashIndex >= 0 ? url.substring(0, slashIndex) : url;
+    const pathPart = slashIndex >= 0 ? url.substring(slashIndex) : '';
+    if (!hostPart) {
+      return false;
+    }
+
+    const isIpv4Host = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(hostPart);
+    const isNamedHost = /^(localhost|[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?::\d+)?$/.test(hostPart);
+    if (!isIpv4Host && !isNamedHost) {
+      return false;
+    }
+
+    return hostPart.includes(':') || pathPart.startsWith('/');
+  }
+
+  private resolveImageUrl(rawUrl: string): string {
+    const url = (rawUrl || '').trim();
+    if (!url) {
+      return '';
+    }
+    if (url.includes('://') || url.startsWith('data:') || url.startsWith('file:')) {
+      return url;
+    }
+
+    const serverUrl = this.getNormalizedServerUrl();
+    const protocol = serverUrl.startsWith('https://') ? 'https:' : 'http:';
+
+    if (url.startsWith('//')) {
+      return `${protocol}${url}`;
+    }
+    if (this.isHostLikeUrlWithoutScheme(url)) {
+      return `${protocol}//${url}`;
+    }
+
+    if (!serverUrl) {
+      return url;
+    }
+
+    if (url.startsWith('/')) {
+      return `${serverUrl}${url}`;
+    }
+    if (url.startsWith('api/')) {
+      return `${serverUrl}/${url}`;
+    }
+    return url;
+  }
 
   aboutToAppear() {
     if (this.src) {
@@ -39,8 +156,9 @@ export struct SuwayomiImage {
   aboutToDisappear() {
     this.loadingAborted = true;
     this.releasePixelMap();
-    // 重置 currentSrc，确保组件被回收后重新出现时能重新加载图片
+    // 组件销毁后重置状态，避免复用时跳过加载
     this.currentSrc = '';
+    this.effectiveSrc = '';
     this.useDirectImage = false;
     this.loadError = false;
   }
@@ -59,8 +177,7 @@ export struct SuwayomiImage {
     if (this.pixelMap) {
       try {
         this.pixelMap.release();
-      } catch (e) {
-        // 忽略释放错误
+      } catch (_error) {
       }
       this.pixelMap = null;
     }
@@ -76,6 +193,7 @@ export struct SuwayomiImage {
     }
 
     this.currentSrc = this.src;
+    this.effectiveSrc = this.resolveImageUrl(this.src) || this.src;
     this.isLoading = true;
     this.loadError = false;
     this.useDirectImage = false;
@@ -83,24 +201,37 @@ export struct SuwayomiImage {
     this.loadingAborted = false;
 
     try {
+      const requestUrl = this.effectiveSrc;
+      if (requestUrl !== this.src) {
+        logger.debug(TAG, `规范化图片URL: ${this.previewUrl(this.src)} -> ${this.previewUrl(requestUrl)}`);
+      }
+
       // 非 HTTP URL 直接使用 Image 组件（file:// 等本地路径无需认证头）
-      if (!this.src.startsWith('http://') && !this.src.startsWith('https://')) {
+      if (!requestUrl.startsWith('http://') && !requestUrl.startsWith('https://')) {
         this.useDirectImage = true;
         this.isLoading = false;
         return;
       }
 
+      const authorizationHeader = this.getAuthorizationHeader();
+      const canFallbackToDirectImage = !authorizationHeader;
+
       // HTTP URL 下载图片数据（带认证头）
-      const buffer = await this.downloadImage(this.src);
-      
+      const buffer = await this.downloadImage(requestUrl, authorizationHeader);
+
       if (this.loadingAborted) {
         return;
       }
 
       if (!buffer) {
-        // 下载失败，标记为错误（不回退到 Image(url) —— 它无法发送认证头）
-        logger.warn(TAG, `下载图片失败: ${this.src.substring(0, 80)}`);
-        this.loadError = true;
+        if (canFallbackToDirectImage) {
+          logger.warn(TAG, `下载图片失败，回退 Image 组件: ${this.previewUrl(requestUrl)}`);
+          this.useDirectImage = true;
+          this.loadError = false;
+        } else {
+          logger.warn(TAG, `下载图片失败（需要认证，不可回退）: ${this.previewUrl(requestUrl)}`);
+          this.loadError = true;
+        }
         this.isLoading = false;
         return;
       }
@@ -109,12 +240,12 @@ export struct SuwayomiImage {
 
       // 检查是否为 AVIF 格式
       if (isAvifFormat(buffer)) {
-        logger.debug(TAG, `检测到 AVIF 格式: ${this.src.substring(0, 60)}...`);
+        logger.debug(TAG, `检测到 AVIF 格式: ${requestUrl.substring(0, 60)}...`);
         const avifDecoder = AvifDecoder.getInstance();
         if (avifDecoder.isSupported()) {
           pixelMap = await avifDecoder.decode(buffer);
           if (pixelMap) {
-            logger.debug(TAG, `AVIF 解码成功`);
+            logger.debug(TAG, 'AVIF 解码成功');
           }
         }
       }
@@ -126,8 +257,14 @@ export struct SuwayomiImage {
           pixelMap = await imageSource.createPixelMap();
           imageSource.release();
         } catch (decodeError) {
-          logger.warn(TAG, `系统解码失败: ${decodeError}`);
-          this.loadError = true;
+          logger.warn(TAG, `系统解码失败: ${this.resolveErrorText(decodeError as Object | string | number | boolean | null | undefined)}, url=${this.previewUrl(requestUrl)}`);
+          if (canFallbackToDirectImage) {
+            logger.warn(TAG, `系统解码失败，回退 Image 组件: ${this.previewUrl(requestUrl)}`);
+            this.useDirectImage = true;
+            this.loadError = false;
+          } else {
+            this.loadError = true;
+          }
           this.isLoading = false;
           return;
         }
@@ -143,10 +280,17 @@ export struct SuwayomiImage {
       if (pixelMap) {
         this.pixelMap = pixelMap;
       } else {
-        this.loadError = true;
+        logger.warn(TAG, `图片解码结果为空: ${this.previewUrl(requestUrl)}`);
+        if (canFallbackToDirectImage) {
+          logger.warn(TAG, `图片解码结果为空，回退 Image 组件: ${this.previewUrl(requestUrl)}`);
+          this.useDirectImage = true;
+          this.loadError = false;
+        } else {
+          this.loadError = true;
+        }
       }
     } catch (e) {
-      logger.warn(TAG, `加载图片失败: ${e}`);
+      logger.warn(TAG, `加载图片失败: ${this.resolveErrorText(e as Object | string | number | boolean | null | undefined)}, url=${this.previewUrl(this.effectiveSrc || this.src)}`);
       this.loadError = true;
     } finally {
       if (!this.loadingAborted) {
@@ -155,7 +299,7 @@ export struct SuwayomiImage {
     }
   }
 
-  private async downloadImage(url: string): Promise<ArrayBuffer | null> {
+  private async downloadImage(url: string, authorizationHeader?: string): Promise<ArrayBuffer | null> {
     try {
       const httpRequest = http.createHttp();
       const headers: Record<string, string> = {
@@ -163,22 +307,15 @@ export struct SuwayomiImage {
         'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'
       };
 
-      // 添加 Suwayomi 认证头
-      try {
-        const executor = getSuwayomiSourceExecutor();
-        const authHeaders = executor.getImageHeaders();
-        if (authHeaders['Authorization']) {
-          headers['Authorization'] = authHeaders['Authorization'];
-        }
-      } catch (e) {
-        // 忽略获取认证头失败
+      if (authorizationHeader) {
+        headers['Authorization'] = authorizationHeader;
       }
 
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        connectTimeout: 15000,
-        readTimeout: 30000,
+        connectTimeout: 30000,
+        readTimeout: 60000,
         header: headers
       });
 
@@ -188,9 +325,10 @@ export struct SuwayomiImage {
         return response.result as ArrayBuffer;
       }
 
+      logger.warn(TAG, `下载图片HTTP失败: code=${response.responseCode}, url=${this.previewUrl(url)}`);
       return null;
     } catch (e) {
-      logger.debug(TAG, `下载图片失败: ${e}`);
+      logger.warn(TAG, `下载图片异常: ${this.resolveErrorText(e as Object | string | number | boolean | null | undefined)}, url=${this.previewUrl(url)}`);
       return null;
     }
   }
@@ -216,14 +354,15 @@ export struct SuwayomiImage {
       }
 
       // 直接使用 Image 组件加载（非 AVIF 或回退模式）
-      if (this.useDirectImage && this.src) {
-        Image(this.src)
+      if (this.useDirectImage && (this.effectiveSrc || this.src)) {
+        Image(this.effectiveSrc || this.src)
           .width(this.imageWidth)
           .height(this.imgAspectRatio > 0 ? undefined : this.imageHeight)
           .aspectRatio(this.imgAspectRatio > 0 ? this.imgAspectRatio : undefined)
           .objectFit(this.objectFit)
           .borderRadius(this.imgBorderRadius)
           .onError(() => {
+            logger.warn(TAG, `Image组件加载失败: ${this.previewUrl(this.effectiveSrc || this.src)}`);
             this.loadError = true;
           })
       }

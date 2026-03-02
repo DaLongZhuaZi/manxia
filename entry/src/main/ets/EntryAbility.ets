@@ -77,6 +77,8 @@ export default class EntryAbility extends UIAbility {
       this.handleWidgetRouter(want);
     }
 
+    this.handleShortcutIntent(want);
+
     // 启动可监控的初始化流程
     this.runManagedInitialization();
   }
@@ -699,8 +701,13 @@ export default class EntryAbility extends UIAbility {
       }
       
       // 解析params参数
-      const paramsStr = want.parameters['params'] as string;
-      const params = JSON.parse(paramsStr) as Record<string, string>;
+      const paramsRaw = want.parameters['params'];
+      let params: Record<string, string> = {};
+      if (typeof paramsRaw === 'string') {
+        params = JSON.parse(paramsRaw) as Record<string, string>;
+      } else if (typeof paramsRaw === 'object' && paramsRaw !== null) {
+        params = paramsRaw as Record<string, string>;
+      }
       const targetPage = params['targetPage'];
       
       logger.info('EntryAbility', `📱 收到卡片router事件: targetPage=${targetPage}`);
@@ -708,12 +715,68 @@ export default class EntryAbility extends UIAbility {
       if (targetPage === 'readingAnalytics') {
         // 设置标记，跳转到阅读报告页面的日视图
         AppStorage.setOrCreate('widgetTargetPage', 'readingAnalytics');
-        AppStorage.setOrCreate('widgetTargetView', 'daily'); // 日视图
+        AppStorage.setOrCreate('widgetTargetView', params['targetView'] || 'daily');
         logger.info('EntryAbility', '✅ 已设置卡片跳转目标: 阅读报告-日视图');
+      } else if (targetPage === 'continueRead') {
+        const contentType = params['contentType'] || '';
+        const contentId = params['contentId'] || '';
+        if (!contentType || !contentId) {
+          logger.warn('EntryAbility', `continueRead参数不完整: type=${contentType}, id=${contentId}`);
+          return;
+        }
+        AppStorage.setOrCreate('widgetTargetPage', 'continueRead');
+        AppStorage.setOrCreate('widgetContentType', contentType);
+        AppStorage.setOrCreate('widgetContentId', contentId);
+        logger.info('EntryAbility', `✅ 已设置继续阅读跳转: type=${contentType}, id=${contentId}`);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `❌ 处理卡片router事件失败: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * 处理长按快捷入口（兼容实现，便于后续接入系统shortcuts）
+   */
+  private handleShortcutIntent(want: Want): void {
+    try {
+      if (!want.parameters) {
+        return;
+      }
+      const shortcutId = want.parameters['shortcutId'] as string;
+      if (!shortcutId) {
+        return;
+      }
+
+      logger.info('EntryAbility', `📌 收到快捷入口请求: shortcutId=${shortcutId}`);
+      switch (shortcutId) {
+        case 'reading_analytics':
+        case 'readingAnalytics':
+          AppStorage.setOrCreate('widgetTargetPage', 'readingAnalytics');
+          AppStorage.setOrCreate('widgetTargetView', 'daily');
+          break;
+        case 'search':
+        case 'open_search':
+          AppStorage.setOrCreate('widgetTargetPage', 'search');
+          break;
+        case 'continue_read':
+        case 'continueRead':
+        case 'open_recent_read':
+        case 'downloads':
+        case 'open_downloads':
+          // 兼容旧快捷方式ID：历史版本可能仍使用downloads
+          AppStorage.setOrCreate('widgetTargetPage', 'continueReadLatest');
+          break;
+        case 'library':
+        case 'open_library':
+          AppStorage.setOrCreate('widgetTargetPage', 'library');
+          break;
+        default:
+          logger.warn('EntryAbility', `未识别的shortcutId: ${shortcutId}`);
+          break;
+      }
+    } catch (error) {
+      logger.warn('EntryAbility', `handleShortcutIntent error: ${String(error)}`);
     }
   }
 
@@ -791,6 +854,8 @@ export default class EntryAbility extends UIAbility {
     if (want.parameters && want.parameters['params']) {
       this.handleWidgetRouter(want);
     }
+
+    this.handleShortcutIntent(want);
   }
 
   /**
@@ -813,6 +878,13 @@ export default class EntryAbility extends UIAbility {
     
     // 清除后台模糊状态
     AppStorage.setOrCreate('isInBackground', false);
+
+    try {
+      widgetDataSync.init(this.context);
+      void widgetDataSync.syncAllDataThrottled();
+    } catch (error) {
+      logger.warn('EntryAbility', `onForeground widget sync error: ${String(error)}`);
+    }
 
     // 触发业务注册的前台回调
     try {

@@ -318,6 +318,56 @@ export class SuwayomiTracker extends BaseTracker {
     return result;
   }
 
+  /**
+   * 将 Suwayomi 返回的 URL 转为可用绝对地址
+   */
+  private isHostLikeUrlWithoutScheme(url: string): boolean {
+    const slashIndex = url.indexOf('/');
+    const hostPart = slashIndex >= 0 ? url.substring(0, slashIndex) : url;
+    const pathPart = slashIndex >= 0 ? url.substring(slashIndex) : '';
+    if (!hostPart) {
+      return false;
+    }
+    const isIpv4Host = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(hostPart);
+    const isNamedHost = /^(localhost|[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?::\d+)?$/.test(hostPart);
+    if (!isIpv4Host && !isNamedHost) {
+      return false;
+    }
+    return hostPart.includes(':') || pathPart.startsWith('/');
+  }
+
+  private resolveSuwayomiUrl(rawUrl: string): string {
+    const url = (rawUrl || '').trim();
+    if (!url) {
+      return '';
+    }
+    if (url.includes('://') || url.startsWith('data:') || url.startsWith('file:')) {
+      return url;
+    }
+
+    const serverUrlRaw = (this.config.serverUrl || '').trim();
+    if (!serverUrlRaw) {
+      return url;
+    }
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(serverUrlRaw);
+    const normalizedServerUrl = hasScheme ? serverUrlRaw : `http://${serverUrlRaw}`;
+    const serverUrl = normalizedServerUrl.endsWith('/') ?
+      normalizedServerUrl.substring(0, normalizedServerUrl.length - 1) :
+      normalizedServerUrl;
+    const protocol = serverUrl.startsWith('https://') ? 'https:' : 'http:';
+
+    if (url.startsWith('//')) {
+      return `${protocol}${url}`;
+    }
+    if (this.isHostLikeUrlWithoutScheme(url)) {
+      return `${protocol}//${url}`;
+    }
+    if (url.startsWith('/')) {
+      return `${serverUrl}${url}`;
+    }
+    return `${serverUrl}/${url}`;
+  }
+
   // ==================== 图源模式 API ====================
 
   /**
@@ -509,7 +559,7 @@ export class SuwayomiTracker extends BaseTracker {
       const result: TrackSearchResult = {
         remoteId: String(manga.id),
         title: manga.title,
-        coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+        coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
         summary: '',
         publishingType: '',
         startDate: '',
