@@ -2057,7 +2057,43 @@ export struct MangaReaderPage {
         logger.info(TAG, `🌐 WebView图源章节无页面数据，开始动态加载页面列表`);
 
         // [重构] 使用专门的方法获取外部漫画ID（不与本地方法混用）
-        const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(params.mangaId || manga.id);
+        // [P0] Cache-first: already cached online pages should bypass network page-list flow.
+        let validCachedDbPages: OnlinePageInfo[] = [];
+        try {
+          const cachedDataManager = DataManager.getInstance();
+          const cachedDbPages = await cachedDataManager.getOnlineChapterPages(this.readerState.currentChapter.id);
+          validCachedDbPages = cachedDbPages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+        } catch (cacheError) {
+          logger.warn(TAG, `[P0] cache-first query failed, fallback to engine path: ${String(cacheError)}`);
+        }
+        if (validCachedDbPages.length > 0) {
+          const currentChapterId = this.readerState.currentChapter.id;
+          const cachedMangaPages: MangaPage[] = validCachedDbPages.map((pageInfo: OnlinePageInfo, index: number) => {
+            const hasLocalPath = !!pageInfo.localPath && pageInfo.localPath.trim().length > 0;
+            const sourceType: ImageSourceType = hasLocalPath ? ImageSourceType.LOCAL : ImageSourceType.NETWORK;
+            const imagePath = hasLocalPath ? pageInfo.localPath : pageInfo.imageUrl;
+            return {
+              id: pageInfo.id || `${currentChapterId}_page_${pageInfo.pageNumber}`,
+              index: index,
+              sourceType: sourceType,
+              imagePath: imagePath,
+              imageUrl: pageInfo.imageUrl,
+              localPath: pageInfo.localPath,
+              width: pageInfo.width,
+              height: pageInfo.height,
+              fileSize: pageInfo.fileSize,
+              isLoaded: false
+            } as MangaPage;
+          });
+          this.readerState.currentChapter.pages = cachedMangaPages;
+          logger.info(TAG, `[P0] Cache-first hit online_page: count=${cachedMangaPages.length}`);
+          if (this.mangaViewerComponent) {
+            this.mangaViewerComponent.kickstartLoading();
+          }
+          this.preloadNextChapterAfterCurrentLoaded();
+          didDynamicPageList = true;
+        } else {
+          const externalMangaId = await this.getExternalMangaIdForOnlineUndownloaded(params.mangaId || manga.id);
         logger.info(TAG, `  - 最终使用的外部漫画ID: ${externalMangaId}`);
 
         // [修复] 优先使用传入的params.chapterId（它就是正确的externalId）
@@ -2078,52 +2114,18 @@ export struct MangaReaderPage {
           this.readerState.loadingMessage = '正在获取章节图片列表...';
           logger.info(TAG, `🔄 开始获取页面列表: mangaId=${externalMangaId}, chapterId=${externalChapterId}`);
           
-          // [新增] 等待WebView组件完全初始化（避免"WebviewController must be associated with a Web component"错误）
-          logger.debug(TAG, `⏳ 等待WebView组件就绪...`);
-          await new Promise<void>((resolve) => {
-            setTimeout(() => {
-              logger.debug(TAG, `✅ WebView等待完成，开始请求页面列表`);
-              resolve();
-            }, 500); // 延迟500ms确保WebView组件已渲染
-          });
-          
-          // [新增] 智能重试机制：页面列表为空时自动重试
-          let pageListResult: ESObject | null = null;
-          const maxRetries = 2; // 最多重试2次
-          let retryCount = 0;
-          
-          while (retryCount <= maxRetries) {
-            if (retryCount > 0) {
-              const retryDelay = retryCount * 1000; // 递增延迟：1s, 2s
-              logger.info(TAG, `🔄 第${retryCount}次重试，等待${retryDelay}ms后重新获取页面列表...`);
-              this.readerState.loadingMessage = `页面加载中，正在重试(${retryCount}/${maxRetries})...`;
-              await new Promise<void>((resolve) => {
-                setTimeout(() => resolve(), retryDelay);
-              });
-            }
-            
-            // 使用修正后的ID请求页面列表
+          // [P0] 首屏不做固定延迟和长退避重试：立即请求，失败后仅即时重试一次
+          let pageListResult: ESObject | null = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
+          if (!pageListResult.success || !pageListResult.data || pageListResult.data.length === 0) {
+            logger.warn(TAG, '[P0] 首次获取页面列表失败/为空，立即重试一次');
             pageListResult = await this.mangaEngine.getPageList(externalChapterId, externalMangaId);
-            
-            // 检查结果是否有效
-            if (pageListResult.success && pageListResult.data && pageListResult.data.length > 0) {
-              logger.info(TAG, `✅ 页面列表获取成功，共 ${pageListResult.data.length} 页`);
-              break; // 成功获取，退出重试循环
-            }
-            
-            // 如果是最后一次尝试，记录失败
-            if (retryCount === maxRetries) {
-              logger.warn(TAG, `⚠️ 已重试${maxRetries}次，页面列表仍为空`);
-            }
-            
-            retryCount++;
           }
           
           if (!pageListResult) {
             throw new Error('页面列表获取失败：未能获取有效结果');
           }
           
-          logger.info(TAG, `📊 页面列表获取结果: success=${pageListResult.success}, hasData=${!!pageListResult.data}, dataLength=${pageListResult.data?.length || 0}, 重试次数=${retryCount}`);
+          logger.info(TAG, `📊 页面列表获取结果: success=${pageListResult.success}, hasData=${!!pageListResult.data}, dataLength=${pageListResult.data?.length || 0}`);
           if (pageListResult.error) {
             logger.error(TAG, `❌ 页面列表获取错误: ${pageListResult.error}`);
           }
@@ -2256,7 +2258,9 @@ export struct MangaReaderPage {
         // 保存页面信息到数据库
         // [修改] 仅当 sourcePages 有数据且来自网络时保存
         if (sourcePages.length > 0) {
-          await this.savePageInfoToDatabase(this.readerState.currentChapter.id, sourcePages);
+          this.savePageInfoToDatabase(this.readerState.currentChapter.id, sourcePages).catch((err: Error) => {
+            logger.warn(TAG, `保存page表页面列表失败: ${err.message}`);
+          });
           
           // 当前章节页面信息加载完成后，立即预加载下一章节（如果启用）
           this.preloadNextChapterAfterCurrentLoaded();
@@ -2274,6 +2278,7 @@ export struct MangaReaderPage {
           return;
         }
         didDynamicPageList = true;
+        }
       }
       // 在线未下载：章节已有页面数据（来自数据库或上游），也需要校验并主动触发网络加载
       if (!didDynamicPageList && params.contentType === MangaReaderContentType.OnlineUndownloaded && this.readerState.currentChapter && this.readerState.currentChapter.pages && this.readerState.currentChapter.pages.length > 0) {
@@ -4281,6 +4286,37 @@ export struct MangaReaderPage {
       logger.debug(TAG, '预加载页数为0，跳过预加载');
       return;
     }
+
+    // [P0] Cache-first for chapter switch/preload path.
+    if (this.pageParams?.contentType === MangaReaderContentType.OnlineUndownloaded) {
+      try {
+        const dataManager = DataManager.getInstance();
+        const cachedOnlinePages = await dataManager.getOnlineChapterPages(chapter.id);
+        const validCachedOnlinePages = cachedOnlinePages.filter((p: OnlinePageInfo) => p.imageUrl && p.imageUrl.trim().length > 0);
+        if (validCachedOnlinePages.length > 0) {
+          chapter.pages = validCachedOnlinePages.map((p: OnlinePageInfo, index: number): MangaPage => {
+            const hasLocalPath = !!p.localPath && p.localPath.trim().length > 0;
+            const sourceType: ImageSourceType = hasLocalPath ? ImageSourceType.LOCAL : ImageSourceType.NETWORK;
+            const imagePath = hasLocalPath ? p.localPath : p.imageUrl;
+            return {
+              id: p.id || `${chapter.id}_page_${p.pageNumber}`,
+              index: index,
+              sourceType: sourceType,
+              imagePath: imagePath,
+              imageUrl: p.imageUrl,
+              width: p.width,
+              height: p.height,
+              fileSize: p.fileSize,
+              isLoaded: false
+            } as MangaPage;
+          });
+          logger.info(TAG, `[P0] preloadChapterPages cache-first hit online_page: chapter=${chapter.title}, pages=${chapter.pages.length}`);
+          return;
+        }
+      } catch (cacheError) {
+        logger.warn(TAG, `preloadChapterPages cache-first query failed: ${String(cacheError)}`);
+      }
+    }
     
     try {
       // 获取外部章节ID
@@ -4362,8 +4398,10 @@ export struct MangaReaderPage {
       // 更新章节的页面列表（内存中）
       chapter.pages = mangaPages;
       
-      // 保存到数据库（保存全部页面信息，即使只预加载部分）
-      await this.savePageInfoToDatabase(chapter.id, pageListResult.data);
+      // [P0] Non-blocking save: avoid blocking chapter switch on per-page DB writes.
+      this.savePageInfoToDatabase(chapter.id, pageListResult.data).catch((err: Error) => {
+        logger.warn(TAG, `预加载后保存页面信息失败: ${err.message}`);
+      });
       
       logger.info(TAG, `✅ 预加载章节 ${chapter.title} 完成，已保存到数据库`);
     } catch (error) {

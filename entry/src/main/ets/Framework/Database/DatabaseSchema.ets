@@ -854,7 +854,8 @@ export const CREATE_INDEX_SQL: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_comic ON online_chapter (comicId)',
   'CREATE INDEX IF NOT EXISTS idx_online_chapter_external ON online_chapter (comicId, externalId)',
   'CREATE INDEX IF NOT EXISTS idx_online_page_chapter ON online_page (chapterId)',
-  'CREATE INDEX IF NOT EXISTS idx_online_page_number ON online_page (chapterId, pageNumber)'
+  'CREATE INDEX IF NOT EXISTS idx_online_page_number ON online_page (chapterId, pageNumber)',
+  'CREATE INDEX IF NOT EXISTS idx_online_page_image_url ON online_page (imageUrl)'
   ,
   'CREATE INDEX IF NOT EXISTS idx_online_read_user ON online_read_history (userId)',
   'CREATE INDEX IF NOT EXISTS idx_online_read_comic ON online_read_history (comicId)',

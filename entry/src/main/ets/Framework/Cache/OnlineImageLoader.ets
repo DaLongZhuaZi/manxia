@@ -90,6 +90,17 @@ interface CookieCacheEntry {
   timestamp: number;
 }
 
+interface CacheStatusUpdateValue {
+  localPath: string;
+  fileSize: number;
+}
+
+interface CacheStatusUpdatePayload {
+  imageUrl: string;
+  localPath: string;
+  fileSize: number;
+}
+
 export interface CacheStatsInfo {
   count: number;
   size: number;
@@ -107,6 +118,12 @@ export class OnlineImageLoader {
   
   // [修复] 正在加载的URL集合，用于去重
   private loadingUrls = new Set<string>();
+
+  // 缓存状态写库队列（按URL去重，批量异步落库）
+  private pendingCacheStatusUpdates = new Map<string, CacheStatusUpdateValue>();
+  private cacheStatusFlushTimer: number | null = null;
+  private isFlushingCacheStatusUpdates = false;
+  private readonly CACHE_STATUS_FLUSH_DELAY = 150;
   
   // 轻量级内存缓存
   private memoryCache = new Map<string, CacheEntry>();
@@ -263,20 +280,9 @@ export class OnlineImageLoader {
           if (diskCache.isInitialized()) {
             await diskCache.put(request.url, pixelMap);
             logger.debug(TAG, `已保存到磁盘缓存: ${request.url.substring(0, 80)}`);
-          }
-          
-          // [新增] 同步缓存状态到数据库
-          try {
-            const filePath = await diskCache.getCacheFilePath(request.url);
-            const fileSize = await diskCache.getCacheFileSize(request.url);
-            
-            if (filePath && fileSize > 0) {
-              const dataManager = DataManager.getInstance();
-              await dataManager.updateOnlinePageCacheStatus(request.url, filePath, fileSize);
-              logger.debug(TAG, `已同步缓存状态到数据库: ${request.url.substring(0, 80)}`);
-            }
-          } catch (dbError) {
-            logger.warn(TAG, `同步缓存状态到数据库失败: ${String(dbError)}`);
+
+            // [P1] 缓存状态写库异步批量化，避免阻塞主加载链路
+            this.syncCacheStatusToDatabaseAsync(request.url, diskCache);
           }
         } catch (error) {
           logger.warn(TAG, `保存到磁盘缓存失败: ${String(error)}`);
@@ -318,6 +324,71 @@ export class OnlineImageLoader {
       
       // 继续处理队列
       this.processQueue();
+    }
+  }
+
+  private syncCacheStatusToDatabaseAsync(url: string, diskCache: DiskCacheManager): void {
+    (async () => {
+      try {
+        const filePath = await diskCache.getCacheFilePath(url);
+        const fileSize = await diskCache.getCacheFileSize(url);
+
+        if (filePath && fileSize > 0) {
+          this.enqueueCacheStatusUpdate(url, filePath, fileSize);
+        }
+      } catch (error) {
+        logger.warn(TAG, `准备缓存状态同步失败: ${String(error)}`);
+      }
+    })().catch((error: Error) => {
+      logger.warn(TAG, `异步缓存状态同步失败: ${String(error)}`);
+    });
+  }
+
+  private enqueueCacheStatusUpdate(imageUrl: string, localPath: string, fileSize: number): void {
+    this.pendingCacheStatusUpdates.set(imageUrl, { localPath, fileSize });
+    this.scheduleCacheStatusFlush();
+  }
+
+  private scheduleCacheStatusFlush(): void {
+    if (this.cacheStatusFlushTimer !== null) {
+      return;
+    }
+
+    this.cacheStatusFlushTimer = setTimeout(() => {
+      this.cacheStatusFlushTimer = null;
+      this.flushCacheStatusUpdates().catch((error: Error) => {
+        logger.warn(TAG, `批量同步缓存状态到数据库失败: ${String(error)}`);
+      });
+    }, this.CACHE_STATUS_FLUSH_DELAY) as number;
+  }
+
+  private async flushCacheStatusUpdates(): Promise<void> {
+    if (this.isFlushingCacheStatusUpdates || this.pendingCacheStatusUpdates.size === 0) {
+      return;
+    }
+
+    this.isFlushingCacheStatusUpdates = true;
+    const updates: Array<CacheStatusUpdatePayload> = [];
+    this.pendingCacheStatusUpdates.forEach((value, imageUrl) => {
+      updates.push({
+        imageUrl,
+        localPath: value.localPath,
+        fileSize: value.fileSize
+      });
+    });
+    this.pendingCacheStatusUpdates.clear();
+
+    try {
+      const dataManager = DataManager.getInstance();
+      await dataManager.batchUpdateOnlinePageCacheStatus(updates);
+      logger.debug(TAG, `已批量同步缓存状态到数据库: ${updates.length}条`);
+    } catch (error) {
+      logger.warn(TAG, `批量同步缓存状态到数据库失败: ${String(error)}`);
+    } finally {
+      this.isFlushingCacheStatusUpdates = false;
+      if (this.pendingCacheStatusUpdates.size > 0) {
+        this.scheduleCacheStatusFlush();
+      }
     }
   }
 

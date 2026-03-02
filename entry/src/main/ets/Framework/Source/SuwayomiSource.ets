@@ -344,16 +344,90 @@ export class SuwayomiSource {
   }
 
   /**
+   * 规范化服务器地址，确保不以 / 结尾
+   */
+  private getNormalizedServerUrl(): string {
+    const rawServerUrl = (this.config.serverUrl || '').trim();
+    if (!rawServerUrl) {
+      return '';
+    }
+
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(rawServerUrl);
+    const withScheme = hasScheme ? rawServerUrl : `http://${rawServerUrl}`;
+    return withScheme.endsWith('/') ? withScheme.substring(0, withScheme.length - 1) : withScheme;
+  }
+
+  /**
+   * 检测是否为缺少协议头的主机地址（如 192.168.1.2:4567/api/...）
+   */
+  private isHostLikeUrlWithoutScheme(url: string): boolean {
+    const slashIndex = url.indexOf('/');
+    const hostPart = slashIndex >= 0 ? url.substring(0, slashIndex) : url;
+    const pathPart = slashIndex >= 0 ? url.substring(slashIndex) : '';
+    if (!hostPart) {
+      return false;
+    }
+
+    const isIpv4Host = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(hostPart);
+    const isNamedHost = /^(localhost|[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)(?::\d+)?$/.test(hostPart);
+    if (!isIpv4Host && !isNamedHost) {
+      return false;
+    }
+
+    // 仅在包含端口或路径时判定为网络地址，避免把 "icon.png" 误判为域名
+    return hostPart.includes(':') || pathPart.startsWith('/');
+  }
+
+  /**
+   * 将 Suwayomi 返回的图片/页面 URL 转为可请求的绝对地址
+   */
+  private resolveSuwayomiUrl(rawUrl: string): string {
+    const url = (rawUrl || '').trim();
+    if (!url) {
+      return '';
+    }
+
+    // 已是完整 URL（http/https 或其他 scheme）
+    if (url.includes('://') || url.startsWith('data:') || url.startsWith('file:')) {
+      return url;
+    }
+
+    const serverUrl = this.getNormalizedServerUrl();
+    const protocol = serverUrl.startsWith('https://') ? 'https://' : 'http://';
+
+    if (this.isHostLikeUrlWithoutScheme(url)) {
+      return `${protocol}${url}`;
+    }
+
+    // 协议相对 URL
+    if (url.startsWith('//')) {
+      const protocolPrefix = serverUrl.startsWith('https://') ? 'https:' : 'http:';
+      return `${protocolPrefix}${url}`;
+    }
+
+    if (!serverUrl) {
+      return url;
+    }
+
+    if (url.startsWith('/')) {
+      return `${serverUrl}${url}`;
+    }
+
+    return `${serverUrl}/${url}`;
+  }
+
+  /**
    * 执行 GraphQL 查询
    */
   private async executeGraphQL(query: string, variables?: Object): Promise<GraphQLData | null> {
-    if (!this.config.serverUrl) {
+    const serverUrl = this.getNormalizedServerUrl();
+    if (!serverUrl) {
       logger.error(TAG, '服务器地址未配置');
       return null;
     }
 
     try {
-      const url = `${this.config.serverUrl}/api/graphql`;
+      const url = `${serverUrl}/api/graphql`;
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
@@ -520,15 +594,16 @@ export class SuwayomiSource {
     }
 
     logger.info(TAG, `分类 ${categoryId} 获取到 ${mangas.length} 本漫画`);
+    const serverUrl = this.getNormalizedServerUrl();
     return mangas.map((manga: SuwayomiManga): ComicInfo => ({
       id: String(manga.id),
       title: manga.title,
       author: manga.author || manga.artist,
-      coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+      coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
       description: manga.description,
       status: manga.status,
       tags: manga.genre,
-      url: `${this.config.serverUrl}/manga/${manga.id}`
+      url: `${serverUrl}/manga/${manga.id}`
     }));
   }
 
@@ -700,15 +775,16 @@ export class SuwayomiSource {
       }
 
       const items = mangas.map((manga: SuwayomiManga): ComicInfo => {
+        const serverUrl = this.getNormalizedServerUrl();
         const comicInfo: SuwayomiComicInfo = {
           id: String(manga.id),
           title: manga.title,
           author: manga.author || manga.artist,
-          coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+          coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
           description: manga.description,
           status: manga.status,
           tags: manga.genre,
-          url: `${this.config.serverUrl}/manga/${manga.id}`,
+          url: `${serverUrl}/manga/${manga.id}`,
           // 排序字段
           lastReadAt: manga.lastReadAt || 0,
           inLibraryAt: manga.inLibraryAt || 0,
@@ -770,15 +846,16 @@ export class SuwayomiSource {
       return [];
     }
 
+    const searchServerUrl = this.getNormalizedServerUrl();
     return mangas.map((manga: SuwayomiManga): ComicInfo => ({
       id: String(manga.id),
       title: manga.title,
       author: manga.author || manga.artist,
-      coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+      coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
       description: manga.description,
       status: manga.status,
       tags: manga.genre,
-      url: `${this.config.serverUrl}/manga/${manga.id}`
+      url: `${searchServerUrl}/manga/${manga.id}`
     }));
   }
 
@@ -809,15 +886,16 @@ export class SuwayomiSource {
       return [];
     }
 
+    const libraryServerUrl = this.getNormalizedServerUrl();
     return mangas.map((manga: SuwayomiManga): ComicInfo => ({
       id: String(manga.id),
       title: manga.title,
       author: manga.author || manga.artist,
-      coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+      coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
       description: manga.description,
       status: manga.status,
       tags: manga.genre,
-      url: `${this.config.serverUrl}/manga/${manga.id}`
+      url: `${libraryServerUrl}/manga/${manga.id}`
     }));
   }
 
@@ -859,12 +937,13 @@ export class SuwayomiSource {
       return null;
     }
 
+    const detailServerUrl = this.getNormalizedServerUrl();
     const chapters: SuwayomiChapter[] | undefined = manga.chapters?.nodes;
     const chapterList: ChapterInfo[] = chapters ? chapters.map((ch: SuwayomiChapter): ChapterInfo => {
       const chapterInfo: ChapterInfo = {
         id: String(ch.id),
         title: ch.name || `第 ${ch.chapterNumber} 章`,
-        url: `${this.config.serverUrl}/manga/${mangaId}/chapter/${ch.id}`,
+        url: `${detailServerUrl}/manga/${mangaId}/chapter/${ch.id}`,
         updateTime: ch.uploadDate
       };
       // 使用 extra 字段存储额外信息
@@ -879,11 +958,11 @@ export class SuwayomiSource {
       id: String(manga.id),
       title: manga.title,
       author: manga.author || manga.artist,
-      coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+      coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
       description: manga.description,
       status: manga.status,
       tags: manga.genre,
-      url: `${this.config.serverUrl}/manga/${mangaId}`,
+      url: `${detailServerUrl}/manga/${mangaId}`,
       chapters: chapterList
     };
     // 存储 inLibrary 状态
@@ -912,7 +991,7 @@ export class SuwayomiSource {
       // 使用 mutation 返回的页面 URL
       logger.info(TAG, `获取到 ${fetchedPages.length} 个页面 URL`);
       return fetchedPages.map((pageUrl: string): PageInfo => ({
-        url: pageUrl.startsWith('http') ? pageUrl : `${this.config.serverUrl}${pageUrl}`
+        url: this.resolveSuwayomiUrl(pageUrl)
       }));
     }
 
@@ -933,8 +1012,9 @@ export class SuwayomiSource {
     }
 
     const pages: PageInfo[] = [];
+    const pagesServerUrl = this.getNormalizedServerUrl();
     for (let i = 0; i < pageCount; i++) {
-      const pageUrl = `${this.config.serverUrl}/api/v1/manga/chapter/${chapterId}/page/${i}`;
+      const pageUrl = `${pagesServerUrl}/api/v1/manga/chapter/${chapterId}/page/${i}`;
       pages.push({ url: pageUrl });
     }
     logger.info(TAG, `生成 ${pages.length} 个页面 URL，示例: ${pages[0]?.url}`);
@@ -1026,15 +1106,16 @@ export class SuwayomiSource {
       return [];
     }
 
+    const browseServerUrl = this.getNormalizedServerUrl();
     return mangas.map((manga: SuwayomiManga): ComicInfo => ({
       id: String(manga.id),
       title: manga.title,
       author: manga.author || manga.artist,
-      coverUrl: manga.thumbnailUrl ? `${this.config.serverUrl}${manga.thumbnailUrl}` : '',
+      coverUrl: this.resolveSuwayomiUrl(manga.thumbnailUrl),
       description: manga.description,
       status: manga.status,
       tags: manga.genre,
-      url: `${this.config.serverUrl}/manga/${manga.id}`
+      url: `${browseServerUrl}/manga/${manga.id}`
     }));
   }
 
@@ -1087,6 +1168,13 @@ export class SuwayomiSource {
       headers['Authorization'] = `Basic ${encoded}`;
     }
     return headers;
+  }
+
+  /**
+   * 获取规范化后的服务器地址（包含协议）
+   */
+  public getServerUrl(): string {
+    return this.getNormalizedServerUrl();
   }
 }
 

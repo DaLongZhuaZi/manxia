@@ -312,6 +312,9 @@ export struct UnifiedDetailPage {
   private mangaDetailLoader: MangaDetailLoader = MangaDetailLoader.getInstance();
   private webViewController: webview.WebviewController = new webview.WebviewController();
   private webViewManager: WebViewSourceManager = WebViewSourceManager.getInstance();
+  @State private webViewControllerAttached: boolean = false;
+  private pendingInitialContentLoad: boolean = false;
+  private initialContentLoadTriggered: boolean = false;
   
   /**
    * 生成小说缓存用的bookId
@@ -370,14 +373,24 @@ export struct UnifiedDetailPage {
     );
 
     this.initializeResponsiveLayout();
-    
-    // 初始化WebView控制器（用于在线漫画重新获取）
-    try {
-      this.webViewManager.setGlobalWebViewController(this.webViewController);
-      logger.info(TAG, 'WebView控制器已初始化');
-    } catch (error) {
-      logger.warn(TAG, `WebView控制器初始化失败: ${String(error)}`);
+    this.webViewControllerAttached = false;
+    logger.info(TAG, 'Waiting hidden WebView controller attach');
+  }
+
+  private triggerInitialContentLoadIfReady(): void {
+    if (this.initialContentLoadTriggered || !this.pageParams) {
+      return;
     }
+
+    if (!this.webViewControllerAttached) {
+      this.pendingInitialContentLoad = true;
+      logger.info(TAG, 'WebView控制器未附加，延迟加载详情页内容');
+      return;
+    }
+
+    this.pendingInitialContentLoad = false;
+    this.initialContentLoadTriggered = true;
+    this.loadContent();
   }
 
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
@@ -391,6 +404,10 @@ export struct UnifiedDetailPage {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
     }
+
+    this.webViewControllerAttached = false;
+    this.pendingInitialContentLoad = false;
+    this.initialContentLoadTriggered = false;
     
     // 取消下载回调注册
     if (this.downloadCallbackRegistered) {
@@ -6038,6 +6055,18 @@ export struct UnifiedDetailPage {
           .opacity(0)
           .position({ x: 0, y: 0 })
           .zIndex(-1)
+          .onControllerAttached(() => {
+            logger.info(TAG, '隐藏WebView控制器已附加');
+            this.webViewControllerAttached = true;
+            try {
+              this.webViewManager.setGlobalWebViewController(this.webViewController);
+            } catch (error) {
+              logger.warn(TAG, `设置全局WebView控制器失败: ${String(error)}`);
+            }
+            if (this.pendingInitialContentLoad || !this.initialContentLoadTriggered) {
+              this.triggerInitialContentLoadIfReady();
+            }
+          })
         
         // 背景层：封面图片毛玻璃效果
         Stack() {
@@ -6165,7 +6194,9 @@ export struct UnifiedDetailPage {
       const params = context.pathInfo?.param as UnifiedDetailPageParams;
       if (params) {
         this.pageParams = params;
-        this.loadContent();
+        this.pendingInitialContentLoad = false;
+        this.initialContentLoadTriggered = false;
+        this.triggerInitialContentLoadIfReady();
       }
     })
     .onShown(() => {

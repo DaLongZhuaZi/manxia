@@ -123,8 +123,10 @@ export struct SuwayomiMangaDetailPage {
     this.errorMessage = '';
 
     try {
+      await this.executor.initialize();
       // 获取图片请求头
       this.imageHeaders = this.executor.getImageHeaders();
+      logger.info(TAG, `封面鉴权状态: authorization=${this.imageHeaders['Authorization'] ? 'present' : 'absent'}`);
       
       // 加载漫画详情
       this.mangaDetail = await this.executor.getDetail(this.mangaId);
@@ -133,6 +135,7 @@ export struct SuwayomiMangaDetailPage {
         // 获取 inLibrary 状态
         this.isInLibrary = (this.mangaDetail as ESObject)['inLibrary'] === true;
         logger.info(TAG, `加载漫画详情: ${this.mangaDetail.title}, ${this.mangaDetail.chapters?.length || 0} 章, inLibrary=${this.isInLibrary}`);
+        logger.info(TAG, `详情封面URL: ${this.mangaDetail.coverUrl ? this.mangaDetail.coverUrl.substring(0, 120) : 'empty'}`);
         
         // 查找最后阅读的章节（从服务器端 isRead 状态）
         this.findLastReadChapter();

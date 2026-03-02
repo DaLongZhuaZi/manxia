@@ -17,6 +17,8 @@ import { DataManager } from '../Framework/Data/DataManager';
 const TAG = 'WidgetDataSync';
 const WIDGET_DATA_STORE = 'widget_reading_data';
 const FORM_STORAGE = 'form_storage';
+const RECENT_READ_LIMIT = 6;
+const SYNC_MIN_INTERVAL_MS = 45 * 1000;
 
 /**
  * 阅读目标数据
@@ -89,24 +91,38 @@ interface FormUpdateData {
   hasEbookGoal: boolean;
   hasNovelGoal: boolean;
   hasAnyGoal: boolean;
-  // 最近阅读（最多4本）
+  // 最近阅读（最多6本）
   recentCount: number;
+  recent1Id: string;
   recent1Title: string;
   recent1Cover: string;
   recent1Progress: number;
   recent1Type: string;
+  recent2Id: string;
   recent2Title: string;
   recent2Cover: string;
   recent2Progress: number;
   recent2Type: string;
+  recent3Id: string;
   recent3Title: string;
   recent3Cover: string;
   recent3Progress: number;
   recent3Type: string;
+  recent4Id: string;
   recent4Title: string;
   recent4Cover: string;
   recent4Progress: number;
   recent4Type: string;
+  recent5Id: string;
+  recent5Title: string;
+  recent5Cover: string;
+  recent5Progress: number;
+  recent5Type: string;
+  recent6Id: string;
+  recent6Title: string;
+  recent6Cover: string;
+  recent6Progress: number;
+  recent6Type: string;
 }
 
 /**
@@ -115,6 +131,8 @@ interface FormUpdateData {
 export class WidgetDataSync {
   private static instance: WidgetDataSync | null = null;
   private context: common.UIAbilityContext | null = null;
+  private lastSyncTimestamp: number = 0;
+  private syncInFlight: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -172,6 +190,32 @@ export class WidgetDataSync {
     } catch (e) {
       logger.error(TAG, `syncAllData error: ${JSON.stringify(e)}`);
     }
+  }
+
+  /**
+   * 节流同步，避免短时间重复触发高开销计算
+   */
+  public async syncAllDataThrottled(force: boolean = false): Promise<void> {
+    const now = Date.now();
+    if (!force && now - this.lastSyncTimestamp < SYNC_MIN_INTERVAL_MS) {
+      logger.debug(TAG, `skip throttled sync, interval=${now - this.lastSyncTimestamp}ms`);
+      return;
+    }
+
+    if (this.syncInFlight) {
+      logger.debug(TAG, 'reuse in-flight widget sync task');
+      return this.syncInFlight;
+    }
+
+    this.syncInFlight = this.syncAllData()
+      .then(() => {
+        this.lastSyncTimestamp = Date.now();
+      })
+      .finally(() => {
+        this.syncInFlight = null;
+      });
+
+    return this.syncInFlight;
   }
 
   /**
@@ -325,8 +369,8 @@ export class WidgetDataSync {
       logger.error(TAG, `loadRecentReads error: ${JSON.stringify(e)}`);
     }
     
-    // 只返回前4项
-    return items.slice(0, 4);
+    // 只返回前6项
+    return items.slice(0, RECENT_READ_LIMIT);
   }
 
   /**
@@ -378,7 +422,7 @@ export class WidgetDataSync {
           ebookGoalMinutes: 0, ebookReadMinutes: 0,
           novelGoalMinutes: 0, novelReadMinutes: 0
         },
-        recentReads: recentReads.slice(0, 4),
+        recentReads: recentReads.slice(0, RECENT_READ_LIMIT),
         lastUpdateTime: Date.now()
       };
 
@@ -407,7 +451,7 @@ export class WidgetDataSync {
       
       const data: WidgetData = {
         goals: goals,
-        recentReads: recentReads.slice(0, 4),
+        recentReads: recentReads.slice(0, RECENT_READ_LIMIT),
         lastUpdateTime: Date.now()
       };
 
@@ -498,22 +542,36 @@ export class WidgetDataSync {
       hasNovelGoal: goals.novelGoalMinutes > 0,
       hasAnyGoal: goals.mangaGoalMinutes > 0 || goals.ebookGoalMinutes > 0 || goals.novelGoalMinutes > 0,
       recentCount: recentReads.length,
+      recent1Id: recentReads.length > 0 ? recentReads[0].id : '',
       recent1Title: recentReads.length > 0 ? recentReads[0].title : '',
       recent1Cover: recentReads.length > 0 ? recentReads[0].cover : '',
       recent1Progress: recentReads.length > 0 ? recentReads[0].progress : 0,
       recent1Type: recentReads.length > 0 ? recentReads[0].type : '',
+      recent2Id: recentReads.length > 1 ? recentReads[1].id : '',
       recent2Title: recentReads.length > 1 ? recentReads[1].title : '',
       recent2Cover: recentReads.length > 1 ? recentReads[1].cover : '',
       recent2Progress: recentReads.length > 1 ? recentReads[1].progress : 0,
       recent2Type: recentReads.length > 1 ? recentReads[1].type : '',
+      recent3Id: recentReads.length > 2 ? recentReads[2].id : '',
       recent3Title: recentReads.length > 2 ? recentReads[2].title : '',
       recent3Cover: recentReads.length > 2 ? recentReads[2].cover : '',
       recent3Progress: recentReads.length > 2 ? recentReads[2].progress : 0,
       recent3Type: recentReads.length > 2 ? recentReads[2].type : '',
+      recent4Id: recentReads.length > 3 ? recentReads[3].id : '',
       recent4Title: recentReads.length > 3 ? recentReads[3].title : '',
       recent4Cover: recentReads.length > 3 ? recentReads[3].cover : '',
       recent4Progress: recentReads.length > 3 ? recentReads[3].progress : 0,
-      recent4Type: recentReads.length > 3 ? recentReads[3].type : ''
+      recent4Type: recentReads.length > 3 ? recentReads[3].type : '',
+      recent5Id: recentReads.length > 4 ? recentReads[4].id : '',
+      recent5Title: recentReads.length > 4 ? recentReads[4].title : '',
+      recent5Cover: recentReads.length > 4 ? recentReads[4].cover : '',
+      recent5Progress: recentReads.length > 4 ? recentReads[4].progress : 0,
+      recent5Type: recentReads.length > 4 ? recentReads[4].type : '',
+      recent6Id: recentReads.length > 5 ? recentReads[5].id : '',
+      recent6Title: recentReads.length > 5 ? recentReads[5].title : '',
+      recent6Cover: recentReads.length > 5 ? recentReads[5].cover : '',
+      recent6Progress: recentReads.length > 5 ? recentReads[5].progress : 0,
+      recent6Type: recentReads.length > 5 ? recentReads[5].type : ''
     };
 
     return result;

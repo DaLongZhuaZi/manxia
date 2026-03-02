@@ -65,7 +65,7 @@ export class SuwayomiSourceExecutor {
    * 获取服务器地址
    */
   public getServerUrl(): string {
-    return this.suwayomiSource.getConfig().serverUrl;
+    return this.suwayomiSource.getServerUrl();
   }
 
   /**

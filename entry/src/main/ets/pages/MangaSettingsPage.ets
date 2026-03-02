@@ -1072,23 +1072,27 @@ struct MangaSettingsPage {
         .justifyContent(FlexAlign.Center)
       } else if (this.currentManga) {
         if (this.responsive_isLandscape) {
-          // 横屏：封面和信息垂直排列
-          Column({ space: 16 }) {
-            // 封面 - 使用 key 强制刷新图片
-            Image(this.getCoverImageSourceForUI())
-              .width('100%')
-              .aspectRatio(0.7)
-              .borderRadius(8)
-              .objectFit(ImageFit.Cover)
-              .backgroundColor(Color.Transparent)
-              .key(`cover_${this.coverImagePath}`)
-              .onError(() => {
-                const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
-                logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
-              })
-            
-            // 漫画信息
-            Column({ space: 8 }) {
+          Row({ space: 16 }) {
+            Stack() {
+              Image(this.getCoverImageSourceForUI())
+                .width('100%')
+                .height('100%')
+                .borderRadius(8)
+                .objectFit(ImageFit.Contain)
+                .backgroundColor(Color.Transparent)
+                .key(`cover_landscape_${this.coverImagePath}`)
+                .onError(() => {
+                  const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
+                  logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
+                })
+            }
+            .width(180)
+            .height(260)
+            .padding(8)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .borderRadius(12)
+
+            Column({ space: 10 }) {
               Text(this.currentManga.title)
                 .fontSize(16)
                 .fontWeight(FontWeight.Bold)
@@ -1106,157 +1110,164 @@ struct MangaSettingsPage {
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
 
+              if (this.currentManga.metadata.genres.length > 0) {
+                Text(`标签: ${this.currentManga.metadata.genres.slice(0, 3).join(', ')}`)
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+
               Text(`章节: ${this.currentManga.chapters.length} | 状态: ${this.currentManga.status}`)
                 .fontSize(12)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              
-              // 操作按钮
-              Button('从漫画页面选择封面')
-                .width('100%')
-                .height(36)
-                .fontFamily(this.appFontFamily)
-                .fontSize(14)
-                .onClick(() => { this.selectCoverFromMangaPages(); })
 
-              Button('从相册选择封面')
-                .width('100%')
-                .height(36)
-                .fontFamily(this.appFontFamily)
-                .fontSize(14)
-                .onClick(() => { this.selectCoverImage(); })
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Start)
-          }
-          .width('100%')
-          .padding(16)
-        } else {
-          // 竖屏：封面和信息横向排列
-          Row({ space: 16 }) {
-            // 封面图片区域 - 使用 key 强制刷新图片
-            Stack() {
-              Image(this.getCoverImageSourceForUI())
-                .width('100%')
-                .height('100%')
-                .borderRadius(8)
-                .objectFit(ImageFit.Auto)
-                .backgroundColor(Color.Transparent)
-                .key(`cover_portrait_${this.coverImagePath}`)
-                .onError(() => {
-                  const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
-                  logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
-                })
-              
-            }
-            .width('40%')
-            .height('60%')
+              Blank()
 
-            // 漫画详细信息
-            Column({ space: 8 }) {
-            Text(this.currentManga.title)
-              .fontSize(16)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-            if (this.currentManga.metadata.authors.length > 0) {
-              Row({ space: 4 }) {
-                Text('作者:')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                
-                Text(this.currentManga.metadata.authors.join(', '))
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Row({ space: 10 }) {
+                Button('从漫画页面选择封面')
+                  .type(ButtonType.ROUNDED_RECTANGLE)
                   .layoutWeight(1)
+                  .height(40)
+                  .fontFamily(this.appFontFamily)
+                  .fontSize(14)
+                  .onClick(() => { this.selectCoverFromMangaPages(); })
+
+                Button('从相册选择封面')
+                  .type(ButtonType.ROUNDED_RECTANGLE)
+                  .layoutWeight(1)
+                  .height(40)
+                  .fontFamily(this.appFontFamily)
+                  .fontSize(14)
+                  .onClick(() => { this.selectCoverImage(); })
               }
               .width('100%')
-            }
-
-            if (this.currentManga.metadata.genres.length > 0) {
-              Row({ space: 4 }) {
-                Text('标签:')
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                
-                Text(this.currentManga.metadata.genres.slice(0, 3).join(', '))
-                  .fontSize(13)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .layoutWeight(1)
-              }
-              .width('100%')
-            }
-
-            Row({ space: 8 }) {
-              Text(`章节: ${this.currentManga.chapters.length}`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-              
-              Text(`状态: ${this.currentManga.status}`)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
-
-            // 操作区：从漫画页面选择封面
-            Column({ space: 8 }) {
-              Button('从漫画页面选择封面')
-                .type(ButtonType.ROUNDED_RECTANGLE)
-                .height(40)
-                .fontFamily(this.appFontFamily)
-                .onClick(() => { this.selectCoverFromMangaPages(); })
-
-              Button('从相册选择封面')
-                .type(ButtonType.ROUNDED_RECTANGLE)
-                .height(40)
-                .fontFamily(this.appFontFamily)
-                .onClick(() => { this.selectCoverImage(); })
-            }
-            .position({ x: '0%', y: '37%' })
-            .markAnchor({ x: 1, y: 1 })
-            .align(Alignment.BottomEnd)
             }
             .layoutWeight(1)
+            .height(260)
             .alignItems(HorizontalAlign.Start)
           }
           .width('100%')
-          .padding(16)
+        } else {
+          Column({ space: 12 }) {
+            Row({ space: 12 }) {
+              Stack() {
+                Image(this.getCoverImageSourceForUI())
+                  .width('100%')
+                  .height('100%')
+                  .borderRadius(8)
+                  .objectFit(ImageFit.Contain)
+                  .backgroundColor(Color.Transparent)
+                  .key(`cover_portrait_${this.coverImagePath}`)
+                  .onError(() => {
+                    const srcType = this.currentManga ? this.currentManga.coverSourceType : undefined;
+                    logger.warn(TAG, `设置页封面加载失败: raw='${this.coverImagePath}', display='${this.getCoverDisplayPathForLog()}', source=${srcType}`);
+                  })
+              }
+              .width(136)
+              .height(194)
+              .padding(8)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+              .borderRadius(12)
 
-          Blank(36)
+              Column({ space: 8 }) {
+                Text(this.currentManga.title)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          // 描述
-          if (this.currentManga.description && this.currentManga.description.length > 0) {
-            Column({ space: 8 }) {
-              Text('简介')
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                .alignSelf(ItemAlign.Start)
-              
-              Text(this.currentManga.description)
-                .fontSize(13)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                .maxLines(3)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .lineHeight(20)
+                if (this.currentManga.metadata.authors.length > 0) {
+                  Row({ space: 4 }) {
+                    Text('作者:')
+                      .fontSize(13)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    
+                    Text(this.currentManga.metadata.authors.join(', '))
+                      .fontSize(13)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(1)
+                  }
+                  .width('100%')
+                }
+
+                if (this.currentManga.metadata.genres.length > 0) {
+                  Row({ space: 4 }) {
+                    Text('标签:')
+                      .fontSize(13)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    
+                    Text(this.currentManga.metadata.genres.slice(0, 3).join(', '))
+                      .fontSize(13)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(1)
+                  }
+                  .width('100%')
+                }
+
+                Text(`章节: ${this.currentManga.chapters.length} | 状态: ${this.currentManga.status}`)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
             }
             .width('100%')
-            .padding({ left: 16, right: 16, bottom: 16 })
+
+            Column({ space: 8 }) {
+              Button('从漫画页面选择封面')
+                .type(ButtonType.ROUNDED_RECTANGLE)
+                .width('100%')
+                .height(40)
+                .fontFamily(this.appFontFamily)
+                .fontSize(14)
+                .onClick(() => { this.selectCoverFromMangaPages(); })
+
+              Button('从相册选择封面')
+                .type(ButtonType.ROUNDED_RECTANGLE)
+                .width('100%')
+                .height(40)
+                .fontFamily(this.appFontFamily)
+                .fontSize(14)
+                .onClick(() => { this.selectCoverImage(); })
+            }
+            .width('100%')
           }
+          .width('100%')
+        }
+
+        // 描述
+        if (this.currentManga.description && this.currentManga.description.length > 0) {
+          Column({ space: 8 }) {
+            Text('简介')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .alignSelf(ItemAlign.Start)
+            
+            Text(this.currentManga.description)
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .lineHeight(20)
+          }
+          .width('100%')
         }
       }
     }

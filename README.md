@@ -16,19 +16,23 @@
 <table>
   <tr>
     <td><img src="docs/screenshots/home.jpg" width="200" alt="首页"/></td>
-    <td><img src="docs/screenshots/discover.jpg" width="200" alt="发现"/></td>
-    <td><img src="docs/screenshots/manga.jpg" width="200" alt="漫画详情"/></td>
-    <td><img src="docs/screenshots/extension.jpg" width="200" alt="图源"/></td>
+    <td><img src="docs/screenshots/bookshelf.jpg" width="200" alt="书架"/></td>
     <td><img src="docs/screenshots/legado.jpg" width="200" alt="开源阅读书源"/></td>
+    <td><img src="docs/screenshots/extension.jpg" width="200" alt="图源"/></td>
+    <td><img src="docs/screenshots/history.jpg" width="200" alt="历史"/></td>
+    <td><img src="docs/screenshots/manga-1.jpg" width="200" alt="漫画详情页-1"/></td>
+    <td><img src="docs/screenshots/manga-2.jpg" width="200" alt="漫画详情页-1"/></td>
     <td><img src="docs/screenshots/setting.jpg" width="200" alt="设置"/></td>
     <td><img src="docs/screenshots/home-pad.jpg" width="300" alt="平板设置"/></td>
   </tr>
   <tr>
     <td align="center">首页</td>
-    <td align="center">发现</td>
-    <td align="center">漫画详情</td>
-    <td align="center">图源</td>
+    <td align="center">书架</td>
     <td align="center">开源阅读书源</td>
+    <td align="center">图源</td>
+    <td align="center">历史</td>
+    <td align="center">漫画详情页-1</td>
+    <td align="center">漫画详情页-2</td>
     <td align="center">设置</td>
     <td align="center">平板设置</td>
   </tr>

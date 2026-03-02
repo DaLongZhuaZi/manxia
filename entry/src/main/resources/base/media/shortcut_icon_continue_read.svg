@@ -1,0 +1,31 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="80" x2="896" y2="944" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2E86FF"/>
+      <stop offset="0.55" stop-color="#1F6BFF"/>
+      <stop offset="1" stop-color="#1249C7"/>
+    </linearGradient>
+    <linearGradient id="bookL" x1="286" y1="286" x2="512" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FCFF"/>
+      <stop offset="1" stop-color="#E5F0FF"/>
+    </linearGradient>
+    <linearGradient id="bookR" x1="512" y1="286" x2="738" y2="740" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2F8FF"/>
+      <stop offset="1" stop-color="#DCEBFF"/>
+    </linearGradient>
+    <linearGradient id="play" x1="554" y1="452" x2="652" y2="578" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8CE9FF"/>
+      <stop offset="1" stop-color="#CAEFFF"/>
+    </linearGradient>
+  </defs>
+  <rect x="72" y="72" width="880" height="880" rx="212" fill="url(#bg)"/>
+  <rect x="286" y="286" width="226" height="454" rx="42" fill="url(#bookL)"/>
+  <rect x="512" y="286" width="226" height="454" rx="42" fill="url(#bookR)"/>
+  <path d="M512 314V740" stroke="#C5DBFF" stroke-width="18"/>
+  <path d="M554 452L652 512L554 572V452Z" fill="url(#play)"/>
+  <path d="M348 286H424V430L386 404L348 430V286Z" fill="#9ED6FF"/>
+  <path d="M330 388H482" stroke="#C5DBFF" stroke-width="14" stroke-linecap="round"/>
+  <path d="M330 438H482" stroke="#C5DBFF" stroke-width="14" stroke-linecap="round"/>
+  <path d="M542 388H694" stroke="#C5DBFF" stroke-width="14" stroke-linecap="round"/>
+  <path d="M542 438H694" stroke="#C5DBFF" stroke-width="14" stroke-linecap="round"/>
+</svg>

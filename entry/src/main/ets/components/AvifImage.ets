@@ -103,6 +103,12 @@ export struct AvifImage {
         this.isLoading = false;
         return;
       }
+
+      // 非 AVIF 链接优先走系统 Image，避免不必要的网络下载与解码
+      if (!this.looksLikeAvifUrl(this.src)) {
+        this.isLoading = false;
+        return;
+      }
       
       // 下载图片数据
       const buffer = await this.downloadImage(this.src);
@@ -200,6 +206,20 @@ export struct AvifImage {
     return this.src.length > 0 && !this.src.startsWith('http://') && !this.src.startsWith('https://');
   }
 
+  /**
+   * 基于 URL 快速判断是否可能是 AVIF 资源
+   */
+  private looksLikeAvifUrl(url: string): boolean {
+    if (!url) {
+      return false;
+    }
+    const lowerUrl = url.toLowerCase();
+    return lowerUrl.indexOf('.avif') >= 0 ||
+      lowerUrl.indexOf('format=avif') >= 0 ||
+      lowerUrl.indexOf('fm=avif') >= 0 ||
+      lowerUrl.indexOf('image/avif') >= 0;
+  }
+
   build() {
     Stack() {
       if (this.isLocalFile()) {
@@ -254,5 +274,7 @@ export struct AvifImage {
     }
     .width(this.imageWidth)
     .height(this.imageHeight)
+    .borderRadius(this.imageBorderRadius)
+    .clip(true)
   }
 }

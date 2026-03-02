@@ -68,8 +68,8 @@ export class ComicConverter {
       title: comic.title,
       alternativeTitles: [],
       description: comic.description,
-      coverImagePath: comic.coverUrl,
-      coverSourceType: detectImageSourceType(comic.coverUrl),
+      coverImagePath: comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl,
+      coverSourceType: detectImageSourceType(comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl),
       status: StatusConverter.toMangaStatus(comic.status),
       metadata: defaultMetadata,
       chapters: [], // 章节信息需要单独加载
@@ -155,8 +155,8 @@ export class ComicConverter {
       title: comic.title,
       alternativeTitles: [],
       description: comic.description,
-      coverImagePath: comic.coverUrl,
-      coverSourceType: detectImageSourceType(comic.coverUrl),
+      coverImagePath: comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl,
+      coverSourceType: detectImageSourceType(comic.coverLocalPath && comic.coverLocalPath.length > 0 ? comic.coverLocalPath : comic.coverUrl),
       status: StatusConverter.toMangaStatus(comic.status),
       metadata: defaultMetadata,
       chapters: [], // 章节信息需要单独加载

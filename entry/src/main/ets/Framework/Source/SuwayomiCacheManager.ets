@@ -317,6 +317,16 @@ export class SuwayomiCacheManager {
   }
 
   /**
+   * 截断URL用于日志，避免日志过长
+   */
+  private previewUrl(url: string): string {
+    if (!url) {
+      return '';
+    }
+    return url.length > 120 ? `${url.substring(0, 120)}...` : url;
+  }
+
+  /**
    * 从URL中提取文件扩展名
    */
   private getExtensionFromUrl(url: string): string {
@@ -415,11 +425,11 @@ export class SuwayomiCacheManager {
         logger.debug(TAG, `封面缓存成功: ${mangaId} -> ${cachePath}`);
         return cachePath;
       } else {
-        logger.error(TAG, `下载封面失败: ${response.responseCode}`);
+        logger.warn(TAG, `下载封面失败: mangaId=${mangaId}, code=${response.responseCode}, url=${this.previewUrl(coverUrl)}`);
         return null;
       }
     } catch (error) {
-      logger.error(TAG, `缓存封面失败: ${error}`);
+      logger.error(TAG, `缓存封面失败: mangaId=${mangaId}, url=${this.previewUrl(coverUrl)}, error=${String(error)}`);
       return null;
     }
   }
@@ -506,11 +516,11 @@ export class SuwayomiCacheManager {
         logger.debug(TAG, `图源图标缓存成功: ${sourceId} -> ${cachePath}`);
         return cachePath;
       } else {
-        logger.error(TAG, `下载图源图标失败: ${response.responseCode}`);
+        logger.warn(TAG, `下载图源图标失败: sourceId=${sourceId}, code=${response.responseCode}, url=${this.previewUrl(iconUrl)}`);
         return null;
       }
     } catch (error) {
-      logger.error(TAG, `缓存图源图标失败: ${error}`);
+      logger.error(TAG, `缓存图源图标失败: sourceId=${sourceId}, url=${this.previewUrl(iconUrl)}, error=${String(error)}`);
       return null;
     }
   }
