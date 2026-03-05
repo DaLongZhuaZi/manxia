@@ -38,7 +38,7 @@
         "exported": true,
         "continuable": true,
         "orientation": "auto_rotation",
-        "backgroundModes": ["dataTransfer"],
+        "backgroundModes": ["dataTransfer", "audioPlayback"],
         "skills": [
           {
             "entities": [

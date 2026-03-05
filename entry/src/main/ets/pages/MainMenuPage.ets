@@ -73,6 +73,7 @@ import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
 import { WindowManager } from '../Utils/WindowManager';
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
+import { ReadAloudFloatingBall } from '../Framework/Components/ReadAloudFloatingBall';
 import { HelpPanelOverlayV2 } from '../Framework/Components/HelpPanelV2';
 import { SourceSettingsPage, SourceSettingsPageParams } from './SourceSettingsPage';
 import { SourceLoginPage } from './SourceLoginPage';
@@ -85,6 +86,8 @@ import { NovelBookshelfPage, NovelDetailPageParams, NovelSearchPageParams, Novel
 import { NovelSearchPage } from './NovelSearchPage';
 import { NovelDetailPage } from './NovelDetailPage';
 import { NovelReaderPage } from './NovelReaderPage';
+import { NovelReadAloudPage } from './NovelReadAloudPage';
+import { ReadAloudPlayerPage } from './ReadAloudPlayerPage';
 import { NovelSourceManagementPage } from './NovelSourceManagementPage';
 import { NovelExplorePage } from './NovelExplorePage';
 import { NovelSourceLoginPage } from './NovelSourceLoginPage';
@@ -19921,6 +19924,10 @@ struct MainMenuPage {
       NovelDetailPage()
     } else if (name === 'NovelReaderPage') {
       NovelReaderPage()
+    } else if (name === 'NovelReadAloudPage') {
+      NovelReadAloudPage()
+    } else if (name === 'ReadAloudPlayerPage') {
+      ReadAloudPlayerPage()
     } else if (name === 'NovelSourceManagementPage') {
       NovelSourceManagementPage()
     } else if (name === 'NovelExplorePage') {
@@ -20690,7 +20697,7 @@ struct MainMenuPage {
         }
       }
     })
-    
+
     // 后台模糊遮罩层（当应用进入后台且启用了模糊遮罩时显示）
     BackgroundBlurOverlay({
       isVisible: this.isInBackground && this.backgroundBlurEnabled,
@@ -20699,6 +20706,9 @@ struct MainMenuPage {
       iconType: this.backgroundBlurIconType,
       currentTheme: this.themeState.currentTheme
     })
+
+    // 听书悬浮球（放在最顶层，避免被导航目的页或后台模糊遮罩覆盖）
+    ReadAloudFloatingBall()
     }
     .width('100%')
     .height('100%')

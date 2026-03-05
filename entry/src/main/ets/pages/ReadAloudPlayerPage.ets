@@ -1,0 +1,564 @@
+import { promptAction, LengthMetrics } from '@kit.ArkUI';
+import { HdsNavDestination, ScrollEffectType } from '@kit.UIDesignKit';
+import { logger } from '../Utils/Logger';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
+import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../Framework/ReadAloud/ReadAloudTypes';
+
+const TAG = 'ReadAloudPlayerPage';
+const PLAYER_SKIP_CHARS: number = 420;
+
+@Component
+export struct ReadAloudPlayerPage {
+  @State pathStack: NavPathStack = new NavPathStack();
+  @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+
+  @State hasSession: boolean = false;
+  @State isPlaying: boolean = false;
+  @State bookTitle: string = '听书播放器';
+  @State chapterTitle: string = '';
+  @State coverUrl: string = '';
+  @State progressPercent: number = 0;
+  @State progressText: string = '0%';
+  @State statusText: string = '未播放';
+  @State chapterInfoText: string = '--';
+  @State pageInfoText: string = '--';
+  @State charInfoText: string = '--';
+  @State chunkInfoText: string = '--';
+  @State engineInfoText: string = '--';
+  @State speedInfoText: string = '--';
+  @State excerptText: string = '';
+  @State entered: boolean = false;
+
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
+
+  private onReadAloudStateChanged: (payload: IEventPayload) => void = (_payload: IEventPayload): void => {
+    this.refreshPlayerState();
+  };
+
+  aboutToAppear(): void {
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
+    eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    this.refreshPlayerState();
+    this.readAloudController.refreshMediaSession();
+  }
+
+  aboutToDisappear(): void {
+    eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+  }
+
+  private refreshPlayerState(): void {
+    const snapshot = this.readAloudController.getSnapshot();
+    const context = this.readAloudController.getContextSnapshot();
+    const hasValidContext = context !== null && snapshot.hasContext;
+    this.hasSession = hasValidContext;
+    this.isPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
+    this.statusText = this.getStatusText(snapshot.playbackState);
+
+    if (!context || !hasValidContext) {
+      this.bookTitle = '听书播放器';
+      this.chapterTitle = '当前没有可播放内容';
+      this.coverUrl = '';
+      this.progressPercent = 0;
+      this.progressText = '0%';
+      this.chapterInfoText = '--';
+      this.pageInfoText = '--';
+      this.charInfoText = '--';
+      this.chunkInfoText = '--';
+      this.engineInfoText = '--';
+      this.speedInfoText = '--';
+      this.excerptText = '';
+      return;
+    }
+
+    this.bookTitle = context.bookTitle && context.bookTitle.length > 0 ? context.bookTitle : '听书播放器';
+    this.chapterTitle = context.chapterTitle && context.chapterTitle.length > 0
+      ? context.chapterTitle
+      : `第${context.chapterIndex + 1}章`;
+    this.coverUrl = context.coverUrl ?? '';
+    const percent = this.calculateProgressPercent(snapshot, context);
+    this.progressPercent = percent;
+    this.progressText = `${Math.round(percent)}%`;
+    const contentLength = Math.max(0, context.content.length);
+    const maxCharIndex = Math.max(0, contentLength - 1);
+    const rawCharIndex = snapshot.currentCharIndex >= 0 ? snapshot.currentCharIndex : (context.resumeCharIndex ?? 0);
+    const safeCharIndex = Math.max(0, Math.min(rawCharIndex, maxCharIndex));
+    this.chapterInfoText = `第${context.chapterIndex + 1}章`;
+    this.pageInfoText = context.pageIndex >= 0 ? `第${context.pageIndex + 1}页` : '未知页';
+    this.charInfoText = contentLength > 0 ? `${safeCharIndex + 1}/${contentLength}` : '--';
+    this.chunkInfoText = snapshot.chunkStartCharIndex >= 0 && snapshot.chunkEndCharIndex > snapshot.chunkStartCharIndex
+      ? `${snapshot.chunkStartCharIndex + 1}-${snapshot.chunkEndCharIndex}`
+      : '--';
+    this.engineInfoText = this.getEngineText(String(snapshot.settings.engineType ?? 'SYSTEM'));
+    this.speedInfoText = `${(snapshot.settings.speed ?? 1).toFixed(2)}x`;
+    this.excerptText = this.buildExcerptText(context.content, safeCharIndex);
+  }
+
+  private calculateProgressPercent(
+    payload: ReadAloudStateSnapshot,
+    context: ReadAloudSessionContext
+  ): number {
+    if (!context.content || context.content.length <= 0) {
+      return 0;
+    }
+    const maxCharIndex = Math.max(0, context.content.length - 1);
+    const rawCharIndex = payload.currentCharIndex >= 0
+      ? payload.currentCharIndex
+      : (context.resumeCharIndex ?? 0);
+    const safeCharIndex = Math.max(0, Math.min(rawCharIndex, maxCharIndex));
+    return (safeCharIndex / Math.max(1, maxCharIndex)) * 100;
+  }
+
+  private getStatusText(playbackState: ReadAloudPlaybackState): string {
+    if (playbackState === ReadAloudPlaybackState.PLAYING) {
+      return '播放中';
+    }
+    if (playbackState === ReadAloudPlaybackState.PAUSED) {
+      return '已暂停';
+    }
+    if (playbackState === ReadAloudPlaybackState.STOPPED) {
+      return '已停止';
+    }
+    return '未播放';
+  }
+
+  private getEngineText(engineType: string): string {
+    if (engineType === 'SYSTEM') {
+      return '系统 TTS';
+    }
+    if (engineType === 'LEGADO_COMPAT') {
+      return 'Legado 兼容';
+    }
+    if (engineType === 'REMOTE') {
+      return '远程 TTS';
+    }
+    return engineType;
+  }
+
+  private buildExcerptText(content: string, currentCharIndex: number): string {
+    if (!content || content.length <= 0) {
+      return '暂无可展示文本';
+    }
+    const safeIndex = Math.max(0, Math.min(currentCharIndex, Math.max(0, content.length - 1)));
+    const start = Math.max(0, safeIndex - 28);
+    const end = Math.min(content.length, safeIndex + 44);
+    const snippet = content.substring(start, end).replace(/\s+/g, ' ').trim();
+    if (!snippet) {
+      return '暂无可展示文本';
+    }
+    const prefix = start > 0 ? '…' : '';
+    const suffix = end < content.length ? '…' : '';
+    return `${prefix}${snippet}${suffix}`;
+  }
+
+  private togglePlayPause(): void {
+    if (!this.hasSession) {
+      promptAction.showToast({
+        message: '当前没有可播放内容',
+        duration: 1500
+      });
+      return;
+    }
+    if (this.isPlaying) {
+      this.readAloudController.pause('player_toggle');
+    } else {
+      this.readAloudController.start('player_toggle');
+    }
+    this.readAloudController.refreshMediaSession();
+    this.refreshPlayerState();
+  }
+
+  private skipPrevious(): void {
+    if (!this.hasSession) {
+      return;
+    }
+    this.readAloudController.seekByChars(-PLAYER_SKIP_CHARS, 'player_skip_previous');
+    this.readAloudController.refreshMediaSession();
+    this.refreshPlayerState();
+  }
+
+  private skipNext(): void {
+    if (!this.hasSession) {
+      return;
+    }
+    this.readAloudController.seekByChars(PLAYER_SKIP_CHARS, 'player_skip_next');
+    this.readAloudController.refreshMediaSession();
+    this.refreshPlayerState();
+  }
+
+  private stopPlayback(): void {
+    if (!this.hasSession) {
+      return;
+    }
+    this.readAloudController.stop('player_stop');
+    this.readAloudController.refreshMediaSession();
+    this.refreshPlayerState();
+  }
+
+  private closePage(): void {
+    try {
+      AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
+      this.pathStack.pop();
+    } catch (error) {
+      logger.warn(TAG, `返回失败: ${String(error)}`);
+    }
+  }
+
+  @Builder
+  private buildCoverCard(): void {
+    Column({ space: 12 }) {
+      if (this.coverUrl.length > 0) {
+        Image(this.coverUrl)
+          .width(188)
+          .height(252)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(16)
+      } else {
+        Column() {
+          SymbolGlyph($r('sys.symbol.book'))
+            .fontSize(60)
+            .fontColor([$r('app.color.text_secondary')])
+        }
+        .width(188)
+        .height(252)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(16)
+      }
+
+      Text(this.bookTitle)
+        .fontSize(22)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(2)
+        .textAlign(TextAlign.Center)
+
+      Text(this.chapterTitle)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .maxLines(2)
+        .textAlign(TextAlign.Center)
+
+      Text(this.statusText)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.isPlaying ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 8, left: 8, right: 8, bottom: 8 })
+    .backgroundColor('rgba(255,255,255,0.02)')
+    .borderRadius(20)
+    .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
+  }
+
+  @Builder
+  private buildProgressCard(): void {
+    Column({ space: 10 }) {
+      Row() {
+        Text('播放进度')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.progressText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Progress({
+        value: this.progressPercent,
+        total: 100,
+        type: ProgressType.Linear
+      })
+        .width('100%')
+        .height(8)
+        .color($r('app.color.accent_primary'))
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.background_secondary'))
+    .borderRadius(16)
+  }
+
+  @Builder
+  private buildSessionInfoCard(): void {
+    Column({ space: 10 }) {
+      Text('播放详情')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+
+      Row() {
+        Text('章节')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.chapterInfoText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('页面')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.pageInfoText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('字符')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.charInfoText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('分段')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.chunkInfoText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('引擎 / 语速')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(`${this.engineInfoText} · ${this.speedInfoText}`)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor('rgba(255,255,255,0.02)')
+    .borderRadius(16)
+    .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
+  }
+
+  @Builder
+  private buildExcerptCard(): void {
+    Column({ space: 8 }) {
+      Text('当前朗读片段')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+      Text(this.excerptText.length > 0 ? this.excerptText : '暂无可展示文本')
+        .fontSize(15)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_primary'))
+        .lineHeight(24)
+        .maxLines(4)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.background_secondary'))
+    .borderRadius(16)
+  }
+
+  @Builder
+  private buildControlCard(): void {
+    Column({ space: 14 }) {
+      Row({ space: 16 }) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(20)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(52)
+        .height(52)
+        .borderRadius(26)
+        .backgroundColor($r('app.color.background_secondary'))
+        .enabled(this.hasSession)
+        .onClick(() => this.skipPrevious())
+
+        Button() {
+          SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+            .fontSize(28)
+            .fontColor([Color.White])
+        }
+        .width(72)
+        .height(72)
+        .borderRadius(36)
+        .backgroundColor($r('app.color.accent_primary'))
+        .enabled(this.hasSession)
+        .onClick(() => this.togglePlayPause())
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_right'))
+            .fontSize(20)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(52)
+        .height(52)
+        .borderRadius(26)
+        .backgroundColor($r('app.color.background_secondary'))
+        .enabled(this.hasSession)
+        .onClick(() => this.skipNext())
+      }
+      .justifyContent(FlexAlign.Center)
+      .width('100%')
+
+      Button('停止播放')
+        .height(38)
+        .width('100%')
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor($r('app.color.background_secondary'))
+        .fontColor($r('app.color.text_primary'))
+        .enabled(this.hasSession)
+        .onClick(() => this.stopPlayback())
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor('rgba(255,255,255,0.02)')
+    .borderRadius(16)
+    .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
+  }
+
+  build() {
+    HdsNavDestination() {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.background_primary'))
+
+        Circle()
+          .width(280)
+          .height(280)
+          .fill('rgba(24,144,255,0.10)')
+          .position({ x: -100, y: -90 })
+
+        Circle()
+          .width(220)
+          .height(220)
+          .fill('rgba(24,144,255,0.06)')
+          .position({ x: '100%', y: '75%' })
+          .translate({ x: -170, y: -120 })
+
+        Scroll() {
+          Column({ space: 14 }) {
+            this.buildCoverCard()
+            this.buildProgressCard()
+            this.buildSessionInfoCard()
+            this.buildExcerptCard()
+            this.buildControlCard()
+            Blank()
+          }
+          .width('100%')
+          .padding({ top: 18, left: 16, right: 16, bottom: 20 })
+          .opacity(this.entered ? 1 : 0)
+          .translate({ y: this.entered ? 0 : 20 })
+          .animation({ duration: 260, curve: Curve.EaseOut })
+        }
+        .width('100%')
+        .height('100%')
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(2),
+        end: LengthMetrics.vp(2)
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(76)
+        },
+        originalStyle: {
+          backgroundStyle: { backgroundColor: Color.Transparent },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('app.color.text_primary'),
+              subTitleColor: $r('app.color.text_secondary')
+            },
+            backIconStyle: {
+              backgroundColor: $r('app.color.background_secondary'),
+              iconColor: $r('app.color.text_primary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: $r('app.color.background_secondary') },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('app.color.text_primary'),
+              subTitleColor: $r('app.color.text_secondary')
+            },
+            backIconStyle: {
+              backgroundColor: $r('app.color.background_secondary'),
+              iconColor: $r('app.color.text_primary')
+            }
+          }
+        }
+      },
+      content: {
+        title: {
+          mainTitle: '听书播放器'
+        }
+      }
+    })
+    .backgroundColor(Color.Transparent)
+    .mode(NavDestinationMode.STANDARD)
+    .onReady((context: NavDestinationContext) => {
+      this.pathStack = context.pathStack;
+      AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', 0);
+      this.refreshPlayerState();
+      this.entered = false;
+      setTimeout(() => {
+        this.entered = true;
+      }, 20);
+    })
+    .onShown(() => {
+      AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
+      this.refreshPlayerState();
+      this.readAloudController.refreshMediaSession();
+    })
+    .onBackPressed(() => {
+      this.closePage();
+      return true;
+    })
+  }
+}

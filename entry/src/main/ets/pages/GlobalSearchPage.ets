@@ -118,6 +118,7 @@ export struct GlobalSearchPage {
   @State expandedGroups: Set<string> = new Set<string>();  // 已展开显示所有结果的分组ID
   @State mangaSourceDisplayCount: number = SOURCE_DISPLAY_LIMIT;  // 当前显示的漫画图源数量
   @State novelSourceDisplayCount: number = SOURCE_DISPLAY_LIMIT;  // 当前显示的小说书源数量
+  @State isResultsScrolling: boolean = false;  // 结果列表是否正在滚动
   
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -131,6 +132,9 @@ export struct GlobalSearchPage {
   private searchService: GlobalSearchService = getGlobalSearchService();
   private pathStack: NavPathStack = new NavPathStack();
   private lastProgressUpdate: number = 0;  // 上次进度更新时间戳
+  private pendingProgressGroups: SearchSourceGroup[] | null = null;
+  private pendingProgressCompleted: number = 0;
+  private pendingProgressTotal: number = 0;
   
   // WebView 相关（用于后台搜索 WebView 格式图源）
   private webViewController: webview.WebviewController = new webview.WebviewController();
@@ -407,6 +411,48 @@ export struct GlobalSearchPage {
     this.filteredGroups = this.sourceGroups.filter(g => g.items.length > 0 || g.isSearching || g.hasError);
   }
 
+  private applyProgressSnapshot(completed: number, total: number, groups: SearchSourceGroup[]): void {
+    this.lastProgressUpdate = Date.now();
+    this.searchProgress = `搜索中... (${completed}/${total})`;
+    this.sourceGroups = [...groups];
+    this.updateFilteredGroups();
+  }
+
+  private queueProgressSnapshot(completed: number, total: number, groups: SearchSourceGroup[]): void {
+    this.pendingProgressGroups = groups;
+    this.pendingProgressCompleted = completed;
+    this.pendingProgressTotal = total;
+  }
+
+  private flushPendingProgressSnapshot(): void {
+    if (!this.pendingProgressGroups) {
+      return;
+    }
+    const completed = this.pendingProgressCompleted;
+    const total = this.pendingProgressTotal;
+    this.applyProgressSnapshot(
+      completed,
+      total,
+      this.pendingProgressGroups
+    );
+    this.pendingProgressGroups = null;
+    this.pendingProgressCompleted = 0;
+    this.pendingProgressTotal = 0;
+    if (total > 0 && completed >= total) {
+      this.isSearching = false;
+      this.searchProgress = '';
+    }
+  }
+
+  private onResultsScrollStart(): void {
+    this.isResultsScrolling = true;
+  }
+
+  private onResultsScrollStop(): void {
+    this.isResultsScrolling = false;
+    this.flushPendingProgressSnapshot();
+  }
+
   /**
    * 加载搜索历史
    */
@@ -442,6 +488,9 @@ export struct GlobalSearchPage {
       this.isSearching = true;
       this.searchProgress = '正在搜索...';
       this.sourceGroups = [];
+      this.pendingProgressGroups = null;
+      this.pendingProgressCompleted = 0;
+      this.pendingProgressTotal = 0;
       
       // 自动收起在线源列表
       this.showSourceExpanded = false;
@@ -472,27 +521,37 @@ export struct GlobalSearchPage {
       const results = await this.searchService.searchAll(
         this.searchKeyword,
         filterConfig,
-        (completed: number, total: number, groupName: string, groups: SearchSourceGroup[]) => {
+        (completed: number, total: number, _groupName: string, groups: SearchSourceGroup[]) => {
+          // 触摸/滑动期间冻结结果刷新，仅缓存最新快照，待停止滑动后一次性应用
+          if (this.isResultsScrolling) {
+            this.queueProgressSnapshot(completed, total, groups);
+            return;
+          }
+
           // 节流进度更新，最多每500ms更新一次UI
           const now = Date.now();
           if (now - this.lastProgressUpdate >= 500 || completed === total) {
-            this.lastProgressUpdate = now;
-            this.searchProgress = `搜索中... (${completed}/${total})`;
-            this.sourceGroups = [...groups];
-            this.updateFilteredGroups();
+            this.applyProgressSnapshot(completed, total, groups);
           }
         }
       );
 
-      this.sourceGroups = results;
-      this.updateFilteredGroups();
-      this.isSearching = false;
-      this.searchProgress = '';
+      const finalTotal = this.pendingProgressTotal > 0 ? this.pendingProgressTotal : results.length;
+      if (this.isResultsScrolling) {
+        this.queueProgressSnapshot(finalTotal, finalTotal, results);
+      } else {
+        this.applyProgressSnapshot(finalTotal, finalTotal, results);
+        this.isSearching = false;
+        this.searchProgress = '';
+      }
       
       const totalResults = results.reduce((sum, g) => sum + g.items.length, 0);
       logger.info(TAG, `搜索完成: ${results.length}个分组, ${totalResults}条结果`);
     } catch (error) {
       logger.error(TAG, `搜索失败: ${error}`);
+      this.pendingProgressGroups = null;
+      this.pendingProgressCompleted = 0;
+      this.pendingProgressTotal = 0;
       this.isSearching = false;
       this.searchProgress = '';
     }
@@ -933,6 +992,12 @@ export struct GlobalSearchPage {
               .layoutWeight(1)
               .scrollBar(BarState.Auto)
               .edgeEffect(EdgeEffect.Spring)
+              .onScrollStart(() => {
+                this.onResultsScrollStart();
+              })
+              .onScrollStop(() => {
+                this.onResultsScrollStop();
+              })
             }
           } else if (this.searchKeyword && this.sourceGroups.length > 0 && !this.sourceGroups.some(g => g.isSearching)) {
             // 搜索完成但无结果
@@ -1133,6 +1198,12 @@ export struct GlobalSearchPage {
     .layoutWeight(1)
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring)
+    .onScrollStart(() => {
+      this.onResultsScrollStart();
+    })
+    .onScrollStop(() => {
+      this.onResultsScrollStop();
+    })
   }
 
 
@@ -1228,6 +1299,12 @@ export struct GlobalSearchPage {
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .width('100%')
+          .onScrollStart(() => {
+            this.onResultsScrollStart();
+          })
+          .onScrollStop(() => {
+            this.onResultsScrollStop();
+          })
         }
       } else if (group.hasError) {
         Text('搜索失败，请重试')
@@ -1262,8 +1339,7 @@ export struct GlobalSearchPage {
    */
   private getUnifiedCoverSource(item: UnifiedSearchItem): ResourceStr {
     const coverUrl = item.coverUrl || '';
-    
-    // 根据内容类型返回默认封面
+
     if (coverUrl.length === 0) {
       switch (item.contentType) {
         case SearchContentType.MANGA:
@@ -1271,28 +1347,28 @@ export struct GlobalSearchPage {
         case SearchContentType.EBOOK:
           return $r('app.media.ic_ebook');
         case SearchContentType.NOVEL:
-          return $r('app.media.ic_ebook');
+          return $r('app.media.ebook');
         default:
           return $r('app.media.mangabook');
       }
     }
-    
-    // 应用资源路径
+
     if (coverUrl.startsWith('app.media.')) {
       const resourceName = coverUrl.substring('app.media.'.length);
       if (resourceName === 'mangabook') return $r('app.media.mangabook');
+      if (resourceName === 'ebook') return $r('app.media.ebook');
       if (resourceName === 'ic_ebook') return $r('app.media.ic_ebook');
-      if (resourceName === 'ic_novel') return $r('app.media.ic_ebook');
+      if (resourceName === 'ic_novel') return $r('app.media.ebook');
       return $r('app.media.mangabook');
     }
-    
-    // 本地文件路径
+
     if (coverUrl.startsWith('/')) {
       return `file://${coverUrl}`;
     }
-    
+
     return coverUrl;
   }
+
 
   /**
    * 获取搜索结果默认封面
@@ -1304,11 +1380,12 @@ export struct GlobalSearchPage {
       case SearchContentType.EBOOK:
         return $r('app.media.ic_ebook');
       case SearchContentType.NOVEL:
-        return $r('app.media.ic_ebook');
+        return $r('app.media.ebook');
       default:
         return $r('app.media.mangabook');
     }
   }
+
 
   /**
    * 构建项目卡片（统一搜索结果）
@@ -1316,46 +1393,68 @@ export struct GlobalSearchPage {
   @Builder
   buildItemCard(item: UnifiedSearchItem) {
     Column({ space: 8 }) {
-      // 封面
       if (item.coverUrl && item.coverUrl.length > 0) {
         Image(this.getUnifiedCoverSource(item))
           .width(100)
           .height(140)
           .borderRadius(8)
           .objectFit(ImageFit.Cover)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(
+            ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
+          )
           .alt(this.getDefaultCover(item.contentType))
       } else {
-        // 无封面时显示标题首字
-        Column() {
-          Text(item.title.substring(0, 1))
-            .fontSize(32)
-            .fontFamily(this.appFontFamily)
-            .fontColor('#FFFFFF')
-            .fontWeight(FontWeight.Bold)
+        if (item.contentType === SearchContentType.NOVEL) {
+          Image($r('app.media.ebook'))
+            .width(100)
+            .height(140)
+            .borderRadius(8)
+            .objectFit(ImageFit.Contain)
+            .backgroundColor(
+              ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme)
+            )
+            .alt($r('app.media.ebook'))
+        } else {
+          Column() {
+            Text(item.title.substring(0, 1))
+              .fontSize(32)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#FFFFFF')
+              .fontWeight(FontWeight.Bold)
+          }
+          .width(100)
+          .height(140)
+          .borderRadius(8)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .justifyContent(FlexAlign.Center)
         }
-        .width(100)
-        .height(140)
-        .borderRadius(8)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .justifyContent(FlexAlign.Center)
       }
 
-      // 标题
-      Text(item.title)
-        .fontSize(13)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width(100)
-        .textAlign(TextAlign.Start)
+      Column() {
+        Text(item.title)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .lineHeight(18)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width(100)
+          .textAlign(TextAlign.Start)
+      }
+      .width(100)
+      .height(36)
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Start)
     }
     .width(100)
+    .height(184)
+    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Start)
     .onClick(() => {
       this.openDetail(item);
     })
   }
+
 
   /**
    * 构建内容类型筛选Chip

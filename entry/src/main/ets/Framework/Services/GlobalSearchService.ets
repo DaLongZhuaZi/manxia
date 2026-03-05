@@ -12,6 +12,7 @@ import { ComicInfo as OnlineComicInfo } from '../Source/SourceExecutor';
 import { EBookDataManager } from '../Data/EBookDataManager';
 import { getNovelDataManager, NovelDataManager } from '../Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Novel/NovelSourceManager';
+import { SearchParseOptions } from '../Novel/NovelSourceExecutor';
 import { SourceManager, SourceInfo } from '../Source/SourceManager';
 import { SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Source/SuwayomiSourceExecutor';
 import { EBook } from '../../Models/EBookModels';
@@ -400,7 +401,10 @@ export class GlobalSearchService {
    */
   async searchOnlineNovel(sourceId: string, keyword: string, page: number = 1): Promise<UnifiedSearchItem[]> {
     try {
-      const results = await this.novelSourceManager.search(sourceId, keyword, page);
+      const parseOptions: SearchParseOptions = {
+        yieldSliceMs: 12
+      };
+      const results = await this.novelSourceManager.search(sourceId, keyword, page, parseOptions);
       return results.map((novel: NovelSearchResult): UnifiedSearchItem => ({
         id: `online-novel-${sourceId}-${novel.bookUrl}`,
         title: novel.name,
@@ -614,7 +618,7 @@ export class GlobalSearchService {
     
     // 【关键】立即触发一次进度回调，让 UI 显示所有正在搜索的分组
     if (onProgress) {
-      onProgress(0, totalGroups, '', groups);
+      onProgress(0, totalGroups, '', this.createProgressSnapshot(groups));
     }
     
     // 根据 group 类型对任务进行分类
@@ -624,8 +628,13 @@ export class GlobalSearchService {
     const updateProgress = () => {
       completedGroups++;
       if (onProgress) {
-        const currentGroup = groups.find(g => g.isSearching === false && g.items.length > 0);
-        onProgress(completedGroups, totalGroups, currentGroup?.groupName || '', groups);
+        let currentGroupName = '';
+        for (const group of groups) {
+          if (!group.isSearching) {
+            currentGroupName = group.groupName;
+          }
+        }
+        onProgress(completedGroups, totalGroups, currentGroupName, this.createProgressSnapshot(groups));
       }
     };
     
@@ -653,6 +662,15 @@ export class GlobalSearchService {
       // Suwayomi 搜索任务
       executeTasksInBatches(tasksByType.suwayomi, 1)
     ]);
+
+    // 兜底确保所有分组都已结束，避免 UI 长时间停留在“搜索中”
+    for (const group of groups) {
+      group.isSearching = false;
+    }
+
+    if (onProgress) {
+      onProgress(totalGroups, totalGroups, '', this.createProgressSnapshot(groups));
+    }
     
     logger.info(TAG, `全局搜索完成: 共${groups.reduce((sum, g) => sum + g.items.length, 0)}条结果`);
     
@@ -695,6 +713,28 @@ export class GlobalSearchService {
     logger.info(TAG, `任务分类: 本地=${result.local.length}, 图源=${result.manga.length}, 书源=${result.novel.length}, Suwayomi=${result.suwayomi.length}`);
     
     return result;
+  }
+
+  /**
+   * 生成进度快照：返回新数组和新分组对象，保证 UI 能感知到状态更新
+   */
+  private createProgressSnapshot(groups: SearchSourceGroup[]): SearchSourceGroup[] {
+    const snapshot: SearchSourceGroup[] = [];
+    for (const group of groups) {
+      snapshot.push({
+        groupId: group.groupId,
+        groupName: group.groupName,
+        contentType: group.contentType,
+        sourceType: group.sourceType,
+        onlineSourceType: group.onlineSourceType,
+        // 进度快照只需要替换分组对象，避免频繁深拷贝大结果集导致主线程抖动
+        items: group.items,
+        isSearching: group.isSearching,
+        hasError: group.hasError,
+        errorMessage: group.errorMessage
+      });
+    }
+    return snapshot;
   }
 
   /**

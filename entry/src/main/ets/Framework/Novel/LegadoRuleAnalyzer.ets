@@ -26,6 +26,16 @@ class PerformanceConfig {
   static readonly BATCH_SIZE = 500;
   // ID查找最大元素数量（ID通常较少）
   static readonly MAX_ID_ELEMENTS = 1000;
+  // HTML转文本时的最大输入大小（避免超大输入导致主线程长时间占用）
+  static readonly MAX_TEXT_PARSE_INPUT_SIZE = 256 * 1024;
+  // HTML转文本的最大输出大小（搜索场景下足够展示且能防止异常规则放大）
+  static readonly MAX_TEXT_OUTPUT_SIZE = 64 * 1024;
+  // HTML转文本缓存上限（每个Analyzer实例）
+  static readonly HTML_TO_TEXT_CACHE_SIZE = 256;
+  // 仅对较小片段启用HTML转文本缓存，避免大字符串高频Map写入带来的主线程抖动
+  static readonly HTML_TO_TEXT_CACHE_MAX_INPUT_SIZE = 8 * 1024;
+  // 标签闭合异常时的元素回退截断，防止单次规则解析把主线程长期占满
+  static readonly MAX_UNCLOSED_ELEMENT_FALLBACK_SIZE = 128 * 1024;
   
   /**
    * 安全截取内容，避免处理过大的HTML
@@ -85,6 +95,16 @@ interface IndexSelectorResult {
 interface RuleSplitResult {
   rules: string[];
   splitType: string;
+}
+
+class TagRegexPair {
+  openTag: RegExp;
+  closeTag: RegExp;
+
+  constructor(openTag: RegExp, closeTag: RegExp) {
+    this.openTag = openTag;
+    this.closeTag = closeTag;
+  }
 }
 
 /**
@@ -242,19 +262,135 @@ class LegadoRuleChainAnalyzer {
 export class LegadoRuleAnalyzer {
   // Hot-path selector tracing is disabled by default to prevent UI thread stalls.
   private static readonly ENABLE_SELECTOR_TRACE: boolean = false;
+  private static readonly SELF_CLOSING_TAGS: Set<string> = new Set([
+    'br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'param', 'source', 'track', 'wbr'
+  ]);
+  private static readonly TAG_REGEX_CACHE: Map<string, TagRegexPair> = new Map();
+  private static readonly PARSED_RULE_CACHE_MAX: number = 2048;
+  private static readonly RULE_SPLIT_CACHE_MAX: number = 4096;
+  private static readonly PARSED_RULE_CACHE: Map<string, LegadoParsedRule> = new Map();
+  private static readonly RULE_SPLIT_CACHE: Map<string, RuleSplitResult> = new Map();
   private content: string = '';
   private baseUrl: string = '';
   private isJSON: boolean = false;
   private variables: Map<string, string> = new Map();
   private htmlBridge: LegadoHtmlBridge | null = null;
+  private htmlToTextCache: Map<string, string> = new Map();
+  private maxElementsLimit: number = 0;
 
   constructor() {}
+
+  setMaxElementsLimit(limit?: number): LegadoRuleAnalyzer {
+    if (limit === undefined || limit <= 0) {
+      this.maxElementsLimit = 0;
+      return this;
+    }
+    this.maxElementsLimit = Math.floor(limit);
+    return this;
+  }
+
+  private getMaxElements(defaultLimit: number): number {
+    if (this.maxElementsLimit <= 0) {
+      return defaultLimit;
+    }
+    return Math.min(defaultLimit, this.maxElementsLimit);
+  }
 
   private selectorTrace(messageBuilder: () => string): void {
     if (!LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
       return;
     }
     logger.debug(TAG, messageBuilder());
+  }
+
+  private static putParsedRuleCache(key: string, value: LegadoParsedRule): void {
+    if (LegadoRuleAnalyzer.PARSED_RULE_CACHE.size >= LegadoRuleAnalyzer.PARSED_RULE_CACHE_MAX) {
+      const firstKey = LegadoRuleAnalyzer.PARSED_RULE_CACHE.keys().next().value as string | undefined;
+      if (firstKey) {
+        LegadoRuleAnalyzer.PARSED_RULE_CACHE.delete(firstKey);
+      }
+    }
+    LegadoRuleAnalyzer.PARSED_RULE_CACHE.set(key, value);
+  }
+
+  private static putRuleSplitCache(key: string, value: RuleSplitResult): void {
+    if (LegadoRuleAnalyzer.RULE_SPLIT_CACHE.size >= LegadoRuleAnalyzer.RULE_SPLIT_CACHE_MAX) {
+      const firstKey = LegadoRuleAnalyzer.RULE_SPLIT_CACHE.keys().next().value as string | undefined;
+      if (firstKey) {
+        LegadoRuleAnalyzer.RULE_SPLIT_CACHE.delete(firstKey);
+      }
+    }
+    LegadoRuleAnalyzer.RULE_SPLIT_CACHE.set(key, value);
+  }
+
+  private isJsOpenTagAt(str: string, index: number): boolean {
+    if (index + 3 >= str.length) {
+      return false;
+    }
+    const c1 = str[index + 1];
+    const c2 = str[index + 2];
+    return str[index] === '<' &&
+      (c1 === 'j' || c1 === 'J') &&
+      (c2 === 's' || c2 === 'S') &&
+      str[index + 3] === '>';
+  }
+
+  private isJsCloseTagAt(str: string, index: number): boolean {
+    if (index + 4 >= str.length) {
+      return false;
+    }
+    const c2 = str[index + 2];
+    const c3 = str[index + 3];
+    return str[index] === '<' &&
+      str[index + 1] === '/' &&
+      (c2 === 'j' || c2 === 'J') &&
+      (c3 === 's' || c3 === 'S') &&
+      str[index + 4] === '>';
+  }
+
+  private matchesSplitterAt(str: string, index: number, splitter: string): boolean {
+    if (index + splitter.length > str.length) {
+      return false;
+    }
+    for (let i = 0; i < splitter.length; i++) {
+      if (str[index + i] !== splitter[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private getTagRegexPair(tagName: string): TagRegexPair {
+    const normalizedTagName = tagName.toLowerCase();
+    const cached = LegadoRuleAnalyzer.TAG_REGEX_CACHE.get(normalizedTagName);
+    if (cached) {
+      return cached;
+    }
+    const pair = new TagRegexPair(
+      new RegExp(`<${this.escapeRegex(normalizedTagName)}(?:\\s|>)`, 'gi'),
+      new RegExp(`</${this.escapeRegex(normalizedTagName)}>`, 'gi')
+    );
+    LegadoRuleAnalyzer.TAG_REGEX_CACHE.set(normalizedTagName, pair);
+    return pair;
+  }
+
+  private pushElementIfNew(
+    results: string[],
+    seenStartIndexes: Set<number>,
+    html: string,
+    startIndex: number,
+    tagName: string,
+    maxElements: number
+  ): void {
+    if (results.length >= maxElements || seenStartIndexes.has(startIndex)) {
+      return;
+    }
+    const element = this.extractElement(html, startIndex, tagName);
+    if (!element) {
+      return;
+    }
+    seenStartIndexes.add(startIndex);
+    results.push(element);
   }
 
   /**
@@ -267,6 +403,8 @@ export class LegadoRuleAnalyzer {
       this.baseUrl = baseUrl;
     }
     this.isJSON = this.checkIsJSON(content);
+    this.variables.clear();
+    this.htmlToTextCache.clear();
     
     // HTML大小阈值：超过此大小不创建DOM桥接，使用字符串解析
     // 增加到100KB以支持更大的章节列表页面
@@ -324,6 +462,12 @@ export class LegadoRuleAnalyzer {
         mode: LegadoRuleMode.Default,
         rule: ''
       };
+    }
+
+    const parseCacheKey = `${this.isJSON ? '1' : '0'}|${ruleStr}`;
+    const cachedRule = LegadoRuleAnalyzer.PARSED_RULE_CACHE.get(parseCacheKey);
+    if (cachedRule) {
+      return cachedRule;
     }
 
     let rule = ruleStr.trim();
@@ -430,7 +574,7 @@ export class LegadoRuleAnalyzer {
       }
     }
 
-    return {
+    const parsedRule: LegadoParsedRule = {
       mode,
       rule: rule.trim(),
       replaceRegex,
@@ -438,6 +582,8 @@ export class LegadoRuleAnalyzer {
       replaceFirst,
       putMap: Object.keys(putMap).length > 0 ? putMap : undefined
     };
+    LegadoRuleAnalyzer.putParsedRuleCache(parseCacheKey, parsedRule);
+    return parsedRule;
   }
 
   /**
@@ -567,9 +713,9 @@ export class LegadoRuleAnalyzer {
    */
   private async getStringSingleInternalAsync(ruleStr: string): Promise<string> {
     const parsedRule = this.parseRule(ruleStr);
-    
-    // 调试日志
-    logger.debug(TAG, `getStringSingleInternalAsync: mode=${parsedRule.mode}, rule=${ruleStr.substring(0, 50)}...`);
+    if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+      logger.debug(TAG, `getStringSingleInternalAsync: mode=${parsedRule.mode}, rule=${ruleStr.substring(0, 50)}...`);
+    }
     
     // 处理put变量
     if (parsedRule.putMap) {
@@ -592,9 +738,13 @@ export class LegadoRuleAnalyzer {
         result = this.getStringByRegex(parsedRule.rule);
         break;
       case LegadoRuleMode.Js:
-        logger.debug(TAG, `执行JS规则(异步), content长度=${this.content.length}, content前100字符=${this.content.substring(0, 100)}`);
+        if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+          logger.debug(TAG, `执行JS规则(异步), content长度=${this.content.length}, content前100字符=${this.content.substring(0, 100)}`);
+        }
         result = await this.evalJSAsync(parsedRule.rule);
-        logger.debug(TAG, `JS规则执行结果: ${result.substring(0, 100)}`);
+        if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+          logger.debug(TAG, `JS规则执行结果: ${result.substring(0, 100)}`);
+        }
         break;
       case LegadoRuleMode.Default:
       default:
@@ -616,24 +766,37 @@ export class LegadoRuleAnalyzer {
    * 支持 &&, ||, %% 分割符
    */
   private splitRuleStr(ruleStr: string): RuleSplitResult {
+    const cached = LegadoRuleAnalyzer.RULE_SPLIT_CACHE.get(ruleStr);
+    if (cached) {
+      return cached;
+    }
+
     // 按优先级检查分割符: %%, ||, &&
     // 注意：需要避免在引号内或JS代码内分割
-    const result: RuleSplitResult = { rules: [ruleStr], splitType: '' };
-    if (this.containsSplitter(ruleStr, '%%')) {
-      result.rules = this.safeSplit(ruleStr, '%%');
-      result.splitType = '%%';
+    let result: RuleSplitResult = { rules: [ruleStr], splitType: '' };
+
+    const percentRules = this.safeSplit(ruleStr, '%%');
+    if (percentRules.length > 1) {
+      result = { rules: percentRules, splitType: '%%' };
+      LegadoRuleAnalyzer.putRuleSplitCache(ruleStr, result);
       return result;
     }
-    if (this.containsSplitter(ruleStr, '||')) {
-      result.rules = this.safeSplit(ruleStr, '||');
-      result.splitType = '||';
+
+    const orRules = this.safeSplit(ruleStr, '||');
+    if (orRules.length > 1) {
+      result = { rules: orRules, splitType: '||' };
+      LegadoRuleAnalyzer.putRuleSplitCache(ruleStr, result);
       return result;
     }
-    if (this.containsSplitter(ruleStr, '&&')) {
-      result.rules = this.safeSplit(ruleStr, '&&');
-      result.splitType = '&&';
+
+    const andRules = this.safeSplit(ruleStr, '&&');
+    if (andRules.length > 1) {
+      result = { rules: andRules, splitType: '&&' };
+      LegadoRuleAnalyzer.putRuleSplitCache(ruleStr, result);
       return result;
     }
+
+    LegadoRuleAnalyzer.putRuleSplitCache(ruleStr, result);
     return result;
   }
 
@@ -644,15 +807,15 @@ export class LegadoRuleAnalyzer {
     let inQuote = false;
     let quoteChar = '';
     let inJsTag = false;
-    
-    for (let i = 0; i < str.length - splitter.length + 1; i++) {
+
+    for (let i = 0; i < str.length; i++) {
       // 检查是否进入或离开<js>标签
-      if (str.substring(i, i + 4).toLowerCase() === '<js>') {
+      if (this.isJsOpenTagAt(str, i)) {
         inJsTag = true;
         i += 3;
         continue;
       }
-      if (str.substring(i, i + 5).toLowerCase() === '</js>') {
+      if (this.isJsCloseTagAt(str, i)) {
         inJsTag = false;
         i += 4;
         continue;
@@ -672,7 +835,7 @@ export class LegadoRuleAnalyzer {
           inQuote = false;
         }
       }
-      if (!inQuote && str.substring(i, i + splitter.length) === splitter) {
+      if (!inQuote && this.matchesSplitterAt(str, i, splitter)) {
         return true;
       }
     }
@@ -688,18 +851,18 @@ export class LegadoRuleAnalyzer {
     let inQuote = false;
     let quoteChar = '';
     let inJsTag = false;
-    
+
     for (let i = 0; i < str.length; i++) {
       // 检查是否进入或离开<js>标签
-      if (str.substring(i, i + 4).toLowerCase() === '<js>') {
+      if (this.isJsOpenTagAt(str, i)) {
         inJsTag = true;
-        current += str.substring(i, i + 4);
+        current += str[i] + str[i + 1] + str[i + 2] + str[i + 3];
         i += 3;
         continue;
       }
-      if (str.substring(i, i + 5).toLowerCase() === '</js>') {
+      if (this.isJsCloseTagAt(str, i)) {
         inJsTag = false;
-        current += str.substring(i, i + 5);
+        current += str[i] + str[i + 1] + str[i + 2] + str[i + 3] + str[i + 4];
         i += 4;
         continue;
       }
@@ -720,8 +883,8 @@ export class LegadoRuleAnalyzer {
           inQuote = false;
         }
       }
-      
-      if (!inQuote && str.substring(i, i + splitter.length) === splitter) {
+
+      if (!inQuote && this.matchesSplitterAt(str, i, splitter)) {
         if (current.trim()) {
           results.push(current.trim());
         }
@@ -1372,7 +1535,7 @@ export class LegadoRuleAnalyzer {
     try {
       // 检查内容是否为空
       if (!this.content || this.content.trim() === '') {
-        logger.debug(TAG, `JSONPath解析: 内容为空`);
+        this.selectorTrace((): string => `JSONPath解析: 内容为空`);
         return [];
       }
       
@@ -1382,7 +1545,7 @@ export class LegadoRuleAnalyzer {
         data = JSON.parse(this.content);
       } catch (parseError) {
         // 内容不是有效的JSON，可能是HTML
-        logger.debug(TAG, `JSONPath解析: 内容不是有效JSON，跳过`);
+        this.selectorTrace((): string => `JSONPath解析: 内容不是有效JSON，跳过`);
         return [];
       }
       
@@ -1700,8 +1863,7 @@ export class LegadoRuleAnalyzer {
     // 步骤2: 使用@分割规则链
     const ruleAnalyzer = new LegadoRuleChainAnalyzer(rule);
     const rules = ruleAnalyzer.splitByAt();
-    // 性能优化：减少日志输出，仅在内容较小时输出调试日志
-    if (this.content.length < 10000) {
+    if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
       logger.debug(TAG, `getStringByLegadoRule: rule=${rule}, rules=${JSON.stringify(rules)}`);
     }
     
@@ -1719,8 +1881,7 @@ export class LegadoRuleAnalyzer {
         const found = this.findElementsBySingleRule(el, rules[i]);
         newElements.push(...found);
       }
-      // 性能优化：减少日志输出
-      if (this.content.length < 10000) {
+      if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
         logger.debug(TAG, `getStringByLegadoRule: step[${i}]=${rules[i]}, found=${newElements.length}`);
       }
       elements = newElements;
@@ -1819,6 +1980,7 @@ export class LegadoRuleAnalyzer {
     // 解析索引选择器
     const indexResult = this.parseIndexSelector(rule);
     const selector = indexResult.selector;
+    const requiredCount = this.estimateRequiredElementCount(indexResult);
     
     // 获取所有匹配的元素
     let results: string[] = [];
@@ -1827,16 +1989,16 @@ export class LegadoRuleAnalyzer {
       results = this.getChildElements(content);
     } else if (selector.startsWith('class.')) {
       const className = selector.substring(6);
-      results = this.findElementsByClass(content, className);
+      results = this.findElementsByClass(content, className, requiredCount);
     } else if (selector.startsWith('id.')) {
       const idName = selector.substring(3);
-      results = this.findElementsById(content, idName);
+      results = this.findElementsById(content, idName, requiredCount);
     } else if (selector.startsWith('tag.')) {
       const tagName = selector.substring(4);
-      results = this.findElementsByTag(content, tagName);
+      results = this.findElementsByTag(content, tagName, requiredCount);
     } else if (selector.startsWith('text.')) {
       const searchText = selector.substring(5);
-      results = this.findElementsByText(content, searchText);
+      results = this.findElementsByText(content, searchText, requiredCount);
     } else if (selector.includes('.') && !selector.startsWith('.')) {
       // 处理CSS选择器格式: tag.class (如 span.zuo, div.content)
       // 这是标准CSS选择器，表示 <tag class="class">
@@ -1844,6 +2006,7 @@ export class LegadoRuleAnalyzer {
       const tagName = selector.substring(0, dotIndex);
       const className = selector.substring(dotIndex + 1);
       // 先按标签查找，再按class过滤
+      // tag.class 需要先取全量tag再按class过滤，不能提前按索引限制tag数量，否则会改变语义
       const tagElements = this.findElementsByTag(content, tagName);
       for (const el of tagElements) {
         // 检查元素是否包含指定的class
@@ -1857,7 +2020,7 @@ export class LegadoRuleAnalyzer {
       }
     } else {
       // 默认作为标签名处理
-      results = this.findElementsByTag(content, selector);
+      results = this.findElementsByTag(content, selector, requiredCount);
     }
     
     // 应用索引筛选
@@ -1954,6 +2117,44 @@ export class LegadoRuleAnalyzer {
       }
     }
   }
+
+  /**
+   * 基于索引规则估算所需最小元素数。
+   * 仅在“选择模式 + 全部非负索引”时返回正数；否则返回0表示无法提前裁剪。
+   */
+  private estimateRequiredElementCount(indexResult: IndexSelectorResult): number {
+    if (!indexResult.hasIndex || indexResult.exclude) {
+      return 0;
+    }
+
+    let maxIndex = -1;
+
+    for (const idx of indexResult.indexes) {
+      if (idx < 0) {
+        return 0;
+      }
+      if (idx > maxIndex) {
+        maxIndex = idx;
+      }
+    }
+
+    for (const range of indexResult.ranges) {
+      if (range.start < 0 || range.end < 0) {
+        return 0;
+      }
+      if (range.start > maxIndex) {
+        maxIndex = range.start;
+      }
+      if (range.end > maxIndex) {
+        maxIndex = range.end;
+      }
+    }
+
+    if (maxIndex < 0) {
+      return 0;
+    }
+    return maxIndex + 1;
+  }
   
   /**
    * 应用索引筛选
@@ -2019,7 +2220,7 @@ export class LegadoRuleAnalyzer {
     const results: string[] = [];
     
     // 性能保护：使用统一配置
-    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    const MAX_ELEMENTS = this.getMaxElements(PerformanceConfig.MAX_ELEMENTS);
     const searchContent = PerformanceConfig.safeSubstring(content);
     
     // 匹配第一层子元素
@@ -2049,16 +2250,319 @@ export class LegadoRuleAnalyzer {
     return results;
   }
 
+  private isWhitespaceChar(ch: string): boolean {
+    return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f';
+  }
+
+  private findClassAttrIndex(content: string, fromIndex: number): number {
+    const max = content.length - 5;
+    for (let i = fromIndex; i <= max; i++) {
+      const c0 = content[i];
+      if (c0 !== 'c' && c0 !== 'C') {
+        continue;
+      }
+      const c1 = content[i + 1];
+      const c2 = content[i + 2];
+      const c3 = content[i + 3];
+      const c4 = content[i + 4];
+      if ((c1 === 'l' || c1 === 'L') &&
+        (c2 === 'a' || c2 === 'A') &&
+        (c3 === 's' || c3 === 'S') &&
+        (c4 === 's' || c4 === 'S')) {
+        let j = i + 5;
+        while (j < content.length && this.isWhitespaceChar(content[j])) {
+          j++;
+        }
+        if (j < content.length && content[j] === '=') {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  private extractTagNameAt(content: string, tagStart: number): string {
+    if (tagStart < 0 || tagStart + 1 >= content.length) {
+      return '';
+    }
+    let i = tagStart + 1;
+    if (content[i] === '/' || content[i] === '!') {
+      return '';
+    }
+    const start = i;
+    while (i < content.length) {
+      const ch = content[i];
+      const isLower = ch >= 'a' && ch <= 'z';
+      const isUpper = ch >= 'A' && ch <= 'Z';
+      const isDigit = ch >= '0' && ch <= '9';
+      if (!isLower && !isUpper && !isDigit) {
+        break;
+      }
+      i++;
+    }
+    if (i === start) {
+      return '';
+    }
+    return content.substring(start, i);
+  }
+
+  private extractClassValueFromTag(content: string, classAttrIndex: number, tagEnd: number): string {
+    let i = classAttrIndex + 5;
+    while (i < tagEnd && this.isWhitespaceChar(content[i])) {
+      i++;
+    }
+    if (i >= tagEnd || content[i] !== '=') {
+      return '';
+    }
+    i++;
+    while (i < tagEnd && this.isWhitespaceChar(content[i])) {
+      i++;
+    }
+    if (i >= tagEnd) {
+      return '';
+    }
+    const quote = content[i];
+    if (quote === '"' || quote === "'") {
+      const start = i + 1;
+      let end = start;
+      while (end < tagEnd && content[end] !== quote) {
+        end++;
+      }
+      return content.substring(start, end);
+    }
+    const start = i;
+    let end = i;
+    while (end < tagEnd && !this.isWhitespaceChar(content[end]) && content[end] !== '>') {
+      end++;
+    }
+    return content.substring(start, end);
+  }
+
+  private containsClassToken(classValue: string, classToken: string): boolean {
+    if (!classToken || !classValue) {
+      return false;
+    }
+    let index = classValue.indexOf(classToken);
+    while (index !== -1) {
+      const beforeIndex = index - 1;
+      const afterIndex = index + classToken.length;
+      const beforeOk = beforeIndex < 0 || this.isWhitespaceChar(classValue[beforeIndex]);
+      const afterOk = afterIndex >= classValue.length || this.isWhitespaceChar(classValue[afterIndex]);
+      if (beforeOk && afterOk) {
+        return true;
+      }
+      index = classValue.indexOf(classToken, index + 1);
+    }
+    return false;
+  }
+
+  private containsAllClassTokens(classValue: string, classNames: string[]): boolean {
+    for (const classToken of classNames) {
+      if (!this.containsClassToken(classValue, classToken)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private findIdAttrIndex(content: string, fromIndex: number): number {
+    const max = content.length - 2;
+    for (let i = fromIndex; i <= max; i++) {
+      const c0 = content[i];
+      const c1 = content[i + 1];
+      if ((c0 === 'i' || c0 === 'I') && (c1 === 'd' || c1 === 'D')) {
+        let j = i + 2;
+        while (j < content.length && this.isWhitespaceChar(content[j])) {
+          j++;
+        }
+        if (j < content.length && content[j] === '=') {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  private extractIdValueFromTag(content: string, idAttrIndex: number, tagEnd: number): string {
+    let i = idAttrIndex + 2;
+    while (i < tagEnd && this.isWhitespaceChar(content[i])) {
+      i++;
+    }
+    if (i >= tagEnd || content[i] !== '=') {
+      return '';
+    }
+    i++;
+    while (i < tagEnd && this.isWhitespaceChar(content[i])) {
+      i++;
+    }
+    if (i >= tagEnd) {
+      return '';
+    }
+    const quote = content[i];
+    if (quote === '"' || quote === "'") {
+      const start = i + 1;
+      let end = start;
+      while (end < tagEnd && content[end] !== quote) {
+        end++;
+      }
+      return content.substring(start, end);
+    }
+    const start = i;
+    let end = i;
+    while (end < tagEnd && !this.isWhitespaceChar(content[end]) && content[end] !== '>') {
+      end++;
+    }
+    return content.substring(start, end);
+  }
+
+  private isAttributeNameBoundary(ch: string): boolean {
+    return ch === '' || this.isWhitespaceChar(ch) || ch === '=' || ch === '>' || ch === '/' || ch === '<';
+  }
+
+  private extractAttributeValueFromTagContent(tagContent: string, attrName: string): string | null {
+    const lowerAttrName = attrName.trim().toLowerCase();
+    if (!lowerAttrName) {
+      return null;
+    }
+    const contentLength = tagContent.length;
+    const targetLength = lowerAttrName.length;
+    const maxStart = contentLength - targetLength;
+    for (let i = 0; i <= maxStart; i++) {
+      const firstChar = this.toLowerAsciiChar(tagContent[i]);
+      if (firstChar !== lowerAttrName[0]) {
+        continue;
+      }
+
+      const beforeChar = i > 0 ? tagContent[i - 1] : '';
+      if (!this.isAttributeNameBoundary(beforeChar)) {
+        continue;
+      }
+
+      let matched = true;
+      for (let j = 1; j < targetLength; j++) {
+        if (this.toLowerAsciiChar(tagContent[i + j]) !== lowerAttrName[j]) {
+          matched = false;
+          break;
+        }
+      }
+      if (!matched) {
+        continue;
+      }
+
+      const afterIndex = i + targetLength;
+      const afterChar = afterIndex < contentLength ? tagContent[afterIndex] : '';
+      if (!this.isAttributeNameBoundary(afterChar)) {
+        continue;
+      }
+
+      let valueStart = afterIndex;
+      while (valueStart < contentLength && this.isWhitespaceChar(tagContent[valueStart])) {
+        valueStart++;
+      }
+      if (valueStart >= contentLength || tagContent[valueStart] !== '=') {
+        return '';
+      }
+
+      valueStart++;
+      while (valueStart < contentLength && this.isWhitespaceChar(tagContent[valueStart])) {
+        valueStart++;
+      }
+      if (valueStart >= contentLength) {
+        return '';
+      }
+
+      const quote = tagContent[valueStart];
+      if (quote === '"' || quote === "'") {
+        const start = valueStart + 1;
+        let end = start;
+        while (end < contentLength && tagContent[end] !== quote) {
+          end++;
+        }
+        return tagContent.substring(start, end);
+      }
+
+      const start = valueStart;
+      let end = valueStart;
+      while (end < contentLength && !this.isWhitespaceChar(tagContent[end]) && tagContent[end] !== '>') {
+        end++;
+      }
+      return tagContent.substring(start, end);
+    }
+    return null;
+  }
+
+  private toLowerAsciiChar(ch: string): string {
+    if (ch >= 'A' && ch <= 'Z') {
+      return String.fromCharCode(ch.charCodeAt(0) + 32);
+    }
+    return ch;
+  }
+
+  private isTagBoundaryChar(ch: string): boolean {
+    return ch === '' || this.isWhitespaceChar(ch) || ch === '>' || ch === '/';
+  }
+
+  private matchesTagNameAt(content: string, tagStart: number, lowerTagName: string): boolean {
+    if (lowerTagName.length === 0) {
+      return this.extractTagNameAt(content, tagStart).length > 0;
+    }
+
+    const nameStart = tagStart + 1;
+    if (nameStart + lowerTagName.length > content.length) {
+      return false;
+    }
+
+    for (let i = 0; i < lowerTagName.length; i++) {
+      const actual = this.toLowerAsciiChar(content[nameStart + i]);
+      if (actual !== lowerTagName[i]) {
+        return false;
+      }
+    }
+
+    const boundaryIndex = nameStart + lowerTagName.length;
+    const boundaryChar = boundaryIndex < content.length ? content[boundaryIndex] : '';
+    return this.isTagBoundaryChar(boundaryChar);
+  }
+
+  private findTagStartByName(content: string, fromIndex: number, lowerTagName: string): number {
+    let cursor = fromIndex;
+    while (cursor < content.length) {
+      const tagStart = content.indexOf('<', cursor);
+      if (tagStart === -1) {
+        return -1;
+      }
+      if (tagStart + 1 >= content.length) {
+        return -1;
+      }
+
+      const next = content[tagStart + 1];
+      if (next === '/' || next === '!' || next === '?') {
+        cursor = tagStart + 1;
+        continue;
+      }
+
+      if (this.matchesTagNameAt(content, tagStart, lowerTagName)) {
+        return tagStart;
+      }
+      cursor = tagStart + 1;
+    }
+    return -1;
+  }
+
   /**
    * 按class查找元素
    * 增强版：支持多个class名称，添加诊断日志
    * 添加性能保护：限制元素数量和内容大小以避免ANR
    */
-  private findElementsByClass(content: string, className: string): string[] {
+  private findElementsByClass(content: string, className: string, maxElementsHint: number = 0): string[] {
     const results: string[] = [];
+    const seenStartIndexes: Set<number> = new Set();
     
     // 性能保护：使用统一配置
-    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    let maxElements = this.getMaxElements(PerformanceConfig.MAX_ELEMENTS);
+    if (maxElementsHint > 0) {
+      maxElements = Math.min(maxElements, maxElementsHint);
+    }
     const searchContent = PerformanceConfig.safeSubstring(content);
     
     // 分割多个class名称
@@ -2072,115 +2576,45 @@ export class LegadoRuleAnalyzer {
       this.selectorTrace((): string => `findElementsByClass: 查找class="${className}", contentLen=${searchContent.length}`);
     }
     
-    // 方法1: 使用正则表达式直接匹配（更可靠）
-    // 对于单个class，使用更精确的正则
-    if (classNames.length === 1) {
-      const singleClass = classNames[0];
-      // 匹配 class="...className..." 或 class='...className...'
-      // 确保className是完整的class名（前后是空格或引号边界）
-      const classPatterns = [
-        new RegExp(`<([a-zA-Z][a-zA-Z0-9]*)\\s+[^>]*\\bclass\\s*=\\s*"([^"]*\\b${this.escapeRegex(singleClass)}\\b[^"]*)"[^>]*>`, 'gi'),
-        new RegExp(`<([a-zA-Z][a-zA-Z0-9]*)\\s+[^>]*\\bclass\\s*=\\s*'([^']*\\b${this.escapeRegex(singleClass)}\\b[^']*)'[^>]*>`, 'gi')
-      ];
-      
-      for (const pattern of classPatterns) {
-        let match = pattern.exec(searchContent);
-        while (match !== null && results.length < MAX_ELEMENTS) {
-          const tagName = match[1];
-          const classAttr = match[2];
-          // 验证class是完整匹配（不是子字符串）
-          const classes = classAttr.split(/\s+/);
-          if (classes.includes(singleClass)) {
-            const element = this.extractElement(searchContent, match.index, tagName);
-            if (element && !results.includes(element)) {
-              results.push(element);
-            }
-          }
-          match = pattern.exec(searchContent);
-        }
-        if (results.length > 0) break;
+    // 统一使用低分配字符串扫描，避免复杂正则在大文本下阻塞主线程
+    let searchStart = 0;
+    while (searchStart < searchContent.length && results.length < maxElements) {
+      const classAttrIndex = this.findClassAttrIndex(searchContent, searchStart);
+      if (classAttrIndex === -1) {
+        break;
       }
-    }
-    
-    // 如果正则方法没找到或需要匹配多个class，使用字符串搜索方法
-    if (results.length === 0) {
-      let searchStart = 0;
-      const lowerContent = searchContent.toLowerCase();
-      
-      while (searchStart < searchContent.length && results.length < MAX_ELEMENTS) {
-        // 查找 class= 的位置
-        const classAttrIndex = lowerContent.indexOf('class=', searchStart);
-        if (classAttrIndex === -1) break;
-        
-        // 向前找到开始标签的 <
-        let tagStart = classAttrIndex;
-        while (tagStart > 0 && searchContent[tagStart] !== '<') {
-          tagStart--;
-        }
-        
-        // 确保这是一个开始标签
-        if (searchContent[tagStart] !== '<' || searchContent[tagStart + 1] === '/' || searchContent[tagStart + 1] === '!') {
-          searchStart = classAttrIndex + 6;
-          continue;
-        }
-        
-        // 找到标签名
-        const tagNameMatch = searchContent.substring(tagStart).match(/^<([a-zA-Z][a-zA-Z0-9]*)/);
-        if (!tagNameMatch) {
-          searchStart = classAttrIndex + 6;
-          continue;
-        }
-        const tagName = tagNameMatch[1];
-        
-        // 找到标签结束位置
-        let tagEnd = searchContent.indexOf('>', classAttrIndex);
-        if (tagEnd === -1) {
-          searchStart = classAttrIndex + 6;
-          continue;
-        }
-        
-        // 提取class属性值
-        const attrPart = searchContent.substring(classAttrIndex, tagEnd);
-        let classValue = '';
-        
-        // 匹配 class="value" 或 class='value' 或 class=value
-        const doubleQuoteMatch = attrPart.match(/^class\s*=\s*"([^"]*)"/i);
-        const singleQuoteMatch = attrPart.match(/^class\s*=\s*'([^']*)'/i);
-        const noQuoteMatch = attrPart.match(/^class\s*=\s*([^\s>"']+)/i);
-        
-        if (doubleQuoteMatch) {
-          classValue = doubleQuoteMatch[1];
-        } else if (singleQuoteMatch) {
-          classValue = singleQuoteMatch[1];
-        } else if (noQuoteMatch) {
-          classValue = noQuoteMatch[1];
-        }
-        
-        // 检查是否包含所有目标class
-        if (classValue) {
-          const elementClasses = classValue.split(/\s+/);
-          let hasAllClasses = true;
-          for (const targetClass of classNames) {
-            if (!elementClasses.includes(targetClass)) {
-              hasAllClasses = false;
-              break;
-            }
-          }
-          
-          if (hasAllClasses) {
-            const element = this.extractElement(searchContent, tagStart, tagName);
-            if (element && !results.includes(element)) {
-              results.push(element);
-            }
-          }
-        }
-        
-        searchStart = tagEnd + 1;
+
+      // 向前找到开始标签的 <
+      let tagStart = classAttrIndex;
+      while (tagStart > 0 && searchContent[tagStart] !== '<') {
+        tagStart--;
       }
+      if (tagStart < 0 || searchContent[tagStart] !== '<') {
+        searchStart = classAttrIndex + 5;
+        continue;
+      }
+
+      const tagName = this.extractTagNameAt(searchContent, tagStart);
+      if (!tagName) {
+        searchStart = classAttrIndex + 5;
+        continue;
+      }
+
+      const tagEnd = searchContent.indexOf('>', classAttrIndex);
+      if (tagEnd === -1) {
+        break;
+      }
+
+      const classValue = this.extractClassValueFromTag(searchContent, classAttrIndex, tagEnd);
+      if (classValue && this.containsAllClassTokens(classValue, classNames)) {
+        this.pushElementIfNew(results, seenStartIndexes, searchContent, tagStart, tagName, maxElements);
+      }
+
+      searchStart = tagEnd + 1;
     }
-    
-    // 如果还是没找到，输出HTML中存在的class供诊断
-    if (results.length === 0) {
+
+    // 如果还是没找到，输出HTML中存在的class供诊断（仅在开启trace时）
+    if (results.length === 0 && LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
       const allClasses: string[] = [];
       const classRegex = /\bclass\s*=\s*["']([^"']+)["']/gi;
       let classMatch = classRegex.exec(searchContent);
@@ -2212,109 +2646,62 @@ export class LegadoRuleAnalyzer {
    * 增强版：支持更多id属性格式，添加诊断日志
    * 添加性能保护：限制元素数量和内容大小以避免ANR
    */
-  private findElementsById(content: string, idName: string): string[] {
+  private findElementsById(content: string, idName: string, maxElementsHint: number = 0): string[] {
     const results: string[] = [];
+    const seenStartIndexes: Set<number> = new Set();
     
     // 性能保护：使用统一配置（ID查找使用较小限制）
-    const MAX_ELEMENTS = PerformanceConfig.MAX_ID_ELEMENTS;
+    let maxElements = this.getMaxElements(PerformanceConfig.MAX_ID_ELEMENTS);
+    if (maxElementsHint > 0) {
+      maxElements = Math.min(maxElements, maxElementsHint);
+    }
     const searchContent = PerformanceConfig.safeSubstring(content);
     
     // 性能优化：减少大型内容时的日志输出
     if (searchContent.length < 10000) {
       this.selectorTrace((): string => `findElementsById: 查找id="${idName}", contentLen=${searchContent.length}`);
     }
-    
-    // 方法1: 使用正则表达式直接匹配（更可靠）
-    // 匹配 id="xxx" 或 id='xxx' 或 id=xxx
-    const idPatterns = [
-      new RegExp(`<([a-zA-Z][a-zA-Z0-9]*)\\s+[^>]*\\bid\\s*=\\s*"${this.escapeRegex(idName)}"[^>]*>`, 'gi'),
-      new RegExp(`<([a-zA-Z][a-zA-Z0-9]*)\\s+[^>]*\\bid\\s*=\\s*'${this.escapeRegex(idName)}'[^>]*>`, 'gi'),
-      new RegExp(`<([a-zA-Z][a-zA-Z0-9]*)\\s+[^>]*\\bid\\s*=\\s*${this.escapeRegex(idName)}(?=[\\s>])[^>]*>`, 'gi')
-    ];
-    
-    for (const pattern of idPatterns) {
-      let match = pattern.exec(searchContent);
-      while (match !== null && results.length < MAX_ELEMENTS) {
-        const tagName = match[1];
-        const element = this.extractElement(searchContent, match.index, tagName);
-        if (element && !results.includes(element)) {
-          results.push(element);
-          this.selectorTrace((): string => `findElementsById: 找到元素 <${tagName} id="${idName}">`);
-        }
-        match = pattern.exec(searchContent);
+
+    // 统一使用低分配字符串扫描，避免复杂正则在大文本下阻塞主线程
+    let searchStart = 0;
+    const lowerIdName = idName.toLowerCase();
+    while (searchStart < searchContent.length && results.length < maxElements) {
+      const idAttrIndex = this.findIdAttrIndex(searchContent, searchStart);
+      if (idAttrIndex === -1) {
+        break;
       }
-      if (results.length > 0) break; // 找到了就不再尝试其他模式
+
+      // 向前找到开始标签的 <
+      let tagStart = idAttrIndex;
+      while (tagStart > 0 && searchContent[tagStart] !== '<') {
+        tagStart--;
+      }
+      if (tagStart < 0 || searchContent[tagStart] !== '<') {
+        searchStart = idAttrIndex + 2;
+        continue;
+      }
+
+      const tagName = this.extractTagNameAt(searchContent, tagStart);
+      if (!tagName) {
+        searchStart = idAttrIndex + 2;
+        continue;
+      }
+
+      const tagEnd = searchContent.indexOf('>', idAttrIndex);
+      if (tagEnd === -1) {
+        break;
+      }
+
+      const idValue = this.extractIdValueFromTag(searchContent, idAttrIndex, tagEnd);
+      if (idValue && idValue.toLowerCase() === lowerIdName) {
+        this.pushElementIfNew(results, seenStartIndexes, searchContent, tagStart, tagName, maxElements);
+      }
+
+      searchStart = tagEnd + 1;
     }
     
-    // 如果正则方法没找到，尝试字符串搜索方法（作为备用）
-    if (results.length === 0) {
-      let searchStart = 0;
-      const lowerContent = searchContent.toLowerCase();
-      const lowerIdName = idName.toLowerCase();
-      
-      while (searchStart < searchContent.length && results.length < MAX_ELEMENTS) {
-        // 查找 id= 的位置
-        const idAttrIndex = lowerContent.indexOf('id=', searchStart);
-        if (idAttrIndex === -1) break;
-        
-        // 向前找到开始标签的 <
-        let tagStart = idAttrIndex;
-        while (tagStart > 0 && searchContent[tagStart] !== '<') {
-          tagStart--;
-        }
-        
-        // 确保这是一个开始标签
-        if (searchContent[tagStart] !== '<' || searchContent[tagStart + 1] === '/' || searchContent[tagStart + 1] === '!') {
-          searchStart = idAttrIndex + 3;
-          continue;
-        }
-        
-        // 找到标签名
-        const tagNameMatch = searchContent.substring(tagStart).match(/^<([a-zA-Z][a-zA-Z0-9]*)/);
-        if (!tagNameMatch) {
-          searchStart = idAttrIndex + 3;
-          continue;
-        }
-        const tagName = tagNameMatch[1];
-        
-        // 找到标签结束位置
-        let tagEnd = searchContent.indexOf('>', idAttrIndex);
-        if (tagEnd === -1) {
-          searchStart = idAttrIndex + 3;
-          continue;
-        }
-        
-        // 提取id属性值
-        const attrPart = searchContent.substring(idAttrIndex, tagEnd);
-        let idValue = '';
-        
-        // 匹配 id="value" 或 id='value' 或 id=value
-        const doubleQuoteMatch = attrPart.match(/^id\s*=\s*"([^"]*)"/i);
-        const singleQuoteMatch = attrPart.match(/^id\s*=\s*'([^']*)'/i);
-        const noQuoteMatch = attrPart.match(/^id\s*=\s*([^\s>"']+)/i);
-        
-        if (doubleQuoteMatch) {
-          idValue = doubleQuoteMatch[1];
-        } else if (singleQuoteMatch) {
-          idValue = singleQuoteMatch[1];
-        } else if (noQuoteMatch) {
-          idValue = noQuoteMatch[1];
-        }
-        
-        // 检查是否匹配目标id（不区分大小写）
-        if (idValue.toLowerCase() === lowerIdName) {
-          const element = this.extractElement(searchContent, tagStart, tagName);
-          if (element && !results.includes(element)) {
-            results.push(element);
-          }
-        }
-        
-        searchStart = tagEnd + 1;
-      }
-    }
-    
-    // 如果还是没找到，输出HTML中所有id属性供诊断
-    if (results.length === 0) {
+    // 如果还是没找到，输出HTML中所有id属性供诊断（仅在开启trace时）
+    if (results.length === 0 && LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
       const allIds: string[] = [];
       const idRegex = /\bid\s*=\s*["']?([^"'\s>]+)["']?/gi;
       let idMatch = idRegex.exec(searchContent);
@@ -2342,27 +2729,34 @@ export class LegadoRuleAnalyzer {
    * 按标签名查找元素
    * 添加性能保护：限制元素数量和内容大小以避免ANR
    */
-  private findElementsByTag(content: string, tagName: string): string[] {
+  private findElementsByTag(content: string, tagName: string, maxElementsHint: number = 0): string[] {
     const results: string[] = [];
     
     // 性能保护：使用统一配置
-    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
+    let maxElements = this.getMaxElements(PerformanceConfig.MAX_ELEMENTS);
+    if (maxElementsHint > 0) {
+      maxElements = Math.min(maxElements, maxElementsHint);
+    }
     const searchContent = PerformanceConfig.safeSubstring(content);
-    
-    const pattern = `<${this.escapeRegex(tagName)}[^>]*>`;
-    try {
-      const regex = new RegExp(pattern, 'gi');
-      let match = regex.exec(searchContent);
-      while (match !== null && results.length < MAX_ELEMENTS) {
-        const element = this.extractElement(searchContent, match.index, tagName);
+
+    const normalizedTagName = tagName.trim().toLowerCase();
+    let searchStart = 0;
+    while (searchStart < searchContent.length && results.length < maxElements) {
+      const tagStart = this.findTagStartByName(searchContent, searchStart, normalizedTagName);
+      if (tagStart === -1) {
+        break;
+      }
+
+      const matchedTagName = normalizedTagName || this.extractTagNameAt(searchContent, tagStart).toLowerCase();
+      if (matchedTagName) {
+        const element = this.extractElement(searchContent, tagStart, matchedTagName);
         if (element) {
           results.push(element);
         }
-        match = regex.exec(searchContent);
       }
-    } catch (e) {
-      // 忽略正则错误
+      searchStart = tagStart + 1;
     }
+
     return results;
   }
 
@@ -2370,24 +2764,76 @@ export class LegadoRuleAnalyzer {
    * 按文本内容查找元素
    * 添加性能保护：限制元素数量和内容大小以避免ANR
    */
-  private findElementsByText(content: string, searchText: string): string[] {
+  private findElementsByText(content: string, searchText: string, maxElementsHint: number = 0): string[] {
     const results: string[] = [];
     
     // 性能保护：使用统一配置
-    const MAX_ELEMENTS = PerformanceConfig.MAX_ELEMENTS;
-    const searchContent = PerformanceConfig.safeSubstring(content);
-    
-    const pattern = `<([a-zA-Z][a-zA-Z0-9]*)[^>]*>[^<]*${this.escapeRegex(searchText)}[^<]*</\\1>`;
-    try {
-      const regex = new RegExp(pattern, 'gi');
-      let match = regex.exec(searchContent);
-      while (match !== null && results.length < MAX_ELEMENTS) {
-        results.push(match[0]);
-        match = regex.exec(searchContent);
-      }
-    } catch (e) {
-      // 忽略正则错误
+    let maxElements = this.getMaxElements(PerformanceConfig.MAX_ELEMENTS);
+    if (maxElementsHint > 0) {
+      maxElements = Math.min(maxElements, maxElementsHint);
     }
+    const searchContent = PerformanceConfig.safeSubstring(content);
+
+    if (!searchText) {
+      return results;
+    }
+
+    const targetLower = searchText.toLowerCase();
+    let searchStart = 0;
+    while (searchStart < searchContent.length && results.length < maxElements) {
+      const tagStart = this.findTagStartByName(searchContent, searchStart, '');
+      if (tagStart === -1) {
+        break;
+      }
+
+      const tagName = this.extractTagNameAt(searchContent, tagStart).toLowerCase();
+      if (!tagName) {
+        searchStart = tagStart + 1;
+        continue;
+      }
+
+      const startTagEnd = searchContent.indexOf('>', tagStart);
+      if (startTagEnd === -1) {
+        break;
+      }
+
+      const textStart = startTagEnd + 1;
+      const nextLt = searchContent.indexOf('<', textStart);
+      if (nextLt === -1) {
+        break;
+      }
+      if (nextLt <= textStart || nextLt + 1 >= searchContent.length || searchContent[nextLt + 1] !== '/') {
+        searchStart = tagStart + 1;
+        continue;
+      }
+
+      let closeNameEnd = nextLt + 2;
+      while (closeNameEnd < searchContent.length) {
+        const code = searchContent.charCodeAt(closeNameEnd);
+        if (!this.isAlphaNumericCode(code)) {
+          break;
+        }
+        closeNameEnd++;
+      }
+      const closeTagName = searchContent.substring(nextLt + 2, closeNameEnd).toLowerCase();
+      if (closeTagName !== tagName) {
+        searchStart = tagStart + 1;
+        continue;
+      }
+
+      const closeTagEnd = searchContent.indexOf('>', closeNameEnd);
+      if (closeTagEnd === -1) {
+        break;
+      }
+
+      const textContent = searchContent.substring(textStart, nextLt);
+      if (textContent.toLowerCase().indexOf(targetLower) !== -1) {
+        results.push(searchContent.substring(tagStart, closeTagEnd + 1));
+      }
+
+      searchStart = closeTagEnd + 1;
+    }
+
     return results;
   }
   
@@ -2446,7 +2892,9 @@ export class LegadoRuleAnalyzer {
     const contentLength = this.content.length;
     
     if (contentLength > HTML_SIZE_THRESHOLD) {
-      logger.debug(TAG, `getElementsByCSSWithBridge: HTML过大(${contentLength}字节)，使用字符串解析避免ANR`);
+      if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+        logger.debug(TAG, `getElementsByCSSWithBridge: HTML过大(${contentLength}字节)，使用字符串解析避免ANR`);
+      }
       return this.getElementsByCSSChain(selector);
     }
     
@@ -2457,7 +2905,9 @@ export class LegadoRuleAnalyzer {
         if (selector.includes('@')) {
           const elements = this.htmlBridge.parseChainRuleToHtmlList(selector);
           if (elements.length > 0) {
-            logger.debug(TAG, `getElementsByCSSWithBridge: 使用HTML桥接解析链式规则，结果数量=${elements.length}`);
+            if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+              logger.debug(TAG, `getElementsByCSSWithBridge: 使用HTML桥接解析链式规则，结果数量=${elements.length}`);
+            }
             return elements;
           }
         } else {
@@ -2465,7 +2915,9 @@ export class LegadoRuleAnalyzer {
           const elements = this.htmlBridge.querySelectorAll(selector);
           if (elements.length > 0) {
             const results = elements.map((elem: HtmlElement): string => elem.outerHTML);
-            logger.debug(TAG, `getElementsByCSSWithBridge: 使用HTML桥接解析CSS选择器，结果数量=${results.length}`);
+            if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+              logger.debug(TAG, `getElementsByCSSWithBridge: 使用HTML桥接解析CSS选择器，结果数量=${results.length}`);
+            }
             return results;
           }
         }
@@ -2808,6 +3260,7 @@ export class LegadoRuleAnalyzer {
     
     // 复合选择器：使用字符串搜索方法
     const results: string[] = [];
+    const seenStartIndexes: Set<number> = new Set();
     let searchStart = 0;
     
     while (searchStart < html.length) {
@@ -2843,10 +3296,8 @@ export class LegadoRuleAnalyzer {
       
       // 检查class
       if (className) {
-        const classAttrMatch = tagContent.match(/\bclass\s*=\s*"([^"]*)"/i) ||
-                               tagContent.match(/\bclass\s*=\s*'([^']*)'/i) ||
-                               tagContent.match(/\bclass\s*=\s*([^\s>"']+)/i);
-        if (!classAttrMatch || !this.hasClass(classAttrMatch[1], className)) {
+        const classAttrValue = this.extractAttributeValueFromTagContent(tagContent, 'class');
+        if (classAttrValue === null || !this.hasClass(classAttrValue, className)) {
           searchStart = tagEndIndex + 1;
           continue;
         }
@@ -2854,10 +3305,8 @@ export class LegadoRuleAnalyzer {
       
       // 检查id
       if (idName) {
-        const idAttrMatch = tagContent.match(/\bid\s*=\s*"([^"]*)"/i) ||
-                            tagContent.match(/\bid\s*=\s*'([^']*)'/i) ||
-                            tagContent.match(/\bid\s*=\s*([^\s>"']+)/i);
-        if (!idAttrMatch || idAttrMatch[1] !== idName) {
+        const idAttrValue = this.extractAttributeValueFromTagContent(tagContent, 'id');
+        if (idAttrValue === null || idAttrValue !== idName) {
           searchStart = tagEndIndex + 1;
           continue;
         }
@@ -2865,20 +3314,18 @@ export class LegadoRuleAnalyzer {
       
       // 检查属性选择器
       if (attrSelector) {
-        const attrRegex = new RegExp(`\\b${this.escapeRegex(attrSelector)}\\s*=\\s*["']([^"']*)["']`, 'i');
-        const attrMatchResult = tagContent.match(attrRegex);
-        if (!attrMatchResult) {
+        const attrActualValue = this.extractAttributeValueFromTagContent(tagContent, attrSelector);
+        if (attrActualValue === null) {
           searchStart = tagEndIndex + 1;
           continue;
         }
         if (attrValue) {
-          const attrActualValue = attrMatchResult[1];
           let attrMatches = false;
           switch (attrOperator) {
             case '$=': attrMatches = attrActualValue.endsWith(attrValue); break;
             case '^=': attrMatches = attrActualValue.startsWith(attrValue); break;
             case '*=': attrMatches = attrActualValue.includes(attrValue); break;
-            case '~=': attrMatches = attrActualValue.split(/\s+/).includes(attrValue); break;
+            case '~=': attrMatches = this.containsClassToken(attrActualValue, attrValue); break;
             default: attrMatches = attrActualValue === attrValue;
           }
           if (!attrMatches) {
@@ -2889,10 +3336,7 @@ export class LegadoRuleAnalyzer {
       }
       
       // 匹配成功，提取完整元素
-      const element = this.extractElement(html, tagStartIndex, currentTagName);
-      if (element && !results.includes(element)) {
-        results.push(element);
-      }
+      this.pushElementIfNew(results, seenStartIndexes, html, tagStartIndex, currentTagName, Number.MAX_SAFE_INTEGER);
       
       searchStart = tagEndIndex + 1;
     }
@@ -2911,10 +3355,18 @@ export class LegadoRuleAnalyzer {
   /**
    * 从指定位置提取完整的HTML元素
    */
+  private getUnclosedElementFallback(html: string, startIndex: number): string {
+    const fallbackEnd = Math.min(
+      html.length,
+      startIndex + PerformanceConfig.MAX_UNCLOSED_ELEMENT_FALLBACK_SIZE
+    );
+    return html.substring(startIndex, fallbackEnd);
+  }
+
   private extractElement(html: string, startIndex: number, tagName: string): string | null {
     // 检查是否是自关闭标签
-    const selfClosingTags = ['br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'param', 'source', 'track', 'wbr'];
-    if (selfClosingTags.includes(tagName.toLowerCase())) {
+    const normalizedTagName = tagName.toLowerCase();
+    if (LegadoRuleAnalyzer.SELF_CLOSING_TAGS.has(normalizedTagName)) {
       const endOfTag = html.indexOf('>', startIndex);
       if (endOfTag !== -1) {
         return html.substring(startIndex, endOfTag + 1);
@@ -2924,9 +3376,14 @@ export class LegadoRuleAnalyzer {
     
     // 查找匹配的结束标签
     let depth = 1;
-    let pos = html.indexOf('>', startIndex) + 1;
-    const openTag = new RegExp(`<${tagName}(?:\\s|>)`, 'gi');
-    const closeTag = new RegExp(`</${tagName}>`, 'gi');
+    const startTagEnd = html.indexOf('>', startIndex);
+    if (startTagEnd === -1) {
+      return null;
+    }
+    let pos = startTagEnd + 1;
+    const tagRegexPair = this.getTagRegexPair(normalizedTagName);
+    const openTag = tagRegexPair.openTag;
+    const closeTag = tagRegexPair.closeTag;
     
     while (depth > 0 && pos < html.length) {
       openTag.lastIndex = pos;
@@ -2936,8 +3393,8 @@ export class LegadoRuleAnalyzer {
       const nextClose = closeTag.exec(html);
       
       if (!nextClose) {
-        // 没有找到结束标签，返回到文档末尾
-        return html.substring(startIndex);
+        // 没有找到结束标签，返回受限片段，避免单次解析卡住主线程
+        return this.getUnclosedElementFallback(html, startIndex);
       }
       
       if (!nextOpen || nextClose.index < nextOpen.index) {
@@ -2955,7 +3412,7 @@ export class LegadoRuleAnalyzer {
       return html.substring(startIndex, pos);
     }
     
-    return null;
+    return this.getUnclosedElementFallback(html, startIndex);
   }
 
   /**
@@ -2967,7 +3424,7 @@ export class LegadoRuleAnalyzer {
       case 'text':
       case 'textcontent':
         // 移除HTML标签，获取纯文本
-        return this.htmlToText(element);
+        return this.htmlToTextCached(element);
       case 'textnodes':
         // 获取所有文本节点，换行分隔
         // 移除script和style标签内容
@@ -3007,21 +3464,19 @@ export class LegadoRuleAnalyzer {
       case 'src':
       case 'data-src':
         // 获取属性值并解析为绝对URL
-        const urlAttrRegex = new RegExp(`${attr}=["']([^"']+)["']`, 'i');
-        const urlAttrMatch = element.match(urlAttrRegex);
-        if (urlAttrMatch) {
-          return this.resolveUrl(urlAttrMatch[1]);
+        const urlAttrValue = this.extractAttributeValueFromTagContent(element, attr);
+        if (urlAttrValue && urlAttrValue.length > 0) {
+          return this.resolveUrl(urlAttrValue);
         }
         return '';
       case 'content':
         // 获取meta标签的content属性
-        const contentMatch = element.match(/content=["']([^"']+)["']/i);
-        return contentMatch ? contentMatch[1] : '';
+        const contentValue = this.extractAttributeValueFromTagContent(element, 'content');
+        return contentValue === null ? '' : contentValue;
       default:
         // 其他属性
-        const defaultRegex = new RegExp(`${this.escapeRegex(attr)}=["']([^"']+)["']`, 'i');
-        const defaultMatch = element.match(defaultRegex);
-        return defaultMatch ? defaultMatch[1] : '';
+        const defaultValue = this.extractAttributeValueFromTagContent(element, attr);
+        return defaultValue === null ? '' : defaultValue;
     }
   }
 
@@ -3029,50 +3484,257 @@ export class LegadoRuleAnalyzer {
    * 将HTML转换为纯文本
    * 移除所有HTML标签、script、style、注释，并处理HTML实体
    */
+  private htmlToTextCached(html: string): string {
+    if (!html) {
+      return '';
+    }
+    if (html.length > PerformanceConfig.HTML_TO_TEXT_CACHE_MAX_INPUT_SIZE) {
+      return this.htmlToText(html);
+    }
+    const cacheKey = this.buildHtmlToTextCacheKey(html);
+    const cached = this.htmlToTextCache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const parsed = this.htmlToText(html);
+    if (this.htmlToTextCache.size >= PerformanceConfig.HTML_TO_TEXT_CACHE_SIZE) {
+      const firstKey = this.htmlToTextCache.keys().next().value as string | undefined;
+      if (firstKey) {
+        this.htmlToTextCache.delete(firstKey);
+      }
+    }
+    this.htmlToTextCache.set(cacheKey, parsed);
+    return parsed;
+  }
+
+  private buildHtmlToTextCacheKey(html: string): string {
+    const len = html.length;
+    let hash = 2166136261;
+    if (len > 0) {
+      const step = Math.max(1, Math.floor(len / 32));
+      for (let i = 0; i < len; i += step) {
+        hash ^= html.charCodeAt(i);
+        hash = (hash * 16777619) >>> 0;
+      }
+      hash ^= html.charCodeAt(len - 1);
+      hash = (hash * 16777619) >>> 0;
+    }
+    const headLen = Math.min(48, len);
+    const tailLen = Math.min(48, len);
+    const head = html.substring(0, headLen);
+    const tail = html.substring(len - tailLen);
+    return `${len}|${hash.toString(16)}|${head}|${tail}`;
+  }
+
   private htmlToText(html: string): string {
-    let text = html;
-    
-    // 1. 移除script标签及其内容
-    text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-    
-    // 2. 移除style标签及其内容
-    text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-    
-    // 3. 移除HTML注释
-    text = text.replace(/<!--[\s\S]*?-->/g, '');
-    
-    // 4. 将<br>、<br/>、<p>、</p>、<div>、</div>等转换为换行
-    text = text.replace(/<br\s*\/?>/gi, '\n');
-    text = text.replace(/<\/?(p|div|li|tr|h[1-6])[^>]*>/gi, '\n');
-    
-    // 5. 移除所有其他HTML标签
-    text = text.replace(/<[^>]+>/g, '');
-    
-    // 6. 处理常见HTML实体
-    text = text.replace(/&nbsp;/gi, ' ');
-    text = text.replace(/&lt;/gi, '<');
-    text = text.replace(/&gt;/gi, '>');
-    text = text.replace(/&amp;/gi, '&');
-    text = text.replace(/&quot;/gi, '"');
-    text = text.replace(/&apos;/gi, "'");
-    text = text.replace(/&#(\d+);/g, (_match: string, dec: string): string => {
-      return String.fromCharCode(parseInt(dec, 10));
+    if (!html) {
+      return '';
+    }
+
+    // 保护性截断：避免异常规则把整页甚至大文件都送进文本转换。
+    let text = PerformanceConfig.safeSubstring(html, PerformanceConfig.MAX_TEXT_PARSE_INPUT_SIZE);
+    const hasTags = text.indexOf('<') !== -1;
+    if (hasTags) {
+      text = this.stripHtmlTagsFast(text);
+    }
+
+    if (text.indexOf('&') !== -1) {
+      text = this.decodeHtmlEntitiesFast(text);
+    }
+
+    text = this.normalizePlainText(text);
+    if (text.length > PerformanceConfig.MAX_TEXT_OUTPUT_SIZE) {
+      return text.substring(0, PerformanceConfig.MAX_TEXT_OUTPUT_SIZE).trim();
+    }
+    return text;
+  }
+
+  private isAlphaNumericCode(code: number): boolean {
+    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  }
+
+  private isAlphaNumericChar(ch: string): boolean {
+    if (!ch || ch.length === 0) {
+      return false;
+    }
+    return this.isAlphaNumericCode(ch.charCodeAt(0));
+  }
+
+  private isBreakTagName(tagName: string): boolean {
+    if (tagName === 'br' || tagName === 'p' || tagName === 'div' || tagName === 'li' || tagName === 'tr') {
+      return true;
+    }
+    if (tagName.length === 2 && tagName[0] === 'h') {
+      const code = tagName.charCodeAt(1);
+      return code >= 49 && code <= 54;
+    }
+    return false;
+  }
+
+  private stripHtmlTagsFast(html: string): string {
+    const chunks: string[] = [];
+    const OUTPUT_LIMIT = PerformanceConfig.MAX_TEXT_OUTPUT_SIZE * 2;
+    let outputLength = 0;
+    let i = 0;
+    let textStart = 0;
+    let skipTag = '';
+    const len = html.length;
+
+    while (i < len && outputLength < OUTPUT_LIMIT) {
+      // 在script/style中时，直接跳到下一个标签起点
+      if (skipTag) {
+        const nextTag = html.indexOf('<', i);
+        if (nextTag === -1) {
+          break;
+        }
+        i = nextTag;
+      }
+
+      if (html[i] !== '<') {
+        i++;
+        continue;
+      }
+
+      if (!skipTag && i > textStart) {
+        const part = html.substring(textStart, i);
+        if (part) {
+          chunks.push(part);
+          outputLength += part.length;
+          if (outputLength >= OUTPUT_LIMIT) {
+            break;
+          }
+        }
+      }
+
+      // HTML注释
+      if (i + 3 < len && html[i + 1] === '!' && html[i + 2] === '-' && html[i + 3] === '-') {
+        const commentEnd = html.indexOf('-->', i + 4);
+        i = commentEnd === -1 ? len : commentEnd + 3;
+        textStart = i;
+        continue;
+      }
+
+      // 解析标签名
+      let j = i + 1;
+      let isClosingTag = false;
+      if (j < len && html[j] === '/') {
+        isClosingTag = true;
+        j++;
+      }
+      while (j < len && this.isWhitespaceChar(html[j])) {
+        j++;
+      }
+
+      const nameStart = j;
+      while (j < len) {
+        const code = html.charCodeAt(j);
+        if (!this.isAlphaNumericCode(code)) {
+          break;
+        }
+        j++;
+      }
+      const tagName = nameStart < j ? html.substring(nameStart, j).toLowerCase() : '';
+
+      // 查找标签结束，处理引号内的 >
+      let k = j;
+      let quoteChar = '';
+      while (k < len) {
+        const tk = html[k];
+        if (quoteChar) {
+          if (tk === quoteChar) {
+            quoteChar = '';
+          }
+        } else if (tk === '"' || tk === "'") {
+          quoteChar = tk;
+        } else if (tk === '>') {
+          break;
+        }
+        k++;
+      }
+      const tagEnd = k < len ? k + 1 : len;
+
+      if (skipTag) {
+        if (isClosingTag && tagName === skipTag) {
+          skipTag = '';
+        }
+        i = tagEnd;
+        textStart = i;
+        continue;
+      }
+
+      if (!isClosingTag && (tagName === 'script' || tagName === 'style')) {
+        skipTag = tagName;
+        i = tagEnd;
+        textStart = i;
+        continue;
+      }
+
+      if (this.isBreakTagName(tagName)) {
+        const lastChunk = chunks.length > 0 ? chunks[chunks.length - 1] : '';
+        if (lastChunk.length === 0 || lastChunk[lastChunk.length - 1] !== '\n') {
+          chunks.push('\n');
+          outputLength++;
+        }
+      }
+
+      i = tagEnd;
+      textStart = i;
+    }
+
+    if (!skipTag && textStart < len && outputLength < OUTPUT_LIMIT) {
+      const tailLen = Math.min(len - textStart, OUTPUT_LIMIT - outputLength);
+      if (tailLen > 0) {
+        chunks.push(html.substring(textStart, textStart + tailLen));
+      }
+    }
+
+    return chunks.join('');
+  }
+
+  private decodeHtmlEntitiesFast(text: string): string {
+    let result = text;
+
+    // 常见命名实体，使用一次replace完成
+    result = result.replace(/&(nbsp|lt|gt|amp|quot|apos);/gi, (_match: string, name: string): string => {
+      const lower = name.toLowerCase();
+      if (lower === 'nbsp') return ' ';
+      if (lower === 'lt') return '<';
+      if (lower === 'gt') return '>';
+      if (lower === 'amp') return '&';
+      if (lower === 'quot') return '"';
+      if (lower === 'apos') return "'";
+      return _match;
     });
-    text = text.replace(/&#x([0-9a-fA-F]+);/g, (_match: string, hex: string): string => {
-      return String.fromCharCode(parseInt(hex, 16));
-    });
-    
-    // 7. 合并多个连续空白字符为单个空格（但保留换行）
-    text = text.replace(/[ \t]+/g, ' ');
-    
-    // 8. 合并多个连续换行为最多两个换行
-    text = text.replace(/\n{3,}/g, '\n\n');
-    
-    // 9. 去除每行首尾空白
-    text = text.split('\n').map((line: string): string => line.trim()).join('\n');
-    
-    // 10. 去除首尾空白
-    return text.trim();
+
+    if (result.indexOf('&#') !== -1) {
+      result = result.replace(/&#(\d+);/g, (_match: string, dec: string): string => {
+        return String.fromCharCode(parseInt(dec, 10));
+      });
+      result = result.replace(/&#x([0-9a-fA-F]+);/g, (_match: string, hex: string): string => {
+        return String.fromCharCode(parseInt(hex, 16));
+      });
+    }
+
+    return result;
+  }
+
+  private normalizePlainText(text: string): string {
+    let result = text;
+
+    if (result.indexOf('\r') !== -1) {
+      result = result.replace(/\r\n?/g, '\n');
+    }
+    if (result.indexOf('\t') !== -1 || result.indexOf('  ') !== -1) {
+      result = result.replace(/[ \t]+/g, ' ');
+    }
+    if (result.indexOf('\n') !== -1) {
+      // 去除每行首尾空白并收敛空行
+      result = result.replace(/^[ \t]+|[ \t]+$/gm, '');
+      result = result.replace(/\n{3,}/g, '\n\n');
+    }
+
+    return result.trim();
   }
 
   // ==================== XPath解析 ====================
@@ -4372,7 +5034,9 @@ export class LegadoRuleAnalyzer {
   private evalJS(code: string): string {
     // 在同步上下文中，我们无法等待异步结果
     // 记录日志并返回空字符串，调用方应使用异步版本
-    logger.debug(TAG, `JS执行(同步): ${code.substring(0, 50)}... - 建议使用异步版本`);
+    if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+      logger.debug(TAG, `JS执行(同步): ${code.substring(0, 50)}... - 建议使用异步版本`);
+    }
     
     // 启动异步执行但不等待结果（用于预热）
     const jsEngine = getLegadoJsEngine();
@@ -4385,7 +5049,9 @@ export class LegadoRuleAnalyzer {
     // 异步执行，结果会被丢弃（同步上下文无法等待）
     jsEngine.execute(code, context).then((result) => {
       if (result.success && result.result) {
-        logger.debug(TAG, `JS异步执行完成: ${result.result.substring(0, 50)}...`);
+        if (LegadoRuleAnalyzer.ENABLE_SELECTOR_TRACE) {
+          logger.debug(TAG, `JS异步执行完成: ${result.result.substring(0, 50)}...`);
+        }
       }
     }).catch((e: Error) => {
       logger.warn(TAG, `JS异步执行失败: ${String(e)}`);

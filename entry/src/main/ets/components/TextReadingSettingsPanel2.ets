@@ -1,24 +1,31 @@
 /**
- * 小说阅读器阅读设置面板
- * 独立对话框，提供阅读模式、翻页动画、开关设置、进度显示等设置
- * 风格与漫画阅读器对话框一致：竖屏底部上滑、横屏右侧滑入
+ * 阅读设置面板（新版）
+  * 包含阅读模式与听书相关配置。
+  * 仅处理 UI 交互，不直接执行业务逻辑。
  */
 
 import {
   TextReaderSettings,
   TextReadingMode,
-  TextPageTurnAnimation
+  TextPageTurnAnimation,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  DEFAULT_READ_ALOUD_SETTINGS
 } from '../Models/TextReaderModels';
 import { logger } from '../Utils/Logger';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { curves, UIContext, display } from '@kit.ArkUI';
+import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
+import { ReadAloudSettingsInfoPanel } from './ReadAloudSettingsInfoPanel';
 
 const TAG = 'TextReadingSettingsPanel2';
 
 /**
- * 翻页动画选项接口
+  * 翻页动画选项定义
  */
 interface AnimationOption {
   text: string;
@@ -26,7 +33,7 @@ interface AnimationOption {
 }
 
 /**
- * 回调接口
+ * 设置变更回调
  */
 interface TextReadingSettingsCallbacks {
   onSettingsChange: (settings: TextReaderSettings) => void;
@@ -37,22 +44,30 @@ interface TextReadingSettingsCallbacks {
 export struct TextReadingSettingsPanel2 {
   @Prop settings: TextReaderSettings;
   @Prop isVisible: boolean;
+  @Prop initialShowReadAloudPanel: boolean = false;
   @Prop callbacks: TextReadingSettingsCallbacks;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
 
-  // 动画状态
+  // 面板动效状态
   @State private panelOpacity: number = 0;
   @State private panelTranslateY: number = 300;
   @State private panelTranslateX: number = 320;
   @State private backdropOpacity: number = 0;
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private isLandscape: boolean = false;
+  @State private readAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
+  @State private readAloudVoiceOptions: ReadAloudVoiceOption[] = [];
+  @State private showReadAloudPanel: boolean = false;
+  @State private readAloudStatusMessage: string = '';
 
   private uiContext: UIContext | undefined = undefined;
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
 
   aboutToAppear() {
     this.uiContext = this.getUIContext();
     this.detectScreenOrientation();
+    this.refreshReadAloudAvailability();
+    this.showReadAloudPanel = this.initialShowReadAloudPanel;
 
     ThemeAwareHelper.initializeThemeAware('TextReadingSettingsPanel2', this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -180,7 +195,185 @@ export struct TextReadingSettingsPanel2 {
     this.notifyChange();
   }
 
-  // ==================== 竖屏面板 ====================
+  private getSafeReadAloudSettings(): ReadAloudSettings {
+    const current = this.settings.readAloud;
+    const rawEngine = current?.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const speed = Math.max(
+      0.5,
+      Math.min(2.0, current?.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed)
+    );
+    const pitch = Math.max(
+      0.5,
+      Math.min(2.0, current?.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch)
+    );
+    const volume = Math.max(
+      0,
+      Math.min(1, current?.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume)
+    );
+    const voiceLanguage = current?.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '';
+    const voicePersonRaw = current?.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
+    const voiceOnlineRaw = current?.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
+    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
+    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
+
+    return {
+      enabled: current?.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
+      engineType: safeEngine,
+      speed,
+      pitch,
+      volume,
+      continueInBackground: current?.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
+      autoPlayNextChapter: current?.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
+      pauseOnManualPageTurn: current?.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
+      voiceLanguage,
+      voicePerson,
+      voiceOnline
+    };
+  }
+
+  private updateReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
+    const current = this.getSafeReadAloudSettings();
+
+    const rawEngine = partial.engineType ?? current.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const speed = Math.max(0.5, Math.min(2.0, partial.speed ?? current.speed));
+    const pitch = Math.max(0.5, Math.min(2.0, partial.pitch ?? current.pitch));
+    const volume = Math.max(0, Math.min(1, partial.volume ?? current.volume));
+    const voiceLanguage = partial.voiceLanguage ?? current.voiceLanguage ?? '';
+    const voicePersonRaw = partial.voicePerson ?? current.voicePerson ?? -1;
+    const voiceOnlineRaw = partial.voiceOnline ?? current.voiceOnline ?? -1;
+    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
+    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
+
+    this.settings.readAloud = {
+      enabled: partial.enabled ?? current.enabled,
+      engineType: safeEngine,
+      speed,
+      pitch,
+      volume,
+      continueInBackground: partial.continueInBackground ?? current.continueInBackground,
+      autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
+      pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
+      voiceLanguage,
+      voicePerson,
+      voiceOnline
+    };
+    this.notifyChange();
+    if (
+      partial.engineType !== undefined ||
+      partial.voiceLanguage !== undefined ||
+      partial.voicePerson !== undefined ||
+      partial.voiceOnline !== undefined
+    ) {
+      this.refreshReadAloudVoices();
+    }
+  }
+
+  // ==================== 听书引擎可用性 ====================
+  private refreshReadAloudAvailability(): void {
+    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+      this.readAloudAvailability = map;
+      if (!map.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        }
+      }
+      this.refreshReadAloudVoices();
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书引擎可用性失败: ${errorText}`);
+      this.readAloudStatusMessage = `引擎可用性探测失败：${errorText}`;
+    });
+  }
+
+  private isReadAloudEngineAvailable(engineType: ReadAloudEngineType): boolean {
+    if (engineType === ReadAloudEngineType.SYSTEM) {
+      return this.readAloudAvailability.SYSTEM === true;
+    }
+    if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      return this.readAloudAvailability.LEGADO_COMPAT === true;
+    }
+    if (engineType === ReadAloudEngineType.REMOTE) {
+      return this.readAloudAvailability.REMOTE === true;
+    }
+    return false;
+  }
+
+  private refreshReadAloudVoices(): void {
+    const engineType = this.getSafeReadAloudSettings().engineType;
+    if (!this.isReadAloudEngineAvailable(engineType)) {
+      this.readAloudVoiceOptions = [];
+      if (engineType === ReadAloudEngineType.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        } else {
+          this.readAloudStatusMessage = '系统 TTS 当前不可用，请点击刷新重试';
+        }
+      } else {
+        this.readAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
+      }
+      return;
+    }
+    this.readAloudController.listVoices(engineType).then((voices: ReadAloudVoiceOption[]) => {
+      this.readAloudVoiceOptions = voices;
+      if (voices.length > 0) {
+        this.readAloudStatusMessage = '';
+      } else if (engineType === ReadAloudEngineType.SYSTEM) {
+        this.readAloudStatusMessage = '系统 TTS 可直接朗读，但系统未返回可选音色';
+      } else {
+        this.readAloudStatusMessage = '当前引擎暂未返回音色列表';
+      }
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书音色列表失败: ${errorText}`);
+      this.readAloudVoiceOptions = [];
+      this.readAloudStatusMessage = `音色列表拉取失败：${errorText}`;
+    });
+  }
+
+  private formatReadAloudError(error: Object | string): string {
+    if (typeof error === 'string') {
+      return error;
+    }
+    const errorObj = error as Error;
+    if (errorObj.message && errorObj.message.length > 0) {
+      return errorObj.message;
+    }
+    try {
+      const jsonText = JSON.stringify(error);
+      if (jsonText && jsonText.length > 0 && jsonText !== '{}') {
+        return jsonText;
+      }
+    } catch (_ignored) {
+    }
+    return String(error);
+  }
+
+  private getReadAloudSummary(): string {
+    const readAloud = this.getSafeReadAloudSettings();
+    let engineLabel: string = '系统';
+    if (readAloud.engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      engineLabel = '兼容';
+    } else if (readAloud.engineType === ReadAloudEngineType.REMOTE) {
+      engineLabel = '远程';
+    }
+    const enabledText = readAloud.enabled ? '已启用' : '未启用';
+    return `${enabledText} · ${engineLabel} · 语速${readAloud.speed.toFixed(1)}x`;
+  }
+
   @Builder
   buildPortraitPanel() {
     Column() {
@@ -240,7 +433,7 @@ export struct TextReadingSettingsPanel2 {
     .hitTestBehavior(HitTestMode.Default)
   }
 
-  // ==================== 横屏面板 ====================
+  // 横屏面板
   @Builder
   buildLandscapePanel() {
     Row() {
@@ -304,7 +497,7 @@ export struct TextReadingSettingsPanel2 {
     .height('100%')
   }
 
-  // ==================== 竖屏内容 ====================
+  // 阅读设置内容（常规）
   @Builder
   buildReadingContent() {
     // 阅读模式
@@ -317,7 +510,7 @@ export struct TextReadingSettingsPanel2 {
 
       Row({ space: 8 }) {
         Column() {
-          Text('左右翻页')
+        Text('翻页')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(this.settings.readingMode === TextReadingMode.PAGE ?
@@ -351,7 +544,7 @@ export struct TextReadingSettingsPanel2 {
         })
 
         Column() {
-          Text('双页')
+        Text('双页')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(this.settings.readingMode === TextReadingMode.DUAL_PAGE ?
@@ -371,7 +564,7 @@ export struct TextReadingSettingsPanel2 {
     }
     .width('100%')
 
-    // 翻页动画（仅在翻页模式或双页模式下显示）
+    // 仅在翻页/双页模式下显示翻页动画设置
     if (this.settings.readingMode === TextReadingMode.PAGE || this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
       Column({ space: 12 }) {
         Text('翻页动画')
@@ -414,14 +607,14 @@ export struct TextReadingSettingsPanel2 {
     }
 
     Column({ space: 10 }) {
-      Text('自动翻页')
+      Text('右下角显示信息')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
 
       Row() {
-        Text('启用自动翻页')
+          Text('页码')
           .fontSize(13)
           .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_primary'))
@@ -434,7 +627,7 @@ export struct TextReadingSettingsPanel2 {
       }
       .width('100%')
 
-      Text(`翻页间隔：${this.getAutoPageTurnInterval()} 秒`)
+      Text(`Auto page-turn interval: ${this.getAutoPageTurnInterval()} s`)
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.text_secondary'))
@@ -458,7 +651,7 @@ export struct TextReadingSettingsPanel2 {
 
     Divider().color($r('app.color.divider'))
 
-    // 开关设置
+    // 基础阅读交互
     this.buildToggleSetting('点击翻页', this.settings.tapToTurn, (isOn: boolean) => {
       this.settings.tapToTurn = isOn;
       this.notifyChange();
@@ -476,16 +669,16 @@ export struct TextReadingSettingsPanel2 {
 
     Divider().color($r('app.color.divider'))
 
-    // 阅读进度显示
+    // 底部显示模式
     Column({ space: 8 }) {
-      Text('阅读进度显示')
+        Text('底部显示模式')
         .fontSize(14)
         .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
 
-      Text('右下角显示信息')
+      Text('选择底部显示内容')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.text_secondary'))
@@ -493,7 +686,7 @@ export struct TextReadingSettingsPanel2 {
 
       Row({ space: 8 }) {
         Column() {
-          Text('页码')
+      Text('页码')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(this.settings.showPageNumber ?
@@ -511,7 +704,7 @@ export struct TextReadingSettingsPanel2 {
         })
 
         Column() {
-          Text('进度')
+            Text('进度')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(!this.settings.showPageNumber && this.settings.showProgress ?
@@ -529,7 +722,7 @@ export struct TextReadingSettingsPanel2 {
         })
 
         Column() {
-          Text('不显示')
+            Text('不显示')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(!this.settings.showPageNumber && !this.settings.showProgress ?
@@ -552,13 +745,13 @@ export struct TextReadingSettingsPanel2 {
 
     Divider().color($r('app.color.divider'))
 
-    // 其他显示开关
-    this.buildToggleSetting('显示时间 (底部中央)', this.settings.showTime, (isOn: boolean) => {
+    // 底部附加信息
+    this.buildToggleSetting('显示时间（底部信息栏）', this.settings.showTime, (isOn: boolean) => {
       this.settings.showTime = isOn;
       this.notifyChange();
     })
 
-    this.buildToggleSetting('显示电量 (左下角)', this.settings.showBattery, (isOn: boolean) => {
+    this.buildToggleSetting('显示电量（状态栏）', this.settings.showBattery, (isOn: boolean) => {
       this.settings.showBattery = isOn;
       this.notifyChange();
     })
@@ -582,10 +775,10 @@ export struct TextReadingSettingsPanel2 {
     .padding({ top: 4, bottom: 4 })
   }
 
-  // ==================== 横屏紧凑内容 ====================
+  // 阅读设置内容（紧凑）
   @Builder
   buildReadingContentCompact() {
-    // 阅读模式（紧凑）
+    // 阅读模式
     Column() {
       Text('阅读模式')
         .fontSize(12)
@@ -597,7 +790,7 @@ export struct TextReadingSettingsPanel2 {
 
       Row({ space: 4 }) {
         Column() {
-          Text('翻页')
+            Text('翻页')
             .fontSize(10)
             .fontFamily(this.appFontFamily)
             .fontColor(this.settings.readingMode === TextReadingMode.PAGE ?
@@ -614,7 +807,7 @@ export struct TextReadingSettingsPanel2 {
         })
 
         Column() {
-          Text('滚动')
+      Text('上下滚动')
             .fontSize(10)
             .fontFamily(this.appFontFamily)
             .fontColor(this.settings.readingMode === TextReadingMode.SCROLL ?
@@ -651,7 +844,7 @@ export struct TextReadingSettingsPanel2 {
     }
     .width('100%')
 
-    // 翻页动画（紧凑）
+    // 仅在翻页/双页模式下显示翻页动画设置
     if (this.settings.readingMode === TextReadingMode.PAGE || this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
       Column() {
         Text('翻页动画')
@@ -696,7 +889,7 @@ export struct TextReadingSettingsPanel2 {
     }
 
     Column() {
-      Text('自动翻页')
+          Text('无')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
@@ -705,7 +898,7 @@ export struct TextReadingSettingsPanel2 {
         .margin({ bottom: 6 })
 
       Row() {
-        Text('启用')
+          Text('进度')
           .fontSize(11)
           .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_primary'))
@@ -719,7 +912,7 @@ export struct TextReadingSettingsPanel2 {
       .width('100%')
       .margin({ bottom: 6 })
 
-      Text(`${this.getAutoPageTurnInterval()} 秒/次`)
+      Text(`${this.getAutoPageTurnInterval()} s/page`)
         .fontSize(10)
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.text_secondary'))
@@ -744,7 +937,7 @@ export struct TextReadingSettingsPanel2 {
 
     Divider().color($r('app.color.divider'))
 
-    // 开关设置（紧凑两列）
+    // 其他显示开关
     Column() {
       Text('其他设置')
         .fontSize(12)
@@ -757,7 +950,7 @@ export struct TextReadingSettingsPanel2 {
       Row() {
         Column() {
           Row() {
-            Text('点击翻页')
+          Text('点击翻页')
               .fontSize(11)
               .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
@@ -773,7 +966,7 @@ export struct TextReadingSettingsPanel2 {
           .margin({ bottom: 6 })
 
           Row() {
-            Text('屏幕常亮')
+            Text('保持屏幕常亮')
               .fontSize(11)
               .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
@@ -789,7 +982,7 @@ export struct TextReadingSettingsPanel2 {
           .margin({ bottom: 6 })
 
           Row() {
-            Text('显示时间')
+          Text('显示时间（底部信息栏）')
               .fontSize(11)
               .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
@@ -808,7 +1001,7 @@ export struct TextReadingSettingsPanel2 {
 
         Column() {
           Row() {
-            Text('音量翻页')
+      Text('音量键翻页')
               .fontSize(11)
               .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
@@ -824,7 +1017,7 @@ export struct TextReadingSettingsPanel2 {
           .margin({ bottom: 6 })
 
           Row() {
-            Text('显示电量')
+      Text('显示电量（状态栏）')
               .fontSize(11)
               .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
@@ -846,9 +1039,9 @@ export struct TextReadingSettingsPanel2 {
 
     Divider().color($r('app.color.divider'))
 
-    // 进度显示（紧凑）
+    // 底部显示模式
     Column() {
-      Text('右下角显示')
+          Text('底部模式')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontWeight(FontWeight.Medium)
@@ -894,7 +1087,7 @@ export struct TextReadingSettingsPanel2 {
         })
 
         Column() {
-          Text('无')
+      Text('不显示')
             .fontSize(10)
             .fontFamily(this.appFontFamily)
             .fontColor(!this.settings.showPageNumber && !this.settings.showProgress ?
@@ -933,6 +1126,28 @@ export struct TextReadingSettingsPanel2 {
           this.buildLandscapePanel()
         } else {
           this.buildPortraitPanel()
+        }
+
+        if (this.showReadAloudPanel) {
+          ReadAloudSettingsInfoPanel({
+            isLandscape: this.isLandscape,
+            settings: this.getSafeReadAloudSettings(),
+            availability: this.readAloudAvailability,
+            voiceOptions: this.readAloudVoiceOptions,
+            statusMessage: this.readAloudStatusMessage,
+            appFontFamily: this.appFontFamily,
+            callbacks: {
+              onClose: () => {
+                this.showReadAloudPanel = false;
+              },
+              onRefresh: () => {
+                this.refreshReadAloudAvailability();
+              },
+              onChange: (partial: Partial<ReadAloudSettings>) => {
+                this.updateReadAloudSettings(partial);
+              }
+            }
+          })
         }
       }
       .width('100%')

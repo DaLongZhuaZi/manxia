@@ -42,11 +42,16 @@ import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { NovelDictRuleManager, DictRule } from '../Framework/Novel/NovelDictRuleManager';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
+import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 
 const TAG = 'NovelReaderPage';
 
 @Component
 export struct NovelReaderPage {
+  private static readonly READ_ALOUD_RESUME_KEY_PREFIX: string = 'novel_read_aloud_resume_char_';
+
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -68,6 +73,10 @@ export struct NovelReaderPage {
   @State totalChapters: number = 0;
   @State currentPageIndex: number = 0;
   @State chapters: TextChapter[] = [];
+  @State readAloudPlaying: boolean = false;
+  @State readAloudCurrentCharIndex: number = -1;
+  @State currentPageStartCharIndex: number = 0;
+  @State currentPageEndCharIndex: number = 0;
 
   // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
   @State showTopToolbar: boolean = false;
@@ -78,6 +87,7 @@ export struct NovelReaderPage {
   @State showFontSettings: boolean = false;
   @State showBackgroundSettings: boolean = false;
   @State showReadingSettings: boolean = false;
+  @State openReadAloudInfoWhenOpenReadingSettings: boolean = false;
 
   // 动画状态
   @State chapterListOpacity: number = 0;
@@ -100,6 +110,7 @@ export struct NovelReaderPage {
   private sourceId: string = '';
   private bookUrl: string = '';
   private bookName: string = '';
+  private bookCoverUrl: string = '';
   private chapterUrl: string = '';
   private bookId: string = '';
   private chapterId: string = '';
@@ -109,10 +120,35 @@ export struct NovelReaderPage {
   private dataManager = getNovelDataManager();
   private cacheManager = getNovelChapterCacheManager();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private readStartTime: number = 0;
   private lastSaveTime: number = 0;
   private uiContext: UIContext | null = null;
   private saveProgressInterval: number = 30000; // 30秒自动保存
+  private shouldAutoStartReadAloud: boolean = false;
+  private shouldAutoOpenReadAloudPlayer: boolean = false;
+  private lastReadAloudResumePersistTime: number = 0;
+
+  private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    if (!this.bookId) {
+      return;
+    }
+    const statePayload = payload as ReadAloudStatePayload;
+    const payloadBookId = statePayload.bookId ?? '';
+    if (!payloadBookId || payloadBookId !== this.bookId) {
+      return;
+    }
+
+    this.readAloudPlaying = statePayload.playbackState === ReadAloudPlaybackState.PLAYING;
+    this.applyReadAloudProgress(statePayload);
+    if (
+      statePayload.playbackState !== ReadAloudPlaybackState.PLAYING &&
+      statePayload.reason !== 'progress_updated'
+    ) {
+      this.persistReadAloudResumeCharIndex(true);
+      this.saveReadProgress();
+    }
+  };
 
   aboutToAppear(): void {
     // 初始化主题感知
@@ -127,9 +163,15 @@ export struct NovelReaderPage {
       }
     );
     this.readStartTime = Date.now();
+    eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
+    this.syncReadAloudStateFromController();
+    this.readAloudController.refreshMediaSession();
   }
 
   aboutToDisappear(): void {
+    eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    this.persistReadAloudResumeCharIndex(true);
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -144,7 +186,18 @@ export struct NovelReaderPage {
     cancelTransition();
   }
 
+  onPageShow(): void {
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
+    this.syncReadAloudStateFromController();
+    this.updateReadAloudContextByPosition();
+    this.readAloudController.refreshMediaSession();
+  }
+
   onPageHide(): void {
+    this.readAloudController.handlePageHide();
+    this.readAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+    this.persistReadAloudResumeCharIndex(true);
+    this.readAloudController.refreshMediaSession();
     logger.lifecycle(TAG, '小说阅读器页面隐藏（进入后台）');
     // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
     this.saveReadProgress();
@@ -319,6 +372,70 @@ export struct NovelReaderPage {
     this.hideToolbarWithAnimation();
     this.showFontSettings = false;
     this.showBackgroundSettings = false;
+    this.openReadAloudInfoWhenOpenReadingSettings = false;
+    this.showReadingSettings = true;
+  }
+
+  private toggleReadAloudFromToolbar(): void {
+    const defaultReadAloud = DEFAULT_TEXT_READER_SETTINGS.readAloud;
+    if (!defaultReadAloud) {
+      return;
+    }
+    if (!this.settings.readAloud) {
+      this.settings.readAloud = {
+        enabled: defaultReadAloud.enabled,
+        engineType: defaultReadAloud.engineType,
+        speed: defaultReadAloud.speed,
+        pitch: defaultReadAloud.pitch,
+        volume: defaultReadAloud.volume,
+        continueInBackground: defaultReadAloud.continueInBackground,
+        autoPlayNextChapter: defaultReadAloud.autoPlayNextChapter,
+        pauseOnManualPageTurn: defaultReadAloud.pauseOnManualPageTurn,
+        voiceLanguage: defaultReadAloud.voiceLanguage,
+        voicePerson: defaultReadAloud.voicePerson,
+        voiceOnline: defaultReadAloud.voiceOnline
+      };
+    }
+    const readAloudSettings = this.settings.readAloud;
+    if (!readAloudSettings) {
+      return;
+    }
+    if (!readAloudSettings.enabled) {
+      readAloudSettings.enabled = true;
+      this.saveSettings();
+    }
+    this.readAloudController.updateSettings(readAloudSettings);
+    this.updateReadAloudContextByPosition();
+    if (this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING) {
+      this.readAloudController.pause('toolbar_toggle');
+    } else {
+      this.readAloudController.start('toolbar_toggle');
+    }
+    this.readAloudController.refreshMediaSession();
+    this.syncReadAloudStateFromController();
+  }
+
+  private openReadAloudSettingsPanelFromToolbar(): void {
+    const defaultReadAloud = DEFAULT_TEXT_READER_SETTINGS.readAloud;
+    if (defaultReadAloud && !this.settings.readAloud) {
+      this.settings.readAloud = {
+        enabled: defaultReadAloud.enabled,
+        engineType: defaultReadAloud.engineType,
+        speed: defaultReadAloud.speed,
+        pitch: defaultReadAloud.pitch,
+        volume: defaultReadAloud.volume,
+        continueInBackground: defaultReadAloud.continueInBackground,
+        autoPlayNextChapter: defaultReadAloud.autoPlayNextChapter,
+        pauseOnManualPageTurn: defaultReadAloud.pauseOnManualPageTurn,
+        voiceLanguage: defaultReadAloud.voiceLanguage,
+        voicePerson: defaultReadAloud.voicePerson,
+        voiceOnline: defaultReadAloud.voiceOnline
+      };
+    }
+    this.hideToolbarWithAnimation();
+    this.showFontSettings = false;
+    this.showBackgroundSettings = false;
+    this.openReadAloudInfoWhenOpenReadingSettings = true;
     this.showReadingSettings = true;
   }
 
@@ -347,11 +464,17 @@ export struct NovelReaderPage {
         logger.info(TAG, `加载书籍专属设置: ${this.bookId}`);
         this.ensureSettingsComplete(bookSettings);
         this.settings = bookSettings;
+        if (this.settings.readAloud) {
+          this.readAloudController.updateSettings(this.settings.readAloud);
+        }
       } else {
         // 使用全局设置
         const globalSettings = this.settingsManager.getJSON<TextReaderSettings>(SettingKeys.NOVEL_READER_SETTINGS, DEFAULT_TEXT_READER_SETTINGS);
         this.ensureSettingsComplete(globalSettings);
         this.settings = globalSettings;
+        if (this.settings.readAloud) {
+          this.readAloudController.updateSettings(this.settings.readAloud);
+        }
         logger.info(TAG, `使用全局小说阅读器设置`);
       }
     } catch (e) {
@@ -396,9 +519,6 @@ export struct NovelReaderPage {
       if (settings.pageMargins.left === undefined || settings.pageMargins.left < 0) settings.pageMargins.left = 24;
       if (settings.pageMargins.right === undefined || settings.pageMargins.right < 0) settings.pageMargins.right = 24;
     }
-
-    if (settings.autoPageTurnEnabled === undefined) settings.autoPageTurnEnabled = false;
-    if (settings.autoPageTurnInterval === undefined || settings.autoPageTurnInterval <= 0) settings.autoPageTurnInterval = 8;
   }
 
   async loadContent(): Promise<void> {
@@ -468,6 +588,12 @@ export struct NovelReaderPage {
       
       // 加载阅读进度
       await this.loadReadProgress();
+      this.currentPageStartCharIndex = 0;
+      this.currentPageEndCharIndex = 0;
+      this.restoreReadAloudResumeCharIndex();
+      this.syncReadAloudStateFromController();
+      this.updateReadAloudContextByPosition();
+      this.tryHandleAutoReadAloudEntry();
     } catch (error) {
       logger.error(TAG, `加载正文失败: ${String(error)}`);
       this.content = '加载失败: ' + String(error);
@@ -540,6 +666,9 @@ export struct NovelReaderPage {
     this.settings = newSettings;
     // 异步保存设置（不阻塞UI）
     this.saveSettings();
+    if (newSettings.readAloud) {
+      this.readAloudController.updateSettings(newSettings.readAloud);
+    }
     logger.debug(TAG, `设置已更新并保存`);
     
     // 检测阅读模式变化，处理双页模式的横屏切换和组件重载
@@ -615,6 +744,8 @@ export struct NovelReaderPage {
 
   onPageChange(pageIndex: number, totalPages: number): void {
     this.currentPageIndex = pageIndex;
+    this.readAloudController.updatePageIndex(pageIndex);
+    this.updateReadAloudContextByPosition();
     logger.debug(TAG, `页面切换: ${pageIndex + 1}/${totalPages}`);
     
     // 定期保存阅读进度
@@ -737,6 +868,187 @@ export struct NovelReaderPage {
    * [修复] 记录浏览历史
    * 确保阅读过的小说出现在历史浏览中，即使没有加入书架
    */
+  private getCurrentReadAloudResumeCharIndex(): number {
+    if (this.readAloudCurrentCharIndex >= 0) {
+      return this.readAloudCurrentCharIndex;
+    }
+    if (this.currentPageEndCharIndex > this.currentPageStartCharIndex) {
+      return this.currentPageStartCharIndex;
+    }
+    return 0;
+  }
+
+  private getReadAloudResumeKey(): string {
+    return `${NovelReaderPage.READ_ALOUD_RESUME_KEY_PREFIX}${this.bookId}_${this.currentChapterIndex}`;
+  }
+
+  private restoreReadAloudResumeCharIndex(): void {
+    if (!this.bookId || !this.content || this.content.length <= 0) {
+      return;
+    }
+    const resumeCharIndex = Math.floor(this.settingsManager.getNumber(this.getReadAloudResumeKey(), 0));
+    const maxCharIndex = Math.max(0, this.content.length - 1);
+    this.readAloudCurrentCharIndex = Math.max(0, Math.min(resumeCharIndex, maxCharIndex));
+  }
+
+  private persistReadAloudResumeCharIndex(force: boolean): void {
+    if (!this.bookId || !this.content || this.content.length <= 0) {
+      return;
+    }
+    const now = Date.now();
+    if (!force && (now - this.lastReadAloudResumePersistTime) < 1200) {
+      return;
+    }
+    this.lastReadAloudResumePersistTime = now;
+    const maxCharIndex = Math.max(0, this.content.length - 1);
+    const resumeCharIndex = Math.max(
+      0,
+      Math.min(Math.floor(this.getCurrentReadAloudResumeCharIndex()), maxCharIndex)
+    );
+    this.settingsManager.setNumber(this.getReadAloudResumeKey(), resumeCharIndex).catch((error: Object | string) => {
+      logger.warn(TAG, `保存听书恢复点失败: ${String(error)}`);
+    });
+  }
+
+  private updateReadAloudContextByPosition(resumeCharIndex?: number): void {
+    if (!this.bookId || !this.content || this.content.length <= 0) {
+      return;
+    }
+    const maxCharIndex = Math.max(0, this.content.length - 1);
+    const fallbackCharIndex = this.getCurrentReadAloudResumeCharIndex();
+    const safeResumeCharIndex = Math.max(
+      0,
+      Math.min(Math.floor(resumeCharIndex ?? fallbackCharIndex), maxCharIndex)
+    );
+    this.readAloudController.updateContext({
+      bookId: this.bookId,
+      bookTitle: this.bookName,
+      chapterIndex: this.currentChapterIndex,
+      chapterTitle: this.chapterTitle,
+      coverUrl: this.bookCoverUrl,
+      content: this.content,
+      pageIndex: this.currentPageIndex,
+      resumeCharIndex: safeResumeCharIndex
+    });
+  }
+
+  private syncReadAloudStateFromController(): void {
+    if (!this.bookId) {
+      return;
+    }
+    const context = this.readAloudController.getContextSnapshot();
+    if (!context || context.bookId !== this.bookId) {
+      this.readAloudPlaying = false;
+      return;
+    }
+    const snapshot = this.readAloudController.getSnapshot();
+    this.readAloudPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
+    if (!this.content || this.content.length <= 0) {
+      return;
+    }
+    const rawCharIndex = snapshot.currentCharIndex >= 0 ? snapshot.currentCharIndex : (context.resumeCharIndex ?? -1);
+    if (rawCharIndex < 0) {
+      return;
+    }
+    const maxCharIndex = Math.max(0, this.content.length - 1);
+    this.readAloudCurrentCharIndex = Math.max(0, Math.min(Math.floor(rawCharIndex), maxCharIndex));
+  }
+
+  private applyReadAloudProgress(payload: ReadAloudStatePayload): void {
+    if (!this.content || this.content.length <= 0) {
+      return;
+    }
+    const payloadCharIndex = payload.currentCharIndex >= 0 ? payload.currentCharIndex : payload.chunkStartCharIndex;
+    if (payloadCharIndex < 0) {
+      return;
+    }
+    const maxCharIndex = Math.max(0, this.content.length - 1);
+    this.readAloudCurrentCharIndex = Math.max(0, Math.min(Math.floor(payloadCharIndex), maxCharIndex));
+    this.updateReadAloudContextByPosition();
+    this.persistReadAloudResumeCharIndex(false);
+  }
+
+  private onTextPageCharRangeChange(startCharIndex: number, endCharIndex: number): void {
+    this.currentPageStartCharIndex = Math.max(0, startCharIndex);
+    this.currentPageEndCharIndex = Math.max(this.currentPageStartCharIndex, endCharIndex);
+    if (this.readAloudCurrentCharIndex < 0) {
+      this.readAloudCurrentCharIndex = this.currentPageStartCharIndex;
+    }
+    this.updateReadAloudContextByPosition();
+  }
+
+  private onTextUserPageTurnStart(): void {
+    const snapshot = this.readAloudController.getSnapshot();
+    if (!snapshot.settings.pauseOnManualPageTurn) {
+      return;
+    }
+    if (snapshot.playbackState !== ReadAloudPlaybackState.PLAYING) {
+      return;
+    }
+    this.readAloudController.pause('manual_page_turn');
+    this.updateReadAloudContextByPosition();
+    this.readAloudPlaying = false;
+    this.persistReadAloudResumeCharIndex(true);
+    this.saveReadProgress();
+  }
+
+  private onStartReadAloudFromCharIndex(charIndex: number): void {
+    if (!this.content || this.content.length <= 0) {
+      return;
+    }
+    const maxCharIndex = Math.max(0, this.content.length - 1);
+    const safeCharIndex = Math.max(0, Math.min(Math.floor(charIndex), maxCharIndex));
+    this.readAloudCurrentCharIndex = safeCharIndex;
+    this.updateReadAloudContextByPosition(safeCharIndex);
+    this.persistReadAloudResumeCharIndex(false);
+
+    const snapshot = this.readAloudController.getSnapshot();
+    if (snapshot.playbackState === ReadAloudPlaybackState.PLAYING) {
+      const baseCharIndex = snapshot.currentCharIndex >= 0 ? snapshot.currentCharIndex : safeCharIndex;
+      this.readAloudController.seekByChars(safeCharIndex - baseCharIndex, 'selection_start');
+    } else {
+      this.readAloudController.start('selection_start');
+    }
+    this.readAloudController.refreshMediaSession();
+  }
+
+  private tryHandleAutoReadAloudEntry(): void {
+    if (!this.content || this.content.length <= 0) {
+      return;
+    }
+    if (!this.shouldAutoStartReadAloud && !this.shouldAutoOpenReadAloudPlayer) {
+      return;
+    }
+
+    this.updateReadAloudContextByPosition();
+
+    if (this.shouldAutoStartReadAloud) {
+      this.readAloudController.start('read_aloud_page_auto_start');
+      this.shouldAutoStartReadAloud = false;
+    }
+
+    if (this.shouldAutoOpenReadAloudPlayer) {
+      this.shouldAutoOpenReadAloudPlayer = false;
+      setTimeout(() => {
+        this.openReadAloudPlayerPageFromReader();
+      }, 60);
+    }
+  }
+
+  private openReadAloudPlayerPageFromReader(): void {
+    const context = this.readAloudController.getContextSnapshot();
+    if (!context || context.bookId !== this.bookId) {
+      return;
+    }
+    const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+    if (!globalStack) {
+      logger.warn(TAG, 'GlobalNavStack not found, cannot open ReadAloudPlayerPage');
+      return;
+    }
+    AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
+    globalStack.pushPathByName('ReadAloudPlayerPage', undefined);
+  }
+
   private async recordBrowseHistory(param: NovelReaderPageParams): Promise<void> {
     try {
       const settingsManager = getNovelSettingsManager();
@@ -1020,12 +1332,14 @@ export struct NovelReaderPage {
           TextReadingSettingsPanel2({
             settings: this.settings,
             isVisible: this.showReadingSettings,
+            initialShowReadAloudPanel: this.openReadAloudInfoWhenOpenReadingSettings,
             callbacks: {
               onSettingsChange: (newSettings: TextReaderSettings) => {
                 this.onSettingsChange(newSettings);
               },
               onClose: () => {
                 this.showReadingSettings = false;
+                this.openReadAloudInfoWhenOpenReadingSettings = false;
               }
             }
           })
@@ -1058,6 +1372,10 @@ export struct NovelReaderPage {
         // 生成bookId和chapterId
         this.bookId = `${param.sourceId}_${encodeURIComponent(param.bookUrl)}`;
         this.chapterId = `${this.bookId}_${param.chapterIndex}`;
+        this.bookCoverUrl = param.coverUrl || '';
+        this.shouldAutoStartReadAloud = param.autoStartReadAloud === true;
+        this.shouldAutoOpenReadAloudPlayer = param.autoOpenReadAloudPlayer === true;
+        AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
         this.loadSettings();
         this.loadContent();
         
@@ -1110,8 +1428,17 @@ export struct NovelReaderPage {
       settings: this.settings,
       currentChapterIndex: this.currentChapterIndex,
       currentPageIndex: this.currentPageIndex,
+      readAloudCurrentCharIndex: this.readAloudCurrentCharIndex,
+      readAloudFollowEnabled: this.readAloudPlaying,
+      readAloudHighlightEnabled: true,
       paginationMode: PaginationMode.ONLINE,  // 在线小说使用ONLINE分页模式
       onPageChange: (pageIndex: number, totalPages: number) => this.onPageChange(pageIndex, totalPages),
+      onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => {
+        this.onTextPageCharRangeChange(startCharIndex, endCharIndex);
+      },
+      onUserPageTurnStart: () => {
+        this.onTextUserPageTurnStart();
+      },
       onChapterChange: (chapterIndex: number) => this.onChapterChange(chapterIndex),
       onTapCenter: () => this.onTapCenter(),
       onReady: () => {
@@ -1120,7 +1447,8 @@ export struct NovelReaderPage {
         setReaderReady();
       },
       onAddPurifyRule: (pattern: string) => this.addPurifyRule(pattern),
-      onSearchEncyclopedia: (keyword: string) => this.showEncyclopediaSearch(keyword)
+      onSearchEncyclopedia: (keyword: string) => this.showEncyclopediaSearch(keyword),
+      onStartReadAloudFromCharIndex: (charIndex: number) => this.onStartReadAloudFromCharIndex(charIndex)
     })
       .width('100%')
       .height('100%')
@@ -1259,7 +1587,6 @@ export struct NovelReaderPage {
         // 阅读设置按钮
         Button() {
           SymbolGlyph($r('sys.symbol.gearshape'))
-
         }
         .width(48)
         .height(48)
@@ -1267,6 +1594,46 @@ export struct NovelReaderPage {
         .onClick(() => {
           this.showReadingSettingsPanel();
         })
+
+        Blank()
+
+        // 听书胶囊区域
+        Row() {
+          Row() {
+            SymbolGlyph(this.readAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+              .fontSize(18)
+              .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+          }
+          .width(48)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.toggleReadAloudFromToolbar();
+          })
+
+          Column()
+            .width(1)
+            .height(16)
+            .backgroundColor(this.readAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+
+          Row() {
+            SymbolGlyph($r('sys.symbol.Celia'))
+              .fontSize(16)
+              .fontColor([this.readAloudPlaying ? Color.White : $r('app.color.text_primary')])
+          }
+          .width(44)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.openReadAloudSettingsPanelFromToolbar();
+          })
+        }
+        .height(36)
+        .backgroundColor(this.readAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+        .borderRadius(18)
+        .clip(true)
+
+
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: this.navigationBarHeight })

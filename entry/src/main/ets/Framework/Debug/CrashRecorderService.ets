@@ -201,12 +201,12 @@ export class CrashRecorderService {
     sections.push('');
 
     // 崩溃信息
-    sections.push('▶ 崩溃时间');
+    sections.push('【崩溃时间】');
     sections.push(`  ${dateStr}`);
     sections.push('');
 
     // 设备信息
-    sections.push('▶ 设备信息');
+    sections.push('【设备信息】');
     try {
       sections.push(`  设备类型: ${deviceInfo.deviceType || '未知'}`);
       sections.push(`  品牌: ${deviceInfo.brand || '未知'}`);
@@ -219,20 +219,20 @@ export class CrashRecorderService {
     sections.push('');
 
     // 异常信息
-    sections.push('▶ 异常信息');
+    sections.push('【异常信息】');
     sections.push(`  ${errorMessage}`);
     sections.push('');
 
     // 堆栈信息
     if (stackTrace) {
-      sections.push('▶ 堆栈信息');
+      sections.push('【堆栈信息】');
       sections.push(stackTrace);
       sections.push('');
     }
 
     // 崩溃前的完整日志
     sections.push('═'.repeat(60));
-    sections.push(`▶ 崩溃前日志快照（共 ${logs.length} 条）`);
+    sections.push(`【崩溃前日志快照（共 ${logs.length} 条）】`);
     sections.push('═'.repeat(60));
     sections.push('');
 

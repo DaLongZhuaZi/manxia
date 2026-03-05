@@ -17,6 +17,7 @@ import {
   TextReaderCallbacks,
   TextPage,
   TextChapter,
+  PageMargins,
   TextReadingMode,
   TextReadingDirection,
   TextPageTurnAnimation,
@@ -30,6 +31,9 @@ import { InteractionManager, VibrationScene } from '../Framework/Managers/Intera
 
 
 const TAG = 'TextReaderComponent';
+const READ_ALOUD_HISTORY_HIGHLIGHT = '#334A90E2';
+const READ_ALOUD_READ_HIGHLIGHT = '#CC66BB6A';
+const READ_ALOUD_CURRENT_SENTENCE_HIGHLIGHT = '#CCFFCA28';
 
 /**
  * RGB颜色接口
@@ -66,6 +70,9 @@ export struct TextReaderComponent {
   @Link @Watch('onChapterIndexChange') currentChapterIndex: number;
   /** 当前页面索引 */
   @Link @Watch('onPageIndexChange') currentPageIndex: number;
+  @Prop @Watch('onReadAloudCharIndexChange') readAloudCurrentCharIndex: number = -1;
+  @Prop readAloudFollowEnabled: boolean = false;
+  @Prop readAloudHighlightEnabled: boolean = false;
   /** 底部状态栏高度（用于避让底部信息显示区域） */
   @Prop bottomStatusBarHeight: number = 28;
   /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
@@ -83,6 +90,8 @@ export struct TextReaderComponent {
   
   // ========== 回调函数 ==========
   onPageChange: (pageIndex: number, totalPages: number) => void = () => {};
+  onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => void = () => {};
+  onUserPageTurnStart: () => void = () => {};
   onChapterChange: (chapterIndex: number) => void = () => {};
   onProgressChange: (progress: number) => void = () => {};
   /** 点击中间区域回调（用于显示/隐藏工具栏） */
@@ -95,6 +104,8 @@ export struct TextReaderComponent {
   onAddPurifyRule: (pattern: string) => void = () => {};
   /** 百科搜索回调 */
   onSearchEncyclopedia: (keyword: string) => void = () => {};
+  /** 从指定字符位置开始听书 */
+  onStartReadAloudFromCharIndex: (charIndex: number) => void = () => {};
   
   // ========== 文本选择状态 ==========
   /** 选择开始位置 */
@@ -121,6 +132,7 @@ export struct TextReaderComponent {
   @State private componentHeight: number = 0;
   @State private contentAreaWidth: number = 0;
   @State private contentAreaHeight: number = 0;
+  @State private relayoutOpacity: number = 1;
   
   // ========== 翻页动画状态 ==========
   @State private isAnimating: boolean = false;
@@ -162,8 +174,17 @@ export struct TextReaderComponent {
   private static readonly MAX_PAGINATION_RETRIES: number = 10;  // 最大分页重试次数
   private areaChangeDebounceTimer: number = -1;  // onAreaChange防抖定时器
   private static readonly AREA_CHANGE_DEBOUNCE_MS: number = 100;  // 防抖时间(100ms)
+  private settingsRepaginateDebounceTimer: number = -1;
+  private static readonly SETTINGS_REPAGINATE_DEBOUNCE_MS: number = 60;
+  private static readonly MIN_CONTENT_WIDTH_VP: number = 120;
+  private static readonly MIN_CONTENT_LINE_COUNT: number = 2;
   private lastContentAreaWidth: number = 0;  // 上次内容区域宽度
   private lastContentAreaHeight: number = 0;  // 上次内容区域高度
+  private lastPaginationSignature: string = '';
+  private pendingAnchorCharIndex: number = -1;
+  private pendingRelayoutAnimation: boolean = false;
+  private lastReadAloudHighlightLogTime: number = 0;
+  private lastReadAloudScrollFollowTime: number = 0;
   @State private isLoading: boolean = false;  // 加载状态
   
   // ========== 章节切换过渡状态 ==========
@@ -188,6 +209,8 @@ export struct TextReaderComponent {
   private static readonly AUTO_SCROLL_MIN_STEP_VP: number = 120;
   private static readonly AUTO_SCROLL_MAX_STEP_VP: number = 720;
   private static readonly AUTO_SCROLL_END_THRESHOLD_VP: number = 36;
+  private static readonly READ_ALOUD_SCROLL_FOLLOW_INTERVAL_MS: number = 380;
+  private static readonly READ_ALOUD_SCROLL_FOLLOW_MIN_DELTA_VP: number = 36;
   
   // ========== Canvas渲染上下文 ==========
   private renderingSettings: RenderingContextSettings = new RenderingContextSettings(true);
@@ -325,8 +348,8 @@ export struct TextReaderComponent {
     
     // 检查内容是否有效
     if (!this.content || this.content.length === 0) {
-      logger.warn(TAG, `内容为空，跳过分页`);
       this.isLoading = false;
+      this.finishPendingRelayoutIfNeeded();
       return;
     }
     
@@ -337,6 +360,7 @@ export struct TextReaderComponent {
         logger.error(TAG, `分页重试次数超过限制(${TextReaderComponent.MAX_PAGINATION_RETRIES})，停止重试`);
         this.isLoading = false;
         this.paginationRetryCount = 0;
+        this.finishPendingRelayoutIfNeeded();
         return;
       }
       logger.info(TAG, `组件尺寸未初始化，延迟分页(重试${this.paginationRetryCount}/${TextReaderComponent.MAX_PAGINATION_RETRIES})`);
@@ -381,20 +405,25 @@ export struct TextReaderComponent {
         }
         this.lastExternalPageIndex = this.currentPageIndex;
         this.shouldJumpToLastPage = false;
+        this.pendingAnchorCharIndex = -1;
         logger.info(TAG, `分页完成，跳转到最后一页: ${this.currentPageIndex + 1}/${this.totalPages}`);
       }
+
+      this.restorePageIndexByAnchor();
       
       // 更新当前页面内容
       this.updatePageContents();
       
       // 每次分页完成都更新签名，确保与当前设置同步
       this.lastRenderSignature = this.getRenderSignature();
+      this.lastPaginationSignature = this.getPaginationSignature();
       
       // 通知页面变化（确保进度正确保存）
       this.notifyPageChange();
       
       // 通知分页完成
       this.onReady();
+      this.finishPendingRelayoutIfNeeded();
     }, 50);  // 延迟 50ms 让 UI 有机会更新
   }
   
@@ -413,8 +442,192 @@ export struct TextReaderComponent {
 
   private onSettingsChange(): void {
     this.syncAutoPageTurnState('settings-change');
+    this.checkAndInvalidatePixelMapCache();
+    this.stopCurlAnimation();
+
+    const nextSignature = this.getPaginationSignature();
+    if (this.lastPaginationSignature.length === 0) {
+      this.lastPaginationSignature = nextSignature;
+      return;
+    }
+    if (nextSignature === this.lastPaginationSignature) {
+      return;
+    }
+
+    if (this.settingsRepaginateDebounceTimer !== -1) {
+      clearTimeout(this.settingsRepaginateDebounceTimer);
+    }
+    this.settingsRepaginateDebounceTimer = setTimeout(() => {
+      this.settingsRepaginateDebounceTimer = -1;
+      if (!this.content || this.content.length === 0) {
+        return;
+      }
+
+      this.pendingAnchorCharIndex = this.getCurrentAnchorCharIndex();
+      this.pendingRelayoutAnimation = true;
+      this.startRelayoutAnimation();
+      this.recalculateContentArea();
+      this.releaseAllPixelMapCache();
+      this.paginateContentAsync();
+    }, TextReaderComponent.SETTINGS_REPAGINATE_DEBOUNCE_MS);
   }
 
+  private getPaginationSignature(): string {
+    const ts = this.settings.textStyle;
+    const pm = this.getEffectivePageMargins();
+    return `${this.settings.readingMode}|${this.settings.readingDirection}|${ts.fontSize}|${ts.lineHeight}|` +
+      `${ts.letterSpacing}|${ts.paragraphSpacing}|${ts.firstLineIndent}|${pm.top}|${pm.bottom}|${pm.left}|${pm.right}|` +
+      `${this.getEffectiveBottomBarHeight()}|${this.componentWidth}|${this.componentHeight}`;
+  }
+
+  private getCurrentAnchorCharIndex(): number {
+    if (this.pages.length === 0) {
+      return 0;
+    }
+    const safeIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
+    return this.pages[safeIndex]?.startCharIndex ?? 0;
+  }
+
+  private findPageIndexByCharIndex(charIndex: number): number {
+    if (this.pages.length === 0 || charIndex <= 0) {
+      return 0;
+    }
+    for (let i = 0; i < this.pages.length; i++) {
+      const page = this.pages[i];
+      if (charIndex >= page.startCharIndex && charIndex < page.endCharIndex) {
+        return i;
+      }
+    }
+    return this.pages.length - 1;
+  }
+
+  private restorePageIndexByAnchor(): void {
+    if (this.pendingAnchorCharIndex < 0 || this.pages.length === 0) {
+      return;
+    }
+    const targetIndex = this.findPageIndexByCharIndex(this.pendingAnchorCharIndex);
+    this.pendingAnchorCharIndex = -1;
+
+    if (this.isDualPageMode()) {
+      const safeTarget = Math.max(0, Math.min(targetIndex, this.pages.length - 1));
+      this.dualPageBaseIndex = safeTarget - (safeTarget % 2);
+      this.currentPageIndex = this.dualPageBaseIndex;
+    } else {
+      this.currentPageIndex = Math.max(0, Math.min(targetIndex, this.pages.length - 1));
+    }
+    this.lastExternalPageIndex = this.currentPageIndex;
+  }
+
+  private startRelayoutAnimation(): void {
+    if (this.showCurlEffect || this.isAnimating || this.isChapterTransition) {
+      this.relayoutOpacity = 1;
+      return;
+    }
+    animateTo({
+      duration: 90,
+      curve: Curve.EaseOut
+    }, () => {
+      this.relayoutOpacity = 0.9;
+    });
+  }
+
+  private finishRelayoutAnimation(): void {
+    animateTo({
+      duration: 120,
+      curve: Curve.EaseIn
+    }, () => {
+      this.relayoutOpacity = 1;
+    });
+  }
+
+  private finishPendingRelayoutIfNeeded(): void {
+    if (!this.pendingRelayoutAnimation) {
+      return;
+    }
+    this.pendingRelayoutAnimation = false;
+    this.finishRelayoutAnimation();
+  }
+
+  private getEffectivePageMargins(): PageMargins {
+    const defaultMargins = DEFAULT_TEXT_READER_SETTINGS.pageMargins;
+    const baseMargins = this.settings.pageMargins ?? defaultMargins;
+    const safeMargins: PageMargins = {
+      top: Math.max(0, Math.round(Number(baseMargins.top) || 0)),
+      bottom: Math.max(0, Math.round(Number(baseMargins.bottom) || 0)),
+      left: Math.max(0, Math.round(Number(baseMargins.left) || 0)),
+      right: Math.max(0, Math.round(Number(baseMargins.right) || 0))
+    };
+
+    const baseWidth = this.isDualPageMode() ? Math.floor(this.componentWidth / 2) : this.componentWidth;
+    const baseHeight = this.componentHeight;
+    if (baseWidth <= 0 || baseHeight <= 0) {
+      return safeMargins;
+    }
+
+    const minContentWidth = Math.min(
+      TextReaderComponent.MIN_CONTENT_WIDTH_VP,
+      Math.max(48, baseWidth - 16)
+    );
+    const maxHorizontalMargins = Math.max(0, baseWidth - minContentWidth);
+    const totalHorizontalMargins = safeMargins.left + safeMargins.right;
+    if (totalHorizontalMargins > maxHorizontalMargins && totalHorizontalMargins > 0) {
+      const ratio = maxHorizontalMargins / totalHorizontalMargins;
+      safeMargins.left = Math.floor(safeMargins.left * ratio);
+      safeMargins.right = Math.floor(safeMargins.right * ratio);
+    }
+
+    const bottomBarHeight = this.getEffectiveBottomBarHeight();
+    const lineHeightVp = this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight;
+    const minContentHeight = Math.max(
+      lineHeightVp * TextReaderComponent.MIN_CONTENT_LINE_COUNT,
+      lineHeightVp
+    );
+    const maxVerticalMargins = Math.max(0, baseHeight - bottomBarHeight - minContentHeight);
+    const totalVerticalMargins = safeMargins.top + safeMargins.bottom;
+    if (totalVerticalMargins > maxVerticalMargins && totalVerticalMargins > 0) {
+      const ratio = maxVerticalMargins / totalVerticalMargins;
+      safeMargins.top = Math.floor(safeMargins.top * ratio);
+      safeMargins.bottom = Math.floor(safeMargins.bottom * ratio);
+    }
+
+    return safeMargins;
+  }
+
+  private recalculateContentArea(): boolean {
+    const baseWidth = this.isDualPageMode() ? Math.floor(this.componentWidth / 2) : this.componentWidth;
+    if (baseWidth <= 0 || this.componentHeight <= 0) {
+      return false;
+    }
+
+    const pageMargins = this.getEffectivePageMargins();
+    const bottomBarHeight = this.getEffectiveBottomBarHeight();
+    const newContentWidth = Math.max(1, baseWidth - pageMargins.left - pageMargins.right);
+    const newContentHeight = Math.max(1, this.componentHeight - pageMargins.top - pageMargins.bottom - bottomBarHeight);
+
+    const widthChanged = Math.abs(newContentWidth - this.lastContentAreaWidth) > 1;
+    const heightChanged = Math.abs(newContentHeight - this.lastContentAreaHeight) > 1;
+    if (!widthChanged && !heightChanged) {
+      return false;
+    }
+
+    this.contentAreaWidth = newContentWidth;
+    this.contentAreaHeight = newContentHeight;
+    this.lastContentAreaWidth = newContentWidth;
+    this.lastContentAreaHeight = newContentHeight;
+    logger.debug(TAG, `内容区域变化: ${this.contentAreaWidth.toFixed(0)}x${this.contentAreaHeight.toFixed(0)}`);
+    return true;
+  }
+
+  private getEffectiveContentPadding(): PageMargins {
+    const pageMargins = this.getEffectivePageMargins();
+    const padding: PageMargins = {
+      top: pageMargins.top,
+      bottom: pageMargins.bottom + this.getEffectiveBottomBarHeight(),
+      left: pageMargins.left,
+      right: pageMargins.right
+    };
+    return padding;
+  }
 
   private isAutoPageTurnActive(): boolean {
     if (this.settings.autoPageTurnEnabled !== true) {
@@ -597,7 +810,7 @@ export struct TextReaderComponent {
       if (this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
         const nextBase = this.dualPageBaseIndex + 2;
         if (nextBase < this.totalPages) {
-          this.goToNextDualPage();
+          this.goToNextDualPage('auto_page_turn');
         } else if (!this.trySwitchToNextChapterForAuto()) {
           logger.info(TAG, 'autoPageTurn reached end of book in dual-page mode');
           this.clearAutoPageTurnTimer();
@@ -606,7 +819,7 @@ export struct TextReaderComponent {
       }
 
       if (this.currentPageIndex < this.totalPages - 1) {
-        this.goToNextPage();
+        this.goToNextPage('auto_page_turn');
       } else if (!this.trySwitchToNextChapterForAuto()) {
         logger.info(TAG, 'autoPageTurn reached end of book in page mode');
         this.clearAutoPageTurnTimer();
@@ -648,6 +861,101 @@ export struct TextReaderComponent {
       this.notifyPageChange();
     }
   }
+
+  private onReadAloudCharIndexChange(): void {
+    this.tryFollowPageForReadAloud();
+    if (!this.readAloudHighlightEnabled || this.readAloudCurrentCharIndex < 0) {
+      return;
+    }
+    const now = Date.now();
+    if ((now - this.lastReadAloudHighlightLogTime) < 1200) {
+      return;
+    }
+    this.lastReadAloudHighlightLogTime = now;
+    logger.debug(
+      TAG,
+      `听书高亮定位: page=${this.currentPageIndex + 1}/${this.totalPages}, char=${this.readAloudCurrentCharIndex}`
+    );
+  }
+
+  private tryFollowPageForReadAloud(): void {
+    if (!this.readAloudFollowEnabled) {
+      return;
+    }
+    if (this.readAloudCurrentCharIndex < 0) {
+      return;
+    }
+    if (this.settings.readingMode === TextReadingMode.SCROLL) {
+      this.tryFollowScrollForReadAloud();
+      return;
+    }
+    if (this.pages.length === 0 || this.totalPages <= 0) {
+      return;
+    }
+    if (this.isAnimating || this.showCurlEffect || this.isPaginating || this.isLoading) {
+      return;
+    }
+
+    const dualMode = this.isDualPageMode();
+    const targetPageIndex = this.findPageIndexByCharIndex(this.readAloudCurrentCharIndex);
+    let safeTargetPageIndex = Math.max(0, Math.min(targetPageIndex, this.totalPages - 1));
+    if (dualMode) {
+      safeTargetPageIndex = safeTargetPageIndex - (safeTargetPageIndex % 2);
+    }
+
+    const currentEffectivePageIndex = dualMode ? this.dualPageBaseIndex : this.currentPageIndex;
+    if (safeTargetPageIndex === currentEffectivePageIndex) {
+      return;
+    }
+
+    if (!dualMode && Math.abs(safeTargetPageIndex - currentEffectivePageIndex) === 1) {
+      if (safeTargetPageIndex > currentEffectivePageIndex) {
+        this.goToNextPage('read_aloud_follow');
+      } else {
+        this.goToPrevPage('read_aloud_follow');
+      }
+      return;
+    }
+
+    this.goToPage(safeTargetPageIndex, 'read_aloud_follow');
+  }
+
+  private tryFollowScrollForReadAloud(): void {
+    if (this.content.length <= 0 || this.contentAreaHeight <= 0) {
+      return;
+    }
+    const now = Date.now();
+    if ((now - this.lastReadAloudScrollFollowTime) < TextReaderComponent.READ_ALOUD_SCROLL_FOLLOW_INTERVAL_MS) {
+      return;
+    }
+
+    const estimatedEndY = this.getEstimatedScrollEndOffsetY();
+    if (estimatedEndY <= 0) {
+      return;
+    }
+
+    const currentOffsetY = this.getCurrentScrollOffsetY();
+    const ratio = Math.max(0, Math.min(1, this.readAloudCurrentCharIndex / Math.max(1, this.content.length)));
+    const targetOffsetY = Math.max(0, Math.min(estimatedEndY, Math.floor(estimatedEndY * ratio)));
+    const minDelta = Math.max(
+      TextReaderComponent.READ_ALOUD_SCROLL_FOLLOW_MIN_DELTA_VP,
+      Math.floor(this.contentAreaHeight * 0.08)
+    );
+    if (Math.abs(targetOffsetY - currentOffsetY) < minDelta) {
+      return;
+    }
+
+    this.lastReadAloudScrollFollowTime = now;
+    try {
+      this.scrollController.scrollTo({
+        xOffset: 0,
+        yOffset: targetOffsetY,
+        animation: { duration: 260 }
+      });
+    } catch (error) {
+      logger.debug(TAG, `听书滚动跟随失败: ${String(error)}`);
+    }
+  }
   
   aboutToDisappear(): void {
     logger.info(TAG, '文本阅读器组件销毁');
@@ -662,8 +970,15 @@ export struct TextReaderComponent {
       clearTimeout(this.areaChangeDebounceTimer);
       this.areaChangeDebounceTimer = -1;
     }
+    if (this.settingsRepaginateDebounceTimer !== -1) {
+      clearTimeout(this.settingsRepaginateDebounceTimer);
+      this.settingsRepaginateDebounceTimer = -1;
+    }
     this.clearAutoPageTurnTimer();
     this.clearAutoScrollStepGuard();
+    this.pendingAnchorCharIndex = -1;
+    this.pendingRelayoutAnimation = false;
+    this.relayoutOpacity = 1;
   }
   
   /**
@@ -1257,12 +1572,501 @@ export struct TextReaderComponent {
       this.updateDualPageContents();
     }
   }
+
+  private getReadAloudHighlightSplitIndex(): number {
+    if (!this.readAloudHighlightEnabled) {
+      return -1;
+    }
+    if (this.readAloudCurrentCharIndex < 0 || this.pages.length === 0) {
+      return -1;
+    }
+
+    const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
+    const page = this.pages[safePageIndex];
+    if (!page) {
+      return -1;
+    }
+    if (page.endCharIndex <= page.startCharIndex) {
+      return -1;
+    }
+
+    const pageCharSpan = Math.max(1, page.endCharIndex - page.startCharIndex);
+    const clampedReadCharIndex = Math.max(
+      page.startCharIndex,
+      Math.min(this.readAloudCurrentCharIndex, page.endCharIndex)
+    );
+    const splitRatio = (clampedReadCharIndex - page.startCharIndex) / pageCharSpan;
+    const maxSplitIndex = Math.max(0, this.currentPageContent.length);
+    const localSplitIndex = Math.floor(maxSplitIndex * splitRatio);
+    return Math.max(0, Math.min(localSplitIndex, maxSplitIndex));
+  }
+
+  private hasReadAloudHighlight(): boolean {
+    return this.getReadAloudHighlightSplitIndex() >= 0;
+  }
+
+  private isReadAloudSentenceBoundary(char: string): boolean {
+    return char === '\n' ||
+      char === '\r' ||
+      char === '。' ||
+      char === '！' ||
+      char === '？' ||
+      char === '．' ||
+      char === '｡' ||
+      char === '…' ||
+      char === '؟' ||
+      char === '।' ||
+      char === '॥' ||
+      char === '؛' ||
+      char === '.' ||
+      char === '!' ||
+      char === '?' ||
+      char === ';' ||
+      char === '；';
+  }
+
+  private isReadAloudSentenceTailChar(char: string): boolean {
+    return char === '"' ||
+      char === '\'' ||
+      char === ')' ||
+      char === '）' ||
+      char === '】' ||
+      char === '》' ||
+      char === '」' ||
+      char === '』' ||
+      char === '”' ||
+      char === '’';
+  }
+
+  private getReadAloudSentenceStartIndex(): number {
+    const splitIndex = this.getReadAloudHighlightSplitIndex();
+    if (splitIndex < 0) {
+      return 0;
+    }
+
+    let sentenceStart = splitIndex;
+    while (sentenceStart > 0) {
+      const prevChar = this.currentPageContent.charAt(sentenceStart - 1);
+      if (this.isReadAloudSentenceBoundary(prevChar)) {
+        break;
+      }
+      sentenceStart -= 1;
+    }
+    return sentenceStart;
+  }
+
+  private getReadAloudSentenceEndIndex(): number {
+    const splitIndex = this.getReadAloudHighlightSplitIndex();
+    if (splitIndex < 0) {
+      return 0;
+    }
+
+    let sentenceEnd = Math.max(0, splitIndex);
+    while (sentenceEnd < this.currentPageContent.length) {
+      const currentChar = this.currentPageContent.charAt(sentenceEnd);
+      sentenceEnd += 1;
+      if (this.isReadAloudSentenceBoundary(currentChar)) {
+        while (sentenceEnd < this.currentPageContent.length) {
+          const tailChar = this.currentPageContent.charAt(sentenceEnd);
+          if (!this.isReadAloudSentenceTailChar(tailChar)) {
+            break;
+          }
+          sentenceEnd += 1;
+        }
+        break;
+      }
+    }
+    return sentenceEnd;
+  }
+
+  private getReadAloudBeforeSentenceText(): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndex();
+    if (splitIndex <= 0) {
+      return '';
+    }
+    const sentenceStart = this.getReadAloudSentenceStartIndex();
+    if (sentenceStart <= 0) {
+      return '';
+    }
+    return this.currentPageContent.substring(0, sentenceStart);
+  }
+
+  private getReadAloudSentenceReadText(): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndex();
+    if (splitIndex <= 0) {
+      return '';
+    }
+    const sentenceStart = this.getReadAloudSentenceStartIndex();
+    if (splitIndex <= sentenceStart) {
+      return '';
+    }
+    return this.currentPageContent.substring(sentenceStart, splitIndex);
+  }
+
+  private getReadAloudSentenceUnreadText(): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndex();
+    if (splitIndex < 0) {
+      return '';
+    }
+    const sentenceEnd = this.getReadAloudSentenceEndIndex();
+    if (sentenceEnd <= splitIndex) {
+      return '';
+    }
+    return this.currentPageContent.substring(splitIndex, sentenceEnd);
+  }
+
+  private getReadAloudAfterSentenceText(): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndex();
+    if (splitIndex < 0) {
+      return this.currentPageContent;
+    }
+    const sentenceEnd = this.getReadAloudSentenceEndIndex();
+    if (sentenceEnd >= this.currentPageContent.length) {
+      return '';
+    }
+    return this.currentPageContent.substring(sentenceEnd);
+  }
+
+  private getReadAloudHighlightSplitIndexForPage(pageIndex: number, pageContent: string): number {
+    if (!this.readAloudHighlightEnabled) {
+      return -1;
+    }
+    if (this.readAloudCurrentCharIndex < 0 || this.pages.length === 0) {
+      return -1;
+    }
+    if (pageIndex < 0 || pageIndex >= this.pages.length) {
+      return -1;
+    }
+
+    const page = this.pages[pageIndex];
+    if (!page || page.endCharIndex <= page.startCharIndex) {
+      return -1;
+    }
+
+    const pageCharSpan = Math.max(1, page.endCharIndex - page.startCharIndex);
+    const clampedReadCharIndex = Math.max(
+      page.startCharIndex,
+      Math.min(this.readAloudCurrentCharIndex, page.endCharIndex)
+    );
+    const splitRatio = (clampedReadCharIndex - page.startCharIndex) / pageCharSpan;
+    const maxSplitIndex = Math.max(0, pageContent.length);
+    const localSplitIndex = Math.floor(maxSplitIndex * splitRatio);
+    return Math.max(0, Math.min(localSplitIndex, maxSplitIndex));
+  }
+
+  private hasReadAloudHighlightForPage(pageIndex: number, pageContent: string): boolean {
+    return this.getReadAloudHighlightSplitIndexForPage(pageIndex, pageContent) >= 0;
+  }
+
+  private getReadAloudSentenceStartIndexForText(pageContent: string, splitIndex: number): number {
+    if (splitIndex < 0) {
+      return 0;
+    }
+
+    let sentenceStart = splitIndex;
+    while (sentenceStart > 0) {
+      const prevChar = pageContent.charAt(sentenceStart - 1);
+      if (this.isReadAloudSentenceBoundary(prevChar)) {
+        break;
+      }
+      sentenceStart -= 1;
+    }
+    return sentenceStart;
+  }
+
+  private getReadAloudSentenceEndIndexForText(pageContent: string, splitIndex: number): number {
+    if (splitIndex < 0) {
+      return 0;
+    }
+
+    let sentenceEnd = Math.max(0, splitIndex);
+    while (sentenceEnd < pageContent.length) {
+      const currentChar = pageContent.charAt(sentenceEnd);
+      sentenceEnd += 1;
+      if (this.isReadAloudSentenceBoundary(currentChar)) {
+        while (sentenceEnd < pageContent.length) {
+          const tailChar = pageContent.charAt(sentenceEnd);
+          if (!this.isReadAloudSentenceTailChar(tailChar)) {
+            break;
+          }
+          sentenceEnd += 1;
+        }
+        break;
+      }
+    }
+    return sentenceEnd;
+  }
+
+  private getReadAloudBeforeSentenceTextForPage(pageIndex: number, pageContent: string): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndexForPage(pageIndex, pageContent);
+    if (splitIndex <= 0) {
+      return '';
+    }
+    const sentenceStart = this.getReadAloudSentenceStartIndexForText(pageContent, splitIndex);
+    if (sentenceStart <= 0) {
+      return '';
+    }
+    return pageContent.substring(0, sentenceStart);
+  }
+
+  private getReadAloudSentenceReadTextForPage(pageIndex: number, pageContent: string): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndexForPage(pageIndex, pageContent);
+    if (splitIndex <= 0) {
+      return '';
+    }
+    const sentenceStart = this.getReadAloudSentenceStartIndexForText(pageContent, splitIndex);
+    if (splitIndex <= sentenceStart) {
+      return '';
+    }
+    return pageContent.substring(sentenceStart, splitIndex);
+  }
+
+  private getReadAloudSentenceUnreadTextForPage(pageIndex: number, pageContent: string): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndexForPage(pageIndex, pageContent);
+    if (splitIndex < 0) {
+      return '';
+    }
+    const sentenceEnd = this.getReadAloudSentenceEndIndexForText(pageContent, splitIndex);
+    if (sentenceEnd <= splitIndex) {
+      return '';
+    }
+    return pageContent.substring(splitIndex, sentenceEnd);
+  }
+
+  private getReadAloudAfterSentenceTextForPage(pageIndex: number, pageContent: string): string {
+    const splitIndex = this.getReadAloudHighlightSplitIndexForPage(pageIndex, pageContent);
+    if (splitIndex < 0) {
+      return pageContent;
+    }
+    const sentenceEnd = this.getReadAloudSentenceEndIndexForText(pageContent, splitIndex);
+    if (sentenceEnd >= pageContent.length) {
+      return '';
+    }
+    return pageContent.substring(sentenceEnd);
+  }
+
+  private getReadAloudScrollSplitIndex(): number {
+    if (!this.readAloudHighlightEnabled) {
+      return -1;
+    }
+    if (this.readAloudCurrentCharIndex < 0 || this.content.length === 0) {
+      return -1;
+    }
+    const contentLastCharIndex = Math.max(0, this.content.length - 1);
+    const safeReadCharIndex = Math.max(0, Math.min(this.readAloudCurrentCharIndex, contentLastCharIndex));
+    return safeReadCharIndex;
+  }
+
+  private hasReadAloudScrollHighlight(): boolean {
+    return this.getReadAloudScrollSplitIndex() >= 0;
+  }
+
+  private getReadAloudScrollSentenceStartIndex(): number {
+    const splitIndex = this.getReadAloudScrollSplitIndex();
+    if (splitIndex < 0) {
+      return 0;
+    }
+
+    let sentenceStart = splitIndex;
+    while (sentenceStart > 0) {
+      const prevChar = this.content.charAt(sentenceStart - 1);
+      if (this.isReadAloudSentenceBoundary(prevChar)) {
+        break;
+      }
+      sentenceStart -= 1;
+    }
+    return sentenceStart;
+  }
+
+  private getReadAloudScrollSentenceEndIndex(): number {
+    const splitIndex = this.getReadAloudScrollSplitIndex();
+    if (splitIndex < 0) {
+      return 0;
+    }
+
+    let sentenceEnd = Math.max(0, splitIndex);
+    while (sentenceEnd < this.content.length) {
+      const currentChar = this.content.charAt(sentenceEnd);
+      sentenceEnd += 1;
+      if (this.isReadAloudSentenceBoundary(currentChar)) {
+        while (sentenceEnd < this.content.length) {
+          const tailChar = this.content.charAt(sentenceEnd);
+          if (!this.isReadAloudSentenceTailChar(tailChar)) {
+            break;
+          }
+          sentenceEnd += 1;
+        }
+        break;
+      }
+    }
+    return sentenceEnd;
+  }
+
+  private getReadAloudScrollBeforeSentenceText(): string {
+    const splitIndex = this.getReadAloudScrollSplitIndex();
+    if (splitIndex <= 0) {
+      return '';
+    }
+    const sentenceStart = this.getReadAloudScrollSentenceStartIndex();
+    if (sentenceStart <= 0) {
+      return '';
+    }
+    return this.content.substring(0, sentenceStart);
+  }
+
+  private getReadAloudScrollSentenceReadText(): string {
+    const splitIndex = this.getReadAloudScrollSplitIndex();
+    if (splitIndex <= 0) {
+      return '';
+    }
+    const sentenceStart = this.getReadAloudScrollSentenceStartIndex();
+    if (splitIndex <= sentenceStart) {
+      return '';
+    }
+    return this.content.substring(sentenceStart, splitIndex);
+  }
+
+  private getReadAloudScrollSentenceUnreadText(): string {
+    const splitIndex = this.getReadAloudScrollSplitIndex();
+    if (splitIndex < 0) {
+      return '';
+    }
+    const sentenceEnd = this.getReadAloudScrollSentenceEndIndex();
+    if (sentenceEnd <= splitIndex) {
+      return '';
+    }
+    return this.content.substring(splitIndex, sentenceEnd);
+  }
+
+  private getReadAloudScrollAfterSentenceText(): string {
+    const splitIndex = this.getReadAloudScrollSplitIndex();
+    if (splitIndex < 0) {
+      return this.content;
+    }
+    const sentenceEnd = this.getReadAloudScrollSentenceEndIndex();
+    if (sentenceEnd >= this.content.length) {
+      return '';
+    }
+    return this.content.substring(sentenceEnd);
+  }
+
+  @Builder
+  private buildCurrentPageTextLayer() {
+    if (!this.hasReadAloudHighlight()) {
+      Text(this.currentPageContent)
+        .fontSize(this.settings.textStyle.fontSize)
+        .fontColor(this.settings.textStyle.textColor)
+        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .letterSpacing(this.settings.textStyle.letterSpacing)
+        .fontWeight(this.settings.textStyle.fontWeight)
+        .fontFamily(this.settings.textStyle.fontFamily)
+        .textAlign(this.getTextAlign())
+        .padding(this.getEffectiveContentPadding())
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.getContentBackgroundColor())
+        .copyOption(CopyOptions.InApp)
+        .selection(this.selectionStart, this.selectionEnd)
+        .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+          this.handleTextSelectionChange(selectionStart, selectionEnd);
+        })
+        .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenu, TextResponseType.LONG_PRESS, {
+          onDisappear: () => {
+            this.clearSelection();
+          }
+        })
+    } else {
+      Text() {
+        if (this.getReadAloudBeforeSentenceText().length > 0) {
+          Span(this.getReadAloudBeforeSentenceText())
+            .textBackgroundStyle({ color: READ_ALOUD_HISTORY_HIGHLIGHT })
+        }
+        if (this.getReadAloudSentenceReadText().length > 0) {
+          Span(this.getReadAloudSentenceReadText())
+            .textBackgroundStyle({ color: READ_ALOUD_READ_HIGHLIGHT })
+        }
+        if (this.getReadAloudSentenceUnreadText().length > 0) {
+          Span(this.getReadAloudSentenceUnreadText())
+            .textBackgroundStyle({ color: READ_ALOUD_CURRENT_SENTENCE_HIGHLIGHT })
+        }
+        if (this.getReadAloudAfterSentenceText().length > 0) {
+          Span(this.getReadAloudAfterSentenceText())
+        }
+      }
+        .fontSize(this.settings.textStyle.fontSize)
+        .fontColor(this.settings.textStyle.textColor)
+        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .letterSpacing(this.settings.textStyle.letterSpacing)
+        .fontWeight(this.settings.textStyle.fontWeight)
+        .fontFamily(this.settings.textStyle.fontFamily)
+        .textAlign(this.getTextAlign())
+        .padding(this.getEffectiveContentPadding())
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.getContentBackgroundColor())
+        .copyOption(CopyOptions.InApp)
+        .selection(this.selectionStart, this.selectionEnd)
+        .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+          this.handleTextSelectionChange(selectionStart, selectionEnd);
+        })
+        .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenu, TextResponseType.LONG_PRESS, {
+          onDisappear: () => {
+            this.clearSelection();
+          }
+        })
+    }
+  }
+
+  @Builder
+  private buildDualPageTextLayer(pageContent: string, pageIndex: number) {
+    if (!this.hasReadAloudHighlightForPage(pageIndex, pageContent)) {
+      Text(pageContent)
+        .fontSize(this.settings.textStyle.fontSize)
+        .fontColor(this.settings.textStyle.textColor)
+        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .letterSpacing(this.settings.textStyle.letterSpacing)
+        .fontWeight(this.settings.textStyle.fontWeight)
+        .fontFamily(this.settings.textStyle.fontFamily)
+        .textAlign(this.getTextAlign())
+        .padding(this.getEffectiveContentPadding())
+        .width('100%')
+        .height('100%')
+    } else {
+      Text() {
+        if (this.getReadAloudBeforeSentenceTextForPage(pageIndex, pageContent).length > 0) {
+          Span(this.getReadAloudBeforeSentenceTextForPage(pageIndex, pageContent))
+            .textBackgroundStyle({ color: READ_ALOUD_HISTORY_HIGHLIGHT })
+        }
+        if (this.getReadAloudSentenceReadTextForPage(pageIndex, pageContent).length > 0) {
+          Span(this.getReadAloudSentenceReadTextForPage(pageIndex, pageContent))
+            .textBackgroundStyle({ color: READ_ALOUD_READ_HIGHLIGHT })
+        }
+        if (this.getReadAloudSentenceUnreadTextForPage(pageIndex, pageContent).length > 0) {
+          Span(this.getReadAloudSentenceUnreadTextForPage(pageIndex, pageContent))
+            .textBackgroundStyle({ color: READ_ALOUD_CURRENT_SENTENCE_HIGHLIGHT })
+        }
+        if (this.getReadAloudAfterSentenceTextForPage(pageIndex, pageContent).length > 0) {
+          Span(this.getReadAloudAfterSentenceTextForPage(pageIndex, pageContent))
+        }
+      }
+        .fontSize(this.settings.textStyle.fontSize)
+        .fontColor(this.settings.textStyle.textColor)
+        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .letterSpacing(this.settings.textStyle.letterSpacing)
+        .fontWeight(this.settings.textStyle.fontWeight)
+        .fontFamily(this.settings.textStyle.fontFamily)
+        .textAlign(this.getTextAlign())
+        .padding(this.getEffectiveContentPadding())
+        .width('100%')
+        .height('100%')
+    }
+  }
   
   // ========== 翻页逻辑 ==========
   /**
    * 翻到下一页
    */
-  private goToNextPage(): void {
+  private goToNextPage(source: string = 'manual'): void {
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToNextPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
@@ -1273,7 +2077,8 @@ export struct TextReaderComponent {
       this.provideBoundaryFeedback();
       return;
     }
-    
+
+    this.notifyUserPageTurnStartIfNeeded(source);
     this.isForward = true;
     this.performPageTurn(this.currentPageIndex + 1);
   }
@@ -1281,7 +2086,7 @@ export struct TextReaderComponent {
   /**
    * 翻到上一页
    */
-  private goToPrevPage(): void {
+  private goToPrevPage(source: string = 'manual'): void {
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToPrevPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
@@ -1292,7 +2097,8 @@ export struct TextReaderComponent {
       this.provideBoundaryFeedback();
       return;
     }
-    
+
+    this.notifyUserPageTurnStartIfNeeded(source);
     this.isForward = false;
     this.performPageTurn(this.currentPageIndex - 1);
   }
@@ -1300,7 +2106,7 @@ export struct TextReaderComponent {
   /**
    * 跳转到指定页面
    */
-  private goToPage(pageIndex: number): void {
+  private goToPage(pageIndex: number, source: string = 'programmatic'): void {
     // 安全检查
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
@@ -1309,9 +2115,16 @@ export struct TextReaderComponent {
     if (pageIndex < 0 || pageIndex >= this.totalPages) {
       return;
     }
-    
+
+    this.notifyUserPageTurnStartIfNeeded(source);
     this.isForward = pageIndex > this.currentPageIndex;
     this.performPageTurn(pageIndex);
+  }
+
+  private notifyUserPageTurnStartIfNeeded(source: string): void {
+    if (source === 'manual') {
+      this.onUserPageTurnStart();
+    }
   }
   
   /**
@@ -1722,6 +2535,23 @@ export struct TextReaderComponent {
       // 使用内部动画模式执行翻页
       this.curlAnimateFrom = 0;
       this.curlAnimateTarget = 1.0;
+      this.startAnimationTimeout();
+
+      const fallbackTargetPageIndex = targetPageIndex;
+      const fallbackDelayMs = Math.max(420, this.novelCurlConfig.animationDuration + 140);
+      this.curlAnimationTimer = setTimeout(() => {
+        this.curlAnimationTimer = -1;
+        if (!this.showCurlEffect || !this.isAnimating || this.curlPendingPageIndex !== fallbackTargetPageIndex) {
+          return;
+        }
+        logger.warn(TAG, `performCurlAnimation fallback complete: ${this.currentPageIndex} -> ${fallbackTargetPageIndex}`);
+        if (fallbackTargetPageIndex >= 0 && fallbackTargetPageIndex < this.totalPages) {
+          this.currentPageIndex = fallbackTargetPageIndex;
+          this.updatePageContents();
+          this.notifyPageChange();
+        }
+        this.resetCurlState();
+      }, fallbackDelayMs);
       
       logger.info(TAG, `执行卷页动画: ${this.currentPageIndex} -> ${targetPageIndex}`);
     }).catch((err: Error) => {
@@ -1966,12 +2796,7 @@ export struct TextReaderComponent {
         .fontWeight(this.settings.textStyle.fontWeight)
         .fontFamily(this.settings.textStyle.fontFamily)
         .textAlign(this.getTextAlign())
-        .padding({
-          top: this.settings.pageMargins.top,
-          bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-          left: this.settings.pageMargins.left,
-          right: this.settings.pageMargins.right
-        })
+        .padding(this.getEffectiveContentPadding())
         .width(width)
         .height(height)
       
@@ -1999,6 +2824,7 @@ export struct TextReaderComponent {
    * 卷页动画完成回调
    */
   private onCurlAnimationComplete(): void {
+    this.stopCurlAnimation();
     const targetIndex = this.curlPendingPageIndex;
     
     if (targetIndex >= 0 && targetIndex < this.totalPages) {
@@ -2015,6 +2841,7 @@ export struct TextReaderComponent {
       this.curlAnimateFrom = 0;
       this.curlPendingPageIndex = -1;
       this.isAnimating = false;
+      this.clearAnimationTimeout();
       this.releasePixelMaps();
     }, 50);
   }
@@ -2070,12 +2897,14 @@ export struct TextReaderComponent {
    * 重置卷页状态
    */
   private resetCurlState(): void {
+    this.stopCurlAnimation();
     this.showCurlEffect = false;
     this.curlProgress = 0;
     this.curlAnimateTarget = -1;
     this.curlAnimateFrom = 0;
     this.curlPendingPageIndex = -1;
     this.isAnimating = false;
+    this.clearAnimationTimeout();
     this.releasePixelMaps();
   }
   
@@ -2173,6 +3002,7 @@ export struct TextReaderComponent {
    */
   private notifyPageChange(): void {
     this.onPageChange(this.currentPageIndex, this.totalPages);
+    this.notifyPageCharRangeChange();
     
     // 计算阅读进度
     let progress: number;
@@ -2187,6 +3017,21 @@ export struct TextReaderComponent {
     // 预加载相邻页面的 PixelMap（用于卷页动画）
     this.preloadAdjacentPagePixelMaps();
     this.syncAutoPageTurnState('notify-page-change');
+  }
+
+  private notifyPageCharRangeChange(): void {
+    if (this.pages.length === 0) {
+      this.onPageCharRangeChange(0, 0);
+      return;
+    }
+
+    let targetPageIndex = this.currentPageIndex;
+    if (this.isDualPageMode()) {
+      targetPageIndex = this.dualPageBaseIndex;
+    }
+    const safeIndex = Math.max(0, Math.min(targetPageIndex, this.pages.length - 1));
+    const page = this.pages[safeIndex];
+    this.onPageCharRangeChange(page.startCharIndex, page.endCharIndex);
   }
   
   // ========== 手势处理 ==========
@@ -2579,7 +3424,7 @@ export struct TextReaderComponent {
   /**
    * 双页模式翻到下一对页面
    */
-  private goToNextDualPage(): void {
+  private goToNextDualPage(source: string = 'manual'): void {
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
     
     const nextBase = this.dualPageBaseIndex + 2;
@@ -2592,7 +3437,8 @@ export struct TextReaderComponent {
       }
       return;
     }
-    
+
+    this.notifyUserPageTurnStartIfNeeded(source);
     this.isForward = true;
     this.dualAnimSide = 'right';
     this.performDualPageTurn(nextBase);
@@ -2601,7 +3447,7 @@ export struct TextReaderComponent {
   /**
    * 双页模式翻到上一对页面
    */
-  private goToPrevDualPage(): void {
+  private goToPrevDualPage(source: string = 'manual'): void {
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
     
     const prevBase = this.dualPageBaseIndex - 2;
@@ -2615,7 +3461,8 @@ export struct TextReaderComponent {
       }
       return;
     }
-    
+
+    this.notifyUserPageTurnStartIfNeeded(source);
     this.isForward = false;
     this.dualAnimSide = 'left';
     this.performDualPageTurn(prevBase);
@@ -3084,20 +3931,25 @@ export struct TextReaderComponent {
       }
       
       // 内容层
-      if (this.isChapterTransition) {
-        // 章节切换过渡页
-        this.buildChapterTransitionPage()
-      } else if (this.settings.readingMode === TextReadingMode.SCROLL) {
-        // 滚动模式
-        this.buildScrollMode()
-      } else if (this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
-        // 双页模式
-        this.buildDualPageMode()
-      } else {
-        // 翻页模式
-        this.buildPageMode()
+      Stack() {
+        if (this.isChapterTransition) {
+          // 章节切换过渡页
+          this.buildChapterTransitionPage()
+        } else if (this.settings.readingMode === TextReadingMode.SCROLL) {
+          // 滚动模式
+          this.buildScrollMode()
+        } else if (this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
+          // 双页模式
+          this.buildDualPageMode()
+        } else {
+          // 翻页模式
+          this.buildPageMode()
+        }
       }
-      
+      .width('100%')
+      .height('100%')
+      .opacity(this.relayoutOpacity)
+
       // 卷页效果层（单页模式）
       if (this.showCurlEffect && this.currentPixelMap && !this.isDualPageMode()) {
         PageCurlEffectV2({
@@ -3159,29 +4011,11 @@ export struct TextReaderComponent {
     .width('100%')
     .height('100%')
     .onAreaChange((_, newArea) => {
-      this.componentWidth = newArea.width as number;
-      this.componentHeight = newArea.height as number;
-      // 双页模式下每页宽度为半屏
-      const baseWidth = this.isDualPageMode() ? Math.floor(this.componentWidth / 2) : this.componentWidth;
-      const newContentWidth = baseWidth - this.settings.pageMargins.left - this.settings.pageMargins.right;
-      // 内容区域高度 = 组件高度 - 上下页边距 - 底部状态栏高度
-      const bottomBarHeight = this.getEffectiveBottomBarHeight();
-      const newContentHeight = this.componentHeight - this.settings.pageMargins.top - this.settings.pageMargins.bottom - bottomBarHeight;
-      
-      // 检查内容区域是否真正变化（避免重复分页）
-      const widthChanged = Math.abs(newContentWidth - this.lastContentAreaWidth) > 1;
-      const heightChanged = Math.abs(newContentHeight - this.lastContentAreaHeight) > 1;
-      
-      if (!widthChanged && !heightChanged) {
-        return;  // 尺寸未变化，跳过分页
+      this.componentWidth = Number(newArea.width);
+      this.componentHeight = Number(newArea.height);
+      if (!this.recalculateContentArea()) {
+        return;
       }
-      
-      this.contentAreaWidth = newContentWidth;
-      this.contentAreaHeight = newContentHeight;
-      this.lastContentAreaWidth = newContentWidth;
-      this.lastContentAreaHeight = newContentHeight;
-      
-      logger.debug(TAG, `内容区域变化: ${this.contentAreaWidth.toFixed(0)}x${this.contentAreaHeight.toFixed(0)}`);
       
       // 使用防抖机制重新分页
       if (this.areaChangeDebounceTimer !== -1) {
@@ -3189,7 +4023,14 @@ export struct TextReaderComponent {
       }
       this.areaChangeDebounceTimer = setTimeout(() => {
         this.areaChangeDebounceTimer = -1;
-        this.paginateContent();
+        if (!this.content || this.content.length === 0) {
+          return;
+        }
+        this.pendingAnchorCharIndex = this.getCurrentAnchorCharIndex();
+        this.pendingRelayoutAnimation = true;
+        this.startRelayoutAnimation();
+        this.releaseAllPixelMapCache();
+        this.paginateContentAsync();
       }, TextReaderComponent.AREA_CHANGE_DEBOUNCE_MS);
     })
     .parallelGesture(
@@ -3238,9 +4079,24 @@ export struct TextReaderComponent {
   buildScrollMode() {
     Scroll(this.scrollController) {
       Column() {
-        // 分段显示文本，避免一次性渲染大量内容导致卡顿
-        ForEach(this.getTextSegments(), (segment: string, index: number) => {
-          Text(segment)
+        if (this.hasReadAloudScrollHighlight()) {
+          Text() {
+            if (this.getReadAloudScrollBeforeSentenceText().length > 0) {
+              Span(this.getReadAloudScrollBeforeSentenceText())
+                .textBackgroundStyle({ color: READ_ALOUD_HISTORY_HIGHLIGHT })
+            }
+            if (this.getReadAloudScrollSentenceReadText().length > 0) {
+              Span(this.getReadAloudScrollSentenceReadText())
+                .textBackgroundStyle({ color: READ_ALOUD_READ_HIGHLIGHT })
+            }
+            if (this.getReadAloudScrollSentenceUnreadText().length > 0) {
+              Span(this.getReadAloudScrollSentenceUnreadText())
+                .textBackgroundStyle({ color: READ_ALOUD_CURRENT_SENTENCE_HIGHLIGHT })
+            }
+            if (this.getReadAloudScrollAfterSentenceText().length > 0) {
+              Span(this.getReadAloudScrollAfterSentenceText())
+            }
+          }
             .fontSize(this.settings.textStyle.fontSize)
             .fontColor(this.settings.textStyle.textColor)
             .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
@@ -3249,14 +4105,22 @@ export struct TextReaderComponent {
             .fontFamily(this.settings.textStyle.fontFamily)
             .textAlign(this.getTextAlign())
             .width('100%')
-        })
+        } else {
+          // 非听书高亮状态下使用分段渲染，避免一次性绘制大段文本导致卡顿
+          ForEach(this.getTextSegments(), (segment: string, _index: number) => {
+            Text(segment)
+              .fontSize(this.settings.textStyle.fontSize)
+              .fontColor(this.settings.textStyle.textColor)
+              .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+              .letterSpacing(this.settings.textStyle.letterSpacing)
+              .fontWeight(this.settings.textStyle.fontWeight)
+              .fontFamily(this.settings.textStyle.fontFamily)
+              .textAlign(this.getTextAlign())
+              .width('100%')
+          })
+        }
       }
-      .padding({
-        top: this.settings.pageMargins.top,
-        bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-        left: this.settings.pageMargins.left,
-        right: this.settings.pageMargins.right
-      })
+      .padding(this.getEffectiveContentPadding())
       .width('100%')
       .backgroundColor(this.getContentBackgroundColor())
     }
@@ -3329,12 +4193,7 @@ export struct TextReaderComponent {
           .fontWeight(this.settings.textStyle.fontWeight)
           .fontFamily(this.settings.textStyle.fontFamily)
           .textAlign(this.getTextAlign())
-          .padding({
-            top: this.settings.pageMargins.top,
-            bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-            left: this.settings.pageMargins.left,
-            right: this.settings.pageMargins.right
-          })
+          .padding(this.getEffectiveContentPadding())
           .width('100%')
           .height('100%')
           .backgroundColor(this.getContentBackgroundColor())
@@ -3343,33 +4202,7 @@ export struct TextReaderComponent {
       // 当前页容器（支持卷曲效果）
       Stack() {
         // 当前页内容（支持长按选择文本）
-        Text(this.currentPageContent)
-          .fontSize(this.settings.textStyle.fontSize)
-          .fontColor(this.settings.textStyle.textColor)
-          .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
-          .letterSpacing(this.settings.textStyle.letterSpacing)
-          .fontWeight(this.settings.textStyle.fontWeight)
-          .fontFamily(this.settings.textStyle.fontFamily)
-          .textAlign(this.getTextAlign())
-          .padding({
-            top: this.settings.pageMargins.top,
-            bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-            left: this.settings.pageMargins.left,
-            right: this.settings.pageMargins.right
-          })
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.getContentBackgroundColor())
-          .copyOption(CopyOptions.InApp)
-          .selection(this.selectionStart, this.selectionEnd)
-          .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
-            this.handleTextSelectionChange(selectionStart, selectionEnd);
-          })
-          .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenu, TextResponseType.LONG_PRESS, {
-            onDisappear: () => {
-              this.clearSelection();
-            }
-          })
+        this.buildCurrentPageTextLayer()
         
         // 卷曲效果由 Canvas 层 PageCurlEffectV2 统一渲染（包含3D卷曲、光影、背面）
         // 无需额外的 ArkUI 叠加层
@@ -3445,12 +4278,7 @@ export struct TextReaderComponent {
                 .fontWeight(this.settings.textStyle.fontWeight)
                 .fontFamily(this.settings.textStyle.fontFamily)
                 .textAlign(this.getTextAlign())
-                .padding({
-                  top: this.settings.pageMargins.top,
-                  bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-                  left: this.settings.pageMargins.left,
-                  right: this.settings.pageMargins.right
-                })
+                .padding(this.getEffectiveContentPadding())
                 .width('100%')
                 .height('100%')
             }
@@ -3478,22 +4306,7 @@ export struct TextReaderComponent {
                 .height('100%')
                 .backgroundColor(this.getBackgroundColor())
             }
-            Text(this.dualLeftPageContent)
-              .fontSize(this.settings.textStyle.fontSize)
-              .fontColor(this.settings.textStyle.textColor)
-              .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
-              .letterSpacing(this.settings.textStyle.letterSpacing)
-              .fontWeight(this.settings.textStyle.fontWeight)
-              .fontFamily(this.settings.textStyle.fontFamily)
-              .textAlign(this.getTextAlign())
-              .padding({
-                top: this.settings.pageMargins.top,
-                bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-                left: this.settings.pageMargins.left,
-                right: this.settings.pageMargins.right
-              })
-              .width('100%')
-              .height('100%')
+            this.buildDualPageTextLayer(this.dualLeftPageContent, this.dualLeftPageIndex)
             // 左页页码指示器
             if (this.settings.showPageNumber) {
               Row() {
@@ -3571,12 +4384,7 @@ export struct TextReaderComponent {
                 .fontWeight(this.settings.textStyle.fontWeight)
                 .fontFamily(this.settings.textStyle.fontFamily)
                 .textAlign(this.getTextAlign())
-                .padding({
-                  top: this.settings.pageMargins.top,
-                  bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-                  left: this.settings.pageMargins.left,
-                  right: this.settings.pageMargins.right
-                })
+                .padding(this.getEffectiveContentPadding())
                 .width('100%')
                 .height('100%')
             }
@@ -3604,22 +4412,7 @@ export struct TextReaderComponent {
                 .height('100%')
                 .backgroundColor(this.getBackgroundColor())
             }
-            Text(this.dualRightPageContent)
-              .fontSize(this.settings.textStyle.fontSize)
-              .fontColor(this.settings.textStyle.textColor)
-              .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
-              .letterSpacing(this.settings.textStyle.letterSpacing)
-              .fontWeight(this.settings.textStyle.fontWeight)
-              .fontFamily(this.settings.textStyle.fontFamily)
-              .textAlign(this.getTextAlign())
-              .padding({
-                top: this.settings.pageMargins.top,
-                bottom: this.settings.pageMargins.bottom + this.getEffectiveBottomBarHeight(),
-                left: this.settings.pageMargins.left,
-                right: this.settings.pageMargins.right
-              })
-              .width('100%')
-              .height('100%')
+            this.buildDualPageTextLayer(this.dualRightPageContent, this.dualRightPageIndex)
             // 右页页码指示器
             if (this.settings.showPageNumber && this.dualRightPageIndex < this.totalPages) {
               Row() {
@@ -3843,6 +4636,10 @@ export struct TextReaderComponent {
         .onClick(() => {
           this.addPurifyRuleFromSelection();
         })
+      MenuItem({ content: '开始听书' })
+        .onClick(() => {
+          this.startReadAloudFromSelection();
+        })
       MenuItem({ content: '分享' })
         .onClick(() => {
           this.shareSelectedText();
@@ -3895,6 +4692,69 @@ export struct TextReaderComponent {
       this.onSearchEncyclopedia(this.selectedText);
     }
     this.clearSelection();
+  }
+
+  private startReadAloudFromSelection(): void {
+    const startCharIndex = this.getReadAloudStartCharIndexFromSelection();
+    if (startCharIndex < 0) {
+      promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+      this.clearSelection();
+      return;
+    }
+    this.onStartReadAloudFromCharIndex(startCharIndex);
+    promptAction.showToast({ message: '已从所选句开始听书', duration: 1500 });
+    this.clearSelection();
+  }
+
+  private getReadAloudStartCharIndexFromSelection(): number {
+    if (this.selectionStart < 0 || this.selectionEnd <= this.selectionStart) {
+      return -1;
+    }
+    if (this.content.length <= 0) {
+      return -1;
+    }
+
+    const globalSelectionStart = this.getGlobalSelectionStartCharIndex();
+    if (globalSelectionStart < 0) {
+      return -1;
+    }
+    return this.resolveReadAloudSentenceStartCharIndex(globalSelectionStart);
+  }
+
+  private getGlobalSelectionStartCharIndex(): number {
+    if (this.settings.readingMode === TextReadingMode.SCROLL) {
+      if (this.content.length <= 0) {
+        return -1;
+      }
+      return Math.max(0, Math.min(this.selectionStart, this.content.length - 1));
+    }
+
+    if (this.pages.length <= 0) {
+      return -1;
+    }
+    const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
+    const page = this.pages[safePageIndex];
+    if (!page) {
+      return -1;
+    }
+    const safeLocalStart = Math.max(0, Math.min(this.selectionStart, this.currentPageContent.length));
+    const globalIndex = page.startCharIndex + safeLocalStart;
+    if (globalIndex < 0 || globalIndex >= this.content.length) {
+      return Math.max(0, Math.min(globalIndex, this.content.length - 1));
+    }
+    return globalIndex;
+  }
+
+  private resolveReadAloudSentenceStartCharIndex(charIndex: number): number {
+    let sentenceStart = Math.max(0, Math.min(charIndex, this.content.length - 1));
+    while (sentenceStart > 0) {
+      const prevChar = this.content.charAt(sentenceStart - 1);
+      if (this.isReadAloudSentenceBoundary(prevChar)) {
+        break;
+      }
+      sentenceStart -= 1;
+    }
+    return sentenceStart;
   }
   
   /**

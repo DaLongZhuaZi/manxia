@@ -1,7 +1,7 @@
 /**
- * 文本阅读器设置面板组件
- * 提供字体、背景、翻页动画等设置
- * 修复响应性问题，支持多背景图片
+ * 阅读设置面板
+  * 统一管理字体、背景、阅读与听书选项。
+  * 仅执行 UI 层状态变更与回调通知。
  */
 
 import {
@@ -17,6 +17,9 @@ import {
   PRESET_BACKGROUNDS,
   PresetBackground,
   SavedBackgroundImage,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  DEFAULT_READ_ALOUD_SETTINGS,
   DEFAULT_TEXT_STYLE,
   DEFAULT_PAGE_MARGINS
 } from '../Models/TextReaderModels';
@@ -27,11 +30,15 @@ import { promptAction } from '@kit.ArkUI';
 import { EBookDataManager, BackgroundImageInfo } from '../Framework/Data/EBookDataManager';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { getFontManager, SystemFont, CustomFont, FontType } from '../Framework/Managers/FontManager';
+import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
+import { ReadAloudSettingsInfoPanel } from './ReadAloudSettingsInfoPanel';
 
 const TAG = 'TextReaderSettingsPanel';
 
 /**
- * 文字对齐选项接口
+ * 文本对齐方式选项
  */
 interface AlignmentOption {
   text: string;
@@ -39,7 +46,7 @@ interface AlignmentOption {
 }
 
 /**
- * 字体粗细选项接口
+  * 字重选项
  */
 interface WeightOption {
   text: string;
@@ -47,7 +54,7 @@ interface WeightOption {
 }
 
 /**
- * 翻页动画选项接口
+  * 翻页动画选项
  */
 interface AnimationOption {
   text: string;
@@ -55,7 +62,7 @@ interface AnimationOption {
 }
 
 /**
- * 设置面板标签页类型
+   * 设置分组
  */
 enum SettingsTab {
   FONT = 'FONT',
@@ -65,24 +72,24 @@ enum SettingsTab {
 
 @Component
 export struct TextReaderSettingsPanel {
-  /** 阅读设置（双向绑定） */
+  /** 阅读设置 */
   @Link settings: TextReaderSettings;
   /** 关闭回调 */
   onClose: () => void = () => {};
-  /** 设置变化回调 */
+  /** 设置变更回调 */
   onSettingsChange: (settings: TextReaderSettings) => void = () => {};
   /** 是否横屏 */
   @Prop isLandscape: boolean = false;
   
-  /** 当前选中的标签页 */
+  /** 当前页签 */
   @State private currentTab: SettingsTab = SettingsTab.FONT;
-  /** 强制刷新计数器 - 用于触发UI更新 */
+  /** 刷新计数器（用于刷新预览） */
   @State private refreshCounter: number = 0;
   /** 预览文本 */
-  private previewText: string = '这是一段预览文字，用于展示当前的字体设置和背景颜色效果。';
-  /** 所有可用的背景图片（来自其他电子书和全局设置） */
+  private previewText: string = 'This is preview text for current font and background settings.';
+  /** 所有可用背景图片 */
   @State private allAvailableBackgroundImages: BackgroundImageInfo[] = [];
-  /** 是否显示其他电子书背景图片选择器 */
+  /** 是否显示“其他背景”选择器 */
   @State private showOtherBgImagePicker: boolean = false;
   /** 电子书数据管理器 */
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
@@ -92,16 +99,23 @@ export struct TextReaderSettingsPanel {
   @State private customFonts: CustomFont[] = [];
   /** 是否显示字体选择器 */
   @State private showFontPicker: boolean = false;
+  /** 是否显示听书设置面板 */
+  @State private showReadAloudPanel: boolean = false;
+  @State private readAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
+  @State private readAloudVoiceOptions: ReadAloudVoiceOption[] = [];
+  @State private readAloudStatusMessage: string = '';
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   
   aboutToAppear(): void {
-    // 加载所有可用的背景图片
+    // 加载背景图片池
     this.loadAllAvailableBackgroundImages();
     // 加载字体列表
     this.loadFontLists();
+    this.refreshReadAloudAvailability();
   }
   
   /**
-   * 加载字体列表
+   * 加载系统和自定义字体
    */
   private loadFontLists(): void {
     const fontManager = getFontManager();
@@ -110,7 +124,7 @@ export struct TextReaderSettingsPanel {
   }
   
   /**
-   * 加载所有可用的背景图片（来自其他电子书和全局设置）
+    * 加载所有可用背景图片
    */
   private async loadAllAvailableBackgroundImages(): Promise<void> {
     try {
@@ -119,7 +133,7 @@ export struct TextReaderSettingsPanel {
       const allImages: BackgroundImageInfo[] = [];
       const seenPaths = new Set<string>();
       
-      // 先添加全局设置的背景图片
+      // 优先加入全局背景图
       const settingsManager = SettingsManager.getInstance();
       const globalBgImagePath = settingsManager.getString(SettingKeys.GLOBAL_TEXT_BG_IMAGE_PATH, '');
       if (globalBgImagePath && globalBgImagePath.length > 0) {
@@ -132,7 +146,7 @@ export struct TextReaderSettingsPanel {
         allImages.push(globalBgInfo);
       }
       
-      // 添加电子书的背景图片（去重）
+      // 合并书籍背景图并去重
       for (const img of ebookImages) {
         if (!seenPaths.has(img.imagePath)) {
           seenPaths.add(img.imagePath);
@@ -148,12 +162,12 @@ export struct TextReaderSettingsPanel {
   }
   
   /**
-   * 强制刷新设置并通知变化
-   * 通过创建新对象来确保 ArkTS 能够检测到变化
+    * 更新设置并通知外部
+    * 使用新对象触发响应式刷新
    */
   private updateAndNotify(): void {
     this.refreshCounter++;
-    // 创建深拷贝以触发响应式更新
+    // 构建新对象，避免原地引用无法观测
     const newSettings: TextReaderSettings = {
       readingMode: this.settings.readingMode,
       readingDirection: this.settings.readingDirection,
@@ -192,68 +206,271 @@ export struct TextReaderSettingsPanel {
       autoScrollSpeed: this.settings.autoScrollSpeed,
       autoPageTurnEnabled: this.settings.autoPageTurnEnabled,
       autoPageTurnInterval: this.settings.autoPageTurnInterval,
-      curlBackOpacity: this.settings.curlBackOpacity
+      curlBackOpacity: this.settings.curlBackOpacity,
+      readAloud: this.getSafeReadAloudSettings()
     };
     this.settings = newSettings;
     this.onSettingsChange(newSettings);
   }
+
+  private getSafeReadAloudSettings(): ReadAloudSettings {
+    const current = this.settings.readAloud;
+    const rawEngine = current?.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const speed = Math.max(
+      0.5,
+      Math.min(2.0, current?.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed)
+    );
+    const pitch = Math.max(
+      0.5,
+      Math.min(2.0, current?.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch)
+    );
+    const volume = Math.max(
+      0,
+      Math.min(1, current?.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume)
+    );
+    const voiceLanguage = current?.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '';
+    const voicePersonRaw = current?.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
+    const voiceOnlineRaw = current?.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
+    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
+    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
+
+    return {
+      enabled: current?.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
+      engineType: safeEngine,
+      speed,
+      pitch,
+      volume,
+      continueInBackground: current?.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
+      autoPlayNextChapter: current?.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
+      pauseOnManualPageTurn: current?.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
+      voiceLanguage,
+      voicePerson,
+      voiceOnline
+    };
+  }
+
+  private updateReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
+    const current = this.getSafeReadAloudSettings();
+    const rawEngine = partial.engineType ?? current.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const speed = Math.max(0.5, Math.min(2.0, partial.speed ?? current.speed));
+    const pitch = Math.max(0.5, Math.min(2.0, partial.pitch ?? current.pitch));
+    const volume = Math.max(0, Math.min(1, partial.volume ?? current.volume));
+    const voiceLanguage = partial.voiceLanguage ?? current.voiceLanguage ?? '';
+    const voicePersonRaw = partial.voicePerson ?? current.voicePerson ?? -1;
+    const voiceOnlineRaw = partial.voiceOnline ?? current.voiceOnline ?? -1;
+    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
+    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
+
+    this.settings.readAloud = {
+      enabled: partial.enabled ?? current.enabled,
+      engineType: safeEngine,
+      speed,
+      pitch,
+      volume,
+      continueInBackground: partial.continueInBackground ?? current.continueInBackground,
+      autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
+      pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
+      voiceLanguage,
+      voicePerson,
+      voiceOnline
+    };
+    this.updateAndNotify();
+    if (
+      partial.engineType !== undefined ||
+      partial.voiceLanguage !== undefined ||
+      partial.voicePerson !== undefined ||
+      partial.voiceOnline !== undefined
+    ) {
+      this.refreshReadAloudVoices();
+    }
+  }
   
-  build() {
-    Column() {
-      // 标题栏
-      Row() {
-        Text('阅读设置')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-        
-        Button() {
-          Image($r('app.media.ic_close'))
-            .width(20)
-            .height(20)
-            .fillColor($r('app.color.text_secondary'))
+  private refreshReadAloudAvailability(): void {
+    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+      this.readAloudAvailability = map;
+      if (!map.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
         }
-        .width(36)
-        .height(36)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => this.onClose())
       }
-      .width('100%')
-      .padding({ left: 20, right: 12, top: 16, bottom: 12 })
-      
-      // 标签页切换
-      Row({ space: 0 }) {
-        this.buildTabButton('字体', SettingsTab.FONT)
-        this.buildTabButton('背景', SettingsTab.BACKGROUND)
-        this.buildTabButton('阅读', SettingsTab.READING)
+      this.refreshReadAloudVoices();
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书引擎可用性失败: ${errorText}`);
+      this.readAloudStatusMessage = `引擎可用性探测失败：${errorText}`;
+    });
+  }
+
+  private isReadAloudEngineAvailable(engineType: ReadAloudEngineType): boolean {
+    if (engineType === ReadAloudEngineType.SYSTEM) {
+      return this.readAloudAvailability.SYSTEM === true;
+    }
+    if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      return this.readAloudAvailability.LEGADO_COMPAT === true;
+    }
+    if (engineType === ReadAloudEngineType.REMOTE) {
+      return this.readAloudAvailability.REMOTE === true;
+    }
+    return false;
+  }
+
+  private refreshReadAloudVoices(): void {
+    const engineType = this.getSafeReadAloudSettings().engineType;
+    if (!this.isReadAloudEngineAvailable(engineType)) {
+      this.readAloudVoiceOptions = [];
+      if (engineType === ReadAloudEngineType.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        } else {
+          this.readAloudStatusMessage = '系统 TTS 当前不可用，请点击刷新重试';
+        }
+      } else {
+        this.readAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
       }
-      .width('100%')
-      .padding({ left: 16, right: 16 })
-      
-      Divider().color($r('app.color.divider'))
-      
-      // 内容区域
-      Scroll() {
-        Column({ space: 16 }) {
-          if (this.currentTab === SettingsTab.FONT) {
-            this.buildFontSettings()
-          } else if (this.currentTab === SettingsTab.BACKGROUND) {
-            this.buildBackgroundSettings()
-          } else {
-            this.buildReadingSettings()
+      return;
+    }
+    this.readAloudController.listVoices(engineType).then((voices: ReadAloudVoiceOption[]) => {
+      this.readAloudVoiceOptions = voices;
+      if (voices.length > 0) {
+        this.readAloudStatusMessage = '';
+      } else if (engineType === ReadAloudEngineType.SYSTEM) {
+        this.readAloudStatusMessage = '系统 TTS 可直接朗读，但系统未返回可选音色';
+      } else {
+        this.readAloudStatusMessage = '当前引擎暂未返回音色列表';
+      }
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书音色列表失败: ${errorText}`);
+      this.readAloudVoiceOptions = [];
+      this.readAloudStatusMessage = `音色列表拉取失败：${errorText}`;
+    });
+  }
+
+  private formatReadAloudError(error: Object | string): string {
+    if (typeof error === 'string') {
+      return error;
+    }
+    const errorObj = error as Error;
+    if (errorObj.message && errorObj.message.length > 0) {
+      return errorObj.message;
+    }
+    try {
+      const jsonText = JSON.stringify(error);
+      if (jsonText && jsonText.length > 0 && jsonText !== '{}') {
+        return jsonText;
+      }
+    } catch (_ignored) {
+    }
+    return String(error);
+  }
+
+  private getReadAloudSummary(): string {
+    const settings = this.getSafeReadAloudSettings();
+    let engineLabel: string = '系统';
+    if (settings.engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      engineLabel = '兼容';
+    } else if (settings.engineType === ReadAloudEngineType.REMOTE) {
+      engineLabel = '远程';
+    }
+    const enabledText = settings.enabled ? '已启用' : '未启用';
+    return `${enabledText} · ${engineLabel} · 语速${settings.speed.toFixed(1)}x`;
+  }
+
+  build() {
+    Stack() {
+      Column() {
+        // 标题栏
+        Row() {
+          Text('阅读设置')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
+          
+          Button() {
+            Image($r('app.media.ic_close'))
+              .width(20)
+              .height(20)
+              .fillColor($r('app.color.text_secondary'))
           }
+          .width(36)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => this.onClose())
         }
         .width('100%')
-        .padding({ left: 20, right: 20, top: 16, bottom: 20 })
+        .padding({ left: 20, right: 12, top: 16, bottom: 12 })
+        
+        // 页签栏
+        Row({ space: 0 }) {
+          this.buildTabButton('字体', SettingsTab.FONT)
+          this.buildTabButton('背景', SettingsTab.BACKGROUND)
+          this.buildTabButton('阅读', SettingsTab.READING)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16 })
+        
+        Divider().color($r('app.color.divider'))
+        
+        // 设置内容
+        Scroll() {
+          Column({ space: 16 }) {
+            if (this.currentTab === SettingsTab.FONT) {
+              this.buildFontSettings()
+            } else if (this.currentTab === SettingsTab.BACKGROUND) {
+              this.buildBackgroundSettings()
+            } else {
+              this.buildReadingSettings()
+            }
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 16, bottom: 20 })
+        }
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
       }
-      .layoutWeight(1)
-      .scrollBar(BarState.Auto)
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .borderRadius({ topLeft: 16, topRight: 16 })
+
+      if (this.showReadAloudPanel) {
+        ReadAloudSettingsInfoPanel({
+          isLandscape: this.isLandscape,
+          settings: this.getSafeReadAloudSettings(),
+          availability: this.readAloudAvailability,
+          voiceOptions: this.readAloudVoiceOptions,
+          statusMessage: this.readAloudStatusMessage,
+          callbacks: {
+            onClose: () => {
+              this.showReadAloudPanel = false;
+            },
+            onRefresh: () => {
+              this.refreshReadAloudAvailability();
+            },
+            onChange: (partial: Partial<ReadAloudSettings>) => {
+              this.updateReadAloudSettings(partial);
+            }
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Color.Transparent)
-    .borderRadius({ topLeft: 16, topRight: 16 })
   }
   
   @Builder
@@ -284,11 +501,11 @@ export struct TextReaderSettingsPanel {
    */
   @Builder
   buildFontSettings() {
-    // 使用 refreshCounter 触发重新渲染
+    // 利用 refreshCounter 强制刷新预览区
     Column({ space: 20 }) {
-      // 预览区域
+      // 字体预览
       Column() {
-        Text('预览效果')
+          Text('预览效果')
           .fontSize(13)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
@@ -369,7 +586,7 @@ export struct TextReaderSettingsPanel {
       // 行高
       Column({ space: 8 }) {
         Row() {
-          Text('行高')
+        Text('行高')
             .fontSize(14)
             .fontColor($r('app.color.text_primary'))
           Blank()
@@ -428,7 +645,7 @@ export struct TextReaderSettingsPanel {
       
       // 文字对齐
       Column({ space: 8 }) {
-        Text('文字对齐')
+          Text('文字对齐')
           .fontSize(14)
           .fontColor($r('app.color.text_primary'))
           .width('100%')
@@ -461,10 +678,10 @@ export struct TextReaderSettingsPanel {
       }
       .width('100%')
       
-      // 字体粗细
+      // 字重
       Column({ space: 8 }) {
         Row() {
-          Text('字体粗细')
+            Text('字重')
             .fontSize(14)
             .fontColor($r('app.color.text_primary'))
           Blank()
@@ -502,10 +719,10 @@ export struct TextReaderSettingsPanel {
       }
       .width('100%')
       
-      // 字体选择
+      // 字体家族
       Column({ space: 8 }) {
         Row() {
-          Text('字体')
+              Text('字体')
             .fontSize(14)
             .fontColor($r('app.color.text_primary'))
           Blank()
@@ -520,8 +737,8 @@ export struct TextReaderSettingsPanel {
         
         if (this.showFontPicker) {
           Column({ space: 8 }) {
-            // 系统字体
-            Text('系统字体')
+            // 系统字体列表
+        Text('系统字体')
               .fontSize(12)
               .fontColor($r('app.color.text_secondary'))
               .width('100%')
@@ -538,14 +755,14 @@ export struct TextReaderSettingsPanel {
                     Color.White : $r('app.color.text_primary'))
                   .onClick(() => {
                     this.settings.textStyle.fontFamily = font.name;
-                    this.settings.textStyle.fontPath = ''; // 系统字体不需要路径
+                    this.settings.textStyle.fontPath = ''; // 使用系统字体时清空自定义字体路径
                     this.updateAndNotify();
                   })
               }, (font: SystemFont) => font.id)
             }
             .width('100%')
             
-            // 自定义字体
+            // 自定义字体列表
             if (this.customFonts.length > 0) {
               Text('自定义字体')
                 .fontSize(12)
@@ -585,18 +802,18 @@ export struct TextReaderSettingsPanel {
   }
   
   /**
-   * 获取当前字体显示名称
+    * 获取当前字体显示名
    */
   private getCurrentFontDisplayName(): string {
     const currentFamily = this.settings.textStyle.fontFamily;
     
-    // 检查系统字体
+    // 优先匹配系统字体
     const systemFont = this.systemFonts.find(f => f.name === currentFamily);
     if (systemFont) {
       return systemFont.displayName;
     }
     
-    // 检查自定义字体
+    // 再匹配自定义字体
     const customFont = this.customFonts.find(f => f.familyName === currentFamily);
     if (customFont) {
       return customFont.displayName;
@@ -611,9 +828,9 @@ export struct TextReaderSettingsPanel {
   @Builder
   buildBackgroundSettings() {
     Column({ space: 20 }) {
-      // 预设背景颜色
+      // 预设背景主题
       Column({ space: 12 }) {
-        Text('预设主题(同时设置背景主题与文本颜色)')
+        Text('可在此设置当前书籍背景，也可从其他书籍已保存背景中进行选择')
           .fontSize(14)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
@@ -655,17 +872,17 @@ export struct TextReaderSettingsPanel {
       
       Divider().color($r('app.color.divider'))
       
-      // 自定义背景图片
+      // 背景图片设置
       Column({ space: 12 }) {
         Row() {
-          Text('自定义背景图片')
+            Text('选择已有背景图片')
             .fontSize(14)
             .fontColor($r('app.color.text_secondary'))
           Blank()
           Row({ space: 8 }) {
-            // 使用已有背景按钮
+            // 仅在有可复用背景时显示“添加”
             if (this.allAvailableBackgroundImages.length > 0) {
-              Button('已有')
+            Button('已有')
                 .fontSize(12)
                 .height(28)
                 .backgroundColor($r('app.color.accent_secondary'))
@@ -674,7 +891,7 @@ export struct TextReaderSettingsPanel {
                   this.showOtherBgImagePicker = !this.showOtherBgImagePicker;
                 })
             }
-            Button('添加')
+              Button('添加')
               .fontSize(12)
               .height(28)
               .backgroundColor($r('app.color.accent_primary'))
@@ -686,10 +903,10 @@ export struct TextReaderSettingsPanel {
         }
         .width('100%')
         
-        // 其他电子书背景图片选择器
+        // 展开跨书背景选择器
         if (this.showOtherBgImagePicker && this.allAvailableBackgroundImages.length > 0) {
           Column({ space: 8 }) {
-            Text('选择已有背景图片')
+            Text('从其他书籍背景中选择')
               .fontSize(12)
               .fontColor($r('app.color.text_secondary'))
               .width('100%')
@@ -718,7 +935,7 @@ export struct TextReaderSettingsPanel {
                 }
                 .margin({ right: 8, bottom: 8 })
                 .onClick(() => {
-                  // 选择此图片作为背景
+                  // 应用所选背景图
                   this.settings.background = {
                     type: BackgroundType.IMAGE,
                     imagePath: item.imagePath,
@@ -737,7 +954,7 @@ export struct TextReaderSettingsPanel {
           .borderRadius(8)
         }
         
-        // 已保存的背景图片缩略图
+        // 已保存背景图
         if (this.settings.savedBackgroundImages && this.settings.savedBackgroundImages.length > 0) {
           Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
             ForEach(this.settings.savedBackgroundImages, (savedImg: SavedBackgroundImage, index: number) => {
@@ -754,7 +971,7 @@ export struct TextReaderSettingsPanel {
                     color: $r('app.color.accent_primary')
                   })
                 
-                // 选中标记
+                // 当前使用中的背景标记
                 if (this.settings.background.type === BackgroundType.IMAGE && 
                     this.settings.background.imagePath === savedImg.path) {
                   Column()
@@ -769,7 +986,7 @@ export struct TextReaderSettingsPanel {
               .height(45)
               .margin({ right: 8, bottom: 8 })
               .onClick(() => {
-                // 选择此图片作为背景
+                // 应用已保存背景图
                 this.settings.background = {
                   type: BackgroundType.IMAGE,
                   imagePath: savedImg.path,
@@ -787,23 +1004,23 @@ export struct TextReaderSettingsPanel {
           }
           .width('100%')
           
-          Text('长按图片可删除')
+        Text('长按图片可删除')
             .fontSize(11)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
         } else {
-          Text('暂无保存的背景图片')
+          Text('暂无已保存背景图')
             .fontSize(13)
             .fontColor($r('app.color.text_secondary'))
             .width('100%')
             .padding({ top: 8, bottom: 8 })
         }
         
-        // 图片不透明度调节（仅在使用图片背景时显示）
+        // 背景透明度
         if (this.settings.background.type === BackgroundType.IMAGE) {
           Column({ space: 8 }) {
             Row() {
-              Text('图片不透明度')
+          Text('背景透明度')
                 .fontSize(14)
                 .fontColor($r('app.color.text_primary'))
               Blank()
@@ -833,7 +1050,7 @@ export struct TextReaderSettingsPanel {
       
       Divider().color($r('app.color.divider'))
       
-      // 文字颜色（仅在使用图片背景时需要手动选择）
+      // 文字颜色（图片背景）
       if (this.settings.background.type === BackgroundType.IMAGE) {
         Column({ space: 12 }) {
           Text('文字颜色')
@@ -881,7 +1098,7 @@ export struct TextReaderSettingsPanel {
           .width('100%')
         
         Row({ space: 8 }) {
-          Button('左右翻页')
+          Button('翻页')
             .fontSize(13)
             .height(36)
             .layoutWeight(1)
@@ -911,7 +1128,7 @@ export struct TextReaderSettingsPanel {
       }
       .width('100%')
       
-      // 翻页动画（仅在翻页模式下显示）
+      // 翻页动画
       if (this.settings.readingMode === TextReadingMode.PAGE) {
         Column({ space: 12 }) {
           Text('翻页动画')
@@ -950,7 +1167,7 @@ export struct TextReaderSettingsPanel {
       
       Divider().color($r('app.color.divider'))
       
-      // 开关设置
+      // 阅读交互开关
       this.buildToggleSetting('点击翻页', this.settings.tapToTurn, (isOn: boolean) => {
         this.settings.tapToTurn = isOn;
         this.updateAndNotify();
@@ -965,19 +1182,19 @@ export struct TextReaderSettingsPanel {
         this.settings.keepScreenOn = isOn;
         this.updateAndNotify();
       })
-      
+
       Divider().color($r('app.color.divider'))
       
-      // 底部信息显示设置
+      // 底部显示模式
       Column({ space: 8 }) {
-        Text('阅读进度显示')
+          Text('底部显示模式')
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .width('100%')
         
-        // 右下角显示选项（页码/进度/不显示，三选一）
-        Text('右下角显示信息')
+        // 页码/进度/不显示
+          Text('选择底部显示内容')
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
@@ -1031,13 +1248,13 @@ export struct TextReaderSettingsPanel {
       
       Divider().color($r('app.color.divider'))
       
-      // 其他显示开关
-      this.buildToggleSetting('显示时间 (底部中央)', this.settings.showTime, (isOn: boolean) => {
+      // 附加显示项
+      this.buildToggleSetting('显示时间（底部信息栏）', this.settings.showTime, (isOn: boolean) => {
         this.settings.showTime = isOn;
         this.updateAndNotify();
       })
       
-      this.buildToggleSetting('显示电量 (左下角)', this.settings.showBattery, (isOn: boolean) => {
+      this.buildToggleSetting('显示电量（状态栏）', this.settings.showBattery, (isOn: boolean) => {
         this.settings.showBattery = isOn;
         this.updateAndNotify();
       })
@@ -1062,7 +1279,7 @@ export struct TextReaderSettingsPanel {
   }
   
   /**
-   * 选择背景图片并复制到应用沙箱目录
+    * 选择并保存背景图片
    */
   private async selectBackgroundImage(): Promise<void> {
     try {
@@ -1075,27 +1292,27 @@ export struct TextReaderSettingsPanel {
       if (result.photoUris && result.photoUris.length > 0) {
         const sourceUri = result.photoUris[0];
         
-        // 将图片复制到应用沙箱目录
+        // 复制图片到应用沙箱
         const savedPath = await this.copyImageToSandbox(sourceUri);
         if (!savedPath) {
           logger.error(TAG, '复制图片到沙箱失败');
           return;
         }
         
-        // 添加到保存的背景图片列表
+        // 初始化背景图列表
         if (!this.settings.savedBackgroundImages) {
           this.settings.savedBackgroundImages = [];
         }
         
-        // 检查是否已存在
+        // 避免重复添加
         const exists = this.settings.savedBackgroundImages.some(
           (img: SavedBackgroundImage) => img.path === savedPath
         );
         
         if (!exists) {
-          // 最多保存10个
+          // 最多保留 10 张背景图
           if (this.settings.savedBackgroundImages.length >= 10) {
-            // 删除最旧的图片文件
+            // 移除最早一张
             const oldImage = this.settings.savedBackgroundImages.shift();
             if (oldImage) {
               this.deleteImageFile(oldImage.path);
@@ -1108,7 +1325,7 @@ export struct TextReaderSettingsPanel {
           });
         }
         
-        // 设置为当前背景
+        // 应用新的背景配置
         this.settings.background = {
           type: BackgroundType.IMAGE,
           imagePath: savedPath,
@@ -1116,25 +1333,25 @@ export struct TextReaderSettingsPanel {
         };
         
         this.updateAndNotify();
-        logger.info(TAG, `选择背景图片已保存到沙箱: ${savedPath}`);
+        logger.info(TAG, `背景图已保存到应用目录: ${savedPath}`);
       }
     } catch (error) {
-      logger.error(TAG, `选择图片失败: ${String(error)}`);
+      logger.error(TAG, `保存背景图失败: ${String(error)}`);
     }
   }
   
   /**
-   * 复制图片到应用沙箱目录
-   * 注意：PhotoViewPicker 返回的是 file://media/... URI，需要特殊处理
-   * 使用 @ohos.file.fs 模块（与 ThemeSettingsPage 一致）
+    * 将图片复制到缓存目录
+    * 返回新文件路径
+    * 失败时返回 null
    */
   private async copyImageToSandbox(sourceUri: string): Promise<string | null> {
     try {
-      // 获取应用缓存目录（直接使用 cacheDir，与官方示例完全一致）
+      // 获取应用缓存目录
       const context = getContext(this);
       const cacheDir = context.cacheDir;
       
-      // 生成唯一文件名（直接放在 cacheDir 下，与官方示例一致）
+      // 生成目标文件名
       const timestamp = Date.now();
       const randomStr = Math.random().toString(36).substring(2, 8);
       const extension = this.getFileExtension(sourceUri);
@@ -1143,32 +1360,32 @@ export struct TextReaderSettingsPanel {
       
       logger.info(TAG, `cacheDir: ${cacheDir}`);
       
-      logger.info(TAG, `准备复制图片: ${sourceUri} -> ${destPath}`);
+      logger.info(TAG, `复制源文件到目标: ${sourceUri} -> ${destPath}`);
       
-      // 使用官方文档推荐的方式：打开源文件后直接 copyFileSync 到目标路径
+      // 打开源文件
       const sourceFile = fs.openSync(sourceUri, fs.OpenMode.READ_ONLY);
-      logger.info(TAG, `源文件打开成功, fd: ${sourceFile.fd}`);
+      logger.info(TAG, `已打开源文件, fd: ${sourceFile.fd}`);
       
-      // copyFileSync 支持 (fd, path) 格式，不需要预先创建目标文件
+      // copyFileSync 支持 (fd, path) 的形式，这里使用源 fd 复制到目标路径
       fs.copyFileSync(sourceFile.fd, destPath);
-      logger.info(TAG, `copyFileSync 完成`);
+      logger.info(TAG, `copyFileSync 执行完成`);
       
       fs.closeSync(sourceFile);
       
-      // 验证文件是否复制成功
+      // 校验目标文件
       const stat = fs.statSync(destPath);
-      logger.info(TAG, `图片复制成功: ${destPath}, 大小: ${stat.size} 字节`);
+      logger.info(TAG, `目标文件校验通过: ${destPath}, 大小: ${stat.size} bytes`);
       
       return destPath;
       
     } catch (error) {
-      logger.error(TAG, `复制图片失败: ${String(error)}`);
+      logger.error(TAG, `copyBackgroundImageToAppStorage 执行失败: ${String(error)}`);
       return null;
     }
   }
   
   /**
-   * 获取文件扩展名
+    * 获取文件扩展名
    */
   private getFileExtension(path: string): string {
     const lastDot = path.lastIndexOf('.');
@@ -1179,22 +1396,22 @@ export struct TextReaderSettingsPanel {
   }
   
   /**
-   * 删除图片文件
+    * 删除背景图文件
    */
   private deleteImageFile(path: string): void {
     try {
-      // 只删除沙箱内的文件
+      // 仅删除背景目录内文件
       if (path.includes('/bg_images/')) {
         fs.unlinkSync(path);
         logger.info(TAG, `已删除背景图片文件: ${path}`);
       }
     } catch (error) {
-      logger.warn(TAG, `删除图片文件失败: ${String(error)}`);
+      logger.warn(TAG, `删除背景图片文件失败: ${String(error)}`);
     }
   }
   
   /**
-   * 显示删除确认对话框
+    * 弹出删除确认对话框
    */
   private showDeleteConfirmDialog(index: number): void {
     promptAction.showDialog({
@@ -1209,12 +1426,12 @@ export struct TextReaderSettingsPanel {
         this.deleteBackgroundImage(index);
       }
     }).catch((err: Error) => {
-      logger.error(TAG, `显示对话框失败: ${err.message}`);
+      logger.error(TAG, `删除确认弹窗失败: ${err.message}`);
     });
   }
   
   /**
-   * 删除背景图片
+   * 删除背景图项
    */
   private deleteBackgroundImage(index: number): void {
     if (!this.settings.savedBackgroundImages || index < 0 || index >= this.settings.savedBackgroundImages.length) {
@@ -1223,12 +1440,12 @@ export struct TextReaderSettingsPanel {
     
     const deletedPath = this.settings.savedBackgroundImages[index].path;
     
-    // 删除沙箱中的图片文件
+    // 删除对应文件
     this.deleteImageFile(deletedPath);
     
     this.settings.savedBackgroundImages.splice(index, 1);
     
-    // 如果删除的是当前使用的背景，切换回默认颜色背景
+    // 若当前正在使用该图，回退为纯色背景
     if (this.settings.background.type === BackgroundType.IMAGE && 
         this.settings.background.imagePath === deletedPath) {
       this.settings.background = {
@@ -1240,6 +1457,6 @@ export struct TextReaderSettingsPanel {
     }
     
     this.updateAndNotify();
-    logger.info(TAG, `删除背景图片: index=${index}, path=${deletedPath}`);
+    logger.info(TAG, `删除背景图项: index=${index}, path=${deletedPath}`);
   }
 }

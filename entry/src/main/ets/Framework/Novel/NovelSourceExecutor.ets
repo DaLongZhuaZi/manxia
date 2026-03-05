@@ -78,19 +78,22 @@ interface HttpRequestResult {
  * 搜索解析选项
  * 用于在高并发校验场景下降低主线程解析压力
  */
-interface SearchParseOptions {
+export interface SearchParseOptions {
   /** 最多保留多少条搜索结果（<=0 时表示不限制） */
   maxResults?: number;
   /** 最多扫描多少个候选元素（<=0 时表示不限制） */
   maxElementScan?: number;
   /** 是否禁用 item 级 DOM bridge（改用字符串解析） */
   disableItemDomBridge?: boolean;
+  forceFullExecution?: boolean;
+  yieldSliceMs?: number;
 }
 
 /**
  * 小说源执行器类
  */
 export class NovelSourceExecutor {
+  private static readonly ENABLE_SEARCH_PARSE_TRACE: boolean = false;
   private source: LegadoBookSource;
   private urlAnalyzer: LegadoUrlAnalyzer;
 
@@ -113,11 +116,22 @@ export class NovelSourceExecutor {
     }
   }
 
+  private searchParseTrace(messageBuilder: () => string): void {
+    if (!NovelSourceExecutor.ENABLE_SEARCH_PARSE_TRACE) {
+      return;
+    }
+    logger.debug(TAG, messageBuilder());
+  }
+
   /**
    * 搜索书籍
    */
-  async search(keyword: string, page: number = 1): Promise<LegadoSearchBook[]> {
-    const result = await this.searchWithError(keyword, page);
+  async search(
+    keyword: string,
+    page: number = 1,
+    parseOptions?: SearchParseOptions
+  ): Promise<LegadoSearchBook[]> {
+    const result = await this.searchWithError(keyword, page, parseOptions);
     return result.books;
   }
   
@@ -820,56 +834,162 @@ export class NovelSourceExecutor {
     const rule = this.source.ruleSearch;
     
     if (!rule || !rule.bookList) {
-      logger.debug(TAG, `[书源:${this.source.bookSourceName}] 搜索规则为空或缺少bookList`);
+      this.searchParseTrace((): string => `[书源:${this.source.bookSourceName}] 搜索规则为空或缺少bookList`);
       return results;
     }
 
     // 性能优化：减少日志输出，仅在小型响应时输出调试信息
     if (html.length < 50000) {
-      const htmlSnippet = html.length > 500 ? html.substring(0, 500) + '...' : html;
-      logger.debug(TAG, `[书源:${this.source.bookSourceName}] 响应长度=${html.length}, bookList规则=${rule.bookList}`);
-      logger.debug(TAG, `[书源:${this.source.bookSourceName}] 响应片段: ${htmlSnippet}`);
+      this.searchParseTrace((): string => `[书源:${this.source.bookSourceName}] 响应长度=${html.length}, bookList规则=${rule.bookList}`);
+      this.searchParseTrace((): string => {
+        const htmlSnippet = html.length > 500 ? html.substring(0, 500) + '...' : html;
+        return `[书源:${this.source.bookSourceName}] 响应片段: ${htmlSnippet}`;
+      });
     }
 
-    const maxResults = parseOptions?.maxResults && parseOptions.maxResults > 0
+    const forceFullExecution = parseOptions?.forceFullExecution === true;
+    const maxResults = !forceFullExecution && parseOptions?.maxResults && parseOptions.maxResults > 0
       ? Math.floor(parseOptions.maxResults)
       : Number.MAX_SAFE_INTEGER;
-    const maxElementScan = parseOptions?.maxElementScan && parseOptions.maxElementScan > 0
+    const maxElementScan = !forceFullExecution && parseOptions?.maxElementScan && parseOptions.maxElementScan > 0
       ? Math.floor(parseOptions.maxElementScan)
       : Number.MAX_SAFE_INTEGER;
     const disableItemDomBridge = parseOptions?.disableItemDomBridge === true;
+    const configuredYieldSlice = parseOptions?.yieldSliceMs && parseOptions.yieldSliceMs > 0
+      ? Math.floor(parseOptions.yieldSliceMs)
+      : 8;
+    const yieldSliceMs = Math.max(4, Math.min(20, configuredYieldSlice));
+    let rootElementLimit = 0;
+    if (!forceFullExecution && ((parseOptions?.maxResults && parseOptions.maxResults > 0) ||
+      (parseOptions?.maxElementScan && parseOptions.maxElementScan > 0))) {
+      const limitByResults = maxResults === Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : maxResults * 2;
+      const limitByScan = maxElementScan === Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : maxElementScan * 2;
+      rootElementLimit = Math.max(20, Math.min(limitByResults, limitByScan, 240));
+    }
 
     const analyzer = new LegadoRuleAnalyzer();
-    analyzer.setContent(html, baseUrl);
+    if (rootElementLimit > 0) {
+      analyzer.setMaxElementsLimit(rootElementLimit);
+    }
+    analyzer.setContent(html, baseUrl, disableItemDomBridge);
 
     // 使用异步方法获取元素，支持JS规则
     const bookElements = await analyzer.getElementsAsync(rule.bookList);
-    logger.debug(TAG, `[书源:${this.source.bookSourceName}] bookList解析结果: ${bookElements.length} 个元素`);
+    this.searchParseTrace((): string => `[书源:${this.source.bookSourceName}] bookList解析结果: ${bookElements.length} 个元素`);
 
     const scanLimit = Math.min(bookElements.length, maxElementScan);
-    for (let i = 0; i < scanLimit && results.length < maxResults; i++) {
-      const itemAnalyzer = new LegadoRuleAnalyzer();
-      itemAnalyzer.setContent(bookElements[i], baseUrl, disableItemDomBridge);
+    const YIELD_SLICE_MS = yieldSliceMs;
+    let lastYieldTime = Date.now();
+    const maybeYield = async (): Promise<void> => {
+      const now = Date.now();
+      if (now - lastYieldTime >= YIELD_SLICE_MS) {
+        await this.yieldToEventLoop();
+        lastYieldTime = Date.now();
+      }
+    };
+    const shouldUseAsyncRule = (ruleText?: string): boolean => {
+      if (!ruleText) {
+        return false;
+      }
+      const lowerRule = ruleText.toLowerCase();
+      return lowerRule.includes('<js>') || lowerRule.includes('@js:') || lowerRule.startsWith('js:');
+    };
+    const nameUseAsync = shouldUseAsyncRule(rule.name);
+    const bookUrlUseAsync = shouldUseAsyncRule(rule.bookUrl);
+    const authorUseAsync = shouldUseAsyncRule(rule.author);
+    const kindUseAsync = shouldUseAsyncRule(rule.kind);
+    const introUseAsync = shouldUseAsyncRule(rule.intro);
+    const coverUrlUseAsync = shouldUseAsyncRule(rule.coverUrl);
+    const latestChapterUseAsync = shouldUseAsyncRule(rule.lastChapter);
+    const wordCountUseAsync = shouldUseAsyncRule(rule.wordCount);
+    const shouldDisableItemDomBridge = disableItemDomBridge || scanLimit > 40;
+    const itemAnalyzer = new LegadoRuleAnalyzer();
+    if (shouldDisableItemDomBridge) {
+      // item级规则只用于提取单条字段，不需要放开到全局上限，限制可显著降低异常规则卡顿风险
+      itemAnalyzer.setMaxElementsLimit(768);
+    }
+    const syncRuleCache: Map<string, string> = new Map();
+    const asyncRuleCache: Map<string, Promise<string>> = new Map();
 
-      const name = itemAnalyzer.getString(rule.name);
+    const readRuleValue = (
+      ruleText: string | undefined,
+      useAsync: boolean
+    ): string | Promise<string> => {
+      if (!ruleText) {
+        return '';
+      }
+      if (useAsync) {
+        const cachedAsync = asyncRuleCache.get(ruleText);
+        if (cachedAsync !== undefined) {
+          return cachedAsync;
+        }
+        const asyncValue = itemAnalyzer.getStringAsync(ruleText);
+        asyncRuleCache.set(ruleText, asyncValue);
+        return asyncValue;
+      }
+
+      const cachedSync = syncRuleCache.get(ruleText);
+      if (cachedSync !== undefined) {
+        return cachedSync; 
+      }
+      const syncValue = itemAnalyzer.getString(ruleText);
+      syncRuleCache.set(ruleText, syncValue);
+      return syncValue;
+    };
+    for (let i = 0; i < scanLimit && results.length < maxResults; i++) {
+      const loopStart = Date.now();
+      if (loopStart - lastYieldTime >= YIELD_SLICE_MS) {
+        await this.yieldToEventLoop();
+        lastYieldTime = Date.now();
+      }
+      syncRuleCache.clear();
+      asyncRuleCache.clear();
+      itemAnalyzer.setContent(bookElements[i], baseUrl, shouldDisableItemDomBridge);
+
+      const nameRuleValue = readRuleValue(rule.name, nameUseAsync);
+      const name = typeof nameRuleValue === 'string' ? nameRuleValue : await nameRuleValue;
+      await maybeYield();
       // 性能优化：仅在第一个元素时输出调试信息
       if (i === 0 && html.length < 50000) {
-        const elementSnippet = bookElements[i].length > 200 ? bookElements[i].substring(0, 200) + '...' : bookElements[i];
-        logger.debug(TAG, `[书源:${this.source.bookSourceName}] 元素[0]片段: ${elementSnippet}`);
-        logger.debug(TAG, `[书源:${this.source.bookSourceName}] 元素[0] name规则=${rule.name}, 解析结果="${name}"`);
+        this.searchParseTrace((): string => {
+          const elementSnippet = bookElements[i].length > 200 ? bookElements[i].substring(0, 200) + '...' : bookElements[i];
+          return `[书源:${this.source.bookSourceName}] 元素[0]片段: ${elementSnippet}`;
+        });
+        this.searchParseTrace((): string => `[书源:${this.source.bookSourceName}] 元素[0] name规则=${rule.name}, 解析结果="${name}"`);
       }
       if (!name) {
         continue;
       }
 
       // 解析bookUrl（使用异步方法支持JS规则）
-      const bookUrlRaw = await itemAnalyzer.getStringAsync(rule.bookUrl);
+      const bookUrlRuleValue = readRuleValue(rule.bookUrl, bookUrlUseAsync);
+      const bookUrlRaw = typeof bookUrlRuleValue === 'string' ? bookUrlRuleValue : await bookUrlRuleValue;
       const bookUrl = bookUrlRaw || baseUrl;
+      await maybeYield();
+
+      const authorRuleValue = readRuleValue(rule.author, authorUseAsync);
+      const author = typeof authorRuleValue === 'string' ? authorRuleValue : await authorRuleValue;
+      await maybeYield();
+      const kindRuleValue = readRuleValue(rule.kind, kindUseAsync);
+      const kind = typeof kindRuleValue === 'string' ? kindRuleValue : await kindRuleValue;
+      await maybeYield();
+      const introRuleValue = readRuleValue(rule.intro, introUseAsync);
+      const intro = typeof introRuleValue === 'string' ? introRuleValue : await introRuleValue;
+      await maybeYield();
+      const coverRuleValue = readRuleValue(rule.coverUrl, coverUrlUseAsync);
+      const coverUrl = typeof coverRuleValue === 'string' ? coverRuleValue : await coverRuleValue;
+      await maybeYield();
+      const chapterRuleValue = readRuleValue(rule.lastChapter, latestChapterUseAsync);
+      const latestChapterTitle = typeof chapterRuleValue === 'string' ? chapterRuleValue : await chapterRuleValue;
+      await maybeYield();
+      const wordCountRuleValue = readRuleValue(rule.wordCount, wordCountUseAsync);
+      const wordCount = typeof wordCountRuleValue === 'string' ? wordCountRuleValue : await wordCountRuleValue;
+      await maybeYield();
       
       // 始终输出第一个元素的bookUrl解析信息（用于调试）
       if (i === 0) {
-        logger.debug(TAG, `搜索结果解析: bookUrl规则=${rule.bookUrl}, 解析结果=${bookUrlRaw}, 最终URL=${bookUrl}`);
-        logger.debug(TAG, `元素内容: ${bookElements[i].substring(0, 300)}`);
+        this.searchParseTrace((): string => `搜索结果解析: bookUrl规则=${rule.bookUrl}, 解析结果=${bookUrlRaw}, 最终URL=${bookUrl}`);
+        this.searchParseTrace((): string => `元素内容: ${bookElements[i].substring(0, 300)}`);
       }
 
       const searchBook: LegadoSearchBook = {
@@ -877,25 +997,27 @@ export class NovelSourceExecutor {
         originName: this.source.bookSourceName,
         bookUrl: bookUrl,
         name: name,
-        author: itemAnalyzer.getString(rule.author) || '',
-        kind: itemAnalyzer.getString(rule.kind),
-        intro: itemAnalyzer.getString(rule.intro),
-        coverUrl: itemAnalyzer.getString(rule.coverUrl),
-        latestChapterTitle: itemAnalyzer.getString(rule.lastChapter),
-        wordCount: itemAnalyzer.getString(rule.wordCount),
+        author: author || '',
+        kind: kind,
+        intro: intro,
+        coverUrl: coverUrl,
+        latestChapterTitle: latestChapterTitle,
+        wordCount: wordCount,
         type: this.source.bookSourceType
       };
 
       results.push(searchBook);
 
-      // 分段让出事件循环，避免在大量结果时长时间占用主线程
-      if ((i + 1) % 20 === 0) {
+      // 单条解析后再次判断时间片，降低重规则场景下的主线程阻塞概率
+      const loopEnd = Date.now();
+      if (loopEnd - lastYieldTime >= YIELD_SLICE_MS) {
         await this.yieldToEventLoop();
+        lastYieldTime = Date.now();
       }
     }
 
     if (scanLimit < bookElements.length) {
-      logger.debug(TAG, `[书源:${this.source.bookSourceName}] 搜索元素扫描已截断: ${scanLimit}/${bookElements.length}`);
+      this.searchParseTrace((): string => `[书源:${this.source.bookSourceName}] 搜索元素扫描已截断: ${scanLimit}/${bookElements.length}`);
     }
 
     logger.info(TAG, `搜索结果: ${results.length} 本书`);

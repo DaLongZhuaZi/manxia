@@ -149,6 +149,60 @@ export interface SavedBackgroundImage {
 }
 
 /**
+ * 听书引擎类型
+ */
+export enum ReadAloudEngineType {
+  SYSTEM = 'SYSTEM',
+  LEGADO_COMPAT = 'LEGADO_COMPAT',
+  REMOTE = 'REMOTE'
+}
+
+/**
+ * 听书设置
+ */
+export interface ReadAloudSettings {
+  /** 听书总开关 */
+  enabled: boolean;
+  /** 引擎类型 */
+  engineType: ReadAloudEngineType;
+  /** 语速（0.5-2.0） */
+  speed: number;
+  /** 音调（0.5-2.0） */
+  pitch: number;
+  /** 音量（0-1） */
+  volume: number;
+  /** 后台是否继续播放 */
+  continueInBackground: boolean;
+  /** 章节切换后是否自动继续 */
+  autoPlayNextChapter: boolean;
+  /** 手动翻页时是否自动暂停听书 */
+  pauseOnManualPageTurn: boolean;
+  /** 系统TTS音色语种（空字符串表示跟随系统默认） */
+  voiceLanguage?: string;
+  /** 系统TTS音色人设（-1 表示跟随系统默认） */
+  voicePerson?: number;
+  /** 系统TTS音色在线类型（0在线/1离线，-1表示跟随系统默认） */
+  voiceOnline?: number;
+}
+
+/**
+ * 默认听书设置
+ */
+export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
+  enabled: false,
+  engineType: ReadAloudEngineType.SYSTEM,
+  speed: 1.0,
+  pitch: 1.0,
+  volume: 1.0,
+  continueInBackground: false,
+  autoPlayNextChapter: true,
+  pauseOnManualPageTurn: true,
+  voiceLanguage: '',
+  voicePerson: -1,
+  voiceOnline: -1
+};
+
+/**
  * 文本阅读器设置
  */
 export interface TextReaderSettings {
@@ -188,6 +242,8 @@ export interface TextReaderSettings {
   autoPageTurnInterval?: number;
   /** 卷页背面透明度（0-100） */
   curlBackOpacity: number;
+  /** 听书设置（可选，兼容旧版本） */
+  readAloud?: ReadAloudSettings;
 }
 
 /**
@@ -245,7 +301,20 @@ export const DEFAULT_TEXT_READER_SETTINGS: TextReaderSettings = {
   autoScrollSpeed: 50,
   autoPageTurnEnabled: false,
   autoPageTurnInterval: 8,
-  curlBackOpacity: 90
+  curlBackOpacity: 90,
+  readAloud: {
+    enabled: DEFAULT_READ_ALOUD_SETTINGS.enabled,
+    engineType: DEFAULT_READ_ALOUD_SETTINGS.engineType,
+    speed: DEFAULT_READ_ALOUD_SETTINGS.speed,
+    pitch: DEFAULT_READ_ALOUD_SETTINGS.pitch,
+    volume: DEFAULT_READ_ALOUD_SETTINGS.volume,
+    continueInBackground: DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
+    autoPlayNextChapter: DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
+    pauseOnManualPageTurn: DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
+    voiceLanguage: DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage,
+    voicePerson: DEFAULT_READ_ALOUD_SETTINGS.voicePerson,
+    voiceOnline: DEFAULT_READ_ALOUD_SETTINGS.voiceOnline
+  }
 };
 
 /**
@@ -302,6 +371,8 @@ export interface TextReadingProgress {
 export interface TextReaderCallbacks {
   /** 页面切换回调 */
   onPageChange?: (pageIndex: number, totalPages: number) => void;
+  /** 当前页字符区间变化回调（用于听书进度映射） */
+  onPageCharRangeChange?: (startCharIndex: number, endCharIndex: number) => void;
   /** 章节切换回调 */
   onChapterChange?: (chapterIndex: number) => void;
   /** 进度变化回调 */

@@ -20,7 +20,7 @@ import { isReaderKitEnabled } from '../Framework/Initialization/ReaderKitFeature
 import { EBookReadingSettingsPanel } from '../Framework/Components/EBookReadingSettingsPanel';
 import { curves, UIContext } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
-import { TextReaderComponent } from '../components/TextReaderComponent';
+import { TextReaderComponent, PaginationMode } from '../components/TextReaderComponent';
 import { TextReaderSettingsPanel } from '../components/TextReaderSettingsPanel';
 import {
   TextReaderSettings,
@@ -28,6 +28,9 @@ import {
   TextPageTurnAnimation,
   BackgroundType,
   DEFAULT_TEXT_READER_SETTINGS,
+  DEFAULT_READ_ALOUD_SETTINGS,
+  ReadAloudEngineType,
+  ReadAloudSettings,
   isTextFile,
   TextAlignment,
   SavedBackgroundImage,
@@ -35,10 +38,14 @@ import {
   PRESET_BACKGROUNDS,
   PresetBackground
 } from '../Models/TextReaderModels';
-import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
+import { eventBus, GameEvent, BasePayload, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
 import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudPlaybackState, ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
+import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
+import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoPanel';
 
 const TAG = 'EBookReaderPage';
 
@@ -127,14 +134,30 @@ struct EBookReaderPage {
   @State textReaderSettings: TextReaderSettings = DEFAULT_TEXT_READER_SETTINGS;
   @State textCurrentPageIndex: number = 0;
   @State textContent: string = '';
+  @State textCurrentPageStartCharIndex: number = 0;
+  @State textCurrentPageEndCharIndex: number = 0;
+  @State textReadAloudPlaying: boolean = false;
+  @State textReadAloudCurrentCharIndex: number = -1;
+  @State showReadAloudPanel: boolean = false;
+  @State readAloudPanelSettings: ReadAloudSettings = DEFAULT_READ_ALOUD_SETTINGS;
+  @State readAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
+  @State readAloudVoiceOptions: ReadAloudVoiceOption[] = [];
+  @State readAloudStatusMessage: string = '';
   // 跟踪最新的文本阅读进度百分比（避免退出时被旧值覆盖）
   private latestTextProgress: number = 0;
+  // 听书进度持久化节流，避免高频写库
+  private lastReadAloudProgressSaveTime: number = 0;
+  private lastReadAloudPanelCloseTime: number = 0;
+  private static readonly READ_ALOUD_PANEL_REOPEN_GUARD_MS: number = 320;
+  private static readonly READ_ALOUD_PROGRESS_SAVE_INTERVAL_MS: number = 3000;
   @State showTextReaderSettings: boolean = false;
   @State textReaderSettingsOpacity: number = 0;
   @State textReaderSettingsScale: number = 0.95;
 
   // 数据管理器
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   
   // UI上下文（用于设置沉浸式模式）
   private uiContext: UIContext | undefined = undefined;
@@ -152,8 +175,28 @@ struct EBookReaderPage {
   private isVolumeKeyListenerRegistered: boolean = false;
   private volumeUpCallback: ((event: InputKeyEvent) => void) | null = null;
   private volumeDownCallback: ((event: InputKeyEvent) => void) | null = null;
+  private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    const statePayload = payload as ReadAloudStatePayload;
+    const payloadBookId = statePayload.bookId ?? '';
+    if (!payloadBookId || payloadBookId !== this.ebook.id) {
+      return;
+    }
+
+    this.textReadAloudPlaying = statePayload.playbackState === ReadAloudPlaybackState.PLAYING;
+    this.applyTextReadAloudProgress(statePayload);
+    if (
+      statePayload.playbackState !== ReadAloudPlaybackState.PLAYING &&
+      statePayload.reason !== 'progress_updated'
+    ) {
+      this.saveReadingProgress();
+    }
+  };
 
   aboutToAppear(): void {
+    eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
       // [修复] 只有当用户选择跟随系统主题时才更新背景色
@@ -200,6 +243,21 @@ struct EBookReaderPage {
   }
 
   aboutToDisappear(): void {
+    eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    const readAloudSnapshot = this.readAloudController.getSnapshot();
+    const keepReadAloudAliveOnExit = readAloudSettings.continueInBackground &&
+      (
+        readAloudSnapshot.playbackState === ReadAloudPlaybackState.PLAYING ||
+        readAloudSnapshot.playbackState === ReadAloudPlaybackState.PAUSED
+      );
+    if (keepReadAloudAliveOnExit) {
+      this.textReadAloudPlaying = readAloudSnapshot.playbackState === ReadAloudPlaybackState.PLAYING;
+      logger.info(TAG, '离开电子书阅读器：已保持听书后台继续播放');
+    } else {
+      this.readAloudController.release();
+      this.textReadAloudPlaying = false;
+    }
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     // 注销音量键翻页监听
@@ -218,6 +276,8 @@ struct EBookReaderPage {
 
   onPageHide(): void {
     logger.lifecycle(TAG, '电子书阅读器页面隐藏（进入后台）');
+    this.readAloudController.handlePageHide();
+    this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     // 累加当前阅读时间段，确保不丢失
     this.accumulateReadingTime();
     // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
@@ -531,16 +591,7 @@ struct EBookReaderPage {
         if (ebook.readingProgress.domPos) {
           this.currentDomPos = ebook.readingProgress.domPos;
           logger.info(TAG, `恢复 DOM 位置: ${this.currentDomPos}`);
-          
-          // 对于 TXT 阅读器，从 domPos 恢复页码
-          // 格式: "page:N" 其中 N 是页码
-          if (ebook.readingProgress.domPos.startsWith('page:')) {
-            const pageIndex = parseInt(ebook.readingProgress.domPos.substring(5), 10);
-            if (!isNaN(pageIndex) && pageIndex >= 0) {
-              this.textCurrentPageIndex = pageIndex;
-              logger.info(TAG, `恢复文本阅读器页码: ${pageIndex}`);
-            }
-          }
+          this.restoreTextReadAloudFromDomPos(ebook.readingProgress.domPos);
         }
         
         // 备用：从 currentPosition 恢复页码
@@ -572,6 +623,7 @@ struct EBookReaderPage {
       if (ebook.format === EBookFormat.TXT) {
         this.textContent = this.getTextContent();
         logger.info(TAG, `初始化文本内容，长度: ${this.textContent.length}`);
+        this.syncTextReadAloudContext();
       }
 
       this.isLoading = false;
@@ -704,7 +756,8 @@ struct EBookReaderPage {
       tapToTurn: tapToTurn,
       volumeKeyNavigation: volumeKeyNav,
       autoScrollSpeed: 50,
-      curlBackOpacity: 90
+      curlBackOpacity: 90,
+      readAloud: this.loadGlobalReadAloudSettings()
     };
     
     // 同步更新 fontSize 等状态变量
@@ -770,7 +823,8 @@ struct EBookReaderPage {
       tapToTurn: settings.tapToTurn ?? true,
       volumeKeyNavigation: settings.volumeKeyNavigation ?? true,
       autoScrollSpeed: 50,
-      curlBackOpacity: 90
+      curlBackOpacity: 90,
+      readAloud: this.loadGlobalReadAloudSettings()
     };
     
     // 同步背景图片设置到页面状态
@@ -782,6 +836,475 @@ struct EBookReaderPage {
     }
 
     logger.info(TAG, `从数据库加载文本阅读器设置: volumeKeyNavigation=${this.textReaderSettings.volumeKeyNavigation}, fontSize=${this.textReaderSettings.textStyle.fontSize}, bgType=${this.textReaderSettings.background.type}, bgColor=${this.textReaderSettings.background.color}, textColor=${this.textReaderSettings.textStyle.textColor}, bgImagePath=${this.textReaderSettings.background.imagePath}`);
+  }
+
+  private getSafeReadAloudSettings(settings?: ReadAloudSettings): ReadAloudSettings {
+    const globalDefaults = this.loadGlobalReadAloudSettings();
+    const rawEngine = settings?.engineType ?? globalDefaults.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const speed = Math.max(0.5, Math.min(2.0, settings?.speed ?? globalDefaults.speed));
+    const pitch = Math.max(0.5, Math.min(2.0, settings?.pitch ?? globalDefaults.pitch));
+    const volume = Math.max(0, Math.min(1, settings?.volume ?? globalDefaults.volume));
+    const voiceLanguage = settings?.voiceLanguage ?? globalDefaults.voiceLanguage ?? '';
+    const voicePersonRaw = settings?.voicePerson ?? globalDefaults.voicePerson ?? -1;
+    const voiceOnlineRaw = settings?.voiceOnline ?? globalDefaults.voiceOnline ?? -1;
+    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
+    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
+
+    return {
+      enabled: settings?.enabled ?? globalDefaults.enabled,
+      engineType: safeEngine,
+      speed,
+      pitch,
+      volume,
+      continueInBackground: settings?.continueInBackground ?? globalDefaults.continueInBackground,
+      autoPlayNextChapter: settings?.autoPlayNextChapter ?? globalDefaults.autoPlayNextChapter,
+      pauseOnManualPageTurn: settings?.pauseOnManualPageTurn ?? globalDefaults.pauseOnManualPageTurn,
+      voiceLanguage,
+      voicePerson,
+      voiceOnline
+    };
+  }
+
+  private loadGlobalReadAloudSettings(): ReadAloudSettings {
+    const engineRaw = this.settingsManager.getString(
+      SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE,
+      DEFAULT_READ_ALOUD_SETTINGS.engineType
+    ) as ReadAloudEngineType;
+
+    return {
+      enabled: this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED,
+        DEFAULT_READ_ALOUD_SETTINGS.enabled
+      ),
+      engineType: engineRaw,
+      speed: this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED,
+        DEFAULT_READ_ALOUD_SETTINGS.speed
+      ),
+      pitch: this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH,
+        DEFAULT_READ_ALOUD_SETTINGS.pitch
+      ),
+      volume: this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME,
+        DEFAULT_READ_ALOUD_SETTINGS.volume
+      ),
+      continueInBackground: this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG,
+        DEFAULT_READ_ALOUD_SETTINGS.continueInBackground
+      ),
+      autoPlayNextChapter: this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
+        DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter
+      ),
+      pauseOnManualPageTurn: this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
+        DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn
+      ),
+      voiceLanguage: this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE,
+        DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? ''
+      ),
+      voicePerson: this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON,
+        DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1
+      ),
+      voiceOnline: this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE,
+        DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1
+      )
+    };
+  }
+
+  private async persistGlobalReadAloudSettings(settings: ReadAloudSettings): Promise<void> {
+    try {
+      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED, settings.enabled);
+      await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE, settings.engineType);
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED, settings.speed);
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH, settings.pitch);
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME, settings.volume);
+      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG, settings.continueInBackground);
+      await this.settingsManager.setBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
+        settings.autoPlayNextChapter
+      );
+      await this.settingsManager.setBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
+        settings.pauseOnManualPageTurn
+      );
+      await this.settingsManager.setString(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE,
+        settings.voiceLanguage ?? ''
+      );
+      await this.settingsManager.setNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON,
+        settings.voicePerson ?? -1
+      );
+      await this.settingsManager.setNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE,
+        settings.voiceOnline ?? -1
+      );
+    } catch (error) {
+      logger.warn(TAG, `保存全局听书设置失败: ${String(error)}`);
+    }
+  }
+
+  private syncTextReadAloudContext(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    this.textReaderSettings.readAloud = readAloudSettings;
+    this.readAloudController.updateSettings(readAloudSettings);
+    this.updateTextReadAloudContextByPosition();
+    this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+  }
+
+  private getCurrentTextResumeCharIndex(): number {
+    if (this.textReadAloudCurrentCharIndex >= 0) {
+      return this.textReadAloudCurrentCharIndex;
+    }
+    if (this.textCurrentPageEndCharIndex > this.textCurrentPageStartCharIndex) {
+      return this.textCurrentPageStartCharIndex;
+    }
+    return 0;
+  }
+
+  private calculateTextOverallProgressByChar(charIndex: number): number {
+    if (!this.ebook || this.ebook.chapters.length === 0) {
+      return 0;
+    }
+
+    const totalChapters = this.ebook.chapters.length;
+    const chapterLength = this.textContent.length;
+    if (chapterLength <= 0) {
+      const baseProgress = (this.currentChapterIndex / totalChapters) * 100;
+      return Math.max(0, Math.min(100, baseProgress));
+    }
+
+    const safeCharIndex = Math.max(0, Math.min(charIndex, chapterLength));
+    const chapterProgress = safeCharIndex / chapterLength;
+    const overallProgress = ((this.currentChapterIndex + chapterProgress) / totalChapters) * 100;
+    return Math.max(0, Math.min(100, overallProgress));
+  }
+
+  private tryPersistTextReadAloudProgress(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    if (this.textReadAloudCurrentCharIndex < 0) {
+      return;
+    }
+
+    const now = Date.now();
+    if ((now - this.lastReadAloudProgressSaveTime) < EBookReaderPage.READ_ALOUD_PROGRESS_SAVE_INTERVAL_MS) {
+      return;
+    }
+    this.lastReadAloudProgressSaveTime = now;
+
+    const overallProgress = this.calculateTextOverallProgressByChar(this.textReadAloudCurrentCharIndex);
+    this.latestTextProgress = overallProgress;
+    this.saveTextReadingProgressWithPage(overallProgress, this.textCurrentPageIndex);
+  }
+
+  private updateTextReadAloudContextByPosition(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    this.readAloudController.updateContext({
+      bookId: this.ebook.id,
+      chapterIndex: this.currentChapterIndex,
+      chapterTitle: this.currentChapter?.title || '',
+      content: this.textContent,
+      pageIndex: this.textCurrentPageIndex,
+      resumeCharIndex: this.getCurrentTextResumeCharIndex()
+    });
+  }
+
+  private applyTextReadAloudProgress(payload: ReadAloudStatePayload): void {
+    const payloadCharIndex = payload.currentCharIndex >= 0 ? payload.currentCharIndex : payload.chunkStartCharIndex;
+    if (payloadCharIndex < 0) {
+      return;
+    }
+
+    const maxCharIndex = Math.max(0, this.textContent.length);
+    this.textReadAloudCurrentCharIndex = Math.max(0, Math.min(payloadCharIndex, maxCharIndex));
+    if (payload.reason === 'progress_updated') {
+      logger.debug(
+        TAG,
+        `听书进度更新: char=${this.textReadAloudCurrentCharIndex}, chunk=[${payload.chunkStartCharIndex}, ${payload.chunkEndCharIndex}]`
+      );
+    }
+    this.latestTextProgress = this.calculateTextOverallProgressByChar(this.textReadAloudCurrentCharIndex);
+    this.updateTextReadAloudContextByPosition();
+    if (
+      payload.reason === 'progress_updated' ||
+      payload.playbackState === ReadAloudPlaybackState.PLAYING
+    ) {
+      this.tryPersistTextReadAloudProgress();
+    }
+  }
+
+  private onTextPageCharRangeChange(startCharIndex: number, endCharIndex: number): void {
+    this.textCurrentPageStartCharIndex = Math.max(0, startCharIndex);
+    this.textCurrentPageEndCharIndex = Math.max(this.textCurrentPageStartCharIndex, endCharIndex);
+    if (this.textReadAloudCurrentCharIndex < 0) {
+      this.textReadAloudCurrentCharIndex = this.textCurrentPageStartCharIndex;
+    } else {
+      const isPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+      if (!isPlaying) {
+        const inCurrentPage = this.textReadAloudCurrentCharIndex >= this.textCurrentPageStartCharIndex &&
+          this.textReadAloudCurrentCharIndex < this.textCurrentPageEndCharIndex;
+        if (!inCurrentPage) {
+          // 非播放状态下翻页时，将恢复点对齐到当前页，避免再次从旧位置或开头开始。
+          this.textReadAloudCurrentCharIndex = this.textCurrentPageStartCharIndex;
+        }
+      }
+    }
+    this.updateTextReadAloudContextByPosition();
+  }
+
+  private onTextUserPageTurnStart(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    if (!readAloudSettings.pauseOnManualPageTurn) {
+      return;
+    }
+    const isPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+    if (!isPlaying) {
+      return;
+    }
+    this.readAloudController.pause('manual_page_turn');
+    this.updateTextReadAloudContextByPosition();
+    this.textReadAloudPlaying = false;
+    this.saveReadingProgress();
+    logger.info(TAG, '检测到手动翻页，已暂停听书并保存进度');
+  }
+
+  private toggleTextReadAloud(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+
+    const currentReadAloud = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    let nextReadAloud: ReadAloudSettings = {
+      enabled: currentReadAloud.enabled,
+      engineType: currentReadAloud.engineType,
+      speed: currentReadAloud.speed,
+      pitch: currentReadAloud.pitch,
+      volume: currentReadAloud.volume,
+      continueInBackground: currentReadAloud.continueInBackground,
+      autoPlayNextChapter: currentReadAloud.autoPlayNextChapter,
+      pauseOnManualPageTurn: currentReadAloud.pauseOnManualPageTurn,
+      voiceLanguage: currentReadAloud.voiceLanguage,
+      voicePerson: currentReadAloud.voicePerson,
+      voiceOnline: currentReadAloud.voiceOnline
+    };
+
+    if (!nextReadAloud.enabled) {
+      nextReadAloud.enabled = true;
+      this.textReaderSettings.readAloud = nextReadAloud;
+      this.saveTextReaderSettings();
+      this.persistGlobalReadAloudSettings(nextReadAloud);
+    }
+
+    this.readAloudController.updateSettings(nextReadAloud);
+    this.updateTextReadAloudContextByPosition();
+    if (this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING) {
+      this.readAloudController.pause('toolbar_toggle');
+    } else {
+      this.readAloudController.start('toolbar_toggle');
+    }
+    this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+  }
+
+  private openReadAloudSettingsPanel(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    const now = Date.now();
+    if ((now - this.lastReadAloudPanelCloseTime) < EBookReaderPage.READ_ALOUD_PANEL_REOPEN_GUARD_MS) {
+      logger.debug(
+        TAG,
+        `听书面板打开被防抖拦截: delta=${now - this.lastReadAloudPanelCloseTime}ms`
+      );
+      return;
+    }
+    this.showReadAloudPanel = true;
+    this.readAloudPanelSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    logger.info(TAG, '打开听书设置与信息面板');
+    this.refreshReadAloudAvailability();
+  }
+
+  private updateReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    logger.debug(TAG, `应用听书设置变更: ${JSON.stringify(partial)}`);
+    const current = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    const rawEngine = partial.engineType ?? current.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const speed = Math.max(0.5, Math.min(2.0, partial.speed ?? current.speed));
+    const pitch = Math.max(0.5, Math.min(2.0, partial.pitch ?? current.pitch));
+    const volume = Math.max(0, Math.min(1, partial.volume ?? current.volume));
+    const voiceLanguage = partial.voiceLanguage ?? current.voiceLanguage ?? '';
+    const voicePersonRaw = partial.voicePerson ?? current.voicePerson ?? -1;
+    const voiceOnlineRaw = partial.voiceOnline ?? current.voiceOnline ?? -1;
+    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
+    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
+
+    const nextReadAloud: ReadAloudSettings = {
+      enabled: partial.enabled ?? current.enabled,
+      engineType: safeEngine,
+      speed,
+      pitch,
+      volume,
+      continueInBackground: partial.continueInBackground ?? current.continueInBackground,
+      autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
+      pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
+      voiceLanguage,
+      voicePerson,
+      voiceOnline
+    };
+    this.readAloudPanelSettings = nextReadAloud;
+    this.textReaderSettings.readAloud = nextReadAloud;
+    this.saveTextReaderSettings();
+    this.persistGlobalReadAloudSettings(nextReadAloud);
+    this.syncTextReadAloudContext();
+
+    if (
+      partial.engineType !== undefined ||
+      partial.voiceLanguage !== undefined ||
+      partial.voicePerson !== undefined ||
+      partial.voiceOnline !== undefined
+    ) {
+      this.refreshReadAloudVoices();
+    }
+  }
+
+  private refreshReadAloudAvailability(): void {
+    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+      this.readAloudAvailability = map;
+      if (!map.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        }
+      }
+      this.refreshReadAloudVoices();
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书引擎可用性失败: ${errorText}`);
+      this.readAloudStatusMessage = `引擎可用性探测失败：${errorText}`;
+    });
+  }
+
+  private isReadAloudEngineAvailable(engineType: ReadAloudEngineType): boolean {
+    if (engineType === ReadAloudEngineType.SYSTEM) {
+      return this.readAloudAvailability.SYSTEM === true;
+    }
+    if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      return this.readAloudAvailability.LEGADO_COMPAT === true;
+    }
+    if (engineType === ReadAloudEngineType.REMOTE) {
+      return this.readAloudAvailability.REMOTE === true;
+    }
+    return false;
+  }
+
+  private refreshReadAloudVoices(): void {
+    const engineType = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud).engineType;
+    if (!this.isReadAloudEngineAvailable(engineType)) {
+      this.readAloudVoiceOptions = [];
+      if (engineType === ReadAloudEngineType.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        } else {
+          this.readAloudStatusMessage = '系统 TTS 当前不可用，请点击刷新重试';
+        }
+      } else {
+        this.readAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
+      }
+      return;
+    }
+    this.readAloudController.listVoices(engineType).then((voices: ReadAloudVoiceOption[]) => {
+      this.readAloudVoiceOptions = voices;
+      if (voices.length > 0) {
+        this.readAloudStatusMessage = '';
+      } else if (engineType === ReadAloudEngineType.SYSTEM) {
+        this.readAloudStatusMessage = '系统 TTS 可直接朗读，但系统未返回可选音色';
+      } else {
+        this.readAloudStatusMessage = '当前引擎暂未返回音色列表';
+      }
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书音色列表失败: ${errorText}`);
+      this.readAloudVoiceOptions = [];
+      this.readAloudStatusMessage = `音色列表拉取失败：${errorText}`;
+    });
+  }
+
+  private formatReadAloudError(error: Object | string): string {
+    if (typeof error === 'string') {
+      return error;
+    }
+    const errorObj = error as Error;
+    if (errorObj.message && errorObj.message.length > 0) {
+      return errorObj.message;
+    }
+    try {
+      const jsonText = JSON.stringify(error);
+      if (jsonText && jsonText.length > 0 && jsonText !== '{}') {
+        return jsonText;
+      }
+    } catch (_ignored) {
+    }
+    return String(error);
+  }
+
+  private buildTextDomPos(pageIndex: number): string {
+    const safePageIndex = Math.max(0, pageIndex);
+    if (this.textReadAloudCurrentCharIndex < 0) {
+      return `page:${safePageIndex}`;
+    }
+    return `page:${safePageIndex};char:${Math.max(0, this.textReadAloudCurrentCharIndex)}`;
+  }
+
+  private restoreTextReadAloudFromDomPos(domPos: string): void {
+    if (!domPos || !domPos.startsWith('page:')) {
+      return;
+    }
+    const parts = domPos.split(';');
+    const pagePart = parts.length > 0 ? parts[0] : '';
+    const pageIndex = parseInt(pagePart.substring(5), 10);
+    if (!isNaN(pageIndex) && pageIndex >= 0) {
+      this.textCurrentPageIndex = pageIndex;
+      logger.info(TAG, `恢复文本阅读器页码: ${pageIndex}`);
+    }
+
+    for (const part of parts) {
+      if (part.startsWith('char:')) {
+        const charIndex = parseInt(part.substring(5), 10);
+        if (!isNaN(charIndex) && charIndex >= 0) {
+          this.textReadAloudCurrentCharIndex = charIndex;
+        }
+        break;
+      }
+    }
   }
 
   /**
@@ -858,16 +1381,34 @@ struct EBookReaderPage {
       return;
     }
 
+    let wasPlaying = false;
+    let readAloudSettings: ReadAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    if (this.ebook.format === EBookFormat.TXT) {
+      readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+      wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+      if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
+        this.readAloudController.pause('chapter_switch');
+      }
+    }
+
     this.currentChapterIndex--;
     this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
     // TXT格式使用页码进度保存，其他格式使用通用方法
     if (this.ebook.format === EBookFormat.TXT) {
       this.textCurrentPageIndex = 0;
       this.textContent = this.getTextContent();
+      this.textCurrentPageStartCharIndex = 0;
+      this.textCurrentPageEndCharIndex = 0;
+      this.textReadAloudCurrentCharIndex = 0;
+      this.updateTextReadAloudContextByPosition();
       // 计算全书进度：当前章节索引 / 总章节数 * 100
       const totalChapters = this.ebook.chapters?.length || 1;
       const overallProgress = (this.currentChapterIndex / totalChapters) * 100;
       this.saveTextReadingProgressWithPage(overallProgress, 0);
+      if (wasPlaying && readAloudSettings.enabled && readAloudSettings.autoPlayNextChapter) {
+        this.readAloudController.start('chapter_switch');
+      }
+      this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     } else {
       this.saveReadingProgress();
     }
@@ -883,16 +1424,34 @@ struct EBookReaderPage {
       return;
     }
 
+    let wasPlaying = false;
+    let readAloudSettings: ReadAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    if (this.ebook.format === EBookFormat.TXT) {
+      readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+      wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+      if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
+        this.readAloudController.pause('chapter_switch');
+      }
+    }
+
     this.currentChapterIndex++;
     this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
     // TXT格式使用页码进度保存，其他格式使用通用方法
     if (this.ebook.format === EBookFormat.TXT) {
       this.textCurrentPageIndex = 0;
       this.textContent = this.getTextContent();
+      this.textCurrentPageStartCharIndex = 0;
+      this.textCurrentPageEndCharIndex = 0;
+      this.textReadAloudCurrentCharIndex = 0;
+      this.updateTextReadAloudContextByPosition();
       // 计算全书进度：当前章节索引 / 总章节数 * 100
       const totalChapters = this.ebook.chapters?.length || 1;
       const overallProgress = (this.currentChapterIndex / totalChapters) * 100;
       this.saveTextReadingProgressWithPage(overallProgress, 0);
+      if (wasPlaying && readAloudSettings.enabled && readAloudSettings.autoPlayNextChapter) {
+        this.readAloudController.start('chapter_switch');
+      }
+      this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     } else {
       this.saveReadingProgress();
     }
@@ -985,7 +1544,7 @@ struct EBookReaderPage {
       let progressPercent = 0;
       
       if (this.ebook.format === EBookFormat.TXT) {
-        domPos = `page:${this.textCurrentPageIndex}`;
+        domPos = this.buildTextDomPos(this.textCurrentPageIndex);
         currentPosition = this.textCurrentPageIndex;
         chapterId = this.currentChapter?.id || '';
         // TXT格式：使用翻页时记录的最新进度值，避免被旧值覆盖
@@ -1075,6 +1634,16 @@ struct EBookReaderPage {
       return;
     }
     
+    let wasPlaying = false;
+    let readAloudSettings: ReadAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+    if (this.ebook.format === EBookFormat.TXT) {
+      readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+      wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+      if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
+        this.readAloudController.pause('chapter_switch');
+      }
+    }
+
     logger.info(TAG, `跳转到章节: ${chapterIndex}`);
     
     // 更新本地状态
@@ -1086,13 +1655,21 @@ struct EBookReaderPage {
     if (this.ebook.format === EBookFormat.TXT) {
       // 纯文本阅读器：重置页码到第一页，并更新文本内容
       this.textCurrentPageIndex = 0;
+      this.textCurrentPageStartCharIndex = 0;
+      this.textCurrentPageEndCharIndex = 0;
+      this.textReadAloudCurrentCharIndex = 0;
       // 更新文本内容（触发 TextReaderComponent 重新分页）
       this.textContent = this.getTextContent();
+      this.updateTextReadAloudContextByPosition();
       logger.info(TAG, `纯文本阅读器跳转到章节 ${chapterIndex}，内容长度: ${this.textContent.length}`);
       // 计算全书进度：当前章节索引 / 总章节数 * 100
       const totalChapters = this.ebook.chapters?.length || 1;
       const overallProgress = (chapterIndex / totalChapters) * 100;
       this.saveTextReadingProgressWithPage(overallProgress, 0);
+      if (wasPlaying && readAloudSettings.enabled && readAloudSettings.autoPlayNextChapter) {
+        this.readAloudController.start('chapter_switch');
+      }
+      this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     } else if (this.readerKitController && this.readerKitController.isControllerReady()) {
       // Reader Kit 格式：通过控制器跳转
       await this.readerKitController.goToChapter(chapterIndex, '');
@@ -1511,6 +2088,32 @@ struct EBookReaderPage {
         if (this.showTextReaderSettings) {
           this.buildTextReaderSettingsPanel()
         }
+
+        if (this.showReadAloudPanel && this.isUsingTextReader()) {
+          ReadAloudSettingsInfoPanel({
+            isLandscape: this.isLandscape,
+            settings: this.readAloudPanelSettings,
+            availability: this.readAloudAvailability,
+            voiceOptions: this.readAloudVoiceOptions,
+            statusMessage: this.readAloudStatusMessage,
+            appFontFamily: this.appFontFamily,
+            callbacks: {
+              onClose: () => {
+                const closeTime = Date.now();
+                this.lastReadAloudPanelCloseTime = closeTime;
+                this.showReadAloudPanel = false;
+                logger.info(TAG, `关闭听书设置与信息面板: closeAt=${closeTime}`);
+              },
+              onRefresh: () => {
+                this.refreshReadAloudAvailability();
+              },
+              onChange: (partial: Partial<ReadAloudSettings>) => {
+                this.updateReadAloudSettings(partial);
+              }
+            }
+          })
+            .zIndex(20000)
+        }
       }
       .width('100%')
       .height('100%')
@@ -1740,12 +2343,18 @@ struct EBookReaderPage {
       TextReaderComponent({
         content: this.textContent,
         chapters: this.getTextChapters(),
+        paginationMode: PaginationMode.ONLINE,
         settings: this.textReaderSettings,
         currentChapterIndex: this.currentChapterIndex,
         currentPageIndex: this.textCurrentPageIndex,
+        readAloudCurrentCharIndex: this.textReadAloudCurrentCharIndex,
+        readAloudFollowEnabled: this.textReadAloudPlaying,
+        readAloudHighlightEnabled: true,
         bottomStatusBarHeight: 28,  // 底部状态栏高度，避让时间、电量、页码显示区域
         onPageChange: (pageIndex: number, totalPages: number) => {
           this.textCurrentPageIndex = pageIndex;
+          this.readAloudController.updatePageIndex(pageIndex);
+          this.updateTextReadAloudContextByPosition();
           logger.debug(TAG, `文本阅读器页面切换: ${pageIndex + 1}/${totalPages}`);
           // 计算全书进度（而非章节内进度）
           // 公式: (当前章节索引 + 当前页在章节内的比例) / 总章节数 * 100
@@ -1755,11 +2364,31 @@ struct EBookReaderPage {
           logger.debug(TAG, `文本阅读进度: ${overallProgress.toFixed(1)}%`);
           this.saveTextReadingProgressWithPage(overallProgress, pageIndex);
         },
+        onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => {
+          this.onTextPageCharRangeChange(startCharIndex, endCharIndex);
+        },
+        onUserPageTurnStart: () => {
+          this.onTextUserPageTurnStart();
+        },
         onChapterChange: (chapterIndex: number) => {
+          const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
+          const wasPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
+          if (wasPlaying && !readAloudSettings.autoPlayNextChapter) {
+            this.readAloudController.pause('chapter_switch');
+          }
           this.currentChapterIndex = chapterIndex;
           this.currentChapter = this.ebook?.chapters[chapterIndex] || null;
+          this.textCurrentPageIndex = 0;
+          this.textCurrentPageStartCharIndex = 0;
+          this.textCurrentPageEndCharIndex = 0;
+          this.textReadAloudCurrentCharIndex = 0;
           // 章节切换时更新文本内容
           this.textContent = this.getTextContent();
+          this.updateTextReadAloudContextByPosition();
+          if (wasPlaying && readAloudSettings.enabled && readAloudSettings.autoPlayNextChapter) {
+            this.readAloudController.start('chapter_switch');
+          }
+          this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
         },
         onProgressChange: (progress: number) => {
           logger.debug(TAG, `文本阅读进度: ${progress.toFixed(1)}%`);
@@ -1882,6 +2511,7 @@ struct EBookReaderPage {
     
     // 记录最新进度，避免退出时被旧值覆盖
     this.latestTextProgress = progress;
+    const totalReadingTime = this.ebook.readingProgress?.totalReadingTime ?? 0;
     
     try {
       const readingProgress: EBookReadingProgress = {
@@ -1889,13 +2519,22 @@ struct EBookReaderPage {
         currentChapterId: this.currentChapter?.id || '',
         currentChapterIndex: this.currentChapterIndex,
         currentPosition: pageIndex,  // 保存当前页码
-        domPos: `page:${pageIndex}`,  // 使用特殊格式标记页码
+        domPos: this.buildTextDomPos(pageIndex),  // 同时记录页码与听书字符位置
         progress: progress,
         lastReadTime: Date.now(),
-        totalReadingTime: 0
+        totalReadingTime: totalReadingTime
       };
       
       await this.ebookDataManager.saveReadingProgress(readingProgress);
+      if (this.ebook.readingProgress) {
+        this.ebook.readingProgress.currentChapterId = readingProgress.currentChapterId;
+        this.ebook.readingProgress.currentChapterIndex = readingProgress.currentChapterIndex;
+        this.ebook.readingProgress.currentPosition = readingProgress.currentPosition;
+        this.ebook.readingProgress.domPos = readingProgress.domPos;
+        this.ebook.readingProgress.progress = readingProgress.progress;
+        this.ebook.readingProgress.lastReadTime = readingProgress.lastReadTime;
+        this.ebook.readingProgress.totalReadingTime = readingProgress.totalReadingTime;
+      }
       logger.debug(TAG, `保存文本阅读进度: 章节=${this.currentChapterIndex}, 页码=${pageIndex}, 进度=${progress.toFixed(1)}%`);
     } catch (error) {
       logger.error(TAG, `保存文本阅读进度失败: ${String(error)}`);
@@ -1937,8 +2576,11 @@ struct EBookReaderPage {
             this.hideTextReaderSettingsWithAnimation();
           },
           onSettingsChange: (settings: TextReaderSettings) => {
+            settings.readAloud = this.getSafeReadAloudSettings(settings.readAloud);
             this.textReaderSettings = settings;
             this.saveTextReaderSettings();
+            this.syncTextReadAloudContext();
+            this.persistGlobalReadAloudSettings(this.getSafeReadAloudSettings(settings.readAloud));
           }
         })
       }
@@ -2168,6 +2810,43 @@ struct EBookReaderPage {
           .onClick(() => {
             this.showTextReaderSettingsWithAnimation();
           })
+
+          Blank()
+
+          Row() {
+          Row() {
+            SymbolGlyph(this.textReadAloudPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+              .fontSize(18)
+              .fontColor([this.textReadAloudPlaying ? Color.White : $r('app.color.text_primary')])
+          }
+            .width(48)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.toggleTextReadAloud();
+            })
+
+            Column()
+              .width(1)
+              .height(16)
+              .backgroundColor(this.textReadAloudPlaying ? '#66FFFFFF' : $r('app.color.divider_primary'))
+
+            Row() {
+              SymbolGlyph($r('sys.symbol.gearshape'))
+                .fontSize(16)
+                .fontColor([this.textReadAloudPlaying ? Color.White : $r('app.color.text_primary')])
+            }
+            .width(44)
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .onClick(() => {
+              this.openReadAloudSettingsPanel();
+            })
+          }
+          .height(36)
+          .backgroundColor(this.textReadAloudPlaying ? '#1A1890FF' : $r('app.color.background_secondary'))
+          .borderRadius(18)
+          .clip(true)
         } else {
           // 电子书阅读器：显示字体和阅读设置按钮
           // 字体设置按钮

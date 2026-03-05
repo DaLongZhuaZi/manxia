@@ -8,7 +8,7 @@
 import { logger } from '../../Utils/Logger';
 import { LegadoBookSource, LegadoSearchBook, LegadoBook, LegadoChapter, LegadoSourceImportResult, LegadoExploreKind } from './LegadoSourceTypes';
 import { LegadoSourceParser } from './LegadoSourceParser';
-import { NovelSourceExecutor } from './NovelSourceExecutor';
+import { NovelSourceExecutor, SearchParseOptions } from './NovelSourceExecutor';
 import { NovelSourceInfo, NovelSearchResult } from '../../Models/NovelModels';
 import { getNovelDataManager } from './NovelDataManager';
 import { LargeFileJSONParser, ParseProgressCallback, ParseConfig, ParseResult } from './LargeFileJSONParser';
@@ -359,7 +359,12 @@ export class NovelSourceManager {
   /**
    * 搜索书籍（单个书源）
    */
-  async search(sourceId: string, keyword: string, page: number = 1): Promise<NovelSearchResult[]> {
+  async search(
+    sourceId: string,
+    keyword: string,
+    page: number = 1,
+    parseOptions?: SearchParseOptions
+  ): Promise<NovelSearchResult[]> {
     const executor = this.getExecutor(sourceId);
     if (!executor) {
       logger.warn(TAG, `书源不存在: ${sourceId}`);
@@ -367,9 +372,11 @@ export class NovelSourceManager {
     }
 
     const source = this.sources.get(sourceId)!;
-    const results = await executor.search(keyword, page);
-
-    return results.map((book: LegadoSearchBook): NovelSearchResult => {
+    const results = await executor.search(keyword, page, parseOptions);
+    const mapped: NovelSearchResult[] = [];
+    const mapYieldStep = parseOptions?.forceFullExecution === true ? 80 : 200;
+    for (let i = 0; i < results.length; i++) {
+      const book = results[i];
       const result: NovelSearchResult = {
         sourceId: sourceId,
         sourceName: source.bookSourceName,
@@ -383,8 +390,16 @@ export class NovelSourceManager {
         wordCount: book.wordCount,
         isNSFW: source.isNSFW === true
       };
-      return result;
-    });
+      mapped.push(result);
+      if ((i + 1) % mapYieldStep === 0) {
+        await this.yieldToEventLoop();
+      }
+    }
+    return mapped;
+  }
+
+  private async yieldToEventLoop(): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 0));
   }
 
   /**
