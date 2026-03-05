@@ -1,4 +1,4 @@
-﻿import { common } from '@kit.AbilityKit';
+import { common } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { getRssSubscriptionManager, RssSubscriptionManager } from './RssSubscriptionManager';
 

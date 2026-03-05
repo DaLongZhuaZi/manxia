@@ -769,10 +769,9 @@ export struct NovelDetailPage {
           Row() {
             // 阅读进度标记
             if (index === this.lastReadChapterIndex) {
-              Text('▶')
+              SymbolGlyph($r('sys.symbol.play_fill'))
                 .fontSize(10)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
                 .margin({ right: 6 })
             }
             

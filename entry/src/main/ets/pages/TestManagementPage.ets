@@ -180,9 +180,9 @@ struct TestManagementPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Text('▶')
+        SymbolGlyph($r('sys.symbol.play_fill'))
           .fontSize(16)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
           .margin({ left: 8 })
       }
       .width('100%')

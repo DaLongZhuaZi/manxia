@@ -121,6 +121,43 @@ export class BasePayload implements IEventPayload {
 }
 
 /**
+ * 听书状态事件载荷
+ */
+export class ReadAloudStatePayload implements IEventPayload {
+  public playbackState: string;
+  public reason: string;
+  public engineType: string;
+  public bookId: string;
+  public chapterIndex: number;
+  public pageIndex: number;
+  public currentCharIndex: number;
+  public chunkStartCharIndex: number;
+  public chunkEndCharIndex: number;
+
+  constructor(
+    playbackState: string,
+    reason: string,
+    engineType: string,
+    bookId: string,
+    chapterIndex: number,
+    pageIndex: number,
+    currentCharIndex: number,
+    chunkStartCharIndex: number,
+    chunkEndCharIndex: number
+  ) {
+    this.playbackState = playbackState;
+    this.reason = reason;
+    this.engineType = engineType;
+    this.bookId = bookId;
+    this.chapterIndex = chapterIndex;
+    this.pageIndex = pageIndex;
+    this.currentCharIndex = currentCharIndex;
+    this.chunkStartCharIndex = chunkStartCharIndex;
+    this.chunkEndCharIndex = chunkEndCharIndex;
+  }
+}
+
+/**
  * 漫画导入完成事件的载荷
  */
 export class MangaImportCompletedPayload implements IEventPayload {
@@ -213,6 +250,11 @@ interface GameEventConstants {
   NOVEL_UPDATED: string;
   NOVEL_COVER_CHANGED: string;
   NOVEL_LIST_REFRESH_NEEDED: string;
+  // 听书状态
+  READ_ALOUD_STARTED: string;
+  READ_ALOUD_PAUSED: string;
+  READ_ALOUD_STOPPED: string;
+  READ_ALOUD_STATE_CHANGED: string;
   // 文件导入
   FILE_IMPORT_REQUESTED: string;
   // 封面选择
@@ -267,6 +309,10 @@ export const GameEvent: GameEventConstants = {
   NOVEL_UPDATED: 'novelUpdated',
   NOVEL_COVER_CHANGED: 'novelCoverChanged',
   NOVEL_LIST_REFRESH_NEEDED: 'novelListRefreshNeeded',
+  READ_ALOUD_STARTED: 'readAloudStarted',
+  READ_ALOUD_PAUSED: 'readAloudPaused',
+  READ_ALOUD_STOPPED: 'readAloudStopped',
+  READ_ALOUD_STATE_CHANGED: 'readAloudStateChanged',
 
   // --- 文件导入事件 ---
   FILE_IMPORT_REQUESTED: 'fileImportRequested',

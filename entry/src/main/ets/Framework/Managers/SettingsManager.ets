@@ -61,6 +61,18 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_SHOW_BATTERY = 'global_text_show_battery';
   static readonly GLOBAL_TEXT_SHOW_PAGE_NUMBER = 'global_text_show_page_number';
   static readonly GLOBAL_TEXT_SHOW_PROGRESS = 'global_text_show_progress';
+  // 听书全局默认设置
+  static readonly GLOBAL_TEXT_READ_ALOUD_ENABLED = 'global_text_read_aloud_enabled';
+  static readonly GLOBAL_TEXT_READ_ALOUD_ENGINE = 'global_text_read_aloud_engine';
+  static readonly GLOBAL_TEXT_READ_ALOUD_SPEED = 'global_text_read_aloud_speed';
+  static readonly GLOBAL_TEXT_READ_ALOUD_PITCH = 'global_text_read_aloud_pitch';
+  static readonly GLOBAL_TEXT_READ_ALOUD_VOLUME = 'global_text_read_aloud_volume';
+  static readonly GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG = 'global_text_read_aloud_continue_bg';
+  static readonly GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER = 'global_text_read_aloud_auto_play_next_chapter';
+  static readonly GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN = 'global_text_read_aloud_pause_on_manual_page_turn';
+  static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE = 'global_text_read_aloud_voice_language';
+  static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON = 'global_text_read_aloud_voice_person';
+  static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE = 'global_text_read_aloud_voice_online';
   
   // 下载设置
   static readonly DOWNLOAD_WIFI_ONLY = 'download_wifi_only';

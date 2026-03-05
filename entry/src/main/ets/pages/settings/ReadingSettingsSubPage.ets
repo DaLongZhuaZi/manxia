@@ -1,7 +1,7 @@
-// 文件路径: entry/src/main/ets/pages/settings/ReadingSettingsSubPage.ets
+// 文件: entry/src/main/ets/pages/settings/ReadingSettingsSubPage.ets
 /**
  * 阅读设置子页面
- * 包含漫画、电子书、纯文本阅读器的默认阅读设置
+  * 聚合漫画、电子书与文字阅读全局配置。
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
@@ -18,26 +18,30 @@ import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { ReadingMode, ReadingDirection, DEFAULT_READING_SETTINGS, PageTurnAnimationType } from '../../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { TextPageTurnAnimation, TextAlignment, PRESET_BACKGROUNDS, PresetBackground, DEFAULT_TEXT_READER_SETTINGS } from '../../Models/TextReaderModels';
+import { TextPageTurnAnimation, TextAlignment, PRESET_BACKGROUNDS, PresetBackground, DEFAULT_TEXT_READER_SETTINGS, DEFAULT_READ_ALOUD_SETTINGS, ReadAloudEngineType, ReadAloudSettings } from '../../Models/TextReaderModels';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { EBookDataManager, BackgroundImageInfo } from '../../Framework/Data/EBookDataManager';
 import { fileIo } from '@kit.CoreFileKit';
+import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../../Framework/ReadAloud/ReadAloudAvailability';
+import { ReadAloudController } from '../../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudVoiceOption } from '../../Framework/ReadAloud/ReadAloudTypes';
+import { ReadAloudSettingsInfoPanel } from '../../components/ReadAloudSettingsInfoPanel';
 
 const TAG = 'ReadingSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
 
-// 导航参数接口
+// 页面参数
 interface ReadingSettingsSubPageParams {
   fromPage?: string;
 }
 
-// ForEach 使用的接口类型
+// 漫画翻页动画选项
 interface PageTurnAnimationOption {
   type: PageTurnAnimationType;
   label: string;
 }
 
-// 纯文本阅读器翻页动画选项接口
+// 文字翻页动画选项
 interface TextAnimationOption {
   text: string;
   anim: TextPageTurnAnimation;
@@ -48,22 +52,23 @@ export struct ReadingSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
 
-  // 主题相关状态
+  // 主题与字体状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'ReadingSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private readAloudController: ReadAloudController = ReadAloudController.getInstance();
 
-  // 响应式布局相关状态
+  // 响应式布局状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
 
-  // 漫画全局阅读设置
+  // 漫画默认阅读设置
   @State defaultReadingMode: ReadingMode = DEFAULT_READING_SETTINGS.readingMode;
   @State defaultReadingDirection: ReadingDirection = DEFAULT_READING_SETTINGS.readingDirection;
   @State defaultBrightness: number = DEFAULT_READING_SETTINGS.brightness;
@@ -71,14 +76,14 @@ export struct ReadingSettingsSubPage {
   @State volumeKeyNavigation: boolean = DEFAULT_READING_SETTINGS.volumeKeyNavigation;
   @State defaultPageTurnAnimation: PageTurnAnimationType = DEFAULT_READING_SETTINGS.pageTurnAnimation;
 
-  // 电子书全局阅读设置
+  // 电子书默认设置
   @State ebookFontSize: number = DEFAULT_EBOOK_READING_SETTINGS.fontSize;
   @State ebookLineHeight: number = DEFAULT_EBOOK_READING_SETTINGS.lineHeight;
   @State ebookPageMargin: number = DEFAULT_EBOOK_READING_SETTINGS.pageMargin;
   @State ebookThemeIndex: number = 0;
   @State ebookPageMode: EBookPageMode = DEFAULT_EBOOK_READING_SETTINGS.pageMode;
 
-  // 纯文本阅读器全局设置
+  // 文字阅读默认设置
   @State textFontSize: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize;
   @State textLineHeight: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.lineHeight;
   @State textParagraphSpacing: number = DEFAULT_TEXT_READER_SETTINGS.textStyle.paragraphSpacing;
@@ -95,13 +100,29 @@ export struct ReadingSettingsSubPage {
   @State textBgImagePath: string = '';
   @State textBgImageOpacity: number = 0.3;
   @State textUseBgImage: boolean = false;
-  // 底部信息栏设置
+  // 底部信息栏显示设置
   @State textShowTime: boolean = true;
   @State textShowBattery: boolean = true;
   @State textShowPageNumber: boolean = true;
   @State textShowProgress: boolean = false;
+  // 听书默认设置
+  @State textReadAloudEnabled: boolean = DEFAULT_READ_ALOUD_SETTINGS.enabled;
+  @State textReadAloudEngine: ReadAloudEngineType = DEFAULT_READ_ALOUD_SETTINGS.engineType;
+  @State textReadAloudSpeed: number = DEFAULT_READ_ALOUD_SETTINGS.speed;
+  @State textReadAloudPitch: number = DEFAULT_READ_ALOUD_SETTINGS.pitch;
+  @State textReadAloudVolume: number = DEFAULT_READ_ALOUD_SETTINGS.volume;
+  @State textReadAloudVoiceLanguage: string = DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '';
+  @State textReadAloudVoicePerson: number = DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
+  @State textReadAloudVoiceOnline: number = DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
+  @State textReadAloudContinueBg: boolean = DEFAULT_READ_ALOUD_SETTINGS.continueInBackground;
+  @State textReadAloudAutoNextChapter: boolean = DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter;
+  @State textReadAloudPauseOnManualPageTurn: boolean = DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn;
+  @State textReadAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
+  @State textReadAloudVoiceOptions: ReadAloudVoiceOption[] = [];
+  @State showReadAloudPanel: boolean = false;
+  @State textReadAloudStatusMessage: string = '';
   
-  // 背景图片管理
+  // 背景图管理状态
   @State allBackgroundImages: BackgroundImageInfo[] = [];
   @State showBackgroundManager: boolean = false;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
@@ -111,7 +132,7 @@ export struct ReadingSettingsSubPage {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
       if (stack) {
         this.pathStack = stack;
-        logger.debug(TAG, '✅ 成功获取GlobalNavStack');
+        logger.debug(TAG, '已成功获取 GlobalNavStack');
       }
     } catch (err) {
       logger.error(TAG, 'AppStorage.get 异常', String(err));
@@ -133,8 +154,9 @@ export struct ReadingSettingsSubPage {
     // 初始化响应式布局
     this.initializeResponsiveLayout();
 
-    // 加载保存的全局设置
+    // 加载全局设置
     this.loadGlobalSettings();
+    this.refreshReadAloudAvailability();
   }
 
   private lifecycle = new PageLifecycleManager('ReadingSettingsSubPage', { enableDebug: true });
@@ -144,7 +166,7 @@ export struct ReadingSettingsSubPage {
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
     
-    // 移除设备变化监听器
+    // 注销设备监听
     if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
@@ -152,7 +174,7 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
-   * 初始化响应式布局
+   * 初始化响应式布局参数与监听
    */
   private initializeResponsiveLayout(): void {
     try {
@@ -169,7 +191,7 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
-   * 更新响应式布局参数
+    * 更新响应式参数
    */
   private updateResponsiveParams(): void {
     const layoutParams = ResponsiveLayoutHelper.getLayoutParams();
@@ -197,11 +219,11 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
-   * 加载全局设置
+   * 加载全局阅读设置
    */
   private loadGlobalSettings(): void {
     try {
-      // 漫画阅读设置
+      // 漫画全局设置
       this.defaultReadingMode = this.settingsManager.getString(
         SettingKeys.GLOBAL_READING_MODE,
         DEFAULT_READING_SETTINGS.readingMode
@@ -258,7 +280,7 @@ export struct ReadingSettingsSubPage {
         DEFAULT_EBOOK_READING_SETTINGS.pageMode
       ) as EBookPageMode;
 
-      // 纯文本阅读器全局设置
+      // 文字阅读全局设置
       this.textFontSize = this.settingsManager.getNumber(
         SettingKeys.GLOBAL_TEXT_FONT_SIZE,
         DEFAULT_TEXT_READER_SETTINGS.textStyle.fontSize
@@ -340,11 +362,314 @@ export struct ReadingSettingsSubPage {
         SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS,
         false
       );
+      this.textReadAloudEnabled = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED,
+        DEFAULT_READ_ALOUD_SETTINGS.enabled
+      );
+      this.textReadAloudEngine = this.normalizeReadAloudEngine(this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE,
+        DEFAULT_READ_ALOUD_SETTINGS.engineType
+      ));
+      this.textReadAloudSpeed = Math.max(0.5, Math.min(2.0, this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED,
+        DEFAULT_READ_ALOUD_SETTINGS.speed
+      )));
+      this.textReadAloudPitch = Math.max(0.5, Math.min(2.0, this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH,
+        DEFAULT_READ_ALOUD_SETTINGS.pitch
+      )));
+      this.textReadAloudVolume = Math.max(0, Math.min(1, this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME,
+        DEFAULT_READ_ALOUD_SETTINGS.volume
+      )));
+      this.textReadAloudVoiceLanguage = this.settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE,
+        DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? ''
+      );
+      this.textReadAloudVoicePerson = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON,
+        DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1
+      );
+      this.textReadAloudVoiceOnline = this.settingsManager.getNumber(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE,
+        DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1
+      );
+      this.textReadAloudContinueBg = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG,
+        DEFAULT_READ_ALOUD_SETTINGS.continueInBackground
+      );
+      this.textReadAloudAutoNextChapter = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
+        DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter
+      );
+      this.textReadAloudPauseOnManualPageTurn = this.settingsManager.getBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
+        DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn
+      );
 
       logger.info(TAG, '阅读设置加载完成');
     } catch (error) {
-      logger.error(TAG, '加载阅读设置失败', String(error));
+      logger.error(TAG, '返回失败', String(error));
     }
+  }
+
+  private normalizeReadAloudEngine(engine: string): ReadAloudEngineType {
+    if (
+      engine === ReadAloudEngineType.SYSTEM ||
+      engine === ReadAloudEngineType.LEGADO_COMPAT ||
+      engine === ReadAloudEngineType.REMOTE
+    ) {
+      return engine as ReadAloudEngineType;
+    }
+    return ReadAloudEngineType.SYSTEM;
+  }
+
+  private refreshReadAloudAvailability(): void {
+    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+      this.textReadAloudAvailability = map;
+      if (!map.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.textReadAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        }
+      }
+      if (!this.isReadAloudEngineAvailable(this.textReadAloudEngine)) {
+        if (this.isReadAloudEngineAvailable(ReadAloudEngineType.SYSTEM)) {
+          this.textReadAloudEngine = ReadAloudEngineType.SYSTEM;
+        } else {
+          this.textReadAloudEnabled = false;
+        }
+      }
+      this.refreshReadAloudVoices();
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新听书引擎可用性失败: ${errorText}`);
+      this.textReadAloudStatusMessage = `引擎可用性探测失败：${errorText}`;
+    });
+  }
+
+  private isReadAloudEngineAvailable(engineType: ReadAloudEngineType): boolean {
+    if (engineType === ReadAloudEngineType.SYSTEM) {
+      return this.textReadAloudAvailability.SYSTEM === true;
+    }
+    if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      return this.textReadAloudAvailability.LEGADO_COMPAT === true;
+    }
+    if (engineType === ReadAloudEngineType.REMOTE) {
+      return this.textReadAloudAvailability.REMOTE === true;
+    }
+    return false;
+  }
+
+  private refreshReadAloudVoices(): void {
+    if (!this.isReadAloudEngineAvailable(this.textReadAloudEngine)) {
+      this.textReadAloudVoiceOptions = [];
+      if (this.textReadAloudEngine === ReadAloudEngineType.SYSTEM) {
+        const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.textReadAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        } else {
+          this.textReadAloudStatusMessage = '系统 TTS 当前不可用，请点击刷新重试';
+        }
+      } else {
+        this.textReadAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
+      }
+      return;
+    }
+    this.readAloudController.listVoices(this.textReadAloudEngine).then((voices: ReadAloudVoiceOption[]) => {
+      this.textReadAloudVoiceOptions = voices;
+      if (voices.length > 0) {
+        this.textReadAloudStatusMessage = '';
+      } else if (this.textReadAloudEngine === ReadAloudEngineType.SYSTEM) {
+        this.textReadAloudStatusMessage = '系统 TTS 可直接朗读，但系统未返回可选音色';
+      } else {
+        this.textReadAloudStatusMessage = '当前引擎暂未返回音色列表';
+      }
+    }).catch((error: Object | string) => {
+      const errorText = this.formatReadAloudError(error);
+      logger.warn(TAG, `刷新全局听书音色列表失败: ${errorText}`);
+      this.textReadAloudVoiceOptions = [];
+      this.textReadAloudStatusMessage = `音色列表拉取失败：${errorText}`;
+    });
+  }
+
+  private formatReadAloudError(error: Object | string): string {
+    if (typeof error === 'string') {
+      return error;
+    }
+    const errorObj = error as Error;
+    if (errorObj.message && errorObj.message.length > 0) {
+      return errorObj.message;
+    }
+    try {
+      const jsonText = JSON.stringify(error);
+      if (jsonText && jsonText.length > 0 && jsonText !== '{}') {
+        return jsonText;
+      }
+    } catch (_ignored) {
+    }
+    return String(error);
+  }
+
+  private buildGlobalReadAloudSettings(): ReadAloudSettings {
+    const voicePersonRaw = this.textReadAloudVoicePerson;
+    const voiceOnlineRaw = this.textReadAloudVoiceOnline;
+    return {
+      enabled: this.textReadAloudEnabled,
+      engineType: this.textReadAloudEngine,
+      speed: Math.max(0.5, Math.min(2.0, this.textReadAloudSpeed)),
+      pitch: Math.max(0.5, Math.min(2.0, this.textReadAloudPitch)),
+      volume: Math.max(0, Math.min(1, this.textReadAloudVolume)),
+      continueInBackground: this.textReadAloudContinueBg,
+      autoPlayNextChapter: this.textReadAloudAutoNextChapter,
+      pauseOnManualPageTurn: this.textReadAloudPauseOnManualPageTurn,
+      voiceLanguage: this.textReadAloudVoiceLanguage,
+      voicePerson: voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1,
+      voiceOnline: (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1
+    };
+  }
+
+  private getReadAloudSummary(): string {
+    const readAloud = this.buildGlobalReadAloudSettings();
+    let engineLabel: string = '系统';
+    if (readAloud.engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      engineLabel = '兼容';
+    } else if (readAloud.engineType === ReadAloudEngineType.REMOTE) {
+      engineLabel = '远程';
+    }
+    const enabledText = readAloud.enabled ? '已启用' : '未启用';
+    return `${enabledText} · ${engineLabel} · 语速${readAloud.speed.toFixed(1)}x`;
+  }
+
+  private applyGlobalReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
+    const current = this.buildGlobalReadAloudSettings();
+    const rawEngine = partial.engineType ?? current.engineType;
+    const safeEngine = (
+      rawEngine === ReadAloudEngineType.SYSTEM ||
+      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+      rawEngine === ReadAloudEngineType.REMOTE
+    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+
+    const next: ReadAloudSettings = {
+      enabled: partial.enabled ?? current.enabled,
+      engineType: safeEngine,
+      speed: Math.max(0.5, Math.min(2.0, partial.speed ?? current.speed)),
+      pitch: Math.max(0.5, Math.min(2.0, partial.pitch ?? current.pitch)),
+      volume: Math.max(0, Math.min(1, partial.volume ?? current.volume)),
+      continueInBackground: partial.continueInBackground ?? current.continueInBackground,
+      autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
+      pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
+      voiceLanguage: partial.voiceLanguage ?? current.voiceLanguage ?? '',
+      voicePerson: (partial.voicePerson ?? current.voicePerson ?? -1) >= 0
+        ? Math.floor(partial.voicePerson ?? current.voicePerson ?? -1)
+        : -1,
+      voiceOnline: ((partial.voiceOnline ?? current.voiceOnline ?? -1) === 0 || (partial.voiceOnline ?? current.voiceOnline ?? -1) === 1)
+        ? (partial.voiceOnline ?? current.voiceOnline ?? -1)
+        : -1
+    };
+
+    this.textReadAloudEnabled = next.enabled;
+    this.textReadAloudEngine = next.engineType;
+    this.textReadAloudSpeed = next.speed;
+    this.textReadAloudPitch = next.pitch;
+    this.textReadAloudVolume = next.volume;
+    this.textReadAloudVoiceLanguage = next.voiceLanguage ?? '';
+    this.textReadAloudVoicePerson = next.voicePerson ?? -1;
+    this.textReadAloudVoiceOnline = next.voiceOnline ?? -1;
+    this.textReadAloudContinueBg = next.continueInBackground;
+    this.textReadAloudAutoNextChapter = next.autoPlayNextChapter;
+    this.textReadAloudPauseOnManualPageTurn = next.pauseOnManualPageTurn;
+
+    const persistPartial: Partial<ReadAloudSettings> = {};
+    if (partial.enabled !== undefined) {
+      persistPartial.enabled = next.enabled;
+    }
+    if (partial.engineType !== undefined) {
+      persistPartial.engineType = next.engineType;
+    }
+    if (partial.speed !== undefined) {
+      persistPartial.speed = next.speed;
+    }
+    if (partial.pitch !== undefined) {
+      persistPartial.pitch = next.pitch;
+    }
+    if (partial.volume !== undefined) {
+      persistPartial.volume = next.volume;
+    }
+    if (partial.voiceLanguage !== undefined) {
+      persistPartial.voiceLanguage = next.voiceLanguage;
+    }
+    if (partial.voicePerson !== undefined) {
+      persistPartial.voicePerson = next.voicePerson;
+    }
+    if (partial.voiceOnline !== undefined) {
+      persistPartial.voiceOnline = next.voiceOnline;
+    }
+    if (partial.continueInBackground !== undefined) {
+      persistPartial.continueInBackground = next.continueInBackground;
+    }
+    if (partial.autoPlayNextChapter !== undefined) {
+      persistPartial.autoPlayNextChapter = next.autoPlayNextChapter;
+    }
+    if (partial.pauseOnManualPageTurn !== undefined) {
+      persistPartial.pauseOnManualPageTurn = next.pauseOnManualPageTurn;
+    }
+
+    this.persistGlobalReadAloudPartial(persistPartial).catch((error: Object | string) => {
+      logger.warn(TAG, `持久化全局听书设置失败: ${String(error)}`);
+    });
+
+    if (
+      partial.engineType !== undefined ||
+      partial.voiceLanguage !== undefined ||
+      partial.voicePerson !== undefined ||
+      partial.voiceOnline !== undefined
+    ) {
+      this.refreshReadAloudVoices();
+    }
+  }
+
+  private async persistGlobalReadAloudPartial(partial: Partial<ReadAloudSettings>): Promise<void> {
+    if (partial.enabled !== undefined) {
+      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED, partial.enabled);
+    }
+    if (partial.engineType !== undefined) {
+      await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE, partial.engineType);
+    }
+    if (partial.speed !== undefined) {
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED, partial.speed);
+    }
+    if (partial.pitch !== undefined) {
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH, partial.pitch);
+    }
+    if (partial.volume !== undefined) {
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME, partial.volume);
+    }
+    if (partial.voiceLanguage !== undefined) {
+      await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE, partial.voiceLanguage);
+    }
+    if (partial.voicePerson !== undefined) {
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON, partial.voicePerson);
+    }
+    if (partial.voiceOnline !== undefined) {
+      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE, partial.voiceOnline);
+    }
+    if (partial.continueInBackground !== undefined) {
+      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG, partial.continueInBackground);
+    }
+    if (partial.autoPlayNextChapter !== undefined) {
+      await this.settingsManager.setBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
+        partial.autoPlayNextChapter
+      );
+    }
+    if (partial.pauseOnManualPageTurn !== undefined) {
+      await this.settingsManager.setBoolean(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
+        partial.pauseOnManualPageTurn
+      );
+    }
+    this.settingsManager.syncToAppStorage();
   }
 
   private goBack(): void {
@@ -356,12 +681,12 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
-   * 构建漫画阅读设置区域
+    * 漫画阅读设置
    */
   @Builder
   buildMangaReadingSettings() {
     Column({ space: 16 }) {
-      Text('漫画默认设置')
+            Text('漫画默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
@@ -377,7 +702,7 @@ export struct ReadingSettingsSubPage {
         
         Row({ space: 8 }) {
           Button({ stateEffect: true }) {
-            Text('单页')
+        Text('单页')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
@@ -437,7 +762,7 @@ export struct ReadingSettingsSubPage {
             })
 
           Button({ stateEffect: true }) {
-            Text('条漫')
+            Text('条漫模式')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
@@ -470,7 +795,7 @@ export struct ReadingSettingsSubPage {
         
         Row({ space: 8 }) {
           Button({ stateEffect: true }) {
-            Text('从左到右')
+        Text('从左到右')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
@@ -490,7 +815,7 @@ export struct ReadingSettingsSubPage {
             })
 
           Button({ stateEffect: true }) {
-            Text('从右到左')
+        Text('从右到左')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
@@ -510,7 +835,7 @@ export struct ReadingSettingsSubPage {
             })
 
           Button({ stateEffect: true }) {
-            Text('从上到下')
+      Text('从上到下')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
@@ -534,7 +859,7 @@ export struct ReadingSettingsSubPage {
 
       // 翻页动画
       Column({ space: 8 }) {
-        Text('默认翻页动画')
+          Text('默认翻页动画')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -543,9 +868,9 @@ export struct ReadingSettingsSubPage {
           ForEach([
             { type: PageTurnAnimationType.NONE, label: '无' },
             { type: PageTurnAnimationType.SLIDE, label: '滑动' },
-            { type: PageTurnAnimationType.FADE, label: '淡入淡出' },
-            { type: PageTurnAnimationType.CURL, label: '卷页' },
-            { type: PageTurnAnimationType.CUBE, label: '立方体' },
+            { type: PageTurnAnimationType.FADE, label: '淡入' },
+            { type: PageTurnAnimationType.CURL, label: '卷曲' },
+            { type: PageTurnAnimationType.CUBE, label: '立方' },
             { type: PageTurnAnimationType.COVER, label: '覆盖' },
             { type: PageTurnAnimationType.DEPTH, label: '景深' }
           ], (item: PageTurnAnimationOption) => {
@@ -574,9 +899,9 @@ export struct ReadingSettingsSubPage {
         .width('100%')
       }
 
-      // 开关设置
+      // 通用开关
       Row() {
-        Text('保持屏幕常亮')
+          Text('保持屏幕常亮')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -592,7 +917,7 @@ export struct ReadingSettingsSubPage {
       .justifyContent(FlexAlign.SpaceBetween)
 
       Row() {
-        Text('音量键翻页')
+          Text('音量键翻页')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -615,22 +940,22 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
-   * 构建电子书默认设置区域
+    * 电子书阅读设置
    */
   @Builder
   buildEBookSettings() {
     Column({ space: 16 }) {
-      Text('电子书默认设置')
+        Text('电子书默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      // 字体大小
+      // 页面模式
       Column({ space: 8 }) {
         Row() {
-          Text('默认字体大小')
+        Text('默认字体大小')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -696,7 +1021,7 @@ export struct ReadingSettingsSubPage {
       // 页边距
       Column({ space: 8 }) {
         Row() {
-          Text('默认页边距')
+            Text('默认页边距')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -728,7 +1053,7 @@ export struct ReadingSettingsSubPage {
 
       // 阅读主题
       Column({ space: 8 }) {
-        Text('默认阅读主题')
+            Text('默认阅读主题')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -774,7 +1099,7 @@ export struct ReadingSettingsSubPage {
         .justifyContent(FlexAlign.SpaceAround)
       }
 
-      // 翻页模式
+      // 翻页方式
       Column({ space: 8 }) {
         Text('默认翻页模式')
           .fontSize(14)
@@ -792,7 +1117,7 @@ export struct ReadingSettingsSubPage {
                   this.settingsManager.syncToAppStorage();
                 }
               })
-            Text('仿真翻页')
+          Text('仿真翻页')
               .fontSize(14)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -825,12 +1150,12 @@ export struct ReadingSettingsSubPage {
   }
 
   /**
-   * 构建纯文本阅读器默认设置区域
+    * 文字阅读设置
    */
   @Builder
   buildTextReaderSettings() {
     Column({ space: 16 }) {
-      Text('纯文本阅读器默认设置')
+          Text('文字阅读默认设置')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontFamily(this.appFontFamily)
@@ -939,7 +1264,7 @@ export struct ReadingSettingsSubPage {
       // 首行缩进
       Column({ space: 8 }) {
         Row() {
-          Text('首行缩进')
+        Text('首行缩进')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -972,7 +1297,7 @@ export struct ReadingSettingsSubPage {
       // 页边距
       Column({ space: 8 }) {
         Row() {
-          Text('默认页边距')
+        Text('默认页边距')
             .fontSize(14)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1002,9 +1327,9 @@ export struct ReadingSettingsSubPage {
           })
       }
 
-      // 背景色主题
+      // 背景主题
       Column({ space: 8 }) {
-        Text('默认背景色')
+          Text('默认背景色')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1057,7 +1382,7 @@ export struct ReadingSettingsSubPage {
 
       // 翻页动画
       Column({ space: 8 }) {
-        Text('默认翻页动画')
+          Text('默认翻页动画')
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -1067,7 +1392,7 @@ export struct ReadingSettingsSubPage {
           ForEach([
             { text: '滑动', anim: TextPageTurnAnimation.SLIDE },
             { text: '卷曲', anim: TextPageTurnAnimation.CURL },
-            { text: '淡入淡出', anim: TextPageTurnAnimation.FADE },
+            { text: '淡入', anim: TextPageTurnAnimation.FADE },
             { text: '无', anim: TextPageTurnAnimation.NONE }
           ] as TextAnimationOption[], (item: TextAnimationOption) => {
             Button({ stateEffect: true }) {
@@ -1097,7 +1422,7 @@ export struct ReadingSettingsSubPage {
         .width('100%')
       }
 
-      // 开关设置
+      // 文字阅读交互开关
       Column({ space: 12 }) {
         Row() {
           Text('保持屏幕常亮')
@@ -1166,7 +1491,7 @@ export struct ReadingSettingsSubPage {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
 
             if (this.responsive_isLandscape) {
-              // 横屏：使用Flex布局，设置项自动换行，每行最多2个
+              // 横屏双列布局
               Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
                 Column({ space: 16 }) {
                   this.buildMangaReadingSettings()
@@ -1188,7 +1513,7 @@ export struct ReadingSettingsSubPage {
               }
               .width('100%')
             } else {
-              // 竖屏：原有布局
+              // 竖屏单列布局
               this.buildMangaReadingSettings()
               this.buildEBookSettings()
               this.buildTextReaderSettings()
@@ -1205,6 +1530,28 @@ export struct ReadingSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+
+        if (this.showReadAloudPanel) {
+          ReadAloudSettingsInfoPanel({
+            isLandscape: this.responsive_isLandscape,
+            settings: this.buildGlobalReadAloudSettings(),
+            availability: this.textReadAloudAvailability,
+            voiceOptions: this.textReadAloudVoiceOptions,
+            statusMessage: this.textReadAloudStatusMessage,
+            appFontFamily: this.appFontFamily,
+            callbacks: {
+              onClose: () => {
+                this.showReadAloudPanel = false;
+              },
+              onRefresh: () => {
+                this.refreshReadAloudAvailability();
+              },
+              onChange: (partial: Partial<ReadAloudSettings>) => {
+                this.applyGlobalReadAloudSettings(partial);
+              }
+            }
+          })
+        }
       }
     }
     .titleBar({

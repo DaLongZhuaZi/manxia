@@ -181,6 +181,51 @@ export struct TextFontSettingsPanel {
     }
   }
 
+  private ensurePageMargins(): void {
+    if (!this.settings.pageMargins) {
+      this.settings.pageMargins = {
+        top: DEFAULT_PAGE_MARGINS.top,
+        bottom: DEFAULT_PAGE_MARGINS.bottom,
+        left: DEFAULT_PAGE_MARGINS.left,
+        right: DEFAULT_PAGE_MARGINS.right
+      };
+    }
+  }
+
+  private updateHorizontalMargins(value: number): void {
+    this.ensurePageMargins();
+    const margin = Math.round(value);
+    this.settings.pageMargins = {
+      top: this.settings.pageMargins.top,
+      bottom: this.settings.pageMargins.bottom,
+      left: margin,
+      right: margin
+    };
+    this.notifyChange();
+  }
+
+  private updateTopMargin(value: number): void {
+    this.ensurePageMargins();
+    this.settings.pageMargins = {
+      top: Math.round(value),
+      bottom: this.settings.pageMargins.bottom,
+      left: this.settings.pageMargins.left,
+      right: this.settings.pageMargins.right
+    };
+    this.notifyChange();
+  }
+
+  private updateBottomMargin(value: number): void {
+    this.ensurePageMargins();
+    this.settings.pageMargins = {
+      top: this.settings.pageMargins.top,
+      bottom: Math.round(value),
+      left: this.settings.pageMargins.left,
+      right: this.settings.pageMargins.right
+    };
+    this.notifyChange();
+  }
+
   /**
    * 恢复字体设置为默认值
    */
@@ -504,7 +549,7 @@ export struct TextFontSettingsPanel {
           .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.text_primary'))
         Blank()
-        Text(`${this.settings.pageMargins.left}`)
+        Text(`${this.settings.pageMargins?.left ?? DEFAULT_PAGE_MARGINS.left}`)
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor($r('app.color.accent'))
@@ -512,23 +557,76 @@ export struct TextFontSettingsPanel {
       .width('100%')
 
       Slider({
-        value: this.settings.pageMargins.left,
-        min: 8,
-        max: 64,
-        step: 4
+        value: this.settings.pageMargins?.left ?? DEFAULT_PAGE_MARGINS.left,
+        min: 0,
+        max: 80,
+        step: 2
       })
         .width('100%')
         .trackColor($r('app.color.divider'))
         .selectedColor($r('app.color.accent'))
         .onChange((value: number) => {
-          const margin = Math.round(value);
-          this.settings.pageMargins = {
-            top: margin + 24,
-            bottom: margin + 24,
-            left: margin,
-            right: margin
-          };
-          this.notifyChange();
+          this.updateHorizontalMargins(value);
+        })
+    }
+    .width('100%')
+
+    // 上边距
+    Column({ space: 8 }) {
+      Row() {
+        Text('上边距')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        Text(`${this.settings.pageMargins?.top ?? DEFAULT_PAGE_MARGINS.top}`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.accent'))
+      }
+      .width('100%')
+
+      Slider({
+        value: this.settings.pageMargins?.top ?? DEFAULT_PAGE_MARGINS.top,
+        min: 0,
+        max: 160,
+        step: 2
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateTopMargin(value);
+        })
+    }
+    .width('100%')
+
+    // 下边距
+    Column({ space: 8 }) {
+      Row() {
+        Text('下边距')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+        Blank()
+        Text(`${this.settings.pageMargins?.bottom ?? DEFAULT_PAGE_MARGINS.bottom}`)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.accent'))
+      }
+      .width('100%')
+
+      Slider({
+        value: this.settings.pageMargins?.bottom ?? DEFAULT_PAGE_MARGINS.bottom,
+        min: 0,
+        max: 160,
+        step: 2
+      })
+        .width('100%')
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateBottomMargin(value);
         })
     }
     .width('100%')
@@ -782,30 +880,79 @@ export struct TextFontSettingsPanel {
         .width(30)
 
       Slider({
-        value: this.settings.pageMargins.left,
-        min: 8,
-        max: 64,
-        step: 4
+        value: this.settings.pageMargins?.left ?? DEFAULT_PAGE_MARGINS.left,
+        min: 0,
+        max: 80,
+        step: 2
       })
         .layoutWeight(1)
         .trackColor($r('app.color.divider'))
         .selectedColor($r('app.color.accent'))
         .onChange((value: number) => {
-          const margin = Math.round(value);
-          this.settings.pageMargins = {
-            top: margin + 24,
-            bottom: margin + 24,
-            left: margin,
-            right: margin
-          };
-          this.notifyChange();
+          this.updateHorizontalMargins(value);
         })
 
-      Text(`${this.settings.pageMargins.left}`)
+      Text(`${this.settings.pageMargins?.left ?? DEFAULT_PAGE_MARGINS.left}`)
         .fontSize(10)
         .fontFamily(this.appFontFamily)
         .fontColor($r('app.color.accent'))
-        .width(25)
+        .width(32)
+    }
+    .width('100%')
+
+    Row() {
+      Text('上')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_primary'))
+        .width(30)
+
+      Slider({
+        value: this.settings.pageMargins?.top ?? DEFAULT_PAGE_MARGINS.top,
+        min: 0,
+        max: 160,
+        step: 2
+      })
+        .layoutWeight(1)
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateTopMargin(value);
+        })
+
+      Text(`${this.settings.pageMargins?.top ?? DEFAULT_PAGE_MARGINS.top}`)
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.accent'))
+        .width(32)
+    }
+    .width('100%')
+
+    Row() {
+      Text('下')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_primary'))
+        .width(30)
+
+      Slider({
+        value: this.settings.pageMargins?.bottom ?? DEFAULT_PAGE_MARGINS.bottom,
+        min: 0,
+        max: 160,
+        step: 2
+      })
+        .layoutWeight(1)
+        .trackColor($r('app.color.divider'))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: number) => {
+          this.updateBottomMargin(value);
+        })
+
+      Text(`${this.settings.pageMargins?.bottom ?? DEFAULT_PAGE_MARGINS.bottom}`)
+        .fontSize(10)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.accent'))
+        .width(32)
     }
     .width('100%')
 

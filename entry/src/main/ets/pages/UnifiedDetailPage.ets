@@ -1490,6 +1490,20 @@ export struct UnifiedDetailPage {
   }
 
   /**
+   * 继续听书（仅小说）
+   */
+  private continueReadAloud(): void {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) return;
+
+    const lastIndex = this.content.lastReadChapterIndex;
+    if (lastIndex >= 0 && lastIndex < this.content.chapters.length) {
+      this.openNovelReadAloudPage(lastIndex);
+    } else {
+      this.openNovelReadAloudPage(0);
+    }
+  }
+
+  /**
    * 打开在线电子书阅读器（ZLibrary等）
    */
   private openOnlineEBookReader(): void {
@@ -1654,6 +1668,36 @@ export struct UnifiedDetailPage {
         this.pathStack.pushPathByName('NovelReaderPage', params);
       }
     );
+  }
+
+  /**
+   * 打开小说听书播放器（通过阅读器初始化上下文后自动跳转播放器页）
+   */
+  private openNovelReadAloudPage(chapterIndex: number): void {
+    if (!this.content) return;
+
+    const chapter = this.content.chapters[chapterIndex];
+    if (!chapter) return;
+
+    const originalChapter = NovelAdapter.getOriginalChapter(chapter);
+    const originalBook = NovelAdapter.getOriginalNovel(this.content);
+
+    const params: NovelReaderPageParams = {
+      sourceId: this.content.sourceId || '',
+      bookUrl: this.content.id,
+      bookName: this.content.title,
+      chapterUrl: originalChapter?.url || '',
+      chapterTitle: chapter.title,
+      chapterIndex: chapterIndex,
+      totalChapters: this.content.totalChapters,
+      tocUrl: originalBook?.tocUrl,
+      author: this.content.author,
+      coverUrl: this.content.coverUrl,
+      autoStartReadAloud: true,
+      autoOpenReadAloudPlayer: true
+    };
+
+    this.pathStack.pushPathByName('NovelReaderPage', params);
   }
 
   /**
@@ -2782,6 +2826,17 @@ export struct UnifiedDetailPage {
             .height(36)
             .width('100%')
             .onClick(() => this.continueReading())
+
+          if (this.content?.contentType === UnifiedContentType.NOVEL) {
+            Button('开始听书')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '22')
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .height(34)
+              .width('100%')
+              .onClick(() => this.continueReadAloud())
+          }
         }
         .width('100%')
       }
@@ -5996,23 +6051,37 @@ export struct UnifiedDetailPage {
       .height('100%')
       .padding({ left: 8, right: 16, top: 16, bottom: 16 })
 
-      // 右下角浮动阅读按钮
-      Button((this.content?.lastReadChapterIndex ?? -1) >= 0 ? '继续阅读' : '开始阅读')
-        .fontSize(14)
-        .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .fontColor(Color.White)
-        .height(44)
-        .padding({ left: 24, right: 24 })
-        .borderRadius(22)
-        .shadow({
-          radius: 12,
-          color: 'rgba(0,0,0,0.15)',
-          offsetX: 0,
-          offsetY: 4
-        })
-        .position({ right: 24, bottom: 24 })
-        .onClick(() => this.continueReading())
+      // 右下角浮动阅读按钮组
+      Column({ space: 10 }) {
+        Button((this.content?.lastReadChapterIndex ?? -1) >= 0 ? '继续阅读' : '开始阅读')
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(Color.White)
+          .height(44)
+          .padding({ left: 24, right: 24 })
+          .borderRadius(22)
+          .shadow({
+            radius: 12,
+            color: 'rgba(0,0,0,0.15)',
+            offsetX: 0,
+            offsetY: 4
+          })
+          .onClick(() => this.continueReading())
+
+        if (this.content?.contentType === UnifiedContentType.NOVEL) {
+          Button('开始听书')
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '22')
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .height(40)
+            .padding({ left: 20, right: 20 })
+            .borderRadius(20)
+            .onClick(() => this.continueReadAloud())
+        }
+      }
+      .position({ right: 24, bottom: 24 })
     }
     .width('100%')
     .height('100%')

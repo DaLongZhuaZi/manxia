@@ -122,6 +122,8 @@ export struct PageCurlEffectV2 {
   private animationTimer: number = -1;
   // 动画期间弹簧软化标记
   private isReleaseAnimating: boolean = false;
+  // 当动画目标在 Canvas 未就绪时先缓存，待 onReady 后补触发。
+  private pendingAnimateAfterReady: boolean = false;
   
   // ImageBitmap缓存（用于Canvas绘制）
   private currentImageBitmap: ImageBitmap | null = null;
@@ -277,9 +279,15 @@ export struct PageCurlEffectV2 {
    *  - 无速度时：使用基于进度的默认时长
    */
   onAnimateToTargetChange(): void {
-    if (this.animateToTarget < 0 || !this.isReady) {
+    if (this.animateToTarget < 0) {
+      this.pendingAnimateAfterReady = false;
       return;
     }
+    if (!this.isReady) {
+      this.pendingAnimateAfterReady = true;
+      return;
+    }
+    this.pendingAnimateAfterReady = false;
     
     // 停止之前的动画
     this.stopAnimation();
@@ -1460,6 +1468,9 @@ export struct PageCurlEffectV2 {
           this.updateImageBitmaps();
           logger.info(TAG, `[Canvas.onReady] 调用renderCurlEffect`);
           this.renderCurlEffect();
+          if (this.pendingAnimateAfterReady || this.animateToTarget >= 0) {
+            this.onAnimateToTargetChange();
+          }
         })
     }
     .width(this.componentWidth)
