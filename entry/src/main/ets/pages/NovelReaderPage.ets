@@ -28,7 +28,8 @@ import {
   TextReadingMode,
   BackgroundType,
   PageMargins,
-  TextAlignment
+  TextAlignment,
+  SavedBackgroundImage
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
@@ -123,13 +124,16 @@ export struct NovelReaderPage {
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private readStartTime: number = 0;
   private lastSaveTime: number = 0;
+  private lastProgressReadTime: number = 0;
   private uiContext: UIContext | null = null;
   private saveProgressInterval: number = 30000; // 30秒自动保存
   private readAloudProgressSaveInterval: number = 4000;
+  private currentChapterTotalPages: number = 0;
   private shouldAutoStartReadAloud: boolean = false;
   private shouldAutoOpenReadAloudPlayer: boolean = false;
   private lastReadAloudResumePersistTime: number = 0;
   private lastReadAloudProgressSaveTime: number = 0;
+  private isReadProgressReady: boolean = false;
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
     if (!this.bookId) {
@@ -538,6 +542,7 @@ export struct NovelReaderPage {
 
   async loadContent(): Promise<void> {
     this.isLoading = true;
+    this.isReadProgressReady = false;
     try {
       // 设置沉浸式模式
       this.setupFullscreenMode();
@@ -603,6 +608,7 @@ export struct NovelReaderPage {
       
       // 加载阅读进度
       await this.loadReadProgress();
+      this.isReadProgressReady = true;
       this.currentPageStartCharIndex = 0;
       this.currentPageEndCharIndex = 0;
       this.restoreReadAloudResumeCharIndex();
@@ -674,15 +680,91 @@ export struct NovelReaderPage {
   }
 
   onSettingsChange(newSettings: TextReaderSettings): void {
+    const sourceBackground = newSettings.background ?? this.settings.background;
+    const sourceTextStyle = newSettings.textStyle ?? this.settings.textStyle;
+    const sourcePageMargins = newSettings.pageMargins ?? this.settings.pageMargins;
+    const sourceSavedBackgroundImages: SavedBackgroundImage[] =
+      newSettings.savedBackgroundImages ?? [];
+
+    const savedBackgroundImages: SavedBackgroundImage[] = [];
+    for (let i = 0; i < sourceSavedBackgroundImages.length; i++) {
+      const item = sourceSavedBackgroundImages[i];
+      savedBackgroundImages.push({
+        path: item.path,
+        addTime: item.addTime
+      });
+    }
+
+    const nextSettings: TextReaderSettings = {
+      readingMode: newSettings.readingMode,
+      readingDirection: newSettings.readingDirection,
+      pageTurnAnimation: newSettings.pageTurnAnimation,
+      background: {
+        type: sourceBackground.type,
+        color: sourceBackground.color,
+        imagePath: sourceBackground.imagePath,
+        imageOpacity: sourceBackground.imageOpacity,
+        gradientStart: sourceBackground.gradientStart,
+        gradientEnd: sourceBackground.gradientEnd,
+        gradientAngle: sourceBackground.gradientAngle
+      },
+      savedBackgroundImages: savedBackgroundImages,
+      textStyle: {
+        fontSize: sourceTextStyle.fontSize,
+        lineHeight: sourceTextStyle.lineHeight,
+        paragraphSpacing: sourceTextStyle.paragraphSpacing,
+        firstLineIndent: sourceTextStyle.firstLineIndent,
+        letterSpacing: sourceTextStyle.letterSpacing,
+        textColor: sourceTextStyle.textColor,
+        fontWeight: sourceTextStyle.fontWeight,
+        fontFamily: sourceTextStyle.fontFamily,
+        fontPath: sourceTextStyle.fontPath,
+        textAlignment: sourceTextStyle.textAlignment
+      },
+      pageMargins: {
+        top: sourcePageMargins.top,
+        bottom: sourcePageMargins.bottom,
+        left: sourcePageMargins.left,
+        right: sourcePageMargins.right
+      },
+      keepScreenOn: newSettings.keepScreenOn,
+      showPageNumber: newSettings.showPageNumber,
+      showProgress: newSettings.showProgress,
+      showTime: newSettings.showTime,
+      showBattery: newSettings.showBattery,
+      tapToTurn: newSettings.tapToTurn,
+      volumeKeyNavigation: newSettings.volumeKeyNavigation,
+      autoScrollSpeed: newSettings.autoScrollSpeed,
+      autoPageTurnEnabled: newSettings.autoPageTurnEnabled,
+      autoPageTurnInterval: newSettings.autoPageTurnInterval,
+      curlBackOpacity: newSettings.curlBackOpacity,
+      readAloud: newSettings.readAloud
+        ? {
+            enabled: newSettings.readAloud.enabled,
+            engineType: newSettings.readAloud.engineType,
+            speed: newSettings.readAloud.speed,
+            pitch: newSettings.readAloud.pitch,
+            volume: newSettings.readAloud.volume,
+            continueInBackground: newSettings.readAloud.continueInBackground,
+            autoPlayNextChapter: newSettings.readAloud.autoPlayNextChapter,
+            pauseOnManualPageTurn: newSettings.readAloud.pauseOnManualPageTurn,
+            voiceLanguage: newSettings.readAloud.voiceLanguage,
+            voicePerson: newSettings.readAloud.voicePerson,
+            voiceOnline: newSettings.readAloud.voiceOnline
+          }
+        : undefined
+    };
+    this.ensureSettingsComplete(nextSettings);
+
     const oldMode = this.lastReadingMode;
-    const newMode = newSettings.readingMode;
+    const newMode = nextSettings.readingMode;
     
     // 直接更新settings状态，触发UI响应式更新
-    this.settings = newSettings;
+    this.settings = nextSettings;
     // 异步保存设置（不阻塞UI）
     this.saveSettings();
-    if (newSettings.readAloud) {
-      this.readAloudController.updateSettings(newSettings.readAloud);
+    if (nextSettings.readAloud) {
+      this.readAloudController.updateSettings(nextSettings.readAloud);
     }
     logger.debug(TAG, `设置已更新并保存`);
     
@@ -759,21 +841,15 @@ export struct NovelReaderPage {
 
   onPageChange(pageIndex: number, totalPages: number): void {
     this.currentPageIndex = pageIndex;
+    this.currentChapterTotalPages = Math.max(0, totalPages);
     this.readAloudController.updatePageIndex(pageIndex);
     this.updateReadAloudContextByPosition();
     logger.debug(TAG, `页面切换: ${pageIndex + 1}/${totalPages}`);
-    
-    // 定期保存阅读进度
+
+    // 页码变化立即落库，避免短时阅读/异常退出时进度丢失
     const now = Date.now();
-    if (this.readAloudPlaying) {
-      this.lastSaveTime = now;
-      this.saveReadProgress();
-      return;
-    }
-    if (now - this.lastSaveTime > this.saveProgressInterval) {
-      this.saveReadProgress();
-      this.lastSaveTime = now;
-    }
+    this.lastSaveTime = now;
+    this.saveReadProgress();
   }
 
   onChapterChange(chapterIndex: number): void {
@@ -835,17 +911,51 @@ export struct NovelReaderPage {
   /**
    * 保存阅读进度
    */
+  private calculateReadProgressPercent(): number {
+    if (this.totalChapters <= 0) {
+      return 0;
+    }
+
+    let chapterFraction = 0;
+    const contentLength = this.content ? this.content.length : 0;
+    if (contentLength > 0) {
+      let anchorCharIndex = -1;
+      if (this.readAloudCurrentCharIndex >= 0) {
+        anchorCharIndex = this.readAloudCurrentCharIndex;
+      } else if (this.currentPageEndCharIndex > this.currentPageStartCharIndex) {
+        anchorCharIndex = this.currentPageEndCharIndex;
+      } else {
+        anchorCharIndex = this.currentPageStartCharIndex;
+      }
+      const safeAnchorCharIndex = Math.max(0, Math.min(Math.floor(anchorCharIndex), contentLength - 1));
+      chapterFraction = Math.max(0, Math.min(1, (safeAnchorCharIndex + 1) / contentLength));
+    } else if (this.currentChapterTotalPages > 0) {
+      const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.currentChapterTotalPages - 1));
+      chapterFraction = Math.max(0, Math.min(1, (safePageIndex + 1) / this.currentChapterTotalPages));
+    }
+
+    const safeChapterIndex = Math.max(0, Math.min(this.currentChapterIndex, Math.max(0, this.totalChapters - 1)));
+    const progressPercent = ((safeChapterIndex + chapterFraction) / this.totalChapters) * 100;
+    return Math.max(0, Math.min(100, progressPercent));
+  }
+
   async saveReadProgress(): Promise<void> {
     if (!this.bookId) return;
+    if (!this.isReadProgressReady) {
+      logger.debug(TAG, `跳过保存阅读进度（尚未完成进度恢复）: 章节${this.currentChapterIndex}, 页面${this.currentPageIndex}`);
+      return;
+    }
 
     try {
-      const now = Date.now();
+      const candidateNow = Date.now();
+      const now = candidateNow > this.lastProgressReadTime ? candidateNow : (this.lastProgressReadTime + 1);
+      this.lastProgressReadTime = now;
       const progress: NovelReadProgress = {
         bookId: this.bookId,
         chapterId: this.chapterId,
         chapterIndex: this.currentChapterIndex,
         position: this.currentPageIndex,
-        progress: this.totalChapters > 0 ? (this.currentChapterIndex / this.totalChapters) * 100 : 0,
+        progress: this.calculateReadProgressPercent(),
         readTime: now
       };
       
@@ -1451,6 +1561,7 @@ export struct NovelReaderPage {
       readAloudCurrentCharIndex: this.readAloudCurrentCharIndex,
       readAloudFollowEnabled: this.readAloudPlaying,
       readAloudHighlightEnabled: true,
+      bottomStatusBarHeight: 0,
       paginationMode: PaginationMode.ONLINE,  // 在线小说使用ONLINE分页模式
       onPageChange: (pageIndex: number, totalPages: number) => this.onPageChange(pageIndex, totalPages),
       onPageCharRangeChange: (startCharIndex: number, endCharIndex: number) => {

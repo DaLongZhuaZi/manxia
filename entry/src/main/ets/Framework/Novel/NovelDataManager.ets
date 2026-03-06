@@ -268,8 +268,8 @@ export class NovelDataManager {
       book.author || '', book.kind || '', book.intro || '', book.coverUrl || '',
       book.coverLocalPath || '', book.tocUrl || '', book.latestChapterTitle || '',
       book.wordCount || '', book.chapterCount || 0, book.readStatus || 'unread',
-      book.lastReadChapterId || '', book.lastReadChapterIndex || 0,
-      book.lastReadPosition || 0, book.lastReadTime || 0,
+      book.lastReadChapterId ?? '', book.lastReadChapterIndex ?? -1,
+      book.lastReadPosition ?? 0, book.lastReadTime ?? 0,
       book.isFavorite ? 1 : 0,
       book.isPrivate ? 1 : 0,  // isPrivate默认为0（普通内容）
       isNSFWVal,                // isNSFW：支持从书源自动继承
@@ -438,6 +438,14 @@ export class NovelDataManager {
        lastReadPosition = ?, lastReadTime = ?, readStatus = 'reading', updateTime = ?
        WHERE id = ? AND (lastReadTime IS NULL OR lastReadTime <= ?)`,
       [progress.chapterId, progress.chapterIndex, progress.position, safeReadTime, now, progress.bookId, safeReadTime]
+    );
+    await store.executeSql(
+      `UPDATE novel_book SET lastReadChapterId = ?, lastReadChapterIndex = ?,
+       lastReadPosition = ?, lastReadTime = ?, readStatus = 'reading', updateTime = ?
+       WHERE sourceId = (SELECT sourceId FROM novel_book WHERE id = ?)
+         AND bookUrl = (SELECT bookUrl FROM novel_book WHERE id = ?)
+         AND (lastReadTime IS NULL OR lastReadTime <= ?)`,
+      [progress.chapterId, progress.chapterIndex, progress.position, safeReadTime, now, progress.bookId, progress.bookId, safeReadTime]
     );
   }
 
@@ -683,7 +691,7 @@ export class NovelDataManager {
   async getBookByUrl(sourceId: string, bookUrl: string): Promise<NovelBook | null> {
     const store = this.getStore();
     const rs = await store.querySql(
-      'SELECT * FROM novel_book WHERE sourceId = ? AND bookUrl = ?',
+      'SELECT * FROM novel_book WHERE sourceId = ? AND bookUrl = ? ORDER BY lastReadTime DESC, updateTime DESC',
       [sourceId, bookUrl]
     );
     const books = this.parseBookResults(rs);
@@ -697,9 +705,16 @@ export class NovelDataManager {
    */
   async updateReadingTime(bookId: string, additionalTime: number): Promise<void> {
     const store = this.getStore();
+    const now = Date.now();
     await store.executeSql(
       'UPDATE novel_book SET totalReadingTime = totalReadingTime + ?, updateTime = ? WHERE id = ?',
-      [additionalTime, Date.now(), bookId]
+      [additionalTime, now, bookId]
+    );
+    await store.executeSql(
+      `UPDATE novel_book SET totalReadingTime = totalReadingTime + ?, updateTime = ?
+       WHERE sourceId = (SELECT sourceId FROM novel_book WHERE id = ?)
+         AND bookUrl = (SELECT bookUrl FROM novel_book WHERE id = ?)`,
+      [additionalTime, now, bookId, bookId]
     );
     logger.debug(TAG, `更新书籍阅读时长: ${bookId}, 新增 ${additionalTime} 秒`);
   }

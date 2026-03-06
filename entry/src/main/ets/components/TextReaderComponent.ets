@@ -298,9 +298,9 @@ export struct TextReaderComponent {
       logger.info(TAG, `内容变化，重新分页。旧长度: ${this.lastContent.length}, 新长度: ${this.content.length}`);
       this.lastContent = this.content;
       
-      // 重置状态
-      this.currentPageIndex = 0;
-      this.lastExternalPageIndex = 0;
+      // 内容变更时不写回 @Link 页码，避免覆盖父组件已恢复的进度
+      const preservedPageIndex = Math.max(0, Math.floor(this.currentPageIndex));
+      this.lastExternalPageIndex = preservedPageIndex;
       
       // 清空旧的页面数据和缓存，避免访问旧数据导致崩溃
       this.pages = [];
@@ -482,10 +482,14 @@ export struct TextReaderComponent {
 
   private getCurrentAnchorCharIndex(): number {
     if (this.pages.length === 0) {
-      return 0;
+      return -1;
     }
     const safeIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
-    return this.pages[safeIndex]?.startCharIndex ?? 0;
+    const page = this.pages[safeIndex];
+    if (!page) {
+      return -1;
+    }
+    return Math.max(0, page.startCharIndex);
   }
 
   private findPageIndexByCharIndex(charIndex: number): number {
@@ -627,6 +631,29 @@ export struct TextReaderComponent {
       right: pageMargins.right
     };
     return padding;
+  }
+
+  /**
+   * 当上下边距都为0时，轻度收紧文本行高，减少首尾行盒留白的视觉空隙
+   */
+  private getEffectiveTextLineHeight(): number {
+    const fontSize = this.settings.textStyle.fontSize;
+    const baseLineHeight = fontSize * this.settings.textStyle.lineHeight;
+    const pageMargins = this.settings.pageMargins;
+    if (!pageMargins) {
+      return baseLineHeight;
+    }
+
+    const top = Math.max(0, Math.round(Number(pageMargins.top) || 0));
+    const bottom = Math.max(0, Math.round(Number(pageMargins.bottom) || 0));
+    if (top > 0 || bottom > 0) {
+      return baseLineHeight;
+    }
+
+    const extraLeading = Math.max(0, baseLineHeight - fontSize);
+    const trim = Math.min(extraLeading, fontSize * 0.28);
+    const minLineHeight = fontSize * 1.12;
+    return Math.max(minLineHeight, baseLineHeight - trim);
   }
 
   private isAutoPageTurnActive(): boolean {
@@ -835,31 +862,30 @@ export struct TextReaderComponent {
    */
   private lastExternalPageIndex: number = -1;
   private onPageIndexChange(): void {
-    // 防止内部翻页触发重复更新
     if (this.lastExternalPageIndex === this.currentPageIndex) {
       return;
     }
-    
-    // 动画进行中不处理外部页面索引变化，避免破坏卷页动画状态
+
     if (this.isAnimating || this.showCurlEffect) {
       logger.debug(TAG, `外部页面索引变化被跳过（动画中）: ${this.lastExternalPageIndex} -> ${this.currentPageIndex}`);
       return;
     }
-    
-    // 边界检查
+
+    // Keep external index untouched before pagination is ready.
+    if (this.totalPages <= 0) {
+      this.lastExternalPageIndex = this.currentPageIndex;
+      return;
+    }
+
     const safeIndex = Math.max(0, Math.min(this.currentPageIndex, this.totalPages - 1));
     if (safeIndex !== this.currentPageIndex) {
       this.currentPageIndex = safeIndex;
     }
-    
+
     logger.info(TAG, `外部页面索引变化: ${this.lastExternalPageIndex} -> ${this.currentPageIndex}, totalPages=${this.totalPages}`);
     this.lastExternalPageIndex = this.currentPageIndex;
-    
-    // 更新页面内容
-    if (this.totalPages > 0) {
-      this.updatePageContents();
-      this.notifyPageChange();
-    }
+    this.updatePageContents();
+    this.notifyPageChange();
   }
 
   private onReadAloudCharIndexChange(): void {
@@ -1294,7 +1320,7 @@ export struct TextReaderComponent {
     
     const fontSize = this.settings.textStyle.fontSize;
     const lineHeight = this.settings.textStyle.lineHeight;
-    const actualLineHeight = fontSize * lineHeight;
+    const actualLineHeight = this.getEffectiveTextLineHeight();
     
     // 计算每页可容纳的行数
     const linesPerPage = Math.floor(this.contentAreaHeight / actualLineHeight);
@@ -1358,12 +1384,12 @@ export struct TextReaderComponent {
         const emptyLineChars = charsPerLine;
         if (currentPageCharCount + emptyLineChars > charsPerPage && currentPageParagraphs.length > 0) {
           // 当前页已满，创建新页
-          pages.push({
-            index: pages.length,
-            content: currentPageParagraphs.join('\n'),
-            startCharIndex: pageStartCharIndex,
-            endCharIndex: charIndex
-          });
+          this.pushOnlinePage(
+            pages,
+            currentPageParagraphs,
+            pageStartCharIndex,
+            charIndex
+          );
           pageStartCharIndex = charIndex;
           currentPageParagraphs = [];
           currentPageCharCount = 0;
@@ -1399,12 +1425,12 @@ export struct TextReaderComponent {
               
               // 首部分添加到当前页（带首行缩进）
               currentPageParagraphs.push('　'.repeat(indentChars) + firstPart);
-              pages.push({
-                index: pages.length,
-                content: currentPageParagraphs.join('\n'),
-                startCharIndex: pageStartCharIndex,
-                endCharIndex: charIndex + splitPoint
-              });
+              this.pushOnlinePage(
+                pages,
+                currentPageParagraphs,
+                pageStartCharIndex,
+                charIndex + splitPoint
+              );
               
               // 开始新页，放剩余部分（不需要首行缩进，因为是段落中间）
               pageStartCharIndex = charIndex + splitPoint;
@@ -1418,12 +1444,12 @@ export struct TextReaderComponent {
         }
         
         // 无法分割或不值得分割，直接换页
-        pages.push({
-          index: pages.length,
-          content: currentPageParagraphs.join('\n'),
-          startCharIndex: pageStartCharIndex,
-          endCharIndex: charIndex
-        });
+        this.pushOnlinePage(
+          pages,
+          currentPageParagraphs,
+          pageStartCharIndex,
+          charIndex
+        );
         pageStartCharIndex = charIndex;
         currentPageParagraphs = [];
         currentPageCharCount = 0;
@@ -1437,16 +1463,67 @@ export struct TextReaderComponent {
     
     // 处理最后一页
     if (currentPageParagraphs.length > 0) {
-      pages.push({
-        index: pages.length,
-        content: currentPageParagraphs.join('\n'),
-        startCharIndex: pageStartCharIndex,
-        endCharIndex: charIndex
-      });
+      this.pushOnlinePage(
+        pages,
+        currentPageParagraphs,
+        pageStartCharIndex,
+        charIndex
+      );
     }
     
     this.pages = pages;
     this.totalPages = pages.length;
+  }
+
+  /**
+   * 向 ONLINE 分页结果中添加页面（裁掉首尾空白行，稳定首行/末行视觉位置）
+   */
+  private pushOnlinePage(
+    pages: TextPage[],
+    paragraphs: string[],
+    startCharIndex: number,
+    endCharIndex: number
+  ): void {
+    const rawContent = paragraphs.join('\n');
+    const normalizedContent = this.trimBoundaryEmptyLines(rawContent);
+    if (normalizedContent.length <= 0) {
+      return;
+    }
+
+    const safeStartCharIndex = Math.max(0, Math.floor(startCharIndex));
+    const safeEndCharIndex = Math.max(safeStartCharIndex, Math.floor(endCharIndex));
+    pages.push({
+      index: pages.length,
+      content: normalizedContent,
+      startCharIndex: safeStartCharIndex,
+      endCharIndex: safeEndCharIndex
+    });
+  }
+
+  /**
+   * 裁掉文本首尾空白行（保留中间空行）
+   */
+  private trimBoundaryEmptyLines(text: string): string {
+    if (!text) {
+      return '';
+    }
+
+    const lines = text.split('\n');
+    let start = 0;
+    let end = lines.length - 1;
+    while (start <= end && lines[start].trim().length === 0) {
+      start += 1;
+    }
+    while (end >= start && lines[end].trim().length === 0) {
+      end -= 1;
+    }
+    if (start > end) {
+      return '';
+    }
+    if (start === 0 && end === lines.length - 1) {
+      return text;
+    }
+    return lines.slice(start, end + 1).join('\n');
   }
   
   /**
@@ -1956,7 +2033,7 @@ export struct TextReaderComponent {
       Text(this.currentPageContent)
         .fontSize(this.settings.textStyle.fontSize)
         .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
         .fontWeight(this.settings.textStyle.fontWeight)
         .fontFamily(this.settings.textStyle.fontFamily)
@@ -1995,7 +2072,7 @@ export struct TextReaderComponent {
       }
         .fontSize(this.settings.textStyle.fontSize)
         .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
         .fontWeight(this.settings.textStyle.fontWeight)
         .fontFamily(this.settings.textStyle.fontFamily)
@@ -2023,7 +2100,7 @@ export struct TextReaderComponent {
       Text(pageContent)
         .fontSize(this.settings.textStyle.fontSize)
         .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
         .fontWeight(this.settings.textStyle.fontWeight)
         .fontFamily(this.settings.textStyle.fontFamily)
@@ -2051,7 +2128,7 @@ export struct TextReaderComponent {
       }
         .fontSize(this.settings.textStyle.fontSize)
         .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
         .fontWeight(this.settings.textStyle.fontWeight)
         .fontFamily(this.settings.textStyle.fontFamily)
@@ -2791,7 +2868,7 @@ export struct TextReaderComponent {
       Text(content)
         .fontSize(this.settings.textStyle.fontSize)
         .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+        .lineHeight(this.getEffectiveTextLineHeight())
         .letterSpacing(this.settings.textStyle.letterSpacing)
         .fontWeight(this.settings.textStyle.fontWeight)
         .fontFamily(this.settings.textStyle.fontFamily)
@@ -4099,7 +4176,7 @@ export struct TextReaderComponent {
           }
             .fontSize(this.settings.textStyle.fontSize)
             .fontColor(this.settings.textStyle.textColor)
-            .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+            .lineHeight(this.getEffectiveTextLineHeight())
             .letterSpacing(this.settings.textStyle.letterSpacing)
             .fontWeight(this.settings.textStyle.fontWeight)
             .fontFamily(this.settings.textStyle.fontFamily)
@@ -4111,7 +4188,7 @@ export struct TextReaderComponent {
             Text(segment)
               .fontSize(this.settings.textStyle.fontSize)
               .fontColor(this.settings.textStyle.textColor)
-              .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+              .lineHeight(this.getEffectiveTextLineHeight())
               .letterSpacing(this.settings.textStyle.letterSpacing)
               .fontWeight(this.settings.textStyle.fontWeight)
               .fontFamily(this.settings.textStyle.fontFamily)
@@ -4188,7 +4265,7 @@ export struct TextReaderComponent {
         Text(this.isForward ? this.nextPageContent : this.prevPageContent)
           .fontSize(this.settings.textStyle.fontSize)
           .fontColor(this.settings.textStyle.textColor)
-          .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+          .lineHeight(this.getEffectiveTextLineHeight())
           .letterSpacing(this.settings.textStyle.letterSpacing)
           .fontWeight(this.settings.textStyle.fontWeight)
           .fontFamily(this.settings.textStyle.fontFamily)
@@ -4273,7 +4350,7 @@ export struct TextReaderComponent {
               Text(this.dualUnderLeftContent)
                 .fontSize(this.settings.textStyle.fontSize)
                 .fontColor(this.settings.textStyle.textColor)
-                .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+                .lineHeight(this.getEffectiveTextLineHeight())
                 .letterSpacing(this.settings.textStyle.letterSpacing)
                 .fontWeight(this.settings.textStyle.fontWeight)
                 .fontFamily(this.settings.textStyle.fontFamily)
@@ -4379,7 +4456,7 @@ export struct TextReaderComponent {
               Text(this.dualUnderRightContent)
                 .fontSize(this.settings.textStyle.fontSize)
                 .fontColor(this.settings.textStyle.textColor)
-                .lineHeight(this.settings.textStyle.fontSize * this.settings.textStyle.lineHeight)
+                .lineHeight(this.getEffectiveTextLineHeight())
                 .letterSpacing(this.settings.textStyle.letterSpacing)
                 .fontWeight(this.settings.textStyle.fontWeight)
                 .fontFamily(this.settings.textStyle.fontFamily)
@@ -4851,3 +4928,4 @@ export struct TextReaderComponent {
     }
   }
 }
+

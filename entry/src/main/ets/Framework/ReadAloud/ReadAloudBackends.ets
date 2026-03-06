@@ -18,6 +18,8 @@ const SYSTEM_TTS_OFFLINE_MODE: number = 1;
 const SYNTH_COMPLETE_FALLBACK_INTERVAL_MS: number = 420;
 const SYNTH_COMPLETE_FALLBACK_MAX_RETRY: number = 80;
 const SYSTEM_TTS_SERVICE_NOT_INITIALIZED_CODE: number = 1002300007;
+const SYSTEM_TTS_INVALID_CHUNK_EMPTY: string = 'SYSTEM_TTS_INVALID_CHUNK_EMPTY';
+const SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR: string = 'SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR';
 
 interface ReadAloudErrorLike {
   code?: number | string;
@@ -259,7 +261,7 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
         this.recoverEngineAndReplayCurrentChunkSafely('speak_listener_error');
         return;
       }
-      this.skipFailedChunkAndContinue();
+      this.skipFailedChunkAndContinue(`code=${errorCode}, message=${errorMessage}`);
     }
   };
 
@@ -771,7 +773,7 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
   private async speakCurrentChunk(): Promise<void> {
     const rawChunk = this.queue[this.queueIndex] ?? '';
     if (!rawChunk || rawChunk.trim().length === 0) {
-      throw new Error('SYSTEM_TTS_INVALID_CHUNK_EMPTY');
+      throw new Error(SYSTEM_TTS_INVALID_CHUNK_EMPTY);
     }
     const range = this.getQueueRange(this.queueIndex);
     const clampedCurrent = Math.max(range.start, Math.min(this.currentCharIndex, Math.max(range.start, range.end - 1)));
@@ -780,7 +782,7 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     const localOffset = Math.max(0, startCharIndex - range.start);
     const chunk = localOffset > 0 ? rawChunk.substring(localOffset) : rawChunk;
     if (!this.hasSpeakableChar(chunk)) {
-      throw new Error('SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR');
+      throw new Error(SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR);
     }
     this.currentCharIndex = startCharIndex;
     this.updateProgressSnapshot(this.currentCharIndex, startCharIndex, endCharIndex);
@@ -840,8 +842,9 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
 
   private speakCurrentChunkSafely(): void {
     this.speakCurrentChunkWithRecovery().catch((error: Object | string) => {
-      logger.warn(TAG, `SYSTEM TTS 继续朗读失败: ${formatReadAloudError(error)}`);
-      this.skipFailedChunkAndContinue();
+      const errorText = formatReadAloudError(error);
+      logger.warn(TAG, `SYSTEM TTS 继续朗读失败: ${errorText}`);
+      this.skipFailedChunkAndContinue(errorText);
     });
   }
 
@@ -890,8 +893,9 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
 
   private recoverEngineAndReplayCurrentChunkSafely(reason: string): void {
     this.recoverEngineAndReplayCurrentChunk(reason).catch((error: Object | string) => {
-      logger.warn(TAG, `SYSTEM TTS 引擎恢复失败: reason=${reason}, error=${formatReadAloudError(error)}`);
-      this.skipFailedChunkAndContinue();
+      const errorText = formatReadAloudError(error);
+      logger.warn(TAG, `SYSTEM TTS 引擎恢复失败: reason=${reason}, error=${errorText}`);
+      this.skipFailedChunkAndContinue(errorText);
     });
   }
 
@@ -937,8 +941,12 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     }
   }
 
-  private skipFailedChunkAndContinue(): void {
+  private skipFailedChunkAndContinue(errorText: string = ''): void {
     if (this.pauseRequested || this.stopRequested || this.queue.length === 0) {
+      return;
+    }
+
+    if (this.trySkipUnspeakableChunkAndContinue(errorText)) {
       return;
     }
 
@@ -968,6 +976,68 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     this.serviceRecoveryRetryCount = 0;
     this.notifyPlaybackEvent('paused_for_error', 'chunk_retry_failed', this.currentCharIndex);
     logger.warn(TAG, `SYSTEM TTS 当前分段重试失败，已停留在原句等待用户继续: queueIndex=${this.queueIndex}, char=${this.currentCharIndex}`);
+  }
+
+  private isInvalidChunkErrorText(errorText: string): boolean {
+    if (!errorText || errorText.length <= 0) {
+      return false;
+    }
+    return errorText.includes(SYSTEM_TTS_INVALID_CHUNK_EMPTY) ||
+      errorText.includes(SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR);
+  }
+
+  private finishQueueAfterUnspeakableSkip(reason: string): void {
+    this.queueIndex = 0;
+    this.pauseRequested = true;
+    this.stopRequested = false;
+    this.chunkFailureRetryCount = 0;
+    this.serviceRecoveryRetryCount = 0;
+    this.notifyPlaybackEvent('completed', reason, this.currentCharIndex);
+  }
+
+  private trySkipUnspeakableChunkAndContinue(errorText: string): boolean {
+    if (!this.isInvalidChunkErrorText(errorText)) {
+      return false;
+    }
+    if (this.queue.length <= 0) {
+      return true;
+    }
+
+    const failedRange = this.getQueueRange(this.queueIndex);
+    this.currentCharIndex = Math.max(failedRange.start, failedRange.end);
+    this.updateProgressSnapshot(this.currentCharIndex, failedRange.start, failedRange.end);
+    this.pendingRequestId = '';
+
+    this.queueIndex += 1;
+    this.chunkFailureRetryCount = 0;
+    this.serviceRecoveryRetryCount = 0;
+
+    if (this.queueIndex >= this.queue.length) {
+      logger.info(
+        TAG,
+        `SYSTEM TTS 不可朗读分段已自动跳过并到达末尾: error=${errorText}, queueIndex=${this.queueIndex}, char=${this.currentCharIndex}`
+      );
+      this.finishQueueAfterUnspeakableSkip('queue_finished_after_unspeakable_skip');
+      return true;
+    }
+
+    if (!this.normalizeQueueIndexToSpeakableChunkFromCurrentChar()) {
+      logger.info(
+        TAG,
+        `SYSTEM TTS 后续无可朗读分段，自动结束: error=${errorText}, queueIndex=${this.queueIndex}, char=${this.currentCharIndex}`
+      );
+      this.finishQueueAfterUnspeakableSkip('queue_finished_after_unspeakable_skip');
+      return true;
+    }
+
+    const nextRange = this.getQueueRange(this.queueIndex);
+    this.updateProgressSnapshot(this.currentCharIndex, nextRange.start, nextRange.end);
+    logger.warn(
+      TAG,
+      `SYSTEM TTS 检测到不可朗读分段，已自动跳过继续: error=${errorText}, nextQueueIndex=${this.queueIndex}, char=${this.currentCharIndex}`
+    );
+    this.speakCurrentChunkSafely();
+    return true;
   }
 
   private scheduleChunkCompleteFallback(requestId: string, delayMs: number = SYNTH_COMPLETE_FALLBACK_INTERVAL_MS): void {
@@ -1268,9 +1338,13 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
       }
       const chunk = content.slice(chunkStart, chunkEnd);
       if (chunk.trim().length > 0) {
-        this.queue.push(chunk);
-        this.queueStartCharIndex.push(chunkStart);
-        this.queueEndCharIndex.push(chunkEnd);
+        if (this.hasSpeakableChar(chunk)) {
+          this.queue.push(chunk);
+          this.queueStartCharIndex.push(chunkStart);
+          this.queueEndCharIndex.push(chunkEnd);
+        } else {
+          logger.debug(TAG, `SYSTEM TTS 忽略不可朗读分段: range=${chunkStart}-${chunkEnd}`);
+        }
       }
       chunkStart = chunkEnd;
     }
