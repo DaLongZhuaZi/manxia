@@ -1283,7 +1283,7 @@ export struct UnifiedDetailPage {
     
     // 如果还是查不到，尝试构建 ID 来查询
     if (!bookInDb && sourceId) {
-      const constructedId = `${sourceId}_${bookUrl}`;
+      const constructedId = this.getNovelCacheBookId(sourceId, bookUrl);
       bookInDb = await this.novelDataManager.getBook(constructedId);
       logger.debug(TAG, `尝试按构建ID查询: ${constructedId}, 结果: ${bookInDb ? '找到' : '未找到'}`);
     }
@@ -1375,7 +1375,7 @@ export struct UnifiedDetailPage {
       // 保存小说信息到数据库（持久化缓存）
       try {
         const novelBook: NovelBook = {
-          id: `${loadSourceId}_${book.bookUrl}`,
+          id: this.getNovelCacheBookId(loadSourceId, book.bookUrl),
           sourceId: loadSourceId,
           sourceName: sourceName,
           bookUrl: book.bookUrl,
@@ -1420,7 +1420,7 @@ export struct UnifiedDetailPage {
     }
 
     // 获取阅读进度（使用之前已查询的bookInDb）
-    const lastReadIndex = bookInDb?.lastReadChapterIndex || -1;
+    const lastReadIndex = bookInDb?.lastReadChapterIndex ?? -1;
 
     // 检查收藏状态
     this.isFavorite = bookInDb?.isFavorite || false;
@@ -1458,7 +1458,28 @@ export struct UnifiedDetailPage {
       case UnifiedContentType.NOVEL:
         this.openNovelReader(chapterIndex);
         break;
+      }
+  }
+
+  private getShelfButtonLabel(): string {
+    if (!this.isInShelf) {
+      return '添加书架';
     }
+    return this.currentShelfName ? `在「${this.currentShelfName}」书架中` : '在书架中';
+  }
+
+  private hasReadingRecord(): boolean {
+    if (!this.content) return false;
+    const lastIndex = this.content.lastReadChapterIndex;
+    return lastIndex >= 0 && lastIndex < this.content.chapters.length;
+  }
+
+  private getReadButtonLabel(): string {
+    return this.hasReadingRecord() ? '继续阅读' : '开始阅读';
+  }
+
+  private getReadAloudButtonLabel(): string {
+    return this.hasReadingRecord() ? '继续听书' : '开始听书';
   }
 
   /**
@@ -2806,36 +2827,68 @@ export struct UnifiedDetailPage {
               .onClick(() => this.openReplaceBookDialog())
           } else {
             // 正常模式：显示添加书架按钮
-            Button(this.isInShelf ? (this.currentShelfName ? `在「${this.currentShelfName}」书架中` : '在书架中') : '添加书架')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
+            Button() {
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+                  .fontSize(14)
+                  .fontColor([this.isInShelf
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+                Text(this.getShelfButtonLabel())
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(this.isInShelf
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+            }
               .backgroundColor(this.isInShelf 
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) + '20'
                 : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-              .fontColor(this.isInShelf
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .height(32)
               .width('100%')
               .onClick(() => this.showAddToShelfSelection())
           }
 
           // 阅读按钮
-          Button((this.content?.lastReadChapterIndex ?? -1) >= 0 ? '继续阅读' : '开始阅读')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.text_book_closed'))
+                .fontSize(14)
+                .fontColor([Color.White])
+              Text(this.getReadButtonLabel())
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(Color.White)
+            }
+          }
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(Color.White)
             .height(36)
             .width('100%')
             .onClick(() => this.continueReading())
 
           if (this.content?.contentType === UnifiedContentType.NOVEL) {
-            Button('开始听书')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '22')
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            Button() {
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.Celia'))
+                  .fontSize(14)
+                  .fontColor([Color.White])
+                Text(this.getReadAloudButtonLabel())
+                  .fontSize(14)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(Color.White)
+              }
+            }
+              .linearGradient({
+                angle: 135,
+                colors: [
+                  ['#00C2FF', 0],
+                  ['#4B7BFF', 0.55],
+                  ['#7A5CFF', 1]
+                ]
+              })
               .height(34)
               .width('100%')
               .onClick(() => this.continueReadAloud())
@@ -3088,7 +3141,7 @@ export struct UnifiedDetailPage {
         
         Button() {
           Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.wand_and_stars'))
+            SymbolGlyph($r('sys.symbol.Celia'))
               .fontSize(16)
               .fontColor([this.isGeneratingCover 
                 ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -3127,7 +3180,7 @@ export struct UnifiedDetailPage {
         
         Button() {
           Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.wand_and_stars'))
+            SymbolGlyph($r('sys.symbol.Celia'))
               .fontSize(16)
               .fontColor([this.isGeneratingCover 
                 ? ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)
@@ -5997,15 +6050,26 @@ export struct UnifiedDetailPage {
             .borderRadius(18)
             .onClick(() => this.openReplaceBookDialog())
         } else {
-          Button(this.isInShelf ? (this.currentShelfName ? `在「${this.currentShelfName}」书架中` : '在书架中') : '添加书架')
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.books_vertical_fill'))
+                .fontSize(13)
+                .fontColor([this.isInShelf
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text(this.getShelfButtonLabel())
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.isInShelf
+                  ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+          }
             .backgroundColor(this.isInShelf
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) + '20'
               : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .fontColor(this.isInShelf
-              ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
-              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .height(36)
             .width('100%')
             .borderRadius(18)
@@ -6056,11 +6120,18 @@ export struct UnifiedDetailPage {
 
       // 右下角浮动阅读按钮组
       Column({ space: 10 }) {
-        Button((this.content?.lastReadChapterIndex ?? -1) >= 0 ? '继续阅读' : '开始阅读')
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
+        Button() {
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.text_book_closed'))
+              .fontSize(14)
+              .fontColor([Color.White])
+            Text(this.getReadButtonLabel())
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(Color.White)
+          }
+        }
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          .fontColor(Color.White)
           .height(44)
           .padding({ left: 24, right: 24 })
           .borderRadius(22)
@@ -6073,11 +6144,25 @@ export struct UnifiedDetailPage {
           .onClick(() => this.continueReading())
 
         if (this.content?.contentType === UnifiedContentType.NOVEL) {
-          Button('开始听书')
-            .fontSize(13)
-            .fontFamily(this.appFontFamily)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '22')
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.Celia'))
+                .fontSize(13)
+                .fontColor([Color.White])
+              Text(this.getReadAloudButtonLabel())
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(Color.White)
+            }
+          }
+            .linearGradient({
+              angle: 135,
+              colors: [
+                ['#00C2FF', 0],
+                ['#4B7BFF', 0.55],
+                ['#7A5CFF', 1]
+              ]
+            })
             .height(40)
             .padding({ left: 20, right: 20 })
             .borderRadius(20)
@@ -6396,24 +6481,35 @@ export struct UnifiedDetailPage {
    */
   private async refreshNovelReadingProgress(): Promise<void> {
     if (!this.content) return;
-    
+
     try {
       const novelBook: NovelBook | null = await this.novelDataManager.getBookByUrl(
-        this.content.sourceId || '', 
+        this.content.sourceId || '',
         this.content.id
       );
-      
+
       if (novelBook) {
-        const lastChapterIndex: number = novelBook.lastReadChapterIndex || 0;
-        const readChapters: number = novelBook.chapterCount || 0;
-        
+        const maxChapterIndex = Math.max(-1, this.content.totalChapters - 1);
+        const rawLastChapterIndex = novelBook.lastReadChapterIndex ?? -1;
+        const lastChapterIndex = Math.max(-1, Math.min(rawLastChapterIndex, maxChapterIndex));
+        const readChapters = lastChapterIndex >= 0 ? (lastChapterIndex + 1) : 0;
+
+        let readProgress = this.content.totalChapters > 0
+          ? Math.round((readChapters / this.content.totalChapters) * 100)
+          : 0;
+        const progressData = await this.novelDataManager.getReadProgress(novelBook.id);
+        if (progressData) {
+          const preciseProgress = Math.round(progressData.progress);
+          if (preciseProgress > readProgress) {
+            readProgress = preciseProgress;
+          }
+        }
+
         this.content.lastReadChapterIndex = lastChapterIndex;
         this.content.readChapters = readChapters;
-        this.content.readProgress = this.content.totalChapters > 0 
-          ? Math.round((readChapters / this.content.totalChapters) * 100) 
-          : 0;
-        
-        logger.info(TAG, `小说阅读进度已刷新: 章节${lastChapterIndex}, 已读${readChapters}章`);
+        this.content.readProgress = readProgress;
+
+        logger.info(TAG, `小说阅读进度已刷新: 章节${lastChapterIndex}, 进度${readProgress}%`);
       }
     } catch (error) {
       logger.error(TAG, `刷新小说阅读进度失败: ${String(error)}`);
@@ -7267,7 +7363,7 @@ export struct UnifiedDetailPage {
       
       // 如果找不到，尝试用构建ID查询
       if (!bookInDb) {
-        const constructedId = `${sourceId}_${this.content.id}`;
+        const constructedId = this.getNovelCacheBookId(sourceId, this.content.id);
         bookInDb = await this.novelDataManager.getBook(constructedId);
         logger.info(TAG, `通过构建ID查询原书: ${constructedId}, 结果: ${bookInDb ? '找到' : '未找到'}`);
       }
@@ -7470,7 +7566,7 @@ export struct UnifiedDetailPage {
       
       // 如果找不到，尝试用构建ID查询
       if (!newBookInDb) {
-        const constructedId = `${newSourceId}_${newBookUrl}`;
+        const constructedId = this.getNovelCacheBookId(newSourceId, newBookUrl);
         newBookInDb = await this.novelDataManager.getBook(constructedId);
         logger.info(TAG, `通过构建ID查询: ${constructedId}, 结果: ${newBookInDb ? '找到' : '未找到'}`);
       }
