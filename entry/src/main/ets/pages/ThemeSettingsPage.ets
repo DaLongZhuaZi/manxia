@@ -2765,6 +2765,7 @@ export struct ThemeSettingsPage {
               bottom: this.responsive_contentPadding + this.navigationBarHeight
             })
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .width('100%')
           .height('100%')
           .align(Alignment.TopStart) // 响应式：大屏居中对齐
@@ -2774,6 +2775,7 @@ export struct ThemeSettingsPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
       .width('100%')
       .height('100%')

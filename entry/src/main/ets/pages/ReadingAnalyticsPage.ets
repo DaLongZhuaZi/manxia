@@ -4439,6 +4439,7 @@ struct ReadingAnalyticsPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .align(Alignment.TopStart)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
@@ -4458,6 +4459,7 @@ struct ReadingAnalyticsPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .align(Alignment.TopStart)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
@@ -4477,6 +4479,7 @@ struct ReadingAnalyticsPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .position({ x: 0, y: 0 })
 
           // 选择器面板
@@ -4521,6 +4524,7 @@ struct ReadingAnalyticsPage {
               .height(200)
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .borderRadius({ topLeft: 16, topRight: 16 })
           .position({ x: 0, y: '100%' })

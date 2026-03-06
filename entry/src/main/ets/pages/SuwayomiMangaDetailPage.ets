@@ -616,6 +616,7 @@ export struct SuwayomiMangaDetailPage {
           Column()
             .width('100%')
             .height('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .linearGradient({
               direction: GradientDirection.Bottom,
               colors: [
@@ -643,6 +644,7 @@ export struct SuwayomiMangaDetailPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .justifyContent(FlexAlign.Center)
         } else if (this.errorMessage) {
           Column({ space: 16 }) {
@@ -660,6 +662,7 @@ export struct SuwayomiMangaDetailPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .justifyContent(FlexAlign.Center)
           .padding(16)
         } else {
@@ -687,6 +690,7 @@ export struct SuwayomiMangaDetailPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
         }

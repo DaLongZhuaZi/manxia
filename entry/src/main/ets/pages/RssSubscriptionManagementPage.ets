@@ -2522,6 +2522,7 @@ export struct RssSubscriptionManagementPage {
             this.buildSearchBar()
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .height(this.showSearchBar ? 56 : 0)
           .opacity(this.showSearchBar ? 1 : 0)
           .clip(true)
@@ -2543,6 +2544,7 @@ export struct RssSubscriptionManagementPage {
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
@@ -2567,6 +2569,7 @@ export struct RssSubscriptionManagementPage {
                 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
@@ -2591,6 +2594,7 @@ export struct RssSubscriptionManagementPage {
                 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
@@ -2603,6 +2607,7 @@ export struct RssSubscriptionManagementPage {
               }, (source: RssSubscriptionSource) => source.id)
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .padding({ left: 12, right: 12, top: 8 })
             .scrollBar(BarState.Auto)
@@ -2611,6 +2616,7 @@ export struct RssSubscriptionManagementPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         if (this.showEditDialog) {
           this.buildEditDialog()

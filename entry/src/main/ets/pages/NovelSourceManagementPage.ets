@@ -335,6 +335,7 @@ export struct NovelSourceManagementPage {
             this.buildSearchBar()
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .height(this.showSearchBar ? 56 : 0)
           .opacity(this.showSearchBar ? 1 : 0)
           .clip(true)
@@ -366,6 +367,7 @@ export struct NovelSourceManagementPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 导入对话框
         if (this.showImportDialog) {
@@ -382,6 +384,7 @@ export struct NovelSourceManagementPage {
         }
 
       }
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .width('100%')
       .height('100%')
     }
@@ -1064,6 +1067,7 @@ export struct NovelSourceManagementPage {
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
   }
@@ -1123,6 +1127,7 @@ export struct NovelSourceManagementPage {
         .onClick(() => this.importFromClipboard())
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
   }
@@ -1161,6 +1166,7 @@ export struct NovelSourceManagementPage {
       }
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .padding({ left: 12, right: 12, top: 8 })
     .edgeEffect(EdgeEffect.Spring)

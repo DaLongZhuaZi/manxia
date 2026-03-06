@@ -537,6 +537,7 @@ export struct MergeDecisionDialog {
       .justifyContent(FlexAlign.SpaceBetween)
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .padding({ left: 16, right: 16, top: 16, bottom: 16 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme), radius: 10 })
@@ -640,6 +641,7 @@ export struct ChapterMergeDialog {
       .justifyContent(FlexAlign.SpaceBetween)
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .padding({ left: 16, right: 16, top: 16, bottom: 16 })
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme), radius: 10 })
@@ -7788,7 +7790,7 @@ struct DataManagementPage {
         // 内容层 - 选择文件导入
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
+          // Blank().height(TITLE_BAR_HEIGHT_MINI)
 
           // 内容区域
           Scroll(this.scroller) {
@@ -7809,9 +7811,11 @@ struct DataManagementPage {
               // 底部间距
               Blank().height(20)
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .width('100%')
             .padding({ left: 16, right: 16, top: 8 })
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
@@ -7838,9 +7842,10 @@ struct DataManagementPage {
         .width('100%')
         .height('100%')
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .padding({
           top: this.statusBarHeight,
-          bottom: this.navigationBarHeight,
+          // bottom: this.navigationBarHeight,
           left: this.responsive_contentPadding,
           right: this.responsive_contentPadding
         })
@@ -7850,6 +7855,7 @@ struct DataManagementPage {
           this.buildBatchStrategyDialog()
         }
       }
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .titleBar({
       padding: {

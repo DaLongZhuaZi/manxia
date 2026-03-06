@@ -833,6 +833,7 @@ export struct NovelSearchPage {
               }
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
             .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 12 })
           }
@@ -854,6 +855,7 @@ export struct NovelSearchPage {
               .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
@@ -876,6 +878,7 @@ export struct NovelSearchPage {
                 .margin({ top: 4 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
           } else if (this.isSearching && this.sourceResults.length === 0) {
@@ -891,6 +894,7 @@ export struct NovelSearchPage {
                 .margin({ top: 12 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
           } else {
@@ -913,6 +917,7 @@ export struct NovelSearchPage {
                     .onClick(() => this.clearHistory())
                 }
                 .width('100%')
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 12 })
 
                 Flex({ wrap: FlexWrap.Wrap }) {
@@ -949,6 +954,7 @@ export struct NovelSearchPage {
                   })
                 }
                 .width('100%')
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
               } else {
                 // 无搜索历史时的提示
@@ -963,11 +969,13 @@ export struct NovelSearchPage {
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                 }
                 .width('100%')
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .layoutWeight(1)
                 .justifyContent(FlexAlign.Center)
               }
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
@@ -975,6 +983,7 @@ export struct NovelSearchPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
         
         // 书源选择弹窗
@@ -1048,6 +1057,7 @@ export struct NovelSearchPage {
         TabContent() {
           this.buildAllResultsList()
         }
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .tabBar(this.buildTabBarItem('全部', this.searchResults.length, -1))
         
         // 各书源标签页
@@ -1055,6 +1065,7 @@ export struct NovelSearchPage {
           TabContent() {
             this.buildSourceResultsList(sourceResult)
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .tabBar(this.buildTabBarItem(sourceResult.sourceName, sourceResult.results.length, index))
         }, (sourceResult: SourceSearchResult) => sourceResult.sourceId)
       }
@@ -1068,6 +1079,7 @@ export struct NovelSearchPage {
       .layoutWeight(1)
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
   }
   
@@ -1124,6 +1136,7 @@ export struct NovelSearchPage {
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring)
   }
@@ -1139,6 +1152,7 @@ export struct NovelSearchPage {
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .justifyContent(FlexAlign.Center)
     } else {
       Scroll() {
@@ -1153,6 +1167,7 @@ export struct NovelSearchPage {
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
     }

@@ -369,6 +369,7 @@ export struct NovelExplorePage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 书源选择弹窗
         if (this.showSourcePicker) {

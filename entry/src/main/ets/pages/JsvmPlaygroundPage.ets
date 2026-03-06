@@ -1257,17 +1257,20 @@ result`,
                 this.buildHistoryPanel()
               }
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .width('100%')
           }
           .layoutWeight(1)
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           
           // 底部操作栏
           this.buildBottomBar()
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
       .width('100%')
       .height('100%')
@@ -1337,6 +1340,7 @@ result`,
           .fontColor(this.themeState.isDarkTheme() ? '#ffffff' : '#333333')
           .backgroundColor(this.showExamples ? '#007AFF' : (this.themeState.isDarkTheme() ? '#333333' : '#e0e0e0'))
           .borderRadius(6)
+          .animation({ duration: 140 })
           .onClick(() => {
             this.showExamples = !this.showExamples;
             this.showContext = false;
@@ -1351,6 +1355,7 @@ result`,
           .backgroundColor(this.showContext ? '#007AFF' : (this.themeState.isDarkTheme() ? '#333333' : '#e0e0e0'))
           .borderRadius(6)
           .margin({ left: 6 })
+          .animation({ duration: 140 })
           .onClick(() => {
             this.showContext = !this.showContext;
             this.showExamples = false;
@@ -1366,6 +1371,7 @@ result`,
           .backgroundColor(this.showSettings ? '#007AFF' : (this.themeState.isDarkTheme() ? '#333333' : '#e0e0e0'))
           .borderRadius(6)
           .margin({ left: 6 })
+          .animation({ duration: 140 })
           .onClick(() => {
             this.showSettings = !this.showSettings;
             this.showExamples = false;
@@ -1424,12 +1430,13 @@ result`,
           .fontColor('#ffffff')
           .backgroundColor('#4CAF50')
           .borderRadius(4)
+          .animation({ duration: 140 })
           .onClick(() => {
             this.testHtmlParserLib();
           })
         
         // QuickJS测试按钮
-        Button('QuickJS测试')
+        Button('QuickJS')
           .type(ButtonType.Normal)
           .height(26)
           .fontSize(11)
@@ -1437,12 +1444,13 @@ result`,
           .backgroundColor('#FF9800')
           .borderRadius(4)
           .margin({ left: 6 })
+          .animation({ duration: 140 })
           .onClick(() => {
             this.testQuickJSEngine();
           })
         
         // Rhino沙箱测试按钮
-        Button('Rhino沙箱测试')
+        Button('Rhino沙箱')
           .type(ButtonType.Normal)
           .height(26)
           .fontSize(11)
@@ -1450,12 +1458,13 @@ result`,
           .backgroundColor('#9C27B0')
           .borderRadius(4)
           .margin({ left: 6 })
+          .animation({ duration: 140 })
           .onClick(() => {
             this.testRhinoSandboxEngine();
           })
         
         // Jsoup测试按钮
-        Button('Jsoup测试')
+        Button('Jsoup')
           .type(ButtonType.Normal)
           .height(26)
           .fontSize(11)
@@ -1463,6 +1472,7 @@ result`,
           .backgroundColor('#2196F3')
           .borderRadius(4)
           .margin({ left: 6 })
+          .animation({ duration: 140 })
           .onClick(() => {
             this.testJsoupParsing();
           })
@@ -1749,36 +1759,37 @@ result`,
   @Builder
   buildTabBar() {
     Row() {
-      this.buildTabButton('📝 编辑器', 0)
-      this.buildTabButton('📤 输出', 1)
-      this.buildTabButton(`📋 历史${this.executionHistory.length > 0 ? ' (' + this.executionHistory.length + ')' : ''}`, 2)
+      this.buildTabButton($r('sys.symbol.doc_text'), '编辑器', 0)
+      this.buildTabButton($r('sys.symbol.play_fill'), '输出', 1)
+      this.buildTabButton($r('sys.symbol.clock'), `历史${this.executionHistory.length > 0 ? ' (' + this.executionHistory.length + ')' : ''}`, 2)
     }
     .width('100%')
-    .height(44)
-    .backgroundColor(this.themeState.isDarkTheme() ? '#252525' : '#ffffff')
+    .height(36)
+    .backgroundColor(this.themeState.isDarkTheme() ? '#1f1f1f' : '#f3f3f3')
     .border({ width: { bottom: 1 }, color: this.themeState.isDarkTheme() ? '#333333' : '#e0e0e0' })
-    .shadow({ radius: 2, color: this.themeState.isDarkTheme() ? '#00000040' : '#00000010', offsetY: 1 })
   }
 
   @Builder
-  buildTabButton(title: string, index: number) {
-    Column() {
+  buildTabButton(icon: Resource, title: string, index: number) {
+    Row({ space: 6 }) {
+      SymbolGlyph(icon)
+        .fontSize(13)
+        .fontColor([this.selectedTab === index ? '#007AFF' : (this.themeState.isDarkTheme() ? '#9a9a9a' : '#666666')])
+
       Text(title)
-        .fontSize(14)
-        .fontColor(this.selectedTab === index ? '#007AFF' : (this.themeState.isDarkTheme() ? '#888888' : '#666666'))
+        .fontSize(13)
+        .fontColor(this.selectedTab === index ? '#007AFF' : (this.themeState.isDarkTheme() ? '#9a9a9a' : '#666666'))
         .fontWeight(this.selectedTab === index ? FontWeight.Medium : FontWeight.Normal)
-      
-      if (this.selectedTab === index) {
-        Divider()
-          .width(40)
-          .height(2)
-          .color('#007AFF')
-          .margin({ top: 6 })
-      }
     }
     .layoutWeight(1)
     .height('100%')
     .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.selectedTab === index ? (this.themeState.isDarkTheme() ? '#2b2b2b' : '#ffffff') : Color.Transparent)
+    .border({
+      width: { top: this.selectedTab === index ? 2 : 0, bottom: 0, left: 0, right: 0 },
+      color: '#007AFF'
+    })
+    .animation({ duration: 160 })
     .onClick(() => {
       this.selectedTab = index;
     })
@@ -1822,6 +1833,7 @@ result`,
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -1920,6 +1932,7 @@ result`,
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -1940,6 +1953,7 @@ result`,
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .justifyContent(FlexAlign.Center)
     } else {
       Column() {
@@ -2107,13 +2121,15 @@ result`,
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .backgroundColor(this.themeState.isDarkTheme() ? '#1a1a1a' : '#f0f0f0')
     }
   }
 
   @Builder
   buildBottomBar() {
-    Row() {
+    Column() {
+      Row() {
       // 清空按钮
       Button() {
         Row() {
@@ -2131,6 +2147,7 @@ result`,
       .backgroundColor(this.themeState.isDarkTheme() ? '#2a2a2a' : '#fff0f0')
       .borderRadius(8)
       .padding({ left: 16, right: 16 })
+      .animation({ duration: 140 })
       .onClick(() => this.clearCode())
       
       Blank()
@@ -2161,6 +2178,7 @@ result`,
       .borderRadius(8)
       .padding({ left: 12, right: 12 })
       .enabled(!this.isExecuting)
+      .animation({ duration: 140 })
       .onClick(() => {
         this.executeWithRhinoSandbox();
         this.selectedTab = 1;
@@ -2193,6 +2211,7 @@ result`,
       .padding({ left: 12, right: 12 })
       .margin({ left: 6 })
       .enabled(!this.isExecuting)
+      .animation({ duration: 140 })
       .onClick(() => {
         this.executeWithQuickJS();
         this.selectedTab = 1;
@@ -2224,14 +2243,19 @@ result`,
       .padding({ left: 12, right: 12 })
       .margin({ left: 6 })
       .enabled(!this.isExecuting)
+      .animation({ duration: 140 })
       .onClick(() => {
         this.executeCode();
         this.selectedTab = 1;
       })
+      }
+      .width('100%')
+      .height(60)
+      .padding({ left: 16, right: 16 })
     }
     .width('100%')
-    .height(60)
-    .padding({ left: 16, right: 16 })
+    // .padding({ bottom: this.navigationBarHeight })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .backgroundColor(this.themeState.isDarkTheme() ? '#252525' : '#ffffff')
     .border({ width: { top: 1 }, color: this.themeState.isDarkTheme() ? '#333333' : '#e0e0e0' })
   }

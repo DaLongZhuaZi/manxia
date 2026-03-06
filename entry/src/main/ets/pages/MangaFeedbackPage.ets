@@ -430,6 +430,7 @@ struct MangaFeedbackPage {
         }
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({

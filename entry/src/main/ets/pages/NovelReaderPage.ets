@@ -125,9 +125,11 @@ export struct NovelReaderPage {
   private lastSaveTime: number = 0;
   private uiContext: UIContext | null = null;
   private saveProgressInterval: number = 30000; // 30秒自动保存
+  private readAloudProgressSaveInterval: number = 4000;
   private shouldAutoStartReadAloud: boolean = false;
   private shouldAutoOpenReadAloudPlayer: boolean = false;
   private lastReadAloudResumePersistTime: number = 0;
+  private lastReadAloudProgressSaveTime: number = 0;
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
     if (!this.bookId) {
@@ -141,6 +143,17 @@ export struct NovelReaderPage {
 
     this.readAloudPlaying = statePayload.playbackState === ReadAloudPlaybackState.PLAYING;
     this.applyReadAloudProgress(statePayload);
+    if (
+      statePayload.playbackState === ReadAloudPlaybackState.PLAYING &&
+      statePayload.reason === 'progress_updated'
+    ) {
+      const now = Date.now();
+      if ((now - this.lastReadAloudProgressSaveTime) >= this.readAloudProgressSaveInterval) {
+        this.lastReadAloudProgressSaveTime = now;
+        this.lastSaveTime = now;
+        this.saveReadProgress();
+      }
+    }
     if (
       statePayload.playbackState !== ReadAloudPlaybackState.PLAYING &&
       statePayload.reason !== 'progress_updated'
@@ -187,6 +200,7 @@ export struct NovelReaderPage {
   }
 
   onPageShow(): void {
+    this.setupFullscreenMode();
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
     this.syncReadAloudStateFromController();
     this.updateReadAloudContextByPosition();
@@ -194,6 +208,7 @@ export struct NovelReaderPage {
   }
 
   onPageHide(): void {
+    this.restoreNormalMode();
     this.readAloudController.handlePageHide();
     this.readAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     this.persistReadAloudResumeCharIndex(true);
@@ -750,6 +765,11 @@ export struct NovelReaderPage {
     
     // 定期保存阅读进度
     const now = Date.now();
+    if (this.readAloudPlaying) {
+      this.lastSaveTime = now;
+      this.saveReadProgress();
+      return;
+    }
     if (now - this.lastSaveTime > this.saveProgressInterval) {
       this.saveReadProgress();
       this.lastSaveTime = now;
@@ -817,7 +837,7 @@ export struct NovelReaderPage {
    */
   async saveReadProgress(): Promise<void> {
     if (!this.bookId) return;
-    
+
     try {
       const now = Date.now();
       const progress: NovelReadProgress = {

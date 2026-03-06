@@ -272,6 +272,7 @@ struct DummyPage {
         }
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     // [核心] 配置 titleBar，实现滚动模糊效果

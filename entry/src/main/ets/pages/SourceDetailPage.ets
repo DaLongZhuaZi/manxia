@@ -2437,6 +2437,7 @@ export struct SourceDetailPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 隐藏的WebView组件（仅在使用WebView系统时渲染，调试模式下显示）
         // 注意：src使用about:blank，所有导航由controller控制，避免状态变化时重新加载

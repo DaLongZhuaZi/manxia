@@ -229,6 +229,7 @@ export struct SourceLoginPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .margin({ top: this.statusBarHeight })
 
         // 底部工具栏

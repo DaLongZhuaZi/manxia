@@ -51,6 +51,7 @@ struct SplashPage {
   private componentId: string = 'SplashPage';
   private initStartTime: number = 0; // 初始化开始时间
   private readonly MIN_SPLASH_DURATION: number = 1600; // 最小停留时间 1.6 秒
+  private readonly MIN_SPLASH_DURATION_SHORTCUT: number = 2200; // 快捷入口启动最小停留时间 2.2 秒
 
   aboutToAppear(): void {
     logger.lifecycle('SplashPage', '🚀 启动页面开始加载');
@@ -208,7 +209,8 @@ struct SplashPage {
     // 必须同时满足：页面加载完成 + 主题加载完成 + APP初始化完成
     if (this.isPageLoaded && this.isThemeLoaded && this.isAppInitialized) {
       const elapsed = Date.now() - this.initStartTime;
-      const remainingTime = Math.max(0, this.MIN_SPLASH_DURATION - elapsed);
+      const minDuration = this.getEffectiveMinSplashDuration();
+      const remainingTime = Math.max(0, minDuration - elapsed);
       
       logger.info('SplashPage', `✅ 所有初始化完成，耗时 ${elapsed}ms，还需等待 ${remainingTime}ms`);
       
@@ -248,6 +250,13 @@ struct SplashPage {
       const shouldShowGuide = this.welcomeGuideManager.shouldShowGuide();
       logger.info('SplashPage', `是否显示引导: ${shouldShowGuide}`);
 
+      // 快捷入口冷启动：在 MainMenuPage 启动时使用“即时路由模式”，减少主页面闪现
+      const startupRoutePending = !shouldShowGuide && this.hasWidgetTargetPage();
+      AppStorage.setOrCreate('startupRoutePending', startupRoutePending);
+      if (startupRoutePending) {
+        this.loadingProgress = '正在准备快捷入口...';
+      }
+
       // 使用 pushUrl 跳转，让 SplashPage 在上层淡出，MainMenuPage 在下层显示
       const router = this.uiContext?.getRouter();
       if (router) {
@@ -268,6 +277,15 @@ struct SplashPage {
     } catch (error) {
       logger.error('SplashPage', '跳转过程中发生异常', String(error));
     }
+  }
+
+  private hasWidgetTargetPage(): boolean {
+    const targetPage = AppStorage.get<string>('widgetTargetPage') || '';
+    return targetPage.trim().length > 0;
+  }
+
+  private getEffectiveMinSplashDuration(): number {
+    return this.hasWidgetTargetPage() ? this.MIN_SPLASH_DURATION_SHORTCUT : this.MIN_SPLASH_DURATION;
   }
 
   /**
@@ -395,6 +413,7 @@ struct SplashPage {
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .padding({
         top: this.statusBarHeight,
         bottom: this.navigationBarHeight

@@ -935,6 +935,7 @@ struct DownloadManagerPage {
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .width('100%')
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
@@ -954,6 +955,7 @@ struct DownloadManagerPage {
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 }
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .width('100%')
                 .layoutWeight(1)
                 .justifyContent(FlexAlign.Center)
@@ -966,6 +968,7 @@ struct DownloadManagerPage {
                   }
                   .width('100%')
                 }
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .layoutWeight(1)
                 .edgeEffect(EdgeEffect.Spring)
                 .scrollBar(BarState.Auto)
@@ -979,6 +982,7 @@ struct DownloadManagerPage {
                 .width('100%')
                 .padding({ top: 8 })
               }
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .layoutWeight(1)
               .edgeEffect(EdgeEffect.Spring)
               .scrollBar(BarState.Auto)
@@ -987,6 +991,7 @@ struct DownloadManagerPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({

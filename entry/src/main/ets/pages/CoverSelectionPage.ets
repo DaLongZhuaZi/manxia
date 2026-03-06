@@ -5,6 +5,7 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { UIContext, LengthMetrics } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { logger } from '../Utils/Logger';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
@@ -59,6 +60,7 @@ export struct CoverSelectionPage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
 
     this.uiContext = this.getUIContext();
     if (!this.uiContext) {
@@ -93,6 +95,7 @@ export struct CoverSelectionPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -402,6 +405,7 @@ export struct CoverSelectionPage {
         .height('100%')
         .align(Alignment.TopStart)
         .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({
@@ -436,4 +440,3 @@ export struct CoverSelectionPage {
     .backgroundColor(Color.Transparent)
   }
 }
-

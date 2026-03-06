@@ -1,12 +1,16 @@
 import { promptAction, LengthMetrics } from '@kit.ArkUI';
-import { HdsNavDestination, ScrollEffectType } from '@kit.UIDesignKit';
+import { HdsNavDestination } from '@kit.UIDesignKit';
 import { logger } from '../Utils/Logger';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../Framework/ReadAloud/ReadAloudTypes';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
+import { ThemeManager } from '../Framework/Managers/ThemeManager';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 @Component
 export struct ReadAloudPlayerPage {
@@ -30,6 +34,11 @@ export struct ReadAloudPlayerPage {
   @State excerptText: string = '';
   @State entered: boolean = false;
 
+  // 主题状态
+  @State themeState: ThemeAwareState = new ThemeAwareState();
+  private themeManager: ThemeManager = ThemeManager.getInstance();
+  private componentId: string = `PrivacyPolicyPage_${Date.now()}`;
+
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (_payload: IEventPayload): void => {
@@ -37,6 +46,7 @@ export struct ReadAloudPlayerPage {
   };
 
   aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.refreshPlayerState();
@@ -44,6 +54,7 @@ export struct ReadAloudPlayerPage {
   }
 
   aboutToDisappear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
   }
 
@@ -457,7 +468,8 @@ export struct ReadAloudPlayerPage {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor($r('app.color.background_primary'))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Circle()
           .width(280)
@@ -474,6 +486,7 @@ export struct ReadAloudPlayerPage {
 
         Scroll() {
           Column({ space: 14 }) {
+            Blank().height(TITLE_BAR_HEIGHT_MINI)
             this.buildCoverCard()
             this.buildProgressCard()
             this.buildSessionInfoCard()
@@ -489,6 +502,7 @@ export struct ReadAloudPlayerPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
       }
@@ -501,26 +515,7 @@ export struct ReadAloudPlayerPage {
         end: LengthMetrics.vp(2)
       },
       style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(76)
-        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: Color.Transparent },
-          contentStyle: {
-            titleStyle: {
-              mainTitleColor: $r('app.color.text_primary'),
-              subTitleColor: $r('app.color.text_secondary')
-            },
-            backIconStyle: {
-              backgroundColor: $r('app.color.background_secondary'),
-              iconColor: $r('app.color.text_primary')
-            }
-          }
-        },
-        scrollEffectStyle: {
           backgroundStyle: { backgroundColor: $r('app.color.background_secondary') },
           contentStyle: {
             titleStyle: {
@@ -528,7 +523,7 @@ export struct ReadAloudPlayerPage {
               subTitleColor: $r('app.color.text_secondary')
             },
             backIconStyle: {
-              backgroundColor: $r('app.color.background_secondary'),
+              backgroundColor: $r('app.color.comp_background_tertiary'),
               iconColor: $r('app.color.text_primary')
             }
           }

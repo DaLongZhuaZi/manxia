@@ -411,15 +411,18 @@ export struct NovelSourceDebugPage {
               this.buildLogs()
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .padding({ left: 16, right: 16, top: 8, bottom: 32 })
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 加载遮罩
         if (this.isRunning) {
@@ -853,6 +856,7 @@ export struct NovelSourceDebugPage {
       .padding(8)
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .margin({ top: 16 })
   }
 
@@ -872,6 +876,7 @@ export struct NovelSourceDebugPage {
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .backgroundColor('#80000000')
     .justifyContent(FlexAlign.Center)
   }

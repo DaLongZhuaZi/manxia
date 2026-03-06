@@ -891,6 +891,7 @@ export struct AdvancedSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 重启提示对话框
         if (this.showRestartDialog) {

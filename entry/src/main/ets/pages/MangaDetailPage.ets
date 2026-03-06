@@ -269,6 +269,7 @@ struct MangaDetailPage {
   // 字体相关状态
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   // 数据服务
   private dataService: DataService = DataService.getInstance();
@@ -5588,6 +5589,8 @@ struct MangaDetailPage {
         }
         .width('100%')
         .height('100%')
+        .padding({ top: this.statusBarHeight })
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 隐藏的WebView组件（用于网络漫画）
         Web({ src: 'about:blank', controller: this.webViewController })

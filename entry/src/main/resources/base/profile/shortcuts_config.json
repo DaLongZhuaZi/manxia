@@ -44,6 +44,21 @@
           }
         }
       ]
+    },
+    {
+      "shortcutId": "continue_read_aloud",
+      "label": "$string:shortcut_continue_read_aloud",
+      "icon": "$media:shortcut_icon_continue_read_aloud",
+      "wants": [
+        {
+          "bundleName": "com.dlzz.manxia",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "shortcutId": "continue_read_aloud"
+          }
+        }
+      ]
     }
   ]
 }

@@ -344,6 +344,7 @@ export struct RssFavoritesPage {
           this.buildSearchBar()
         }
         .width('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .height(this.showSearchBar ? 56 : 0)
         .opacity(this.showSearchBar ? 1 : 0)
         .clip(true)
@@ -363,6 +364,7 @@ export struct RssFavoritesPage {
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
@@ -389,6 +391,7 @@ export struct RssFavoritesPage {
               })
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
@@ -401,6 +404,7 @@ export struct RssFavoritesPage {
             }, (item: RssFeedItem) => item.id)
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .padding({ left: 12, right: 12, top: 8 })
           .scrollBar(BarState.Auto)
@@ -409,6 +413,7 @@ export struct RssFavoritesPage {
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .animation(ThemeAwareHelper.getThemeTransitionAnimation())

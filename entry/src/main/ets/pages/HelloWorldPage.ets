@@ -115,6 +115,7 @@ struct HelloWorldPage {
       .height('100%')
       .scrollBar(BarState.Auto)
       .edgeEffect(EdgeEffect.Spring)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
     .animation({ duration: 300, curve: Curve.EaseInOut })

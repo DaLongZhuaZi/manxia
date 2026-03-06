@@ -250,6 +250,7 @@ export struct NotificationSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({

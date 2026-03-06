@@ -10,8 +10,10 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'SupportersPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /**
  * 流星粒子数据
@@ -46,10 +48,12 @@ export struct SupportersPage {
   // 字体相关状态
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   // 流星动画相关
-  private canvasRenderingContext: CanvasRenderingContext2D | null = null;
   private canvasSettings: RenderingContextSettings = new RenderingContextSettings(true);
+  private canvasRenderingContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.canvasSettings);
   @State private canvasWidth: number = 400;
   @State private canvasHeight: number = 800;
   private meteors: MeteorParticle[] = [];
@@ -72,6 +76,7 @@ export struct SupportersPage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
 
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(
@@ -99,6 +104,7 @@ export struct SupportersPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     this.stopAnimation();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -345,10 +351,10 @@ export struct SupportersPage {
 
         // 流星动画层
         Canvas(this.canvasRenderingContext)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .width('100%')
           .height('100%')
           .onReady(() => {
-            this.canvasRenderingContext = new CanvasRenderingContext2D(this.canvasSettings);
             // 初始填充背景
             if (this.canvasRenderingContext) {
               this.canvasRenderingContext.fillStyle = 'rgba(10, 10, 20, 1)';
@@ -364,6 +370,7 @@ export struct SupportersPage {
         // 内容层
         Column() {
           // 顶部区域 - 返回按钮和标题
+          /*
           Row() {
             Button() {
               SymbolGlyph($r('sys.symbol.arrow_left'))
@@ -382,6 +389,9 @@ export struct SupportersPage {
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 16 })
+          */
+
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
 
           // 标题区域
           Column({ space: 8 }) {
@@ -396,6 +406,7 @@ export struct SupportersPage {
               .fontFamily(this.appFontFamily)
               .fontColor('rgba(255, 255, 255, 0.6)')
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .width('100%')
           .padding({ left: 20, right: 20, top: 20, bottom: 32 })
           .alignItems(HorizontalAlign.Start)
@@ -414,9 +425,11 @@ export struct SupportersPage {
               // 底部间距
               Blank().height(40)
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .width('100%')
             .padding({ left: 20, right: 20 })
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
@@ -437,21 +450,46 @@ export struct SupportersPage {
                 .fontSize(16)
                 .fontColor(['rgba(255, 200, 100, 0.8)'])
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
             Text('afdian.com/a/dalongzz')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor('rgba(255, 255, 255, 0.5)')
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .width('100%')
           .padding({ bottom: 24 })
           .alignItems(HorizontalAlign.Center)
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .padding({ top: this.statusBarHeight })
       }
     }
     .hideTitleBar(true)
+    /* .titleBar({
+      style: {
+        originalStyle: {
+          backgroundStyle: {
+            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
+          },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+            },
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '支持者鸣谢' }
+      }
+    }) */
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;

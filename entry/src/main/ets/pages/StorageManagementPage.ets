@@ -725,6 +725,7 @@ export struct StorageManagementPage {
                         this.themeState.currentTheme))
                   }
                 }
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
                 .width('100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background',
@@ -758,9 +759,11 @@ export struct StorageManagementPage {
                 .scrollBar(BarState.Auto)
                 .edgeEffect(EdgeEffect.Spring)
               }
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .layoutWeight(1)
               .width('100%')
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .padding({ left: 16, right: 16, top: 8 })
 
@@ -781,12 +784,14 @@ export struct StorageManagementPage {
                 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
           }
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
 
         // 缓存管理面板弹窗
@@ -801,6 +806,7 @@ export struct StorageManagementPage {
           }
           .width('90%')
           .height('80%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .borderRadius(16)
           .shadow({ radius: 20, color: 'rgba(0, 0, 0, 0.3)' })

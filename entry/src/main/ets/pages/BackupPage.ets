@@ -1733,6 +1733,7 @@ struct BackupPage {
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .gesture(
             PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
               .onActionStart((event: GestureEvent) => {
@@ -1755,6 +1756,7 @@ struct BackupPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 对话框层
         this.buildBackupOptionsDialog()

@@ -28,7 +28,9 @@ export enum DisplayMode {
   /** 只隐藏导航栏 */
   HIDE_NAVIGATION_BAR = 'hide_navigation_bar',
   /** 沉浸式但保持系统栏可见 */
-  IMMERSIVE_WITH_BARS = 'immersive_with_bars'
+  IMMERSIVE_WITH_BARS = 'immersive_with_bars',
+  /** 专用模式：页面自行避让状态栏，导航栏区域允许内容沉浸 */
+  STATUS_SAFE_BOTTOM_IMMERSIVE = 'status_safe_bottom_immersive'
 }
 
 /**
@@ -217,7 +219,7 @@ export class WindowManager {
         return;
       }
 
-      // 取消全屏布局
+      // 取消全屏布局，保证系统状态栏/导航栏由系统避让
       mainWindow.setWindowLayoutFullScreen(false).then(() => {
         logger.info(WindowManager.TAG, '✅ 取消全屏布局成功');
       }).catch((err: BusinessError) => {
@@ -228,6 +230,7 @@ export class WindowManager {
       mainWindow.setWindowSystemBarEnable(['status', 'navigation']).then(() => {
         logger.info(WindowManager.TAG, '✅ 已恢复默认显示模式');
         WindowManager.currentMode = DisplayMode.DEFAULT;
+        WindowManager.setNormalSystemBar(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 恢复默认显示模式失败: ${JSON.stringify(err)}`);
       });
@@ -272,6 +275,41 @@ export class WindowManager {
 
     } catch (error) {
       logger.error(WindowManager.TAG, `❌ 设置沉浸式模式异常: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * 专用模式：页面自行处理状态栏避让，同时允许内容延伸到底部导航栏区域
+   * @param uiContext 可选的UIContext，推荐在组件中传入
+   */
+  static setStatusSafeBottomImmersive(uiContext?: UIContext): void {
+    try {
+      const mainWindow = uiContext ?
+        WindowManager.getMainWindowFromUIContext(uiContext) :
+        WindowManager.getMainWindow();
+
+      if (!mainWindow) {
+        logger.error(WindowManager.TAG, '❌ 无法获取主窗口，设置专用沉浸模式失败');
+        return;
+      }
+
+      // 启用全屏布局，允许内容延伸到导航栏区域
+      mainWindow.setWindowLayoutFullScreen(true).then(() => {
+        logger.info(WindowManager.TAG, '✅ 专用沉浸模式全屏布局设置成功');
+      }).catch((err: BusinessError) => {
+        logger.error(WindowManager.TAG, `❌ 专用沉浸模式全屏布局设置失败: ${JSON.stringify(err)}`);
+      });
+
+      // 保持状态栏和导航栏都可见，由页面自行处理顶部状态栏避让
+      mainWindow.setWindowSystemBarEnable(['status', 'navigation']).then(() => {
+        logger.info(WindowManager.TAG, '✅ 专用沉浸模式系统栏设置成功');
+        WindowManager.currentMode = DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE;
+        WindowManager.setNormalSystemBar(mainWindow);
+      }).catch((err: BusinessError) => {
+        logger.error(WindowManager.TAG, `❌ 专用沉浸模式系统栏设置失败: ${JSON.stringify(err)}`);
+      });
+    } catch (error) {
+      logger.error(WindowManager.TAG, `❌ 设置专用沉浸模式异常: ${(error as Error).message}`);
     }
   }
 
@@ -423,6 +461,9 @@ export class WindowManager {
       case DisplayMode.IMMERSIVE_WITH_BARS:
         WindowManager.setImmersiveWithBars(uiContext);
         break;
+      case DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE:
+        WindowManager.setStatusSafeBottomImmersive(uiContext);
+        break;
       case DisplayMode.DEFAULT:
       default:
         WindowManager.restoreDefault(uiContext);
@@ -517,8 +558,22 @@ export class WindowManager {
       
       // 存储系统栏高度信息（直接传递mainWindow实例）
       WindowManager.storeSystemBarHeights(mainWindow);
-      
-      // 设置默认的正常系统栏
+
+      // 初始化默认模式：显示系统栏并保持非全屏布局（系统自动避让）
+      mainWindow.setWindowLayoutFullScreen(false).then(() => {
+        logger.info(WindowManager.TAG, '✅ 初始化默认模式非全屏布局设置成功');
+      }).catch((err: BusinessError) => {
+        logger.error(WindowManager.TAG, `❌ 初始化默认模式非全屏布局设置失败: ${JSON.stringify(err)}`);
+      });
+
+      mainWindow.setWindowSystemBarEnable(['status', 'navigation']).then(() => {
+        logger.info(WindowManager.TAG, '✅ 初始化默认模式系统栏设置成功');
+      }).catch((err: BusinessError) => {
+        logger.error(WindowManager.TAG, `❌ 初始化默认模式系统栏设置失败: ${JSON.stringify(err)}`);
+      });
+
+      WindowManager.currentMode = DisplayMode.DEFAULT;
+      // 设置默认的正常系统栏样式
       WindowManager.setNormalSystemBar(mainWindow);
       
       logger.info(WindowManager.TAG, '✅ WindowManager初始化完成');

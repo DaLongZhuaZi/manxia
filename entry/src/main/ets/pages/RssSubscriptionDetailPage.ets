@@ -296,6 +296,7 @@ export struct RssSubscriptionDetailPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
         } else {
@@ -378,12 +379,14 @@ export struct RssSubscriptionDetailPage {
               .padding({ left: 12, right: 12, top: 8, bottom: 20 })
             }
             .width('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
       }
       .width('100%')

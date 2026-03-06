@@ -413,24 +413,31 @@ export class NovelDataManager {
     const now = Date.now();
     const id = this.generateId();
 
-    // 使用DELETE + INSERT策略（根据记忆中的经验）
-    await store.executeSql('DELETE FROM novel_read_progress WHERE bookId = ?', [progress.bookId]);
+    // 使用 readTime 保护的更新/插入策略，避免乱序写入覆盖新进度
+    const safeReadTime = progress.readTime > 0 ? progress.readTime : now;
     
-    const sql = `INSERT INTO novel_read_progress 
+    const updateProgressSql = `UPDATE novel_read_progress SET
+      chapterId = ?, chapterIndex = ?, position = ?, progress = ?, readTime = ?, updateTime = ?
+      WHERE bookId = ? AND readTime <= ?`;
+    await store.executeSql(updateProgressSql, [
+      progress.chapterId, progress.chapterIndex, progress.position, progress.progress, safeReadTime, now,
+      progress.bookId, safeReadTime
+    ]);
+
+    const insertProgressSql = `INSERT OR IGNORE INTO novel_read_progress
       (id, bookId, chapterId, chapterIndex, position, progress, readTime, createTime, updateTime)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-    await store.executeSql(sql, [
+    await store.executeSql(insertProgressSql, [
       id, progress.bookId, progress.chapterId, progress.chapterIndex,
-      progress.position, progress.progress, progress.readTime, now, now
+      progress.position, progress.progress, safeReadTime, now, now
     ]);
 
     // 同时更新书籍表的阅读进度
     await store.executeSql(
       `UPDATE novel_book SET lastReadChapterId = ?, lastReadChapterIndex = ?, 
        lastReadPosition = ?, lastReadTime = ?, readStatus = 'reading', updateTime = ?
-       WHERE id = ?`,
-      [progress.chapterId, progress.chapterIndex, progress.position, progress.readTime, now, progress.bookId]
+       WHERE id = ? AND (lastReadTime IS NULL OR lastReadTime <= ?)`,
+      [progress.chapterId, progress.chapterIndex, progress.position, safeReadTime, now, progress.bookId, safeReadTime]
     );
   }
 

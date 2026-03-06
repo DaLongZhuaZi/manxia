@@ -30,6 +30,7 @@ import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG: string = 'MangaSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -50,6 +51,8 @@ interface NavigationPath {
 @Component
 struct MangaSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
   private uiContext: UIContext | undefined = undefined;
 
@@ -154,7 +157,12 @@ struct MangaSettingsPage {
   /**
    * 对齐 MangaReaderPage 的实现：在页面显示时从 AppStorage 绑定全局导航栈，并解析最新参数
    */
+  aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+  }
+
   onPageShow() {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     logger.lifecycle(TAG, '漫画设置页面开始显示');
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
@@ -234,6 +242,7 @@ struct MangaSettingsPage {
   private lifecycle = new PageLifecycleManager('MangaSettingsPage', { enableDebug: true });
 
   aboutToDisappear() {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -2281,6 +2290,7 @@ struct MangaSettingsPage {
             }
             .width('40%')
             .height('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .padding({ left: this.responsive_contentPadding, right: 8 })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
@@ -2303,12 +2313,15 @@ struct MangaSettingsPage {
             }
             .width('60%')
             .height('100%')
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .padding({ left: 8, right: this.responsive_contentPadding })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
         } else {
           // 竖屏布局：原有布局
           Scroll(this.scroller) {
@@ -2330,6 +2343,8 @@ struct MangaSettingsPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .padding({ top: this.statusBarHeight, bottom: this.navigationBarHeight })
           .align(Alignment.TopStart)
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)

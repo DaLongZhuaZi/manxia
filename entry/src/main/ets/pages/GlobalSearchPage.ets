@@ -32,6 +32,7 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { webview } from '@kit.ArkWeb';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'GlobalSearchPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -145,6 +146,7 @@ export struct GlobalSearchPage {
   @State pageParams: GlobalSearchPageParams | null = null;
 
   aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.initThemeAware();
     this.initFontAware();
     this.loadSearchHistory();
@@ -311,6 +313,7 @@ export struct GlobalSearchPage {
   private lifecycle = new PageLifecycleManager('GlobalSearchPage', { enableDebug: true });
 
   aboutToDisappear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题监听器
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -960,6 +963,7 @@ export struct GlobalSearchPage {
             }
             .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .width('100%')
@@ -989,6 +993,7 @@ export struct GlobalSearchPage {
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, top: 8 })
               }
               .width('100%')
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .layoutWeight(1)
               .scrollBar(BarState.Auto)
               .edgeEffect(EdgeEffect.Spring)
@@ -1082,6 +1087,7 @@ export struct GlobalSearchPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
         
         // 隐藏的 WebView 组件（用于后台搜索 WebView 格式图源）
@@ -1194,6 +1200,7 @@ export struct GlobalSearchPage {
       .width('100%')
       .constraintSize({ maxWidth: this.responsive_maxContentWidth })
     }
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .layoutWeight(1)
     .scrollBar(BarState.Auto)

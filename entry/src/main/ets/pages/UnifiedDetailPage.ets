@@ -15,6 +15,7 @@ import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { logger } from '../Utils/Logger';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
@@ -360,6 +361,7 @@ export struct UnifiedDetailPage {
   @State isLoadingRecommendations: boolean = false;
 
   aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -396,6 +398,7 @@ export struct UnifiedDetailPage {
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
 
   aboutToDisappear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -6189,52 +6192,57 @@ export struct UnifiedDetailPage {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        if (this.isLoading) {
-          this.buildLoadingView()
-        } else if (this.errorMessage) {
-          this.buildErrorView()
-        } else if (this.responsive_isLandscape) {
-          // 横屏布局：左侧封面信息 + 右侧章节列表
-          this.buildLandscapeLayout()
-        } else {
-          // 竖屏布局：垂直滚动
-          Refresh({ refreshing: $$this.isRefreshing }) {
-            Scroll(this.scroller) {
-              Column({ space: 16 }) {
-                // 刷新进度提示
-                if (this.refreshProgress) {
-                  Text(this.refreshProgress)
-                    .fontSize(12)
-                    .fontColor(this.themeState.currentTheme === ThemeType.DARK ? '#AAAAAA' : '#666666')
-                    .padding({ top: 8, bottom: 8 })
-                }
-                
-                this.buildHeader()
-                this.buildDescription()
-                this.buildActionBar()
-                this.buildCacheStatusCard()
-                this.buildShelfContentSection()
-                this.buildRecommendationSection()
-                this.buildChapterList()
+        Column() {
+          if (this.isLoading) {
+            this.buildLoadingView()
+          } else if (this.errorMessage) {
+            this.buildErrorView()
+          } else if (this.responsive_isLandscape) {
+            // 横屏布局：左侧封面信息 + 右侧章节列表
+            this.buildLandscapeLayout()
+          } else {
+            // 竖屏布局：垂直滚动
+            Refresh({ refreshing: $$this.isRefreshing }) {
+              Scroll(this.scroller) {
+                Column({ space: 16 }) {
+                  // 刷新进度提示
+                  if (this.refreshProgress) {
+                    Text(this.refreshProgress)
+                      .fontSize(12)
+                      .fontColor(this.themeState.currentTheme === ThemeType.DARK ? '#AAAAAA' : '#666666')
+                      .padding({ top: 8, bottom: 8 })
+                  }
+                  
+                  this.buildHeader()
+                  this.buildDescription()
+                  this.buildActionBar()
+                  this.buildCacheStatusCard()
+                  this.buildShelfContentSection()
+                  this.buildRecommendationSection()
+                  this.buildChapterList()
 
-                Blank().height(40)
+                  Blank().height(40)
+                }
+                .width('100%')
+                .constraintSize({ maxWidth: this.responsive_maxContentWidth })
+                .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
               }
               .width('100%')
-              .constraintSize({ maxWidth: this.responsive_maxContentWidth })
-              .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
+              .height('100%')
+              .align(Alignment.TopStart)
+              .scrollBar(BarState.Off)
+              .edgeEffect(EdgeEffect.Spring)
             }
+            .onRefreshing(() => {
+              this.onRefresh();
+            })
             .width('100%')
             .height('100%')
-            .align(Alignment.TopStart)
-            .scrollBar(BarState.Off)
-            .edgeEffect(EdgeEffect.Spring)
           }
-          .onRefreshing(() => {
-            this.onRefresh();
-          })
-          .width('100%')
-          .height('100%')
         }
+        .width('100%')
+        .height('100%')
+        .padding({ top: this.statusBarHeight })
         
         // 封面预览弹窗
         if (this.showCoverPreview && this.content?.coverUrl) {
@@ -6269,6 +6277,7 @@ export struct UnifiedDetailPage {
       }
     })
     .onShown(() => {
+      WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
     })

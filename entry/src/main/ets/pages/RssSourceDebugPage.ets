@@ -366,6 +366,7 @@ export struct RssSourceDebugPage {
             .padding({ left: 12, right: 12, top: 8, bottom: 18 })
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)

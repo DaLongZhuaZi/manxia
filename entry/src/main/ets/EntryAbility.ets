@@ -767,6 +767,11 @@ export default class EntryAbility extends UIAbility {
           // 兼容旧快捷方式ID：历史版本可能仍使用downloads
           AppStorage.setOrCreate('widgetTargetPage', 'continueReadLatest');
           break;
+        case 'continue_read_aloud':
+        case 'continueReadAloud':
+        case 'open_recent_read_aloud':
+          AppStorage.setOrCreate('widgetTargetPage', 'continueReadAloud');
+          break;
         case 'library':
         case 'open_library':
           AppStorage.setOrCreate('widgetTargetPage', 'library');
