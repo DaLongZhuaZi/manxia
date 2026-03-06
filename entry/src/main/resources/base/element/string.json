@@ -71,6 +71,10 @@
     {
       "name": "shortcut_continue_read",
       "value": "继续阅读"
+    },
+    {
+      "name": "shortcut_continue_read_aloud",
+      "value": "继续听书"
     }
   ]
 }

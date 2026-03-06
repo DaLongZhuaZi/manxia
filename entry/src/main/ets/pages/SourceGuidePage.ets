@@ -23,6 +23,7 @@ export struct SourceGuidePage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `SourceGuidePage_${Date.now()}`;
 
@@ -493,6 +494,7 @@ export struct SourceGuidePage {
         }
         .width('100%')
         .height('100%')
+        .padding({ top: this.statusBarHeight })
       }
     }
     .backgroundColor(Color.Transparent)

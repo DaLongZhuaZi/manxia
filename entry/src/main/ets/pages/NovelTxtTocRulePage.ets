@@ -337,6 +337,7 @@ export struct NovelTxtTocRulePage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else if (this.rules.length === 0) {
           Column() {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
@@ -344,6 +345,7 @@ export struct NovelTxtTocRulePage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
           List() {
             ListItem() {
@@ -360,6 +362,7 @@ export struct NovelTxtTocRulePage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .padding({ top: 8 })
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)

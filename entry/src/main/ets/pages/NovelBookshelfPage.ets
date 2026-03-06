@@ -468,6 +468,7 @@ export struct NovelBookshelfPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
       .width('100%')
       .height('100%')
@@ -904,6 +905,7 @@ export struct NovelBookshelfPage {
       }
     }
     .width('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .gesture(
       PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })

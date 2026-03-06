@@ -125,7 +125,7 @@ export struct PageSettingsSubPage {
     { title: '图源', index: TabIndex.SOURCE, required: false },
     { title: '书源', index: TabIndex.BOOK_SOURCE, required: false },
     { title: 'Suwayomi', index: TabIndex.SUWAYOMI, required: false },
-    { title: '设置', index: TabIndex.SETTINGS, required: true }
+    { title: '管理', index: TabIndex.SETTINGS, required: true }
   ];
 
   // 底栏自定义状态
@@ -381,7 +381,7 @@ export struct PageSettingsSubPage {
    */
   private async saveVisibleTabs(): Promise<void> {
     try {
-      // 确保必须显示的标签（书库、设置）始终存在
+      // 确保必须显示的标签（书库、管理）始终存在
       const requiredIndices = this.tabConfigs
         .filter(cfg => cfg.required)
         .map(cfg => cfg.index);
@@ -1127,6 +1127,7 @@ export struct PageSettingsSubPage {
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({

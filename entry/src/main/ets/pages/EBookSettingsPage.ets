@@ -33,6 +33,7 @@ import {
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -146,6 +147,7 @@ export struct EBookSettingsPage {
   @State coverImagePath: string = '';
 
   aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -246,6 +248,7 @@ export struct EBookSettingsPage {
   private lifecycle = new PageLifecycleManager('EBookSettingsPage', { enableDebug: true });
 
   aboutToDisappear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -680,6 +683,7 @@ export struct EBookSettingsPage {
             this.buildLoadingView()
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .padding({ left: 16, right: 16, bottom: 20 })
         } else if (this.errorMessage.length > 0) {
           Column({ space: 16 }) {
@@ -687,6 +691,7 @@ export struct EBookSettingsPage {
             this.buildErrorView()
           }
           .width('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .padding({ left: 16, right: 16, bottom: 20 })
         } else if (this.isLandscape) {
           // 横屏布局：左边40%电子书信息，右边60%设置选项
@@ -704,6 +709,7 @@ export struct EBookSettingsPage {
             .padding({ left: 16, right: 8 })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             
             // 右侧：各种设置选项
             Scroll(this.scroller) {
@@ -719,6 +725,7 @@ export struct EBookSettingsPage {
             .padding({ left: 8, right: 16 })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           }
           .width('100%')
           .height('100%')
@@ -737,6 +744,7 @@ export struct EBookSettingsPage {
           .height('100%')
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
       }
     }

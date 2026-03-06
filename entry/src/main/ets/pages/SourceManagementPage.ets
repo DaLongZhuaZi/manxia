@@ -455,6 +455,7 @@ export struct SourceManagementPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 代理配置对话框
         if (this.showProxyDialog) {
@@ -696,6 +697,7 @@ export struct SourceManagementPage {
         }
       }
     }
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .layoutWeight(1)
     .padding({ left: 16, right: 16, bottom: 16 })

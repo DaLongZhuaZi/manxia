@@ -69,6 +69,7 @@ struct LifecycleMonitorPage {
       }
       .width('100%')
       .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
       }
     }

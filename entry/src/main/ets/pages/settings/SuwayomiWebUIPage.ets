@@ -189,12 +189,14 @@ export struct SuwayomiWebUIPage {
                 })
                 .fontFamily(this.appFontFamily)
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .width('100%')
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
           } else {
             // WebView
             Web({ src: this.currentUrl, controller: this.webController })
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .width('100%')
               .layoutWeight(1)
               .javaScriptAccess(true)
@@ -233,6 +235,7 @@ export struct SuwayomiWebUIPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({

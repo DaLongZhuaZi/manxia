@@ -15,6 +15,7 @@ import { MarkdownViewerComponent, MarkdownTheme, TocItem, MarkdownViewerCallback
 import { fileEditorService, FileInfo, SearchResult } from '../Framework/Editor/FileEditorService';
 import { ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'FileEditorPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -115,6 +116,7 @@ export struct FileEditorPage {
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   
   aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.getUIContext());
     logger.info(TAG, '文件编辑器页面初始化');
     
     // 加载编辑器设置
@@ -139,6 +141,7 @@ export struct FileEditorPage {
   }
   
   aboutToDisappear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     // 移除主题监听器
     if (this.themeChangeCallback) {
       this.themeManager.offThemeChange(this.themeChangeCallback);
@@ -996,6 +999,7 @@ export struct FileEditorPage {
               Column() {
                 this.buildSettingsPanel()
               }
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .width('100%')
               .height('100%')
               .backgroundColor('rgba(0, 0, 0, 0.5)')
@@ -1022,8 +1026,10 @@ export struct FileEditorPage {
               this.buildNewFileDialog()
             }
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
         }
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .width('100%')
         .height('100%')
       }

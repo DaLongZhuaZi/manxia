@@ -825,6 +825,7 @@ A: 不会，原文件保持不变。`;
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
@@ -856,6 +857,7 @@ A: 不会，原文件保持不变。`;
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
             .edgeEffect(EdgeEffect.Spring)
@@ -882,6 +884,7 @@ A: 不会，原文件保持不变。`;
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
         .padding({
           top: this.statusBarHeight,
@@ -890,6 +893,7 @@ A: 不会，原文件保持不变。`;
         })
 
       }
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .titleBar({
       padding: { start: LengthMetrics.vp(16), end: LengthMetrics.vp(16) },

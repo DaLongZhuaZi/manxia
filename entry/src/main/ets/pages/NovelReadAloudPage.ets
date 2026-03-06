@@ -442,6 +442,7 @@ export struct NovelReadAloudPage {
       }
       .width('100%')
       .height('100%')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .backgroundColor($r('app.color.background_primary'))
     }
     .onReady((context: NavDestinationContext) => {

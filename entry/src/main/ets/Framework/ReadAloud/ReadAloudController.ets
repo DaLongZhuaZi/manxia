@@ -16,6 +16,7 @@ const TAG = 'ReadAloudController';
 const MEDIA_SKIP_CHARS: number = 420;
 const BASE_CHARS_PER_SECOND: number = 11;
 const BACKGROUND_KEEP_ALIVE_INTERVAL_MS: number = 15000;
+const PAUSE_RESUME_REWIND_CHARS: number = 2;
 
 interface ReadAloudControllerErrorLike {
   code?: number | string;
@@ -238,10 +239,15 @@ export class ReadAloudController {
       `pause:${this.settings.engineType}`,
       () => {
         this.syncProgressSnapshotFromBackend();
+        if (this.playbackState !== ReadAloudPlaybackState.PAUSED) {
+          return;
+        }
+        this.applyPauseResumeCompensation(reason);
         this.syncContextResumeCharFromSnapshot(`pause_after_${reason}`);
       }
     );
     this.syncProgressSnapshotFromBackend();
+    this.applyPauseResumeCompensation(reason);
     this.syncContextResumeCharFromSnapshot(`pause_before_${reason}`);
     this.changeState(ReadAloudPlaybackState.PAUSED, reason);
     eventBus.publish(GameEvent.READ_ALOUD_PAUSED, this.createStatePayload(reason));
@@ -351,10 +357,7 @@ export class ReadAloudController {
     }
 
     logger.warn(TAG, `听书引擎不可用: ${currentEngine}`);
-    if (
-      currentEngine !== ReadAloudEngineType.SYSTEM &&
-      ReadAloudAvailability.isAvailableSync(ReadAloudEngineType.SYSTEM)
-    ) {
+    if (currentEngine !== ReadAloudEngineType.SYSTEM) {
       this.settings.engineType = ReadAloudEngineType.SYSTEM;
       this.switchBackend(ReadAloudEngineType.SYSTEM);
       this.backend.applySettings(this.settings);
@@ -362,8 +365,8 @@ export class ReadAloudController {
       return true;
     }
 
-    logger.warn(TAG, '没有可用听书引擎，忽略启动请求');
-    return false;
+    logger.warn(TAG, 'SYSTEM engine availability cache unavailable, continue start attempt');
+    return true;
   }
 
   private normalizeEngineType(engineType: ReadAloudEngineType): ReadAloudEngineType {
@@ -475,6 +478,35 @@ export class ReadAloudController {
     this.currentCharIndex = snapshot.currentCharIndex;
     this.chunkStartCharIndex = snapshot.chunkStartCharIndex;
     this.chunkEndCharIndex = snapshot.chunkEndCharIndex;
+  }
+
+  private applyPauseResumeCompensation(reason: string): void {
+    if (!this.shouldApplyPauseResumeCompensation(reason)) {
+      return;
+    }
+    if (this.currentCharIndex < 0) {
+      return;
+    }
+    const adjustedCharIndex = Math.max(0, this.currentCharIndex - PAUSE_RESUME_REWIND_CHARS);
+    if (adjustedCharIndex === this.currentCharIndex) {
+      return;
+    }
+    this.currentCharIndex = adjustedCharIndex;
+  }
+
+  private shouldApplyPauseResumeCompensation(reason: string): boolean {
+    switch (reason) {
+      case 'manual':
+      case 'user_toggle':
+      case 'toolbar_toggle':
+      case 'floating_ball_toggle':
+      case 'player_toggle':
+      case 'media_control_pause':
+      case 'read_aloud_page_toggle':
+        return true;
+      default:
+        return false;
+    }
   }
 
   private syncContextResumeCharFromSnapshot(reason: string): void {

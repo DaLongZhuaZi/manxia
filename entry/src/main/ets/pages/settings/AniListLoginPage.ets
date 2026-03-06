@@ -234,6 +234,7 @@ export struct AniListLoginPage {
           } else {
             // WebView 登录
             Web({ src: this.getAuthUrl(), controller: this.webController })
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
               .width('100%')
               .layoutWeight(1)
               .javaScriptAccess(true)

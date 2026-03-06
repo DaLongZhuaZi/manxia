@@ -573,29 +573,35 @@ export struct EBookDetailPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
-        if (this.isLoading) {
-          this.buildLoadingView()
-        } else if (this.errorMessage.length > 0) {
-          this.buildErrorView()
-        } else if (this.ebook) {
-          if (this.isLandscape) {
-            // 横屏布局
-            this.buildLandscapeLayout()
-          } else {
-            // 竖屏布局
-            Scroll(this.scroller) {
-              Column({ space: 20 }) {
-                this.buildDetailContent()
+        Column() {
+          if (this.isLoading) {
+            this.buildLoadingView()
+          } else if (this.errorMessage.length > 0) {
+            this.buildErrorView()
+          } else if (this.ebook) {
+            if (this.isLandscape) {
+              // 横屏布局
+              this.buildLandscapeLayout()
+            } else {
+              // 竖屏布局
+              Scroll(this.scroller) {
+                Column({ space: 20 }) {
+                  this.buildDetailContent()
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, bottom: 20 })
               }
               .width('100%')
-              .padding({ left: 16, right: 16, bottom: 20 })
+              .height('100%')
+              .scrollBar(BarState.Auto)
+              .edgeEffect(EdgeEffect.Spring)
             }
-            .width('100%')
-            .height('100%')
-            .scrollBar(BarState.Auto)
-            .edgeEffect(EdgeEffect.Spring)
           }
         }
+        .width('100%')
+        .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .padding({ top: this.statusBarHeight })
 
         // 编辑弹窗
         if (this.showEditDialog) {

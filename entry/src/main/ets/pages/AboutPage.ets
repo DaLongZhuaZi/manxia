@@ -488,6 +488,7 @@ struct AboutPage {
             .padding({ left: this.responsive_contentPadding, right: 8 })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             
             // 右侧：操作按钮和版权信息
             Scroll(this.scroller) {
@@ -503,9 +504,11 @@ struct AboutPage {
             .padding({ left: 8, right: this.responsive_contentPadding })
             .edgeEffect(EdgeEffect.Spring)
             .scrollBar(BarState.Auto)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
           // 竖屏布局：原有布局
           Scroll(this.scroller) {
@@ -529,6 +532,7 @@ struct AboutPage {
           })
           .edgeEffect(EdgeEffect.Spring)
           .scrollBar(BarState.Auto)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         }
       }
     }

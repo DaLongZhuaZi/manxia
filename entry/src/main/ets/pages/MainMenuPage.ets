@@ -70,7 +70,7 @@ import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
 import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
-import { WindowManager } from '../Utils/WindowManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { StorageManagementPage } from './StorageManagementPage';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { ReadAloudFloatingBall } from '../Framework/Components/ReadAloudFloatingBall';
@@ -156,9 +156,11 @@ import { EBookSettingsPage } from './EBookSettingsPage';
 import { NovelBook, NovelReadStatus, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
 import { getNovelDataManager, NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelSourceManager, NovelSourceManager } from '../Framework/Novel/NovelSourceManager';
-import { LegadoSourceImportResult } from '../Framework/Novel/LegadoSourceTypes';
+import { LegadoBook, LegadoSourceImportResult, LegadoBookSourceType } from '../Framework/Novel/LegadoSourceTypes';
 import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from '../Framework/Managers/FontManager';
+import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
+import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 
 // 导入Suwayomi相关
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Framework/Source/SuwayomiSourceExecutor';
@@ -783,6 +785,92 @@ struct MainMenuPage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  private readonly hdsDestinationPages: Set<string> = new Set<string>([
+    'AboutPage',
+    'AdvancedSettingsSubPage',
+    'AniListLoginPage',
+    'AnimationSettingsSubPage',
+    'AvifTestPage',
+    'BackupPage',
+    'DataManagementPage',
+    'DownloadManagerPage',
+    'DownloadSyncPage',
+    'DummyPage',
+    'EBookDetailPage',
+    'ErrorManagementSubPage',
+    'FontSettingsSubPage',
+    'GlobalSettingsPage',
+    'HelloWorldPage',
+    'HelpCenterPage',
+    'InteractionSettingsSubPage',
+    'JsvmPlaygroundPage',
+    'LifecycleMonitorPage',
+    'LogManagerPage',
+    'MangaDetailPage',
+    'MangaFeedbackPage',
+    'MangaSourceTestPage',
+    'NetworkSettingsSubPage',
+    'NotificationSettingsSubPage',
+    'NovelBookshelfPage',
+    'NovelDetailPage',
+    'NovelDictRulePage',
+    'NovelExplorePage',
+    'NovelReplaceRulePage',
+    'NovelSearchPage',
+    'NovelSettingsPage',
+    'NovelSourceDebugPage',
+    'NovelSourceLoginPage',
+    'NovelSourceManagementPage',
+    'NovelTxtTocRulePage',
+    'OnlineEBookDetailPage',
+    'PageSettingsSubPage',
+    'ReadingAnalyticsPage',
+    'ReadingSettingsSubPage',
+    'RssFavoritesPage',
+    'RssSourceDebugPage',
+    'RssSubscriptionManagementPage',
+    'RssSubscriptionPage',
+    'SearchPage',
+    'SourceDetailPage',
+    'SourceLoginPage',
+    'SourceManagementPage',
+    'SourceSettingsPage',
+    'StorageManagementPage',
+    'SuwayomiBrowsePage',
+    'SuwayomiMangaDetailPage',
+    'SuwayomiSourceBrowsePage',
+    'SuwayomiSettingsPage',
+    'SuwayomiWebUIPage',
+    'SystemAnimationDemoPage',
+    'SystemResourceDemoPage',
+    'SystemStatusPage',
+    'TestManagementPage',
+    'ThemeSettingsPage',
+    'TrackingSettingsSubPage',
+    'WebViewConfigurableSystemTestPage',
+    'ZLibraryReaderPage'
+  ]);
+  private readonly destinationSelfManagedWindowPages: Set<string> = new Set<string>([
+    'MangaReaderPage',
+    'EBookReaderPage',
+    'NovelReaderPage',
+    'SuwayomiReaderPage',
+    'ZLibraryReaderPage',
+    'UnifiedDetailPage',
+    'FileEditorPage'
+  ]);
+
+  private applyWindowModeForDestination(name: string): void {
+    if (!name || this.destinationSelfManagedWindowPages.has(name)) {
+      return;
+    }
+    const uiContext = this.getUIContext();
+    if (this.hdsDestinationPages.has(name)) {
+      WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, uiContext);
+      return;
+    }
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, uiContext);
+  }
 
   /**
    * 计算顶部避让值：折叠屏设备不应用避让
@@ -893,6 +981,8 @@ struct MainMenuPage {
   @StorageProp('force_tablet_mode') private forceTabletMode: boolean = false;
   @StorageProp('force_landscape_mode') private forceLandscapeMode: boolean = false;
   @StorageProp('main_menu_tablet_top_bar_position') @Watch('onTabletTopBarPositionChanged') private tabletTopBarPosition: string = 'left';
+  @StorageProp('startupRoutePending') private startupRoutePending: boolean = false;
+  private startupRouteHandling: boolean = false;
   // Bug 1 fix: onNewWant通知机制——解决app在前台时onPageShow不触发的问题
   @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
   // Bug 3 fix: 防止aboutToAppear/onPageShow/@Watch三路同时触发重复导入调度
@@ -961,7 +1051,7 @@ struct MainMenuPage {
       required: false
     },
     {
-      title: '设置',
+      title: '管理',
       icon: $r('app.media.ic_settings'),
       selectedIcon: $r('app.media.ic_settings'),
       systemIcon: $r('sys.symbol.gearshape'),
@@ -1011,6 +1101,11 @@ struct MainMenuPage {
 
     // 处理路由参数
     this.handleRouteParams();
+
+    // 快捷入口冷启动：尽早开始目标路由，减少 MainMenuPage 闪现
+    if (this.startupRoutePending) {
+      void this.handleWidgetNavigationIfPresent(true);
+    }
 
     // 请求通知权限（首次进入主页面时）
     this.requestNotificationPermission();
@@ -1144,16 +1239,27 @@ struct MainMenuPage {
     this.handleDeepLinkIfPresent();
     
     // 处理卡片跳转
-    this.handleWidgetNavigationIfPresent();
+    if (!this.startupRoutePending) {
+      void this.handleWidgetNavigationIfPresent(false);
+    }
   }
 
   /**
    * 处理卡片跳转（如果存在）
    */
-  private handleWidgetNavigationIfPresent(): void {
+  private async handleWidgetNavigationIfPresent(startupFastRoute: boolean = false): Promise<void> {
+    if (startupFastRoute && this.startupRouteHandling) {
+      return;
+    }
+    if (startupFastRoute) {
+      this.startupRouteHandling = true;
+    }
     try {
       const targetPage = AppStorage.get<string>('widgetTargetPage');
       if (!targetPage) {
+        if (startupFastRoute) {
+          this.startupRoutePending = false;
+        }
         return;
       }
 
@@ -1165,12 +1271,16 @@ struct MainMenuPage {
       if (targetPage === 'readingAnalytics') {
         const targetView = AppStorage.get<string>('widgetTargetView') || 'daily';
         AppStorage.setOrCreate('widgetTargetView', '');
-        
+        if (startupFastRoute) {
+          AppStorage.setOrCreate('analyticsViewMode', targetView);
+          this.pathStack.pushPathByName('ReadingAnalyticsPage', undefined);
+          logger.info(TAG, `✅ 已快捷跳转到阅读报告页面: viewMode=${targetView}`);
+          return;
+        }
+
         // 延迟跳转，确保页面已加载完成
         setTimeout(() => {
-          // 设置参数标记用于阅读报告页面读取
           AppStorage.setOrCreate('analyticsViewMode', targetView);
-          // 跳转到阅读报告页面
           this.pathStack.pushPathByName('ReadingAnalyticsPage', undefined);
           logger.info(TAG, `✅ 已跳转到阅读报告页面: viewMode=${targetView}`);
         }, 300);
@@ -1182,6 +1292,10 @@ struct MainMenuPage {
         const contentId = AppStorage.get<string>('widgetContentId') || '';
         AppStorage.setOrCreate('widgetContentType', '');
         AppStorage.setOrCreate('widgetContentId', '');
+        if (startupFastRoute) {
+          await this.navigateFromWidgetContinueRead(contentType, contentId);
+          return;
+        }
 
         setTimeout(() => {
           void this.navigateFromWidgetContinueRead(contentType, contentId);
@@ -1190,8 +1304,23 @@ struct MainMenuPage {
       }
 
       if (targetPage === 'continueReadLatest' || targetPage === 'continue_read_latest' || targetPage === 'open_recent_read') {
+        if (startupFastRoute) {
+          await this.navigateFromShortcutLatestRecentRead();
+          return;
+        }
         setTimeout(() => {
           void this.navigateFromShortcutLatestRecentRead();
+        }, 200);
+        return;
+      }
+
+      if (targetPage === 'continueReadAloud' || targetPage === 'continue_read_aloud' || targetPage === 'open_recent_read_aloud') {
+        if (startupFastRoute) {
+          await this.navigateFromShortcutContinueReadAloud();
+          return;
+        }
+        setTimeout(() => {
+          void this.navigateFromShortcutContinueReadAloud();
         }, 200);
         return;
       }
@@ -1212,6 +1341,11 @@ struct MainMenuPage {
       }
     } catch (error) {
       logger.error(TAG, `❌ 处理卡片跳转失败: ${error}`);
+    } finally {
+      if (startupFastRoute) {
+        this.startupRoutePending = false;
+        this.startupRouteHandling = false;
+      }
     }
   }
 
@@ -1289,6 +1423,108 @@ struct MainMenuPage {
       logger.error(TAG, `快捷方式继续阅读跳转失败: ${String(error)}`);
       this.showToast('打开最近阅读失败，已打开书库');
       this.fallbackWidgetContinueRead('');
+    }
+  }
+
+  private async navigateFromShortcutContinueReadAloud(): Promise<void> {
+    try {
+      const readAloudController = ReadAloudController.getInstance();
+      const snapshot = readAloudController.getSnapshot();
+      const context = readAloudController.getContextSnapshot();
+
+      if (snapshot.hasContext && context && context.content && context.content.length > 0) {
+        if (snapshot.playbackState !== ReadAloudPlaybackState.PLAYING) {
+          readAloudController.start('shortcut_continue_read_aloud');
+        }
+        readAloudController.refreshMediaSession();
+        AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
+        this.pathStack.pushPathByName('ReadAloudPlayerPage', undefined);
+        logger.info(TAG, `快捷方式继续听书命中当前会话: bookId=${context.bookId}, chapter=${context.chapterIndex}`);
+        return;
+      }
+
+      let novelList: NovelBook[] = this.contentFilterManager.filterContentList(this.recentNovelList);
+      if (novelList.length === 0) {
+        const loadedNovels = await this.loadRecentNovelList();
+        novelList = this.contentFilterManager.filterContentList(loadedNovels);
+      }
+
+      const candidates = novelList
+        .filter((item: NovelBook) =>
+          !!item &&
+          !!item.bookUrl &&
+          !!item.sourceId &&
+          ((item.lastReadTime ?? 0) > 0 || (item.lastReadChapterIndex ?? -1) >= 0)
+        )
+        .sort((a: NovelBook, b: NovelBook) => (b.lastReadTime ?? 0) - (a.lastReadTime ?? 0));
+
+      if (candidates.length <= 0) {
+        logger.warn(TAG, '快捷方式继续听书失败：没有可恢复的听书或小说阅读记录');
+        this.showToast('暂无可继续听书内容');
+        this.pathStack.pushPathByName('ReadAloudPlayerPage', undefined);
+        return;
+      }
+
+      await this.navigateNovelToReadAloud(candidates[0]);
+    } catch (error) {
+      logger.error(TAG, `快捷方式继续听书跳转失败: ${String(error)}`);
+      this.showToast('继续听书失败');
+      this.pathStack.pushPathByName('ReadAloudPlayerPage', undefined);
+    }
+  }
+
+  private async navigateNovelToReadAloud(novel: NovelBook): Promise<void> {
+    try {
+      const sourceManager = getNovelSourceManager();
+      const parsedBook = await sourceManager.getBookInfo(novel.sourceId, novel.bookUrl);
+      const resolvedBook: LegadoBook = parsedBook ?? {
+        id: `${novel.sourceId}_${encodeURIComponent(novel.bookUrl)}`,
+        origin: novel.sourceId,
+        originName: novel.sourceName || '',
+        bookUrl: novel.bookUrl,
+        name: novel.name,
+        author: novel.author,
+        kind: novel.kind,
+        intro: novel.intro,
+        coverUrl: novel.coverUrl,
+        tocUrl: novel.tocUrl || novel.bookUrl,
+        latestChapterTitle: novel.latestChapterTitle,
+        wordCount: novel.wordCount,
+        updateTime: novel.lastReadTime,
+        type: LegadoBookSourceType.TEXT
+      };
+      const chapters = await sourceManager.getChapterList(novel.sourceId, resolvedBook);
+      if (chapters.length <= 0) {
+        logger.warn(TAG, `快捷方式继续听书失败：章节为空，回退详情页: ${novel.name}`);
+        this.showToast('未找到章节，已打开小说详情');
+        this.openNovelDetail(novel);
+        return;
+      }
+
+      const lastReadChapterIndex = novel.lastReadChapterIndex ?? 0;
+      const safeChapterIndex = Math.max(0, Math.min(lastReadChapterIndex, chapters.length - 1));
+      const chapter = chapters[safeChapterIndex];
+      const params: NovelReaderPageParams = {
+        sourceId: novel.sourceId,
+        bookUrl: novel.bookUrl,
+        bookName: resolvedBook.name || novel.name,
+        chapterUrl: chapter.url,
+        chapterTitle: chapter.title || `第${safeChapterIndex + 1}章`,
+        chapterIndex: safeChapterIndex,
+        totalChapters: chapters.length,
+        tocUrl: resolvedBook.tocUrl || novel.tocUrl || novel.bookUrl,
+        author: resolvedBook.author || novel.author,
+        coverUrl: resolvedBook.coverUrl || novel.coverUrl,
+        sourceName: novel.sourceName || resolvedBook.originName || '',
+        autoStartReadAloud: true,
+        autoOpenReadAloudPlayer: true
+      };
+      this.pathStack.pushPathByName('NovelReaderPage', params);
+      logger.info(TAG, `快捷方式继续听书命中最近小说: ${novel.name}, chapter=${safeChapterIndex + 1}/${chapters.length}`);
+    } catch (error) {
+      logger.error(TAG, `快捷方式继续听书恢复章节失败: ${String(error)}`);
+      this.showToast('恢复听书失败，已打开小说详情');
+      this.openNovelDetail(novel);
     }
   }
 
@@ -1791,6 +2027,7 @@ struct MainMenuPage {
   private getFloatingSideBarHeight(): number {
     const deviceInfo = this.deviceManager.getDeviceInfo();
     const h: number = deviceInfo.screenHeight
+      - this.statusBarHeight
       - this.navigationBarHeight
       - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
     return h > 0 ? h : deviceInfo.screenHeight;
@@ -5250,12 +5487,13 @@ struct MainMenuPage {
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
     this.checkPendingFileImport();
     
     // 检查是否有卡片跳转请求（来自onNewWant或onCreate）
-    this.handleWidgetNavigationIfPresent();
+    void this.handleWidgetNavigationIfPresent(this.startupRoutePending);
 
     void widgetDataSync.syncAllDataThrottled();
 
@@ -5505,7 +5743,7 @@ struct MainMenuPage {
    */
   private async saveVisibleTabs(indices: number[]): Promise<void> {
     try {
-      // 确保必须显示的标签（书库、设置）始终存在
+      // 确保必须显示的标签（书库、管理）始终存在
       const requiredIndices = this.tabConfigs
         .filter(cfg => cfg.required)
         .map(cfg => cfg.index);
@@ -6193,7 +6431,7 @@ struct MainMenuPage {
           { text: '首页', color: AppColors.primary },
           { text: '我的书库', color: AppColors.primary },
           { text: '发现', color: AppColors.primary },
-          { text: '设置', color: AppColors.primary },
+          { text: '管理', color: AppColors.primary },
           { text: '关于应用', color: AppColors.primary }
         ]
       }, (err, data) => {
@@ -19360,7 +19598,7 @@ struct MainMenuPage {
           SymbolGlyph($r('sys.symbol.gearshape'))
             .fontSize(12)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          Text('设置')
+          Text('管理')
             .fontSize(11)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
@@ -19812,176 +20050,183 @@ struct MainMenuPage {
    */
   @Builder
   buildNavDestination(name: string, param: ESObject) {
-    // 测试页面导航已移除
-    // if (name === 'TestManagementPage') {
-    //   TestManagementPage()
-    // } else
-    if (name === 'DataManagementPage') {
-      DataManagementPage()
-    } else if (name === 'DownloadSyncPage') {
-      DownloadSyncPage()
-    } else if (name === 'MangaReaderPage') {
-      MangaReaderPage()
-    } else if (name === 'MangaDetailPage') {
-      MangaDetailPage()
-    } else if (name === 'CoverSelectionPage') {
-      CoverSelectionPage()
-    } else if (name === 'MangaSettingsPage') {
-      MangaSettingsPage()
-    } else if (name === 'SearchPage') {
-      SearchPage()
-    } else if (name === 'GlobalSearchPage') {
-      GlobalSearchPage()
-    } else if (name === 'WebViewConfigurableSystemTestPage') {
-      WebViewConfigurableSystemTestPage()
-    } else if (name === 'MangaSourceTestPage') {
-      MangaSourceTestPage()
-    } else if (name === 'DummyPage') {
-      DummyPage()
-    } else if (name === 'SystemAnimationDemoPage') {
-      SystemAnimationDemoPage()
-    } else if (name === 'SystemResourceDemoPage') {
-      SystemResourceDemoPage()
-    } else if (name === 'HelloWorldPage') {
-      HelloWorldPage()
-    } else if (name === 'SystemStatusPage') {
-      SystemStatusPage()
-    } else if (name === 'GlobalSettingsPage') {
-      GlobalSettingsPage()
-    } else if (name === 'ReadingSettingsSubPage') {
-      ReadingSettingsSubPage()
-    } else if (name === 'NetworkSettingsSubPage') {
-      NetworkSettingsSubPage()
-    } else if (name === 'NotificationSettingsSubPage') {
-      NotificationSettingsSubPage()
-    } else if (name === 'AdvancedSettingsSubPage') {
-      AdvancedSettingsSubPage()
-    } else if (name === 'ErrorManagementSubPage') {
-      ErrorManagementSubPage()
-    } else if (name === 'InteractionSettingsSubPage') {
-      InteractionSettingsSubPage()
-    } else if (name === 'AnimationSettingsSubPage') {
-      AnimationSettingsSubPage()
-    } else if (name === 'TrackingSettingsSubPage') {
-      TrackingSettingsSubPage()
-    } else if (name === 'AniListLoginPage') {
-      AniListLoginPage()
-    } else if (name === 'SuwayomiSettingsPage') {
-      SuwayomiSettingsPage()
-    } else if (name === 'SuwayomiWebUIPage') {
-      SuwayomiWebUIPage()
-    } else if (name === 'SuwayomiBrowsePage') {
-      SuwayomiBrowsePage()
-    } else if (name === 'SuwayomiSourceBrowsePage') {
-      SuwayomiSourceBrowsePage()
-    } else if (name === 'SuwayomiMangaDetailPage') {
-      SuwayomiMangaDetailPage()
-    } else if (name === 'SuwayomiReaderPage') {
-      SuwayomiReaderPage()
-    } else if (name === 'ZLibraryReaderPage') {
-      ZLibraryReaderPage()
-    } else if (name === 'DownloadManagerPage') {
-      DownloadManagerPage()
-    } else if (name === 'AboutPage') {
-      AboutPage()
-    } else if (name === 'ReadingAnalyticsPage') {
-      ReadingAnalyticsPage()
-    } else if (name === 'MangaFeedbackPage') {
-      MangaFeedbackPage()
-    } else if (name === 'LogManagerPage') {
-      LogManagerPage()
-    } else if (name === 'OpenSourceLicensePage') {
-      OpenSourceLicensePage()
-    } else if (name === 'SupportersPage') {
-      SupportersPage()
-    } else if (name === 'UserAgreementPage') {
-      UserAgreementPage()
-    } else if (name === 'PrivacyPolicyPage') {
-      PrivacyPolicyPage()
-    } else if (name === 'EBookReaderPage') {
-      EBookReaderPage()
-    } else if (name === 'EBookDetailPage') {
-      EBookDetailPage()
-    } else if (name === 'EBookSettingsPage') {
-      EBookSettingsPage()
-    } else if (name === 'ThemeSettingsPage') {
-      ThemeSettingsPage()
-    } else if (name === 'StorageManagementPage') {
-      StorageManagementPage()
-    } else if (name === 'SourceDetailPage') {
-      SourceDetailPage()
-    } else if (name === 'SourceSettingsPage') {
-      SourceSettingsPage()
-    } else if (name === 'SourceLoginPage') {
-      SourceLoginPage()
-    } else if (name === 'OnlineEBookDetailPage') {
-      OnlineEBookDetailPage()
-    } else if (name === 'NovelBookshelfPage') {
-      NovelBookshelfPage()
-    } else if (name === 'NovelSearchPage') {
-      NovelSearchPage()
-    } else if (name === 'NovelDetailPage') {
-      NovelDetailPage()
-    } else if (name === 'NovelReaderPage') {
-      NovelReaderPage()
-    } else if (name === 'NovelReadAloudPage') {
-      NovelReadAloudPage()
-    } else if (name === 'ReadAloudPlayerPage') {
-      ReadAloudPlayerPage()
-    } else if (name === 'NovelSourceManagementPage') {
-      NovelSourceManagementPage()
-    } else if (name === 'NovelExplorePage') {
-      NovelExplorePage()
-    } else if (name === 'NovelSourceLoginPage') {
-      NovelSourceLoginPage()
-    } else if (name === 'NovelReplaceRulePage') {
-      NovelReplaceRulePage()
-    } else if (name === 'NovelSettingsPage') {
-      NovelSettingsPage()
-    } else if (name === 'NovelSourceDebugPage') {
-      NovelSourceDebugPage()
-    } else if (name === 'RssSubscriptionPage') {
-      RssSubscriptionPage()
-    } else if (name === 'RssFavoritesPage') {
-      RssFavoritesPage()
-    } else if (name === 'RssSubscriptionManagementPage') {
-      RssSubscriptionManagementPage()
-    } else if (name === 'RssSourceDebugPage') {
-      RssSourceDebugPage()
-    } else if (name === 'NovelTxtTocRulePage') {
-      NovelTxtTocRulePage()
-    } else if (name === 'NovelDictRulePage') {
-      NovelDictRulePage()
-    } else if (name === 'JsvmPlaygroundPage') {
-      JsvmPlaygroundPage()
-    } else if (name === 'LifecycleMonitorPage') {
-      LifecycleMonitorPage()
-    } else if (name === 'BackupPage') {
-      BackupPage()
-    } else if (name === 'FileEditorPage') {
-      FileEditorPage()
-    } else if (name === 'SystemResourcePreviewPage') {
-      SystemResourcePreviewPage()
-    } else if (name === 'HelpCenterPage') {
-      HelpCenterPage()
-    } else if (name === 'FontSettingsSubPage') {
-      FontSettingsSubPage()
-    } else if (name === 'PageSettingsSubPage') {
-      PageSettingsSubPage()
-    } else if (name === 'UnifiedDetailPage') {
-      UnifiedDetailPage()
-    } else if (name === 'AvifTestPage') {
-      AvifTestPage()
-    } else if (name === 'SourceManagementPage') {
-      SourceManagementPage()
+    Column() {
       // 测试页面导航已移除
-      // } else if (name === 'ReaderKitTestPage') {
-      //   ReaderKitTestPage()
-      // } else if (name === 'PdfKitTestPage') {
-      //   PdfKitTestPage()
-      // } else if (name === 'ScraperTestPage') {  // 已移除，备份为 .bak
-      //   ScraperTestPage()
+      // if (name === 'TestManagementPage') {
+      //   TestManagementPage()
+      // } else
+      if (name === 'DataManagementPage') {
+        DataManagementPage()
+      } else if (name === 'DownloadSyncPage') {
+        DownloadSyncPage()
+      } else if (name === 'MangaReaderPage') {
+        MangaReaderPage()
+      } else if (name === 'MangaDetailPage') {
+        MangaDetailPage()
+      } else if (name === 'CoverSelectionPage') {
+        CoverSelectionPage()
+      } else if (name === 'MangaSettingsPage') {
+        MangaSettingsPage()
+      } else if (name === 'SearchPage') {
+        SearchPage()
+      } else if (name === 'GlobalSearchPage') {
+        GlobalSearchPage()
+      } else if (name === 'WebViewConfigurableSystemTestPage') {
+        WebViewConfigurableSystemTestPage()
+      } else if (name === 'MangaSourceTestPage') {
+        MangaSourceTestPage()
+      } else if (name === 'DummyPage') {
+        DummyPage()
+      } else if (name === 'SystemAnimationDemoPage') {
+        SystemAnimationDemoPage()
+      } else if (name === 'SystemResourceDemoPage') {
+        SystemResourceDemoPage()
+      } else if (name === 'HelloWorldPage') {
+        HelloWorldPage()
+      } else if (name === 'SystemStatusPage') {
+        SystemStatusPage()
+      } else if (name === 'GlobalSettingsPage') {
+        GlobalSettingsPage()
+      } else if (name === 'ReadingSettingsSubPage') {
+        ReadingSettingsSubPage()
+      } else if (name === 'NetworkSettingsSubPage') {
+        NetworkSettingsSubPage()
+      } else if (name === 'NotificationSettingsSubPage') {
+        NotificationSettingsSubPage()
+      } else if (name === 'AdvancedSettingsSubPage') {
+        AdvancedSettingsSubPage()
+      } else if (name === 'ErrorManagementSubPage') {
+        ErrorManagementSubPage()
+      } else if (name === 'InteractionSettingsSubPage') {
+        InteractionSettingsSubPage()
+      } else if (name === 'AnimationSettingsSubPage') {
+        AnimationSettingsSubPage()
+      } else if (name === 'TrackingSettingsSubPage') {
+        TrackingSettingsSubPage()
+      } else if (name === 'AniListLoginPage') {
+        AniListLoginPage()
+      } else if (name === 'SuwayomiSettingsPage') {
+        SuwayomiSettingsPage()
+      } else if (name === 'SuwayomiWebUIPage') {
+        SuwayomiWebUIPage()
+      } else if (name === 'SuwayomiBrowsePage') {
+        SuwayomiBrowsePage()
+      } else if (name === 'SuwayomiSourceBrowsePage') {
+        SuwayomiSourceBrowsePage()
+      } else if (name === 'SuwayomiMangaDetailPage') {
+        SuwayomiMangaDetailPage()
+      } else if (name === 'SuwayomiReaderPage') {
+        SuwayomiReaderPage()
+      } else if (name === 'ZLibraryReaderPage') {
+        ZLibraryReaderPage()
+      } else if (name === 'DownloadManagerPage') {
+        DownloadManagerPage()
+      } else if (name === 'AboutPage') {
+        AboutPage()
+      } else if (name === 'ReadingAnalyticsPage') {
+        ReadingAnalyticsPage()
+      } else if (name === 'MangaFeedbackPage') {
+        MangaFeedbackPage()
+      } else if (name === 'LogManagerPage') {
+        LogManagerPage()
+      } else if (name === 'OpenSourceLicensePage') {
+        OpenSourceLicensePage()
+      } else if (name === 'SupportersPage') {
+        SupportersPage()
+      } else if (name === 'UserAgreementPage') {
+        UserAgreementPage()
+      } else if (name === 'PrivacyPolicyPage') {
+        PrivacyPolicyPage()
+      } else if (name === 'EBookReaderPage') {
+        EBookReaderPage()
+      } else if (name === 'EBookDetailPage') {
+        EBookDetailPage()
+      } else if (name === 'EBookSettingsPage') {
+        EBookSettingsPage()
+      } else if (name === 'ThemeSettingsPage') {
+        ThemeSettingsPage()
+      } else if (name === 'StorageManagementPage') {
+        StorageManagementPage()
+      } else if (name === 'SourceDetailPage') {
+        SourceDetailPage()
+      } else if (name === 'SourceSettingsPage') {
+        SourceSettingsPage()
+      } else if (name === 'SourceLoginPage') {
+        SourceLoginPage()
+      } else if (name === 'OnlineEBookDetailPage') {
+        OnlineEBookDetailPage()
+      } else if (name === 'NovelBookshelfPage') {
+        NovelBookshelfPage()
+      } else if (name === 'NovelSearchPage') {
+        NovelSearchPage()
+      } else if (name === 'NovelDetailPage') {
+        NovelDetailPage()
+      } else if (name === 'NovelReaderPage') {
+        NovelReaderPage()
+      } else if (name === 'NovelReadAloudPage') {
+        NovelReadAloudPage()
+      } else if (name === 'ReadAloudPlayerPage') {
+        ReadAloudPlayerPage()
+      } else if (name === 'NovelSourceManagementPage') {
+        NovelSourceManagementPage()
+      } else if (name === 'NovelExplorePage') {
+        NovelExplorePage()
+      } else if (name === 'NovelSourceLoginPage') {
+        NovelSourceLoginPage()
+      } else if (name === 'NovelReplaceRulePage') {
+        NovelReplaceRulePage()
+      } else if (name === 'NovelSettingsPage') {
+        NovelSettingsPage()
+      } else if (name === 'NovelSourceDebugPage') {
+        NovelSourceDebugPage()
+      } else if (name === 'RssSubscriptionPage') {
+        RssSubscriptionPage()
+      } else if (name === 'RssFavoritesPage') {
+        RssFavoritesPage()
+      } else if (name === 'RssSubscriptionManagementPage') {
+        RssSubscriptionManagementPage()
+      } else if (name === 'RssSourceDebugPage') {
+        RssSourceDebugPage()
+      } else if (name === 'NovelTxtTocRulePage') {
+        NovelTxtTocRulePage()
+      } else if (name === 'NovelDictRulePage') {
+        NovelDictRulePage()
+      } else if (name === 'JsvmPlaygroundPage') {
+        JsvmPlaygroundPage()
+      } else if (name === 'LifecycleMonitorPage') {
+        LifecycleMonitorPage()
+      } else if (name === 'BackupPage') {
+        BackupPage()
+      } else if (name === 'FileEditorPage') {
+        FileEditorPage()
+      } else if (name === 'SystemResourcePreviewPage') {
+        SystemResourcePreviewPage()
+      } else if (name === 'HelpCenterPage') {
+        HelpCenterPage()
+      } else if (name === 'FontSettingsSubPage') {
+        FontSettingsSubPage()
+      } else if (name === 'PageSettingsSubPage') {
+        PageSettingsSubPage()
+      } else if (name === 'UnifiedDetailPage') {
+        UnifiedDetailPage()
+      } else if (name === 'AvifTestPage') {
+        AvifTestPage()
+      } else if (name === 'SourceManagementPage') {
+        SourceManagementPage()
+        // 测试页面导航已移除
+        // } else if (name === 'ReaderKitTestPage') {
+        //   ReaderKitTestPage()
+        // } else if (name === 'PdfKitTestPage') {
+        //   PdfKitTestPage()
+        // } else if (name === 'ScraperTestPage') {  // 已移除，备份为 .bak
+        //   ScraperTestPage()
+      }
     }
+    .width('100%')
+    .height('100%')
+    .onAppear(() => {
+      this.applyWindowModeForDestination(name);
+    })
   }
 
   /**
@@ -19989,7 +20234,7 @@ struct MainMenuPage {
    */
   private getVisibleTabConfigs(): TabConfig[] {
     return this.tabConfigs.filter((cfg: TabConfig) => {
-      // 必须显示的标签（书库、设置）始终显示
+      // 必须显示的标签（书库、管理）始终显示
       if (cfg.required) {
         return true;
       }
@@ -20709,6 +20954,34 @@ struct MainMenuPage {
 
     // 听书悬浮球（放在最顶层，避免被导航目的页或后台模糊遮罩覆盖）
     ReadAloudFloatingBall()
+
+    // 冷启动快捷路由遮罩：在目标页解析完成前屏蔽 MainMenu，避免闪现
+    if (this.startupRoutePending) {
+      Column({ space: 16 }) {
+        Image($r('app.media.icon'))
+          .width(88)
+          .height(88)
+          .objectFit(ImageFit.Contain)
+
+        LoadingProgress()
+          .width(30)
+          .height(30)
+          .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+
+        Text('正在打开快捷入口...')
+          .fontSize(15)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .opacity(0.88)
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .zIndex(99999)
+    }
     }
     .width('100%')
     .height('100%')

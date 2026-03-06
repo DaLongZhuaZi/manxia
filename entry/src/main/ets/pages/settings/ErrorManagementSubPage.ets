@@ -1458,6 +1458,7 @@ export struct ErrorManagementSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         if (this.showClearRangePanel) {
           this.buildClearRangePanel()

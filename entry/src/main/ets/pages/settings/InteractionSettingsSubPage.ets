@@ -432,6 +432,7 @@ export struct InteractionSettingsSubPage {
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
     .titleBar({

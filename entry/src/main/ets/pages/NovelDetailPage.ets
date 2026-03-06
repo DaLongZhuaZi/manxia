@@ -321,6 +321,7 @@ export struct NovelDetailPage {
         .width('100%')
         .height('100%')
         .align(Alignment.TopStart)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 章节列表面板
         Column() {
@@ -337,6 +338,7 @@ export struct NovelDetailPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .opacity(this.showChapterPanel ? 1 : 0)
         .translate({ y: this.showChapterPanel ? 0 : '100%' })
         .animation({ duration: 250, curve: Curve.EaseOut })
@@ -357,6 +359,7 @@ export struct NovelDetailPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .opacity(this.showChangeSourcePanel ? 1 : 0)
         .translate({ y: this.showChangeSourcePanel ? 0 : '100%' })
         .animation({ duration: 250, curve: Curve.EaseOut })
@@ -377,6 +380,7 @@ export struct NovelDetailPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .opacity(this.showDownloadPanel ? 1 : 0)
         .translate({ y: this.showDownloadPanel ? 0 : '100%' })
         .animation({ duration: 250, curve: Curve.EaseOut })
@@ -418,6 +422,7 @@ export struct NovelDetailPage {
           }
           .width('100%')
           .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .alignContent(Alignment.Center)
         }
       }

@@ -7,8 +7,10 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'OpenSourceLicensePage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 
 /**
  * 开源许可页面
@@ -17,6 +19,8 @@ const TAG = 'OpenSourceLicensePage';
 @Component
 export struct OpenSourceLicensePage {
   @Consume('NavPathStack') pathStack: NavPathStack;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   // 主题状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -28,6 +32,7 @@ export struct OpenSourceLicensePage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
 
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(
@@ -46,6 +51,7 @@ export struct OpenSourceLicensePage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
@@ -200,6 +206,7 @@ export struct OpenSourceLicensePage {
         // 内容层
         Column() {
           // 顶部导航栏
+          /*
           Row() {
             Button() {
               SymbolGlyph($r('sys.symbol.arrow_left'))
@@ -225,13 +232,16 @@ export struct OpenSourceLicensePage {
               .width(40)
               .height(40)
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .width('100%')
           .height(56)
           .padding({ left: 16, right: 16 })
+          */
 
           // 滚动内容
           Scroll(this.scroller) {
             Column() {
+              // Blank().height(TITLE_BAR_HEIGHT_MINI)
               // 项目信息
               this.buildSectionTitle('项目信息', $r('sys.symbol.computer_host_fill'))
               this.buildParagraph('漫匣（ManXia）是一款基于HarmonyOS Next的现代化漫画阅读应用，采用纯ArkTS架构开发。')
@@ -384,15 +394,38 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
             .width('100%')
             .padding({ left: 20, right: 20, top: 16, bottom: 20 })
           }
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .padding({ top: this.statusBarHeight })
       }
     }
     .backgroundColor(Color.Transparent)
-    .hideTitleBar(true)
+    .titleBar({
+      style: {
+        originalStyle: {
+          backgroundStyle: {
+            backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme)
+          },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)
+            },
+            backIconStyle: {
+              backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+              iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+            }
+          }
+        }
+      },
+      content: {
+        title: { mainTitle: '开源许可' }
+      }
+    })
   }
 }

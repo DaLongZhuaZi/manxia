@@ -424,6 +424,7 @@ interface MemoryTestResult {
 struct WebViewConfigurableSystemTestPage {
   // 导航栈
   @State pathStack: NavPathStack = new NavPathStack();
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private webviewController: webview.WebviewController = new webview.WebviewController();
   @State webTestUrl: string = 'https://www.bing.com/';
   @State webLoadState: string = 'idle';
@@ -771,6 +772,7 @@ struct WebViewConfigurableSystemTestPage {
       .height('100%')
       .backgroundColor(colorMap['app.color.background_primary'])
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .padding({ top: this.statusBarHeight })
     }
     .hideTitleBar(true)
     .onReady((context: NavDestinationContext) => {
