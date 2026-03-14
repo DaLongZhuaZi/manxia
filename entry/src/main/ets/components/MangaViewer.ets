@@ -661,14 +661,10 @@ export struct MangaViewer {
     this.initScrollPositionKey();
 
     // 恢复滚动位置
-    // [修复] 条漫模式：如果有明确的 currentPageIndex，优先使用 jumpToPageImmediate 跳转，
-    // 而不是依赖旧的 savedScrollPosition（旧的滚动位置可能因多章节布局变化而失效）
-    if (this.isWebtoonMode() && this.currentPageIndex > 0) {
-      // 清除旧的滚动位置缓存，避免与 jumpToPageImmediate 冲突
+    // 条漫模式首屏定位统一交给父组件 onComponentReady 触发，避免重复跳转导致抖动。
+    if (this.isWebtoonMode()) {
+      // 清除旧的滚动位置缓存，避免与父组件的页面定位逻辑冲突
       this.savedScrollPosition = 0;
-      setTimeout(() => {
-        this.jumpToPageImmediate(this.currentPageIndex);
-      }, 100);
     } else {
       this.restoreScrollPosition();
     }
@@ -907,6 +903,58 @@ export struct MangaViewer {
       this.updateSinglePagePreview();
       this.loadCurrentAndNeighborPages();
     }
+  }
+
+  /**
+   * 暴露给父组件：当前可视页是否已经具备可展示内容
+   * 用于过渡动画场景，避免在首屏内容未就绪时提前隐藏遮罩。
+   */
+  public isCurrentVisualReady(): boolean {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return false;
+    }
+
+    const pageCount: number = this.chapter.pages.length;
+    const safeIndex: number = Math.max(0, Math.min(this.viewCurrentPageIndex, pageCount - 1));
+
+    if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
+      const leftIndex: number = (this.leftPageIndex >= 0 && this.leftPageIndex < pageCount)
+        ? this.leftPageIndex
+        : safeIndex;
+      const rightIndex: number = (this.rightPageIndex >= 0 && this.rightPageIndex < pageCount)
+        ? this.rightPageIndex
+        : -1;
+
+      const leftReady = this.isPageVisualReadyByIndex(leftIndex);
+      const rightReady = rightIndex >= 0 ? this.isPageVisualReadyByIndex(rightIndex) : false;
+      // 双页场景下任一可视页就绪即可视为可展示，避免遮罩卡死
+      return leftReady || rightReady;
+    }
+
+    return this.isPageVisualReadyByIndex(safeIndex);
+  }
+
+  private isPageVisualReadyByIndex(pageIndex: number): boolean {
+    if (!this.chapter || !this.chapter.pages || pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
+      return false;
+    }
+
+    const page = this.chapter.pages[pageIndex];
+    if (!page) {
+      return false;
+    }
+
+    if (this.pagePixelMaps.has(page.id) || this.localImageCache.has(page.id)) {
+      return true;
+    }
+
+    const state: ImageLoadState | undefined = this.getPageLoadState(page);
+    if (!state) {
+      return false;
+    }
+
+    // 加载成功或已进入错误态都可认为“首屏已可见”
+    return state.isLoaded || !!state.error;
   }
 
   /**

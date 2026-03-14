@@ -1,0 +1,1883 @@
+﻿/**
+ * 涔︾睄缈诲紑/鍏抽棴杩囨浮鍔ㄧ敾缁勪欢
+ * 
+ * 鏍稿績鐗规€э細
+ * 1. 缈诲紑妯″紡 - 灏侀潰浠庡師浣嶇疆绉诲姩鍒颁腑澶紝绛夊緟闃呰鍣ㄥ氨缁悗鎵ц鎺€寮€鍔ㄧ敾
+ * 2. 鍏抽棴妯″紡 - 闃呰鍣ㄥ唴瀹圭缉灏忓苟缂╁洖鍒板皝闈綅缃紝鑷劧娣″嚭娑堝け
+ * 3. 鍩轰簬Canvas鐨?D娓叉煋鏁堟灉
+ * 4. 鏀寔婕敾闃呰鍣ㄥ拰鐢靛瓙涔﹂槄璇诲櫒
+ * 5. 骞虫粦鐨勭姸鎬佽繃娓″拰鍥炶皟鏈哄埗
+ */
+
+import { logger } from '../Utils/Logger';
+import { image } from '@kit.ImageKit';
+import { curves } from '@kit.ArkUI';
+import { EBookBackgroundSettings } from './BookTransitionOverlay';
+
+const TAG = 'BookOpenTransition';
+
+/**
+ * 杩囨浮鍔ㄧ敾妯″紡
+ */
+export enum TransitionMode {
+  OPEN = 'open',   // 缈诲紑妯″紡
+  CLOSE = 'close'  // 鍏抽棴妯″紡
+}
+
+/**
+ * 鍔ㄧ敾闃舵鏋氫妇
+ */
+export enum TransitionPhase {
+  IDLE = 'idle',                     // 绌洪棽鐘舵€?
+  // 缈诲紑妯″紡闃舵
+  COVER_MOVING = 'cover_moving',     // 灏侀潰绉诲姩鍒颁腑澶?
+  WAITING_READY = 'waiting_ready',   // 绛夊緟闃呰鍣ㄥ氨缁?
+  COVER_LIFTING = 'cover_lifting',   // 灏侀潰鎺€璧?
+  TRANSITIONING = 'transitioning',   // 杩囨浮鍒伴槄璇诲櫒
+  // 鍏抽棴妯″紡闃舵
+  FADE_IN = 'fade_in',               // 鎴浘娣″叆锛堟棤缂濊繃娓★級
+  SHRINKING = 'shrinking',           // 闃呰鍣ㄥ唴瀹圭缉灏?
+  RETURNING = 'returning',           // 缂╁洖鍒板皝闈綅缃?
+  FADING = 'fading',                 // 娣″嚭娑堝け
+  COMPLETED = 'completed'            // 鍔ㄧ敾瀹屾垚
+}
+
+/**
+ * 灏侀潰浣嶇疆淇℃伅
+ */
+export interface CoverPosition {
+  x: number;           // 宸︿笂瑙扻鍧愭爣
+  y: number;           // 宸︿笂瑙扽鍧愭爣
+  width: number;       // 瀹藉害
+  height: number;      // 楂樺害
+}
+
+/**
+ * 杩囨浮鍔ㄧ敾閰嶇疆
+ */
+export interface BookTransitionConfig {
+  // 鍔ㄧ敾鏃堕暱閰嶇疆锛堟绉掞級
+  coverMoveDuration: number;      // 灏侀潰绉诲姩鍒颁腑澶殑鏃堕暱
+  liftDuration: number;           // 鎺€寮€鍔ㄧ敾鏃堕暱
+  transitionDuration: number;     // 杩囨浮鍒伴槄璇诲櫒鏃堕暱
+  shrinkDuration: number;         // 缂╁皬鍔ㄧ敾鏃堕暱
+  returnDuration: number;         // 缂╁洖灏侀潰鏃堕暱
+  fadeDuration: number;           // 娣″嚭鏃堕暱
+  
+  // 鏁堟灉閰嶇疆
+  maxLiftAngle: number;           // 鏈€澶ф巰璧疯搴︼紙搴︼級
+  shadowIntensity: number;        // 闃村奖寮哄害 (0-1)
+  enableShadow: boolean;          // 鏄惁鍚敤闃村奖
+  enable3DEffect: boolean;        // 鏄惁鍚敤3D鏁堟灉
+  
+  // 缂╂斁閰嶇疆
+  centerScale: number;            // 灏侀潰鍦ㄤ腑澶椂鐨勭缉鏀炬瘮渚?
+  minShrinkScale: number;         // 鍏抽棴鏃舵渶灏忕缉鏀炬瘮渚?
+}
+
+/**
+ * 榛樿閰嶇疆
+ */
+const DEFAULT_CONFIG: BookTransitionConfig = {
+  coverMoveDuration: 400,
+  liftDuration: 400,
+  transitionDuration: 300,
+  shrinkDuration: 400,
+  returnDuration: 350,
+  fadeDuration: 200,
+  maxLiftAngle: 68,  // 鏇存槑鏄剧殑3D缈诲紑瑙掑害
+  shadowIntensity: 0.6,
+  enableShadow: true,
+  enable3DEffect: true,
+  centerScale: 0.7,
+  minShrinkScale: 0.15
+};
+
+/**
+ * 杩囨浮鍔ㄧ敾鍙傛暟鎺ュ彛
+ */
+export interface BookTransitionParams {
+  mode: TransitionMode;                    // 鍔ㄧ敾妯″紡
+  coverImagePath: string;                  // 灏侀潰鍥剧墖璺緞
+  coverPosition: CoverPosition;            // 灏侀潰鍘熷浣嶇疆
+  readerContentPixelMap?: image.PixelMap;  // 闃呰鍣ㄥ唴瀹规埅鍥撅紙鍏抽棴妯″紡鐢級
+  config?: Partial<BookTransitionConfig>;  // 鍙€夐厤缃鐩?
+  
+  // 鍥炶皟鍑芥暟
+  onReaderReady?: () => void;              // 闃呰鍣ㄥ氨缁洖璋?
+  onAnimationComplete?: () => void;        // 鍔ㄧ敾瀹屾垚鍥炶皟
+  onPhaseChange?: (phase: TransitionPhase) => void;  // 闃舵鍙樺寲鍥炶皟
+}
+
+@Component
+export struct BookOpenTransition {
+  // ========== 澶栭儴鍙傛暟 ==========
+  @Prop mode: TransitionMode = TransitionMode.OPEN;
+  @Prop coverImagePath: string = '';
+  @Prop @Watch('onCoverPositionChange') coverPosition: CoverPosition = { x: 0, y: 0, width: 100, height: 150 };
+  @Prop @Watch('onReaderPixelMapChange') readerContentPixelMap: image.PixelMap | null = null;
+  @Prop readerContentImagePath: string = '';  // 鍘嬬缉鍚庣殑鎴浘涓存椂鏂囦欢璺緞锛堟帹鑽愪娇鐢級
+  @Prop config: BookTransitionConfig = DEFAULT_CONFIG;
+  @Prop @Watch('onReaderReadyChange') isReaderReady: boolean = false;  // 闃呰鍣ㄦ槸鍚﹀氨缁紙澶栭儴鎺у埗锛?  @Prop ebookBackground: EBookBackgroundSettings | null = null;  // 鐢靛瓙涔﹁儗鏅缃?  @Prop bookTitle: string = '';
+  @Prop bookAuthor: string = '';
+  @Prop bookIntro: string = '';
+  
+  // 鍥炶皟鍑芥暟
+  onAnimationComplete: () => void = () => {};
+  onPhaseChange: (phase: TransitionPhase) => void = () => {};
+  
+  // ========== 鍐呴儴鐘舵€?==========
+  @State private currentPhase: TransitionPhase = TransitionPhase.IDLE;
+  @State private animationProgress: number = 0;  // 褰撳墠闃舵鍔ㄧ敾杩涘害 0-1
+  
+  // 褰撳墠鍔ㄧ敾鐘舵€?
+  @State private currentX: number = 0;
+  @State private currentY: number = 0;
+  @State private currentWidth: number = 0;
+  @State private currentHeight: number = 0;
+  @State private currentScale: number = 1;
+  @State private currentOpacity: number = 1;
+  @State private liftAngle: number = 0;  // 鎺€璧疯搴?
+  @State private shadowOpacity: number = 0;
+  
+  // 缁勪欢灏哄
+  @State private componentWidth: number = 0;
+  @State private componentHeight: number = 0;
+  
+  // 鐩爣浣嶇疆锛堜腑澶級
+  private centerX: number = 0;
+  private centerY: number = 0;
+  private centerWidth: number = 0;
+  private centerHeight: number = 0;
+  
+  // Canvas娓叉煋鐩稿叧
+  private canvasSettings: RenderingContextSettings = new RenderingContextSettings(true);
+  private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.canvasSettings);
+  private coverPixelMap: image.PixelMap | null = null;
+  private backgroundImagePixelMap: image.PixelMap | null = null;  // 鑳屾櫙鍥剧墖锛堢敤浜嶤anvas缁樺埗锛?
+  
+  // 瀛樺偍鎴浘鐨勬湰鍦板壇鏈紙闃叉寮曠敤涓㈠け锛?
+  @State private localReaderPixelMap: image.PixelMap | null = null;
+  
+  // 鍔ㄧ敾鎺у埗
+  private animationTimer: number = -1;
+  @State private isAnimating: boolean = false;  // 鏀逛负@State浠ヨЕ鍙慤I閲嶆柊娓叉煋
+  private pendingAnimationStart: boolean = false;  // 绛夊緟灏哄鍚庡惎鍔ㄥ姩鐢?
+  private animationStartTime: number = 0;
+  private readerReadyCheckTimer: number = -1;  // 绛夊緟闃呰鍣ㄥ氨缁殑璁℃椂鍣?
+  private readerReadyTimeoutTimer: number = -1;  // 瓒呮椂璁℃椂鍣?
+  @State private animationCompleted: boolean = false;  // 鍔ㄧ敾鏄惁宸插畬鎴?
+  
+  // 鍙栨秷鍔ㄧ敾鎺у埗
+  @State private isCancelling: boolean = false;
+  private cancelFadeStartTime: number = 0;
+  private cancelFadeDuration: number = 200;  // 鍙栨秷娓愰殣鏃堕暱
+  private cancelFadeTimer: number = -1;
+  
+  // 灏侀潰缈婚〉鏁堟灉鐘舵€侊紙鐢ㄤ簬鍏抽棴鍔ㄧ敾鐨勫皝闈㈢洊浣忔晥鏋滐級
+  @State private coverFlipProgress: number = 0;  // 灏侀潰缈婚〉杩涘害 0-1锛?=瀹屽叏鎵撳紑, 1=瀹屽叏鐩栦綇锛?
+  
+  // 灏侀潰鍥剧墖鍘熷灏哄锛堢敤浜庝繚鎸佸楂樻瘮锛?
+  private coverOriginalWidth: number = 0;
+  private coverOriginalHeight: number = 0;
+  @State private isSystemResource: boolean = false;  // 鏄惁涓虹郴缁熻祫婧愬浘鐗囷紙缃戠粶鍥剧墖鎴朼pp.media璧勬簮锛?
+  
+  // ========== 鐢熷懡鍛ㄦ湡 ==========
+  aboutToAppear(): void {
+    logger.info(TAG, `缁勪欢鍒濆鍖栵紝妯″紡: ${this.mode}, ebookBackground=${this.ebookBackground ? `鏈?鑹?${this.ebookBackground.backgroundColor}, 鍥?${this.ebookBackground.backgroundImagePath || '鏃?})` : '鏃?}`);
+    // 鍒濆鍖栧綋鍓嶄綅缃负灏侀潰浣嶇疆
+    this.currentX = this.coverPosition.x;
+    this.currentY = this.coverPosition.y;
+    this.currentWidth = this.coverPosition.width;
+    this.currentHeight = this.coverPosition.height;
+    
+    // 濡傛灉鏄叧闂ā寮忥紝淇濆瓨PixelMap鐨勬湰鍦板紩鐢?
+    if (this.mode === TransitionMode.CLOSE) {
+      logger.info(TAG, `馃摲 鍏抽棴妯″紡鍒濆鍖? readerContentPixelMap=${this.readerContentPixelMap ? '鏈夋晥' : '绌?}`);
+      if (this.readerContentPixelMap) {
+        this.localReaderPixelMap = this.readerContentPixelMap;
+        logger.info(TAG, `馃摲 宸蹭繚瀛樻埅鍥惧紩鐢ㄥ埌鏈湴鐘舵€?(aboutToAppear)`);
+      } else {
+        logger.warn(TAG, `馃摲 璀﹀憡: 鍏抽棴妯″紡浣嗘埅鍥句负绌猴紝绛夊緟@Watch鏇存柊`);
+      }
+    }
+    
+    // 鍔犺浇灏侀潰鍥剧墖
+    this.loadCoverImage();
+    
+    // 鍔犺浇鑳屾櫙鍥剧墖锛堝鏋滄湁锛?
+    this.loadBackgroundImage();
+  }
+  
+  /**
+   * 鍔犺浇鑳屾櫙鍥剧墖锛堢敤浜嶤anvas缁樺埗锛?
+   */
+  private loadBackgroundImage(): void {
+    if (!this.ebookBackground || !this.ebookBackground.backgroundImagePath || this.ebookBackground.backgroundImagePath.length === 0) {
+      return;
+    }
+    
+    const imagePath = this.ebookBackground.backgroundImagePath;
+    logger.info(TAG, `鍔犺浇鑳屾櫙鍥剧墖: ${imagePath}`);
+    
+    try {
+      const imageSource = image.createImageSource(imagePath);
+      imageSource.createPixelMap().then((pixelMap: image.PixelMap) => {
+        this.backgroundImagePixelMap = pixelMap;
+        logger.info(TAG, '鑳屾櫙鍥剧墖鍔犺浇鎴愬姛');
+        // 閲嶆柊娓叉煋浠ユ樉绀鸿儗鏅浘鐗?
+        this.renderFrame();
+      }).catch((err: Error) => {
+        logger.error(TAG, `鑳屾櫙鍥剧墖鍔犺浇澶辫触: ${err.message}`);
+      });
+    } catch (error) {
+      logger.error(TAG, `鑳屾櫙鍥剧墖鍔犺浇寮傚父: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  aboutToDisappear(): void {
+    logger.info(TAG, '缁勪欢閿€姣?);
+    this.stopAnimation();
+    this.clearReaderReadyTimers();
+    this.releaseCoverPixelMap();
+    this.animationCompleted = true;  // 鏍囪瀹屾垚锛岄槻姝换浣曟畫鐣欒鏃跺櫒缁х画
+  }
+  
+  // ========== 鍥剧墖鍔犺浇 ==========
+  private async loadCoverImage(): Promise<void> {
+    if (!this.coverImagePath || this.coverImagePath.length === 0) {
+      logger.warn(TAG, '灏侀潰鍥剧墖璺緞涓虹┖');
+      this.tryStartTransitionWhenReady('cover_path_empty');
+      return;
+    }
+    
+    // 妫€鏌ユ槸鍚︿负绯荤粺璧勬簮璺緞锛坅pp.media.xxx锛?
+    if (this.coverImagePath.startsWith('app.media.')) {
+      logger.info(TAG, `妫€娴嬪埌绯荤粺璧勬簮璺緞: ${this.coverImagePath}锛岃烦杩嘝ixelMap鍔犺浇锛屼娇鐢ㄩ粯璁ゅ皝闈㈠昂瀵竊);
+      // 绯荤粺璧勬簮鏃犳硶閫氳繃createImageSource鍔犺浇锛岃缃粯璁ゅ皝闈㈠昂瀵告瘮渚?
+      this.coverOriginalWidth = 210;  // 榛樿灏侀潰瀹藉害
+      this.coverOriginalHeight = 300; // 榛樿灏侀潰楂樺害锛?.7姣斾緥锛?      this.isSystemResource = true;
+      this.tryStartTransitionWhenReady('system_resource_cover');
+      return;
+    }
+    
+    // 妫€鏌ユ槸鍚︿负缃戠粶鍥剧墖锛圚TTP/HTTPS URL锛?
+    if (this.coverImagePath.startsWith('http://') || this.coverImagePath.startsWith('https://')) {
+      logger.info(TAG, `妫€娴嬪埌缃戠粶鍥剧墖: ${this.coverImagePath}锛岃烦杩嘝ixelMap鍔犺浇锛屼娇鐢ㄩ粯璁ゅ皝闈㈠昂瀵竊);
+      // 缃戠粶鍥剧墖鏃犳硶鐩存帴閫氳繃createImageSource鍔犺浇锛岃缃粯璁ゅ皝闈㈠昂瀵告瘮渚?
+      this.coverOriginalWidth = 210;  // 榛樿灏侀潰瀹藉害
+      this.coverOriginalHeight = 300; // 榛樿灏侀潰楂樺害锛?.7姣斾緥锛?      this.isSystemResource = true;   // 鏍囪涓虹壒娈婅祫婧愶紝浣跨敤娓愬彉鏁堟灉
+      this.tryStartTransitionWhenReady('network_cover');
+      return;
+    }
+    
+    try {
+      // 澶勭悊涓嶅悓绫诲瀷鐨勮矾寰?
+      let imagePath = this.coverImagePath;
+      if (imagePath.startsWith('/') && !imagePath.startsWith('file://')) {
+        imagePath = 'file://' + imagePath;
+      }
+      
+      const imageSource = image.createImageSource(imagePath);
+      this.coverPixelMap = await imageSource.createPixelMap();
+      
+      // 鑾峰彇鍥剧墖鍘熷灏哄
+      const imageInfo = await imageSource.getImageInfo();
+      this.coverOriginalWidth = imageInfo.size.width;
+      this.coverOriginalHeight = imageInfo.size.height;
+      logger.info(TAG, `灏侀潰鍥剧墖鍘熷灏哄: ${this.coverOriginalWidth}x${this.coverOriginalHeight}`);
+      
+      imageSource.release();
+      
+      logger.info(TAG, '灏侀潰鍥剧墖鍔犺浇鎴愬姛');
+      
+      // 鍥剧墖鍔犺浇瀹屾垚鍚庣瓑寰呭昂瀵?鎴浘绛夋潯浠跺氨缁啀鍚姩鍔ㄧ敾
+      this.tryStartTransitionWhenReady('cover_pixelmap_loaded');
+    } catch (error) {
+      logger.error(TAG, `鍔犺浇灏侀潰鍥剧墖澶辫触: ${String(error)}`);
+      // 鍗充娇鍔犺浇澶辫触锛屼篃鍏佽浣跨敤鍗犱綅灏侀潰缁х画鍔ㄧ敾
+      this.tryStartTransitionWhenReady('cover_load_failed');
+    }
+  }
+
+  private tryStartTransitionWhenReady(reason: string): void {
+    const hasArea: boolean = this.componentWidth > 0 && this.componentHeight > 0;
+    const closeReady: boolean = this.mode !== TransitionMode.CLOSE || this.isReaderReady;
+    if (hasArea && closeReady) {
+      this.pendingAnimationStart = false;
+      logger.info(
+        TAG,
+        `杩囨浮鍔ㄧ敾鍚姩鏉′欢灏辩华(${reason}): mode=${this.mode}, size=${this.componentWidth}x${this.componentHeight}, isReaderReady=${this.isReaderReady}`
+      );
+      this.startTransition();
+      return;
+    }
+
+    this.pendingAnimationStart = true;
+    logger.info(
+      TAG,
+      `绛夊緟杩囨浮鍔ㄧ敾鏉′欢灏辩华(${reason}): mode=${this.mode}, size=${this.componentWidth}x${this.componentHeight}, isReaderReady=${this.isReaderReady}`
+    );
+  }
+  
+  private releaseCoverPixelMap(): void {
+    if (this.coverPixelMap) {
+      this.coverPixelMap.release();
+      this.coverPixelMap = null;
+    }
+  }
+  
+  // ========== 浣嶇疆鍙樺寲鐩戝惉 ==========
+  private onCoverPositionChange(): void {
+    if (this.currentPhase === TransitionPhase.IDLE) {
+      this.currentX = this.coverPosition.x;
+      this.currentY = this.coverPosition.y;
+      this.currentWidth = this.coverPosition.width;
+      this.currentHeight = this.coverPosition.height;
+    }
+  }
+  
+  // ========== PixelMap鍙樺寲鐩戝惉 ==========
+  private onReaderPixelMapChange(): void {
+    logger.info(TAG, `馃摲 onReaderPixelMapChange瑙﹀彂: mode=${this.mode}, hasPixelMap=${this.readerContentPixelMap ? '鏈? : '鏃?}`);
+    // 褰搑eaderContentPixelMap閫氳繃@Prop璁剧疆鏃讹紝鏇存柊鏈湴鍓湰
+    if (this.mode === TransitionMode.CLOSE && this.readerContentPixelMap) {
+      this.localReaderPixelMap = this.readerContentPixelMap;
+      logger.info(TAG, `馃摲 PixelMap宸叉洿鏂板埌鏈湴鐘舵€?(閫氳繃@Watch)`);
+    }
+  }
+  
+  // ========== 闃呰鍣ㄥ氨缁姸鎬佸彉鍖栫洃鍚?==========
+  private onReaderReadyChange(): void {
+    logger.info(TAG, `onReaderReadyChange: isReaderReady=${this.isReaderReady}, mode=${this.mode}, phase=${this.currentPhase}, pendingStart=${this.pendingAnimationStart}`);
+    
+    // 鍏抽棴妯″紡锛氭埅鍥惧畬鎴愬悗鍚姩鍔ㄧ敾
+    if (this.isReaderReady && this.mode === TransitionMode.CLOSE && this.pendingAnimationStart && !this.isAnimating) {
+      this.tryStartTransitionWhenReady('reader_ready_changed');
+      return;
+    }
+    
+    // 缈诲紑妯″紡锛氫功鏈瀯鍨嬪畬鎴愬悗锛岀瓑闃呰鍣ㄥ氨缁啀鍋氭渶缁堟彮绀?    if (this.mode === TransitionMode.OPEN && this.isReaderReady &&
+      this.currentPhase === TransitionPhase.WAITING_READY && !this.animationCompleted) {
+      logger.info(TAG, '妫€娴嬪埌闃呰鍣ㄥ氨缁紝寮€濮嬫渶缁堟彮绀哄姩鐢?);
+      this.clearReaderReadyTimers();
+      this.startLiftAnimation();
+    }
+  }
+
+  private clearReaderReadyTimers(): void {
+    if (this.readerReadyCheckTimer !== -1) {
+      clearInterval(this.readerReadyCheckTimer);
+      this.readerReadyCheckTimer = -1;
+    }
+    if (this.readerReadyTimeoutTimer !== -1) {
+      clearTimeout(this.readerReadyTimeoutTimer);
+      this.readerReadyTimeoutTimer = -1;
+    }
+  }
+  
+  // ========== 鍔ㄧ敾鎺у埗 ==========
+  
+  /**
+   * 寮€濮嬭繃娓″姩鐢?
+   */
+  public startTransition(): void {
+    if (this.isAnimating) {
+      logger.warn(TAG, '鍔ㄧ敾宸插湪杩涜涓?);
+      return;
+    }
+    
+    // 閲嶇疆瀹屾垚鏍囧織
+    this.animationCompleted = false;
+    this.clearReaderReadyTimers();
+    
+    logger.info(TAG, `寮€濮嬭繃娓″姩鐢伙紝妯″紡: ${this.mode}`);
+    
+    if (this.mode === TransitionMode.OPEN) {
+      this.startOpenAnimation();
+    } else {
+      this.startCloseAnimation();
+    }
+  }
+  
+  /**
+   * 寮€濮嬬炕寮€鍔ㄧ敾
+   */
+  private startOpenAnimation(): void {
+    // 璁＄畻涓ぎ鐩爣浣嶇疆
+    this.calculateCenterPosition();
+    
+    // 璁剧疆鍒濆鐘舵€?
+    this.currentX = this.coverPosition.x;
+    this.currentY = this.coverPosition.y;
+    this.currentWidth = this.coverPosition.width;
+    this.currentHeight = this.coverPosition.height;
+    this.currentScale = 1;
+    this.currentOpacity = 1;
+    this.liftAngle = 0;
+    
+    // 寮€濮嬬涓€闃舵锛氬皝闈㈢Щ鍔ㄥ埌涓ぎ
+    this.setPhase(TransitionPhase.COVER_MOVING);
+    this.animateCoverMove();
+  }
+  
+  /**
+   * 寮€濮嬪叧闂姩鐢?
+   */
+  private startCloseAnimation(): void {
+    // 璁＄畻涓ぎ浣嶇疆锛堝叧闂姩鐢讳粠涓ぎ寮€濮嬶級
+    this.calculateCenterPosition();
+    
+    // 璋冭瘯锛氭鏌ユ埅鍥炬槸鍚﹀彲鐢?
+    logger.info(TAG, `馃摲 鍏抽棴鍔ㄧ敾寮€濮? readerContentPixelMap=${this.readerContentPixelMap ? '鏈夋晥' : '绌?}, localReaderPixelMap=${this.localReaderPixelMap ? '鏈夋晥' : '绌?}`);
+    if (this.localReaderPixelMap) {
+      logger.info(TAG, `馃摲 鍏抽棴鍔ㄧ敾锛氭湰鍦版埅鍥惧彲鐢紝灏嗕娇鐢↖mage缁勪欢鏄剧ず`);
+    } else if (this.readerContentPixelMap) {
+      logger.warn(TAG, `馃摲 鍏抽棴鍔ㄧ敾锛氬師濮嬫埅鍥惧彲鐢ㄤ絾鏈湴鍓湰涓虹┖锛屽皾璇曞鍒禶);
+      this.localReaderPixelMap = this.readerContentPixelMap;
+    } else {
+      logger.warn(TAG, `馃摲 鍏抽棴鍔ㄧ敾锛氭埅鍥句笉鍙敤锛屽皢浣跨敤Canvas澶囩敤鏁堟灉`);
+    }
+    
+    // 璁剧疆鍒濆鐘舵€侊紙浠庡叏灞忓紑濮嬶紝閫忔槑搴︿负1锛?
+    // 鍏抽敭锛氭埅鍥惧唴瀹瑰拰闃呰鍣ㄥ唴瀹瑰畬鍏ㄤ竴鏍凤紝鎵€浠ョ洿鎺ユ樉绀轰笉浼氭湁瑙嗚宸紓
+    this.currentX = 0;
+    this.currentY = 0;
+    this.currentWidth = this.componentWidth;
+    this.currentHeight = this.componentHeight;
+    this.currentScale = 1;
+    this.currentOpacity = 1;  // 鐩存帴鏄剧ず锛屽洜涓烘埅鍥惧拰闃呰鍣ㄥ唴瀹逛竴鏍?
+    this.liftAngle = 0;
+    
+    logger.info(TAG, `鍏抽棴鍔ㄧ敾鍒濆鐘舵€? pos=(${this.currentX}, ${this.currentY}), size=${this.currentWidth}x${this.currentHeight}`);
+    
+    // 鐩存帴寮€濮嬬缉灏忛樁娈碉紙璺宠繃娣″叆锛屽洜涓烘埅鍥惧拰闃呰鍣ㄥ唴瀹逛竴鏍凤級
+    this.setPhase(TransitionPhase.SHRINKING);
+    this.animateShrink();
+  }
+  
+  /**
+   * 娣″叆鍔ㄧ敾锛堝叧闂ā寮忕涓€闃舵锛?
+   * 璁╂埅鍥句粠閫忔槑娓愬彉鍒颁笉閫忔槑锛屽疄鐜版棤缂濊繃娓?
+   */
+  private animateFadeIn(): void {
+    const duration = 100;  // 100ms蹇€熸贰鍏?
+    const startTime = Date.now();
+    
+    const animate = () => {
+      if (this.animationCompleted) {
+        clearInterval(this.animationTimer);
+        return;
+      }
+      
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // 浣跨敤ease-out鏇茬嚎璁╂贰鍏ユ洿鑷劧
+      const easedProgress = 1 - Math.pow(1 - progress, 2);
+      
+      // 鏇存柊閫忔槑搴?
+      this.currentOpacity = easedProgress;
+      
+      if (progress >= 1) {
+        // 娣″叆瀹屾垚锛屽仠姝㈣鏃跺櫒骞惰繘鍏ョ缉灏忛樁娈?
+        clearInterval(this.animationTimer);
+        this.currentOpacity = 1;
+        this.setPhase(TransitionPhase.SHRINKING);
+        this.animateShrink();
+      }
+    };
+    
+    this.animationTimer = setInterval(animate, 16);
+  }
+  
+  /**
+   * 璁＄畻涓ぎ鐩爣浣嶇疆
+   */
+  private calculateCenterPosition(): void {
+    // 闃叉姢妫€鏌ワ細纭繚灏侀潰灏哄鏈夋晥
+    const coverWidth = this.coverPosition.width > 0 ? this.coverPosition.width : 140;
+    const coverHeight = this.coverPosition.height > 0 ? this.coverPosition.height : 200;
+    
+    // 淇濇寔灏侀潰瀹介珮姣?
+    const coverAspectRatio = coverWidth / coverHeight;
+    
+    // 涓ぎ灞曠ず鏃剁殑鏈€澶у昂瀵?
+    const maxWidth = this.componentWidth * this.config.centerScale;
+    const maxHeight = this.componentHeight * this.config.centerScale;
+    
+    // 鏍规嵁瀹介珮姣旇绠楀疄闄呭昂瀵?
+    if (maxHeight > 0 && maxWidth / maxHeight > coverAspectRatio) {
+      // 楂樺害闄愬埗
+      this.centerHeight = maxHeight;
+      this.centerWidth = maxHeight * coverAspectRatio;
+    } else {
+      // 瀹藉害闄愬埗
+      this.centerWidth = maxWidth;
+      this.centerHeight = coverAspectRatio > 0 ? maxWidth / coverAspectRatio : maxHeight;
+    }
+    
+    // 璁＄畻涓ぎ浣嶇疆
+    this.centerX = (this.componentWidth - this.centerWidth) / 2;
+    this.centerY = (this.componentHeight - this.centerHeight) / 2;
+    
+    // 鏈€缁堥槻鎶わ細纭繚娌℃湁NaN
+    if (isNaN(this.centerX)) this.centerX = 0;
+    if (isNaN(this.centerY)) this.centerY = 0;
+    if (isNaN(this.centerWidth)) this.centerWidth = this.componentWidth * 0.7;
+    if (isNaN(this.centerHeight)) this.centerHeight = this.componentHeight * 0.5;
+    
+    logger.debug(TAG, `涓ぎ浣嶇疆: (${this.centerX}, ${this.centerY}), 灏哄: ${this.centerWidth}x${this.centerHeight}`);
+  }
+  
+  /**
+   * 璁剧疆鍔ㄧ敾闃舵
+   */
+  private setPhase(phase: TransitionPhase): void {
+    if (this.currentPhase !== phase) {
+      logger.info(TAG, `闃舵鍙樺寲: ${this.currentPhase} -> ${phase}`);
+      this.currentPhase = phase;
+      this.animationProgress = 0;
+      this.onPhaseChange(phase);
+    }
+  }
+  
+  /**
+   * 鍋滄鍔ㄧ敾
+   */
+  private stopAnimation(): void {
+    if (this.animationTimer !== -1) {
+      clearInterval(this.animationTimer);
+      this.animationTimer = -1;
+    }
+    this.isAnimating = false;
+  }
+  
+  /**
+   * 鍙栨秷鍔ㄧ敾锛堝甫娓愰殣鏁堟灉锛?
+   */
+  public cancelWithFadeOut(onComplete?: () => void): void {
+    if (this.isCancelling) {
+      return;
+    }
+    
+    logger.info(TAG, '寮€濮嬪彇娑堝姩鐢绘笎闅?);
+    this.isCancelling = true;
+    this.stopAnimation();
+    
+    this.cancelFadeStartTime = Date.now();
+    const startOpacity = this.currentOpacity;
+    
+    const animateFadeOut = () => {
+      const elapsed = Date.now() - this.cancelFadeStartTime;
+      const progress = Math.min(1, elapsed / this.cancelFadeDuration);
+      
+      // 娓愰殣
+      this.currentOpacity = startOpacity * (1 - progress);
+      this.shadowOpacity = this.shadowOpacity * (1 - progress);
+      
+      this.renderFrame();
+      
+      if (progress >= 1) {
+        if (this.cancelFadeTimer !== -1) {
+          clearInterval(this.cancelFadeTimer);
+          this.cancelFadeTimer = -1;
+        }
+        this.isCancelling = false;
+        logger.info(TAG, '鍙栨秷鍔ㄧ敾娓愰殣瀹屾垚');
+        if (onComplete) {
+          onComplete();
+        }
+      }
+    };
+    
+    this.cancelFadeTimer = setInterval(animateFadeOut, 16);
+  }
+  
+  // ========== 缈诲紑妯″紡鍔ㄧ敾 ==========
+  
+  // 鏄惁宸茶Е鍙戦〉闈㈣繃娓?
+  private hasTriggeredTransition: boolean = false;
+  // 鏄惁鏄剧ず鍔犺浇涓?
+  @State private showLoading: boolean = false;
+  
+  /**
+   * 涓夋寮忕炕寮€鍔ㄧ敾锛?   * 闃舵1锛氬皝闈粠璇︽儏椤典綅缃Щ鍔ㄥ苟鏀惧ぇ鍒颁腑闂粹€滄垚涔︿綅鈥?   * 闃舵2锛氫功浣擄紙鍘氬害涓庡唴椤碉級鎴愬瀷骞剁户缁帹鍒板叏灞?   * 闃舵3锛氬皝闈㈢炕寮€锛岄湶鍑轰笅鏂归槄璇诲唴瀹?   */
+  private animateCoverMove(): void {
+    this.isAnimating = true;
+    this.animationStartTime = Date.now();
+    this.hasTriggeredTransition = false;
+    
+    // 绗竴娈碉細灏侀潰绉诲姩骞舵瀯寤?D涔︿綋锛堜繚鎸佸皝闈㈤棴鍚堬級
+    const totalDuration = this.config.coverMoveDuration + 320;
+    
+    const startX = this.coverPosition.x;
+    const startY = this.coverPosition.y;
+    const startWidth = this.coverPosition.width;
+    const startHeight = this.coverPosition.height;
+    
+    // 鏈€缁堢洰鏍囷細瀹藉害鍗犲睆骞曠害72%锛屼繚鎸佸皝闈㈡瘮渚嬶紙涓嶅己琛屽崰婊″叏灞忛珮搴︼級
+    const coverAspect = startHeight > 0 ? (startWidth / startHeight) : 0.7;
+    const endWidth = this.componentWidth * 0.72;
+    const endHeight = endWidth / Math.max(0.25, coverAspect);
+    const endX = (this.componentWidth - endWidth) / 2;
+    const endY = (this.componentHeight - endHeight) / 2;
+    const coverMoveStageEnd: number = 0.54;
+
+    const animate = () => {
+      const elapsed = Date.now() - this.animationStartTime;
+      const progress = Math.min(1, elapsed / totalDuration);
+
+      // 闃舵1锛氬皝闈㈢Щ鍔ㄥ苟鏀惧ぇ鍒颁腑闂?      if (progress <= coverMoveStageEnd) {
+        const phaseProgress = this.clamp01(progress / coverMoveStageEnd);
+        const moveProgress = this.easeInOutSine(phaseProgress);
+        const sizeProgress = this.easeOutCubic(phaseProgress);
+        const arcLift = Math.sin(moveProgress * Math.PI) * this.componentHeight * 0.015;
+
+        this.currentWidth = startWidth + (this.centerWidth - startWidth) * sizeProgress;
+        this.currentHeight = startHeight + (this.centerHeight - startHeight) * sizeProgress;
+        this.currentX = startX + (this.centerX - startX) * moveProgress;
+        this.currentY = startY + (this.centerY - startY) * moveProgress - arcLift;
+      } else {
+        // 闃舵2锛氫功浣撶户缁斁澶у埌鈥滃搴﹂摵婊♀€濈殑鏈€缁堝昂瀵?        const phaseProgress = this.clamp01((progress - coverMoveStageEnd) / (1 - coverMoveStageEnd));
+        const settleProgress = this.clamp01(this.easeOutBack(phaseProgress));
+        const settleOffset = (1 - settleProgress) * this.componentHeight * 0.008;
+
+        this.currentWidth = this.centerWidth + (endWidth - this.centerWidth) * settleProgress;
+        this.currentHeight = this.centerHeight + (endHeight - this.centerHeight) * settleProgress;
+        this.currentX = this.centerX + (endX - this.centerX) * settleProgress;
+        this.currentY = this.centerY + (endY - this.centerY) * settleProgress - settleOffset;
+      }
+
+      // 闃呰鍣ㄦ湭灏辩华鍓嶄笉缈荤洊锛岄伩鍏嶅嚭鐜伴粦鑹茶繃娓￠〉闈?      this.liftAngle = 0;
+
+      const buildProgress = this.clamp01((progress - 0.2) / 0.56);
+      const shadowProgress = this.easeInOutSine(buildProgress);
+      this.shadowOpacity = Math.sin(shadowProgress * Math.PI * 0.8) * this.config.shadowIntensity;
+      this.animationProgress = progress;
+      this.renderFrame();
+
+      if (progress >= 1) {
+        this.stopAnimation();
+        this.clearReaderReadyTimers();
+        this.animationCompleted = false;
+        this.showLoading = false;
+        this.currentWidth = endWidth;
+        this.currentHeight = endHeight;
+        this.currentX = endX;
+        this.currentY = endY;
+        this.animationProgress = 1;
+        this.setPhase(TransitionPhase.WAITING_READY);
+        this.renderFrame();
+
+        // 涔︽湰鏋勫瀷瀹屾垚鍚庤Е鍙戝鑸紝瑕嗙洊灞傜户缁繚鐣欏埌闃呰鍣ㄥ氨缁?        if (!this.hasTriggeredTransition) {
+          this.hasTriggeredTransition = true;
+          logger.info(TAG, '涔︽湰鏋勫瀷瀹屾垚锛岃Е鍙戦〉闈㈣繃娓″苟绛夊緟闃呰鍣ㄥ氨缁?);
+          this.onAnimationComplete();
+        }
+
+        // 濡傛灉闃呰鍣ㄥ凡鎻愬墠灏辩华锛堢紦瀛樻瀬蹇級锛岀洿鎺ユ墽琛屾彮绀?        if (this.isReaderReady) {
+          this.startLiftAnimation();
+        }
+      }
+    };
+    
+    this.animationTimer = setInterval(animate, 16);
+  }
+
+  private checkReaderReady(): void {
+    // 闃呰鍣ㄥ氨缁椂闅愯棌鍔犺浇鍔ㄧ敾
+    if (this.isReaderReady) {
+      this.showLoading = false;
+    }
+  }
+  
+  /**
+   * 闃舵2锛氬皝闈㈡巰璧峰姩鐢伙紙淇濈暀鐢ㄤ簬鍏煎锛?
+   */
+  private startLiftAnimation(): void {
+    if (this.mode !== TransitionMode.OPEN || this.animationCompleted || this.isAnimating) {
+      return;
+    }
+
+    this.isAnimating = true;
+    this.animationStartTime = Date.now();
+    this.setPhase(TransitionPhase.COVER_LIFTING);
+
+    const duration = Math.max(240, Math.min(420, this.config.liftDuration));
+    const startLiftAngle = this.liftAngle;
+    const targetLiftAngle = this.config.maxLiftAngle;
+    const startOpacity = this.currentOpacity;
+
+    const animate = () => {
+      const elapsed = Date.now() - this.animationStartTime;
+      const progress = Math.min(1, elapsed / duration);
+      const phaseA = this.clamp01(progress / 0.34);
+      const phaseB = this.clamp01((progress - 0.22) / 0.78);
+      const openProgress = this.clamp01(
+        this.easeOutQuart(phaseA) * 0.38 + this.easeInOutSine(phaseB) * 0.62
+      );
+
+      // 末段加入细小回弹，让翻盖更接近真实书本阻尼
+      const rebound = Math.sin(this.clamp01((progress - 0.78) / 0.22) * Math.PI) * 0.035;
+      const angleProgress = this.clamp01(openProgress + rebound);
+      this.liftAngle = startLiftAngle + (targetLiftAngle - startLiftAngle) * angleProgress;
+
+      // 让下层阅读器显现更柔和：前段几乎不透，后段平滑揭示
+      const revealProgress = this.clamp01((progress - 0.28) / 0.72);
+      const revealEase = this.easeInOutSine(this.easeOutQuart(revealProgress));
+      this.currentOpacity = startOpacity * (1 - revealEase);
+      this.shadowOpacity = (1 - revealEase) * this.config.shadowIntensity * 0.58;
+      this.animationProgress = 1;
+      this.renderFrame();
+
+      if (progress >= 1) {
+        this.stopAnimation();
+        this.liftAngle = targetLiftAngle;
+        this.currentOpacity = 0;
+        this.shadowOpacity = 0;
+        this.animationCompleted = true;
+        this.setPhase(TransitionPhase.COMPLETED);
+        this.renderFrame();
+      }
+    };
+
+    this.animationTimer = setInterval(animate, 16);
+  }
+
+  private startTransitionToReader(): void {
+    // 宸插悎骞跺埌杩炵画鍔ㄧ敾涓?
+  }
+  
+  // ========== 鍏抽棴妯″紡鍔ㄧ敾闃舵 ==========
+  
+  /**
+   * 闃舵1锛氶槄璇诲櫒鍐呭缂╁皬
+   */
+  private animateShrink(): void {
+    this.isAnimating = true;
+    this.animationStartTime = Date.now();
+    const duration = this.config.shrinkDuration;
+    
+    const startWidth = this.componentWidth;
+    const startHeight = this.componentHeight;
+    
+    const animate = () => {
+      const elapsed = Date.now() - this.animationStartTime;
+      const progress = Math.min(1, elapsed / duration);
+      
+      // 浣跨敤缂撳姩鍑芥暟
+      const easedProgress = this.easeInCubic(progress);
+      
+      // 缂╁皬鍒颁腑澶綅缃?
+      this.currentWidth = startWidth - (startWidth - this.centerWidth) * easedProgress;
+      this.currentHeight = startHeight - (startHeight - this.centerHeight) * easedProgress;
+      this.currentX = (this.componentWidth - this.currentWidth) / 2;
+      this.currentY = (this.componentHeight - this.currentHeight) / 2;
+      
+      // 鍦嗚閫愭笎澧炲姞
+      this.animationProgress = progress;
+      this.renderFrame();
+      
+      if (progress >= 1) {
+        this.stopAnimation();
+        // 缂╁皬瀹屾垚锛屽紑濮嬭繑鍥炲皝闈綅缃?
+        this.animateReturn();
+      }
+    };
+    
+    this.animationTimer = setInterval(animate, 16);
+  }
+  
+  /**
+   * 闃舵2锛氱缉鍥炲埌灏侀潰浣嶇疆锛堝悓鏃跺皝闈㈢炕椤电洊浣忥級
+   */
+  private animateReturn(): void {
+    this.isAnimating = true;
+    this.setPhase(TransitionPhase.RETURNING);
+    this.animationStartTime = Date.now();
+    const duration = this.config.returnDuration;
+    
+    const startX = this.currentX;
+    const startY = this.currentY;
+    const startWidth = this.currentWidth;
+    const startHeight = this.currentHeight;
+    
+    const targetX = this.coverPosition.x;
+    const targetY = this.coverPosition.y;
+    const targetWidth = this.coverPosition.width;
+    const targetHeight = this.coverPosition.height;
+    
+    // 鍒濆灏侀潰缈婚〉杩涘害涓?锛堝畬鍏ㄦ墦寮€鐘舵€侊級
+    this.coverFlipProgress = 0;
+    
+    const animate = () => {
+      const elapsed = Date.now() - this.animationStartTime;
+      const progress = Math.min(1, elapsed / duration);
+      
+      // 浣跨敤缂撳姩鍑芥暟
+      const easedProgress = this.easeInOutCubic(progress);
+      
+      // 绉诲姩鍒板皝闈綅缃?
+      this.currentX = startX + (targetX - startX) * easedProgress;
+      this.currentY = startY + (targetY - startY) * easedProgress;
+      this.currentWidth = startWidth + (targetWidth - startWidth) * easedProgress;
+      this.currentHeight = startHeight + (targetHeight - startHeight) * easedProgress;
+      
+      // 灏侀潰缈婚〉鐩栦綇鏁堟灉锛氬湪杩斿洖鍚庢鎵嶅嚭鐜帮紝閬垮厤鈥滅獊鐒堕棯灏侀潰鈥?      if (progress > 0.72) {
+        const flipProgress = (progress - 0.72) / 0.28;  // 褰掍竴鍖栧埌0-1
+        this.coverFlipProgress = this.easeOutCubic(flipProgress);
+      }
+      
+      // 杩斿洖闃舵淇濇寔鎴浘涓讳綋鍙锛屽彧鍦ㄦ湯绔交寰贰鍖?      this.currentOpacity = 1;
+      if (progress > 0.88) {
+        const fadeProgress = (progress - 0.88) / 0.12;
+        this.currentOpacity = 1 - fadeProgress * 0.08;  // 浠呮贰鍑?%
+      }
+      
+      this.animationProgress = progress;
+      this.renderFrame();
+      
+      if (progress >= 1) {
+        this.stopAnimation();
+        // 杩斿洖瀹屾垚锛屽紑濮嬫贰鍑?
+        this.animateFade();
+      }
+    };
+    
+    this.animationTimer = setInterval(animate, 16);
+  }
+  
+  /**
+   * 闃舵3锛氭贰鍑烘秷澶?
+   */
+  private animateFade(): void {
+    this.isAnimating = true;
+    this.setPhase(TransitionPhase.FADING);
+    this.animationStartTime = Date.now();
+    const duration = this.config.fadeDuration;
+    
+    const startOpacity = this.currentOpacity;
+    
+    const animate = () => {
+      const elapsed = Date.now() - this.animationStartTime;
+      const progress = Math.min(1, elapsed / duration);
+      
+      // 浣跨敤缂撳姩鍑芥暟
+      const easedProgress = this.easeOutCubic(progress);
+      
+      // 娣″嚭
+      this.currentOpacity = startOpacity * (1 - easedProgress);
+      
+      // 鏈鍙仛鏋佽交寰敹鏁涳紝閬垮厤鈥滃皝闈㈢獊闂€濇劅
+      const shrinkFactor = 1 - easedProgress * 0.02;
+      this.currentWidth = this.coverPosition.width * shrinkFactor;
+      this.currentHeight = this.coverPosition.height * shrinkFactor;
+      // 淇濇寔涓績浣嶇疆
+      this.currentX = this.coverPosition.x + (this.coverPosition.width - this.currentWidth) / 2;
+      this.currentY = this.coverPosition.y + (this.coverPosition.height - this.currentHeight) / 2;
+      
+      this.animationProgress = progress;
+      this.renderFrame();
+      
+      if (progress >= 1) {
+        this.stopAnimation();
+        this.clearReaderReadyTimers();
+        this.animationCompleted = true;
+        this.setPhase(TransitionPhase.COMPLETED);
+        this.onAnimationComplete();
+      }
+    };
+    
+    this.animationTimer = setInterval(animate, 16);
+  }
+  
+  // ========== 缂撳姩鍑芥暟 ==========
+  
+  private easeOutCubic(t: number): number {
+    return 1 - Math.pow(1 - t, 3);
+  }
+  
+  private easeInCubic(t: number): number {
+    return t * t * t;
+  }
+  
+  private easeInOutCubic(t: number): number {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  private easeInOutSine(t: number): number {
+    return -(Math.cos(Math.PI * t) - 1) / 2;
+  }
+
+  private easeOutQuart(t: number): number {
+    return 1 - Math.pow(1 - t, 4);
+  }
+
+  private easeOutBack(t: number): number {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  }
+
+  private clamp01(value: number): number {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private hasCloseSnapshotLayer(): boolean {
+    return this.mode === TransitionMode.CLOSE &&
+      (!!this.localReaderPixelMap || this.readerContentImagePath.length > 0);
+  }
+
+  private shouldRenderCanvasFrame(): boolean {
+    // 鍏抽棴妯″紡涓嬪鏋滃凡缁忎娇鐢↖mage灞傚睍绀烘埅鍥撅紝灏变笉鍐嶅仛Canvas閫愬抚娓叉煋
+    return !this.hasCloseSnapshotLayer();
+  }
+
+  private getCloseBackdropOpacity(): number {
+    if (this.mode !== TransitionMode.CLOSE) {
+      return 0;
+    }
+    if (this.currentPhase === TransitionPhase.SHRINKING) {
+      return 0.45;
+    }
+    if (this.currentPhase === TransitionPhase.RETURNING) {
+      return 0.5;
+    }
+    if (this.currentPhase === TransitionPhase.FADING) {
+      return 0.32 * this.currentOpacity;
+    }
+    return 0.4;
+  }
+
+  private getOpenBackdropColor(): string {
+    if (this.ebookBackground && this.ebookBackground.backgroundColor.length > 0) {
+      return this.ebookBackground.backgroundColor;
+    }
+    return '#F4EBD8';
+  }
+
+  private getOpenBackdropOpacity(): number {
+    if (this.mode !== TransitionMode.OPEN) {
+      return 0;
+    }
+    if (this.currentPhase === TransitionPhase.COVER_LIFTING) {
+      // 鎺€鐩栭樁娈甸殢灏侀潰涓€璧锋贰鍑猴紝骞虫粦闇插嚭涓嬪眰闃呰鍣?      return Math.max(0, Math.min(1, this.currentOpacity));
+    }
+    if (this.currentPhase === TransitionPhase.COMPLETED) {
+      return 0;
+    }
+    // 绛夊緟闃舵淇濇寔瀹屽叏閬尅
+    return 1;
+  }
+
+  private hasOpenBackgroundImage(): boolean {
+    return this.ebookBackground !== null &&
+      this.ebookBackground.backgroundImagePath !== undefined &&
+      this.ebookBackground.backgroundImagePath.length > 0;
+  }
+
+  private getOpenBackgroundImagePath(): string {
+    if (!this.hasOpenBackgroundImage() || this.ebookBackground === null || this.ebookBackground.backgroundImagePath === undefined) {
+      return '';
+    }
+    return this.ebookBackground.backgroundImagePath;
+  }
+
+  private getOpenBackgroundImageOpacity(): number {
+    if (this.mode !== TransitionMode.OPEN || !this.hasOpenBackgroundImage()) {
+      return 0;
+    }
+    if (this.animationCompleted && this.isReaderReady) {
+      return 0;
+    }
+    if (this.currentPhase === TransitionPhase.COVER_LIFTING) {
+      return Math.max(0, Math.min(1, this.currentOpacity));
+    }
+    if (this.currentPhase === TransitionPhase.COMPLETED) {
+      return 0;
+    }
+    return 1;
+  }
+
+  private getDisplayBookTitle(): string {
+    if (this.bookTitle.trim().length > 0) {
+      return this.bookTitle.trim();
+    }
+    return '';
+  }
+
+  private getDisplayBookAuthor(): string {
+    if (this.bookAuthor.trim().length > 0) {
+      return this.bookAuthor.trim();
+    }
+    return '';
+  }
+
+  private getDisplayBookIntro(): string {
+    if (!this.bookIntro || this.bookIntro.trim().length === 0) {
+      return '';
+    }
+    const normalized = this.bookIntro
+      .replace(/\s+/g, ' ')
+      .replace(/<[^>]*>/g, '')
+      .trim();
+    if (normalized.length <= 140) {
+      return normalized;
+    }
+    return `${normalized.substring(0, 140)}...`;
+  }
+
+  private shouldShowWaitingInfoPanel(): boolean {
+    if (this.mode !== TransitionMode.OPEN || this.isReaderReady) {
+      return false;
+    }
+    if (this.currentPhase !== TransitionPhase.WAITING_READY && this.currentPhase !== TransitionPhase.COVER_LIFTING) {
+      return false;
+    }
+    return this.getDisplayBookTitle().length > 0 || this.getDisplayBookAuthor().length > 0 || this.getDisplayBookIntro().length > 0;
+  }
+
+  private getWaitingInfoPanelWidth(): number {
+    const baseWidth = Math.max(240, this.currentWidth * 0.94);
+    return Math.min(baseWidth, this.componentWidth * 0.86);
+  }
+
+  private getWaitingInfoPanelX(): number {
+    return (this.componentWidth - this.getWaitingInfoPanelWidth()) / 2;
+  }
+
+  private getWaitingInfoPanelY(): number {
+    const preferredY = this.currentY + this.currentHeight + 18;
+    const maxY = this.componentHeight - 190;
+    return Math.max(24, Math.min(preferredY, maxY));
+  }
+  
+  // ========== Canvas娓叉煋 ==========
+  
+  /**
+   * 娓叉煋褰撳墠甯?
+   */
+  private renderFrame(): void {
+    if (!this.canvasContext || !this.shouldRenderCanvasFrame()) return;
+    
+    const ctx = this.canvasContext;
+    const w = this.componentWidth;
+    const h = this.componentHeight;
+    
+    // 娓呯┖鐢诲竷
+    ctx.clearRect(0, 0, w, h);
+    
+    // 鏍规嵁妯″紡閫夋嫨娓叉煋鏂规硶
+    if (this.mode === TransitionMode.OPEN) {
+      this.renderOpenFrame(ctx, w, h);
+    } else {
+      this.renderCloseFrame(ctx, w, h);
+    }
+  }
+  
+  /**
+   * 娓叉煋缈诲紑妯″紡甯?
+   * 鐗圭偣锛氭棤鑳屾櫙閬僵銆佹棤鐧借壊杈规銆佽酱蹇冨湪宸︿晶涔﹁剨
+   */
+  private renderOpenFrame(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    // 娓呯┖鐢诲竷锛堥€忔槑鑳屾櫙锛屼笉缁樺埗閬僵锛?
+    ctx.clearRect(0, 0, w, h);
+    
+    // 淇濆瓨鐘舵€?
+    ctx.save();
+    
+    // ========== 杞村績鍦ㄥ乏杈圭紭锛堜功鑴婁綅缃級 ==========
+    // 绉诲姩鍒板皝闈㈠乏杈圭紭涓偣浣滀负鍙樻崲鍘熺偣
+    const spineX = this.currentX;  // 宸﹁竟缂榅鍧愭爣
+    const spineCenterY = this.currentY + this.currentHeight / 2;  // 鍨傜洿涓績
+    ctx.translate(spineX, spineCenterY);
+    const buildProgress: number = this.clamp01((this.animationProgress - 0.34) / 0.28);
+    const pageDepth: number = Math.max(2, this.currentWidth * (0.012 + 0.03 * buildProgress));
+    const liftProgress: number = this.clamp01(this.liftAngle / Math.max(1, this.config.maxLiftAngle));
+    
+    // ========== 缁樺埗3D涔︿綋涓庡唴椤?==========
+    if (buildProgress > 0.01 || this.liftAngle > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = this.currentOpacity * Math.min(1, 0.2 + buildProgress * 0.9);
+
+      // 鍙充晶鍘氬害闈紙涔︽湰鍘氬害锛?      const sideGradient = ctx.createLinearGradient(this.currentWidth, 0, this.currentWidth + pageDepth, 0);
+      sideGradient.addColorStop(0, 'rgba(228, 218, 198, 0.92)');
+      sideGradient.addColorStop(1, 'rgba(162, 146, 120, 0.96)');
+      ctx.fillStyle = sideGradient;
+      ctx.beginPath();
+      ctx.moveTo(this.currentWidth, -this.currentHeight / 2);
+      ctx.lineTo(this.currentWidth + pageDepth, -this.currentHeight / 2 + pageDepth * 0.32);
+      ctx.lineTo(this.currentWidth + pageDepth, this.currentHeight / 2 - pageDepth * 0.32);
+      ctx.lineTo(this.currentWidth, this.currentHeight / 2);
+      ctx.closePath();
+      ctx.fill();
+      
+      // 鍐呴〉鍐呭鍖哄煙锛堟ā鎷熼槄璇诲櫒鑳屾櫙锛?      const pageInset = pageDepth * 0.36;
+      const pageX = pageInset;
+      const pageY = -this.currentHeight / 2 + pageInset * 0.45;
+      const pageW = this.currentWidth - pageInset * 1.08;
+      const pageH = this.currentHeight - pageInset * 0.9;
+
+      const pageGradient = ctx.createLinearGradient(pageX, pageY, pageX, pageY + pageH);
+      pageGradient.addColorStop(0, 'rgba(248, 243, 231, 0.98)');
+      pageGradient.addColorStop(1, 'rgba(228, 219, 201, 0.98)');
+      ctx.fillStyle = pageGradient;
+      ctx.fillRect(pageX, pageY, pageW, pageH);
+
+      // 涔﹁剨鏆楅儴锛屽寮哄帤閲嶆劅
+      const spineGradient = ctx.createLinearGradient(0, 0, pageDepth * 1.4, 0);
+      spineGradient.addColorStop(0, 'rgba(40, 32, 20, 0.45)');
+      spineGradient.addColorStop(1, 'rgba(40, 32, 20, 0)');
+      ctx.fillStyle = spineGradient;
+      ctx.fillRect(0, -this.currentHeight / 2, pageDepth * 1.4, this.currentHeight);
+
+      // 鐢靛瓙涔︿娇鐢ㄨ鍙栫殑鑳屾櫙璁剧疆锛屾极鐢讳娇鐢ㄦ繁鑹插簳
+      ctx.fillStyle = this.ebookBackground ? this.ebookBackground.backgroundColor : '#F4EBD8';
+      ctx.fillRect(pageX, pageY, pageW, pageH);
+      
+      // 濡傛灉鏈夎儗鏅浘鐗囷紝缁樺埗鑳屾櫙鍥剧墖锛堣鐩栬儗鏅壊锛?      // 浣跨敤 Cover 鏁堟灉锛氫繚鎸佸楂樻瘮濉厖鍖哄煙锛岃鍓秴鍑洪儴鍒?      if (this.backgroundImagePixelMap && this.ebookBackground) {
+        ctx.save();
+        ctx.globalAlpha = this.currentOpacity * (this.ebookBackground.backgroundImageOpacity ?? 0.3);
+        
+        // 鑾峰彇鑳屾櫙鍥剧墖鍘熷灏哄
+        const imgInfo = this.backgroundImagePixelMap.getImageInfoSync();
+        const imgWidth = imgInfo.size.width;
+        const imgHeight = imgInfo.size.height;
+        
+        // 鐩爣鍖哄煙
+        const destX = pageX;
+        const destY = pageY;
+        const destWidth = pageW;
+        const destHeight = pageH;
+        
+        // 璁＄畻 Cover 鏁堟灉鐨勭缉鏀炬瘮渚?
+        const scaleX = destWidth / imgWidth;
+        const scaleY = destHeight / imgHeight;
+        const scale = Math.max(scaleX, scaleY);  // Cover 浣跨敤杈冨ぇ鐨勭缉鏀炬瘮
+        
+        // 璁＄畻缂╂斁鍚庣殑鍥剧墖灏哄
+        const scaledWidth = imgWidth * scale;
+        const scaledHeight = imgHeight * scale;
+        
+        // 璁＄畻灞呬腑鍋忕Щ锛堣鍓秴鍑洪儴鍒嗭級
+        const offsetX = destX + (destWidth - scaledWidth) / 2;
+        const offsetY = destY + (destHeight - scaledHeight) / 2;
+        
+        // 璁剧疆瑁佸壀鍖哄煙
+        ctx.beginPath();
+        ctx.rect(destX, destY, destWidth, destHeight);
+        ctx.clip();
+        
+        // 缁樺埗鑳屾櫙鍥剧墖
+        ctx.drawImage(this.backgroundImagePixelMap, offsetX, offsetY, scaledWidth, scaledHeight);
+        ctx.restore();
+      }
+
+      // 涔﹁剨鍐呴槾褰变笌绾搁〉绾圭悊锛氭巰寮€鏃舵洿鏄庢樉锛岃惀閫犵湡瀹炵炕涔︽劅
+      const gutterWidth = Math.max(6, pageW * 0.08);
+      const gutterGradient = ctx.createLinearGradient(pageX, 0, pageX + gutterWidth, 0);
+      gutterGradient.addColorStop(0, `rgba(45, 34, 24, ${0.22 + liftProgress * 0.28})`);
+      gutterGradient.addColorStop(1, 'rgba(45, 34, 24, 0)');
+      ctx.fillStyle = gutterGradient;
+      ctx.fillRect(pageX, pageY, gutterWidth, pageH);
+
+      const lineCount = Math.max(10, Math.floor(pageH / 32));
+      ctx.save();
+      ctx.strokeStyle = `rgba(128, 110, 86, ${0.08 + liftProgress * 0.1})`;
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= lineCount; i++) {
+        const y = pageY + (pageH * i) / (lineCount + 1);
+        const lineInset = pageW * (0.08 + 0.02 * Math.sin((i / lineCount) * Math.PI));
+        ctx.beginPath();
+        ctx.moveTo(pageX + lineInset, y);
+        ctx.lineTo(pageX + pageW - pageInset * 0.6, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      const pageEdgeGlow = ctx.createLinearGradient(pageX + pageW - pageDepth * 0.5, 0, pageX + pageW, 0);
+      pageEdgeGlow.addColorStop(0, 'rgba(255, 245, 220, 0)');
+      pageEdgeGlow.addColorStop(1, `rgba(255, 245, 220, ${0.12 + liftProgress * 0.18})`);
+      ctx.fillStyle = pageEdgeGlow;
+      ctx.fillRect(pageX + pageW - pageDepth * 0.8, pageY, pageDepth * 0.8, pageH);
+
+      // 页边扇形层次，强化“书页正在被掀开”的动态厚度
+      if (liftProgress > 0.01) {
+        const pageFanCount = 8;
+        for (let i = 0; i < pageFanCount; i++) {
+          const t = pageFanCount <= 1 ? 0 : i / (pageFanCount - 1);
+          const fanOffset = pageDepth * (0.22 + t * (0.52 + liftProgress * 0.6));
+          const fanTilt = liftProgress * pageDepth * (0.14 + t * 0.2);
+          ctx.strokeStyle = `rgba(165, 143, 112, ${(0.09 + t * 0.08) * liftProgress})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(pageX + pageW - fanOffset, pageY + pageH * 0.05);
+          ctx.lineTo(pageX + pageW - fanOffset + fanTilt, pageY + pageH * 0.95);
+          ctx.stroke();
+        }
+      }
+
+      // 封面掀起后，向内页投下动态阴影
+      if (liftProgress > 0.02) {
+        const castStart = pageX + pageW * (0.08 + liftProgress * 0.12);
+        const castEnd = pageX + pageW * (0.62 + liftProgress * 0.14);
+        const coverCast = ctx.createLinearGradient(castStart, 0, castEnd, 0);
+        coverCast.addColorStop(0, `rgba(22, 16, 10, ${0.26 * liftProgress})`);
+        coverCast.addColorStop(0.75, `rgba(22, 16, 10, ${0.08 * liftProgress})`);
+        coverCast.addColorStop(1, 'rgba(22, 16, 10, 0)');
+        ctx.fillStyle = coverCast;
+        ctx.fillRect(pageX, pageY, pageW, pageH);
+      }
+      
+      ctx.restore();
+    }
+    
+    // ========== 搴旂敤3D鎺€璧峰彉鎹紙灏侀潰浠庡乏渚т功鑴婄炕寮€锛?==========
+    if (this.config.enable3DEffect && this.liftAngle > 0) {
+      // 妯℃嫙3D閫忚鏁堟灉 - 浠庡乏渚т功鑴婃巰璧凤紝杞村績宸插湪宸﹁竟缂?      const angleRad = this.liftAngle * Math.PI / 180;
+      const scaleX = Math.max(0.08, Math.cos(angleRad));
+      const shearY = Math.sin(angleRad) * 0.14;
+      const scaleY = Math.max(0.9, 1 - Math.sin(angleRad) * 0.03);
+      const depthShiftX = pageDepth * liftProgress * 0.08;
+      
+      // 搴旂敤鍙樻崲锛歑鍚戝帇缂?+ 杞诲井鍓垏锛屽舰鎴愭洿鏄庢樉灏侀潰缈婚〉閫忚
+      ctx.transform(scaleX, 0, -shearY, scaleY, depthShiftX, 0);
+    }
+    
+    // 缁樺埗闃村奖
+    if (this.config.enableShadow && this.shadowOpacity > 0 && this.liftAngle > 0) {
+      ctx.shadowColor = `rgba(0, 0, 0, ${this.shadowOpacity * 0.6})`;
+      ctx.shadowBlur = 15 + this.liftAngle * 0.5;
+      ctx.shadowOffsetX = Math.sin(this.liftAngle * Math.PI / 180) * 15;
+      ctx.shadowOffsetY = 5;
+    }
+    
+    // 缁樺埗灏侀潰锛堟棤鐧借壊杈规锛?
+    ctx.globalAlpha = this.currentOpacity;
+    
+    // 缁樺埗灏侀潰鍥剧墖锛堝潗鏍囩郴锛氬師鐐瑰湪宸﹁竟缂樹腑鐐癸紝鍚戝彸涓烘X锛屽悜涓嬩负姝锛?
+    // 灏侀潰鍖哄煙锛氫粠(0, -height/2)鍒?width, height/2)
+    if (this.coverPixelMap) {
+      // 璁＄畻淇濇寔瀹介珮姣旂殑缁樺埗鍖哄煙
+      let drawWidth = this.currentWidth;
+      let drawHeight = this.currentHeight;
+      let drawX = 0;
+      let drawY = -this.currentHeight / 2;
+      
+      if (this.coverOriginalWidth > 0 && this.coverOriginalHeight > 0) {
+        const originalAspect = this.coverOriginalWidth / this.coverOriginalHeight;
+        const targetAspect = this.currentWidth / this.currentHeight;
+        
+        if (originalAspect > targetAspect) {
+          // 鍥剧墖鏇村锛屼互楂樺害涓哄熀鍑?
+          drawHeight = this.currentHeight;
+          drawWidth = this.currentHeight * originalAspect;
+          drawX = (this.currentWidth - drawWidth) / 2;  // 姘村钩灞呬腑
+          drawY = -this.currentHeight / 2;
+        } else {
+          // 鍥剧墖鏇撮珮锛屼互瀹藉害涓哄熀鍑?
+          drawWidth = this.currentWidth;
+          drawHeight = this.currentWidth / originalAspect;
+          drawX = 0;
+          drawY = -drawHeight / 2;  // 鍨傜洿灞呬腑
+        }
+      }
+      
+      // 瑁佸壀鍒板皝闈㈠尯鍩?
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
+      ctx.clip();
+      
+      ctx.drawImage(
+        this.coverPixelMap,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight
+      );
+
+      if (this.liftAngle > 0) {
+        // 涔﹁剨鎶樼棔闃村奖
+        const hingeShadow = ctx.createLinearGradient(0, 0, this.currentWidth * 0.16, 0);
+        hingeShadow.addColorStop(0, `rgba(14, 10, 8, ${0.26 + liftProgress * 0.24})`);
+        hingeShadow.addColorStop(1, 'rgba(14, 10, 8, 0)');
+        ctx.fillStyle = hingeShadow;
+        ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth * 0.18, this.currentHeight);
+
+        // 灏侀潰寮ч潰楂樺厜锛堥殢缈诲紑鍔ㄦ€佺Щ鍔級
+        const highlightX = this.currentWidth * (0.22 + liftProgress * 0.5);
+        const coverHighlight = ctx.createLinearGradient(highlightX - this.currentWidth * 0.14, 0, highlightX + this.currentWidth * 0.14, 0);
+        coverHighlight.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        coverHighlight.addColorStop(0.5, `rgba(255, 255, 255, ${0.09 + liftProgress * 0.12})`);
+        coverHighlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = coverHighlight;
+        ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
+
+        // 灏侀潰鍐呬晶杈圭紭鏆楀寲锛屽寮虹炕椤靛帤搴︽劅
+        const edgeShade = ctx.createLinearGradient(this.currentWidth * 0.72, 0, this.currentWidth, 0);
+        edgeShade.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        edgeShade.addColorStop(1, `rgba(0, 0, 0, ${0.16 + liftProgress * 0.12})`);
+        ctx.fillStyle = edgeShade;
+        ctx.fillRect(this.currentWidth * 0.68, -this.currentHeight / 2, this.currentWidth * 0.32, this.currentHeight);
+
+        // 封面最外侧厚度边缘
+        const coverThickness = Math.max(1.2, this.currentWidth * 0.012);
+        const thicknessX = this.currentWidth - coverThickness;
+        const thicknessGradient = ctx.createLinearGradient(thicknessX, 0, this.currentWidth, 0);
+        thicknessGradient.addColorStop(0, `rgba(244, 230, 205, ${0.12 + liftProgress * 0.18})`);
+        thicknessGradient.addColorStop(1, `rgba(82, 66, 44, ${0.22 + liftProgress * 0.2})`);
+        ctx.fillStyle = thicknessGradient;
+        ctx.fillRect(thicknessX, -this.currentHeight / 2, coverThickness, this.currentHeight);
+      }
+      
+      ctx.restore();
+    } else {
+      // 鍗犱綅绗︼紙鐏拌壊锛?
+      ctx.fillStyle = '#E0E0E0';
+      ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
+    }
+    
+    ctx.restore();
+  }
+  
+  /**
+   * 娓叉煋榛戦〉涓婄殑鍔犺浇鍔ㄧ敾
+   */
+  private renderBlackPageLoading(ctx: CanvasRenderingContext2D): void {
+    const centerX = this.currentWidth / 2;
+    const centerY = 0;  // 鍨傜洿涓績锛堝洜涓哄潗鏍囩郴鍘熺偣鍦ㄥ乏杈圭紭涓偣锛?
+    
+    // 鏃嬭浆鐨勫姞杞藉渾鐜?
+    const time = Date.now() / 1000;
+    const rotation = (time * 3) % (Math.PI * 2);
+    
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.rotate(rotation);
+    
+    // 缁樺埗鍔犺浇鍦嗙幆
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    
+    const radius = 25;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 1.5);
+    ctx.stroke();
+    
+    ctx.restore();
+    
+    // 鍔犺浇鏂囧瓧
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('鍔犺浇涓?..', centerX, centerY + 50);
+    
+    // 鎸佺画鍒锋柊浠ユ樉绀哄姩鐢?
+    setTimeout(() => this.renderFrame(), 50);
+  }
+  
+  /**
+   * 娓叉煋涔﹁剨闃村奖
+   */
+  private renderBookSpineShadow(ctx: CanvasRenderingContext2D): void {
+    const shadowWidth = 30 + this.liftAngle * 0.5;
+    const shadowGradient = ctx.createLinearGradient(
+      -this.currentWidth / 2 - shadowWidth,
+      0,
+      -this.currentWidth / 2,
+      0
+    );
+    shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    shadowGradient.addColorStop(0.5, `rgba(0, 0, 0, ${0.1 + this.liftAngle * 0.003})`);
+    shadowGradient.addColorStop(1, `rgba(0, 0, 0, ${0.3 + this.liftAngle * 0.004})`);
+    
+    ctx.fillStyle = shadowGradient;
+    ctx.fillRect(
+      -this.currentWidth / 2 - shadowWidth,
+      -this.currentHeight / 2 - 10,
+      shadowWidth,
+      this.currentHeight + 20
+    );
+  }
+  
+  /**
+   * 娓叉煋灏侀潰鍏夋辰鏁堟灉
+   */
+  private renderCoverGloss(ctx: CanvasRenderingContext2D): void {
+    // 瀵硅绾垮厜娉?
+    const glossGradient = ctx.createLinearGradient(
+      -this.currentWidth / 2,
+      -this.currentHeight / 2,
+      this.currentWidth / 2,
+      this.currentHeight / 2
+    );
+    glossGradient.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+    glossGradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.05)');
+    glossGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
+    glossGradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.02)');
+    glossGradient.addColorStop(1, 'rgba(255, 255, 255, 0.1)');
+    
+    ctx.fillStyle = glossGradient;
+    ctx.fillRect(
+      -this.currentWidth / 2,
+      -this.currentHeight / 2,
+      this.currentWidth,
+      this.currentHeight
+    );
+  }
+  
+  /**
+   * 娓叉煋鍏抽棴妯″紡甯э紙Canvas澶囩敤璺緞锛?   */
+  private renderCloseFrame(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+    // 缁樺埗鍗婇€忔槑鑳屾櫙閬僵锛堥殧绂诲簳灞傜湡瀹為槄璇诲櫒锛?    const bgOpacity = Math.max(0, Math.min(0.65, this.currentOpacity * 0.45 + 0.2));
+    ctx.fillStyle = `rgba(0, 0, 0, ${bgOpacity})`;
+    ctx.fillRect(0, 0, w, h);
+
+    // 缁樺埗闃呰鍣ㄥ唴瀹?    const pixelMapToUse = this.localReaderPixelMap || this.readerContentPixelMap;
+
+    if (pixelMapToUse) {
+      try {
+        // 鐩存帴缁樺埗鎴浘锛屼綔涓哄叧闂姩鐢荤殑鈥滃喕缁撻槄璇诲櫒鈥?        ctx.drawImage(
+          pixelMapToUse,
+          this.currentX,
+          this.currentY,
+          this.currentWidth,
+          this.currentHeight
+        );
+      } catch (e) {
+        logger.error(TAG, `馃摲 缁樺埗鎴浘澶辫触: ${String(e)}`);
+        this.drawFallbackContent(ctx);
+      }
+    } else {
+      this.drawFallbackContent(ctx);
+    }
+  }
+  
+  /**
+   * 缁樺埗澶囩敤鍐呭锛堝綋鎴浘涓嶅彲鐢ㄦ椂锛?
+   */
+  private drawFallbackContent(ctx: CanvasRenderingContext2D): void {
+    const gradient = ctx.createLinearGradient(
+      this.currentX,
+      this.currentY,
+      this.currentX,
+      this.currentY + this.currentHeight
+    );
+    gradient.addColorStop(0, '#2A2A2A');
+    gradient.addColorStop(0.5, '#1A1A1A');
+    gradient.addColorStop(1, '#0A0A0A');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(this.currentX, this.currentY, this.currentWidth, this.currentHeight);
+  }
+  
+  /**
+   * 缁樺埗鍦嗚鐭╁舰璺緞
+   */
+  private roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+  
+  /**
+   * 娓叉煋鍔犺浇鎸囩ず鍣?
+   */
+  private renderLoadingIndicator(ctx: CanvasRenderingContext2D): void {
+    // 缁樺埗鏃嬭浆鐨勫姞杞藉渾鐜?
+    const time = Date.now() / 1000;
+    const rotation = (time * 2) % (Math.PI * 2);
+    
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    
+    const radius = 20;
+    const arcLength = Math.PI * 1.5;
+    
+    ctx.beginPath();
+    ctx.arc(0, this.currentHeight / 2 + 40, radius, rotation, rotation + arcLength);
+    ctx.stroke();
+    
+    ctx.restore();
+    
+    // 鍔犺浇鏂囧瓧
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('鍔犺浇涓?..', 0, this.currentHeight / 2 + 75);
+    
+    // 鎸佺画鍒锋柊鍔犺浇鎸囩ず鍣?
+    if (this.currentPhase === TransitionPhase.WAITING_READY) {
+      setTimeout(() => this.renderFrame(), 50);
+    }
+  }
+  
+  // ========== UI鏋勫缓 ==========
+  build() {
+    Stack() {
+      // 鍏抽棴妯″紡锛氫紭鍏堜娇鐢ㄥ師濮婸ixelMap锛堟棤鎹燂級锛屽鐢ㄥ帇缂╂枃浠?      // 浣跨敤鍘熷PixelMap鍙互閬垮厤鍘嬬缉瀵艰嚧鐨勮川閲忔崯澶卞拰寤惰繜
+      if (this.mode === TransitionMode.CLOSE && (!!this.localReaderPixelMap || this.readerContentImagePath.length > 0)) {
+        // 鑳屾澘灞傦細閬斀搴曞眰鐪熷疄闃呰鍣紝纭繚鑳界湅瑙佲€滄埅鍥惧湪缂╁皬鈥?        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#000000')
+          .opacity(this.getCloseBackdropOpacity())
+
+        // ========== 搴曞眰锛氶槄璇诲櫒鎴浘 ==========
+        // 浼樺厛浣跨敤鍘熷PixelMap锛堟棤鎹熻川閲忥級锛屽鐢ㄥ帇缂╂枃浠?        if (this.localReaderPixelMap) {
+          // 浣跨敤鍘熷PixelMap - 鏃犳崯璐ㄩ噺锛屼笌闃呰鍣ㄥ畬鍏ㄤ竴鑷?          Image(this.localReaderPixelMap)
+            .width(this.currentWidth)
+            .height(this.currentHeight)
+            .position({ x: this.currentX, y: this.currentY })
+            .objectFit(ImageFit.Fill)
+            .opacity(this.currentOpacity)
+            .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
+            .backgroundColor(Color.Transparent)
+            .shadow({
+              radius: 18,
+              color: 'rgba(0, 0, 0, 0.32)',
+              offsetX: 0,
+              offsetY: 8
+            })
+        } else if (this.readerContentImagePath.length > 0) {
+          // 澶囩敤锛氫娇鐢ㄥ帇缂╂枃浠?          Image(`file://${this.readerContentImagePath}`)
+            .width(this.currentWidth)
+            .height(this.currentHeight)
+            .position({ x: this.currentX, y: this.currentY })
+            .objectFit(ImageFit.Fill)
+            .opacity(this.currentOpacity)
+            .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
+            .backgroundColor(Color.Transparent)
+            .shadow({
+              radius: 18,
+              color: 'rgba(0, 0, 0, 0.32)',
+              offsetX: 0,
+              offsetY: 8
+            })
+            .onComplete(() => {
+              logger.info(TAG, `馃摲 鍏抽棴鍔ㄧ敾鎴浘鍔犺浇瀹屾垚: ${this.readerContentImagePath}`);
+            })
+            .onError((error) => {
+              logger.error(TAG, `馃摲 鍏抽棴鍔ㄧ敾鎴浘鍔犺浇澶辫触: ${JSON.stringify(error)}`);
+            })
+        }
+        
+        // ========== 涓婂眰锛氬皝闈㈠浘鐗囷紙甯︾炕椤电洊浣忔晥鏋滐級 ==========
+        if (this.coverImagePath.length > 0 && this.coverFlipProgress > 0) {
+          Stack() {
+            // 灏侀潰鍥剧墖
+            Image(this.coverImagePath.startsWith('/') ? `file://${this.coverImagePath}` : this.coverImagePath)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .borderRadius(6)
+          }
+          .width(this.currentWidth)
+          .height(this.currentHeight)
+          .position({ x: this.currentX, y: this.currentY })
+          .opacity(this.currentOpacity * this.coverFlipProgress)
+          // 3D缈婚〉鍙樻崲鏁堟灉锛氫粠鍙冲悜宸︾洊浣?
+          .rotate({
+            x: 0,
+            y: 1,
+            z: 0,
+            angle: -90 * (1 - this.coverFlipProgress),  // 浠?90搴︼紙鎵撳紑锛夊埌0搴︼紙鐩栦綇锛?
+            centerX: '0%',  // 宸︿晶涓鸿酱蹇?
+            centerY: '50%',
+            perspective: 800
+          })
+          .shadow({
+            radius: 15 * this.coverFlipProgress,
+            color: `rgba(0, 0, 0, ${0.3 * this.coverFlipProgress})`,
+            offsetX: -10 * this.coverFlipProgress,
+            offsetY: 5
+          })
+        }
+      } else {
+        // 缈诲紑妯″紡鎴栨棤鎴浘
+        if (this.mode === TransitionMode.OPEN) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor(this.getOpenBackdropColor())
+            .opacity(this.getOpenBackdropOpacity())
+        }
+        
+        // 鑳屾櫙鍥剧墖灞傦紙浠呭綋绾枃鏈娇鐢ㄨ儗鏅浘鐗囨椂鏄剧ず锛?        // 杩欎竴灞傚缁堝彲瑙侊紝浣滀负鏈€搴曞眰鑳屾櫙锛孋anvas鍦ㄥ叾涓婃柟
+        // 闃呰鍣ㄥ氨缁悗娣″嚭
+        if (this.hasOpenBackgroundImage()) {
+          Stack() {
+            // 鑳屾櫙鑹插眰锛堜綔涓哄浘鐗囧簳鑹诧級
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.ebookBackground?.backgroundColor ?? '#F4EBD8')
+            
+            // 鑳屾櫙鍥剧墖灞?
+            Image(this.getOpenBackgroundImagePath().startsWith('/') ? 
+              `file://${this.getOpenBackgroundImagePath()}` : this.getOpenBackgroundImagePath())
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .opacity(this.ebookBackground?.backgroundImageOpacity ?? 0.3)
+          }
+          .width('100%')
+          .height('100%')
+          .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])
+          .opacity(this.getOpenBackgroundImageOpacity())
+          .animation({ duration: 180, curve: Curve.EaseInOut })
+        }
+        
+        // Canvas缁樺埗灏侀潰鍔ㄧ敾
+        // 鍔ㄧ敾鏈畬鎴愭椂鏄剧ず锛屽畬鎴愬悗娣″嚭
+        // 濡傛灉鏈夎儗鏅浘鐗囷紝娣″嚭鍚庝細鏄剧ず涓婇潰鐨勮儗鏅浘鐗囧眰
+        // 娉ㄦ剰锛欳anvas闇€瑕佸寘瑁呭湪Stack涓墠鑳芥纭墿灞曞埌瀹夊叏鍖哄煙
+        Stack() {
+          Canvas(this.canvasContext)
+            .width('100%')
+            .height('100%')
+            .onReady(() => {
+              logger.info(TAG, `Canvas宸插氨缁? mode=${this.mode}, imagePath=${this.readerContentImagePath ? '鏈? : '鏃?}`);
+              this.renderFrame();
+            })
+          
+          // 缃戠粶鍥剧墖灏侀潰瑕嗙洊灞傦紙褰揷overPixelMap涓虹┖涓旀槸缃戠粶鍥剧墖鏃舵樉绀猴級
+          if (this.isSystemResource && this.coverImagePath.length > 0 && 
+              (this.coverImagePath.startsWith('http://') || this.coverImagePath.startsWith('https://'))) {
+            Image(this.coverImagePath)
+              .width(this.currentWidth)
+              .height(this.currentHeight)
+              .position({ x: this.currentX, y: this.currentY })
+              .objectFit(ImageFit.Cover)
+              .opacity(this.currentOpacity)
+              .borderRadius(4)
+              .rotate({
+                x: 0,
+                y: 1,
+                z: 0,
+                angle: this.mode === TransitionMode.OPEN ? -this.liftAngle : 0,
+                centerX: '0%',
+                centerY: '50%',
+                perspective: 900
+              })
+              .shadow({
+                radius: this.mode === TransitionMode.OPEN ? (8 + this.liftAngle * 0.18) : 0,
+                color: `rgba(0, 0, 0, ${this.mode === TransitionMode.OPEN ? Math.min(0.35, this.liftAngle / 220) : 0})`,
+                offsetX: this.mode === TransitionMode.OPEN ? (this.liftAngle * 0.12) : 0,
+                offsetY: 4
+              })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])
+        .opacity(this.mode === TransitionMode.OPEN ? ((this.animationCompleted && this.isReaderReady) ? 0 : 1) : (this.animationCompleted ? 0 : 1))
+        .animation({ duration: 180, curve: Curve.EaseInOut })
+
+        if (this.shouldShowWaitingInfoPanel()) {
+          Column() {
+            Text('准备阅读中')
+              .fontSize(11)
+              .fontColor('rgba(246, 242, 234, 0.72)')
+              .letterSpacing(0.5)
+              .width('100%')
+
+            if (this.getDisplayBookTitle().length > 0) {
+              Text(this.getDisplayBookTitle())
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#F6F2EA')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 6 })
+                .width('100%')
+            }
+
+            if (this.getDisplayBookAuthor().length > 0) {
+              Text(`浣滆€咃細${this.getDisplayBookAuthor()}`)
+                .fontSize(13)
+                .fontColor('rgba(246, 242, 234, 0.86)')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 8 })
+                .width('100%')
+            }
+
+            if (this.getDisplayBookIntro().length > 0) {
+              Text(this.getDisplayBookIntro())
+                .fontSize(12)
+                .lineHeight(18)
+                .fontColor('rgba(246, 242, 234, 0.78)')
+                .maxLines(4)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 10 })
+                .width('100%')
+            }
+          }
+          .width(this.getWaitingInfoPanelWidth())
+          .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+          .position({ x: this.getWaitingInfoPanelX(), y: this.getWaitingInfoPanelY() })
+          .backgroundColor('rgba(18, 16, 14, 0.46)')
+          .borderRadius(14)
+          .shadow({
+            radius: 16,
+            color: 'rgba(0, 0, 0, 0.22)',
+            offsetX: 0,
+            offsetY: 8
+          })
+          .opacity(this.currentOpacity * 0.98)
+          .animation({ duration: 180, curve: Curve.EaseOut })
+        }
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Transparent)  // 鏍瑰鍣ㄩ€忔槑鑳屾櫙锛岃鍘熼〉闈㈠彲瑙?
+    .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])  // 鎵╁睍鍒版墍鏈夊畨鍏ㄥ尯鍩?
+    .onAreaChange((_, newArea) => {
+      this.componentWidth = newArea.width as number;
+      this.componentHeight = newArea.height as number;
+      logger.debug(TAG, `缁勪欢灏哄: ${this.componentWidth}x${this.componentHeight}`);
+      
+      // 閲嶆柊璁＄畻涓ぎ浣嶇疆
+      if (this.componentWidth > 0 && this.componentHeight > 0) {
+        this.calculateCenterPosition();
+        
+        // 濡傛灉鏈夌瓑寰呭惎鍔ㄧ殑鍔ㄧ敾锛岀幇鍦ㄥ惎鍔ㄥ畠
+        if (this.pendingAnimationStart && !this.isAnimating) {
+          this.tryStartTransitionWhenReady('area_change');
+        }
+      }
+    })
+    .hitTestBehavior(HitTestMode.Transparent)  // 鍏佽鐐瑰嚮绌块€?
+  }
+}
+
+/**
+ * 杩囨浮鍔ㄧ敾绠＄悊鍣紙鍗曚緥锛?
+ * 鐢ㄤ簬鍏ㄥ眬鎺у埗杩囨浮鍔ㄧ敾鐨勬樉绀哄拰闅愯棌
+ */
+export class BookTransitionManager {
+  private static instance: BookTransitionManager | null = null;
+  
+  // 褰撳墠杩囨浮鐘舵€?
+  private isTransitioning: boolean = false;
+  private currentMode: TransitionMode = TransitionMode.OPEN;
+  private pendingReaderReady: boolean = false;
+  
+  // 鍥炶皟
+  private onTransitionStart: (() => void) | null = null;
+  private onTransitionComplete: (() => void) | null = null;
+  
+  private constructor() {}
+  
+  public static getInstance(): BookTransitionManager {
+    if (!BookTransitionManager.instance) {
+      BookTransitionManager.instance = new BookTransitionManager();
+    }
+    return BookTransitionManager.instance;
+  }
+  
+  /**
+   * 寮€濮嬬炕寮€杩囨浮
+   */
+  public startOpenTransition(
+    coverImagePath: string,
+    coverPosition: CoverPosition,
+    onComplete?: () => void
+  ): void {
+    if (this.isTransitioning) {
+      logger.warn(TAG, '宸叉湁杩囨浮鍔ㄧ敾鍦ㄨ繘琛屼腑');
+      return;
+    }
+    
+    this.isTransitioning = true;
+    this.currentMode = TransitionMode.OPEN;
+    this.pendingReaderReady = false;
+    this.onTransitionComplete = onComplete || null;
+    
+    logger.info(TAG, `寮€濮嬬炕寮€杩囨浮: ${coverImagePath}`);
+  }
+  
+  /**
+   * 寮€濮嬪叧闂繃娓?
+   */
+  public startCloseTransition(
+    coverPosition: CoverPosition,
+    readerContentPixelMap?: image.PixelMap,
+    onComplete?: () => void
+  ): void {
+    if (this.isTransitioning) {
+      logger.warn(TAG, '宸叉湁杩囨浮鍔ㄧ敾鍦ㄨ繘琛屼腑');
+      return;
+    }
+    
+    this.isTransitioning = true;
+    this.currentMode = TransitionMode.CLOSE;
+    this.onTransitionComplete = onComplete || null;
+    
+    logger.info(TAG, '寮€濮嬪叧闂繃娓?);
+  }
+  
+  /**
+   * 鏍囪闃呰鍣ㄥ凡灏辩华
+   */
+  public setReaderReady(): void {
+    this.pendingReaderReady = true;
+    logger.info(TAG, '闃呰鍣ㄥ凡灏辩华');
+  }
+  
+  /**
+   * 瀹屾垚杩囨浮
+   */
+  public completeTransition(): void {
+    this.isTransitioning = false;
+    if (this.onTransitionComplete) {
+      this.onTransitionComplete();
+      this.onTransitionComplete = null;
+    }
+    logger.info(TAG, '杩囨浮鍔ㄧ敾瀹屾垚');
+  }
+  
+  /**
+   * 鍙栨秷杩囨浮
+   */
+  public cancelTransition(): void {
+    this.isTransitioning = false;
+    this.onTransitionComplete = null;
+    logger.info(TAG, '杩囨浮鍔ㄧ敾宸插彇娑?);
+  }
+  
+  /**
+   * 鑾峰彇褰撳墠鏄惁姝ｅ湪杩囨浮
+   */
+  public isInTransition(): boolean {
+    return this.isTransitioning;
+  }
+  
+  /**
+   * 鑾峰彇褰撳墠杩囨浮妯″紡
+   */
+  public getCurrentMode(): TransitionMode {
+    return this.currentMode;
+  }
+  
+  /**
+   * 鑾峰彇闃呰鍣ㄦ槸鍚﹀氨缁?
+   */
+  public isReaderReady(): boolean {
+    return this.pendingReaderReady;
+  }
+}
+

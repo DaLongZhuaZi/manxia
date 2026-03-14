@@ -12,6 +12,8 @@ import { logger } from '../Utils/Logger';
 import { image } from '@kit.ImageKit';
 import { componentUtils, componentSnapshot } from '@kit.ArkUI';
 import { fileIo } from '@kit.CoreFileKit';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { TextReaderSettings, DEFAULT_TEXT_READER_SETTINGS, BackgroundType } from '../Models/TextReaderModels';
 import { 
   BookOpenTransition, 
   TransitionMode, 
@@ -33,6 +35,15 @@ export interface TransitionRequest {
   readerContentPixelMap?: image.PixelMap;
   targetBookId?: string;
   targetBookType?: 'manga' | 'ebook' | 'novel';
+  bookTitle?: string;
+  bookAuthor?: string;
+  bookIntro?: string;
+}
+
+export interface BookTransitionMetaInfo {
+  title?: string;
+  author?: string;
+  intro?: string;
 }
 
 /**
@@ -58,6 +69,9 @@ export class GlobalTransitionState {
   targetBookId: string = '';
   targetBookType: 'manga' | 'ebook' | 'novel' = 'manga';
   ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
+  bookTitle: string = '';
+  bookAuthor: string = '';
+  bookIntro: string = '';
 }
 
 /**
@@ -66,6 +80,10 @@ export class GlobalTransitionState {
  */
 export class TransitionController {
   private static instance: TransitionController | null = null;
+  private static readonly OPEN_READER_READY_HIDE_DELAY_MS: number = 780;
+  private static readonly MANGA_TRANSITION_BACKGROUND: string = '#000000';
+  private static readonly NOVEL_TRANSITION_BACKGROUND: string = '#F5F0E1';
+  private static readonly EBOOK_TRANSITION_BACKGROUND: string = '#FFFFFF';
   
   // 状态变化回调
   private onStateChange: ((state: GlobalTransitionState) => void) | null = null;
@@ -75,6 +93,7 @@ export class TransitionController {
   
   // 当前状态
   private currentState: GlobalTransitionState = new GlobalTransitionState();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   
   // 保存翻开动画的封面位置，用于关闭动画复用
   private lastOpenCoverPosition: CoverPosition | null = null;
@@ -84,6 +103,7 @@ export class TransitionController {
   // 取消相关
   private isCancelling: boolean = false;
   private pendingNavigationTimer: number = -1;
+  private openReadyHideTimer: number = -1;
   
   private constructor() {
     logger.info(TAG, 'TransitionController 初始化');
@@ -118,8 +138,11 @@ export class TransitionController {
     targetBookId: string,
     targetBookType: 'manga' | 'ebook' | 'novel',
     onComplete?: () => void,
-    ebookBackground?: EBookBackgroundSettings
+    ebookBackground?: EBookBackgroundSettings,
+    metaInfo?: BookTransitionMetaInfo
   ): void {
+    this.clearOpenReadyHideTimer();
+
     // 检查动画是否启用
     const animationSettingsManager = AnimationSettingsManager.getInstance();
     if (!animationSettingsManager.isBookOpenAnimationEnabled()) {
@@ -161,6 +184,8 @@ export class TransitionController {
       this.lastOpenCoverImagePath = coverImagePath;
       logger.info(TAG, `保存封面图片路径: ${coverImagePath.substring(0, 60)}`);
     }
+
+    const resolvedBackground = this.resolveOpenTransitionBackground(targetBookType, targetBookId, ebookBackground);
     
     this.currentState = {
       isActive: true,
@@ -172,11 +197,136 @@ export class TransitionController {
       isReaderReady: false,
       targetBookId: targetBookId,
       targetBookType: targetBookType,
-      ebookBackground: ebookBackground || null
+      ebookBackground: resolvedBackground,
+      bookTitle: metaInfo?.title || '',
+      bookAuthor: metaInfo?.author || '',
+      bookIntro: metaInfo?.intro || ''
     };
     
     this.onOpenComplete = onComplete || null;
     this.notifyStateChange();
+  }
+
+  private resolveOpenTransitionBackground(
+    targetBookType: 'manga' | 'ebook' | 'novel',
+    targetBookId: string,
+    providedBackground?: EBookBackgroundSettings
+  ): EBookBackgroundSettings | null {
+    if (targetBookType === 'manga') {
+      return {
+        backgroundColor: TransitionController.MANGA_TRANSITION_BACKGROUND
+      };
+    }
+
+    if (this.hasUsableBackgroundSetting(providedBackground)) {
+      const providedColor = providedBackground?.backgroundColor ?? '';
+      const hasBackgroundColor = providedBackground !== undefined
+        && providedColor.length > 0;
+      const safeBackgroundColor = hasBackgroundColor
+        ? providedColor
+        : (targetBookType === 'novel'
+          ? TransitionController.NOVEL_TRANSITION_BACKGROUND
+          : TransitionController.EBOOK_TRANSITION_BACKGROUND);
+      return {
+        backgroundColor: safeBackgroundColor,
+        backgroundImagePath: providedBackground?.backgroundImagePath,
+        backgroundImageOpacity: providedBackground?.backgroundImageOpacity
+      };
+    }
+
+    if (targetBookType === 'novel') {
+      const novelBackground = this.resolveNovelBackground(targetBookId);
+      if (novelBackground) {
+        return novelBackground;
+      }
+      return {
+        backgroundColor: TransitionController.NOVEL_TRANSITION_BACKGROUND
+      };
+    }
+
+    return {
+      backgroundColor: TransitionController.EBOOK_TRANSITION_BACKGROUND
+    };
+  }
+
+  private hasUsableBackgroundSetting(background?: EBookBackgroundSettings): boolean {
+    if (!background) {
+      return false;
+    }
+    const hasColor = typeof background.backgroundColor === 'string' && background.backgroundColor.length > 0;
+    const hasImage = typeof background.backgroundImagePath === 'string' && background.backgroundImagePath.length > 0;
+    return hasColor || hasImage;
+  }
+
+  private resolveNovelBackground(targetBookId: string): EBookBackgroundSettings | null {
+    const settingsKeys: string[] = [];
+    if (targetBookId.length > 0) {
+      settingsKeys.push(`${SettingKeys.NOVEL_READER_SETTINGS}_${targetBookId}`);
+    }
+    settingsKeys.push(SettingKeys.NOVEL_READER_SETTINGS);
+
+    for (let i = 0; i < settingsKeys.length; i++) {
+      const settingsKey = settingsKeys[i];
+      const storedValue = this.settingsManager.getString(settingsKey, '');
+      if (storedValue.length === 0) {
+        continue;
+      }
+
+      const settings = this.settingsManager.getJSON<TextReaderSettings>(settingsKey, DEFAULT_TEXT_READER_SETTINGS);
+      const mapped = this.mapNovelTextBackground(settings);
+      if (mapped) {
+        logger.info(TAG, `小说过渡背景匹配成功: key=${settingsKey}, color=${mapped.backgroundColor}, image=${mapped.backgroundImagePath ? '有' : '无'}`);
+        return mapped;
+      }
+    }
+
+    return null;
+  }
+
+  private mapNovelTextBackground(settings: TextReaderSettings): EBookBackgroundSettings | null {
+    if (!settings || !settings.background) {
+      return null;
+    }
+
+    const background = settings.background;
+    if (background.type === BackgroundType.IMAGE) {
+      const hasImagePath = typeof background.imagePath === 'string' && background.imagePath.length > 0;
+      if (hasImagePath) {
+        return {
+          backgroundColor: TransitionController.NOVEL_TRANSITION_BACKGROUND,
+          backgroundImagePath: background.imagePath as string,
+          backgroundImageOpacity: this.clampBackgroundOpacity(background.imageOpacity ?? 0.3)
+        };
+      }
+      return {
+        backgroundColor: TransitionController.NOVEL_TRANSITION_BACKGROUND
+      };
+    }
+
+    if (background.type === BackgroundType.GRADIENT) {
+      const hasGradientStart = typeof background.gradientStart === 'string' && background.gradientStart.length > 0;
+      const hasFallbackColor = typeof background.color === 'string' && background.color.length > 0;
+      const gradientColor = hasGradientStart
+        ? (background.gradientStart as string)
+        : (hasFallbackColor
+          ? (background.color as string)
+          : TransitionController.NOVEL_TRANSITION_BACKGROUND);
+      return {
+        backgroundColor: gradientColor
+      };
+    }
+
+    const hasColor = typeof background.color === 'string' && background.color.length > 0;
+    const color = hasColor
+      ? (background.color as string)
+      : TransitionController.NOVEL_TRANSITION_BACKGROUND;
+    return {
+      backgroundColor: color
+    };
+  }
+
+  private clampBackgroundOpacity(value: number): number {
+    return Math.max(0, Math.min(1, value));
   }
   
   /**
@@ -192,6 +342,8 @@ export class TransitionController {
     onComplete?: () => void,
     readerContentImagePath?: string
   ): void {
+    this.clearOpenReadyHideTimer();
+
     // 检查动画是否启用
     const animationSettingsManager = AnimationSettingsManager.getInstance();
     if (!animationSettingsManager.isBookCloseAnimationEnabled()) {
@@ -303,18 +455,29 @@ export class TransitionController {
    * 阅读器加载完成后调用此方法，覆盖层会淡出消失
    */
   public setReaderReady(): void {
-    if (this.currentState.isActive && this.currentState.mode === TransitionMode.OPEN) {
-      logger.info(TAG, '阅读器已就绪，开始淡出覆盖层');
-      this.currentState.isReaderReady = true;
-      this.notifyStateChange();
-      
-      // 延迟一小段时间后隐藏覆盖层，让淡出动画有时间播放
-      setTimeout(() => {
-        this.currentState = new GlobalTransitionState();
-        this.notifyStateChange();
-        logger.info(TAG, '覆盖层已隐藏');
-      }, 300);  // 300ms淡出动画
+    if (!this.currentState.isActive || this.currentState.mode !== TransitionMode.OPEN) {
+      return;
     }
+    if (this.currentState.isReaderReady) {
+      logger.debug(TAG, '阅读器就绪信号重复，忽略本次触发');
+      return;
+    }
+
+    logger.info(TAG, '阅读器已就绪，开始淡出覆盖层');
+    this.currentState.isReaderReady = true;
+    this.notifyStateChange();
+
+    // 延迟一小段时间后隐藏覆盖层，让淡出动画有时间播放
+    this.clearOpenReadyHideTimer();
+    this.openReadyHideTimer = setTimeout(() => {
+      this.openReadyHideTimer = -1;
+      if (!this.currentState.isActive || this.currentState.mode !== TransitionMode.OPEN) {
+        return;
+      }
+      this.currentState = new GlobalTransitionState();
+      this.notifyStateChange();
+      logger.info(TAG, '覆盖层已隐藏');
+    }, TransitionController.OPEN_READER_READY_HIDE_DELAY_MS);
   }
   
   /**
@@ -338,6 +501,7 @@ export class TransitionController {
     } else if (mode === TransitionMode.CLOSE) {
       // 关闭模式：直接完成并确保状态重置
       logger.info(TAG, '关闭动画完成，重置状态');
+      this.clearOpenReadyHideTimer();
       
       // 先保存回调引用
       const closeCallback = this.onCloseComplete;
@@ -369,6 +533,7 @@ export class TransitionController {
       clearTimeout(this.pendingNavigationTimer);
       this.pendingNavigationTimer = -1;
     }
+    this.clearOpenReadyHideTimer();
     this.currentState = new GlobalTransitionState();
     this.notifyStateChange();
   }
@@ -391,6 +556,7 @@ export class TransitionController {
       clearTimeout(this.pendingNavigationTimer);
       this.pendingNavigationTimer = -1;
     }
+    this.clearOpenReadyHideTimer();
     
     // 清除完成回调（不执行跳转）
     this.onOpenComplete = null;
@@ -407,6 +573,7 @@ export class TransitionController {
   public onCancelComplete(): void {
     logger.info(TAG, '取消动画渐隐完成');
     this.isCancelling = false;
+    this.clearOpenReadyHideTimer();
     this.currentState = new GlobalTransitionState();
     
     if (this.onCancelCallback) {
@@ -453,6 +620,13 @@ export class TransitionController {
       this.onStateChange(this.currentState);
     }
   }
+
+  private clearOpenReadyHideTimer(): void {
+    if (this.openReadyHideTimer !== -1) {
+      clearTimeout(this.openReadyHideTimer);
+      this.openReadyHideTimer = -1;
+    }
+  }
 }
 
 /**
@@ -464,22 +638,26 @@ export struct BookTransitionOverlay {
   // 过渡状态
   @State private isActive: boolean = false;
   @State private mode: TransitionMode = TransitionMode.OPEN;
+  @State private targetBookType: 'manga' | 'ebook' | 'novel' = 'manga';
   @State private coverImagePath: string = '';
   @State private coverPosition: CoverPosition = { x: 0, y: 0, width: 100, height: 150 };
   @State private readerContentPixelMap: image.PixelMap | null = null;
   @State private readerContentImagePath: string = '';  // 压缩后的截图临时文件路径
   @State private isReaderReady: boolean = false;
   @State private ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
+  @State private bookTitle: string = '';
+  @State private bookAuthor: string = '';
+  @State private bookIntro: string = '';
   
   // 动画配置
   private config: BookTransitionConfig = {
-    coverMoveDuration: 400,
-    liftDuration: 500,
+    coverMoveDuration: 520,
+    liftDuration: 360,
     transitionDuration: 300,
     shrinkDuration: 400,
     returnDuration: 350,
     fadeDuration: 200,
-    maxLiftAngle: 90,  // 减小翻开角度，更自然
+    maxLiftAngle: 74,  // 柔和一些，避免翻盖过猛
     shadowIntensity: 0.6,
     enableShadow: true,
     enable3DEffect: true,
@@ -552,12 +730,16 @@ export struct BookTransitionOverlay {
     const wasActive = this.isActive;
     this.isActive = state.isActive;
     this.mode = state.mode;
+    this.targetBookType = state.targetBookType;
     this.coverImagePath = state.coverImagePath;
     this.coverPosition = state.coverPosition;
     this.readerContentPixelMap = state.readerContentPixelMap;
     this.readerContentImagePath = state.readerContentImagePath;
     this.isReaderReady = state.isReaderReady;
     this.ebookBackground = state.ebookBackground;
+    this.bookTitle = state.bookTitle;
+    this.bookAuthor = state.bookAuthor;
+    this.bookIntro = state.bookIntro;
     
     // 启动或清除超时保护
     if (this.isActive && !wasActive) {
@@ -572,7 +754,7 @@ export struct BookTransitionOverlay {
       }
     }
     
-    logger.debug(TAG, `状态更新: isActive=${this.isActive}, mode=${this.mode}, isReaderReady=${this.isReaderReady}, imagePath=${this.readerContentImagePath ? '有' : '无'}, ebookBg=${this.ebookBackground ? '有' : '无'}`);
+    logger.debug(TAG, `状态更新: isActive=${this.isActive}, mode=${this.mode}, type=${this.targetBookType}, isReaderReady=${this.isReaderReady}, imagePath=${this.readerContentImagePath ? '有' : '无'}, ebookBg=${this.ebookBackground ? '有' : '无'}`);
   }
   
   build() {
@@ -580,6 +762,7 @@ export struct BookTransitionOverlay {
       Stack() {
         BookOpenTransition({
           mode: this.mode,
+          contentType: this.targetBookType,
           coverImagePath: this.coverImagePath,
           coverPosition: this.coverPosition,
           readerContentPixelMap: this.readerContentPixelMap,
@@ -587,6 +770,9 @@ export struct BookTransitionOverlay {
           config: this.config,
           isReaderReady: this.isReaderReady,
           ebookBackground: this.ebookBackground,
+          bookTitle: this.bookTitle,
+          bookAuthor: this.bookAuthor,
+          bookIntro: this.bookIntro,
           onAnimationComplete: () => {
             this.clearSafetyTimeout();
             this.handleAnimationComplete();
@@ -612,14 +798,17 @@ export function startBookOpenTransition(
   coverPosition: CoverPosition,
   targetBookId: string,
   targetBookType: 'manga' | 'ebook' | 'novel',
-  onComplete?: () => void
+  onComplete?: () => void,
+  metaInfo?: BookTransitionMetaInfo
 ): void {
   TransitionController.getInstance().startOpenTransition(
     coverImagePath,
     coverPosition,
     targetBookId,
     targetBookType,
-    onComplete
+    onComplete,
+    undefined,
+    metaInfo
   );
 }
 
@@ -721,7 +910,8 @@ export function startBookOpenTransitionWithComponentId(
   targetBookId: string,
   targetBookType: 'manga' | 'ebook' | 'novel',
   onComplete?: () => void,
-  ebookBackground?: EBookBackgroundSettings
+  ebookBackground?: EBookBackgroundSettings,
+  metaInfo?: BookTransitionMetaInfo
 ): void {
   const coverPosition = getCoverPositionById(componentId);
   TransitionController.getInstance().startOpenTransition(
@@ -730,7 +920,8 @@ export function startBookOpenTransitionWithComponentId(
     targetBookId,
     targetBookType,
     onComplete,
-    ebookBackground
+    ebookBackground,
+    metaInfo
   );
 }
 
@@ -779,6 +970,36 @@ export async function captureComponent(componentId: string): Promise<CaptureResu
     logger.error(TAG, `📷 [组件截图] ❌ 失败: ${componentId}, 错误=${String(error)}`);
     return undefined;
   }
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(() => resolve(), ms);
+  });
+}
+
+async function captureComponentWithRetry(
+  componentId: string,
+  maxAttempts: number = 6,
+  retryDelayMs: number = 40
+): Promise<CaptureResult | undefined> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await captureComponent(componentId);
+    if (result?.pixelMap || (result?.imagePath && result.imagePath.length > 0)) {
+      if (attempt > 1) {
+        logger.info(TAG, `📷 [组件截图] 第 ${attempt} 次重试成功: ${componentId}`);
+      }
+      return result;
+    }
+
+    if (attempt < maxAttempts) {
+      logger.warn(TAG, `📷 [组件截图] 第 ${attempt} 次未获取到有效截图，${retryDelayMs}ms 后重试`);
+      await sleepMs(retryDelayMs);
+    }
+  }
+
+  logger.warn(TAG, `📷 [组件截图] 多次重试后仍未获取到有效截图: ${componentId}`);
+  return undefined;
 }
 
 /**
@@ -916,7 +1137,7 @@ export async function startBookCloseTransitionWithComponentId(
     
     // 直接截图（不显示任何遮罩层）
     logger.info(TAG, `🔴 开始调用 captureComponent...`);
-    const captureResult = await captureComponent(readerComponentId);
+    const captureResult = await captureComponentWithRetry(readerComponentId);
     logger.info(TAG, `🔴 captureComponent 返回: pixelMap=${captureResult?.pixelMap ? '有效' : '空'}, imagePath=${captureResult?.imagePath ? '有' : '无'}`);
     
     // 截图完成后，直接启动关闭动画（带截图数据）

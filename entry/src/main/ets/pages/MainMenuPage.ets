@@ -1516,6 +1516,7 @@ struct MainMenuPage {
         author: resolvedBook.author || novel.author,
         coverUrl: resolvedBook.coverUrl || novel.coverUrl,
         sourceName: novel.sourceName || resolvedBook.originName || '',
+        coverComponentId: `cover_novel_home_${novel.id}`,
         autoStartReadAloud: true,
         autoOpenReadAloudPlayer: true
       };
@@ -13394,6 +13395,8 @@ struct MainMenuPage {
         } as MangaReaderPageParams;
       }
 
+      readerParams.coverComponentId = componentId;
+
       // 触发翻开过渡动画
       const coverPath: string = this.normalizeDisplayPathForManga(manga) || '';
       logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${componentId}`);
@@ -13407,6 +13410,12 @@ struct MainMenuPage {
           // 动画完成时触发导航
           logger.info(TAG, '漫画翻开过渡动画触发导航');
           this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+        },
+        undefined,
+        {
+          title: manga.title,
+          author: manga.metadata?.authors?.[0] || '',
+          intro: manga.description || ''
         }
       );
     } catch (error) {
@@ -13441,7 +13450,8 @@ struct MainMenuPage {
     // 触发翻开过渡动画（使用组件ID获取实际位置）
     const coverPath: string = ebook.metadata.coverImagePath || '';
     const readerParams: EBookReaderParams = {
-      bookId: ebook.id
+      bookId: ebook.id,
+      coverComponentId: componentId
     };
     
     // 获取电子书背景设置
@@ -13458,7 +13468,12 @@ struct MainMenuPage {
         logger.info(TAG, '翻开过渡动画触发导航');
         this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
       },
-      ebookBackground
+      ebookBackground,
+      {
+        title: ebook.metadata.title,
+        author: ebook.metadata.author,
+        intro: ebook.metadata.description
+      }
     );
   }
 

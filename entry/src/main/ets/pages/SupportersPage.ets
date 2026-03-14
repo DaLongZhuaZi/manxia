@@ -66,7 +66,8 @@ export struct SupportersPage {
   private supporters: SupporterInfo[] = [
     { name: '爱发电用户_Xvtc' },
     { name: 'Ring' },
-    { name: '据我所知' }
+    { name: '据我所知' },
+    { name: 'kironal' }
     // 示例：
     // { name: '张三', level: '金牌支持者' },
     // { name: '李四', level: '银牌支持者' },

@@ -60,6 +60,7 @@ interface ReaderKitViewerControllerLike {
  */
 export interface EBookReaderParams {
   bookId: string;
+  coverComponentId?: string;
 }
 
 @Component
@@ -138,6 +139,7 @@ struct EBookReaderPage {
   @State textCurrentPageEndCharIndex: number = 0;
   @State textReadAloudPlaying: boolean = false;
   @State textReadAloudCurrentCharIndex: number = -1;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   @State showReadAloudPanel: boolean = false;
   @State readAloudPanelSettings: ReadAloudSettings = DEFAULT_READ_ALOUD_SETTINGS;
   @State readAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
@@ -161,6 +163,9 @@ struct EBookReaderPage {
   
   // UI上下文（用于设置沉浸式模式）
   private uiContext: UIContext | undefined = undefined;
+  private sourceCoverComponentId: string = '';
+  private hasNotifiedTransitionReaderReady: boolean = false;
+  private isCloseTransitionNavigating: boolean = false;
   
   // Reader Kit 阅读器控制器（用于实时应用设置和跳转章节）
   private readerKitController: ReaderKitViewerControllerLike | null = null;
@@ -271,10 +276,19 @@ struct EBookReaderPage {
     // [修复] 发布阅读进度更新事件，通知书库页面刷新
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
-    cancelTransition();
+    if (!this.isCloseTransitionNavigating) {
+      cancelTransition();
+    } else {
+      logger.info(TAG, 'aboutToDisappear: close transition in progress, skip cancelTransition');
+    }
+  }
+
+  onPageShow(): void {
+    this.setupFullscreenMode();
   }
 
   onPageHide(): void {
+    this.restoreNormalMode();
     logger.lifecycle(TAG, '电子书阅读器页面隐藏（进入后台）');
     this.readAloudController.handlePageHide();
     this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
@@ -450,6 +464,10 @@ struct EBookReaderPage {
         return;
       }
       
+      const currentMode = WindowManager.getCurrentMode();
+      if (currentMode !== DisplayMode.FULL_IMMERSIVE) {
+        this.previousDisplayMode = currentMode;
+      }
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       logger.info(TAG, '设置完全沉浸式阅读模式');
     } catch (error) {
@@ -470,11 +488,24 @@ struct EBookReaderPage {
         return;
       }
       
-      WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.uiContext);
-      logger.info(TAG, '恢复默认显示模式');
+      const targetMode = this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE
+        ? DisplayMode.DEFAULT
+        : this.previousDisplayMode;
+      WindowManager.setDisplayMode(targetMode, this.uiContext);
+      logger.info(TAG, `恢复显示模式: ${targetMode}`);
     } catch (error) {
       logger.error(TAG, `恢复正常模式失败: ${String(error)}`);
     }
+  }
+
+  private notifyTransitionReaderReadyOnce(reason: string): void {
+    if (this.hasNotifiedTransitionReaderReady) {
+      logger.debug(TAG, `过渡动画就绪已通知，忽略重复触发: ${reason}`);
+      return;
+    }
+    this.hasNotifiedTransitionReaderReady = true;
+    setReaderReady();
+    logger.info(TAG, `📤 已通知过渡动画阅读器就绪: ${reason}`);
   }
 
   /**
@@ -482,6 +513,7 @@ struct EBookReaderPage {
    */
   private async loadEBook(bookId: string): Promise<void> {
     try {
+      this.hasNotifiedTransitionReaderReady = false;
       this.isLoading = true;
       this.errorMessage = '';
 
@@ -629,14 +661,11 @@ struct EBookReaderPage {
       this.isLoading = false;
       logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
       
-      // 通知过渡动画阅读器就绪
-      // 注意：TXT 格式由 TextReaderComponent 的 onReady 回调通知，确保分页完成后才显示
-      if (ebook.format !== EBookFormat.TXT) {
-        setReaderReady();
-        logger.info(TAG, '📤 已通知过渡动画阅读器就绪');
-      } else {
-        logger.info(TAG, '📤 TXT格式等待TextReaderComponent分页完成后通知');
-      }
+      // 不在此处直接通知转场层，统一由具体阅读器组件“首屏可见”回调触发
+      // TXT: TextReaderComponent.onReady
+      // PDF: PdfKitViewerComponent.onLoadComplete/onLoadError
+      // ReaderKit占位: buildReaderKitView.onAppear
+      logger.info(TAG, '📤 已进入阅读器就绪等待阶段，等待具体组件回调');
       
       // 设置沉浸式模式
       this.setupFullscreenMode();
@@ -645,6 +674,7 @@ struct EBookReaderPage {
       this.errorMessage = `加载失败: ${String(error instanceof Error ? error.message : error)}`;
       this.isLoading = false;
       logger.error(TAG, '加载电子书失败', String(error instanceof Error ? error.message : error));
+      this.notifyTransitionReaderReadyOnce('ebook_load_failed');
     }
   }
 
@@ -1976,33 +2006,31 @@ struct EBookReaderPage {
    */
   private async goBack(): Promise<void> {
     try {
-      // 使用当前电子书ID构建封面组件ID，获取正确的封面位置
+      // Build cover component id used by close animation.
       const ebookId: string = this.ebook?.id || '';
-      const coverComponentId: string = ebookId ? `cover_ebook_lib_${ebookId}` : '';
-      
-      // 触发关闭过渡动画（带截图和动态封面位置）
+      const coverComponentId: string = this.sourceCoverComponentId || (ebookId ? `cover_ebook_lib_${ebookId}` : '');
+
+      // Save progress first, then trigger close transition.
+      this.saveReadingProgress();
+
       logger.info(TAG, `触发关闭过渡动画（带截图），封面组件ID: ${coverComponentId}`);
       await startBookCloseTransitionWithComponentId(
         'ebook_reader_root',
-        coverComponentId,
-        () => {
-          logger.info(TAG, '关闭过渡动画完成');
-        }
+        coverComponentId
       );
-      
-      this.saveReadingProgress();
-      setTimeout(() => {
-        this.pathStack.pop();
-        logger.info(TAG, '返回上一页');
-      }, 50);
+
+      // Pop immediately after transition starts so detail page is visible during shrink.
+      this.isCloseTransitionNavigating = true;
+      this.pathStack.pop();
     } catch (error) {
       logger.error(TAG, `goBack error: ${error instanceof Error ? error.message : String(error)}`);
-      // [修复] 确保在异常情况下也能返回，重置过渡动画状态
+      this.isCloseTransitionNavigating = false;
       cancelTransition();
       this.saveReadingProgress();
       this.pathStack.pop();
     }
   }
+
 
   build() {
     NavDestination() {
@@ -2136,6 +2164,7 @@ struct EBookReaderPage {
       
       const params = context.pathInfo.param as EBookReaderParams | null;
       if (params && params.bookId) {
+        this.sourceCoverComponentId = params.coverComponentId || '';
         this.loadEBook(params.bookId);
       } else {
         this.errorMessage = '缺少电子书ID参数';
@@ -2269,6 +2298,9 @@ struct EBookReaderPage {
       .height('100%')
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .onAppear(() => {
+        this.notifyTransitionReaderReadyOnce('readerkit_placeholder_appear');
+      })
     }
   }
 
@@ -2298,10 +2330,12 @@ struct EBookReaderPage {
           },
           onLoadComplete: (pageCount: number) => {
             logger.info(TAG, `PDF 加载完成，共 ${pageCount} 页`);
+            this.notifyTransitionReaderReadyOnce('pdf_load_complete');
           },
           onLoadError: (error: string) => {
             logger.error(TAG, `PDF 加载失败: ${error}`);
             this.errorMessage = error;
+            this.notifyTransitionReaderReadyOnce('pdf_load_error');
           }
         } as PdfViewerCallbacks
       })
@@ -2349,7 +2383,7 @@ struct EBookReaderPage {
         currentPageIndex: this.textCurrentPageIndex,
         readAloudCurrentCharIndex: this.textReadAloudCurrentCharIndex,
         readAloudFollowEnabled: this.textReadAloudPlaying,
-        readAloudHighlightEnabled: true,
+        readAloudHighlightEnabled: this.textReadAloudPlaying,
         bottomStatusBarHeight: 28,  // 底部状态栏高度，避让时间、电量、页码显示区域
         onPageChange: (pageIndex: number, totalPages: number) => {
           this.textCurrentPageIndex = pageIndex;
@@ -2400,7 +2434,7 @@ struct EBookReaderPage {
         onReady: () => {
           // 文本阅读器分页完成，通知过渡动画阅读器就绪
           logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
-          setReaderReady();
+          this.notifyTransitionReaderReadyOnce('text_reader_ready');
         }
       })
       .width('100%')

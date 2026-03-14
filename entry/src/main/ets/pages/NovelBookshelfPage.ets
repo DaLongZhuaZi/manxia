@@ -83,6 +83,7 @@ export interface NovelReaderPageParams {
   author?: string;
   coverUrl?: string;
   sourceName?: string;
+  coverComponentId?: string;
   autoStartReadAloud?: boolean;
   autoOpenReadAloudPlayer?: boolean;
 }

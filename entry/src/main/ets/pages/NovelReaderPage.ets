@@ -78,6 +78,10 @@ export struct NovelReaderPage {
   @State readAloudCurrentCharIndex: number = -1;
   @State currentPageStartCharIndex: number = 0;
   @State currentPageEndCharIndex: number = 0;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
+  private sourceCoverComponentId: string = '';
+  private hasNotifiedTransitionReaderReady: boolean = false;
+  private isCloseTransitionNavigating: boolean = false;
 
   // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
   @State showTopToolbar: boolean = false;
@@ -200,7 +204,12 @@ export struct NovelReaderPage {
     // 离开页面时恢复自动旋转（防止双页模式强制横屏残留）
     WindowManager.setPreferredOrientationAuto(this.uiContext ?? undefined);
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
-    cancelTransition();
+    // 关闭动画主动返回时，不要在这里中断过渡层
+    if (!this.isCloseTransitionNavigating) {
+      cancelTransition();
+    } else {
+      logger.info(TAG, '页面销毁：关闭动画进行中，跳过cancelTransition');
+    }
   }
 
   onPageShow(): void {
@@ -235,6 +244,10 @@ export struct NovelReaderPage {
         return;
       }
 
+      const currentMode = WindowManager.getCurrentMode();
+      if (currentMode !== DisplayMode.FULL_IMMERSIVE) {
+        this.previousDisplayMode = currentMode;
+      }
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       logger.info(TAG, '设置完全沉浸式阅读模式');
     } catch (error) {
@@ -255,41 +268,54 @@ export struct NovelReaderPage {
         return;
       }
 
-      WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.uiContext);
-      logger.info(TAG, '恢复默认显示模式');
+      const targetMode = this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE
+        ? DisplayMode.DEFAULT
+        : this.previousDisplayMode;
+      WindowManager.setDisplayMode(targetMode, this.uiContext);
+      logger.info(TAG, `恢复显示模式: ${targetMode}`);
     } catch (error) {
       logger.error(TAG, `恢复正常模式失败: ${String(error)}`);
     }
+  }
+
+  private notifyTransitionReaderReadyOnce(reason: string): void {
+    if (this.hasNotifiedTransitionReaderReady) {
+      logger.debug(TAG, `过渡动画就绪已通知，忽略重复触发: ${reason}`);
+      return;
+    }
+    this.hasNotifiedTransitionReaderReady = true;
+    setReaderReady();
+    logger.info(TAG, `📖 已通知过渡动画阅读器就绪: ${reason}`);
   }
 
   /**
    * 关闭阅读器（带动画）
    */
   private async closeReader(): Promise<void> {
-    // 先保存阅读进度
+    // Save progress before triggering close transition.
     this.saveReadProgress();
 
-    // 获取封面组件ID（用于关闭动画）
-    const coverComponentId = `novel_cover_${this.bookId}`;
+    // Resolve source cover id for close animation target.
+    const coverComponentId = this.sourceCoverComponentId || `novel_cover_${this.bookId}`;
 
     try {
-      // 触发关闭过渡动画
       logger.info(TAG, `触发关闭过渡动画，封面组件ID: ${coverComponentId}`);
       await startBookCloseTransitionWithComponentId(
         'novel_reader_root',
-        coverComponentId,
-        () => {
-          // 动画完成后返回
-          this.pathStack.pop();
-        }
+        coverComponentId
       );
+
+      // Pop immediately after transition starts so detail page is visible during shrink.
+      this.isCloseTransitionNavigating = true;
+      this.pathStack.pop();
     } catch (error) {
       logger.error(TAG, `关闭动画失败: ${String(error)}`);
-      // [修复] 动画失败时重置过渡状态并返回
+      this.isCloseTransitionNavigating = false;
       cancelTransition();
       this.pathStack.pop();
     }
   }
+
 
   /**
    * 切换工具栏显示/隐藏
@@ -541,6 +567,7 @@ export struct NovelReaderPage {
   }
 
   async loadContent(): Promise<void> {
+    this.hasNotifiedTransitionReaderReady = false;
     this.isLoading = true;
     this.isReadProgressReady = false;
     try {
@@ -1491,6 +1518,7 @@ export struct NovelReaderPage {
       this.pathStack = context.pathStack;
       const param = context.pathInfo.param as NovelReaderPageParams | null;
       if (param) {
+        this.sourceCoverComponentId = param.coverComponentId || '';
         this.sourceId = param.sourceId;
         this.bookUrl = param.bookUrl;
         this.bookName = param.bookName;
@@ -1560,7 +1588,7 @@ export struct NovelReaderPage {
       currentPageIndex: this.currentPageIndex,
       readAloudCurrentCharIndex: this.readAloudCurrentCharIndex,
       readAloudFollowEnabled: this.readAloudPlaying,
-      readAloudHighlightEnabled: true,
+      readAloudHighlightEnabled: this.readAloudPlaying,
       bottomStatusBarHeight: 0,
       paginationMode: PaginationMode.ONLINE,  // 在线小说使用ONLINE分页模式
       onPageChange: (pageIndex: number, totalPages: number) => this.onPageChange(pageIndex, totalPages),
@@ -1575,7 +1603,7 @@ export struct NovelReaderPage {
       onReady: () => {
         // 文本阅读器分页完成，通知过渡动画阅读器就绪
         logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
-        setReaderReady();
+        this.notifyTransitionReaderReadyOnce('TextReaderComponent.onReady');
       },
       onAddPurifyRule: (pattern: string) => this.addPurifyRule(pattern),
       onSearchEncyclopedia: (keyword: string) => this.showEncyclopediaSearch(keyword),
