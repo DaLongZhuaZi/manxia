@@ -88,7 +88,7 @@ import { EBookSettingsPageParams } from './EBookDetailPage';
 import { EBookReaderParams } from './EBookReaderPage';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 
-import { startBookOpenTransitionWithComponentId } from '../components/BookTransitionOverlay';
+import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 
 const TAG = 'UnifiedDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -1604,6 +1604,7 @@ export struct UnifiedDetailPage {
     // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
     const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
+    readerParams.coverComponentId = coverComponentId;
     
     logger.info(TAG, `触发漫画翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
     startBookOpenTransitionWithComponentId(
@@ -1615,6 +1616,12 @@ export struct UnifiedDetailPage {
         // 动画完成时触发导航
         logger.info(TAG, '漫画翻开过渡动画触发导航');
         this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+      },
+      undefined,
+      {
+        title: this.content.title,
+        author: this.content.author,
+        intro: this.content.description
       }
     );
   }
@@ -1634,8 +1641,10 @@ export struct UnifiedDetailPage {
     // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
     const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
+    params.coverComponentId = coverComponentId;
+    const ebookBackground = this.getUnifiedEBookTransitionBackground();
     
-    logger.info(TAG, `触发电子书翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+    logger.info(TAG, `触发电子书翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, 有背景设置=${ebookBackground ? '是' : '否'}`);
     startBookOpenTransitionWithComponentId(
       coverPath,
       coverComponentId,
@@ -1645,6 +1654,12 @@ export struct UnifiedDetailPage {
         // 动画完成时触发导航
         logger.info(TAG, '电子书翻开过渡动画触发导航');
         this.pathStack.pushPathByName('EBookReaderPage', params);
+      },
+      ebookBackground,
+      {
+        title: this.content.title,
+        author: this.content.author,
+        intro: this.content.description
       }
     );
   }
@@ -1679,19 +1694,66 @@ export struct UnifiedDetailPage {
     // 优先使用本地缓存的封面路径（可直接加载PixelMap），回退到网络URL
     const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
+    const transitionBookId = this.getUnifiedNovelTransitionBookId();
+    params.coverComponentId = coverComponentId;
     
-    logger.info(TAG, `触发小说翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
+    logger.info(TAG, `触发小说翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, transitionBookId=${transitionBookId}`);
     startBookOpenTransitionWithComponentId(
       coverPath,
       coverComponentId,
-      this.content.id,
+      transitionBookId,
       'novel',
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '小说翻开过渡动画触发导航');
         this.pathStack.pushPathByName('NovelReaderPage', params);
+      },
+      undefined,
+      {
+        title: this.content.title,
+        author: this.content.author,
+        intro: this.content.description
       }
     );
+  }
+
+  private getUnifiedEBookTransitionBackground(): EBookBackgroundSettings | undefined {
+    if (!this.content) {
+      return undefined;
+    }
+
+    const ebook = EBookAdapter.getOriginalEBook(this.content);
+    if (!ebook || !ebook.readingSettings) {
+      return undefined;
+    }
+
+    const background: EBookBackgroundSettings = {
+      backgroundColor: ebook.readingSettings.backgroundColor || '#FFFFFF'
+    };
+
+    const isTxtBook = ebook.format === EBookFormat.TXT;
+    const hasCustomImage = ebook.readingSettings.backgroundType === 'IMAGE'
+      && typeof ebook.readingSettings.backgroundImagePath === 'string'
+      && ebook.readingSettings.backgroundImagePath.length > 0;
+
+    if (isTxtBook && hasCustomImage) {
+      background.backgroundImagePath = ebook.readingSettings.backgroundImagePath;
+      background.backgroundImageOpacity = ebook.readingSettings.backgroundImageOpacity ?? 0.3;
+    }
+
+    return background;
+  }
+
+  private getUnifiedNovelTransitionBookId(): string {
+    if (!this.content) {
+      return '';
+    }
+
+    if (this.content.sourceId && this.content.sourceId.length > 0) {
+      return `${this.content.sourceId}_${encodeURIComponent(this.content.id)}`;
+    }
+
+    return this.content.id;
   }
 
   /**
@@ -1717,6 +1779,7 @@ export struct UnifiedDetailPage {
       tocUrl: originalBook?.tocUrl,
       author: this.content.author,
       coverUrl: this.content.coverUrl,
+      coverComponentId: `cover_${this.componentId}`,
       autoStartReadAloud: true,
       autoOpenReadAloudPlayer: true
     };

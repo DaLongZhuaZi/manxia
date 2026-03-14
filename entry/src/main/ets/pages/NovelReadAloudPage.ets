@@ -50,6 +50,7 @@ export struct NovelReadAloudPage {
   private chapterUrl: string = '';
   private tocUrl: string = '';
   private bookId: string = '';
+  private sourceCoverComponentId: string = '';
   private chapterList: LegadoChapter[] = [];
   private chapterContent: string = '';
   private readAloudSettings: ReadAloudSettings = DEFAULT_READ_ALOUD_SETTINGS;
@@ -359,7 +360,8 @@ export struct NovelReadAloudPage {
       totalChapters: this.totalChapters,
       tocUrl: this.tocUrl || this.bookUrl,
       author: this.author,
-      coverUrl: this.coverUrl
+      coverUrl: this.coverUrl,
+      coverComponentId: this.sourceCoverComponentId || undefined
     };
     this.pathStack.pushPathByName('NovelReaderPage', params);
   }
@@ -464,6 +466,7 @@ export struct NovelReadAloudPage {
       this.tocUrl = param.tocUrl || param.bookUrl;
       this.author = param.author || '';
       this.coverUrl = param.coverUrl || '';
+      this.sourceCoverComponentId = param.coverComponentId || '';
       this.bookId = `${param.sourceId}_${encodeURIComponent(param.bookUrl)}`;
       this.readAloudSettings = this.loadGlobalReadAloudSettings();
       this.readAloudController.updateSettings(this.readAloudSettings);

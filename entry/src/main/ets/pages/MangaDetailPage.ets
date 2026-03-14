@@ -3680,6 +3680,7 @@ struct MangaDetailPage {
       // 触发翻开过渡动画（使用组件ID获取准确封面位置）
       const coverPath: string = this.currentManga.coverImagePath || '';
       const coverComponentId: string = `cover_manga_detail_${this.currentManga.id}`;
+      readerParams.coverComponentId = coverComponentId;
       
       logger.info(TAG, `触发翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
       startBookOpenTransitionWithComponentId(
@@ -3689,14 +3690,16 @@ struct MangaDetailPage {
         'manga',
         () => {
           logger.info(TAG, '翻开过渡动画完成');
+          this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+          logger.info(TAG, `${this.hasReadingProgress() ? '继续' : '开始'}阅读漫画: ${this.currentManga?.title}`);
+        },
+        undefined,
+        {
+          title: this.currentManga?.title || '',
+          author: this.currentManga?.metadata?.authors?.[0] || '',
+          intro: this.currentManga?.description || ''
         }
       );
-      
-      // 延迟导航，让过渡动画先开始
-      setTimeout(() => {
-        this.pathStack.pushPathByName('MangaReaderPage', readerParams);
-        logger.info(TAG, `${this.hasReadingProgress() ? '继续' : '开始'}阅读漫画: ${this.currentManga?.title}`);
-      }, 100);
     } catch (error) {
       logger.error(TAG, `导航到阅读页面失败: ${String(error)}`);
     }
@@ -3997,6 +4000,7 @@ struct MangaDetailPage {
       // 触发翻开过渡动画（使用组件ID获取准确封面位置）
       const coverPath2: string = this.currentManga?.coverImagePath || '';
       const coverComponentId2: string = `cover_manga_detail_${this.currentManga?.id || ''}`;
+      readerParams.coverComponentId = coverComponentId2;
       
       logger.info(TAG, `触发翻开过渡动画(章节): coverPath=${coverPath2}, componentId=${coverComponentId2}`);
       startBookOpenTransitionWithComponentId(
@@ -4006,14 +4010,16 @@ struct MangaDetailPage {
         'manga',
         () => {
           logger.info(TAG, '翻开过渡动画完成(章节)');
+          this.pathStack.pushPathByName('MangaReaderPage', readerParams);
+          logger.info(TAG, `开始阅读章节: ${chapter.title}`);
+        },
+        undefined,
+        {
+          title: this.currentManga?.title || '',
+          author: this.currentManga?.metadata?.authors?.[0] || '',
+          intro: this.currentManga?.description || ''
         }
       );
-      
-      // 延迟导航，让过渡动画先开始
-      setTimeout(() => {
-        this.pathStack.pushPathByName('MangaReaderPage', readerParams);
-        logger.info(TAG, `开始阅读章节: ${chapter.title}`);
-      }, 100);
     } catch (error) {
       logger.error(TAG, `导航到章节阅读失败: ${String(error)}`);
     }

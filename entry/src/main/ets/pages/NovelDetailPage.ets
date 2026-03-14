@@ -977,6 +977,7 @@ export struct NovelDetailPage {
     const coverPath = this.book?.coverUrl || '';
     const bookId = `${this.sourceId}_${encodeURIComponent(this.bookUrl)}`;
     const coverComponentId = `novel_cover_${bookId}`;
+    params.coverComponentId = coverComponentId;
     
     // 触发翻开动画
     logger.info(TAG, `触发翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}`);
@@ -988,6 +989,12 @@ export struct NovelDetailPage {
       () => {
         // 动画完成后导航到阅读器
         this.pathStack.pushPathByName('NovelReaderPage', params);
+      },
+      undefined,
+      {
+        title: this.book?.name || '',
+        author: this.book?.author || '',
+        intro: this.book?.intro || ''
       }
     );
   }

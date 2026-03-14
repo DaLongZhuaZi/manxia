@@ -85,7 +85,7 @@ const DEFAULT_CONFIG: BookTransitionConfig = {
   shrinkDuration: 400,
   returnDuration: 350,
   fadeDuration: 200,
-  maxLiftAngle: 45,  // 减少翻开角度，更自然
+  maxLiftAngle: 68,  // 提升翻开角度，增强3D书本效果
   shadowIntensity: 0.6,
   enableShadow: true,
   enable3DEffect: true,
@@ -113,6 +113,7 @@ export interface BookTransitionParams {
 export struct BookOpenTransition {
   // ========== 外部参数 ==========
   @Prop mode: TransitionMode = TransitionMode.OPEN;
+  @Prop contentType: 'manga' | 'ebook' | 'novel' = 'manga';
   @Prop coverImagePath: string = '';
   @Prop @Watch('onCoverPositionChange') coverPosition: CoverPosition = { x: 0, y: 0, width: 100, height: 150 };
   @Prop @Watch('onReaderPixelMapChange') readerContentPixelMap: image.PixelMap | null = null;
@@ -120,6 +121,9 @@ export struct BookOpenTransition {
   @Prop config: BookTransitionConfig = DEFAULT_CONFIG;
   @Prop @Watch('onReaderReadyChange') isReaderReady: boolean = false;  // 阅读器是否就绪（外部控制）
   @Prop ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
+  @Prop bookTitle: string = '';
+  @Prop bookAuthor: string = '';
+  @Prop bookIntro: string = '';
   
   // 回调函数
   onAnimationComplete: () => void = () => {};
@@ -128,6 +132,7 @@ export struct BookOpenTransition {
   // ========== 内部状态 ==========
   @State private currentPhase: TransitionPhase = TransitionPhase.IDLE;
   @State private animationProgress: number = 0;  // 当前阶段动画进度 0-1
+  @State private loadingProgress: number = 0.06; // 打开等待阶段加载进度 0-1
   
   // 当前动画状态
   @State private currentX: number = 0;
@@ -160,6 +165,9 @@ export struct BookOpenTransition {
   
   // 动画控制
   private animationTimer: number = -1;
+  private loadingProgressTimer: number = -1;
+  private loadingProgressFinishTimer: number = -1;
+  private loadingProgressStartTime: number = 0;
   @State private isAnimating: boolean = false;  // 改为@State以触发UI重新渲染
   private pendingAnimationStart: boolean = false;  // 等待尺寸后启动动画
   private animationStartTime: number = 0;
@@ -183,7 +191,8 @@ export struct BookOpenTransition {
   
   // ========== 生命周期 ==========
   aboutToAppear(): void {
-    logger.info(TAG, `组件初始化，模式: ${this.mode}, ebookBackground=${this.ebookBackground ? `有(色=${this.ebookBackground.backgroundColor}, 图=${this.ebookBackground.backgroundImagePath || '无'})` : '无'}`);
+    logger.info(TAG, `组件初始化，模式: ${this.mode}, type=${this.contentType}, ebookBackground=${this.ebookBackground ? `有(色=${this.ebookBackground.backgroundColor}, 图=${this.ebookBackground.backgroundImagePath || '无'})` : '无'}`);
+    this.resetLoadingProgress();
     // 初始化当前位置为封面位置
     this.currentX = this.coverPosition.x;
     this.currentY = this.coverPosition.y;
@@ -212,11 +221,15 @@ export struct BookOpenTransition {
    * 加载背景图片（用于Canvas绘制）
    */
   private loadBackgroundImage(): void {
-    if (!this.ebookBackground || !this.ebookBackground.backgroundImagePath || this.ebookBackground.backgroundImagePath.length === 0) {
+    if (!this.hasOpenBackgroundImage()) {
+      this.backgroundImagePixelMap = null;
       return;
     }
     
-    const imagePath = this.ebookBackground.backgroundImagePath;
+    const imagePath = this.getOpenBackgroundImagePath();
+    if (imagePath.length === 0) {
+      return;
+    }
     logger.info(TAG, `加载背景图片: ${imagePath}`);
     
     try {
@@ -237,6 +250,7 @@ export struct BookOpenTransition {
   aboutToDisappear(): void {
     logger.info(TAG, '组件销毁');
     this.stopAnimation();
+    this.stopLoadingProgressTimers();
     this.clearReaderReadyTimers();
     this.releaseCoverPixelMap();
     this.animationCompleted = true;  // 标记完成，防止任何残留计时器继续
@@ -371,7 +385,9 @@ export struct BookOpenTransition {
     if (this.isReaderReady && this.currentPhase === TransitionPhase.WAITING_READY && !this.animationCompleted) {
       logger.info(TAG, '检测到阅读器就绪，开始掀开动画');
       this.clearReaderReadyTimers();  // 清除等待计时器
-      this.startLiftAnimation();
+      this.completeLoadingProgress(() => {
+        this.startLiftAnimation();
+      });
     }
   }
   
@@ -417,6 +433,7 @@ export struct BookOpenTransition {
   private startOpenAnimation(): void {
     // 计算中央目标位置
     this.calculateCenterPosition();
+    this.resetLoadingProgress();
     
     // 设置初始状态
     this.currentX = this.coverPosition.x;
@@ -436,36 +453,36 @@ export struct BookOpenTransition {
    * 开始关闭动画
    */
   private startCloseAnimation(): void {
-    // 计算中央位置（关闭动画从中央开始）
+    // Align close stage-1 target with the same 3D book rect used by open animation.
     this.calculateCenterPosition();
-    
-    // 调试：检查截图是否可用
-    logger.info(TAG, `📷 关闭动画开始: readerContentPixelMap=${this.readerContentPixelMap ? '有效' : '空'}, localReaderPixelMap=${this.localReaderPixelMap ? '有效' : '空'}`);
-    if (this.localReaderPixelMap) {
-      logger.info(TAG, `📷 关闭动画：本地截图可用，将使用Image组件显示`);
-    } else if (this.readerContentPixelMap) {
-      logger.warn(TAG, `📷 关闭动画：原始截图可用但本地副本为空，尝试复制`);
+    const closeBookRect = this.getOpenTargetRect();
+    this.centerX = closeBookRect.x;
+    this.centerY = closeBookRect.y;
+    this.centerWidth = closeBookRect.width;
+    this.centerHeight = closeBookRect.height;
+
+    logger.info(TAG, `close start: readerPixelMap=${this.readerContentPixelMap ? 'yes' : 'no'}, localPixelMap=${this.localReaderPixelMap ? 'yes' : 'no'}`);
+    if (!this.localReaderPixelMap && this.readerContentPixelMap) {
       this.localReaderPixelMap = this.readerContentPixelMap;
-    } else {
-      logger.warn(TAG, `📷 关闭动画：截图不可用，将使用Canvas备用效果`);
+      logger.warn(TAG, 'close start: restore local pixelMap from prop');
     }
-    
-    // 设置初始状态（从全屏开始，透明度为1）
-    // 关键：截图内容和阅读器内容完全一样，所以直接显示不会有视觉差异
+
     this.currentX = 0;
     this.currentY = 0;
     this.currentWidth = this.componentWidth;
     this.currentHeight = this.componentHeight;
     this.currentScale = 1;
-    this.currentOpacity = 1;  // 直接显示，因为截图和阅读器内容一样
+    this.currentOpacity = 1;
     this.liftAngle = 0;
-    
-    logger.info(TAG, `关闭动画初始状态: pos=(${this.currentX}, ${this.currentY}), size=${this.currentWidth}x${this.currentHeight}`);
-    
-    // 直接开始缩小阶段（跳过淡入，因为截图和阅读器内容一样）
+    this.coverFlipProgress = 0;
+    this.shadowOpacity = this.config.shadowIntensity * 0.16;
+
+    logger.info(TAG, `close start rect: full=${this.currentWidth}x${this.currentHeight}, center=${this.centerWidth}x${this.centerHeight}`);
+
     this.setPhase(TransitionPhase.SHRINKING);
     this.animateShrink();
   }
+
   
   /**
    * 淡入动画（关闭模式第一阶段）
@@ -549,6 +566,13 @@ export struct BookOpenTransition {
       logger.info(TAG, `阶段变化: ${this.currentPhase} -> ${phase}`);
       this.currentPhase = phase;
       this.animationProgress = 0;
+      if (this.mode === TransitionMode.OPEN) {
+        if (phase === TransitionPhase.WAITING_READY) {
+          this.startWaitingProgressLoop();
+        } else if (phase === TransitionPhase.COVER_LIFTING || phase === TransitionPhase.COMPLETED || phase === TransitionPhase.IDLE) {
+          this.stopLoadingProgressTimers();
+        }
+      }
       this.onPhaseChange(phase);
     }
   }
@@ -563,6 +587,86 @@ export struct BookOpenTransition {
     }
     this.isAnimating = false;
   }
+
+  private resetLoadingProgress(): void {
+    this.stopLoadingProgressTimers();
+    if (this.mode === TransitionMode.OPEN) {
+      this.loadingProgress = 0.06;
+    } else {
+      this.loadingProgress = 0;
+    }
+  }
+
+  private stopLoadingProgressTimers(): void {
+    if (this.loadingProgressTimer !== -1) {
+      clearInterval(this.loadingProgressTimer);
+      this.loadingProgressTimer = -1;
+    }
+    if (this.loadingProgressFinishTimer !== -1) {
+      clearInterval(this.loadingProgressFinishTimer);
+      this.loadingProgressFinishTimer = -1;
+    }
+  }
+
+  private startWaitingProgressLoop(): void {
+    if (this.mode !== TransitionMode.OPEN) {
+      return;
+    }
+    if (this.loadingProgress < 0.42) {
+      this.loadingProgress = 0.42;
+    }
+    if (this.loadingProgressTimer !== -1) {
+      return;
+    }
+
+    this.loadingProgressStartTime = Date.now();
+    this.loadingProgressTimer = setInterval(() => {
+      if (this.currentPhase !== TransitionPhase.WAITING_READY || this.animationCompleted || this.mode !== TransitionMode.OPEN) {
+        return;
+      }
+
+      const elapsed = Date.now() - this.loadingProgressStartTime;
+      const waitingTarget = 0.42 + 0.5 * (1 - Math.exp(-elapsed / 1350));
+      const clampedTarget = Math.max(0.42, Math.min(0.92, waitingTarget));
+      if (clampedTarget > this.loadingProgress) {
+        this.loadingProgress = clampedTarget;
+      }
+    }, 80);
+  }
+
+  private completeLoadingProgress(onDone?: () => void): void {
+    this.stopLoadingProgressTimers();
+
+    if (this.loadingProgress >= 0.999) {
+      this.loadingProgress = 1;
+      if (onDone) {
+        onDone();
+      }
+      return;
+    }
+
+    const startValue = this.loadingProgress;
+    const startTime = Date.now();
+    const duration = 220;
+
+    this.loadingProgressFinishTimer = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const progress = this.clamp01(elapsed / duration);
+      const eased = this.easeOutCubic(progress);
+      this.loadingProgress = startValue + (1 - startValue) * eased;
+
+      if (progress >= 1) {
+        if (this.loadingProgressFinishTimer !== -1) {
+          clearInterval(this.loadingProgressFinishTimer);
+          this.loadingProgressFinishTimer = -1;
+        }
+        this.loadingProgress = 1;
+        if (onDone) {
+          onDone();
+        }
+      }
+    }, 16);
+  }
   
   /**
    * 取消动画（带渐隐效果）
@@ -575,6 +679,7 @@ export struct BookOpenTransition {
     logger.info(TAG, '开始取消动画渐隐');
     this.isCancelling = true;
     this.stopAnimation();
+    this.stopLoadingProgressTimers();
     
     this.cancelFadeStartTime = Date.now();
     const startOpacity = this.currentOpacity;
@@ -613,81 +718,87 @@ export struct BookOpenTransition {
   @State private showLoading: boolean = false;
   
   /**
-   * 连续的翻开动画：
-   * 阶段1 (0%-80%): 封面上浮、放大、翻开，底层黑页同步展开
-   * 阶段2 (80%): 黑页全屏，触发页面过渡到阅读器
-   * 阶段3 (80%-100%): 封面渐隐消失，露出下方阅读器
+   * 阶段1：封面移动到中心并放大，形成“书本就位”状态。
+   * 完成后先触发导航，再进入 WAITING_READY 等待阅读器完成加载。
    */
   private animateCoverMove(): void {
     this.isAnimating = true;
     this.animationStartTime = Date.now();
     this.hasTriggeredTransition = false;
-    
-    // 总动画时长
-    const totalDuration = this.config.coverMoveDuration + this.config.liftDuration;
-    
+    this.showLoading = false;
+
+    const totalDuration = this.config.coverMoveDuration + 260;
+
     const startX = this.coverPosition.x;
     const startY = this.coverPosition.y;
     const startWidth = this.coverPosition.width;
     const startHeight = this.coverPosition.height;
-    
-    // 最终目标：全屏
-    const endWidth = this.componentWidth;
-    const endHeight = this.componentHeight;
-    
+
+    const targetRect = this.getOpenTargetRect();
+    const settleStartY = targetRect.y - Math.min(32, this.componentHeight * 0.04);
+    const settleStartWidth = targetRect.width * 1.04;
+    const settleStartHeight = targetRect.height * 1.04;
+    const stageSplit = 0.74;
+
     const animate = () => {
       const elapsed = Date.now() - this.animationStartTime;
-      const progress = Math.min(1, elapsed / totalDuration);
-      
-      // 使用缓动函数
-      const easedProgress = this.easeInOutCubic(progress);
-      
-      // 连续放大：从封面尺寸到全屏
-      this.currentWidth = startWidth + (endWidth - startWidth) * easedProgress;
-      this.currentHeight = startHeight + (endHeight - startHeight) * easedProgress;
-      
-      // 位置：保持左边缘为轴心移动
-      const leftEdgeX = startX * (1 - easedProgress);
-      this.currentX = leftEdgeX;
-      // Y从封面位置移动到顶部
-      this.currentY = startY * (1 - easedProgress);
-      
-      // 翻开角度：从10%进度开始翻开，到60%完成（更早完成翻开）
-      if (progress > 0.1 && progress < 0.6) {
-        const liftProgress = (progress - 0.1) / 0.5;
-        this.liftAngle = this.easeOutCubic(liftProgress) * this.config.maxLiftAngle;
-      } else if (progress >= 0.6) {
-        this.liftAngle = this.config.maxLiftAngle;
+      const progress = this.clamp01(elapsed / totalDuration);
+
+      if (progress <= stageSplit) {
+        const t = this.clamp01(progress / stageSplit);
+        const eased = this.easeOutQuart(t);
+        this.currentX = startX + (targetRect.x - startX) * eased;
+        this.currentY = startY + (settleStartY - startY) * eased;
+        this.currentWidth = startWidth + (settleStartWidth - startWidth) * eased;
+        this.currentHeight = startHeight + (settleStartHeight - startHeight) * eased;
+        this.liftAngle = 6 * this.easeInOutSine(t);
+      } else {
+        const t = this.clamp01((progress - stageSplit) / (1 - stageSplit));
+        const eased = this.clamp01(this.easeOutBack(t));
+        this.currentX = targetRect.x;
+        this.currentY = settleStartY + (targetRect.y - settleStartY) * this.easeInOutSine(t);
+        this.currentWidth = settleStartWidth + (targetRect.width - settleStartWidth) * eased;
+        this.currentHeight = settleStartHeight + (targetRect.height - settleStartHeight) * eased;
+        this.liftAngle = 6 * (1 - this.easeInOutSine(t));
       }
-      
-      // 动画完成后才触发页面过渡（在progress >= 1的处理中）
-      // 不再在这里提前触发
-      
-      // 封面保持不透明，直到动画完成
-      // 不再渐隐，由动画完成时统一处理
-      
-      // 阴影效果
-      this.shadowOpacity = Math.sin(progress * Math.PI * 0.8) * this.config.shadowIntensity;
-      
+
+      const movingProgress = 0.08 + 0.34 * this.easeInOutSine(progress);
+      const clampedMovingProgress = Math.max(0.08, Math.min(0.45, movingProgress));
+      if (clampedMovingProgress > this.loadingProgress) {
+        this.loadingProgress = clampedMovingProgress;
+      }
+
+      this.currentOpacity = 1;
+      this.shadowOpacity = (0.12 + 0.88 * Math.sin(progress * Math.PI)) * this.config.shadowIntensity;
       this.animationProgress = progress;
       this.renderFrame();
-      
+
       if (progress >= 1) {
         this.stopAnimation();
-        this.clearReaderReadyTimers();
-        this.animationCompleted = true;
+        this.currentX = targetRect.x;
+        this.currentY = targetRect.y;
+        this.currentWidth = targetRect.width;
+        this.currentHeight = targetRect.height;
+        this.liftAngle = 0;
+        this.shadowOpacity = this.config.shadowIntensity * 0.18;
         this.showLoading = false;
-        this.setPhase(TransitionPhase.COMPLETED);
-        
-        // 动画100%完成后才触发页面导航
+        this.setPhase(TransitionPhase.WAITING_READY);
+        this.renderFrame();
+
         if (!this.hasTriggeredTransition) {
           this.hasTriggeredTransition = true;
-          logger.info(TAG, '动画完成，触发页面过渡');
+          logger.info(TAG, '封面就位，触发页面导航');
           this.onAnimationComplete();
+        }
+
+        if (this.isReaderReady) {
+          this.completeLoadingProgress(() => {
+            this.startLiftAnimation();
+          });
         }
       }
     };
-    
+
     this.animationTimer = setInterval(animate, 16);
   }
   
@@ -702,10 +813,63 @@ export struct BookOpenTransition {
   }
   
   /**
-   * 阶段2：封面掀起动画（保留用于兼容）
+   * 阶段2：阅读器就绪后执行封面掀起，模拟真实翻书。
    */
   private startLiftAnimation(): void {
-    // 已合并到连续动画中
+    if (this.mode !== TransitionMode.OPEN) {
+      return;
+    }
+    if (this.animationCompleted || this.currentPhase === TransitionPhase.COVER_LIFTING) {
+      return;
+    }
+    if (!this.isReaderReady) {
+      return;
+    }
+
+    this.stopAnimation();
+    this.setPhase(TransitionPhase.COVER_LIFTING);
+    this.isAnimating = true;
+    this.animationStartTime = Date.now();
+
+    const duration = this.config.liftDuration + Math.floor(this.config.transitionDuration * 0.85);
+    const startAngle = this.liftAngle;
+    const maxAngle = Math.max(this.config.maxLiftAngle, 62);
+
+    const animate = () => {
+      const elapsed = Date.now() - this.animationStartTime;
+      const progress = this.clamp01(elapsed / duration);
+      const liftProgress = this.easeInOutSine(progress);
+
+      const bounce = progress > 0.72
+        ? Math.sin(((progress - 0.72) / 0.28) * Math.PI) * (1 - progress) * 3.2
+        : 0;
+      this.liftAngle = startAngle + (maxAngle - startAngle) * this.easeOutQuart(liftProgress) + bounce;
+
+      const fadeStart = 0.34;
+      if (progress <= fadeStart) {
+        this.currentOpacity = 1;
+      } else {
+        const fadeProgress = this.clamp01((progress - fadeStart) / (1 - fadeStart));
+        this.currentOpacity = 1 - this.easeInOutSine(fadeProgress);
+      }
+
+      this.shadowOpacity = (1 - progress) * this.config.shadowIntensity;
+      this.animationProgress = progress;
+      this.renderFrame();
+
+      if (progress >= 1) {
+        this.stopAnimation();
+        this.currentOpacity = 0;
+        this.shadowOpacity = 0;
+        this.liftAngle = maxAngle;
+        this.loadingProgress = 1;
+        this.animationCompleted = true;
+        this.setPhase(TransitionPhase.COMPLETED);
+        this.renderFrame();
+      }
+    };
+
+    this.animationTimer = setInterval(animate, 16);
   }
   
   /**
@@ -723,37 +887,48 @@ export struct BookOpenTransition {
   private animateShrink(): void {
     this.isAnimating = true;
     this.animationStartTime = Date.now();
-    const duration = this.config.shrinkDuration;
-    
-    const startWidth = this.componentWidth;
-    const startHeight = this.componentHeight;
-    
+    const duration = this.config.shrinkDuration + 50;
+
+    const startX = this.currentX;
+    const startY = this.currentY;
+    const startWidth = this.currentWidth;
+    const startHeight = this.currentHeight;
+    const targetX = this.centerX;
+    const targetY = this.centerY;
+    const targetWidth = this.centerWidth;
+    const targetHeight = this.centerHeight;
+
     const animate = () => {
       const elapsed = Date.now() - this.animationStartTime;
-      const progress = Math.min(1, elapsed / duration);
-      
-      // 使用缓动函数
-      const easedProgress = this.easeInCubic(progress);
-      
-      // 缩小到中央位置
-      this.currentWidth = startWidth - (startWidth - this.centerWidth) * easedProgress;
-      this.currentHeight = startHeight - (startHeight - this.centerHeight) * easedProgress;
-      this.currentX = (this.componentWidth - this.currentWidth) / 2;
-      this.currentY = (this.componentHeight - this.currentHeight) / 2;
-      
-      // 圆角逐渐增加
+      const progress = this.clamp01(elapsed / duration);
+      const eased = this.easeInOutCubic(progress);
+
+      this.currentX = startX + (targetX - startX) * eased;
+      this.currentY = startY + (targetY - startY) * eased;
+      this.currentWidth = startWidth + (targetWidth - startWidth) * eased;
+      this.currentHeight = startHeight + (targetHeight - startHeight) * eased;
+      this.currentOpacity = 1;
+      this.coverFlipProgress = 0;
+      this.shadowOpacity = this.config.shadowIntensity * (0.18 + 0.12 * eased);
+
       this.animationProgress = progress;
       this.renderFrame();
-      
+
       if (progress >= 1) {
         this.stopAnimation();
-        // 缩小完成，开始返回封面位置
+        this.currentX = targetX;
+        this.currentY = targetY;
+        this.currentWidth = targetWidth;
+        this.currentHeight = targetHeight;
+        this.currentOpacity = 1;
+        this.shadowOpacity = this.config.shadowIntensity * 0.3;
         this.animateReturn();
       }
     };
-    
+
     this.animationTimer = setInterval(animate, 16);
   }
+
   
   /**
    * 阶段2：缩回到封面位置（同时封面翻页盖住）
@@ -762,58 +937,46 @@ export struct BookOpenTransition {
     this.isAnimating = true;
     this.setPhase(TransitionPhase.RETURNING);
     this.animationStartTime = Date.now();
-    const duration = this.config.returnDuration;
-    
-    const startX = this.currentX;
-    const startY = this.currentY;
-    const startWidth = this.currentWidth;
-    const startHeight = this.currentHeight;
-    
-    const targetX = this.coverPosition.x;
-    const targetY = this.coverPosition.y;
-    const targetWidth = this.coverPosition.width;
-    const targetHeight = this.coverPosition.height;
-    
-    // 初始封面翻页进度为0（完全打开状态）
+    const duration = Math.max(260, Math.floor(this.config.returnDuration * 0.9));
+
+    const fixedX = this.currentX;
+    const fixedY = this.currentY;
+    const fixedWidth = this.currentWidth;
+    const fixedHeight = this.currentHeight;
+
     this.coverFlipProgress = 0;
-    
+
     const animate = () => {
       const elapsed = Date.now() - this.animationStartTime;
-      const progress = Math.min(1, elapsed / duration);
-      
-      // 使用缓动函数
-      const easedProgress = this.easeInOutCubic(progress);
-      
-      // 移动到封面位置
-      this.currentX = startX + (targetX - startX) * easedProgress;
-      this.currentY = startY + (targetY - startY) * easedProgress;
-      this.currentWidth = startWidth + (targetWidth - startWidth) * easedProgress;
-      this.currentHeight = startHeight + (targetHeight - startHeight) * easedProgress;
-      
-      // 封面翻页盖住效果：从30%进度开始，到100%完成
-      if (progress > 0.3) {
-        const flipProgress = (progress - 0.3) / 0.7;  // 归一化到0-1
-        this.coverFlipProgress = this.easeOutCubic(flipProgress);
-      }
-      
-      // 开始淡出（在后半段）
-      if (progress > 0.7) {
-        const fadeProgress = (progress - 0.7) / 0.3;
-        this.currentOpacity = 1 - fadeProgress * 0.2;  // 淡出20%
-      }
-      
+      const progress = this.clamp01(elapsed / duration);
+      const eased = this.easeInOutSine(progress);
+
+      // Stage-2 only closes the cover, keeps the 3D book fixed at center.
+      this.currentX = fixedX;
+      this.currentY = fixedY;
+      this.currentWidth = fixedWidth;
+      this.currentHeight = fixedHeight;
+      this.currentOpacity = 1;
+      this.coverFlipProgress = eased;
+      this.liftAngle = (1 - eased) * 4;
+      this.shadowOpacity = this.config.shadowIntensity * (0.34 - 0.1 * eased);
+
       this.animationProgress = progress;
       this.renderFrame();
-      
+
       if (progress >= 1) {
         this.stopAnimation();
-        // 返回完成，开始淡出
+        this.coverFlipProgress = 1;
+        this.liftAngle = 0;
+        this.currentOpacity = 1;
+        this.shadowOpacity = this.config.shadowIntensity * 0.24;
         this.animateFade();
       }
     };
-    
+
     this.animationTimer = setInterval(animate, 16);
   }
+
   
   /**
    * 阶段3：淡出消失
@@ -822,42 +985,52 @@ export struct BookOpenTransition {
     this.isAnimating = true;
     this.setPhase(TransitionPhase.FADING);
     this.animationStartTime = Date.now();
-    const duration = this.config.fadeDuration;
-    
-    const startOpacity = this.currentOpacity;
-    
+    const duration = Math.max(this.config.fadeDuration + 120, 320);
+
+    const startX = this.currentX;
+    const startY = this.currentY;
+    const startWidth = this.currentWidth;
+    const startHeight = this.currentHeight;
+    const startShadow = this.shadowOpacity;
+    const targetShadow = this.config.shadowIntensity * 0.08;
+
     const animate = () => {
       const elapsed = Date.now() - this.animationStartTime;
-      const progress = Math.min(1, elapsed / duration);
-      
-      // 使用缓动函数
-      const easedProgress = this.easeOutCubic(progress);
-      
-      // 淡出
-      this.currentOpacity = startOpacity * (1 - easedProgress);
-      
-      // 同时继续轻微缩小
-      const shrinkFactor = 1 - easedProgress * 0.1;
-      this.currentWidth = this.coverPosition.width * shrinkFactor;
-      this.currentHeight = this.coverPosition.height * shrinkFactor;
-      // 保持中心位置
-      this.currentX = this.coverPosition.x + (this.coverPosition.width - this.currentWidth) / 2;
-      this.currentY = this.coverPosition.y + (this.coverPosition.height - this.currentHeight) / 2;
-      
+      const progress = this.clamp01(elapsed / duration);
+      const easedMove = this.easeInOutCubic(progress);
+      const easedShadow = this.easeOutCubic(progress);
+
+      // Stage-3 moves the closed 3D book back to detail-page cover slot.
+      this.currentX = startX + (this.coverPosition.x - startX) * easedMove;
+      this.currentY = startY + (this.coverPosition.y - startY) * easedMove;
+      this.currentWidth = startWidth + (this.coverPosition.width - startWidth) * easedMove;
+      this.currentHeight = startHeight + (this.coverPosition.height - startHeight) * easedMove;
+      this.currentOpacity = 1;
+      this.coverFlipProgress = 1;
+      this.shadowOpacity = startShadow + (targetShadow - startShadow) * easedShadow;
+
       this.animationProgress = progress;
       this.renderFrame();
-      
+
       if (progress >= 1) {
         this.stopAnimation();
+        this.currentX = this.coverPosition.x;
+        this.currentY = this.coverPosition.y;
+        this.currentWidth = this.coverPosition.width;
+        this.currentHeight = this.coverPosition.height;
+        this.currentOpacity = 1;
+        this.coverFlipProgress = 1;
+        this.shadowOpacity = targetShadow;
         this.clearReaderReadyTimers();
         this.animationCompleted = true;
         this.setPhase(TransitionPhase.COMPLETED);
         this.onAnimationComplete();
       }
     };
-    
+
     this.animationTimer = setInterval(animate, 16);
   }
+
   
   // ========== 缓动函数 ==========
   
@@ -871,6 +1044,159 @@ export struct BookOpenTransition {
   
   private easeInOutCubic(t: number): number {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  private easeInOutSine(t: number): number {
+    return -(Math.cos(Math.PI * t) - 1) / 2;
+  }
+
+  private easeOutQuart(t: number): number {
+    return 1 - Math.pow(1 - t, 4);
+  }
+
+  private easeOutBack(t: number): number {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  }
+
+  private clamp01(value: number): number {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private getOpenCoverAspectRatio(): number {
+    const width = this.coverPosition.width > 0
+      ? this.coverPosition.width
+      : (this.coverOriginalWidth > 0 ? this.coverOriginalWidth : 140);
+    const height = this.coverPosition.height > 0
+      ? this.coverPosition.height
+      : (this.coverOriginalHeight > 0 ? this.coverOriginalHeight : 200);
+    return Math.max(0.42, Math.min(1.25, width / Math.max(1, height)));
+  }
+
+  private getOpenTargetRect(): CoverPosition {
+    const aspect = this.getOpenCoverAspectRatio();
+    let width = this.componentWidth * 0.72;
+    let height = width / aspect;
+    const maxHeight = this.componentHeight * 0.82;
+
+    if (height > maxHeight) {
+      height = maxHeight;
+      width = height * aspect;
+    }
+
+    return {
+      x: (this.componentWidth - width) / 2,
+      y: (this.componentHeight - height) / 2,
+      width: width,
+      height: height
+    };
+  }
+
+  private getOpenBackdropColor(): string {
+    if (this.contentType === 'manga') {
+      return '#000000';
+    }
+    if (this.ebookBackground && this.ebookBackground.backgroundColor.length > 0) {
+      return this.ebookBackground.backgroundColor;
+    }
+    if (this.contentType === 'novel') {
+      return '#F5F0E1';
+    }
+    if (this.contentType === 'ebook') {
+      return '#FFFFFF';
+    }
+    return '#10161E';
+  }
+
+  private getOpenBackdropOpacity(): number {
+    return this.mode === TransitionMode.OPEN ? 1 : 0;
+  }
+
+  private hasOpenBackgroundImage(): boolean {
+    if (this.contentType === 'manga') {
+      return false;
+    }
+    return this.mode === TransitionMode.OPEN
+      && this.ebookBackground !== null
+      && this.ebookBackground.backgroundImagePath !== undefined
+      && this.ebookBackground.backgroundImagePath.length > 0;
+  }
+
+  private getOpenBackgroundImagePath(): string {
+    if (this.ebookBackground !== null
+      && this.ebookBackground.backgroundImagePath !== undefined
+      && this.ebookBackground.backgroundImagePath.length > 0) {
+      return this.ebookBackground.backgroundImagePath;
+    }
+    return '';
+  }
+
+  private getOpenBackgroundImageOpacity(): number {
+    if (this.contentType === 'manga') {
+      return 0;
+    }
+    if (!this.ebookBackground) {
+      return 0;
+    }
+    const base = this.ebookBackground.backgroundImageOpacity ?? 0.22;
+    return Math.max(0, Math.min(0.55, base));
+  }
+
+  private getDisplayBookTitle(): string {
+    if (this.bookTitle.length > 0) {
+      return this.bookTitle;
+    }
+    return '正在打开作品';
+  }
+
+  private getDisplayBookAuthor(): string {
+    if (this.bookAuthor.length > 0) {
+      return this.bookAuthor;
+    }
+    return '作者信息加载中';
+  }
+
+  private getDisplayBookIntro(): string {
+    if (this.bookIntro.length > 0) {
+      return this.bookIntro;
+    }
+    return '阅读器正在准备章节内容，请稍候。';
+  }
+
+  private getDisplayLoadingPercentText(): string {
+    const percent = Math.max(1, Math.min(100, Math.round(this.loadingProgress * 100)));
+    return `${percent}%`;
+  }
+
+  private getDisplayLoadingBarWidth(): string {
+    const percent = Math.max(2, Math.min(100, Math.round(this.loadingProgress * 100)));
+    return `${percent}%`;
+  }
+
+  private shouldShowWaitingInfoPanel(): boolean {
+    if (this.mode !== TransitionMode.OPEN) {
+      return false;
+    }
+    if (this.currentPhase === TransitionPhase.COVER_LIFTING || this.currentPhase === TransitionPhase.COMPLETED) {
+      return false;
+    }
+    return this.currentOpacity > 0.01;
+  }
+
+  private getWaitingInfoPanelWidth(): number {
+    const coverBound = Math.max(260, this.currentWidth + 30);
+    return Math.min(this.componentWidth * 0.82, coverBound);
+  }
+
+  private getWaitingInfoPanelX(): number {
+    return (this.componentWidth - this.getWaitingInfoPanelWidth()) / 2;
+  }
+
+  private getWaitingInfoPanelY(): number {
+    const suggestedTop = this.currentY + this.currentHeight + 16;
+    const maxTop = Math.max(24, this.componentHeight - 176);
+    return Math.max(16, Math.min(maxTop, suggestedTop));
   }
   
   // ========== Canvas渲染 ==========
@@ -898,137 +1224,130 @@ export struct BookOpenTransition {
   
   /**
    * 渲染翻开模式帧
-   * 特点：无背景遮罩、无白色边框、轴心在左侧书脊
+   * 通过封面+内页+书脊阴影组合出 3D 翻书效果。
    */
   private renderOpenFrame(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    // 清空画布（透明背景，不绘制遮罩）
+    // 透明画布，底色由 build 中的全屏背景层负责
     ctx.clearRect(0, 0, w, h);
-    
-    // 保存状态
+
     ctx.save();
-    
-    // ========== 轴心在左边缘（书脊位置） ==========
-    // 移动到封面左边缘中点作为变换原点
-    const spineX = this.currentX;  // 左边缘X坐标
-    const spineCenterY = this.currentY + this.currentHeight / 2;  // 垂直中心
+
+    const spineX = this.currentX;
+    const spineCenterY = this.currentY + this.currentHeight / 2;
     ctx.translate(spineX, spineCenterY);
-    
-    // ========== 绘制底层页面（书籍内页） ==========
-    // 电子书使用读取的背景设置，漫画使用黑色
-    if (this.liftAngle > 0) {
+
+    const maxAngle = Math.max(1, this.config.maxLiftAngle);
+    const liftRatio = this.clamp01(this.liftAngle / maxAngle);
+    const pageReveal = this.easeOutCubic(liftRatio);
+
+    // 内页：在封面掀起时逐渐出现，作为“阅读器预览”
+    if (pageReveal > 0.001) {
       ctx.save();
-      ctx.globalAlpha = this.currentOpacity;
-      
-      // 内页内容区域（模拟阅读器背景）
-      // 先绘制背景色作为底色
-      ctx.fillStyle = this.ebookBackground ? this.ebookBackground.backgroundColor : '#000000';
+      ctx.globalAlpha = Math.min(1, 0.56 + pageReveal * 0.44);
+      ctx.fillStyle = this.getOpenBackdropColor();
       ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
-      
-      // 如果有背景图片，绘制背景图片（覆盖背景色）
-      // 使用 Cover 效果：保持宽高比填充区域，裁剪超出部分
-      if (this.backgroundImagePixelMap && this.ebookBackground) {
+
+      if (this.backgroundImagePixelMap && this.hasOpenBackgroundImage()) {
         ctx.save();
-        ctx.globalAlpha = this.currentOpacity * (this.ebookBackground.backgroundImageOpacity ?? 0.3);
-        
-        // 获取背景图片原始尺寸
+        ctx.globalAlpha = this.getOpenBackgroundImageOpacity() * (0.5 + pageReveal * 0.5);
         const imgInfo = this.backgroundImagePixelMap.getImageInfoSync();
         const imgWidth = imgInfo.size.width;
         const imgHeight = imgInfo.size.height;
-        
-        // 目标区域
         const destX = 0;
         const destY = -this.currentHeight / 2;
         const destWidth = this.currentWidth;
         const destHeight = this.currentHeight;
-        
-        // 计算 Cover 效果的缩放比例
         const scaleX = destWidth / imgWidth;
         const scaleY = destHeight / imgHeight;
-        const scale = Math.max(scaleX, scaleY);  // Cover 使用较大的缩放比
-        
-        // 计算缩放后的图片尺寸
+        const scale = Math.max(scaleX, scaleY);
         const scaledWidth = imgWidth * scale;
         const scaledHeight = imgHeight * scale;
-        
-        // 计算居中偏移（裁剪超出部分）
         const offsetX = destX + (destWidth - scaledWidth) / 2;
         const offsetY = destY + (destHeight - scaledHeight) / 2;
-        
-        // 设置裁剪区域
         ctx.beginPath();
         ctx.rect(destX, destY, destWidth, destHeight);
         ctx.clip();
-        
-        // 绘制背景图片
         ctx.drawImage(this.backgroundImagePixelMap, offsetX, offsetY, scaledWidth, scaledHeight);
         ctx.restore();
       }
-      
-      // 如果需要显示加载中动画
-      if (this.showLoading) {
-        this.renderBlackPageLoading(ctx);
+
+      // 内页边缘线，增强“纸张层叠”质感
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.05 + pageReveal * 0.2})`;
+      ctx.lineWidth = 1;
+      const lineCount = 9;
+      const startEdgeX = this.currentWidth * 0.78;
+      const step = Math.max(1.2, this.currentWidth * 0.022);
+      for (let i = 0; i < lineCount; i++) {
+        const lineX = startEdgeX + i * step;
+        ctx.beginPath();
+        ctx.moveTo(lineX, -this.currentHeight / 2 + 3 + i * 0.4);
+        ctx.lineTo(lineX, this.currentHeight / 2 - 3 - i * 0.4);
+        ctx.stroke();
       }
-      
+
+      // 书脊暗部
+      const spineShadow = ctx.createLinearGradient(0, 0, this.currentWidth * 0.26, 0);
+      spineShadow.addColorStop(0, `rgba(0, 0, 0, ${0.36 + pageReveal * 0.12})`);
+      spineShadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = spineShadow;
+      ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth * 0.26, this.currentHeight);
+
+      // 封面投射到内页上的阴影
+      const castWidth = Math.max(22, this.currentWidth * 0.24);
+      const cast = ctx.createLinearGradient(0, 0, castWidth, 0);
+      cast.addColorStop(0, `rgba(0, 0, 0, ${(1 - pageReveal) * 0.28})`);
+      cast.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = cast;
+      ctx.fillRect(0, -this.currentHeight / 2, castWidth, this.currentHeight);
+
       ctx.restore();
     }
-    
-    // ========== 应用3D掀起变换（封面从左侧书脊翻开） ==========
-    if (this.config.enable3DEffect && this.liftAngle > 0) {
-      // 模拟3D透视效果 - 从左侧书脊掀起，轴心已在左边缘
+
+    // 封面变换
+    if (this.config.enable3DEffect && this.liftAngle > 0.01) {
       const angleRad = this.liftAngle * Math.PI / 180;
-      const scaleX = Math.cos(angleRad);
-      // 修复：保持宽高比，Y轴不再应用透视缩放，只缩放X轴模拟翻开效果
-      // 之前的 perspective 应用到Y轴导致图片被拉伸
-      
-      // 应用变换：只缩放X轴，Y轴保持不变
-      ctx.transform(scaleX, 0, 0, 1, 0, 0);
+      const scaleX = Math.max(0.04, Math.cos(angleRad));
+      const skew = -Math.sin(angleRad) * 0.08;
+      ctx.transform(scaleX, 0, skew, 1, 0, 0);
     }
-    
-    // 绘制阴影
-    if (this.config.enableShadow && this.shadowOpacity > 0 && this.liftAngle > 0) {
-      ctx.shadowColor = `rgba(0, 0, 0, ${this.shadowOpacity * 0.6})`;
-      ctx.shadowBlur = 15 + this.liftAngle * 0.5;
-      ctx.shadowOffsetX = Math.sin(this.liftAngle * Math.PI / 180) * 15;
-      ctx.shadowOffsetY = 5;
+
+    if (this.config.enableShadow && this.shadowOpacity > 0) {
+      const shadowStrength = this.shadowOpacity * (0.5 + liftRatio * 0.4);
+      ctx.shadowColor = `rgba(0, 0, 0, ${shadowStrength})`;
+      ctx.shadowBlur = 14 + this.liftAngle * 0.45;
+      ctx.shadowOffsetX = Math.sin(this.liftAngle * Math.PI / 180) * 18;
+      ctx.shadowOffsetY = 6;
     }
-    
-    // 绘制封面（无白色边框）
+
     ctx.globalAlpha = this.currentOpacity;
-    
-    // 绘制封面图片（坐标系：原点在左边缘中点，向右为正X，向下为正Y）
-    // 封面区域：从(0, -height/2)到(width, height/2)
+
     if (this.coverPixelMap) {
-      // 计算保持宽高比的绘制区域
       let drawWidth = this.currentWidth;
       let drawHeight = this.currentHeight;
       let drawX = 0;
       let drawY = -this.currentHeight / 2;
-      
+
       if (this.coverOriginalWidth > 0 && this.coverOriginalHeight > 0) {
         const originalAspect = this.coverOriginalWidth / this.coverOriginalHeight;
         const targetAspect = this.currentWidth / this.currentHeight;
-        
+
         if (originalAspect > targetAspect) {
-          // 图片更宽，以高度为基准
           drawHeight = this.currentHeight;
           drawWidth = this.currentHeight * originalAspect;
-          drawX = (this.currentWidth - drawWidth) / 2;  // 水平居中
+          drawX = (this.currentWidth - drawWidth) / 2;
           drawY = -this.currentHeight / 2;
         } else {
-          // 图片更高，以宽度为基准
           drawWidth = this.currentWidth;
           drawHeight = this.currentWidth / originalAspect;
           drawX = 0;
-          drawY = -drawHeight / 2;  // 垂直居中
+          drawY = -drawHeight / 2;
         }
       }
-      
-      // 裁剪到封面区域
+
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
       ctx.clip();
-      
       ctx.drawImage(
         this.coverPixelMap,
         drawX,
@@ -1036,14 +1355,22 @@ export struct BookOpenTransition {
         drawWidth,
         drawHeight
       );
-      
       ctx.restore();
     } else {
-      // 占位符（灰色）
       ctx.fillStyle = '#E0E0E0';
       ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
     }
-    
+
+    // 书脊高光
+    ctx.save();
+    ctx.globalAlpha = this.currentOpacity * 0.9;
+    const spineHighlight = ctx.createLinearGradient(0, 0, Math.max(4, this.currentWidth * 0.03), 0);
+    spineHighlight.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
+    spineHighlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = spineHighlight;
+    ctx.fillRect(0, -this.currentHeight / 2, Math.max(4, this.currentWidth * 0.03), this.currentHeight);
+    ctx.restore();
+
     ctx.restore();
   }
   
@@ -1262,7 +1589,7 @@ export struct BookOpenTransition {
     Stack() {
       // 关闭模式：优先使用原始PixelMap（无损），备用压缩文件
       // 使用原始PixelMap可以避免压缩导致的质量损失和延迟
-      if (this.mode === TransitionMode.CLOSE && (this.localReaderPixelMap || (this.readerContentImagePath && this.readerContentImagePath.length > 0))) {
+      if (this.mode === TransitionMode.CLOSE && (this.localReaderPixelMap !== null || this.readerContentImagePath.length > 0)) {
         // ========== 底层：阅读器截图 ==========
         // 优先使用原始PixelMap（无损质量），备用压缩文件
         if (this.localReaderPixelMap) {
@@ -1275,7 +1602,7 @@ export struct BookOpenTransition {
             .opacity(this.currentOpacity)
             .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
             .backgroundColor(Color.Transparent)
-        } else if (this.readerContentImagePath && this.readerContentImagePath.length > 0) {
+        } else if (this.readerContentImagePath.length > 0) {
           // 备用：使用压缩文件
           Image(`file://${this.readerContentImagePath}`)
             .width(this.currentWidth)
@@ -1294,7 +1621,7 @@ export struct BookOpenTransition {
         }
         
         // ========== 上层：封面图片（带翻页盖住效果） ==========
-        if (this.coverImagePath && this.coverImagePath.length > 0 && this.coverFlipProgress > 0) {
+        if (this.coverImagePath.length > 0 && this.coverFlipProgress > 0) {
           Stack() {
             // 封面图片
             Image(this.coverImagePath.startsWith('/') ? `file://${this.coverImagePath}` : this.coverImagePath)
@@ -1326,50 +1653,43 @@ export struct BookOpenTransition {
         }
       } else {
         // 翻开模式或无截图
-        
-        // 背景图片层（仅当纯文本使用背景图片时显示）
-        // 这一层始终可见，作为最底层背景，Canvas在其上方
-        // 阅读器就绪后淡出
-        if (this.ebookBackground && this.ebookBackground.backgroundImagePath && this.ebookBackground.backgroundImagePath.length > 0) {
+        if (this.mode === TransitionMode.OPEN) {
           Stack() {
-            // 背景色层（作为图片底色）
             Column()
               .width('100%')
               .height('100%')
-              .backgroundColor(this.ebookBackground.backgroundColor)
-            
-            // 背景图片层
-            Image(this.ebookBackground.backgroundImagePath.startsWith('/') ? 
-              `file://${this.ebookBackground.backgroundImagePath}` : this.ebookBackground.backgroundImagePath)
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
-              .opacity(this.ebookBackground.backgroundImageOpacity ?? 0.3)
+              .backgroundColor(this.getOpenBackdropColor())
+
+            if (this.hasOpenBackgroundImage()) {
+              Image(this.getOpenBackgroundImagePath().startsWith('/')
+                ? `file://${this.getOpenBackgroundImagePath()}`
+                : this.getOpenBackgroundImagePath())
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .opacity(this.getOpenBackgroundImageOpacity())
+            }
           }
           .width('100%')
           .height('100%')
           .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])
-          // 动画完成后显示（封面扩展到全屏后），阅读器就绪后淡出
-          .opacity(this.animationCompleted ? (this.isReaderReady ? 0 : 1) : 0)
-          .animation({ duration: 150, curve: Curve.EaseOut })
+          .opacity(this.getOpenBackdropOpacity())
         }
-        
-        // Canvas绘制封面动画
-        // 动画未完成时显示，完成后淡出
-        // 如果有背景图片，淡出后会显示上面的背景图片层
-        // 注意：Canvas需要包装在Stack中才能正确扩展到安全区域
+
         Stack() {
           Canvas(this.canvasContext)
             .width('100%')
             .height('100%')
             .onReady(() => {
-              logger.info(TAG, `Canvas已就绪, mode=${this.mode}, imagePath=${this.readerContentImagePath ? '有' : '无'}`);
+              logger.info(TAG, `Canvas已就绪, mode=${this.mode}, imagePath=${this.readerContentImagePath.length > 0 ? '有' : '无'}`);
               this.renderFrame();
             })
-          
-          // 网络图片封面覆盖层（当coverPixelMap为空且是网络图片时显示）
-          if (this.isSystemResource && this.coverImagePath && 
-              (this.coverImagePath.startsWith('http://') || this.coverImagePath.startsWith('https://'))) {
+
+          // 网络图片封面覆盖层：用于无法生成 coverPixelMap 的网络图
+          if (this.mode === TransitionMode.OPEN && this.isSystemResource && this.coverImagePath.length > 0 &&
+              (this.coverImagePath.startsWith('http://')
+                || this.coverImagePath.startsWith('https://')
+                || this.coverImagePath.startsWith('app.media.'))) {
             Image(this.coverImagePath)
               .width(this.currentWidth)
               .height(this.currentHeight)
@@ -1377,18 +1697,91 @@ export struct BookOpenTransition {
               .objectFit(ImageFit.Cover)
               .opacity(this.currentOpacity)
               .borderRadius(4)
+              .rotate({
+                x: 0,
+                y: 1,
+                z: 0,
+                angle: -this.liftAngle,
+                centerX: '0%',
+                centerY: '50%',
+                perspective: 1200
+              })
+              .shadow({
+                radius: 12,
+                color: `rgba(0, 0, 0, ${0.2 + this.shadowOpacity * 0.35})`,
+                offsetX: Math.sin(this.liftAngle * Math.PI / 180) * 10,
+                offsetY: 4
+              })
           }
         }
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])
-        .opacity(this.animationCompleted ? 0 : 1)
-        .animation({ duration: 100, curve: Curve.Linear })
+        .opacity(this.mode === TransitionMode.OPEN
+          ? (this.currentPhase === TransitionPhase.COMPLETED ? 0 : 1)
+          : (this.animationCompleted ? 0 : 1))
+        .animation({ duration: 120, curve: Curve.EaseOut })
+
+        if (this.shouldShowWaitingInfoPanel()) {
+          Column({ space: 6 }) {
+            Text(this.getDisplayBookTitle())
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#F5F7FB')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Text(this.getDisplayBookAuthor())
+              .fontSize(13)
+              .fontColor('rgba(236, 240, 246, 0.92)')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Column({ space: 4 }) {
+              Stack() {
+                Row()
+                  .width('100%')
+                  .height(4)
+                  .backgroundColor('rgba(255, 255, 255, 0.2)')
+                  .borderRadius(999)
+
+                Row()
+                  .width(this.getDisplayLoadingBarWidth())
+                  .height(4)
+                  .backgroundColor('#8ACFFF')
+                  .borderRadius(999)
+                  .animation({ duration: 140, curve: Curve.EaseOut })
+              }
+              .width('100%')
+              .height(4)
+
+              Text(`加载进度 ${this.getDisplayLoadingPercentText()}`)
+                .fontSize(11)
+                .fontColor('rgba(214, 223, 238, 0.85)')
+            }
+            .width('100%')
+            .padding({ top: 2, bottom: 2 })
+
+            Text(this.getDisplayBookIntro())
+              .fontSize(12)
+              .lineHeight(18)
+              .fontColor('rgba(223, 228, 238, 0.82)')
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width(this.getWaitingInfoPanelWidth())
+          .position({ x: this.getWaitingInfoPanelX(), y: this.getWaitingInfoPanelY() })
+          .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+          .backgroundColor('rgba(8, 12, 18, 0.58)')
+          .borderRadius(12)
+          .opacity(this.currentOpacity)
+          .animation({ duration: 180, curve: Curve.EaseOut })
+        }
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Color.Transparent)  // 根容器透明背景，让原页面可见
+    .backgroundColor(this.mode === TransitionMode.OPEN ? this.getOpenBackdropColor() : Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END])  // 扩展到所有安全区域
     .onAreaChange((_, newArea) => {
       this.componentWidth = newArea.width as number;

@@ -267,7 +267,8 @@ export struct EBookDetailPage {
     const coverPath: string = this.ebook.metadata.coverImagePath || '';
     const coverComponentId: string = `cover_ebook_detail_${this.ebook.id}`;
     const readerParams: EBookReaderParams = {
-      bookId: this.ebook.id
+      bookId: this.ebook.id,
+      coverComponentId: coverComponentId
     };
     const hasProgress = this.hasReadingProgress();
     const bookTitle = this.ebook?.metadata.title;
@@ -286,7 +287,12 @@ export struct EBookDetailPage {
         logger.info(TAG, `翻开过渡动画触发导航: ${hasProgress ? '继续' : '开始'}阅读电子书: ${bookTitle}`);
         this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
       },
-      ebookBackground
+      ebookBackground,
+      {
+        title: this.ebook.metadata.title,
+        author: this.ebook.metadata.author,
+        intro: this.ebook.metadata.description
+      }
     );
   }
 
