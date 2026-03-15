@@ -183,6 +183,9 @@ export struct BookOpenTransition {
   
   // 封面翻页效果状态（用于关闭动画的封面盖住效果）
   @State private coverFlipProgress: number = 0;  // 封面翻页进度 0-1（0=完全打开, 1=完全盖住）
+  @State private closeReaderOpacity: number = 1;
+  @State private closeBookOpacity: number = 0;
+  @State private closeBookScale: number = 0.88;
   
   // 封面图片原始尺寸（用于保持宽高比）
   private coverOriginalWidth: number = 0;
@@ -467,17 +470,20 @@ export struct BookOpenTransition {
       logger.warn(TAG, 'close start: restore local pixelMap from prop');
     }
 
-    this.currentX = 0;
-    this.currentY = 0;
-    this.currentWidth = this.componentWidth;
-    this.currentHeight = this.componentHeight;
+    this.currentX = this.centerX;
+    this.currentY = this.centerY;
+    this.currentWidth = this.centerWidth;
+    this.currentHeight = this.centerHeight;
     this.currentScale = 1;
     this.currentOpacity = 1;
-    this.liftAngle = 0;
+    this.closeReaderOpacity = 1;
+    this.closeBookOpacity = 0;
+    this.closeBookScale = 0.88;
+    this.liftAngle = 8;
     this.coverFlipProgress = 0;
     this.shadowOpacity = this.config.shadowIntensity * 0.16;
 
-    logger.info(TAG, `close start rect: full=${this.currentWidth}x${this.currentHeight}, center=${this.centerWidth}x${this.centerHeight}`);
+    logger.info(TAG, `close start rect: center=${this.currentWidth}x${this.currentHeight}, reader=${this.componentWidth}x${this.componentHeight}`);
 
     this.setPhase(TransitionPhase.SHRINKING);
     this.animateShrink();
@@ -887,40 +893,46 @@ export struct BookOpenTransition {
   private animateShrink(): void {
     this.isAnimating = true;
     this.animationStartTime = Date.now();
-    const duration = this.config.shrinkDuration + 50;
+    const duration = Math.max(320, this.config.shrinkDuration + 20);
 
-    const startX = this.currentX;
-    const startY = this.currentY;
-    const startWidth = this.currentWidth;
-    const startHeight = this.currentHeight;
-    const targetX = this.centerX;
-    const targetY = this.centerY;
-    const targetWidth = this.centerWidth;
-    const targetHeight = this.centerHeight;
+    const fixedX = this.centerX;
+    const fixedY = this.centerY;
+    const fixedWidth = this.centerWidth;
+    const fixedHeight = this.centerHeight;
 
     const animate = () => {
       const elapsed = Date.now() - this.animationStartTime;
       const progress = this.clamp01(elapsed / duration);
-      const eased = this.easeInOutCubic(progress);
+      const easedFade = this.easeOutCubic(progress);
+      const easedBook = this.easeInOutSine(progress);
 
-      this.currentX = startX + (targetX - startX) * eased;
-      this.currentY = startY + (targetY - startY) * eased;
-      this.currentWidth = startWidth + (targetWidth - startWidth) * eased;
-      this.currentHeight = startHeight + (targetHeight - startHeight) * eased;
+      // Keep the reader snapshot full-screen and fade it out while a centered 3D book appears.
+      this.currentX = fixedX;
+      this.currentY = fixedY;
+      this.currentWidth = fixedWidth;
+      this.currentHeight = fixedHeight;
       this.currentOpacity = 1;
+      this.closeReaderOpacity = 1 - easedFade;
+      this.closeBookOpacity = easedBook;
+      this.closeBookScale = 0.9 + 0.1 * this.easeOutCubic(progress);
       this.coverFlipProgress = 0;
-      this.shadowOpacity = this.config.shadowIntensity * (0.18 + 0.12 * eased);
+      this.liftAngle = (1 - easedBook) * 8;
+      this.shadowOpacity = this.config.shadowIntensity * (0.12 + 0.24 * easedBook);
 
       this.animationProgress = progress;
       this.renderFrame();
 
       if (progress >= 1) {
         this.stopAnimation();
-        this.currentX = targetX;
-        this.currentY = targetY;
-        this.currentWidth = targetWidth;
-        this.currentHeight = targetHeight;
+        this.currentX = fixedX;
+        this.currentY = fixedY;
+        this.currentWidth = fixedWidth;
+        this.currentHeight = fixedHeight;
         this.currentOpacity = 1;
+        this.closeReaderOpacity = 0;
+        this.closeBookOpacity = 1;
+        this.closeBookScale = 1;
+        this.liftAngle = 0;
         this.shadowOpacity = this.config.shadowIntensity * 0.3;
         this.animateReturn();
       }
@@ -957,6 +969,9 @@ export struct BookOpenTransition {
       this.currentWidth = fixedWidth;
       this.currentHeight = fixedHeight;
       this.currentOpacity = 1;
+      this.closeReaderOpacity = 0;
+      this.closeBookOpacity = 1;
+      this.closeBookScale = 1;
       this.coverFlipProgress = eased;
       this.liftAngle = (1 - eased) * 4;
       this.shadowOpacity = this.config.shadowIntensity * (0.34 - 0.1 * eased);
@@ -969,6 +984,9 @@ export struct BookOpenTransition {
         this.coverFlipProgress = 1;
         this.liftAngle = 0;
         this.currentOpacity = 1;
+        this.closeReaderOpacity = 0;
+        this.closeBookOpacity = 1;
+        this.closeBookScale = 1;
         this.shadowOpacity = this.config.shadowIntensity * 0.24;
         this.animateFade();
       }
@@ -1006,6 +1024,9 @@ export struct BookOpenTransition {
       this.currentWidth = startWidth + (this.coverPosition.width - startWidth) * easedMove;
       this.currentHeight = startHeight + (this.coverPosition.height - startHeight) * easedMove;
       this.currentOpacity = 1;
+      this.closeReaderOpacity = 0;
+      this.closeBookOpacity = 1;
+      this.closeBookScale = 1;
       this.coverFlipProgress = 1;
       this.shadowOpacity = startShadow + (targetShadow - startShadow) * easedShadow;
 
@@ -1019,6 +1040,9 @@ export struct BookOpenTransition {
         this.currentWidth = this.coverPosition.width;
         this.currentHeight = this.coverPosition.height;
         this.currentOpacity = 1;
+        this.closeReaderOpacity = 0;
+        this.closeBookOpacity = 1;
+        this.closeBookScale = 1;
         this.coverFlipProgress = 1;
         this.shadowOpacity = targetShadow;
         this.clearReaderReadyTimers();
@@ -1590,27 +1614,22 @@ export struct BookOpenTransition {
       // 关闭模式：优先使用原始PixelMap（无损），备用压缩文件
       // 使用原始PixelMap可以避免压缩导致的质量损失和延迟
       if (this.mode === TransitionMode.CLOSE && (this.localReaderPixelMap !== null || this.readerContentImagePath.length > 0)) {
-        // ========== 底层：阅读器截图 ==========
-        // 优先使用原始PixelMap（无损质量），备用压缩文件
+        // ========== 底层：阅读器截图（全屏，仅渐隐） ==========
         if (this.localReaderPixelMap) {
-          // 使用原始PixelMap - 无损质量，与阅读器完全一致
           Image(this.localReaderPixelMap)
-            .width(this.currentWidth)
-            .height(this.currentHeight)
-            .position({ x: this.currentX, y: this.currentY })
+            .width('100%')
+            .height('100%')
+            .position({ x: 0, y: 0 })
             .objectFit(ImageFit.Fill)
-            .opacity(this.currentOpacity)
-            .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
+            .opacity(this.closeReaderOpacity)
             .backgroundColor(Color.Transparent)
         } else if (this.readerContentImagePath.length > 0) {
-          // 备用：使用压缩文件
           Image(`file://${this.readerContentImagePath}`)
-            .width(this.currentWidth)
-            .height(this.currentHeight)
-            .position({ x: this.currentX, y: this.currentY })
+            .width('100%')
+            .height('100%')
+            .position({ x: 0, y: 0 })
             .objectFit(ImageFit.Fill)
-            .opacity(this.currentOpacity)
-            .borderRadius(this.currentPhase === TransitionPhase.SHRINKING || this.currentPhase === TransitionPhase.FADE_IN ? 0 : 8)
+            .opacity(this.closeReaderOpacity)
             .backgroundColor(Color.Transparent)
             .onComplete(() => {
               logger.info(TAG, `📷 关闭动画截图加载完成: ${this.readerContentImagePath}`);
@@ -1620,35 +1639,52 @@ export struct BookOpenTransition {
             })
         }
         
-        // ========== 上层：封面图片（带翻页盖住效果） ==========
-        if (this.coverImagePath.length > 0 && this.coverFlipProgress > 0) {
+        // ========== 上层：3D书本（显现 -> 合上 -> 移回封面） ==========
+        if (this.closeBookOpacity > 0.001) {
           Stack() {
-            // 封面图片
-            Image(this.coverImagePath.startsWith('/') ? `file://${this.coverImagePath}` : this.coverImagePath)
+            // 书页主体
+            Column()
               .width('100%')
               .height('100%')
-              .objectFit(ImageFit.Cover)
+              .backgroundColor('#F6F1E5')
               .borderRadius(6)
+
+            // 书脊阴影
+            Row()
+              .width(7)
+              .height('100%')
+              .position({ x: 0, y: 0 })
+              .backgroundColor('rgba(42, 28, 16, 0.16)')
+
+            // 封面从打开角度逐步合上
+            if (this.coverImagePath.length > 0) {
+              Image(this.coverImagePath.startsWith('/') ? `file://${this.coverImagePath}` : this.coverImagePath)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .borderRadius(6)
+                .opacity(0.1 + 0.9 * this.coverFlipProgress)
+                .rotate({
+                  x: 0,
+                  y: 1,
+                  z: 0,
+                  angle: -90 * (1 - this.coverFlipProgress),
+                  centerX: '0%',
+                  centerY: '50%',
+                  perspective: 900
+                })
+            }
           }
           .width(this.currentWidth)
           .height(this.currentHeight)
           .position({ x: this.currentX, y: this.currentY })
-          .opacity(this.currentOpacity * this.coverFlipProgress)
-          // 3D翻页变换效果：从右向左盖住
-          .rotate({
-            x: 0,
-            y: 1,
-            z: 0,
-            angle: -90 * (1 - this.coverFlipProgress),  // 从-90度（打开）到0度（盖住）
-            centerX: '0%',  // 左侧为轴心
-            centerY: '50%',
-            perspective: 800
-          })
+          .scale({ x: this.closeBookScale, y: this.closeBookScale })
+          .opacity(this.closeBookOpacity)
           .shadow({
-            radius: 15 * this.coverFlipProgress,
-            color: `rgba(0, 0, 0, ${0.3 * this.coverFlipProgress})`,
-            offsetX: -10 * this.coverFlipProgress,
-            offsetY: 5
+            radius: 14 + 8 * this.coverFlipProgress,
+            color: `rgba(0, 0, 0, ${this.shadowOpacity})`,
+            offsetX: -8 * this.coverFlipProgress,
+            offsetY: 6
           })
         }
       } else {
