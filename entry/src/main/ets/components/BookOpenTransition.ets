@@ -120,6 +120,7 @@ export struct BookOpenTransition {
   @Prop readerContentImagePath: string = '';  // 压缩后的截图临时文件路径（推荐使用）
   @Prop config: BookTransitionConfig = DEFAULT_CONFIG;
   @Prop @Watch('onReaderReadyChange') isReaderReady: boolean = false;  // 阅读器是否就绪（外部控制）
+  @Prop @Watch('onReaderLoadProgressChange') readerLoadProgress: number = 0;
   @Prop ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
   @Prop bookTitle: string = '';
   @Prop bookAuthor: string = '';
@@ -167,7 +168,6 @@ export struct BookOpenTransition {
   private animationTimer: number = -1;
   private loadingProgressTimer: number = -1;
   private loadingProgressFinishTimer: number = -1;
-  private loadingProgressStartTime: number = 0;
   @State private isAnimating: boolean = false;  // 改为@State以触发UI重新渲染
   private pendingAnimationStart: boolean = false;  // 等待尺寸后启动动画
   private animationStartTime: number = 0;
@@ -395,6 +395,13 @@ export struct BookOpenTransition {
   }
   
   // ========== 清除阅读器就绪检查计时器 ==========
+  private onReaderLoadProgressChange(): void {
+    if (this.mode !== TransitionMode.OPEN || this.animationCompleted) {
+      return;
+    }
+    this.applyReaderLoadProgress(this.currentPhase);
+  }
+
   private clearReaderReadyTimers(): void {
     if (this.readerReadyCheckTimer !== -1) {
       clearInterval(this.readerReadyCheckTimer);
@@ -576,7 +583,7 @@ export struct BookOpenTransition {
         if (phase === TransitionPhase.WAITING_READY) {
           this.startWaitingProgressLoop();
         } else if (phase === TransitionPhase.COVER_LIFTING || phase === TransitionPhase.COMPLETED || phase === TransitionPhase.IDLE) {
-          this.stopLoadingProgressTimers();
+          this.applyReaderLoadProgress(phase);
         }
       }
       this.onPhaseChange(phase);
@@ -597,7 +604,8 @@ export struct BookOpenTransition {
   private resetLoadingProgress(): void {
     this.stopLoadingProgressTimers();
     if (this.mode === TransitionMode.OPEN) {
-      this.loadingProgress = 0.06;
+      const readerProgress = this.normalizeReaderLoadProgress(this.readerLoadProgress);
+      this.loadingProgress = Math.max(0.06, Math.min(0.45, readerProgress));
     } else {
       this.loadingProgress = 0;
     }
@@ -621,57 +629,15 @@ export struct BookOpenTransition {
     if (this.loadingProgress < 0.42) {
       this.loadingProgress = 0.42;
     }
-    if (this.loadingProgressTimer !== -1) {
-      return;
-    }
-
-    this.loadingProgressStartTime = Date.now();
-    this.loadingProgressTimer = setInterval(() => {
-      if (this.currentPhase !== TransitionPhase.WAITING_READY || this.animationCompleted || this.mode !== TransitionMode.OPEN) {
-        return;
-      }
-
-      const elapsed = Date.now() - this.loadingProgressStartTime;
-      const waitingTarget = 0.42 + 0.5 * (1 - Math.exp(-elapsed / 1350));
-      const clampedTarget = Math.max(0.42, Math.min(0.92, waitingTarget));
-      if (clampedTarget > this.loadingProgress) {
-        this.loadingProgress = clampedTarget;
-      }
-    }, 80);
+    this.applyReaderLoadProgress(TransitionPhase.WAITING_READY);
   }
 
   private completeLoadingProgress(onDone?: () => void): void {
     this.stopLoadingProgressTimers();
-
-    if (this.loadingProgress >= 0.999) {
-      this.loadingProgress = 1;
-      if (onDone) {
-        onDone();
-      }
-      return;
+    this.loadingProgress = 1;
+    if (onDone) {
+      onDone();
     }
-
-    const startValue = this.loadingProgress;
-    const startTime = Date.now();
-    const duration = 220;
-
-    this.loadingProgressFinishTimer = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const progress = this.clamp01(elapsed / duration);
-      const eased = this.easeOutCubic(progress);
-      this.loadingProgress = startValue + (1 - startValue) * eased;
-
-      if (progress >= 1) {
-        if (this.loadingProgressFinishTimer !== -1) {
-          clearInterval(this.loadingProgressFinishTimer);
-          this.loadingProgressFinishTimer = -1;
-        }
-        this.loadingProgress = 1;
-        if (onDone) {
-          onDone();
-        }
-      }
-    }, 16);
   }
   
   /**
@@ -769,7 +735,9 @@ export struct BookOpenTransition {
       }
 
       const movingProgress = 0.08 + 0.34 * this.easeInOutSine(progress);
-      const clampedMovingProgress = Math.max(0.08, Math.min(0.45, movingProgress));
+      const readerDriven = Math.max(0.08, Math.min(0.62, 0.08 + this.normalizeReaderLoadProgress(this.readerLoadProgress) * 0.54));
+      const mergedProgress = Math.max(movingProgress, readerDriven);
+      const clampedMovingProgress = Math.max(0.08, Math.min(0.62, mergedProgress));
       if (clampedMovingProgress > this.loadingProgress) {
         this.loadingProgress = clampedMovingProgress;
       }
@@ -1088,6 +1056,34 @@ export struct BookOpenTransition {
     return Math.max(0, Math.min(1, value));
   }
 
+  private normalizeReaderLoadProgress(value: number): number {
+    if (!isFinite(value)) {
+      return 0;
+    }
+    const normalized = value > 1 ? value / 100 : value;
+    return this.clamp01(normalized);
+  }
+
+  private applyReaderLoadProgress(phase: TransitionPhase): void {
+    if (this.mode !== TransitionMode.OPEN || this.animationCompleted) {
+      return;
+    }
+
+    const actualProgress = this.normalizeReaderLoadProgress(this.readerLoadProgress);
+    let target = actualProgress;
+    if (phase === TransitionPhase.COVER_MOVING) {
+      target = Math.max(0.08, Math.min(0.62, 0.08 + actualProgress * 0.54));
+    } else if (phase === TransitionPhase.WAITING_READY) {
+      target = Math.min(0.98, actualProgress);
+    } else if (phase === TransitionPhase.COVER_LIFTING || phase === TransitionPhase.COMPLETED) {
+      target = 1;
+    }
+
+    if (target > this.loadingProgress) {
+      this.loadingProgress = target;
+    }
+  }
+
   private getOpenCoverAspectRatio(): number {
     const width = this.coverPosition.width > 0
       ? this.coverPosition.width
@@ -1131,6 +1127,23 @@ export struct BookOpenTransition {
       return '#FFFFFF';
     }
     return '#10161E';
+  }
+
+  private getOpenInnerPageColor(): string {
+    const fallbackColor = '#F6F1E5';
+    if (!this.ebookBackground || this.ebookBackground.backgroundColor.length === 0) {
+      return fallbackColor;
+    }
+
+    const normalized = this.ebookBackground.backgroundColor.replace(/\s+/g, '').toLowerCase();
+    if (normalized === 'transparent'
+      || normalized === 'rgba(0,0,0,0)'
+      || normalized === '#0000'
+      || normalized === '#00000000') {
+      return fallbackColor;
+    }
+
+    return this.ebookBackground.backgroundColor;
   }
 
   private getOpenBackdropOpacity(): number {
@@ -1267,20 +1280,31 @@ export struct BookOpenTransition {
     // 内页：在封面掀起时逐渐出现，作为“阅读器预览”
     if (pageReveal > 0.001) {
       ctx.save();
-      ctx.globalAlpha = Math.min(1, 0.56 + pageReveal * 0.44);
-      ctx.fillStyle = this.getOpenBackdropColor();
-      ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth, this.currentHeight);
+      const pageTop = -this.currentHeight / 2;
+      const pageHeight = this.currentHeight;
+      const pageWidth = this.currentWidth;
+      const pageColor = this.getOpenInnerPageColor();
+      ctx.globalAlpha = Math.min(1, 0.84 + pageReveal * 0.16);
+      ctx.fillStyle = pageColor;
+      ctx.fillRect(0, pageTop, pageWidth, pageHeight);
+
+      const paperTone = ctx.createLinearGradient(0, pageTop, 0, pageTop + pageHeight);
+      paperTone.addColorStop(0, `rgba(255, 255, 255, ${0.14 + pageReveal * 0.08})`);
+      paperTone.addColorStop(0.52, 'rgba(255, 255, 255, 0.02)');
+      paperTone.addColorStop(1, `rgba(0, 0, 0, ${0.06 + pageReveal * 0.05})`);
+      ctx.fillStyle = paperTone;
+      ctx.fillRect(0, pageTop, pageWidth, pageHeight);
 
       if (this.backgroundImagePixelMap && this.hasOpenBackgroundImage()) {
         ctx.save();
-        ctx.globalAlpha = this.getOpenBackgroundImageOpacity() * (0.5 + pageReveal * 0.5);
+        ctx.globalAlpha = this.getOpenBackgroundImageOpacity() * (0.45 + pageReveal * 0.55);
         const imgInfo = this.backgroundImagePixelMap.getImageInfoSync();
         const imgWidth = imgInfo.size.width;
         const imgHeight = imgInfo.size.height;
         const destX = 0;
-        const destY = -this.currentHeight / 2;
-        const destWidth = this.currentWidth;
-        const destHeight = this.currentHeight;
+        const destY = pageTop;
+        const destWidth = pageWidth;
+        const destHeight = pageHeight;
         const scaleX = destWidth / imgWidth;
         const scaleY = destHeight / imgHeight;
         const scale = Math.max(scaleX, scaleY);
@@ -1296,33 +1320,46 @@ export struct BookOpenTransition {
       }
 
       // 内页边缘线，增强“纸张层叠”质感
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.05 + pageReveal * 0.2})`;
+      const foreEdgeWidth = Math.max(10, pageWidth * 0.09);
+      const foreEdgeX = pageWidth - foreEdgeWidth;
+      const foreEdge = ctx.createLinearGradient(foreEdgeX, 0, pageWidth, 0);
+      foreEdge.addColorStop(0, `rgba(170, 137, 98, ${0.14 + pageReveal * 0.08})`);
+      foreEdge.addColorStop(0.56, `rgba(246, 236, 220, ${0.58 + pageReveal * 0.18})`);
+      foreEdge.addColorStop(1, `rgba(142, 111, 77, ${0.24 + pageReveal * 0.08})`);
+      ctx.fillStyle = foreEdge;
+      ctx.fillRect(foreEdgeX, pageTop, foreEdgeWidth, pageHeight);
+
+      const foreEdgeCreaseWidth = Math.max(6, pageWidth * 0.03);
+      const foreEdgeCrease = ctx.createLinearGradient(foreEdgeX - foreEdgeCreaseWidth, 0, foreEdgeX + 1, 0);
+      foreEdgeCrease.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      foreEdgeCrease.addColorStop(1, `rgba(0, 0, 0, ${0.12 + pageReveal * 0.08})`);
+      ctx.fillStyle = foreEdgeCrease;
+      ctx.fillRect(foreEdgeX - foreEdgeCreaseWidth, pageTop, foreEdgeCreaseWidth + 1, pageHeight);
+
+      ctx.strokeStyle = `rgba(96, 70, 42, ${0.14 + pageReveal * 0.1})`;
       ctx.lineWidth = 1;
-      const lineCount = 9;
-      const startEdgeX = this.currentWidth * 0.78;
-      const step = Math.max(1.2, this.currentWidth * 0.022);
-      for (let i = 0; i < lineCount; i++) {
-        const lineX = startEdgeX + i * step;
-        ctx.beginPath();
-        ctx.moveTo(lineX, -this.currentHeight / 2 + 3 + i * 0.4);
-        ctx.lineTo(lineX, this.currentHeight / 2 - 3 - i * 0.4);
-        ctx.stroke();
-      }
+      ctx.strokeRect(0.5, pageTop + 0.5, pageWidth - 1, pageHeight - 1);
+
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.1 + pageReveal * 0.08})`;
+      ctx.beginPath();
+      ctx.moveTo(foreEdgeX + 0.5, pageTop + 2);
+      ctx.lineTo(foreEdgeX + 0.5, pageTop + pageHeight - 2);
+      ctx.stroke();
 
       // 书脊暗部
-      const spineShadow = ctx.createLinearGradient(0, 0, this.currentWidth * 0.26, 0);
+      const spineShadow = ctx.createLinearGradient(0, 0, pageWidth * 0.26, 0);
       spineShadow.addColorStop(0, `rgba(0, 0, 0, ${0.36 + pageReveal * 0.12})`);
       spineShadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = spineShadow;
-      ctx.fillRect(0, -this.currentHeight / 2, this.currentWidth * 0.26, this.currentHeight);
+      ctx.fillRect(0, pageTop, pageWidth * 0.26, pageHeight);
 
       // 封面投射到内页上的阴影
-      const castWidth = Math.max(22, this.currentWidth * 0.24);
+      const castWidth = Math.max(22, pageWidth * 0.24);
       const cast = ctx.createLinearGradient(0, 0, castWidth, 0);
       cast.addColorStop(0, `rgba(0, 0, 0, ${(1 - pageReveal) * 0.28})`);
       cast.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = cast;
-      ctx.fillRect(0, -this.currentHeight / 2, castWidth, this.currentHeight);
+      ctx.fillRect(0, pageTop, castWidth, pageHeight);
 
       ctx.restore();
     }

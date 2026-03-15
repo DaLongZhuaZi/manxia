@@ -17,6 +17,7 @@ import { getNovelReplaceRuleManager, ReplaceRule, ReplaceScope, AddRuleParams } 
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'NovelReplaceRulePage';
 
@@ -48,6 +49,7 @@ export struct NovelReplaceRulePage {
   private ruleManager = getNovelReplaceRuleManager();
 
   aboutToAppear(): void {
+    WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -57,6 +59,7 @@ export struct NovelReplaceRulePage {
   }
 
   aboutToDisappear(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
   }

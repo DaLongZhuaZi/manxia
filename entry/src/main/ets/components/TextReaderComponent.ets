@@ -2470,6 +2470,10 @@ export struct TextReaderComponent {
         setTimeout(() => {
           // 检查是否被中断
           if (!this.isAnimating) {
+            // 内容变化可能提前把 isAnimating 置为 false，仍需收敛章节过渡态
+            this.isChapterTransition = false;
+            this.slideOffset = 0;
+            this.clearAnimationTimeout();
             return;
           }
           
@@ -2551,6 +2555,10 @@ export struct TextReaderComponent {
         setTimeout(() => {
           // 检查是否被中断
           if (!this.isAnimating) {
+            // 内容变化可能提前把 isAnimating 置为 false，仍需收敛章节过渡态
+            this.isChapterTransition = false;
+            this.slideOffset = 0;
+            this.clearAnimationTimeout();
             return;
           }
           
