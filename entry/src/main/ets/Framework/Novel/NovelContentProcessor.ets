@@ -21,6 +21,7 @@ export interface ContentProcessConfig {
   includeTitle: boolean;
   paragraphIndent: string;
   sourceId: string | undefined;
+  enabledRuleIds?: string[];
 }
 
 /**
@@ -59,7 +60,8 @@ function createDefaultConfig(): ContentProcessConfig {
     reSegment: false,
     includeTitle: true,
     paragraphIndent: '　　',
-    sourceId: undefined
+    sourceId: undefined,
+    enabledRuleIds: undefined
   };
   return config;
 }
@@ -77,7 +79,8 @@ function mergeConfig(defaultCfg: ContentProcessConfig, customCfg: ContentProcess
     reSegment: customCfg.reSegment !== undefined ? customCfg.reSegment : defaultCfg.reSegment,
     includeTitle: customCfg.includeTitle !== undefined ? customCfg.includeTitle : defaultCfg.includeTitle,
     paragraphIndent: customCfg.paragraphIndent !== undefined ? customCfg.paragraphIndent : defaultCfg.paragraphIndent,
-    sourceId: customCfg.sourceId !== undefined ? customCfg.sourceId : defaultCfg.sourceId
+    sourceId: customCfg.sourceId !== undefined ? customCfg.sourceId : defaultCfg.sourceId,
+    enabledRuleIds: customCfg.enabledRuleIds !== undefined ? customCfg.enabledRuleIds : defaultCfg.enabledRuleIds
   };
   return result;
 }
@@ -142,7 +145,7 @@ export class NovelContentProcessor {
 
     // 4. 应用替换规则
     if (cfg.useReplace) {
-      const replaceResult = this.applyReplaceRules(mContent, ReplaceScope.CONTENT, cfg.sourceId);
+      const replaceResult = this.applyReplaceRules(mContent, ReplaceScope.CONTENT, cfg.sourceId, cfg.enabledRuleIds);
       mContent = replaceResult.content;
       for (let i = 0; i < replaceResult.appliedRules.length; i++) {
         appliedRules.push(replaceResult.appliedRules[i]);
@@ -153,7 +156,7 @@ export class NovelContentProcessor {
     if (cfg.includeTitle && chapterTitle) {
       let displayTitle = chapterTitle;
       if (cfg.useReplace) {
-        const titleResult = this.applyReplaceRules(displayTitle, ReplaceScope.TITLE, cfg.sourceId);
+        const titleResult = this.applyReplaceRules(displayTitle, ReplaceScope.TITLE, cfg.sourceId, cfg.enabledRuleIds);
         displayTitle = titleResult.content;
       }
       mContent = displayTitle + '\n' + mContent;
@@ -174,8 +177,15 @@ export class NovelContentProcessor {
   /**
    * 处理标题
    */
-  processTitle(title: string, sourceId: string | undefined = undefined): string {
-    const rules = this.replaceRuleManager.getEnabledRules(ReplaceScope.TITLE, sourceId);
+  processTitle(
+    title: string,
+    sourceId: string | undefined = undefined,
+    enabledRuleIds: string[] | undefined = undefined
+  ): string {
+    let rules = this.replaceRuleManager.getEnabledRules(ReplaceScope.TITLE, sourceId);
+    if (enabledRuleIds !== undefined) {
+      rules = rules.filter((rule) => enabledRuleIds.indexOf(rule.id) >= 0);
+    }
     let result = title;
 
     for (let i = 0; i < rules.length; i++) {
@@ -268,9 +278,13 @@ export class NovelContentProcessor {
   private applyReplaceRules(
     content: string, 
     scope: ReplaceScope, 
-    sourceId: string | undefined
+    sourceId: string | undefined,
+    enabledRuleIds: string[] | undefined = undefined
   ): ApplyRulesResult {
-    const rules = this.replaceRuleManager.getEnabledRules(scope, sourceId);
+    let rules = this.replaceRuleManager.getEnabledRules(scope, sourceId);
+    if (enabledRuleIds !== undefined) {
+      rules = rules.filter((rule) => enabledRuleIds.indexOf(rule.id) >= 0);
+    }
     const appliedRules: ReplaceRule[] = [];
     let result = content;
 
@@ -342,16 +356,29 @@ export class NovelContentProcessor {
   /**
    * 快速应用替换规则（不分段）
    */
-  quickReplace(text: string, scope: ReplaceScope = ReplaceScope.CONTENT, sourceId: string | undefined = undefined): string {
-    const result = this.applyReplaceRules(text, scope, sourceId);
+  quickReplace(
+    text: string,
+    scope: ReplaceScope = ReplaceScope.CONTENT,
+    sourceId: string | undefined = undefined,
+    enabledRuleIds: string[] | undefined = undefined
+  ): string {
+    const result = this.applyReplaceRules(text, scope, sourceId, enabledRuleIds);
     return result.content;
   }
 
   /**
    * 获取生效的替换规则
    */
-  getEffectiveRules(scope: ReplaceScope, sourceId: string | undefined = undefined): ReplaceRule[] {
-    return this.replaceRuleManager.getEnabledRules(scope, sourceId);
+  getEffectiveRules(
+    scope: ReplaceScope,
+    sourceId: string | undefined = undefined,
+    enabledRuleIds: string[] | undefined = undefined
+  ): ReplaceRule[] {
+    let rules = this.replaceRuleManager.getEnabledRules(scope, sourceId);
+    if (enabledRuleIds !== undefined) {
+      rules = rules.filter((rule) => enabledRuleIds.indexOf(rule.id) >= 0);
+    }
+    return rules;
   }
 }
 

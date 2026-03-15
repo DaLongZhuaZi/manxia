@@ -41,7 +41,7 @@ import {
 import { eventBus, GameEvent, BasePayload, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
+import { setReaderReady, setReaderLoadingProgress, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState, ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
@@ -165,6 +165,7 @@ struct EBookReaderPage {
   private uiContext: UIContext | undefined = undefined;
   private sourceCoverComponentId: string = '';
   private hasNotifiedTransitionReaderReady: boolean = false;
+  private transitionLoadingProgress: number = 0;
   private isCloseTransitionNavigating: boolean = false;
   
   // Reader Kit 阅读器控制器（用于实时应用设置和跳转章节）
@@ -498,12 +499,23 @@ struct EBookReaderPage {
     }
   }
 
+  private reportTransitionLoadingProgress(progress: number, reason: string): void {
+    const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
+    if (normalized <= this.transitionLoadingProgress + 0.001) {
+      return;
+    }
+    this.transitionLoadingProgress = normalized;
+    setReaderLoadingProgress(normalized);
+    logger.debug(TAG, `transition loading progress: ${(normalized * 100).toFixed(1)}%, reason=${reason}`);
+  }
+
   private notifyTransitionReaderReadyOnce(reason: string): void {
     if (this.hasNotifiedTransitionReaderReady) {
       logger.debug(TAG, `过渡动画就绪已通知，忽略重复触发: ${reason}`);
       return;
     }
     this.hasNotifiedTransitionReaderReady = true;
+    this.reportTransitionLoadingProgress(1, `ready_${reason}`);
     setReaderReady();
     logger.info(TAG, `📤 已通知过渡动画阅读器就绪: ${reason}`);
   }
@@ -514,8 +526,10 @@ struct EBookReaderPage {
   private async loadEBook(bookId: string): Promise<void> {
     try {
       this.hasNotifiedTransitionReaderReady = false;
+      this.transitionLoadingProgress = 0;
       this.isLoading = true;
       this.errorMessage = '';
+      this.reportTransitionLoadingProgress(0.06, 'load_start');
 
       logger.info(TAG, `开始加载电子书: ${bookId}`);
       
@@ -527,6 +541,7 @@ struct EBookReaderPage {
       }
 
       this.ebook = ebook;
+      this.reportTransitionLoadingProgress(0.24, 'ebook_loaded');
       
       // 加载阅读设置
       // [修复] 优先使用全局设置，除非用户明确修改过该电子书的设置
@@ -634,6 +649,7 @@ struct EBookReaderPage {
       }
 
       // 加载当前章节
+      this.reportTransitionLoadingProgress(0.48, 'settings_restored');
       this.currentChapter = ebook.chapters[this.currentChapterIndex];
       
       // 调试日志：检查章节内容
@@ -658,7 +674,9 @@ struct EBookReaderPage {
         this.syncTextReadAloudContext();
       }
 
+      this.reportTransitionLoadingProgress(0.72, 'reader_data_prepared');
       this.isLoading = false;
+      this.reportTransitionLoadingProgress(0.84, 'reader_view_shown');
       logger.info(TAG, `电子书加载完成: ${ebook.metadata.title}`);
       
       // 不在此处直接通知转场层，统一由具体阅读器组件“首屏可见”回调触发
@@ -2299,6 +2317,7 @@ struct EBookReaderPage {
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .onAppear(() => {
+        this.reportTransitionLoadingProgress(0.96, 'readerkit_placeholder_appear');
         this.notifyTransitionReaderReadyOnce('readerkit_placeholder_appear');
       })
     }
@@ -2330,11 +2349,13 @@ struct EBookReaderPage {
           },
           onLoadComplete: (pageCount: number) => {
             logger.info(TAG, `PDF 加载完成，共 ${pageCount} 页`);
+            this.reportTransitionLoadingProgress(0.96, 'pdf_load_complete');
             this.notifyTransitionReaderReadyOnce('pdf_load_complete');
           },
           onLoadError: (error: string) => {
             logger.error(TAG, `PDF 加载失败: ${error}`);
             this.errorMessage = error;
+            this.reportTransitionLoadingProgress(0.96, 'pdf_load_error');
             this.notifyTransitionReaderReadyOnce('pdf_load_error');
           }
         } as PdfViewerCallbacks
@@ -2434,6 +2455,7 @@ struct EBookReaderPage {
         onReady: () => {
           // 文本阅读器分页完成，通知过渡动画阅读器就绪
           logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
+          this.reportTransitionLoadingProgress(0.96, 'text_reader_ready');
           this.notifyTransitionReaderReadyOnce('text_reader_ready');
         }
       })

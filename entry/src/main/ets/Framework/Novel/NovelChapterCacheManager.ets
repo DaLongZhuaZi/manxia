@@ -716,6 +716,22 @@ export class NovelChapterCacheManager {
       logger.error(TAG, `清理书籍缓存失败: ${String(error)}`);
     }
   }
+
+  /**
+   * 清理章节列表缓存（不删除章节正文缓存）
+   */
+  async clearChapterListCache(bookId: string): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      const chapterListPath = `${this.getBookCacheDir(bookId)}/chapters_list.json`;
+      if (await this.sandboxManager.exists(chapterListPath)) {
+        await this.sandboxManager.deleteFile(chapterListPath);
+        logger.info(TAG, `清理章节列表缓存: ${chapterListPath}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `清理章节列表缓存失败: ${String(error)}`);
+    }
+  }
   
   /**
    * 保存书籍元数据
@@ -789,10 +805,10 @@ export class NovelChapterCacheManager {
   /**
    * 从缓存获取章节列表
    * @param bookId 书籍ID
-   * @param _maxAgeHours 已废弃，不再检查缓存过期（用户不需要会自己删除）
+   * @param maxAgeHours 缓存最大有效时长（小时）
    * @returns 章节列表，如果缓存不存在则返回null
    */
-  async getCachedChapterList(bookId: string, _maxAgeHours: number = 24): Promise<LegadoChapter[] | null> {
+  async getCachedChapterList(bookId: string, maxAgeHours: number = 24): Promise<LegadoChapter[] | null> {
     try {
       await this.ensureInitialized();
       
@@ -814,7 +830,16 @@ export class NovelChapterCacheManager {
       }
       const chapterData = JSON.parse(contentStr) as ChapterListCacheData;
       
-      // [移除] 不再检查缓存过期，用户不需要这本书会自己删除
+      const normalizedMaxAgeHours = Number.isFinite(maxAgeHours) ? Math.max(0, maxAgeHours) : 24;
+      const cacheAgeMs = Date.now() - chapterData.updateTime;
+      const maxAgeMs = normalizedMaxAgeHours * 60 * 60 * 1000;
+      if (cacheAgeMs > maxAgeMs) {
+        logger.info(
+          TAG,
+          `章节列表缓存过期: ${bookId}, ageMs=${cacheAgeMs}, maxAgeMs=${maxAgeMs}`
+        );
+        return null;
+      }
       
       logger.info(TAG, `从缓存加载章节列表: ${bookId}, ${chapterData.totalCount}章`);
       return chapterData.chapters;

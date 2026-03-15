@@ -13,7 +13,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
-import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { uniformTypeDescriptor as utd, preferences } from '@kit.ArkData';
 import { logger } from '../Utils/Logger';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
@@ -59,6 +59,9 @@ import { AntiCrawlerConfig } from '../Framework/WebView/MangaSourceTypes';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
+import { getNovelContentProcessor } from '../Framework/Novel/NovelContentProcessor';
+import { getNovelTxtTocRuleManager, TxtTocRule } from '../Framework/Novel/NovelTxtTocRuleManager';
+import { NovelReplaceRuleManager, ReplaceScope, ReplaceRule } from '../Framework/Novel/NovelReplaceRuleManager';
 import { getNovelSourceSearchService, SourceSearchResult, SearchTaskHandle, SearchResultCache } from '../Framework/Novel/NovelSourceSearchService';
 import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheContentType } from '../Framework/Services/CacheStatusService';
 import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadType, UnifiedTaskStatus, UnifiedDownloadTask, UnifiedDownloadCallback, MangaChapterDownloadItem, PageListFetcher } from '../Framework/Download/UnifiedDownloadManager';
@@ -94,6 +97,12 @@ const TAG = 'UnifiedDetailPage';
 const TITLE_BAR_HEIGHT = 56;
 const COVER_HEIGHT = 200;
 const COVER_WIDTH = 140;
+const NOVEL_SETTINGS_STORE = 'novel_settings';
+const NOVEL_SETTING_ENABLE_DIRECTORY_PARSING = 'enableNovelDirectoryParsing';
+const NOVEL_SETTING_ENABLE_REPLACE_RULES = 'enableNovelReplaceRules';
+const NOVEL_BOOK_RULE_SETTINGS_STORE = 'novel_book_rule_settings';
+const NOVEL_BOOK_TOC_RULE_IDS_PREFIX = 'book_toc_rule_ids_';
+const NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX = 'book_replace_rule_ids_';
 
 // ==================== 智能推荐栏常量 ====================
 const RECOMMEND_CARD_COVER_W = 90;   // 推荐卡片封面宽度
@@ -226,6 +235,29 @@ export struct UnifiedDetailPage {
   @State downloadRangeEnd: number = 0;                  // 区间结束
   @State downloadSelectedChapters: Set<number> = new Set();  // 单独选中的章节
   @State downloadChapterListExpanded: boolean = false;  // 章节列表是否展开
+
+  // 小说设置对话框状态
+  @State showNovelSettingsDialog: boolean = false;
+  @State novelSettingsDialogOpacity: number = 0;
+  @State novelSettingsDialogScale: number = 0.8;
+  @State novelSettingsDialogTranslateY: number = 50;
+  @State novelEnableReadWhileDownload: boolean = true;
+  @State novelDefaultLoadChapters: number = 50;
+  @State novelEnableDirectoryParsing: boolean = true;
+  @State novelEnableReplaceRules: boolean = true;
+  @State novelSettingsActiveTab: number = 0;
+  @State novelDirectoryParsingSelection: boolean = true;
+  @State novelReplaceRulesSelection: boolean = true;
+  @State novelTocRules: TxtTocRule[] = [];
+  @State novelReplaceRules: ReplaceRule[] = [];
+  @State novelSelectedTocRuleIds: string[] = [];
+  @State novelSelectedReplaceRuleIds: string[] = [];
+  @State novelAppliedTocRuleIds: string[] = [];
+  @State novelAppliedReplaceRuleIds: string[] = [];
+  @State novelDirectoryRulesDirty: boolean = false;
+  @State novelReplaceRulesDirty: boolean = false;
+  @State isApplyingNovelDirectoryParsing: boolean = false;
+  @State isApplyingNovelReplaceRules: boolean = false;
   
   // 下载进度实时显示状态
   @State downloadProgressCurrent: number = 0;           // 当前下载进度
@@ -1268,8 +1300,25 @@ export struct UnifiedDetailPage {
 
     const sourceId = this.pageParams.sourceId || '';
     const bookUrl = this.pageParams.contentId;
+    let enableDirectoryParsing = true;
+    let enableReplaceRules = true;
     
     logger.debug(TAG, `loadNovelContent: sourceId=${sourceId}, bookUrl=${bookUrl}`);
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
+      enableDirectoryParsing = await store.get(NOVEL_SETTING_ENABLE_DIRECTORY_PARSING, true) as boolean;
+      enableReplaceRules = await store.get(NOVEL_SETTING_ENABLE_REPLACE_RULES, true) as boolean;
+    } catch (error) {
+      logger.warn(TAG, `加载目录解析设置失败，使用默认值: ${String(error)}`);
+      enableDirectoryParsing = true;
+      enableReplaceRules = true;
+    }
+    this.novelEnableDirectoryParsing = enableDirectoryParsing;
+    this.novelEnableReplaceRules = enableReplaceRules;
+    this.novelDirectoryParsingSelection = enableDirectoryParsing;
+    this.novelReplaceRulesSelection = enableReplaceRules;
+    const chapterListCacheHours = enableDirectoryParsing ? 24 : 36500;
 
     // 优先从数据库获取书籍信息（尝试多种查询方式）
     let bookInDb = await this.novelDataManager.getBookByUrl(sourceId, bookUrl);
@@ -1321,8 +1370,8 @@ export struct UnifiedDetailPage {
         wordCount: bookInDb.wordCount
       } as LegadoBook;
 
-      // 优先从缓存获取章节列表，缓存有效期24小时
-      chapters = await this.novelCacheManager.getCachedChapterList(actualBookUrl, 24) || [];
+      // 优先从缓存获取章节列表（缓存时效由小说设置控制）
+      chapters = await this.novelCacheManager.getCachedChapterList(actualBookUrl, chapterListCacheHours) || [];
       
       if (chapters.length === 0) {
         // 缓存不存在或已过期，从网络获取
@@ -1434,6 +1483,25 @@ export struct UnifiedDetailPage {
       lastReadIndex,
       actualSourceId
     );
+    const ruleScopeId = this.getNovelCacheBookId(actualSourceId, actualBookUrl);
+    const scopedTocRuleIds = await this.getScopedRuleIds(ruleScopeId, this.buildBookTocRuleKey(ruleScopeId));
+    const scopedReplaceRuleIds = await this.getScopedRuleIds(ruleScopeId, this.buildBookReplaceRuleKey(ruleScopeId));
+    if (scopedTocRuleIds !== null) {
+      this.novelSelectedTocRuleIds = scopedTocRuleIds;
+    } else {
+      this.novelSelectedTocRuleIds = [];
+    }
+    if (scopedReplaceRuleIds !== null) {
+      this.novelSelectedReplaceRuleIds = scopedReplaceRuleIds;
+    } else {
+      this.novelSelectedReplaceRuleIds = [];
+    }
+    logger.info(
+      TAG,
+      `小说规则生效: scopeId=${ruleScopeId}, scopedToc=${scopedTocRuleIds === null ? 'default' : scopedTocRuleIds.length}, scopedReplace=${scopedReplaceRuleIds === null ? 'default' : scopedReplaceRuleIds.length}`
+    );
+    await this.applyDirectoryRulesToCurrentContent(enableDirectoryParsing, this.novelSelectedTocRuleIds);
+    await this.applyReplaceRulesToCurrentNovelContent(enableReplaceRules, scopedReplaceRuleIds);
     
     // 章节加载完成
     this.isChaptersLoading = false;
@@ -3239,7 +3307,9 @@ export struct UnifiedDetailPage {
         .padding({ left: 16, right: 16 })
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
         .borderRadius(18)
-        .onClick(() => this.openNovelSettings())
+        .onClick(() => {
+          void this.openNovelSettings();
+        })
         
         Button() {
           Row({ space: 6 }) {
@@ -3927,30 +3997,650 @@ export struct UnifiedDetailPage {
   /**
    * 打开小说设置（显示阅读设置弹窗）
    */
-  private openNovelSettings(): void {
-    if (!this.content || !this.pageParams) return;
-    
-    // 显示小说设置选项
-    AlertDialog.show({
-      title: '小说设置',
-      message: '请选择要执行的操作',
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      primaryButton: {
-        value: '进入阅读器设置',
-        action: () => {
-          // 跳转到阅读器，用户可以在阅读器中调整设置
-          this.continueReading();
-        }
-      },
-      secondaryButton: {
-        value: '管理缓存',
-        action: () => {
-          this.showNovelCacheOptions();
-        }
-      }
+  private async openNovelSettings(): Promise<void> {
+    if (!this.content || !this.pageParams || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return;
+    }
+    await this.loadNovelSettingsDialogConfig();
+    await this.loadNovelRuleConfigurations();
+    logger.info(
+      TAG,
+      `打开小说设置: online=${this.isOnlineNovelContent()}, prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}`
+    );
+    this.novelSettingsActiveTab = 0;
+    this.showNovelSettingsDialog = true;
+    animateTo({
+      duration: 300,
+      curve: curves.springMotion(0.6, 0.9)
+    }, () => {
+      this.novelSettingsDialogOpacity = 1;
+      this.novelSettingsDialogScale = 1;
+      this.novelSettingsDialogTranslateY = 0;
     });
   }
+
+  private closeNovelSettingsDialog(): void {
+    animateTo({
+      duration: 250,
+      curve: Curve.EaseOut
+    }, () => {
+      this.novelSettingsDialogOpacity = 0;
+      this.novelSettingsDialogScale = 0.8;
+      this.novelSettingsDialogTranslateY = 50;
+    });
+    setTimeout(() => {
+      this.showNovelSettingsDialog = false;
+    }, 260);
+  }
+
+  private cloneRuleIdList(source: string[]): string[] {
+    const result: string[] = [];
+    for (const id of source) {
+      result.push(id);
+    }
+    return result;
+  }
+
+  private areSameRuleIdList(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (const id of a) {
+      if (b.indexOf(id) < 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private refreshNovelRuleDirtyState(): void {
+    this.novelDirectoryRulesDirty = !this.areSameRuleIdList(this.novelSelectedTocRuleIds, this.novelAppliedTocRuleIds);
+    this.novelReplaceRulesDirty = !this.areSameRuleIdList(this.novelSelectedReplaceRuleIds, this.novelAppliedReplaceRuleIds);
+  }
+
+  private hasPendingNovelSettingChanges(): boolean {
+    return this.novelDirectoryRulesDirty || this.novelReplaceRulesDirty;
+  }
+
+  private async applyPendingNovelSettingsChanges(): Promise<void> {
+    if (this.novelDirectoryRulesDirty) {
+      await this.applyNovelDirectoryParsingSelection();
+    }
+    if (this.novelReplaceRulesDirty) {
+      await this.applyNovelReplaceRulesSelection();
+    }
+  }
+
+  private async requestCloseNovelSettingsDialog(afterClose?: () => void): Promise<void> {
+    if (!this.showNovelSettingsDialog) {
+      if (afterClose) {
+        afterClose();
+      }
+      return;
+    }
+    if (this.isApplyingNovelDirectoryParsing || this.isApplyingNovelReplaceRules) {
+      return;
+    }
+    if (!this.hasPendingNovelSettingChanges()) {
+      this.closeNovelSettingsDialog();
+      if (afterClose) {
+        afterClose();
+      }
+      return;
+    }
+    promptAction.showDialog({
+      title: '有未应用修改',
+      message: '目录解析或净化规则已修改，是否应用后再退出？',
+      buttons: [
+        { text: '应用并退出', color: '#007DFF' },
+        { text: '直接退出', color: '#666666' }
+      ]
+    }).then(async (result) => {
+      if (result.index === 0) {
+        await this.applyPendingNovelSettingsChanges();
+        if (!this.hasPendingNovelSettingChanges()) {
+          this.closeNovelSettingsDialog();
+          if (afterClose) {
+            afterClose();
+          }
+        }
+      } else if (result.index === 1) {
+        this.novelDirectoryRulesDirty = false;
+        this.novelReplaceRulesDirty = false;
+        this.closeNovelSettingsDialog();
+        if (afterClose) {
+          afterClose();
+        }
+      }
+    }).catch(() => {
+      logger.info(TAG, '关闭小说设置已取消');
+    });
+  }
+
+  private isOnlineNovelContent(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return false;
+    }
+    return !this.content.isLocal && !!this.content.sourceId;
+  }
+
+  private getCurrentNovelRuleScopeId(): string {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return '';
+    }
+    const sourceId = this.content.sourceId || this.pageParams?.sourceId || 'local';
+    return this.getNovelCacheBookId(sourceId, this.content.id);
+  }
+
+  private buildBookTocRuleKey(scopeId: string): string {
+    return `${NOVEL_BOOK_TOC_RULE_IDS_PREFIX}${scopeId}`;
+  }
+
+  private buildBookReplaceRuleKey(scopeId: string): string {
+    return `${NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX}${scopeId}`;
+  }
+
+  private parseRuleIdArray(rawValue: string): string[] {
+    if (!rawValue || rawValue.length === 0) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(rawValue) as Array<string>;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      const result: string[] = [];
+      for (const item of parsed) {
+        if (typeof item === 'string' && item.length > 0) {
+          result.push(item);
+        }
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `解析规则ID列表失败: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private isRuleSelected(selectedIds: string[], ruleId: string): boolean {
+    return selectedIds.indexOf(ruleId) >= 0;
+  }
+
+  private toggleRuleSelection(selectedIds: string[], ruleId: string, enabled: boolean): string[] {
+    const result: string[] = [];
+    for (const id of selectedIds) {
+      if (id !== ruleId) {
+        result.push(id);
+      }
+    }
+    if (enabled) {
+      result.push(ruleId);
+    }
+    return result;
+  }
+
+  private getReplaceRuleScopeLabel(scope: ReplaceScope): string {
+    if (scope === ReplaceScope.TITLE) {
+      return '标题';
+    }
+    if (scope === ReplaceScope.CONTENT) {
+      return '正文';
+    }
+    return '全部';
+  }
+
+  private getReplaceRuleSourceLabel(rule: ReplaceRule): string {
+    if (!rule.sourceIds || rule.sourceIds.length === 0) {
+      return '全部来源';
+    }
+    return `指定来源(${rule.sourceIds.length})`;
+  }
+
+  private async loadNovelRuleConfigurations(): Promise<void> {
+    try {
+      const tocRuleManager = getNovelTxtTocRuleManager();
+      await tocRuleManager.initialize();
+      this.novelTocRules = tocRuleManager.getAllRules();
+
+      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
+      await replaceRuleManager.initialize();
+      await replaceRuleManager.refreshRules();
+      this.novelReplaceRules = replaceRuleManager.getAllRules();
+
+      const scopeId = this.getCurrentNovelRuleScopeId();
+      let scopedTocRuleIds: string[] = [];
+      let scopedReplaceRuleIds: string[] = [];
+      let hasScopedTocRuleIds = false;
+      let hasScopedReplaceRuleIds = false;
+      if (scopeId.length > 0) {
+        const context = getContext(this) as common.UIAbilityContext;
+        const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
+        const rawTocRuleIds = await store.get(this.buildBookTocRuleKey(scopeId), '') as string;
+        const rawReplaceRuleIds = await store.get(this.buildBookReplaceRuleKey(scopeId), '') as string;
+        hasScopedTocRuleIds = rawTocRuleIds.length > 0;
+        hasScopedReplaceRuleIds = rawReplaceRuleIds.length > 0;
+        scopedTocRuleIds = this.parseRuleIdArray(rawTocRuleIds);
+        scopedReplaceRuleIds = this.parseRuleIdArray(rawReplaceRuleIds);
+      }
+      if (!hasScopedTocRuleIds) {
+        scopedTocRuleIds = this.novelTocRules.filter((rule) => rule.enabled).map((rule) => rule.id);
+      }
+      if (!hasScopedReplaceRuleIds) {
+        scopedReplaceRuleIds = this.novelReplaceRules.filter((rule) => rule.enabled).map((rule) => rule.id);
+      }
+      this.novelSelectedTocRuleIds = scopedTocRuleIds;
+      this.novelSelectedReplaceRuleIds = scopedReplaceRuleIds;
+      this.novelAppliedTocRuleIds = this.cloneRuleIdList(this.novelSelectedTocRuleIds);
+      this.novelAppliedReplaceRuleIds = this.cloneRuleIdList(this.novelSelectedReplaceRuleIds);
+      this.novelDirectoryRulesDirty = false;
+      this.novelReplaceRulesDirty = false;
+      logger.info(
+        TAG,
+        `小说规则配置已加载: scopeId=${scopeId}, tocRules=${this.novelSelectedTocRuleIds.length}, replaceRules=${this.novelSelectedReplaceRuleIds.length}`
+      );
+    } catch (error) {
+      logger.warn(TAG, `加载小说规则配置失败: ${String(error)}`);
+      this.novelTocRules = [];
+      this.novelReplaceRules = [];
+      this.novelSelectedTocRuleIds = [];
+      this.novelSelectedReplaceRuleIds = [];
+      this.novelAppliedTocRuleIds = [];
+      this.novelAppliedReplaceRuleIds = [];
+      this.novelDirectoryRulesDirty = false;
+      this.novelReplaceRulesDirty = false;
+    }
+  }
+
+  private async loadNovelSettingsDialogConfig(): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
+      this.novelEnableReadWhileDownload = await store.get('enableReadWhileDownload', true) as boolean;
+      this.novelDefaultLoadChapters = Number(await store.get('defaultLoadChapters', 50));
+      this.novelEnableDirectoryParsing = await store.get(NOVEL_SETTING_ENABLE_DIRECTORY_PARSING, true) as boolean;
+      this.novelEnableReplaceRules = await store.get(NOVEL_SETTING_ENABLE_REPLACE_RULES, true) as boolean;
+      this.novelDirectoryParsingSelection = this.novelEnableDirectoryParsing;
+      this.novelReplaceRulesSelection = this.novelEnableReplaceRules;
+      logger.info(
+        TAG,
+        `加载小说设置: prefetchEnabled=${this.novelEnableReadWhileDownload}, prefetchCount=${this.novelDefaultLoadChapters}, directory=${this.novelEnableDirectoryParsing}, replace=${this.novelEnableReplaceRules}`
+      );
+      if (!Number.isFinite(this.novelDefaultLoadChapters) || this.novelDefaultLoadChapters < 0) {
+        this.novelDefaultLoadChapters = 50;
+      }
+    } catch (error) {
+      logger.warn(TAG, `加载小说设置对话框配置失败: ${String(error)}`);
+      this.novelEnableReadWhileDownload = true;
+      this.novelDefaultLoadChapters = 50;
+      this.novelEnableDirectoryParsing = true;
+      this.novelEnableReplaceRules = true;
+      this.novelDirectoryParsingSelection = true;
+      this.novelReplaceRulesSelection = true;
+    }
+  }
+
+  private async saveNovelSettingValue(key: string, value: number | boolean): Promise<boolean> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
+      await store.put(key, value);
+      await store.flush();
+      logger.info(TAG, `小说设置已保存: ${key}=${String(value)}`);
+      return true;
+    } catch (error) {
+      logger.error(TAG, `保存小说设置失败: key=${key}, error=${String(error)}`);
+      promptAction.showToast({ message: '保存设置失败', duration: 1200 });
+      return false;
+    }
+  }
+
+  private getNovelPrefetchChapterOptions(): number[] {
+    return [10, 20, 50, 100, 200, 9999];
+  }
+
+  private formatNovelPrefetchChapterCount(value: number): string {
+    if (value >= 9999) {
+      return '全部';
+    }
+    return `${value}章`;
+  }
+
+  private onNovelPrefetchChapterCountChange(value: number): void {
+    this.novelDefaultLoadChapters = value;
+    logger.info(TAG, `小说预下载范围已切换: ${value}章`);
+    void this.saveNovelSettingValue('defaultLoadChapters', value);
+  }
+
+  private async saveBookScopedRuleIds(tocRuleIds: string[], replaceRuleIds: string[]): Promise<boolean> {
+    const scopeId = this.getCurrentNovelRuleScopeId();
+    if (scopeId.length === 0) {
+      return false;
+    }
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      await store.put(this.buildBookTocRuleKey(scopeId), JSON.stringify(tocRuleIds));
+      await store.put(this.buildBookReplaceRuleKey(scopeId), JSON.stringify(replaceRuleIds));
+      await store.flush();
+      logger.info(
+        TAG,
+        `小说书籍专属规则已保存: scopeId=${scopeId}, tocRules=${tocRuleIds.length}, replaceRules=${replaceRuleIds.length}`
+      );
+      return true;
+    } catch (error) {
+      logger.error(TAG, `保存小说书籍专属规则失败: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private async getScopedRuleIds(scopeId: string, key: string): Promise<string[] | null> {
+    if (scopeId.length === 0) {
+      return null;
+    }
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      const raw = await store.get(key, '') as string;
+      if (!raw || raw.length === 0) {
+        return null;
+      }
+      return this.parseRuleIdArray(raw);
+    } catch (error) {
+      logger.warn(TAG, `加载书籍规则失败: key=${key}, error=${String(error)}`);
+      return null;
+    }
+  }
+
+  private async applyNovelDirectoryParsingSelection(): Promise<void> {
+    if (this.isApplyingNovelDirectoryParsing || !this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return;
+    }
+    this.isApplyingNovelDirectoryParsing = true;
+    try {
+      const nextEnabled = true;
+      this.novelDirectoryParsingSelection = true;
+      const saved = await this.saveNovelSettingValue(NOVEL_SETTING_ENABLE_DIRECTORY_PARSING, nextEnabled);
+      if (!saved) {
+        return;
+      }
+      const scopedSaved = await this.saveBookScopedRuleIds(this.novelSelectedTocRuleIds, this.novelSelectedReplaceRuleIds);
+      if (!scopedSaved) {
+        promptAction.showToast({ message: '保存书籍规则失败', duration: 1400 });
+        return;
+      }
+      this.novelEnableDirectoryParsing = nextEnabled;
+      await this.refreshNovelContentByDirectorySetting(nextEnabled, this.novelSelectedTocRuleIds);
+      this.novelAppliedTocRuleIds = this.cloneRuleIdList(this.novelSelectedTocRuleIds);
+      this.refreshNovelRuleDirtyState();
+      logger.info(TAG, `目录解析应用完成: enabled=${nextEnabled}, selectedRules=${this.novelSelectedTocRuleIds.length}`);
+      promptAction.showToast({
+        message: '目录解析已应用并刷新章节',
+        duration: 1400
+      });
+    } catch (error) {
+      logger.error(TAG, `应用目录解析设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '应用目录解析设置失败', duration: 1400 });
+    } finally {
+      this.isApplyingNovelDirectoryParsing = false;
+    }
+  }
+
+  private async applyNovelReplaceRulesSelection(): Promise<void> {
+    if (this.isApplyingNovelReplaceRules || !this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return;
+    }
+    this.isApplyingNovelReplaceRules = true;
+    try {
+      const nextEnabled = true;
+      this.novelReplaceRulesSelection = true;
+      const saved = await this.saveNovelSettingValue(NOVEL_SETTING_ENABLE_REPLACE_RULES, nextEnabled);
+      if (!saved) {
+        return;
+      }
+      const scopedSaved = await this.saveBookScopedRuleIds(this.novelSelectedTocRuleIds, this.novelSelectedReplaceRuleIds);
+      if (!scopedSaved) {
+        promptAction.showToast({ message: '保存书籍规则失败', duration: 1400 });
+        return;
+      }
+      this.novelEnableReplaceRules = nextEnabled;
+      await this.applyReplaceRulesToCurrentNovelContent(nextEnabled, this.novelSelectedReplaceRuleIds);
+      this.novelAppliedReplaceRuleIds = this.cloneRuleIdList(this.novelSelectedReplaceRuleIds);
+      this.refreshNovelRuleDirtyState();
+      logger.info(TAG, `净化规则应用完成: enabled=${nextEnabled}, selectedRules=${this.novelSelectedReplaceRuleIds.length}`);
+      promptAction.showToast({
+        message: '净化规则已应用到当前内容',
+        duration: 1400
+      });
+    } catch (error) {
+      logger.error(TAG, `应用净化规则设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '应用净化规则设置失败', duration: 1400 });
+    } finally {
+      this.isApplyingNovelReplaceRules = false;
+    }
+  }
+
+  private async refreshNovelContentByDirectorySetting(enableDirectoryParsing: boolean, selectedTocRuleIds: string[]): Promise<void> {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return;
+    }
+    const previousContent = this.content;
+    if (enableDirectoryParsing && this.isOnlineNovelContent() && this.content.id) {
+      await this.novelCacheManager.clearChapterListCache(this.content.id);
+    }
+    await this.loadNovelContent();
+    await this.applyDirectoryRulesToCurrentContent(enableDirectoryParsing, selectedTocRuleIds);
+    if (
+      previousContent &&
+      previousContent.chapters.length > 0 &&
+      (!this.content || this.content.contentType !== UnifiedContentType.NOVEL || this.content.chapters.length === 0)
+    ) {
+      this.content = previousContent;
+      this.isChaptersLoading = false;
+      logger.warn(TAG, '目录解析后章节为空，已回退到应用前数据');
+      promptAction.showToast({ message: '目录解析结果为空，已回退原目录', duration: 1400 });
+    }
+  }
+
+  private async applyDirectoryRulesToCurrentContent(enableDirectoryParsing: boolean, selectedTocRuleIds: string[]): Promise<void> {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL || !enableDirectoryParsing) {
+      return;
+    }
+    if (selectedTocRuleIds.length === 0) {
+      return;
+    }
+    const tocRuleManager = getNovelTxtTocRuleManager();
+    await tocRuleManager.initialize();
+    const regexList: RegExp[] = [];
+    for (const ruleId of selectedTocRuleIds) {
+      const rule = tocRuleManager.getRule(ruleId);
+      if (!rule || !rule.rule) {
+        continue;
+      }
+      try {
+        regexList.push(new RegExp(rule.rule, 'm'));
+      } catch (error) {
+        logger.warn(TAG, `目录规则无效，跳过: id=${ruleId}, error=${String(error)}`);
+      }
+    }
+    if (regexList.length === 0) {
+      return;
+    }
+    const currentContent = this.content;
+    const nextChapters: UnifiedChapter[] = [];
+    let matchedCount = 0;
+    let changedCount = 0;
+    for (const chapter of currentContent.chapters) {
+      const baseTitle = chapter.title || '';
+      let nextTitle = baseTitle;
+      for (const regex of regexList) {
+        regex.lastIndex = 0;
+        const matched = regex.exec(baseTitle);
+        if (matched && matched[0]) {
+          matchedCount += 1;
+          nextTitle = matched[0].trim();
+          break;
+        }
+      }
+      if (nextTitle !== baseTitle) {
+        changedCount += 1;
+      }
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: nextTitle,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: chapter.isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        pageCount: chapter.pageCount,
+        wordCount: chapter.wordCount,
+        publishDate: chapter.publishDate,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      nextChapters.push(updatedChapter);
+    }
+    if (changedCount <= 0) {
+      logger.info(TAG, `目录规则已应用: 命中章节=${matchedCount}, 标题变化=${changedCount}`);
+      return;
+    }
+    const updatedContent: UnifiedContent = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: currentContent.description,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: currentContent.lastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: currentContent.sourceName,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: nextChapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
+    this.content = updatedContent;
+    logger.info(TAG, `目录规则已应用: 命中章节=${matchedCount}, 标题变化=${changedCount}`);
+  }
+
+  private async applyReplaceRulesToCurrentNovelContent(
+    enableReplaceRules: boolean,
+    selectedRuleIds: string[] | null = null
+  ): Promise<void> {
+    if (!this.content || this.content.contentType !== UnifiedContentType.NOVEL) {
+      return;
+    }
+    const sourceId = this.content.sourceId || this.pageParams?.sourceId;
+    const originalNovel = NovelAdapter.getOriginalNovel(this.content);
+    if (!originalNovel) {
+      return;
+    }
+    if (enableReplaceRules) {
+      const replaceRuleManager = NovelReplaceRuleManager.getInstance();
+      await replaceRuleManager.initialize();
+      await replaceRuleManager.refreshRules();
+    }
+    const contentProcessor = getNovelContentProcessor();
+    const baseDescription = originalNovel.intro || this.content.description;
+    const scopedRuleIds = selectedRuleIds === null ? undefined : selectedRuleIds;
+    const nextDescription = enableReplaceRules
+      ? contentProcessor.quickReplace(baseDescription, ReplaceScope.CONTENT, sourceId, scopedRuleIds)
+      : baseDescription;
+
+    const nextChapters: UnifiedChapter[] = [];
+    for (const chapter of this.content.chapters) {
+      const originalChapter = NovelAdapter.getOriginalChapter(chapter);
+      if (!originalChapter) {
+        nextChapters.push(chapter);
+        continue;
+      }
+      const baseTitle = originalChapter.title || chapter.title;
+      const nextTitle = enableReplaceRules
+        ? contentProcessor.processTitle(baseTitle, sourceId, scopedRuleIds)
+        : baseTitle;
+      const updatedChapter: UnifiedChapter = {
+        id: chapter.id,
+        title: nextTitle,
+        index: chapter.index,
+        isRead: chapter.isRead,
+        isDownloaded: chapter.isDownloaded,
+        isBookmarked: chapter.isBookmarked,
+        pageCount: chapter.pageCount,
+        wordCount: chapter.wordCount,
+        publishDate: chapter.publishDate,
+        originalData: chapter.originalData,
+        originalType: chapter.originalType
+      };
+      nextChapters.push(updatedChapter);
+    }
+    let nextLastReadChapterTitle = this.content.lastReadChapterTitle;
+    if (this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < nextChapters.length) {
+      nextLastReadChapterTitle = nextChapters[this.content.lastReadChapterIndex].title;
+    }
+    const currentContent = this.content;
+    const updatedContent: UnifiedContent = {
+      id: currentContent.id,
+      title: currentContent.title,
+      coverUrl: currentContent.coverUrl,
+      author: currentContent.author,
+      description: nextDescription,
+      contentType: currentContent.contentType,
+      genres: currentContent.genres,
+      tags: currentContent.tags,
+      readStatus: currentContent.readStatus,
+      isFavorite: currentContent.isFavorite,
+      isNSFW: currentContent.isNSFW,
+      totalChapters: currentContent.totalChapters,
+      readChapters: currentContent.readChapters,
+      lastReadChapterIndex: currentContent.lastReadChapterIndex,
+      lastReadChapterTitle: nextLastReadChapterTitle,
+      lastReadTime: currentContent.lastReadTime,
+      readProgress: currentContent.readProgress,
+      sourceId: currentContent.sourceId,
+      sourceName: currentContent.sourceName,
+      sourceUrl: currentContent.sourceUrl,
+      isLocal: currentContent.isLocal,
+      publisher: currentContent.publisher,
+      publishDate: currentContent.publishDate,
+      isbn: currentContent.isbn,
+      fileSize: currentContent.fileSize,
+      filePath: currentContent.filePath,
+      format: currentContent.format,
+      chapters: nextChapters,
+      originalData: currentContent.originalData,
+      originalType: currentContent.originalType
+    };
+    this.content = updatedContent;
+  }
+
+  private openNovelTxtTocRulePage(): void {
+    void this.requestCloseNovelSettingsDialog(() => {
+      this.pathStack.pushPathByName('NovelTxtTocRulePage', null);
+    });
+  }
+
+  private openNovelReplaceRulePage(): void {
+    void this.requestCloseNovelSettingsDialog(() => {
+      this.pathStack.pushPathByName('NovelReplaceRulePage', null);
+    });
+  }
+
 
   /**
    * 显示小说缓存选项
@@ -6402,6 +7092,9 @@ export struct UnifiedDetailPage {
         
         // 下载章节选择对话框
         this.buildDownloadDialog()
+
+        // 小说设置对话框
+        this.buildNovelSettingsDialog()
         
         // 换源对话框
         this.buildChangeSourceDialog()
@@ -6843,6 +7536,381 @@ export struct UnifiedDetailPage {
     .width('100%')
   }
   
+  /**
+   * 小说设置对话框
+   */
+  @Builder
+  buildNovelSettingsDialog() {
+    if (this.showNovelSettingsDialog && this.content && this.content.contentType === UnifiedContentType.NOVEL) {
+      Column() {
+        Column({ space: 16 }) {
+          Row() {
+            Text('小说设置')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Blank()
+
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(18)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            }
+            .width(32)
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              void this.requestCloseNovelSettingsDialog();
+            })
+          }
+          .width('100%')
+          Row({ space: 8 }) {
+            this.buildNovelSettingsTabButton('预下载', 0)
+            this.buildNovelSettingsTabButton('目录解析', 1)
+            this.buildNovelSettingsTabButton('净化规则', 2)
+          }
+          .width('100%')
+          .padding(4)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+
+          Scroll() {
+            Column({ space: 12 }) {
+              if (this.novelSettingsActiveTab === 0) {
+                this.buildNovelPrefetchSettingsTab()
+              } else if (this.novelSettingsActiveTab === 1) {
+                this.buildNovelDirectorySettingsTab()
+              } else {
+                this.buildNovelReplaceRuleSettingsTab()
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 420 })
+          .scrollBar(BarState.Auto)
+        }
+        .width('90%')
+        .constraintSize({ maxWidth: 400 })
+        .padding(20)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(16)
+        .scale({ x: this.novelSettingsDialogScale, y: this.novelSettingsDialogScale })
+        .translate({ y: this.novelSettingsDialogTranslateY })
+        .opacity(this.novelSettingsDialogOpacity)
+        .shadow({
+          radius: 20,
+          color: 'rgba(0,0,0,0.2)',
+          offsetX: 0,
+          offsetY: 10
+        })
+        .onClick(() => {
+          // Prevent click-through.
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(`rgba(0,0,0,${0.5 * this.novelSettingsDialogOpacity})`)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => {
+        void this.requestCloseNovelSettingsDialog();
+      })
+    }
+  }
+
+  @Builder
+  private buildNovelSettingsTabButton(label: string, index: number) {
+    Row() {
+      Text(label)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.novelSettingsActiveTab === index
+          ? Color.White
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
+    .height(34)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.novelSettingsActiveTab === index
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+      : Color.Transparent)
+    .borderRadius(14)
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .onClick(() => {
+      logger.info(TAG, `小说设置标签切换: ${label}`);
+      this.novelSettingsActiveTab = index;
+    })
+  }
+
+  @Builder
+  private buildNovelPrefetchSettingsTab() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('预下载设置（仅在线）')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        if (this.isOnlineNovelContent()) {
+          Toggle({ type: ToggleType.Switch, isOn: this.novelEnableReadWhileDownload })
+            .onChange((isOn: boolean) => {
+              this.novelEnableReadWhileDownload = isOn;
+              logger.info(TAG, `小说预下载开关变更: ${isOn}`);
+              void this.saveNovelSettingValue('enableReadWhileDownload', isOn);
+            })
+        }
+      }
+      .width('100%')
+
+      if (this.isOnlineNovelContent()) {
+        Text('在阅读时提前缓存后续章节，设置实时生效')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        if (this.novelEnableReadWhileDownload) {
+          Column({ space: 8 }) {
+            Text(`预下载范围：${this.formatNovelPrefetchChapterCount(this.novelDefaultLoadChapters)}`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+            Row({ space: 8 }) {
+              ForEach(this.getNovelPrefetchChapterOptions(), (count: number) => {
+                Button(this.formatNovelPrefetchChapterCount(count))
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .height(28)
+                  .padding({ left: 10, right: 10 })
+                  .backgroundColor(this.novelDefaultLoadChapters === count
+                    ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                    : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                  .fontColor(this.novelDefaultLoadChapters === count
+                    ? Color.White
+                    : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  .borderRadius(14)
+                  .onClick(() => this.onNovelPrefetchChapterCountChange(count))
+              }, (count: number) => `novel_prefetch_${count}`)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
+      } else {
+        Text('当前为本地小说，预下载仅在线小说可用')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  @Builder
+  private buildNovelDirectorySettingsTab() {
+    Column({ space: 10 }) {
+      Text('目录解析（书籍专属）')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Text('为当前小说单独选择目录解析规则，点击“应用”后会保存并重新解析目录')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+      Row({ space: 8 }) {
+        Button(this.isApplyingNovelDirectoryParsing ? '应用中...' : '应用')
+          .layoutWeight(1)
+          .height(32)
+          .borderRadius(16)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(Color.White)
+          .enabled(!this.isApplyingNovelDirectoryParsing)
+          .onClick(() => {
+            void this.applyNovelDirectoryParsingSelection();
+          })
+        Button('管理目录规则')
+          .layoutWeight(1)
+          .height(32)
+          .borderRadius(16)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.openNovelTxtTocRulePage();
+          })
+      }
+      .width('100%')
+
+      if (this.novelTocRules.length <= 0) {
+        Text('暂无目录规则')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      } else {
+        ForEach(this.novelTocRules, (rule: TxtTocRule) => {
+          Row({ space: 8 }) {
+            Column({ space: 4 }) {
+              Text(rule.name)
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(rule.rule)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .maxLines(3)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(`序号：${rule.serialNumber}  默认：${rule.enabled ? '启用' : '禁用'}`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              if (rule.example && rule.example.length > 0) {
+                Text(`示例：${rule.example}`)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            Toggle({ type: ToggleType.Switch, isOn: this.isRuleSelected(this.novelSelectedTocRuleIds, rule.id) })
+              .onChange((isOn: boolean) => {
+                this.novelSelectedTocRuleIds = this.toggleRuleSelection(this.novelSelectedTocRuleIds, rule.id, isOn);
+                this.refreshNovelRuleDirtyState();
+                logger.info(TAG, `目录规则选择变更: rule=${rule.name}, enabled=${isOn}`);
+              })
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(10)
+        }, (rule: TxtTocRule) => `toc_rule_${rule.id}`)
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
+  @Builder
+  private buildNovelReplaceRuleSettingsTab() {
+    Column({ space: 10 }) {
+      Text('净化规则（书籍专属）')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Text('为当前小说单独选择净化规则，点击“应用”后会立即作用于当前内容并持久化')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+      Row({ space: 8 }) {
+        Button(this.isApplyingNovelReplaceRules ? '应用中...' : '应用')
+          .layoutWeight(1)
+          .height(32)
+          .borderRadius(16)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(Color.White)
+          .enabled(!this.isApplyingNovelReplaceRules)
+          .onClick(() => {
+            void this.applyNovelReplaceRulesSelection();
+          })
+        Button('管理净化规则')
+          .layoutWeight(1)
+          .height(32)
+          .borderRadius(16)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .onClick(() => {
+            this.openNovelReplaceRulePage();
+          })
+      }
+      .width('100%')
+
+      if (this.novelReplaceRules.length <= 0) {
+        Text('暂无净化规则')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      } else {
+        ForEach(this.novelReplaceRules, (rule: ReplaceRule) => {
+          Row({ space: 8 }) {
+            Column({ space: 4 }) {
+              Text(rule.name)
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(`匹配：${rule.pattern}`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                .maxLines(3)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(`替换：${rule.replacement}`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(`范围：${this.getReplaceRuleScopeLabel(rule.scope)}  来源：${this.getReplaceRuleSourceLabel(rule)}  默认：${rule.enabled ? '启用' : '禁用'}`)
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            Toggle({ type: ToggleType.Switch, isOn: this.isRuleSelected(this.novelSelectedReplaceRuleIds, rule.id) })
+              .onChange((isOn: boolean) => {
+                this.novelSelectedReplaceRuleIds = this.toggleRuleSelection(this.novelSelectedReplaceRuleIds, rule.id, isOn);
+                this.refreshNovelRuleDirtyState();
+                logger.info(TAG, `净化规则选择变更: rule=${rule.name}, enabled=${isOn}`);
+              })
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(10)
+        }, (rule: ReplaceRule) => `replace_rule_${rule.id}`)
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(12)
+  }
+
   /**
    * 下载章节选择对话框
    */

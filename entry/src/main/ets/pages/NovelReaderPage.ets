@@ -41,13 +41,21 @@ import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
+import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+import { setReaderReady, setReaderLoadingProgress, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { NovelDictRuleManager, DictRule } from '../Framework/Novel/NovelDictRuleManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 
 const TAG = 'NovelReaderPage';
+const NOVEL_SETTINGS_STORE = 'novel_settings';
+const NOVEL_BOOK_RULE_SETTINGS_STORE = 'novel_book_rule_settings';
+const NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX = 'book_replace_rule_ids_';
+const NOVEL_DEFAULT_PRELOAD_CHAPTERS = 50;
+const MAX_PREPARSED_CHAPTER_CACHE = 12;
+const NOVEL_SETTING_ENABLE_REPLACE_RULES = 'enableNovelReplaceRules';
 
 @Component
 export struct NovelReaderPage {
@@ -132,12 +140,21 @@ export struct NovelReaderPage {
   private uiContext: UIContext | null = null;
   private saveProgressInterval: number = 30000; // 30秒自动保存
   private readAloudProgressSaveInterval: number = 4000;
+  private transitionLoadingProgress: number = 0;
   private currentChapterTotalPages: number = 0;
   private shouldAutoStartReadAloud: boolean = false;
   private shouldAutoOpenReadAloudPlayer: boolean = false;
   private lastReadAloudResumePersistTime: number = 0;
   private lastReadAloudProgressSaveTime: number = 0;
   private isReadProgressReady: boolean = false;
+  private preloadSettingsLoaded: boolean = false;
+  private preloadChapterCount: number = NOVEL_DEFAULT_PRELOAD_CHAPTERS;
+  private preloadWhileReadingEnabled: boolean = true;
+  private replaceRulesEnabled: boolean = true;
+  private scopedReplaceRuleIds: string[] | null = null;
+  private prefetchGeneration: number = 0;
+  private preparsedChapterContent: Map<number, string> = new Map<number, string>();
+  private prefetchingChapterIndexes: Set<number> = new Set<number>();
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (payload: IEventPayload): void => {
     if (!this.bookId) {
@@ -193,6 +210,7 @@ export struct NovelReaderPage {
   aboutToDisappear(): void {
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.persistReadAloudResumeCharIndex(true);
+    this.stopCrossChapterPrefetch(true);
     logger.lifecycle(TAG, 'aboutToDisappear - 开始清理资源');
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -225,6 +243,7 @@ export struct NovelReaderPage {
     this.readAloudController.handlePageHide();
     this.readAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
     this.persistReadAloudResumeCharIndex(true);
+    this.stopCrossChapterPrefetch(false);
     this.readAloudController.refreshMediaSession();
     logger.lifecycle(TAG, '小说阅读器页面隐藏（进入后台）');
     // 立即保存阅读进度，确保 Home → 杀进程场景下进度不丢失
@@ -278,12 +297,23 @@ export struct NovelReaderPage {
     }
   }
 
+  private reportTransitionLoadingProgress(progress: number, reason: string): void {
+    const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
+    if (normalized <= this.transitionLoadingProgress + 0.001) {
+      return;
+    }
+    this.transitionLoadingProgress = normalized;
+    setReaderLoadingProgress(normalized);
+    logger.debug(TAG, `transition loading progress: ${(normalized * 100).toFixed(1)}%, reason=${reason}`);
+  }
+
   private notifyTransitionReaderReadyOnce(reason: string): void {
     if (this.hasNotifiedTransitionReaderReady) {
       logger.debug(TAG, `过渡动画就绪已通知，忽略重复触发: ${reason}`);
       return;
     }
     this.hasNotifiedTransitionReaderReady = true;
+    this.reportTransitionLoadingProgress(1, `ready_${reason}`);
     setReaderReady();
     logger.info(TAG, `📖 已通知过渡动画阅读器就绪: ${reason}`);
   }
@@ -566,23 +596,241 @@ export struct NovelReaderPage {
     }
   }
 
+  private async ensurePreloadSettingsLoaded(): Promise<void> {
+    if (this.preloadSettingsLoaded) {
+      return;
+    }
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
+      const rawDefaultLoadChapters = Number(await store.get('defaultLoadChapters', NOVEL_DEFAULT_PRELOAD_CHAPTERS));
+      this.preloadChapterCount = this.normalizePreloadChapterCount(rawDefaultLoadChapters);
+      this.preloadWhileReadingEnabled = await store.get('enableReadWhileDownload', true) as boolean;
+      this.replaceRulesEnabled = await store.get(NOVEL_SETTING_ENABLE_REPLACE_RULES, true) as boolean;
+      this.scopedReplaceRuleIds = await this.loadScopedReplaceRuleIds();
+      this.preloadSettingsLoaded = true;
+      logger.info(
+        TAG,
+        `preload settings loaded: chapters=${this.preloadChapterCount}, whileReading=${this.preloadWhileReadingEnabled}, replaceRules=${this.replaceRulesEnabled}, scopedReplaceRules=${this.scopedReplaceRuleIds ? this.scopedReplaceRuleIds.length : -1}`
+      );
+    } catch (error) {
+      this.preloadChapterCount = NOVEL_DEFAULT_PRELOAD_CHAPTERS;
+      this.preloadWhileReadingEnabled = true;
+      this.replaceRulesEnabled = true;
+      this.scopedReplaceRuleIds = null;
+      this.preloadSettingsLoaded = true;
+      logger.warn(TAG, `load preload settings failed, use default: ${String(error)}`);
+    }
+  }
+
+  private buildScopedReplaceRuleKey(): string {
+    return `${NOVEL_BOOK_REPLACE_RULE_IDS_PREFIX}${this.bookId}`;
+  }
+
+  private parseRuleIdArray(rawValue: string): string[] {
+    if (!rawValue || rawValue.length === 0) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(rawValue) as Array<string>;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      const result: string[] = [];
+      for (const item of parsed) {
+        if (typeof item === 'string' && item.length > 0) {
+          result.push(item);
+        }
+      }
+      return result;
+    } catch (error) {
+      logger.warn(TAG, `parse scoped replace rule ids failed: ${String(error)}`);
+      return [];
+    }
+  }
+
+  private async loadScopedReplaceRuleIds(): Promise<string[] | null> {
+    if (!this.bookId || this.bookId.length === 0) {
+      return null;
+    }
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      const raw = await store.get(this.buildScopedReplaceRuleKey(), '') as string;
+      if (!raw || raw.length === 0) {
+        return null;
+      }
+      return this.parseRuleIdArray(raw);
+    } catch (error) {
+      logger.warn(TAG, `load scoped replace rule ids failed: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private normalizePreloadChapterCount(rawValue: number): number {
+    if (!Number.isFinite(rawValue)) {
+      return NOVEL_DEFAULT_PRELOAD_CHAPTERS;
+    }
+    const safeValue = Math.floor(rawValue);
+    return Math.max(0, safeValue);
+  }
+
+  private buildContentProcessConfig(): ContentProcessConfig {
+    return {
+      useReplace: this.replaceRulesEnabled,
+      chineseConvert: 0,
+      reSegment: false,
+      includeTitle: true,
+      paragraphIndent: '',
+      sourceId: this.sourceId,
+      enabledRuleIds: this.scopedReplaceRuleIds === null ? undefined : this.scopedReplaceRuleIds
+    };
+  }
+
+  private processChapterContent(
+    rawContent: string,
+    chapterTitle: string,
+    chapterIndex: number,
+    reason: string
+  ): string {
+    const contentProcessor = getNovelContentProcessor();
+    const processResult = contentProcessor.processContent(
+      rawContent,
+      chapterTitle,
+      this.bookName,
+      this.buildContentProcessConfig()
+    );
+    if (processResult.appliedRules.length > 0) {
+      logger.info(TAG, `chapter ${chapterIndex} applied ${processResult.appliedRules.length} replace rules, reason=${reason}`);
+    }
+    logger.debug(
+      TAG,
+      `chapter ${chapterIndex} parsed: chars=${processResult.content.length}, paragraphs=${processResult.paragraphs.length}, reason=${reason}`
+    );
+    return processResult.content;
+  }
+
+  private getEffectivePrefetchCount(): number {
+    if (!this.preloadWhileReadingEnabled) {
+      return 0;
+    }
+    const remaining = this.totalChapters - this.currentChapterIndex - 1;
+    if (remaining <= 0) {
+      return 0;
+    }
+    if (this.preloadChapterCount >= 9999) {
+      return remaining;
+    }
+    return Math.max(0, Math.min(this.preloadChapterCount, remaining));
+  }
+
+  private stopCrossChapterPrefetch(clearPreparedCache: boolean): void {
+    this.prefetchGeneration++;
+    if (clearPreparedCache) {
+      this.prefetchingChapterIndexes.clear();
+      this.preparsedChapterContent.clear();
+    }
+  }
+
+  private trimPreparsedChapterCache(): void {
+    if (this.preparsedChapterContent.size <= MAX_PREPARSED_CHAPTER_CACHE) {
+      return;
+    }
+    const indexes = Array.from(this.preparsedChapterContent.keys()).sort((a: number, b: number) => a - b);
+    while (this.preparsedChapterContent.size > MAX_PREPARSED_CHAPTER_CACHE && indexes.length > 0) {
+      const oldest = indexes.shift();
+      if (oldest === undefined) {
+        break;
+      }
+      if (oldest === this.currentChapterIndex) {
+        continue;
+      }
+      this.preparsedChapterContent.delete(oldest);
+    }
+  }
+
+  private scheduleCrossChapterPrefetch(): void {
+    const preloadCount = this.getEffectivePrefetchCount();
+    if (preloadCount <= 0 || this.chapterList.length === 0) {
+      return;
+    }
+    const startIndex = this.currentChapterIndex + 1;
+    const endIndex = Math.min(this.totalChapters - 1, this.currentChapterIndex + preloadCount);
+    if (startIndex > endIndex) {
+      return;
+    }
+    const generation = ++this.prefetchGeneration;
+    logger.info(TAG, `schedule chapter prefetch: range=${startIndex}-${endIndex}, generation=${generation}`);
+    void this.prefetchChapterRange(generation, startIndex, endIndex);
+  }
+
+  private async prefetchChapterRange(generation: number, startIndex: number, endIndex: number): Promise<void> {
+    for (let chapterIndex = startIndex; chapterIndex <= endIndex; chapterIndex++) {
+      if (generation !== this.prefetchGeneration) {
+        logger.debug(TAG, `prefetch canceled: generation=${generation}, current=${this.prefetchGeneration}`);
+        return;
+      }
+      if (this.preparsedChapterContent.has(chapterIndex) || this.prefetchingChapterIndexes.has(chapterIndex)) {
+        continue;
+      }
+      const chapter = this.chapterList[chapterIndex];
+      if (!chapter) {
+        continue;
+      }
+
+      this.prefetchingChapterIndexes.add(chapterIndex);
+      try {
+        let rawContent = await this.cacheManager.getChapterCache(this.bookId, chapterIndex);
+        if (!rawContent) {
+          const chapterForCache: LegadoChapter = {
+            id: chapter.id || '',
+            bookUrl: this.bookUrl,
+            url: chapter.url,
+            title: chapter.title,
+            index: chapterIndex
+          };
+          const cached = await this.cacheManager.cacheChapter(this.sourceId, this.bookId, chapterForCache);
+          if (!cached) {
+            continue;
+          }
+          rawContent = await this.cacheManager.getChapterCache(this.bookId, chapterIndex);
+        }
+        if (!rawContent) {
+          continue;
+        }
+        const parsedContent = this.processChapterContent(rawContent, chapter.title, chapterIndex, 'prefetch');
+        this.preparsedChapterContent.set(chapterIndex, parsedContent);
+        this.trimPreparsedChapterCache();
+      } catch (error) {
+        logger.warn(TAG, `prefetch chapter failed: index=${chapterIndex}, error=${String(error)}`);
+      } finally {
+        this.prefetchingChapterIndexes.delete(chapterIndex);
+      }
+    }
+  }
+
   async loadContent(): Promise<void> {
     this.hasNotifiedTransitionReaderReady = false;
+    this.transitionLoadingProgress = 0;
     this.isLoading = true;
     this.isReadProgressReady = false;
+    this.reportTransitionLoadingProgress(0.06, 'load_start');
     try {
       // 设置沉浸式模式
       this.setupFullscreenMode();
+      await this.ensurePreloadSettingsLoaded();
       
       // [优化] 确保净化规则管理器已初始化并加载最新规则
       const ruleManager = NovelReplaceRuleManager.getInstance();
       await ruleManager.initialize();
       await ruleManager.refreshRules();
+      this.reportTransitionLoadingProgress(0.2, 'rules_ready');
       
       // 加载章节列表（如果还没有加载）
       if (this.chapterList.length === 0) {
         await this.loadChapterList();
       }
+      this.reportTransitionLoadingProgress(0.38, 'chapter_list_ready');
       
       const chapter: LegadoChapter = {
         id: '',
@@ -594,7 +842,14 @@ export struct NovelReaderPage {
       
       // 先尝试从txt文件缓存加载
       logger.info(TAG, `尝试从缓存加载章节: bookId=${this.bookId}, index=${this.currentChapterIndex}`);
-      let rawContent = await this.cacheManager.getChapterCache(this.bookId, this.currentChapterIndex);
+      const preparsedContent = this.preparsedChapterContent.get(this.currentChapterIndex);
+      if (preparsedContent !== undefined) {
+        this.preparsedChapterContent.delete(this.currentChapterIndex);
+        this.content = preparsedContent;
+        logger.info(TAG, `hit preparsed chapter cache: index=${this.currentChapterIndex}`);
+        this.reportTransitionLoadingProgress(0.62, 'chapter_content_ready');
+      } else {
+        let rawContent = await this.cacheManager.getChapterCache(this.bookId, this.currentChapterIndex);
       
       if (rawContent) {
         logger.info(TAG, `✅ 从txt缓存加载成功: ${this.chapterTitle}`);
@@ -603,35 +858,20 @@ export struct NovelReaderPage {
         logger.info(TAG, `缓存未命中，从网络加载: ${this.chapterTitle}`);
         rawContent = await this.sourceManager.getContent(this.sourceId, chapter);
       }
+      this.reportTransitionLoadingProgress(0.62, 'chapter_content_ready');
       
       if (!rawContent) {
         this.content = '加载失败，请重试';
       } else {
-        // 使用内容处理器应用替换规则
-        // 注意：不在这里添加段落缩进，缩进由TextReaderComponent统一处理
-        // 这样可以避免与TextReaderComponent的缩进逻辑冲突
-        const contentProcessor = getNovelContentProcessor();
-        const processConfig: ContentProcessConfig = {
-          useReplace: true,
-          chineseConvert: 0,
-          reSegment: false,
-          includeTitle: true,
-          paragraphIndent: '',  // 不添加缩进，由TextReaderComponent处理
-          sourceId: this.sourceId
-        };
-        const processResult = contentProcessor.processContent(
+        this.content = this.processChapterContent(
           rawContent,
           this.chapterTitle,
-          this.bookName,
-          processConfig
+          this.currentChapterIndex,
+          'current_chapter_load'
         );
-        // 直接使用处理后的内容，不使用paragraphs（避免额外的换行处理）
-        this.content = processResult.content;
-        
-        if (processResult.appliedRules.length > 0) {
-          logger.info(TAG, `应用了 ${processResult.appliedRules.length} 条替换规则`);
-        }
       }
+      }
+      this.reportTransitionLoadingProgress(0.76, 'content_processed');
       
       // 加载阅读进度
       await this.loadReadProgress();
@@ -642,9 +882,12 @@ export struct NovelReaderPage {
       this.syncReadAloudStateFromController();
       this.updateReadAloudContextByPosition();
       this.tryHandleAutoReadAloudEntry();
+      this.reportTransitionLoadingProgress(0.9, 'progress_restored');
+      this.scheduleCrossChapterPrefetch();
     } catch (error) {
       logger.error(TAG, `加载正文失败: ${String(error)}`);
       this.content = '加载失败: ' + String(error);
+      this.reportTransitionLoadingProgress(0.9, 'load_failed_fallback');
     }
     this.isLoading = false;
   }
@@ -860,6 +1103,7 @@ export struct NovelReaderPage {
       logger.info(TAG, `已添加净化规则: ${pattern.substring(0, 50)}`);
       
       // 重新加载当前章节内容以应用新规则
+      this.stopCrossChapterPrefetch(true);
       this.loadContent();
     } catch (error) {
       logger.error(TAG, `添加净化规则失败: ${String(error)}`);
@@ -912,6 +1156,7 @@ export struct NovelReaderPage {
     this.chapterTitle = targetChapter.title;
     this.chapterId = `${this.bookId}_${chapterIndex}`;
     this.currentPageIndex = 0;
+    this.stopCrossChapterPrefetch(false);
     
     // 重新加载内容
     await this.loadContent();
@@ -1603,6 +1848,7 @@ export struct NovelReaderPage {
       onReady: () => {
         // 文本阅读器分页完成，通知过渡动画阅读器就绪
         logger.info(TAG, '📖 文本阅读器分页完成，通知过渡动画');
+        this.reportTransitionLoadingProgress(0.96, 'text_reader_ready');
         this.notifyTransitionReaderReadyOnce('TextReaderComponent.onReady');
       },
       onAddPurifyRule: (pattern: string) => this.addPurifyRule(pattern),

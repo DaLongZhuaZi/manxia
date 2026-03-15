@@ -42,7 +42,7 @@ import fs from '@ohos.file.fs';
 import { MangaQuickSettings } from '../components/MangaQuickSettings';
 import { MangaReaderChapterList } from '../components/MangaReaderChapterList';
 import { MangaInteractionOverlay, MangaInteractionOverlayParams } from '../components/MangaInteractionOverlay';
-import { setReaderReady, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
+import { setReaderReady, setReaderLoadingProgress, startBookCloseTransitionWithComponentId, CoverPosition, cancelTransition } from '../components/BookTransitionOverlay';
 import { MangaDetailPageParams } from './MangaDetailPage';
 import { DownloadStatus, ReadingStatus } from '../Framework/Types/StatusEnums';
 import { AutoPageTurnController, AutoPageTurnState, AutoPageTurnConfig } from '../Framework/Utils/AutoPageTurnController';
@@ -430,6 +430,7 @@ export struct MangaReaderPage {
   // 问题：MangaViewer 在初始化时会触发 onPageChange 回调，覆盖正确的阅读进度
   private isReaderInitialized: boolean = false;
   private hasNotifiedTransitionReaderReady: boolean = false;
+  private transitionLoadingProgress: number = 0;
   private isCloseTransitionNavigating: boolean = false;
   private transitionReaderReadyPollTimer: number = -1;
   private transitionReaderReadyTimeoutTimer: number = -1;
@@ -1492,7 +1493,9 @@ export struct MangaReaderPage {
     this.activeInitParamsKey = initKey;
     logger.info(TAG, '🚀 开始初始化漫画阅读器');
     this.hasNotifiedTransitionReaderReady = false;
+    this.transitionLoadingProgress = 0;
     this.clearTransitionReaderReadyTimers();
+    this.reportTransitionLoadingProgress(0.06, 'init_start');
     this.isNetworkConfigReady = false; // 重置配置就绪状态，阻止 Viewer 渲染
     
     // 执行初始化并保存Promise
@@ -2032,6 +2035,7 @@ export struct MangaReaderPage {
       logger.info(TAG, `🔄 准备设置当前漫画和章节`);
       logger.info(TAG, `📊 当前状态: manga=${manga ? manga.title : 'null'}, chapters=${manga ? manga.chapters.length : 0}`);
       this.readerState.currentManga = manga;
+      this.reportTransitionLoadingProgress(0.28, 'manga_bound');
       logger.info(TAG, `📚 设置当前漫画: ${manga.title}`);
 
       // 设置当前章节 - 增强错误处理和日志
@@ -2109,6 +2113,8 @@ export struct MangaReaderPage {
         this.notifyTransitionReaderReadyOnce('no_available_chapter');
         return;
       }
+
+      this.reportTransitionLoadingProgress(0.46, 'chapter_bound');
 
       // [重构] 在线已下载：从online_page表加载本地文件路径
       // [修复] 扩展条件：当页面为空，或页面存在但第一页的sourceType仍为NETWORK时，重新加载
@@ -2495,9 +2501,12 @@ export struct MangaReaderPage {
         logger.debug(TAG, `  - 图片URL: ${currentPage.imageUrl}`);
       }
 
+      this.reportTransitionLoadingProgress(0.72, 'chapter_pages_ready');
+
       // 加载阅读设置（异步从数据库加载，确保获取最新保存的设置）
       logger.debug(TAG, '⚙️ 开始加载阅读设置');
       await this.loadReadingSettings();
+      this.reportTransitionLoadingProgress(0.84, 'reading_settings_ready');
 
       // [新增] 此时章节已确定，强制刷新一次 Headers 以确保 Referer 正确
       this.updateNetworkHeadersForChapter(); 
@@ -2520,6 +2529,7 @@ export struct MangaReaderPage {
       }
       this.lastInitializedParamsKey = this.buildInitParamsKey(params);
       this.readerState.isLoading = false;
+      this.reportTransitionLoadingProgress(0.94, 'init_done_wait_visual_ready');
       logger.info(TAG, '✅ 漫画阅读器初始化完成');
       
       // 动画覆盖层退出时机：等待首屏视觉内容就绪（由MangaViewer回调+轮询共同保障）
@@ -2571,6 +2581,16 @@ export struct MangaReaderPage {
     }
   }
 
+  private reportTransitionLoadingProgress(progress: number, reason: string): void {
+    const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
+    if (normalized <= this.transitionLoadingProgress + 0.001) {
+      return;
+    }
+    this.transitionLoadingProgress = normalized;
+    setReaderLoadingProgress(normalized);
+    logger.debug(TAG, `transition loading progress: ${(normalized * 100).toFixed(1)}%, reason=${reason}`);
+  }
+
   private notifyTransitionReaderReadyOnce(reason: string): void {
     if (this.hasNotifiedTransitionReaderReady) {
       logger.debug(TAG, `过渡动画就绪已通知，忽略重复触发: ${reason}`);
@@ -2578,6 +2598,7 @@ export struct MangaReaderPage {
     }
     this.hasNotifiedTransitionReaderReady = true;
     this.clearTransitionReaderReadyTimers();
+    this.reportTransitionLoadingProgress(1, `ready_${reason}`);
     setReaderReady();
     logger.info(TAG, `📤 已通知过渡动画阅读器就绪: ${reason}`);
   }

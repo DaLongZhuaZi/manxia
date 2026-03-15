@@ -66,6 +66,7 @@ export class GlobalTransitionState {
   readerContentPixelMap: image.PixelMap | null = null;
   readerContentImagePath: string = '';  // 压缩后的临时截图路径
   isReaderReady: boolean = false;
+  readerLoadProgress: number = 0;
   targetBookId: string = '';
   targetBookType: 'manga' | 'ebook' | 'novel' = 'manga';
   ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
@@ -195,6 +196,7 @@ export class TransitionController {
       readerContentPixelMap: null,
       readerContentImagePath: '',
       isReaderReady: false,
+      readerLoadProgress: 0.06,
       targetBookId: targetBookId,
       targetBookType: targetBookType,
       ebookBackground: resolvedBackground,
@@ -449,6 +451,23 @@ export class TransitionController {
     this.onCloseComplete = onComplete || null;
     this.notifyStateChange();
   }
+
+  public setReaderLoadingProgress(progress: number): void {
+    if (!this.currentState.isActive || this.currentState.mode !== TransitionMode.OPEN) {
+      return;
+    }
+    if (this.currentState.isReaderReady) {
+      return;
+    }
+
+    const normalized = this.clampBackgroundOpacity(progress > 1 ? progress / 100 : progress);
+    if (normalized <= this.currentState.readerLoadProgress + 0.001) {
+      return;
+    }
+
+    this.currentState.readerLoadProgress = normalized;
+    this.notifyStateChange();
+  }
   
   /**
    * 标记阅读器已就绪（翻开模式时调用）
@@ -465,6 +484,7 @@ export class TransitionController {
 
     logger.info(TAG, '阅读器已就绪，开始淡出覆盖层');
     this.currentState.isReaderReady = true;
+    this.currentState.readerLoadProgress = 1;
     this.notifyStateChange();
 
     // 延迟一小段时间后隐藏覆盖层，让淡出动画有时间播放
@@ -644,6 +664,7 @@ export struct BookTransitionOverlay {
   @State private readerContentPixelMap: image.PixelMap | null = null;
   @State private readerContentImagePath: string = '';  // 压缩后的截图临时文件路径
   @State private isReaderReady: boolean = false;
+  @State private readerLoadProgress: number = 0;
   @State private ebookBackground: EBookBackgroundSettings | null = null;  // 电子书背景设置
   @State private bookTitle: string = '';
   @State private bookAuthor: string = '';
@@ -736,6 +757,7 @@ export struct BookTransitionOverlay {
     this.readerContentPixelMap = state.readerContentPixelMap;
     this.readerContentImagePath = state.readerContentImagePath;
     this.isReaderReady = state.isReaderReady;
+    this.readerLoadProgress = state.readerLoadProgress;
     this.ebookBackground = state.ebookBackground;
     this.bookTitle = state.bookTitle;
     this.bookAuthor = state.bookAuthor;
@@ -769,6 +791,7 @@ export struct BookTransitionOverlay {
           readerContentImagePath: this.readerContentImagePath,
           config: this.config,
           isReaderReady: this.isReaderReady,
+          readerLoadProgress: this.readerLoadProgress,
           ebookBackground: this.ebookBackground,
           bookTitle: this.bookTitle,
           bookAuthor: this.bookAuthor,
@@ -832,6 +855,10 @@ export function startBookCloseTransition(
  */
 export function setReaderReady(): void {
   TransitionController.getInstance().setReaderReady();
+}
+
+export function setReaderLoadingProgress(progress: number): void {
+  TransitionController.getInstance().setReaderLoadingProgress(progress);
 }
 
 /**
