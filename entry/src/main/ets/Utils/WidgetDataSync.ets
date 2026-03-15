@@ -13,6 +13,7 @@ import { getNovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { NovelBook } from '../Models/NovelModels';
 import { logger } from './Logger';
 import { DataManager } from '../Framework/Data/DataManager';
+import { DataInitializer } from '../Framework/Initialization/DataInitializer';
 
 const TAG = 'WidgetDataSync';
 const WIDGET_DATA_STORE = 'widget_reading_data';
@@ -153,6 +154,13 @@ export class WidgetDataSync {
   public async syncAllData(): Promise<void> {
     if (!this.context) {
       logger.warn(TAG, 'syncAllData: context not initialized');
+      return;
+    }
+
+    // 启动早期可能触发前后台切换，此时数据系统尚未就绪，直接跳过避免访问未初始化数据库
+    const initStatus = DataInitializer.getInstance().getInitializationStatus();
+    if (!initStatus.isInitialized) {
+      logger.warn(TAG, `syncAllData: data system not ready (initializing=${initStatus.isInitializing}), skip`);
       return;
     }
 
