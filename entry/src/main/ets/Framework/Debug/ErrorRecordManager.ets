@@ -78,6 +78,7 @@ export class ErrorRecordManager {
   private records: ErrorRecord[] = [];
   private recordsFilePath: string = '';
   private isLoaded: boolean = false;
+  private isInitialized: boolean = false;
   private static readonly MAX_RECORDS: number = 200;
 
   private constructor() {}
@@ -91,9 +92,15 @@ export class ErrorRecordManager {
 
   public initialize(context: common.UIAbilityContext): void {
     try {
+      const targetPath = `${context.filesDir}/error_records.json`;
+      if (this.isInitialized && this.recordsFilePath === targetPath) {
+        return;
+      }
+
       this.context = context;
-      this.recordsFilePath = `${context.filesDir}/error_records.json`;
+      this.recordsFilePath = targetPath;
       this.loadRecords();
+      this.isInitialized = true;
       console.log(`[NGF] ${TAG}: 初始化完成，已加载 ${this.records.length} 条记录`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -399,10 +406,14 @@ export class ErrorRecordManager {
 
   private loadRecords(): void {
     try {
-      try {
-        fs.accessSync(this.recordsFilePath);
-      } catch {
-        this.records = [];
+      if (!this.recordsFilePath) {
+        this.isLoaded = true;
+        return;
+      }
+
+      const exists = fs.accessSync(this.recordsFilePath);
+      if (!exists) {
+        // 首次启动时文件不存在属于正常情况，保持内存中的已有记录
         this.isLoaded = true;
         return;
       }
@@ -411,7 +422,9 @@ export class ErrorRecordManager {
       const stat = fs.statSync(this.recordsFilePath);
       if (stat.size === 0) {
         fs.closeSync(file);
-        this.records = [];
+        if (this.records.length === 0) {
+          this.records = [];
+        }
         this.isLoaded = true;
         return;
       }
@@ -425,7 +438,9 @@ export class ErrorRecordManager {
       const parsed = JSON.parse(jsonStr) as Array<Partial<ErrorRecord>>;
 
       if (!Array.isArray(parsed)) {
-        this.records = [];
+        if (this.records.length === 0) {
+          this.records = [];
+        }
         this.isLoaded = true;
         return;
       }
@@ -454,6 +469,10 @@ export class ErrorRecordManager {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      if (msg.indexOf('No such file or directory') >= 0) {
+        this.isLoaded = true;
+        return;
+      }
       console.error(`[NGF] ${TAG}: 加载错误记录失败: ${msg}`);
       this.records = [];
       this.isLoaded = true;

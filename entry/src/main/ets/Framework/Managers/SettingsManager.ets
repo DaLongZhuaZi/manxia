@@ -29,6 +29,17 @@ export class SettingKeys {
   static readonly GLOBAL_KEEP_SCREEN_ON = 'global_keep_screen_on';
   static readonly GLOBAL_VOLUME_KEY_NAVIGATION = 'global_volume_key_navigation';
   static readonly GLOBAL_PAGE_TURN_ANIMATION = 'global_page_turn_animation';
+  static readonly GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT = 'global_manga_double_page_portrait_layout';
+  static readonly GLOBAL_MANGA_PAGE_SPACING = 'global_manga_page_spacing';
+  static readonly GLOBAL_MANGA_SHOW_PAGE_INFO = 'global_manga_show_page_info';
+  static readonly GLOBAL_MANGA_SHOW_PAGE_INDICATOR = 'global_manga_show_page_indicator';
+  static readonly GLOBAL_MANGA_FIT_MODE = 'global_manga_fit_mode';
+  static readonly GLOBAL_MANGA_AUTO_PAGE_TURN_INTERVAL = 'global_manga_auto_page_turn_interval';
+  static readonly GLOBAL_MANGA_SKIP_INTRO_PAGES = 'global_manga_skip_intro_pages';
+  static readonly GLOBAL_MANGA_CURL_BACK_OPACITY = 'global_manga_curl_back_opacity';
+  static readonly GLOBAL_MANGA_WEBTOON_LEFT_MARGIN = 'global_manga_webtoon_left_margin';
+  static readonly GLOBAL_MANGA_WEBTOON_RIGHT_MARGIN = 'global_manga_webtoon_right_margin';
+  static readonly GLOBAL_MANGA_WEBTOON_MARGIN_SYNC = 'global_manga_webtoon_margin_sync';
   
   // 电子书全局阅读设置
   static readonly GLOBAL_EBOOK_FONT_SIZE = 'global_ebook_font_size';

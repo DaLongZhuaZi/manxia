@@ -52,6 +52,9 @@ interface SystemBarConfig {
 export class WindowManager {
   private static readonly TAG = 'WindowManager';
   private static currentMode: DisplayMode = DisplayMode.DEFAULT;
+  private static readonly BACKGROUND_STORAGE_KEY = 'isInBackground';
+  private static windowStageRef: window.WindowStage | null = null;
+  private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
 
   /**
    * 获取当前 Ability 的主窗口（已废弃，仅用于内部兼容）
@@ -103,6 +106,117 @@ export class WindowManager {
    * 设置完全沉浸式模式 - 隐藏所有系统栏
    * @param uiContext 可选的UIContext，推荐在组件中传入
    */
+  /**
+   * 注册窗口状态变化监听（统一入口）
+   *
+   * 官方 WindowStageEventType 定义（OpenHarmony @ohos.window）:
+   * SHOWN=1, ACTIVE=2, INACTIVE=3, HIDDEN=4, RESUMED=5, PAUSED=6
+   *
+   * 语义要点:
+   * - HIDDEN: 窗口在后台运行
+   * - INACTIVE/PAUSED: 前台但不可交互（并非后台）
+   */
+  static registerWindowStageStateMonitor(windowStage: window.WindowStage): void {
+    try {
+      if (WindowManager.windowStageRef === windowStage && WindowManager.windowStageEventCallback) {
+        return;
+      }
+
+      WindowManager.unregisterWindowStageStateMonitor();
+
+      const callback = (event: window.WindowStageEventType): void => {
+        WindowManager.handleWindowStageEvent(event);
+      };
+
+      windowStage.on('windowStageEvent', callback);
+      WindowManager.windowStageRef = windowStage;
+      WindowManager.windowStageEventCallback = callback;
+      logger.info(WindowManager.TAG, '窗口状态事件监听注册成功');
+    } catch (error) {
+      logger.error(WindowManager.TAG, `注册窗口状态事件监听失败: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * 解除窗口状态变化监听
+   */
+  static unregisterWindowStageStateMonitor(): void {
+    if (!WindowManager.windowStageRef || !WindowManager.windowStageEventCallback) {
+      return;
+    }
+
+    try {
+      WindowManager.windowStageRef.off('windowStageEvent', WindowManager.windowStageEventCallback);
+      logger.info(WindowManager.TAG, '窗口状态事件监听已解除');
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `解除窗口状态事件监听失败: ${(error as Error).message}`);
+    } finally {
+      WindowManager.windowStageRef = null;
+      WindowManager.windowStageEventCallback = null;
+    }
+  }
+
+  /**
+   * 统一同步应用前后台状态（供窗口事件与Ability生命周期共用）
+   */
+  static syncBackgroundState(isInBackground: boolean, source: string): void {
+    const current = AppStorage.get<boolean>(WindowManager.BACKGROUND_STORAGE_KEY);
+    if (current === isInBackground) {
+      return;
+    }
+
+    AppStorage.setOrCreate(WindowManager.BACKGROUND_STORAGE_KEY, isInBackground);
+    logger.info(WindowManager.TAG, `前后台状态已更新: isInBackground=${isInBackground}, source=${source}`);
+  }
+
+  private static handleWindowStageEvent(event: window.WindowStageEventType): void {
+    const eventName = WindowManager.getWindowStageEventName(event);
+    logger.info(WindowManager.TAG, `窗口状态事件: ${eventName}(${event})`);
+
+    const nextBackgroundState = WindowManager.resolveBackgroundStateByWindowStageEvent(event);
+    if (nextBackgroundState === null) {
+      logger.debug(WindowManager.TAG, `窗口状态事件已忽略（不触发前后台切换）: ${eventName}(${event})`);
+      return;
+    }
+
+    WindowManager.syncBackgroundState(nextBackgroundState, `窗口状态事件.${eventName}`);
+  }
+
+  private static resolveBackgroundStateByWindowStageEvent(event: window.WindowStageEventType): boolean | null {
+    switch (event) {
+      case window.WindowStageEventType.INACTIVE:
+      case window.WindowStageEventType.HIDDEN:
+      case window.WindowStageEventType.PAUSED:
+        return true;
+      case window.WindowStageEventType.SHOWN:
+      case window.WindowStageEventType.ACTIVE:
+      case window.WindowStageEventType.RESUMED:
+        return false;
+      default:
+        // 未知事件不强制切换前后台状态
+        return null;
+    }
+  }
+
+  private static getWindowStageEventName(event: window.WindowStageEventType): string {
+    switch (event) {
+      case window.WindowStageEventType.SHOWN:
+        return '前台显示';
+      case window.WindowStageEventType.ACTIVE:
+        return '前台激活';
+      case window.WindowStageEventType.INACTIVE:
+        return '前台失焦';
+      case window.WindowStageEventType.HIDDEN:
+        return '后台隐藏';
+      case window.WindowStageEventType.RESUMED:
+        return '前台可交互';
+      case window.WindowStageEventType.PAUSED:
+        return '前台不可交互';
+      default:
+        return '未知事件';
+    }
+  }
+
   static setFullImmersive(uiContext?: UIContext): void {
     try {
       const mainWindow = uiContext ? 
@@ -555,6 +669,7 @@ export class WindowManager {
   static initialize(windowStage: window.WindowStage): void {
     try {
       const mainWindow = windowStage.getMainWindowSync();
+      WindowManager.registerWindowStageStateMonitor(windowStage);
       
       // 存储系统栏高度信息（直接传递mainWindow实例）
       WindowManager.storeSystemBarHeights(mainWindow);
@@ -575,11 +690,16 @@ export class WindowManager {
       WindowManager.currentMode = DisplayMode.DEFAULT;
       // 设置默认的正常系统栏样式
       WindowManager.setNormalSystemBar(mainWindow);
+      WindowManager.syncBackgroundState(false, '窗口管理器初始化');
       
       logger.info(WindowManager.TAG, '✅ WindowManager初始化完成');
       
     } catch (error) {
       logger.error(WindowManager.TAG, `❌ WindowManager初始化失败: ${(error as Error).message}`);
     }
+  }
+
+  static dispose(): void {
+    WindowManager.unregisterWindowStageStateMonitor();
   }
 }

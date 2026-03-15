@@ -10,6 +10,7 @@ import {
   ReadingMode,
   ReadingDirection,
   PageTurnAnimationType,
+  DoublePagePortraitLayout,
   DEFAULT_READING_SETTINGS
 } from '../../Models/MangaModels';
 import { ComicInfo, ReadHistory, OnlineComicInfo, UserSettingsDatabaseRecord } from '../Data/DataManager';
@@ -260,6 +261,21 @@ export class ComicConverter {
     const globalAnimation = settingsManager.getString(SettingKeys.GLOBAL_PAGE_TURN_ANIMATION, '') as PageTurnAnimationType | '';
     const globalKeepScreenOn = settingsManager.getBoolean(SettingKeys.GLOBAL_KEEP_SCREEN_ON, DEFAULT_READING_SETTINGS.keepScreenOn);
     const globalVolumeKeyNav = settingsManager.getBoolean(SettingKeys.GLOBAL_VOLUME_KEY_NAVIGATION, DEFAULT_READING_SETTINGS.volumeKeyNavigation);
+    const globalBrightness = settingsManager.getNumber(SettingKeys.GLOBAL_BRIGHTNESS, DEFAULT_READING_SETTINGS.brightness);
+    const globalPageSpacing = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_PAGE_SPACING, DEFAULT_READING_SETTINGS.pageSpacing);
+    const globalShowPageInfo = settingsManager.getBoolean(SettingKeys.GLOBAL_MANGA_SHOW_PAGE_INFO, DEFAULT_READING_SETTINGS.showPageInfo);
+    const globalShowPageIndicator = settingsManager.getBoolean(SettingKeys.GLOBAL_MANGA_SHOW_PAGE_INDICATOR, DEFAULT_READING_SETTINGS.showPageIndicator);
+    const globalFitMode = settingsManager.getString(SettingKeys.GLOBAL_MANGA_FIT_MODE, DEFAULT_READING_SETTINGS.fitMode);
+    const globalAutoPageTurnInterval = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_AUTO_PAGE_TURN_INTERVAL, DEFAULT_READING_SETTINGS.autoPageTurnInterval);
+    const globalSkipIntroPages = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_SKIP_INTRO_PAGES, DEFAULT_READING_SETTINGS.skipIntroPages);
+    const globalDoublePagePortraitLayout = settingsManager.getString(
+      SettingKeys.GLOBAL_MANGA_DOUBLE_PAGE_PORTRAIT_LAYOUT,
+      DEFAULT_READING_SETTINGS.doublePagePortraitLayout
+    ) as DoublePagePortraitLayout;
+    const globalCurlBackOpacity = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_CURL_BACK_OPACITY, DEFAULT_READING_SETTINGS.curlBackOpacity);
+    const globalWebtoonLeftMargin = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_WEBTOON_LEFT_MARGIN, DEFAULT_READING_SETTINGS.webtoonLeftMargin);
+    const globalWebtoonRightMargin = settingsManager.getNumber(SettingKeys.GLOBAL_MANGA_WEBTOON_RIGHT_MARGIN, DEFAULT_READING_SETTINGS.webtoonRightMargin);
+    const globalWebtoonMarginSync = settingsManager.getBoolean(SettingKeys.GLOBAL_MANGA_WEBTOON_MARGIN_SYNC, DEFAULT_READING_SETTINGS.webtoonMarginSync);
     
     logger.info(TAG, `全局设置: mode=${globalMode}, direction=${globalDirection}, animation=${globalAnimation}`);
     
@@ -303,22 +319,22 @@ export class ComicConverter {
     const fallbackSettings: ReadingSettings = {
       readingMode: finalMode,
       readingDirection: finalDirection,
-      brightness: DEFAULT_READING_SETTINGS.brightness,
+      brightness: Math.max(0.1, Math.min(2.0, globalBrightness)),
       keepScreenOn: globalKeepScreenOn,
-      pageSpacing: DEFAULT_READING_SETTINGS.pageSpacing,
-      showPageInfo: DEFAULT_READING_SETTINGS.showPageInfo,
-      showPageIndicator: DEFAULT_READING_SETTINGS.showPageIndicator,
-      fitMode: DEFAULT_READING_SETTINGS.fitMode,
-      autoPageTurnInterval: DEFAULT_READING_SETTINGS.autoPageTurnInterval,
-      skipIntroPages: DEFAULT_READING_SETTINGS.skipIntroPages,
+      pageSpacing: Math.max(0, Math.min(50, Math.round(globalPageSpacing))),
+      showPageInfo: globalShowPageInfo,
+      showPageIndicator: globalShowPageIndicator,
+      fitMode: globalFitMode,
+      autoPageTurnInterval: Math.max(0, Math.min(60, Math.round(globalAutoPageTurnInterval))),
+      skipIntroPages: Math.max(0, Math.min(20, Math.round(globalSkipIntroPages))),
       pageTurnAnimation: finalAnimation,
-      doublePagePortraitLayout: DEFAULT_READING_SETTINGS.doublePagePortraitLayout,
+      doublePagePortraitLayout: globalDoublePagePortraitLayout,
       filterSettings: DEFAULT_READING_SETTINGS.filterSettings,
       volumeKeyNavigation: globalVolumeKeyNav,
-      curlBackOpacity: DEFAULT_READING_SETTINGS.curlBackOpacity,
-      webtoonLeftMargin: DEFAULT_READING_SETTINGS.webtoonLeftMargin,
-      webtoonRightMargin: DEFAULT_READING_SETTINGS.webtoonRightMargin,
-      webtoonMarginSync: DEFAULT_READING_SETTINGS.webtoonMarginSync
+      curlBackOpacity: Math.max(50, Math.min(100, Math.round(globalCurlBackOpacity))),
+      webtoonLeftMargin: Math.max(0, Math.min(50, Math.round(globalWebtoonLeftMargin))),
+      webtoonRightMargin: Math.max(0, Math.min(50, Math.round(globalWebtoonRightMargin))),
+      webtoonMarginSync: globalWebtoonMarginSync
     };
     return fallbackSettings;
   }

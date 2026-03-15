@@ -383,6 +383,15 @@ struct AboutPage {
         this.openReleasePage();
       })
 
+      this.buildButtonItem('版本记录', () => {
+        try {
+          logger.info(TAG, '导航到版本记录页面');
+          this.pathStack.pushPath({ name: 'VersionHistoryPage' });
+        } catch (error) {
+          logger.error(TAG, '导航到版本记录页面失败', String(error));
+        }
+      })
+
       this.buildButtonItem('问题反馈', () => {
         logger.info(TAG, '问题反馈');
         this.copyQQGroupAndOpen();

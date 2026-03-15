@@ -165,6 +165,7 @@ export class ErrorMonitorService {
       this.context = context;
       this.errorLogsDir = `${context.filesDir}/error_logs`;
       this.ensureErrorLogsDir();
+      ErrorRecordManager.getInstance().initialize(context);
 
       if (this.isStarted) {
         console.log(`[NGF] ${TAG}: 已在运行，已刷新上下文与日志目录`);

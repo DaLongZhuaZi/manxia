@@ -48,6 +48,7 @@ export class CrashRecorderService {
   private context: common.UIAbilityContext | null = null;
   private errorObserverId: number = -1;
   private isRegistered: boolean = false;
+  private hasCheckedPreviousCrash: boolean = false;
   private crashLogsDir: string = '';
   private logCollector: LogCollector = LogCollector.getInstance();
   private isSaving: boolean = false; // 防止重复保存
@@ -76,8 +77,11 @@ export class CrashRecorderService {
       // 注册全局异常监听
       this.registerErrorObserver();
 
-      // 检查上次崩溃记录
-      this.checkPreviousCrashLogs();
+      // 仅在首次初始化时检查上次崩溃记录，避免重复读取/重复日志
+      if (!this.hasCheckedPreviousCrash) {
+        this.checkPreviousCrashLogs();
+        this.hasCheckedPreviousCrash = true;
+      }
 
       console.log(`[NGF] ${TAG}: 闪退记录服务初始化完成`);
     } catch (error) {
@@ -90,11 +94,25 @@ export class CrashRecorderService {
    * 确保崩溃日志目录存在
    */
   private ensureCrashLogsDir(): void {
+    if (!this.crashLogsDir) {
+      return;
+    }
+
     try {
-      fs.accessSync(this.crashLogsDir);
-    } catch {
+      const exists = fs.accessSync(this.crashLogsDir);
+      if (exists) {
+        return;
+      }
+    } catch (_) {
+      // ignore and try to create
+    }
+
+    try {
       fs.mkdirSync(this.crashLogsDir, true);
       console.log(`[NGF] ${TAG}: 崩溃日志目录已创建: ${this.crashLogsDir}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[NGF] ${TAG}: 创建崩溃日志目录失败: ${msg}`);
     }
   }
 
@@ -141,6 +159,7 @@ export class CrashRecorderService {
     this.isSaving = true;
 
     try {
+      this.ensureCrashLogsDir();
       console.error(`[NGF] ${TAG}: 🚨 捕获到未处理异常: ${errorMessage}`);
 
       const now = Date.now();
@@ -263,6 +282,7 @@ export class CrashRecorderService {
     logFileName: string
   ): void {
     try {
+      this.ensureCrashLogsDir();
       const summaryPath = `${this.crashLogsDir}/last_crash_summary.json`;
       const summary: string = JSON.stringify({
         crashTime: timestamp,
@@ -287,10 +307,15 @@ export class CrashRecorderService {
    */
   private checkPreviousCrashLogs(): void {
     try {
+      this.ensureCrashLogsDir();
       const summaryPath = `${this.crashLogsDir}/last_crash_summary.json`;
       try {
-        fs.accessSync(summaryPath);
-      } catch {
+        const exists = fs.accessSync(summaryPath);
+        if (!exists) {
+          console.log(`[NGF] ${TAG}: 未检测到上次崩溃记录`);
+          return;
+        }
+      } catch (_) {
         // 没有崩溃摘要文件，说明上次正常退出
         console.log(`[NGF] ${TAG}: 未检测到上次崩溃记录`);
         return;
@@ -321,6 +346,10 @@ export class CrashRecorderService {
       console.log(`[NGF] ${TAG}: 崩溃摘要已读取并清除`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      if (msg.indexOf('No such file or directory') >= 0) {
+        console.log(`[NGF] ${TAG}: 未检测到上次崩溃记录`);
+        return;
+      }
       console.error(`[NGF] ${TAG}: 检查崩溃记录失败: ${msg}`);
     }
   }
@@ -338,6 +367,10 @@ export class CrashRecorderService {
   public getCrashLogFiles(): string[] {
     try {
       if (!this.crashLogsDir) {
+        return [];
+      }
+      const exists = fs.accessSync(this.crashLogsDir);
+      if (!exists) {
         return [];
       }
       const files = fs.listFileSync(this.crashLogsDir);

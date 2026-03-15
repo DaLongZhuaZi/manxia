@@ -55,6 +55,7 @@ import { SuwayomiReaderPage } from './SuwayomiReaderPage';
 import { ZLibraryReaderPage } from './ZLibraryReaderPage';
 import { DownloadManagerPage } from './DownloadManagerPage';
 import { AboutPage } from './AboutPage';
+import { VersionHistoryPage } from './VersionHistoryPage';
 import { ReadingAnalyticsPage } from './ReadingAnalyticsPage';
 import { MangaFeedbackPage } from './MangaFeedbackPage';
 import { LogManagerPage } from './LogManagerPage';
@@ -176,6 +177,7 @@ import { eventBus, GameEvent, IEventPayload, MangaImportCompletedPayload, FileIm
 import { WelcomeGuideManager } from '../Framework/Managers/WelcomeGuideManager';
 import { getChangelogManager } from '../Framework/Managers/ChangelogManager';
 import { SourceUpdateManager } from '../Framework/Managers/SourceUpdateManager';
+import { getVersionHistoryManager, VersionRepositoryUpdateCheckResult, MANXIA_EXTENSIONS_REPOSITORY_KEY } from '../Framework/Managers/VersionHistoryManager';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
 import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialog } from '../components/PrivacyAuthDialog';
@@ -696,6 +698,7 @@ struct MainMenuPage {
   @State customTestUrl: string = ''; // 自定义测试URL
   private sourceManager: SourceManager = SourceManager.getInstance(); // 图源管理器
   private sourceUpdateManager: SourceUpdateManager = SourceUpdateManager.getInstance(); // 图源更新管理器
+  private versionHistoryManager = getVersionHistoryManager(); // 提交版本记录管理器
   // WebView容器引用
   private webViewContainerRef: WebViewContainer | null = null;
 
@@ -847,6 +850,7 @@ struct MainMenuPage {
     'TestManagementPage',
     'ThemeSettingsPage',
     'TrackingSettingsSubPage',
+    'VersionHistoryPage',
     'WebViewConfigurableSystemTestPage',
     'ZLibraryReaderPage'
   ]);
@@ -2471,6 +2475,10 @@ struct MainMenuPage {
       const success = await this.sourceUpdateManager.syncRepository();
       
       if (success) {
+        const repoUrl = this.sourceUpdateManager.getRepoUrl();
+        if (repoUrl && repoUrl.length > 0) {
+          await this.markRepositoryCommitVersion(repoUrl);
+        }
         this.hasSourceUpdate = false;
         await this.refreshSources();
         this.showToast('图源仓库同步完成');
@@ -2480,6 +2488,103 @@ struct MainMenuPage {
     } catch (error) {
       logger.error(TAG, `同步图源仓库失败: ${String(error)}`);
       this.showToast('同步失败');
+    }
+  }
+
+  /**
+   * 同步成功后标记当前仓库提交版本
+   */
+  private async markRepositoryCommitVersion(url: string): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (!context) {
+        logger.warn(TAG, '无法获取上下文，跳过图源仓库版本标记');
+        return;
+      }
+      await this.versionHistoryManager.initialize(context as common.Context);
+      const marker = await this.versionHistoryManager.markRepositoryVersionByUrl(url);
+      if (marker) {
+        logger.info(TAG, `已记录图源仓库提交版本: ${marker.name} @ ${marker.commitShortSha}`);
+      }
+    } catch (error) {
+      logger.warn(TAG, `记录图源仓库提交版本失败: ${String(error)}`);
+    }
+  }
+
+  /**
+   * 查找已保存仓库中是否存在漫匣图源仓库
+   */
+  private findManxiaSourceRepository(): SavedRepository | null {
+    for (const repo of this.savedRepositories) {
+      const candidates: string[] = [];
+      if (repo.url) {
+        candidates.push(repo.url);
+      }
+      if (repo.originalUrl) {
+        candidates.push(repo.originalUrl);
+      }
+      if (repo.lastEffectiveUrl) {
+        candidates.push(repo.lastEffectiveUrl);
+      }
+
+      for (const candidateUrl of candidates) {
+        if (this.versionHistoryManager.isManxiaExtensionsRepositoryUrl(candidateUrl)) {
+          return repo;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 应用启动阶段：仅检查并自动更新漫匣图源仓库
+   */
+  private async checkAndAutoUpdateManxiaSourceRepository(): Promise<void> {
+    try {
+      const manxiaRepo = this.findManxiaSourceRepository();
+      if (!manxiaRepo) {
+        logger.debug(TAG, '未检测到漫匣图源仓库，跳过自动更新检查');
+        return;
+      }
+
+      const checkResult: VersionRepositoryUpdateCheckResult = await this.versionHistoryManager.checkManxiaExtensionsRepositoryUpdate();
+      if (!checkResult.canCheck) {
+        logger.warn(TAG, `漫匣图源仓库更新检查不可用: ${checkResult.errorMessage}`);
+        return;
+      }
+
+      const repoUrl = (manxiaRepo.originalUrl && manxiaRepo.originalUrl.length > 0)
+        ? manxiaRepo.originalUrl
+        : manxiaRepo.url;
+
+      // 首次接入没有本地提交版本标记时，先建立基线
+      if (!checkResult.localMarker) {
+        logger.info(TAG, `首次建立漫匣图源仓库版本基线: key=${MANXIA_EXTENSIONS_REPOSITORY_KEY}`);
+        await this.markRepositoryCommitVersion(repoUrl);
+        return;
+      }
+
+      if (!checkResult.hasUpdate) {
+        logger.debug(TAG, '漫匣图源仓库提交无新版本');
+        return;
+      }
+
+      const localSha = checkResult.localMarker.commitShortSha;
+      const remoteSha = checkResult.latestCommit ? checkResult.latestCommit.shortSha : 'unknown';
+      logger.info(TAG, `检测到漫匣图源仓库更新: ${localSha} -> ${remoteSha}`);
+
+      const syncResult = await this.repositoryManager.syncRepositoryFromUrl(repoUrl, manxiaRepo.name);
+      if (!syncResult.success) {
+        logger.warn(TAG, `漫匣图源仓库自动更新失败: ${syncResult.message}`);
+        return;
+      }
+
+      logger.info(TAG, `漫匣图源仓库自动更新完成: ${syncResult.message}`);
+      await this.markRepositoryCommitVersion(repoUrl);
+      await this.loadSavedRepositories();
+      await this.loadSources();
+    } catch (error) {
+      logger.error(TAG, `自动更新漫匣图源仓库失败: ${String(error)}`);
     }
   }
 
@@ -2595,7 +2700,9 @@ struct MainMenuPage {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       await this.repositoryManager.initialize(context);
+      await this.versionHistoryManager.initialize(context as common.Context);
       await this.loadSavedRepositories();
+      await this.checkAndAutoUpdateManxiaSourceRepository();
       logger.info(TAG, '仓库管理器初始化完成');
       
       // 仓库管理器初始化完成后，重新加载图源列表以获取图标路径
@@ -2722,6 +2829,7 @@ struct MainMenuPage {
         // 刷新图源列表和已保存仓库
         await this.loadSources();
         await this.loadSavedRepositories();
+        await this.markRepositoryCommitVersion(urlToSync);
       } else {
         this.addSyncLog('error', result.message);
         this.syncProgress = 0;
@@ -20138,6 +20246,8 @@ struct MainMenuPage {
         DownloadManagerPage()
       } else if (name === 'AboutPage') {
         AboutPage()
+      } else if (name === 'VersionHistoryPage') {
+        VersionHistoryPage()
       } else if (name === 'ReadingAnalyticsPage') {
         ReadingAnalyticsPage()
       } else if (name === 'MangaFeedbackPage') {
