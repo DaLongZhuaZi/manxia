@@ -120,6 +120,7 @@ export interface UnifiedDetailPageParams {
   sourceId?: string;
   // 缓存的基础信息（从列表页传递，用于快速显示）
   cachedTitle?: string;
+  cachedCoverPath?: string;
   cachedCover?: string;
   cachedAuthor?: string;
   // 换源相关参数

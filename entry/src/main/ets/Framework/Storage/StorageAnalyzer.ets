@@ -25,6 +25,7 @@ export enum StorageType {
   DATABASE = 'DATABASE',                  // 数据库 (context.databaseDir)
   COMIC_FILES = 'COMIC_FILES',           // 本地漫画文件 (filesDir/comics)
   COVER_FILES = 'COVER_FILES',           // 封面文件 (filesDir/covers)
+  LIBRARY_COVERS = 'LIBRARY_COVERS',     // 书库持久化封面 (filesDir/library_covers)
   CHAPTER_FILES = 'CHAPTER_FILES',       // 章节文件 (filesDir/chapters)
   TEMP_FILES = 'TEMP_FILES',             // 临时文件 (filesDir/temp)
   PLUGIN_FILES = 'PLUGIN_FILES',         // 插件文件 (filesDir/plugins)
@@ -161,6 +162,8 @@ export class StorageAnalyzer {
       // 5. 分析封面文件
       const coverFilesItem = await this.analyzeCoverFiles();
       items.push(coverFilesItem);
+      const libraryCoversItem = await this.analyzeLibraryCovers();
+      items.push(libraryCoversItem);
       
       // 6. 分析章节文件
       const chapterFilesItem = await this.analyzeChapterFiles();
@@ -344,6 +347,30 @@ export class StorageAnalyzer {
   /**
    * 分析章节文件
    */
+  private async analyzeLibraryCovers(): Promise<StorageItem> {
+    try {
+      const context = uiContextManager.getAbilityContext();
+      if (!context) {
+        return this.createEmptyItem(StorageType.LIBRARY_COVERS, 'Library Covers');
+      }
+      const libraryCoverPath = `${context.filesDir}/library_covers`;
+      const dirInfo = await this.getDirectoryInfo(libraryCoverPath);
+      return {
+        type: StorageType.LIBRARY_COVERS,
+        name: 'Library Covers',
+        description: 'Persistent cover files for library items',
+        size: dirInfo.size,
+        fileCount: dirInfo.count,
+        path: libraryCoverPath,
+        canClear: false,
+        lastModified: Date.now()
+      };
+    } catch (error) {
+      logger.error(TAG, `分析书库封面失败: ${error}`);
+      return this.createEmptyItem(StorageType.LIBRARY_COVERS, 'Library Covers');
+    }
+  }
+
   private async analyzeChapterFiles(): Promise<StorageItem> {
     try {
       const chaptersPath = this.sandboxManager.getDirectory('chapters');
@@ -810,6 +837,10 @@ export class StorageAnalyzer {
         const coverResult = await this.clearDirectory(coversPath, options);
         result.clearedSize = coverResult.clearedSize;
         result.clearedCount = coverResult.clearedCount;
+        break;
+
+      case StorageType.LIBRARY_COVERS:
+        logger.info(TAG, '书库封面属于用户数据，不执行清理');
         break;
 
       case StorageType.TEMP_FILES:

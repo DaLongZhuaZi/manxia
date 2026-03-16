@@ -13,6 +13,7 @@ import { LegadoBookSource } from './LegadoSourceTypes';
 import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAULT_NOVEL_READER_SETTINGS, NovelReadStatus } from '../../Models/NovelModels';
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getNovelCoverGenerator } from './NovelCoverGenerator';
+import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
 
 const TAG = 'NovelDataManager';
 
@@ -31,6 +32,7 @@ export class NovelDataManager {
   private static instance: NovelDataManager | null = null;
   private store: relationalStore.RdbStore | null = null;
   private isInitialized: boolean = false;
+  private filesDir: string = '';
 
   private constructor() {}
 
@@ -59,6 +61,7 @@ export class NovelDataManager {
       };
 
       this.store = await relationalStore.getRdbStore(context, config);
+      this.filesDir = context.filesDir;
       
       // 创建小说相关表（增量添加，不影响现有表）
       await this.createNovelTables();
@@ -641,6 +644,7 @@ export class NovelDataManager {
    */
   async deleteBook(bookId: string): Promise<void> {
     const store = this.getStore();
+    const book = await this.getBook(bookId);
     // 删除相关章节缓存
     await store.executeSql(
       'DELETE FROM novel_content_cache WHERE chapterId IN (SELECT id FROM novel_chapter WHERE bookId = ?)',
@@ -652,6 +656,14 @@ export class NovelDataManager {
     await store.executeSql('DELETE FROM novel_read_progress WHERE bookId = ?', [bookId]);
     // 删除书籍
     await store.executeSql('DELETE FROM novel_book WHERE id = ?', [bookId]);
+    if (book && this.filesDir) {
+      const coverCandidates = [book.coverLocalPath || '', book.coverUrl || ''];
+      for (const coverPath of coverCandidates) {
+        if (LibraryCoverManager.deleteManagedCoverIfExists(coverPath, this.filesDir)) {
+          logger.debug(TAG, `删除小说封面文件: ${coverPath}`);
+        }
+      }
+    }
     logger.info(TAG, `删除书籍: ${bookId}`);
   }
 

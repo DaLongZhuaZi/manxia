@@ -30,6 +30,7 @@ import {
   GenericQueryRecord
 } from '../Database/DatabaseTypes';
 import { SandboxManager } from '../Storage/SandboxManager';
+import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
 import { ImageCacheManager, ImageCacheConfig, MemoryCacheConfig, DiskCacheConfig} from '../Cache/ImageCacheManager';
 import { ComicArchiveManager, ComicChapterInfo, ComicPageInfo } from '../Compress/ComicArchiveManager';
 import { HSPPluginManager } from '../Plugin/HSPPluginManager';
@@ -1633,6 +1634,26 @@ export class DataManager {
       logger.info(TAG, `成功更新漫画封面: ${comicId} -> ${coverUrl}`);
     } catch (error) {
       logger.error(TAG, `更新漫画封面失败: ${error}`);
+      throw error as Error;
+    }
+  }
+
+  public async updateComicCoverForLibrary(comicId: string, coverPath: string): Promise<void> {
+    try {
+      const now = Date.now();
+      await this.databaseManager.executeSql(
+        `UPDATE comic_info
+         SET coverLocalPath = ?, coverUrl = CASE WHEN coverUrl IS NULL OR coverUrl = '' THEN ? ELSE coverUrl END, updateTime = ?
+         WHERE id = ?`,
+        [coverPath, coverPath, now, comicId]
+      );
+      await this.databaseManager.executeSql(
+        'UPDATE online_comic_info SET coverUrl = ?, updateTime = ? WHERE id = ?',
+        [coverPath, now, comicId]
+      );
+      logger.info(TAG, `已更新书库封面路径: comicId=${comicId}, coverPath=${coverPath}`);
+    } catch (error) {
+      logger.error(TAG, `更新书库封面路径失败: ${String(error)}`);
       throw error as Error;
     }
   }
@@ -3368,6 +3389,22 @@ export class DataManager {
           }
 
           // 删除封面缓存
+          const filesDir = this.sandboxManager.getDirectory('files');
+          const comicInfoForCover = actualComicInfo as ComicInfo;
+          const coverCandidates = new Set<string>();
+          if (comicInfoForCover.coverLocalPath) {
+            coverCandidates.add(comicInfoForCover.coverLocalPath);
+          }
+          if (actualComicInfo.coverUrl) {
+            coverCandidates.add(actualComicInfo.coverUrl);
+          }
+          coverCandidates.add(`${this.sandboxManager.getDirectory('covers')}/${comicId}.jpg`);
+          for (const coverCandidate of coverCandidates) {
+            if (LibraryCoverManager.deleteManagedCoverIfExists(coverCandidate, filesDir)) {
+              logger.debug(TAG, `删除受管封面文件: ${coverCandidate}`);
+            }
+          }
+
           if (actualComicInfo.coverUrl) {
             const coverPath = `${this.sandboxManager.getDirectory('covers')}/${comicId}.jpg`;
             if (await this.sandboxManager.exists(coverPath)) {
@@ -3417,6 +3454,19 @@ export class DataManager {
   /**
    * 清理文件名中的非法字符（用于文件路径构建）
    */
+  private isLocalCoverPath(path: string): boolean {
+    if (!path) {
+      return false;
+    }
+    if (path.startsWith('file://')) {
+      return true;
+    }
+    if (path.startsWith('/')) {
+      return true;
+    }
+    return /^[a-zA-Z]:[\\/]/.test(path);
+  }
+
   private sanitizeFileName(fileName: string): string {
     return fileName
       .replace(/[<>:"/\\|?*]/g, '_')  // 替换Windows非法字符
@@ -4509,13 +4559,15 @@ export class DataManager {
       logger.info(TAG, `📝 [SQL] 开始保存在线漫画: title="${comicData.title}", sourceId=${sourceId}, externalId="${finalExternalId}"`);
       
       // 先查询是否已存在相同的 sourceId + externalId 组合
-      const checkSql = 'SELECT id FROM online_comic_info WHERE sourceId = ? AND externalId = ?';
+      const checkSql = 'SELECT id, coverUrl FROM online_comic_info WHERE sourceId = ? AND externalId = ?';
       const existing = await this.databaseManager.querySql(checkSql, [String(sourceId), finalExternalId]);
       
       let comicId: string;
+      let existingCoverUrl = '';
       if (existing && existing.length > 0) {
         // 已存在，使用现有ID进行更新
         comicId = (existing[0] as ESObject).id as string;
+        existingCoverUrl = String((existing[0] as ESObject).coverUrl || '');
         logger.info(TAG, `📝 [SQL] 找到现有记录，将更新: id="${comicId}"`);
       } else {
         // 不存在，生成新ID
@@ -4583,6 +4635,17 @@ export class DataManager {
         }
       }
       
+      let incomingCoverUrl = String(comicData.coverUrl || '');
+      if (existingCoverUrl && this.isLocalCoverPath(existingCoverUrl)) {
+        const normalizedExistingCoverUrl = existingCoverUrl.startsWith('file://')
+          ? existingCoverUrl.substring(7)
+          : existingCoverUrl;
+        if (fs.accessSync(normalizedExistingCoverUrl)) {
+          incomingCoverUrl = existingCoverUrl;
+        }
+        logger.debug(TAG, `保留已持久化封面路径: ${incomingCoverUrl}`);
+      }
+
       const params = [
         comicId,
         String(sourceId),
@@ -4590,7 +4653,7 @@ export class DataManager {
         comicData.title as string,
         comicData.author as string || '',
         comicData.description as string || '',
-        comicData.coverUrl as string || '',
+        incomingCoverUrl,
         JSON.stringify(comicData.tags || []),
         (comicData.rating as number) || 0,
         (comicData.updateTime as number) || now,

@@ -1479,7 +1479,8 @@ export struct NovelBookshelfPage {
         contentId: book.bookUrl,
         sourceId: book.sourceId,
         cachedTitle: book.name,
-        cachedCover: book.coverUrl,
+        cachedCoverPath: book.coverLocalPath || undefined,
+        cachedCover: book.coverLocalPath || book.coverUrl,
         cachedAuthor: book.author
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);

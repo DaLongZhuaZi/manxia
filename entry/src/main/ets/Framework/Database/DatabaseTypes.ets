@@ -1070,6 +1070,22 @@ export interface GenericQueryRecord {
   backgroundType?: DatabaseValue;  // 背景类型 (COLOR/IMAGE)
   backgroundImagePath?: DatabaseValue;  // 背景图片路径
   backgroundImageOpacity?: DatabaseValue;  // 背景图片透明度
+
+  // unified_annotation 字段
+  contentType?: DatabaseValue;
+  contentId?: DatabaseValue;
+  annotationType?: DatabaseValue;
+  textContent?: DatabaseValue;
+  quoteText?: DatabaseValue;
+  chapterTitle?: DatabaseValue;
+  pageProgress?: DatabaseValue;
+  startOffset?: DatabaseValue;
+  endOffset?: DatabaseValue;
+  anchorJson?: DatabaseValue;
+  styleJson?: DatabaseValue;
+  linkedAnnotationId?: DatabaseValue;
+  isDeleted?: DatabaseValue;
+
   // 隐私和NSFW字段
   isNSFW?: DatabaseValue;  // 是否为NSFW内容（0=SFW, 1=NSFW）
   isPrivate?: DatabaseValue;  // 是否为隐私内容（0=普通, 1=隐私）

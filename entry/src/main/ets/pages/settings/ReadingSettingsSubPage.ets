@@ -1598,7 +1598,7 @@ export struct ReadingSettingsSubPage {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      // 椤甸潰妯″紡
+      // 页面模式
       Column({ space: 8 }) {
         Row() {
         Text('默认字体大小')
@@ -1631,7 +1631,7 @@ export struct ReadingSettingsSubPage {
           })
       }
 
-      // 琛岄珮
+      // 行高
       Column({ space: 8 }) {
         Row() {
           Text('默认行高')
@@ -1808,7 +1808,7 @@ export struct ReadingSettingsSubPage {
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         .alignSelf(ItemAlign.Start)
 
-      // 瀛椾綋澶у皬
+      // 字体大小
       Column({ space: 8 }) {
         Row() {
           Text('默认字体大小')
@@ -1841,7 +1841,7 @@ export struct ReadingSettingsSubPage {
           })
       }
 
-      // 琛岄珮
+      // 行高
       Column({ space: 8 }) {
         Row() {
           Text('默认行高')

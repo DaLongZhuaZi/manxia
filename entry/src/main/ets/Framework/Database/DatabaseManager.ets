@@ -179,7 +179,8 @@ export class DatabaseManager {
       'ONLINE_PAGE',
       'ONLINE_READ_HISTORY',
       'TRACK_RECORD',
-      'TRACK_RECORD_UNIQUE_INDEX'
+      'TRACK_RECORD_UNIQUE_INDEX',
+      'UNIFIED_ANNOTATION'
     ];
     
     const tableCreationOrder = [
@@ -210,7 +211,8 @@ export class DatabaseManager {
       CREATE_TABLE_SQL.ONLINE_PAGE as string
       , CREATE_TABLE_SQL.ONLINE_READ_HISTORY as string,
       CREATE_TABLE_SQL.TRACK_RECORD as string,
-      CREATE_TABLE_SQL.TRACK_RECORD_UNIQUE_INDEX as string
+      CREATE_TABLE_SQL.TRACK_RECORD_UNIQUE_INDEX as string,
+      CREATE_TABLE_SQL.UNIFIED_ANNOTATION as string
     ];
     
     for (let i = 0; i < tableCreationOrder.length; i++) {
@@ -1147,6 +1149,20 @@ export class DatabaseManager {
     m.set('duration', (r: GenericQueryRecord, v: DatabaseValue): void => { r.duration = v; });
     m.set('createTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.createTime = v; });
     m.set('updateTime', (r: GenericQueryRecord, v: DatabaseValue): void => { r.updateTime = v; });
+    // unified_annotation fields
+    m.set('contentType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentType = v; });
+    m.set('contentId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.contentId = v; });
+    m.set('annotationType', (r: GenericQueryRecord, v: DatabaseValue): void => { r.annotationType = v; });
+    m.set('textContent', (r: GenericQueryRecord, v: DatabaseValue): void => { r.textContent = v; });
+    m.set('quoteText', (r: GenericQueryRecord, v: DatabaseValue): void => { r.quoteText = v; });
+    m.set('chapterTitle', (r: GenericQueryRecord, v: DatabaseValue): void => { r.chapterTitle = v; });
+    m.set('pageProgress', (r: GenericQueryRecord, v: DatabaseValue): void => { r.pageProgress = v; });
+    m.set('startOffset', (r: GenericQueryRecord, v: DatabaseValue): void => { r.startOffset = v; });
+    m.set('endOffset', (r: GenericQueryRecord, v: DatabaseValue): void => { r.endOffset = v; });
+    m.set('anchorJson', (r: GenericQueryRecord, v: DatabaseValue): void => { r.anchorJson = v; });
+    m.set('styleJson', (r: GenericQueryRecord, v: DatabaseValue): void => { r.styleJson = v; });
+    m.set('linkedAnnotationId', (r: GenericQueryRecord, v: DatabaseValue): void => { r.linkedAnnotationId = v; });
+    m.set('isDeleted', (r: GenericQueryRecord, v: DatabaseValue): void => { r.isDeleted = v; });
     // user_settings 字段
     m.set('settingKey', (r: GenericQueryRecord, v: DatabaseValue): void => { r.settingKey = v; });
     m.set('settingValue', (r: GenericQueryRecord, v: DatabaseValue): void => { r.settingValue = v; });
