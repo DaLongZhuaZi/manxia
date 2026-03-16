@@ -451,7 +451,7 @@ export class NovelAdapter {
     return {
       id: book.bookUrl || '',
       title: book.name || '未知书名',
-      coverUrl: book.coverUrl || '',
+      coverUrl: book.coverLocalPath || book.coverUrl || '',
       author: book.author || '未知作者',
       description: book.intro || '',
       

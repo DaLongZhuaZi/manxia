@@ -112,6 +112,7 @@ import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } fr
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
+import { AnnotationCenterPage } from './AnnotationCenterPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { AvifImage } from '../components/AvifImage';
@@ -977,7 +978,7 @@ struct MainMenuPage {
   @State private initializationProgress: string = '正在初始化...';
 
   // 版本信息
-  @State public appVersion: string = '0.0.7';
+  @State public appVersion: string = '26.0.0.7';
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
@@ -14508,7 +14509,8 @@ struct MainMenuPage {
         contentId: novel.bookUrl,
         sourceId: novel.sourceId,
         cachedTitle: novel.name,
-        cachedCover: novel.coverUrl,
+        cachedCoverPath: novel.coverLocalPath || undefined,
+        cachedCover: novel.coverLocalPath || novel.coverUrl,
         cachedAuthor: novel.author
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
@@ -20334,6 +20336,8 @@ struct MainMenuPage {
         PageSettingsSubPage()
       } else if (name === 'UnifiedDetailPage') {
         UnifiedDetailPage()
+      } else if (name === 'AnnotationCenterPage') {
+        AnnotationCenterPage()
       } else if (name === 'AvifTestPage') {
         AvifTestPage()
       } else if (name === 'SourceManagementPage') {

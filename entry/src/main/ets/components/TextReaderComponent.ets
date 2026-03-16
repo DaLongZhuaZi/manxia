@@ -1,10 +1,10 @@
 /**
  * 文本阅读器核心组件
  * 支持多种阅读模式、翻页动画、自定义背景和文字样式
- */
+  */
 
 import { logger } from '../Utils/Logger';
-import { curves, componentSnapshot, font, promptAction } from '@kit.ArkUI';
+import { curves, componentSnapshot, font, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import measure from '@ohos.measure';
 import { display } from '@kit.ArkUI';
@@ -37,16 +37,48 @@ const READ_ALOUD_CURRENT_SENTENCE_HIGHLIGHT = '#CCFFCA28';
 
 /**
  * RGB颜色接口
- */
+  */
 interface RGBColor {
   r: number;
   g: number;
   b: number;
 }
 
+interface SelectionRange {
+  start: number;
+  end: number;
+}
+
+export interface TextReaderHighlightRange {
+  id: string;
+  startOffset: number;
+  endOffset: number;
+  color: string;
+  quoteText?: string;
+  pageIndex?: number;
+}
+
+interface LocalHighlightRange {
+  start: number;
+  end: number;
+  color: string;
+}
+
+interface TextRenderSegment {
+  key: string;
+  text: string;
+  highlighted: boolean;
+  color: string;
+}
+
+interface CompactTextMapping {
+  compactText: string;
+  originIndices: number[];
+}
+
 /**
  * 分页模式枚举
- */
+  */
 export enum PaginationMode {
   /** 本地文件模式：使用保守的字符估算（0.92系数） */
   LOCAL = 'LOCAL',
@@ -56,7 +88,7 @@ export enum PaginationMode {
 
 /**
  * 文本阅读器组件
- */
+  */
 @Component
 export struct TextReaderComponent {
   // ========== 外部参数 ==========
@@ -77,6 +109,8 @@ export struct TextReaderComponent {
   @Prop bottomStatusBarHeight: number = 28;
   /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
   @Prop paginationMode: PaginationMode = PaginationMode.LOCAL;
+  @Prop enableNovelAnnotations: boolean = false;
+  @Prop novelHighlightRanges: TextReaderHighlightRange[] = [];
   
   // ========== 内容变化追踪 ==========
   /** 上一次的内容（用于检测变化） */
@@ -106,35 +140,38 @@ export struct TextReaderComponent {
   onSearchEncyclopedia: (keyword: string) => void = () => {};
   /** 从指定字符位置开始听书 */
   onStartReadAloudFromCharIndex: (charIndex: number) => void = () => {};
+  onAddHighlight: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
+  onAddHighlightWithThought: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
+  onAddThought: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
   
   // ========== 文本选择状态 ==========
-  /** 选择开始位置 */
-  @State private selectionStart: number = -1;
-  /** 选择结束位置 */
-  @State private selectionEnd: number = -1;
   /** 当前选中的文本 */
+  @State private selectionStart: number = -1;
+  /** 当前选中的文本 */
+  @State private selectionEnd: number = -1;
+  /** 分页后的页面列表 */
   @State private selectedText: string = '';
   
   // ========== 内部状态 ==========
-  /** 分页后的页面列表 */
-  @State private pages: TextPage[] = [];
-  /** 总页数 */
-  @State private totalPages: number = 0;
   /** 当前显示的文本内容 */
-  @State private currentPageContent: string = '';
+  @State private pages: TextPage[] = [];
   /** 下一页的文本内容 */
+  @State private totalPages: number = 0;
+  /** 上一页的文本内容 */
+  @State private currentPageContent: string = '';
+  /** 上一页的文本内容 */
   @State private nextPageContent: string = '';
   /** 上一页的文本内容 */
   @State private prevPageContent: string = '';
   
-  // ========== 组件尺寸 ==========
+  // ========== 翻页动画状态 ==========
   @State private componentWidth: number = 0;
   @State private componentHeight: number = 0;
   @State private contentAreaWidth: number = 0;
   @State private contentAreaHeight: number = 0;
   @State private relayoutOpacity: number = 1;
   
-  // ========== 翻页动画状态 ==========
+  // ========== 卷页动画状态 ==========
   @State private isAnimating: boolean = false;
   @State private slideOffset: number = 0;
   @State private slideOpacity: number = 1;
@@ -145,58 +182,58 @@ export struct TextReaderComponent {
   @State private curlProgress: number = 0;
   @State private currentPixelMap: image.PixelMap | null = null;
   @State private nextPixelMap: image.PixelMap | null = null;
-  @State private prevPixelMap: image.PixelMap | null = null;  // 上一页 PixelMap（预加载）
+  @State private prevPixelMap: image.PixelMap | null = null;// 上一页 PixelMap（预加载）
   @State private curlStartPosition: CurlStartPosition = CurlStartPosition.RIGHT_EDGE;
-  @State private curlTouchX: number = 0;          // 卷曲触摸点X坐标
-  @State private curlTouchY: number = 0;          // 卷曲触摸点Y坐标
-  @State private curlAnimateTarget: number = -1;  // 内部动画目标进度（-1表示不使用）
-  @State private curlAnimateFrom: number = 0;     // 内部动画起始进度
-  private curlPendingPageIndex: number = -1;      // 待切换的页面索引
-  private curlAnimationTimer: number = -1;        // 卷页动画定时器
-  private animationTimeoutTimer: number = -1;     // 动画超时保护定时器
-  private static readonly ANIMATION_TIMEOUT_MS: number = 3000;  // 动画超时时间(3秒)
-  private pagePixelMapCache: Map<number, image.PixelMap> = new Map();  // 页面 PixelMap 缓存
-  private isGeneratingPixelMap: boolean = false;  // 是否正在生成 PixelMap
-  private panStartTime: number = 0;  // 拖拽起始时间戳（用于快速翻页速度检测）
+  @State private curlTouchX: number = 0;// 卷曲触摸点X坐标
+  @State private curlTouchY: number = 0;// 卷曲触摸点Y坐标
+  @State private curlAnimateTarget: number = -1;// 内部动画目标进度（-1表示不使用）
+  @State private curlAnimateFrom: number = 0;// 内部动画起始进度
+  private curlPendingPageIndex: number = -1;// 待切换的页面索引
+  private curlAnimationTimer: number = -1;// 卷页动画定时器
+  private animationTimeoutTimer: number = -1;// 动画超时保护定时器
+  private static readonly ANIMATION_TIMEOUT_MS: number = 3000;// 动画超时时间(3秒)
+  private pagePixelMapCache: Map<number, image.PixelMap> = new Map();// 页面 PixelMap 缓存
+  private isGeneratingPixelMap: boolean = false;// 是否正在生成 PixelMap
+  private panStartTime: number = 0;// 拖拽起始时间戳（用于快速翻页速度检测）
   // 小说专用卷页配置：针对全屏场景优化动画曲线
   private novelCurlConfig: PageCurlConfigV2 = {
     stripCount: 24,
     maxCurlHeight: 120,
     shadowIntensity: 0.5,
-    animationDuration: 350,  // 全屏页面较大，动画时长稍长以保证流畅感
+    animationDuration: 350,// 全屏页面较大，动画时长稍长以保证流畅感
     enableShadow: true,
     enableHighlight: true,
-    flipThreshold: 0.28       // 全屏场景降低阈值，更容易触发翻页
+    flipThreshold: 0.28// 全屏场景降低阈值，更容易触发翻页
   };
-  private isPaginating: boolean = false;  // 是否正在分页
-  private paginationVersion: number = 0;  // 分页版本号，用于取消旧的分页任务
-  private paginationRetryCount: number = 0;  // 分页重试次数
-  private static readonly MAX_PAGINATION_RETRIES: number = 10;  // 最大分页重试次数
-  private areaChangeDebounceTimer: number = -1;  // onAreaChange防抖定时器
-  private static readonly AREA_CHANGE_DEBOUNCE_MS: number = 100;  // 防抖时间(100ms)
+  private isPaginating: boolean = false;// 是否正在分页
+  private paginationVersion: number = 0;// 分页版本号，用于取消旧的分页任务
+  private paginationRetryCount: number = 0;// 分页重试次数
+  private static readonly MAX_PAGINATION_RETRIES: number = 10;// 最大分页重试次数
+  private areaChangeDebounceTimer: number = -1;// onAreaChange防抖定时器
+  private static readonly AREA_CHANGE_DEBOUNCE_MS: number = 100;// 防抖时间(100ms)
   private settingsRepaginateDebounceTimer: number = -1;
   private static readonly SETTINGS_REPAGINATE_DEBOUNCE_MS: number = 60;
   private static readonly MIN_CONTENT_WIDTH_VP: number = 120;
   private static readonly MIN_CONTENT_LINE_COUNT: number = 2;
-  private lastContentAreaWidth: number = 0;  // 上次内容区域宽度
-  private lastContentAreaHeight: number = 0;  // 上次内容区域高度
+  private lastContentAreaWidth: number = 0;// 上次内容区域宽度
+  private lastContentAreaHeight: number = 0;// 上次内容区域高度
   private lastPaginationSignature: string = '';
   private pendingAnchorCharIndex: number = -1;
   private pendingRelayoutAnimation: boolean = false;
   private lastReadAloudHighlightLogTime: number = 0;
   private lastReadAloudScrollFollowTime: number = 0;
-  @State private isLoading: boolean = false;  // 加载状态
-  
-  // ========== 章节切换过渡状态 ==========
-  @State private isChapterTransition: boolean = false;  // 是否正在章节过渡
-  @State private transitionChapterName: string = '';     // 过渡显示的章节名
-  @State private transitionDirection: boolean = true;    // true=下一章, false=上一章
+  @State private isLoading: boolean = false;// 加载状态
   
   // ========== 手势状态 ==========
+  @State private isChapterTransition: boolean = false;// 是否正在章节过渡
+  @State private transitionChapterName: string = '';     // 过渡显示的章节名
+  @State private transitionDirection: boolean = true;// true=下一章, false=上一章
+  
+  // ========== 滚动模式状态 ==========
   @State private touchStartX: number = 0;
   @State private touchStartY: number = 0;
   @State private isDragging: boolean = false;
-  private initialTouchX: number = 0;  // 初始触摸X坐标（用于卷页拖拽）
+  private initialTouchX: number = 0;// 初始触摸X坐标（用于卷页拖拽）
   
   // ========== 滚动模式状态 ==========
   private scrollController: Scroller = new Scroller();
@@ -212,53 +249,53 @@ export struct TextReaderComponent {
   private static readonly READ_ALOUD_SCROLL_FOLLOW_INTERVAL_MS: number = 380;
   private static readonly READ_ALOUD_SCROLL_FOLLOW_MIN_DELTA_VP: number = 36;
   
-  // ========== Canvas渲染上下文 ==========
+  // ========== 音量键翻页状态 ==========
   private renderingSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.renderingSettings);
   
-  // ========== 音量键翻页状态 ==========
-  // 音量键翻页使用组件级 onKeyEvent 处理，无需额外状态
-  
   // ========== 时间和电量显示状态 ==========
+  // ========== 时间和电量显示状态 ==========
+  
+  // ========== 双页模式状态 ==========
   @State private currentTime: string = '';
   @State private batteryLevel: number = 0;
   private timeUpdateInterval: number = -1;
   
   // ========== 双页模式状态 ==========
-  /** 双页模式左页内容 */
-  @State private dualLeftPageContent: string = '';
-  /** 双页模式右页内容 */
-  @State private dualRightPageContent: string = '';
   /** 双页模式左页索引 */
-  @State private dualLeftPageIndex: number = 0;
+  @State private dualLeftPageContent: string = '';
   /** 双页模式右页索引 */
-  @State private dualRightPageIndex: number = 1;
+  @State private dualRightPageContent: string = '';
   /** 双页模式当前展开页基础索引（始终为偶数） */
+  @State private dualLeftPageIndex: number = 0;
+  /** 双页模式当前展开页基础索引（始终为偶数） */
+  @State private dualRightPageIndex: number = 1;
+  /** 双页模式翻页动画作用侧：'left' 或 'right' */
   private dualPageBaseIndex: number = 0;
   // ========== 双页卷页动画 PixelMap ==========
   @State private dualCurlLeftPM: image.PixelMap | null = null;
   @State private dualCurlRightPM: image.PixelMap | null = null;
   @State private dualCurlNextLeftPM: image.PixelMap | null = null;
   @State private dualCurlNextRightPM: image.PixelMap | null = null;
-  /** 双页模式翻页动画作用侧：'left' 或 'right' */
-  @State private dualAnimSide: string = 'right';
-  /** 双页模式翻页动画偏移 */
-  @State private dualSlideOffset: number = 0;
   /** 双页模式翻页动画下方页面内容（左侧） */
-  @State private dualUnderLeftContent: string = '';
+  @State private dualAnimSide: string = 'right';
   /** 双页模式翻页动画下方页面内容（右侧） */
+  @State private dualSlideOffset: number = 0;
+  /** 双页卷页动画定时器（父组件驱动模式） */
+  @State private dualUnderLeftContent: string = '';
+  /** 双页卷页动画定时器（父组件驱动模式） */
   @State private dualUnderRightContent: string = '';
   /** 双页卷页动画定时器（父组件驱动模式） */
   private dualCurlAnimTimer: number = -1;
   
-  // ========== 生命周期 ==========
+    // 注册自定义字体（如果有）
   aboutToAppear(): void {
     logger.info(TAG, '文本阅读器组件初始化');
-    // 注册自定义字体（如果有）
-    this.registerCustomFontIfNeeded();
-    // 启动时间更新定时器
-    this.startTimeUpdate();
     // 获取电量
+    this.registerCustomFontIfNeeded();
+    // 记录初始内容和章节索引
+    this.startTimeUpdate();
+    // 记录初始内容和章节索引
     this.updateBatteryLevel();
     // 记录初始内容和章节索引
     this.lastContent = this.content;
@@ -267,8 +304,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 注册自定义字体（如果设置了fontPath）
-   */
+  * 注册自定义字体（如果设置了fontPath）
+  */
   private registerCustomFontIfNeeded(): void {
     // 防御性检查：确保textStyle对象存在
     if (!this.settings?.textStyle) {
@@ -290,19 +327,19 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 内容变化回调
-   * 当外部传入的 content 变化时触发重新分页
-   */
+  * 内容变化回调
+  * 当外部传入的 content 变化时触发重新分页
+  */
   private onContentChange(): void {
     if (this.content !== this.lastContent) {
       logger.info(TAG, `内容变化，重新分页。旧长度: ${this.lastContent.length}, 新长度: ${this.content.length}`);
       this.lastContent = this.content;
       
-      // 内容变更时不写回 @Link 页码，避免覆盖父组件已恢复的进度
+      // 清空旧的页面数据和缓存，避免访问旧数据导致崩溃
       const preservedPageIndex = Math.max(0, Math.floor(this.currentPageIndex));
       this.lastExternalPageIndex = preservedPageIndex;
       
-      // 清空旧的页面数据和缓存，避免访问旧数据导致崩溃
+      // 清空 PixelMap 缓存
       this.pages = [];
       this.totalPages = 0;
       this.currentPageContent = '';
@@ -319,7 +356,7 @@ export struct TextReaderComponent {
       this.dualCurlNextLeftPM = null;
       this.dualCurlNextRightPM = null;
       
-      // 停止正在进行的动画
+      // 异步分页
       this.stopCurlAnimation();
       this.isAnimating = false;
       this.showCurlEffect = false;
@@ -331,22 +368,22 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 异步分页，避免阻塞主线程
-   */
+  * 异步分页，避免阻塞主线程
+  */
   private paginateContentAsync(): void {
-    // 增加版本号，取消之前的分页任务
+    // 如果已经在分页，记录日志并等待下一帧
     this.paginationVersion++;
     const currentVersion = this.paginationVersion;
     
-    // 如果已经在分页，记录日志并等待下一帧
+    // 显示加载状态
     if (this.isPaginating) {
       logger.info(TAG, `分页任务已在运行，新任务将取消旧任务`);
     }
     
-    // 显示加载状态
+    // 检查内容是否有效
     this.isLoading = true;
     
-    // 检查内容是否有效
+    // 检查组件尺寸是否有效
     if (!this.content || this.content.length === 0) {
       this.isLoading = false;
       this.finishPendingRelayoutIfNeeded();
@@ -373,10 +410,10 @@ export struct TextReaderComponent {
       return;
     }
     
-    // 重置重试计数
+    // 使用 setTimeout 延迟执行，让 UI 有机会更新
     this.paginationRetryCount = 0;
     
-    // 使用 setTimeout 延迟执行，让 UI 有机会更新
+      // 检查版本号，如果不匹配则取消
     setTimeout(() => {
       // 检查版本号，如果不匹配则取消
       if (currentVersion !== this.paginationVersion) {
@@ -394,7 +431,7 @@ export struct TextReaderComponent {
         this.isLoading = false;
       }
       
-      // 检查是否需要跳转到最后一页（返回上一章节时）
+          // 双页模式：跳转到最后一对页面（偶数索引）
       if (this.shouldJumpToLastPage && this.totalPages > 0) {
         if (this.isDualPageMode()) {
           // 双页模式：跳转到最后一对页面（偶数索引）
@@ -411,26 +448,26 @@ export struct TextReaderComponent {
 
       this.restorePageIndexByAnchor();
       
-      // 更新当前页面内容
+      // 每次分页完成都更新签名，确保与当前设置同步
       this.updatePageContents();
       
-      // 每次分页完成都更新签名，确保与当前设置同步
+      // 通知页面变化（确保进度正确保存）
       this.lastRenderSignature = this.getRenderSignature();
       this.lastPaginationSignature = this.getPaginationSignature();
       
-      // 通知页面变化（确保进度正确保存）
+      // 通知分页完成
       this.notifyPageChange();
       
       // 通知分页完成
       this.onReady();
       this.finishPendingRelayoutIfNeeded();
-    }, 50);  // 延迟 50ms 让 UI 有机会更新
+    }, 50);// 延迟 50ms 让 UI 有机会更新
   }
   
   /**
-   * 章节索引变化回调
-   * 当外部传入的 currentChapterIndex 变化时触发
-   */
+  * 章节索引变化回调
+  * 当外部传入的 currentChapterIndex 变化时触发
+  */
   private onChapterIndexChange(): void {
     if (this.currentChapterIndex !== this.lastChapterIndex) {
       logger.info(TAG, `章节索引变化: ${this.lastChapterIndex} -> ${this.currentChapterIndex}`);
@@ -634,8 +671,8 @@ export struct TextReaderComponent {
   }
 
   /**
-   * 当上下边距都为0时，轻度收紧文本行高，减少首尾行盒留白的视觉空隙
-   */
+  * 当上下边距都为0时，轻度收紧文本行高，减少首尾行盒留白的视觉空隙
+  */
   private getEffectiveTextLineHeight(): number {
     const fontSize = this.settings.textStyle.fontSize;
     const baseLineHeight = fontSize * this.settings.textStyle.lineHeight;
@@ -857,9 +894,9 @@ export struct TextReaderComponent {
   }
 
   /**
-   * 页面索引变化回调（用于外部触发翻页，如音量键翻页）
-   * 当外部传入的 currentPageIndex 变化时触发
-   */
+  * 页面索引变化回调（用于外部触发翻页，如音量键翻页）
+  * 当外部传入的 currentPageIndex 变化时触发
+  */
   private lastExternalPageIndex: number = -1;
   private onPageIndexChange(): void {
     if (this.lastExternalPageIndex === this.currentPageIndex) {
@@ -987,9 +1024,9 @@ export struct TextReaderComponent {
     logger.info(TAG, '文本阅读器组件销毁');
     this.releaseAllPixelMapCache();
     this.stopCurlAnimation();
-    // 停止时间更新
+    // 清理防抖定时器
     this.stopTimeUpdate();
-    // 清理动画超时定时器
+    // 清理防抖定时器
     this.clearAnimationTimeout();
     // 清理防抖定时器
     if (this.areaChangeDebounceTimer !== -1) {
@@ -1032,8 +1069,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 强制重置所有动画状态
-   */
+  * 强制重置所有动画状态
+  */
   private forceResetAnimationState(): void {
     this.isAnimating = false;
     this.showCurlEffect = false;
@@ -1049,13 +1086,12 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 提供边界反馈（已到达第一页或最后一页时）
-   */
+  * 提供边界反馈（已到达第一页或最后一页时）
+  */
   private provideBoundaryFeedback(): void {
     try {
-      // 使用警告震动提示用户已到达边界
+      // 震动失败不影响正常使用
       InteractionManager.getInstance().vibrate(VibrationScene.WARNING);
-      logger.debug(TAG, '边界反馈：已到达页面边界');
     } catch (error) {
       // 震动失败不影响正常使用
       logger.debug(TAG, `边界反馈失败: ${String(error)}`);
@@ -1063,19 +1099,19 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 启动时间更新定时器
-   */
+  * 启动时间更新定时器
+  */
   private startTimeUpdate(): void {
     this.updateCurrentTime();
     this.timeUpdateInterval = setInterval(() => {
       this.updateCurrentTime();
       this.updateBatteryLevel();
-    }, 30000); // 每30秒更新一次
+    }, 30000);// 每30秒更新一次
   }
   
   /**
-   * 停止时间更新
-   */
+  * 停止时间更新
+  */
   private stopTimeUpdate(): void {
     if (this.timeUpdateInterval !== -1) {
       clearInterval(this.timeUpdateInterval);
@@ -1084,8 +1120,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 更新当前时间
-   */
+  * 更新当前时间
+  */
   private updateCurrentTime(): void {
     const now = new Date();
     const hours = now.getHours().toString().padStart(2, '0');
@@ -1094,8 +1130,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 更新电量
-   */
+  * 更新电量
+  */
   private updateBatteryLevel(): void {
     try {
       this.batteryLevel = batteryInfo.batterySOC;
@@ -1106,48 +1142,48 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 根据电量获取电池颜色（起始色）
-   * 高电量：绿色，中电量：黄绿色，低电量：红色
-   */
+  * 根据电量获取电池颜色（起始色）
+  * 高电量：绿色，中电量：黄绿色，低电量：红色
+  */
   private getBatteryColor(level: number): string {
     if (level > 60) {
-      return '#4CAF50';  // 绿色
-    } else if (level > 40) {
-      return '#8BC34A';  // 黄绿色
-    } else if (level > 20) {
       return '#FFC107';  // 黄色
+    } else if (level > 40) {
+      return '#FF5722';  // 橙红色
+    } else if (level > 20) {
+      return '#FF5722';  // 橙红色
     } else {
       return '#FF5722';  // 橙红色
     }
   }
   
   /**
-   * 根据电量获取电池颜色（结束色，用于渐变）
-   */
+  * 根据电量获取电池颜色（结束色，用于渐变）
+  */
   private getBatteryColorEnd(level: number): string {
     if (level > 60) {
-      return '#66BB6A';  // 浅绿色
-    } else if (level > 40) {
-      return '#AED581';  // 浅黄绿色
-    } else if (level > 20) {
       return '#FFD54F';  // 浅黄色
+    } else if (level > 40) {
+      return '#FF8A65';  // 浅橙色
+    } else if (level > 20) {
+      return '#FF8A65';  // 浅橙色
     } else {
       return '#FF8A65';  // 浅橙色
     }
   }
   
   /**
-   * 处理音量键翻页（通过组件级 onKeyEvent 调用）
-   * @param keyCode 按键码
-   * @returns 是否消费了该按键事件
-   */
+  * 处理音量键翻页（通过组件级 onKeyEvent 调用）
+  * @param keyCode 按键码
+  * @returns 是否消费了该按键事件
+  */
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
     if (!this.settings.volumeKeyNavigation) {
       return false;
     }
     
     if (keyCode === KeyCode.KEYCODE_VOLUME_UP) {
-      logger.info(TAG, '音量键翻页: 上一页');
+      logger.info(TAG, 'Volume key page turn: previous page');
       if (this.isDualPageMode()) {
         this.goToPrevDualPage();
       } else {
@@ -1156,7 +1192,7 @@ export struct TextReaderComponent {
       this.resetAutoPageTurnTimerForInteraction('volume-key');
       return true;
     } else if (keyCode === KeyCode.KEYCODE_VOLUME_DOWN) {
-      logger.info(TAG, '音量键翻页: 下一页');
+      logger.info(TAG, 'Volume key page turn: next page');
       if (this.isDualPageMode()) {
         this.goToNextDualPage();
       } else {
@@ -1169,19 +1205,13 @@ export struct TextReaderComponent {
     return false;
   }
   
-  // ========== 分页算法 ==========
-  /**
-   * 使用 measure API 精确测量文本宽度
-   * @param text 要测量的文本
-   * @returns 文本宽度（像素）
-   */
   // 缓存屏幕密度，避免重复调用 display.getDefaultDisplaySync()
   private cachedScreenDensity: number = 0;
   
   /**
-   * 获取屏幕密度比例（用于 vp 和 px 转换）
-   * 缓存结果避免重复系统调用
-   */
+  * 获取屏幕密度比例（用于 vp 和 px 转换）
+  * 缓存结果避免重复系统调用
+  */
   private getScreenDensity(): number {
     if (this.cachedScreenDensity > 0) {
       return this.cachedScreenDensity;
@@ -1191,21 +1221,21 @@ export struct TextReaderComponent {
       this.cachedScreenDensity = displayInfo.densityDPI / 160;
       return this.cachedScreenDensity;
     } catch (e) {
-      this.cachedScreenDensity = 3; // 默认密度
+      this.cachedScreenDensity = 3;// 默认密度
       return this.cachedScreenDensity;
     }
   }
   
   /**
-   * 将 vp 转换为 px
-   */
+  * 将 vp 转换为 px
+  */
   private vp2px(vp: number): number {
     return vp * this.getScreenDensity();
   }
   
   /**
-   * 将 px 转换为 vp
-   */
+  * 将 px 转换为 vp
+  */
   private px2vp(px: number): number {
     return px / this.getScreenDensity();
   }
@@ -1215,9 +1245,9 @@ export struct TextReaderComponent {
   private cachedFontSize: number = 0;
   
   /**
-   * 获取平均字符宽度（缓存）
-   * 注意：这里计算的是单个字符的宽度（不包含字间距）
-   */
+  * 获取平均字符宽度（缓存）
+  * 注意：这里计算的是单个字符的宽度（不包含字间距）
+  */
   private getAvgCharWidth(): number {
     const fontSize = this.settings.textStyle.fontSize;
     const letterSpacing = this.settings.textStyle.letterSpacing;
@@ -1227,10 +1257,10 @@ export struct TextReaderComponent {
       return this.cachedAvgCharWidth;
     }
     
-    // 使用常见中文字符测量平均宽度
+    // 单个字符宽度 = (总宽度 - (n-1)*字间距) / n
     const sampleText = '测试文本字符';
     const totalWidth = this.measureTextWidthFast(sampleText);
-    // 总宽度 = n个字符宽度 + (n-1)个字间距
+    // 单个字符宽度 = (总宽度 - (n-1)*字间距) / n
     // 单个字符宽度 = (总宽度 - (n-1)*字间距) / n
     const charCount = sampleText.length;
     this.cachedAvgCharWidth = (totalWidth - (charCount - 1) * letterSpacing) / charCount;
@@ -1241,8 +1271,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 快速测量文本宽度（直接调用API）
-   */
+  * 快速测量文本宽度（直接调用API）
+  */
   private measureTextWidthFast(text: string): number {
     if (!text) return 0;
     
@@ -1261,10 +1291,6 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 将文本按行分割，使用纯字符估算（快速版本）
-   * 不使用 measureTextSize，避免主线程阻塞
-   * @param text 要分割的文本
-   * @param maxWidth 每行最大宽度
    * @param isFirstLine 是否为段落首行（需要缩进）
    * @returns 分割后的行数组
    */
@@ -1272,20 +1298,20 @@ export struct TextReaderComponent {
     const lines: string[] = [];
     const firstLineIndent = this.settings.textStyle.firstLineIndent;
     
-    // 首行缩进使用全角空格
+    // 获取平均字符宽度用于估算
     const indentText = isFirstLine && firstLineIndent > 0 ? '　'.repeat(Math.floor(firstLineIndent)) : '';
     let currentText = indentText + text;
     
-    // 获取平均字符宽度用于估算
+    // LOCAL模式：使用0.92的保守系数，适合本地TXT文件
     const avgCharWidth = this.getAvgCharWidth();
     
-    // 根据分页模式选择不同的系数
-    // LOCAL模式：使用0.92的保守系数，适合本地TXT文件
-    // ONLINE模式：使用1.0的系数，让每行尽可能填满，适合在线小说
-    const widthFactor = this.paginationMode === PaginationMode.ONLINE ? 1.0 : 0.92;
-    
+    // 计算每行字符数：考虑字间距
     // 计算每行字符数：考虑字间距
     // 总宽度 = n个字符宽度 + (n-1)个字间距
+    const widthFactor = this.paginationMode === PaginationMode.ONLINE ? 1.0 : 0.92;
+    
+    // maxWidth + letterSpacing = n * (avgCharWidth + letterSpacing)
+    // n = (maxWidth + letterSpacing) / (avgCharWidth + letterSpacing)
     // maxWidth = n * avgCharWidth + (n-1) * letterSpacing
     // maxWidth = n * avgCharWidth + n * letterSpacing - letterSpacing
     // maxWidth + letterSpacing = n * (avgCharWidth + letterSpacing)
@@ -1293,7 +1319,7 @@ export struct TextReaderComponent {
     const letterSpacing = this.settings.textStyle.letterSpacing;
     const charsPerLine = Math.max(1, Math.floor((maxWidth + letterSpacing) / (avgCharWidth + letterSpacing) * widthFactor));
     
-    // 计算实际一行文字的宽度
+    // 纯字符估算分割，不调用 measureTextSize
     const actualLineWidth = charsPerLine * avgCharWidth + (charsPerLine - 1) * letterSpacing;
     logger.debug(TAG, `[分页调试] maxWidth=${maxWidth.toFixed(2)}, avgCharWidth=${avgCharWidth.toFixed(2)}, letterSpacing=${letterSpacing}, widthFactor=${widthFactor}, charsPerLine=${charsPerLine}, actualLineWidth=${actualLineWidth.toFixed(2)}, 利用率=${(actualLineWidth/maxWidth*100).toFixed(1)}%`);
     
@@ -1309,10 +1335,10 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 计算并分页文本内容
-   * ONLINE模式：使用按字符数分页，让Text组件自然换行，确保JUSTIFY正确生效
-   * LOCAL模式：使用按行分页，精确控制每行内容
-   */
+  * 计算并分页文本内容
+  * ONLINE模式：使用按字符数分页，让Text组件自然换行，确保JUSTIFY正确生效
+  * LOCAL模式：使用按行分页，精确控制每行内容
+  */
   private paginateContent(): void {
     if (!this.content || this.contentAreaWidth <= 0 || this.contentAreaHeight <= 0) {
       return;
@@ -1332,17 +1358,17 @@ export struct TextReaderComponent {
       return;
     }
     
-    // 根据分页模式选择不同的策略
+    // 更新当前页面内容
     if (this.paginationMode === PaginationMode.ONLINE) {
       this.paginateContentOnlineMode(linesPerPage);
     } else {
       this.paginateContentLocalMode(linesPerPage);
     }
     
-    // 更新当前页面内容
+    // 分页完成后预加载相邻页面的 PixelMap（用于卷页动画）
     this.updatePageContents();
     
-    // 分页完成后预加载相邻页面的 PixelMap（用于卷页动画）
+    // 触发就绪回调
     this.preloadAdjacentPagePixelMaps();
     
     logger.info(TAG, `分页完成: 总页数=${this.totalPages}, 每页行数=${linesPerPage}`);
@@ -1352,17 +1378,17 @@ export struct TextReaderComponent {
   }
   
   /**
-   * ONLINE模式分页：按段落分页，让Text组件自然换行
-   * 这样JUSTIFY会正确生效，避免右边空白问题
-   */
+  * ONLINE模式分页：按段落分页，让Text组件自然换行
+  * 这样JUSTIFY会正确生效，避免右边空白问题
+  */
   private paginateContentOnlineMode(linesPerPage: number): void {
     const avgCharWidth = this.getAvgCharWidth();
     const letterSpacing = this.settings.textStyle.letterSpacing;
     const firstLineIndent = this.settings.textStyle.firstLineIndent;
     
-    // 计算每行大约能容纳的字符数
-    const charsPerLine = Math.max(1, Math.floor((this.contentAreaWidth + letterSpacing) / (avgCharWidth + letterSpacing)));
     // 每页大约能容纳的字符数（考虑首行缩进占用的字符数）
+    const charsPerLine = Math.max(1, Math.floor((this.contentAreaWidth + letterSpacing) / (avgCharWidth + letterSpacing)));
+    // 分段处理，保留原始段落结构
     const charsPerPage = charsPerLine * linesPerPage;
     
     logger.info(TAG, `[ONLINE分页] charsPerLine=${charsPerLine}, charsPerPage=${charsPerPage}`);
@@ -1378,9 +1404,9 @@ export struct TextReaderComponent {
     for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
       const paragraph = paragraphs[pIdx];
       
-      // 空段落也要处理（保留换行）
+          // 当前页已满，创建新页
       if (!paragraph.trim()) {
-        // 空行占用一行的空间
+          // 当前页已满，创建新页
         const emptyLineChars = charsPerLine;
         if (currentPageCharCount + emptyLineChars > charsPerPage && currentPageParagraphs.length > 0) {
           // 当前页已满，创建新页
@@ -1400,31 +1426,31 @@ export struct TextReaderComponent {
         continue;
       }
       
-      // 计算段落占用的行数（考虑首行缩进）
+      // 检查是否能放入当前页
       const indentChars = Math.floor(firstLineIndent);
       const paragraphCharsWithIndent = paragraph.length + indentChars;
       const paragraphLines = Math.ceil(paragraphCharsWithIndent / charsPerLine);
       const paragraphCharCost = paragraphLines * charsPerLine;
       
-      // 检查是否能放入当前页
-      if (currentPageCharCount + paragraphCharCost > charsPerPage && currentPageParagraphs.length > 0) {
-        // 当前页放不下整个段落
         // 计算当前页还能容纳多少行
+      if (currentPageCharCount + paragraphCharCost > charsPerPage && currentPageParagraphs.length > 0) {
+          // 至少能放2行，尝试分割段落
+          // 至少能放2行，尝试分割段落
         const remainingLines = Math.floor((charsPerPage - currentPageCharCount) / charsPerLine);
         
         if (remainingLines >= 2) {
-          // 至少能放2行，尝试分割段落
+            // 能放下足够的内容，分割段落
           const remainingChars = remainingLines * charsPerLine - indentChars;
           if (remainingChars > charsPerLine / 2) {
-            // 能放下足够的内容，分割段落
+              // 分割段落
             const splitPoint = this.findParagraphSplitPoint(paragraph, remainingChars);
             if (splitPoint > 0 && splitPoint < paragraph.length - charsPerLine / 2) {
-              // 分割段落
+              // 首部分添加到当前页（带首行缩进）
               const firstPart = paragraph.substring(0, splitPoint);
               const secondPart = paragraph.substring(splitPoint);
               
               // 首部分添加到当前页（带首行缩进）
-              currentPageParagraphs.push('　'.repeat(indentChars) + firstPart);
+          currentPageParagraphs.push('  '.repeat(indentChars) + firstPart);
               this.pushOnlinePage(
                 pages,
                 currentPageParagraphs,
@@ -1455,8 +1481,8 @@ export struct TextReaderComponent {
         currentPageCharCount = 0;
       }
       
-      // 添加段落到当前页（带首行缩进）
-      currentPageParagraphs.push('　'.repeat(indentChars) + paragraph);
+    // 处理最后一页
+          currentPageParagraphs.push('  '.repeat(indentChars) + paragraph);
       currentPageCharCount += paragraphCharCost;
       charIndex += paragraph.length + 1;
     }
@@ -1476,8 +1502,8 @@ export struct TextReaderComponent {
   }
 
   /**
-   * 向 ONLINE 分页结果中添加页面（裁掉首尾空白行，稳定首行/末行视觉位置）
-   */
+  * 向 ONLINE 分页结果中添加页面（裁掉首尾空白行，稳定首行/末行视觉位置）
+  */
   private pushOnlinePage(
     pages: TextPage[],
     paragraphs: string[],
@@ -1501,8 +1527,8 @@ export struct TextReaderComponent {
   }
 
   /**
-   * 裁掉文本首尾空白行（保留中间空行）
-   */
+  * 裁掉文本首尾空白行（保留中间空行）
+  */
   private trimBoundaryEmptyLines(text: string): string {
     if (!text) {
       return '';
@@ -1527,8 +1553,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 找到段落的合适分割点（尽量在标点符号后分割）
-   */
+  * 找到段落的合适分割点（尽量在标点符号后分割）
+  */
   private findParagraphSplitPoint(text: string, targetChars: number): number {
     if (targetChars >= text.length) return text.length;
     
@@ -1546,7 +1572,7 @@ export struct TextReaderComponent {
     }
     
     // 其次在逗号、分号后分割
-    const clauseEnders = ['，', '；', '：', ',', ';', ':'];
+    const clauseEnders = ['\uff0c', '\u3001', '\uff1b', ',', ';', ':'];
     for (let i = endSearch - 1; i >= startSearch; i--) {
       if (clauseEnders.includes(text[i])) {
         return i + 1;
@@ -1558,8 +1584,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * LOCAL模式分页：按行分页，精确控制每行内容
-   */
+  * LOCAL模式分页：按行分页，精确控制每行内容
+  */
   private paginateContentLocalMode(linesPerPage: number): void {
     const paragraphs = this.content.split(/\n+/);
     const pages: TextPage[] = [];
@@ -1578,7 +1604,7 @@ export struct TextReaderComponent {
       const paragraphLines = this.splitTextToLines(
         paragraph.trim(),
         this.contentAreaWidth,
-        true  // 段落首行需要缩进
+        true// 段落首行需要缩进
       );
       
       for (let i = 0; i < paragraphLines.length; i++) {
@@ -1628,8 +1654,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 更新当前、上一页、下一页的内容
-   */
+  * 更新当前、上一页、下一页的内容
+  */
   private updatePageContents(): void {
     if (this.pages.length === 0) {
       this.currentPageContent = '';
@@ -1685,34 +1711,34 @@ export struct TextReaderComponent {
   private isReadAloudSentenceBoundary(char: string): boolean {
     return char === '\n' ||
       char === '\r' ||
-      char === '。' ||
-      char === '！' ||
-      char === '？' ||
-      char === '．' ||
-      char === '｡' ||
-      char === '…' ||
-      char === '؟' ||
-      char === '।' ||
-      char === '॥' ||
-      char === '؛' ||
+      char === '\u3002' ||
+      char === '\uff01' ||
+      char === '\uff1f' ||
+      char === '\u2026' ||
+      char === '\u2014' ||
+      char === '\u2025' ||
+      char === '\u3001' ||
+      char === '\u300d' ||
+      char === '\u300f' ||
+      char === '\u3011' ||
       char === '.' ||
       char === '!' ||
       char === '?' ||
       char === ';' ||
-      char === '；';
+      char === '\uff1b';
   }
 
   private isReadAloudSentenceTailChar(char: string): boolean {
     return char === '"' ||
       char === '\'' ||
       char === ')' ||
-      char === '）' ||
-      char === '】' ||
-      char === '》' ||
-      char === '」' ||
-      char === '』' ||
-      char === '”' ||
-      char === '’';
+      char === '\uff09' ||
+      char === '\u300d' ||
+      char === '\u300f' ||
+      char === '\u3011' ||
+      char === '\u300b' ||
+      char === '\u201d' ||
+      char === '\u2019';
   }
 
   private getReadAloudSentenceStartIndex(): number {
@@ -2027,31 +2053,369 @@ export struct TextReaderComponent {
     return this.content.substring(sentenceEnd);
   }
 
+  private getCurrentPageStartCharIndex(): number {
+    if (this.pages.length <= 0) {
+      return 0;
+    }
+    const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
+    const page = this.pages[safePageIndex];
+    if (!page) {
+      return 0;
+    }
+    return Math.max(0, page.startCharIndex);
+  }
+
+  private getPageStartCharIndexByPageIndex(pageIndex: number): number {
+    if (this.pages.length <= 0) {
+      return 0;
+    }
+    const safePageIndex = Math.max(0, Math.min(pageIndex, this.pages.length - 1));
+    const page = this.pages[safePageIndex];
+    if (page) {
+      return Math.max(0, page.startCharIndex);
+    }
+    for (let i = 0; i < this.pages.length; i++) {
+      const pageItem = this.pages[i];
+      if (pageItem && pageItem.index === pageIndex) {
+        return Math.max(0, pageItem.startCharIndex);
+      }
+    }
+    return 0;
+  }
+
+  private normalizeHighlightComparableText(text: string): string {
+    if (!text || text.length <= 0) {
+      return '';
+    }
+    return text.replace(/\s+/g, '');
+  }
+
+  private isHighlightTextMatch(sourceText: string, quoteText: string): boolean {
+    if (sourceText === quoteText) {
+      return true;
+    }
+    const normalizedSource = this.normalizeHighlightComparableText(sourceText);
+    const normalizedQuote = this.normalizeHighlightComparableText(quoteText);
+    if (normalizedSource.length <= 0 || normalizedQuote.length <= 0) {
+      return false;
+    }
+    return normalizedSource === normalizedQuote;
+  }
+
+  private buildCompactTextMapping(text: string): CompactTextMapping {
+    let compactText = '';
+    const originIndices: number[] = [];
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charAt(i);
+      if (/\s/.test(ch)) {
+        continue;
+      }
+      compactText += ch;
+      originIndices.push(i);
+    }
+    const mapping: CompactTextMapping = {
+      compactText,
+      originIndices
+    };
+    return mapping;
+  }
+
+  private findNearestTextIndex(text: string, target: string, preferredStart: number): number {
+    const firstIndex = text.indexOf(target);
+    if (firstIndex < 0) {
+      return -1;
+    }
+    if (preferredStart < 0) {
+      return firstIndex;
+    }
+    let bestIndex = firstIndex;
+    let bestDistance = Math.abs(firstIndex - preferredStart);
+    let cursor = text.indexOf(target, firstIndex + 1);
+    while (cursor >= 0) {
+      const distance = Math.abs(cursor - preferredStart);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = cursor;
+      }
+      cursor = text.indexOf(target, cursor + 1);
+    }
+    return bestIndex;
+  }
+
+  private findQuoteLocalRange(pageContent: string, quoteText?: string, preferredLocalStart: number = -1): SelectionRange | null {
+    const quote = quoteText ? quoteText.trim() : '';
+    if (pageContent.length <= 0 || quote.length <= 0) {
+      return null;
+    }
+
+    const directIndex = this.findNearestTextIndex(pageContent, quote, preferredLocalStart);
+    if (directIndex >= 0) {
+      const range: SelectionRange = {
+        start: directIndex,
+        end: directIndex + quote.length
+      };
+      return range;
+    }
+
+    const compactQuote = this.normalizeHighlightComparableText(quote);
+    if (compactQuote.length <= 0) {
+      return null;
+    }
+    const mapping = this.buildCompactTextMapping(pageContent);
+    if (mapping.compactText.length <= 0 || mapping.originIndices.length <= 0) {
+      return null;
+    }
+
+    const compactPreferred = preferredLocalStart >= 0
+      ? Math.max(0, Math.min(mapping.compactText.length - 1, preferredLocalStart))
+      : -1;
+    const compactIndex = this.findNearestTextIndex(mapping.compactText, compactQuote, compactPreferred);
+    if (compactIndex < 0) {
+      return null;
+    }
+
+    const endCompactIndex = compactIndex + compactQuote.length - 1;
+    if (endCompactIndex < compactIndex || endCompactIndex >= mapping.originIndices.length) {
+      return null;
+    }
+    const range: SelectionRange = {
+      start: mapping.originIndices[compactIndex],
+      end: mapping.originIndices[endCompactIndex] + 1
+    };
+    return range;
+  }
+
+  private getLocalHighlightRanges(pageContent: string, pageStartCharIndex: number, _pageIndex: number = -1): LocalHighlightRange[] {
+    const ranges: LocalHighlightRange[] = [];
+    if (pageContent.length <= 0 || this.novelHighlightRanges.length <= 0) {
+      return ranges;
+    }
+
+    const pageEndCharIndex = pageStartCharIndex + pageContent.length;
+    for (let i = 0; i < this.novelHighlightRanges.length; i++) {
+      const sourceRange = this.novelHighlightRanges[i];
+      const safeStart = Math.max(0, Math.floor(sourceRange.startOffset));
+      const safeEnd = Math.max(safeStart + 1, Math.floor(sourceRange.endOffset));
+      const preferredLocalStart = safeStart >= pageStartCharIndex
+        ? Math.max(0, Math.min(pageContent.length - 1, safeStart - pageStartCharIndex))
+        : -1;
+      let resolvedLocalStart = -1;
+      let resolvedLocalEnd = -1;
+
+      if (safeEnd > pageStartCharIndex && safeStart < pageEndCharIndex) {
+        const localStart = Math.max(0, safeStart - pageStartCharIndex);
+        const localEnd = Math.min(pageContent.length, safeEnd - pageStartCharIndex);
+        if (localEnd > localStart) {
+          resolvedLocalStart = localStart;
+          resolvedLocalEnd = localEnd;
+          const quote = sourceRange.quoteText ? sourceRange.quoteText.trim() : '';
+          if (quote.length > 0) {
+            const candidateText = pageContent.substring(localStart, localEnd);
+            if (!this.isHighlightTextMatch(candidateText, quote)) {
+              const quoteRange = this.findQuoteLocalRange(pageContent, sourceRange.quoteText, preferredLocalStart);
+              if (quoteRange && quoteRange.end > quoteRange.start) {
+                resolvedLocalStart = quoteRange.start;
+                resolvedLocalEnd = quoteRange.end;
+              }
+            }
+          }
+        }
+      }
+
+      if (resolvedLocalEnd <= resolvedLocalStart) {
+        const quoteRange = this.findQuoteLocalRange(pageContent, sourceRange.quoteText, preferredLocalStart);
+        if (quoteRange && quoteRange.end > quoteRange.start) {
+          resolvedLocalStart = quoteRange.start;
+          resolvedLocalEnd = quoteRange.end;
+        }
+      }
+
+      if (resolvedLocalEnd <= resolvedLocalStart) {
+        continue;
+      }
+
+      const highlightRange: LocalHighlightRange = {
+        start: resolvedLocalStart,
+        end: resolvedLocalEnd,
+        color: sourceRange.color && sourceRange.color.trim().length > 0 ? sourceRange.color : '#E8A317'
+      };
+      ranges.push(highlightRange);
+    }
+
+    ranges.sort((a: LocalHighlightRange, b: LocalHighlightRange) => a.start - b.start || a.end - b.end);
+    return ranges;
+  }
+
+  private buildTextRenderSegments(pageContent: string, pageStartCharIndex: number, pageIndex: number = -1): TextRenderSegment[] {
+    const segments: TextRenderSegment[] = [];
+    if (pageContent.length <= 0) {
+      return segments;
+    }
+
+    const ranges = this.getLocalHighlightRanges(pageContent, pageStartCharIndex, pageIndex);
+    if (ranges.length <= 0) {
+      const plainSegment: TextRenderSegment = {
+        key: 'plain_0',
+        text: pageContent,
+        highlighted: false,
+        color: ''
+      };
+      segments.push(plainSegment);
+      return segments;
+    }
+
+    const boundaries: number[] = [0, pageContent.length];
+    for (let i = 0; i < ranges.length; i++) {
+      boundaries.push(ranges[i].start);
+      boundaries.push(ranges[i].end);
+    }
+    boundaries.sort((a: number, b: number) => a - b);
+
+    const uniqueBoundaries: number[] = [];
+    for (let i = 0; i < boundaries.length; i++) {
+      const boundary = boundaries[i];
+      if (uniqueBoundaries.length <= 0 || uniqueBoundaries[uniqueBoundaries.length - 1] !== boundary) {
+        uniqueBoundaries.push(boundary);
+      }
+    }
+
+    for (let i = 0; i < uniqueBoundaries.length - 1; i++) {
+      const start = uniqueBoundaries[i];
+      const end = uniqueBoundaries[i + 1];
+      if (end <= start) {
+        continue;
+      }
+      const segmentText = pageContent.substring(start, end);
+      if (segmentText.length <= 0) {
+        continue;
+      }
+
+      let highlighted = false;
+      let color = '#E8A317';
+      for (let j = 0; j < ranges.length; j++) {
+        const range = ranges[j];
+        if (start >= range.start && end <= range.end) {
+          highlighted = true;
+          color = range.color;
+        }
+      }
+
+      const segment: TextRenderSegment = {
+        key: `${start}_${end}_${highlighted ? 1 : 0}`,
+        text: segmentText,
+        highlighted,
+        color
+      };
+      segments.push(segment);
+    }
+
+    if (segments.length <= 0) {
+      const fallbackSegment: TextRenderSegment = {
+        key: 'fallback_0',
+        text: pageContent,
+        highlighted: false,
+        color: ''
+      };
+      segments.push(fallbackSegment);
+    }
+
+    return segments;
+  }
+
+  private hasHighlightInPage(pageContent: string, pageStartCharIndex: number, pageIndex: number = -1): boolean {
+    return this.getLocalHighlightRanges(pageContent, pageStartCharIndex, pageIndex).length > 0;
+  }
+
+  @Builder
+  private buildPageTextWithHighlight(pageContent: string, pageStartCharIndex: number, pageIndex: number = -1) {
+    Text() {
+      ForEach(this.buildTextRenderSegments(pageContent, pageStartCharIndex, pageIndex), (segment: TextRenderSegment) => {
+        if (segment.highlighted) {
+          Span(segment.text)
+            .decoration({ type: TextDecorationType.Underline, color: segment.color })
+            .textBackgroundStyle({ color: `${segment.color}55` })
+        } else {
+          Span(segment.text)
+        }
+      }, (segment: TextRenderSegment) => segment.key)
+    }
+      .fontSize(this.settings.textStyle.fontSize)
+      .fontColor(this.settings.textStyle.textColor)
+      .lineHeight(this.getEffectiveTextLineHeight())
+      .letterSpacing(this.settings.textStyle.letterSpacing)
+      .fontWeight(this.settings.textStyle.fontWeight)
+      .fontFamily(this.settings.textStyle.fontFamily)
+      .textAlign(this.getTextAlign())
+      .padding(this.getEffectiveContentPadding())
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.getContentBackgroundColor())
+      .copyOption(CopyOptions.InApp)
+      .selection(this.selectionStart, this.selectionEnd)
+      .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+        this.handleTextSelectionChange(selectionStart, selectionEnd);
+      })
+      .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenuWithSymbol, TextResponseType.LONG_PRESS, {
+        onDisappear: () => {
+          this.clearSelection();
+        }
+      })
+  }
+
+  @Builder
+  private buildDualPageTextWithHighlight(pageContent: string, pageStartCharIndex: number, pageIndex: number = -1) {
+    Text() {
+      ForEach(this.buildTextRenderSegments(pageContent, pageStartCharIndex, pageIndex), (segment: TextRenderSegment) => {
+        if (segment.highlighted) {
+          Span(segment.text)
+            .decoration({ type: TextDecorationType.Underline, color: segment.color })
+            .textBackgroundStyle({ color: `${segment.color}55` })
+        } else {
+          Span(segment.text)
+        }
+      }, (segment: TextRenderSegment) => segment.key)
+    }
+      .fontSize(this.settings.textStyle.fontSize)
+      .fontColor(this.settings.textStyle.textColor)
+      .lineHeight(this.getEffectiveTextLineHeight())
+      .letterSpacing(this.settings.textStyle.letterSpacing)
+      .fontWeight(this.settings.textStyle.fontWeight)
+      .fontFamily(this.settings.textStyle.fontFamily)
+      .textAlign(this.getTextAlign())
+      .padding(this.getEffectiveContentPadding())
+      .width('100%')
+      .height('100%')
+  }
+
   @Builder
   private buildCurrentPageTextLayer() {
     if (!this.hasReadAloudHighlight()) {
-      Text(this.currentPageContent)
-        .fontSize(this.settings.textStyle.fontSize)
-        .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.getEffectiveTextLineHeight())
-        .letterSpacing(this.settings.textStyle.letterSpacing)
-        .fontWeight(this.settings.textStyle.fontWeight)
-        .fontFamily(this.settings.textStyle.fontFamily)
-        .textAlign(this.getTextAlign())
-        .padding(this.getEffectiveContentPadding())
-        .width('100%')
-        .height('100%')
-        .backgroundColor(this.getContentBackgroundColor())
-        .copyOption(CopyOptions.InApp)
-        .selection(this.selectionStart, this.selectionEnd)
-        .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
-          this.handleTextSelectionChange(selectionStart, selectionEnd);
-        })
-        .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenu, TextResponseType.LONG_PRESS, {
-          onDisappear: () => {
-            this.clearSelection();
-          }
-        })
+      if (this.hasHighlightInPage(this.currentPageContent, this.getCurrentPageStartCharIndex(), this.currentPageIndex)) {
+        this.buildPageTextWithHighlight(this.currentPageContent, this.getCurrentPageStartCharIndex(), this.currentPageIndex)
+      } else {
+        Text(this.currentPageContent)
+          .fontSize(this.settings.textStyle.fontSize)
+          .fontColor(this.settings.textStyle.textColor)
+          .lineHeight(this.getEffectiveTextLineHeight())
+          .letterSpacing(this.settings.textStyle.letterSpacing)
+          .fontWeight(this.settings.textStyle.fontWeight)
+          .fontFamily(this.settings.textStyle.fontFamily)
+          .textAlign(this.getTextAlign())
+          .padding(this.getEffectiveContentPadding())
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.getContentBackgroundColor())
+          .copyOption(CopyOptions.InApp)
+          .selection(this.selectionStart, this.selectionEnd)
+          .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+            this.handleTextSelectionChange(selectionStart, selectionEnd);
+          })
+          .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenuWithSymbol, TextResponseType.LONG_PRESS, {
+            onDisappear: () => {
+              this.clearSelection();
+            }
+          })
+      }
     } else {
       Text() {
         if (this.getReadAloudBeforeSentenceText().length > 0) {
@@ -2086,7 +2450,7 @@ export struct TextReaderComponent {
         .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
           this.handleTextSelectionChange(selectionStart, selectionEnd);
         })
-        .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenu, TextResponseType.LONG_PRESS, {
+        .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenuWithSymbol, TextResponseType.LONG_PRESS, {
           onDisappear: () => {
             this.clearSelection();
           }
@@ -2097,17 +2461,21 @@ export struct TextReaderComponent {
   @Builder
   private buildDualPageTextLayer(pageContent: string, pageIndex: number) {
     if (!this.hasReadAloudHighlightForPage(pageIndex, pageContent)) {
-      Text(pageContent)
-        .fontSize(this.settings.textStyle.fontSize)
-        .fontColor(this.settings.textStyle.textColor)
-        .lineHeight(this.getEffectiveTextLineHeight())
-        .letterSpacing(this.settings.textStyle.letterSpacing)
-        .fontWeight(this.settings.textStyle.fontWeight)
-        .fontFamily(this.settings.textStyle.fontFamily)
-        .textAlign(this.getTextAlign())
-        .padding(this.getEffectiveContentPadding())
-        .width('100%')
-        .height('100%')
+      if (this.hasHighlightInPage(pageContent, this.getPageStartCharIndexByPageIndex(pageIndex), pageIndex)) {
+        this.buildDualPageTextWithHighlight(pageContent, this.getPageStartCharIndexByPageIndex(pageIndex), pageIndex)
+      } else {
+        Text(pageContent)
+          .fontSize(this.settings.textStyle.fontSize)
+          .fontColor(this.settings.textStyle.textColor)
+          .lineHeight(this.getEffectiveTextLineHeight())
+          .letterSpacing(this.settings.textStyle.letterSpacing)
+          .fontWeight(this.settings.textStyle.fontWeight)
+          .fontFamily(this.settings.textStyle.fontFamily)
+          .textAlign(this.getTextAlign())
+          .padding(this.getEffectiveContentPadding())
+          .width('100%')
+          .height('100%')
+      }
     } else {
       Text() {
         if (this.getReadAloudBeforeSentenceTextForPage(pageIndex, pageContent).length > 0) {
@@ -2141,8 +2509,8 @@ export struct TextReaderComponent {
   
   // ========== 翻页逻辑 ==========
   /**
-   * 翻到下一页
-   */
+  * 翻到下一页
+  */
   private goToNextPage(source: string = 'manual'): void {
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
@@ -2161,8 +2529,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 翻到上一页
-   */
+  * 翻到上一页
+  */
   private goToPrevPage(source: string = 'manual'): void {
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
@@ -2181,8 +2549,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 跳转到指定页面
-   */
+  * 跳转到指定页面
+  */
   private goToPage(pageIndex: number, source: string = 'programmatic'): void {
     // 安全检查
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
@@ -2205,8 +2573,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 执行翻页动画
-   */
+  * 执行翻页动画
+  */
   private performPageTurn(targetPageIndex: number): void {
     // 安全检查：确保目标页面有效
     if (targetPageIndex < 0 || targetPageIndex >= this.pages.length || this.pages.length === 0) {
@@ -2235,12 +2603,12 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 无动画翻页
-   */
+  * 无动画翻页
+  */
   private performNoAnimation(targetPageIndex: number): void {
     // 安全检查
     if (this.pages.length === 0 || targetPageIndex < 0 || targetPageIndex >= this.pages.length) {
-      logger.warn(TAG, `performNoAnimation: 页面数据无效，跳过`);
+      logger.warn(TAG, 'performNoAnimation: invalid page data, skip');
       return;
     }
     
@@ -2250,20 +2618,20 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 滑动动画翻页
-   */
+  * 滑动动画翻页
+  */
   private performSlideAnimation(targetPageIndex: number): void {
     // 安全检查
     if (this.pages.length === 0 || targetPageIndex < 0 || targetPageIndex >= this.pages.length) {
-      logger.warn(TAG, `performSlideAnimation: 页面数据无效，跳过动画`);
+      logger.warn(TAG, 'performSlideAnimation: invalid page data, skip');
       return;
     }
     
     this.isAnimating = true;
-    this.startAnimationTimeout();  // 启动动画超时保护
+    this.startAnimationTimeout();// 启动动画超时保护
     const direction = this.isForward ? -1 : 1;
     const targetOffset = direction * this.componentWidth;
-    const capturedVersion = this.paginationVersion;  // 捕获当前版本
+    const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止动画期间数据变化
     
     animateTo({
       duration: 300,
@@ -2275,7 +2643,7 @@ export struct TextReaderComponent {
     setTimeout(() => {
       // 检查版本号，如果已变化则取消
       if (capturedVersion !== this.paginationVersion || this.pages.length === 0) {
-        logger.warn(TAG, `performSlideAnimation: 动画完成后页面数据已变化，取消更新`);
+        logger.warn(TAG, 'performSlideAnimation: page data changed after animation, cancel update');
         this.slideOffset = 0;
         this.isAnimating = false;
         this.clearAnimationTimeout();
@@ -2292,17 +2660,17 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 淡入淡出动画翻页
-   */
+  * 淡入淡出动画翻页
+  */
   private performFadeAnimation(targetPageIndex: number): void {
     // 安全检查
     if (this.pages.length === 0 || targetPageIndex < 0 || targetPageIndex >= this.pages.length) {
-      logger.warn(TAG, `performFadeAnimation: 页面数据无效，跳过动画`);
+      logger.warn(TAG, 'performFadeAnimation: invalid page data, skip');
       return;
     }
     
     this.isAnimating = true;
-    this.startAnimationTimeout();  // 启动动画超时保护
+    this.startAnimationTimeout();// 启动动画超时保护
     const capturedVersion = this.paginationVersion;
     
     animateTo({
@@ -2315,7 +2683,7 @@ export struct TextReaderComponent {
     setTimeout(() => {
       // 检查版本号
       if (capturedVersion !== this.paginationVersion || this.pages.length === 0) {
-        logger.warn(TAG, `performFadeAnimation: 动画完成后页面数据已变化，取消更新`);
+        logger.warn(TAG, 'performFadeAnimation: page data changed after animation, cancel update');
         this.slideOpacity = 1;
         this.isAnimating = false;
         this.clearAnimationTimeout();
@@ -2341,19 +2709,19 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 完成滑动翻页（从当前拖拽位置继续动画到目标位置）
-   * @param isForward true 表示向前翻页（下一页），false 表示向后翻页（上一页）
-   */
+  * 完成滑动翻页（从当前拖拽位置继续动画到目标位置）
+  * @param isForward true 表示向前翻页（下一页），false 表示向后翻页（上一页）
+  */
   private completeSlidePageTurn(isForward: boolean): void {
     const targetPageIndex = isForward ? this.currentPageIndex + 1 : this.currentPageIndex - 1;
     
     logger.info(TAG, `completeSlidePageTurn: isForward=${isForward}, currentPage=${this.currentPageIndex}, targetPage=${targetPageIndex}, totalPages=${this.totalPages}, currentChapter=${this.currentChapterIndex}, totalChapters=${this.chapters.length}`);
     
-    // 边界检查 - 支持跨章节翻页
+      // 尝试切换到上一章节的最后一页
     if (targetPageIndex < 0) {
       // 尝试切换到上一章节的最后一页
       if (this.currentChapterIndex > 0) {
-        logger.info(TAG, `completeSlidePageTurn: 切换到上一章节`);
+        logger.info(TAG, `completeSlidePageTurn: 已是第一章第一页，回弹`);
         this.switchToPrevChapter();
       } else {
         logger.info(TAG, `completeSlidePageTurn: 已是第一章第一页，回弹`);
@@ -2365,7 +2733,7 @@ export struct TextReaderComponent {
     if (targetPageIndex >= this.totalPages) {
       // 尝试切换到下一章节的第一页
       if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
-        logger.info(TAG, `completeSlidePageTurn: 切换到下一章节`);
+        logger.info(TAG, `completeSlidePageTurn: 已是最后一章最后一页，回弹`);
         this.switchToNextChapter();
       } else {
         logger.info(TAG, `completeSlidePageTurn: 已是最后一章最后一页，回弹`);
@@ -2375,7 +2743,7 @@ export struct TextReaderComponent {
     }
     
     this.isAnimating = true;
-    this.startAnimationTimeout();  // 启动动画超时保护
+    this.startAnimationTimeout();// 启动动画超时保护
     this.isForward = isForward;
     
     // 从当前位置继续滑动到目标位置
@@ -2402,8 +2770,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 滑动回弹动画
-   */
+  * 滑动回弹动画
+  */
   private animateSlideBack(): void {
     animateTo({
       duration: 200,
@@ -2414,8 +2782,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 切换到下一章节
-   */
+  * 切换到下一章节
+  */
   private switchToNextChapter(): void {
     if (this.chapters.length === 0 || this.currentChapterIndex >= this.chapters.length - 1) {
       this.animateSlideBack();
@@ -2424,10 +2792,10 @@ export struct TextReaderComponent {
     
     const nextChapterIndex = this.currentChapterIndex + 1;
     const nextChapter = this.chapters[nextChapterIndex];
-    const capturedVersion = this.paginationVersion;  // 捕获版本用于中断检测
+    const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
     
     this.isAnimating = true;
-    this.startAnimationTimeout();  // 启动动画超时保护
+    this.startAnimationTimeout();// 启动动画超时保护
     this.isForward = true;
     this.transitionDirection = true;
     this.transitionChapterName = nextChapter?.title || `第 ${nextChapterIndex + 1} 章`;
@@ -2451,7 +2819,7 @@ export struct TextReaderComponent {
       this.isChapterTransition = true;
       this.slideOffset = 0;
       
-      // 100ms 后切换章节并滑动过去
+        // 检查是否被中断
       setTimeout(() => {
         // 检查是否被中断
         if (capturedVersion !== this.paginationVersion || !this.isAnimating) {
@@ -2463,12 +2831,12 @@ export struct TextReaderComponent {
         this.currentChapterIndex = nextChapterIndex;
         this.currentPageIndex = 0;
         
-        // 通知章节变化（外部会更新内容）
+        // 延迟一帧后滑动出过渡页
         this.onChapterChange(this.currentChapterIndex);
         
-        // 延迟一帧后滑动出过渡页
-        setTimeout(() => {
           // 检查是否被中断
+        setTimeout(() => {
+            // 内容变化可能提前把 isAnimating 置为 false，仍需收敛章节过渡态
           if (!this.isAnimating) {
             // 内容变化可能提前把 isAnimating 置为 false，仍需收敛章节过渡态
             this.isChapterTransition = false;
@@ -2497,8 +2865,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 切换到上一章节
-   */
+  * 切换到上一章节
+  */
   private switchToPrevChapter(): void {
     if (this.chapters.length === 0 || this.currentChapterIndex <= 0) {
       this.animateSlideBack();
@@ -2507,15 +2875,15 @@ export struct TextReaderComponent {
     
     const prevChapterIndex = this.currentChapterIndex - 1;
     const prevChapter = this.chapters[prevChapterIndex];
-    const capturedVersion = this.paginationVersion;  // 捕获版本用于中断检测
+    const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
     
     this.isAnimating = true;
-    this.startAnimationTimeout();  // 启动动画超时保护
+    this.startAnimationTimeout();// 启动动画超时保护
     this.isForward = false;
     this.transitionDirection = false;
     this.transitionChapterName = prevChapter?.title || `第 ${prevChapterIndex + 1} 章`;
     
-    // 标记分页完成后跳转到最后一页
+    // 第一步：滑动到过渡页
     this.shouldJumpToLastPage = true;
     
     // 第一步：滑动到过渡页
@@ -2537,7 +2905,7 @@ export struct TextReaderComponent {
       this.isChapterTransition = true;
       this.slideOffset = 0;
       
-      // 100ms 后切换章节并滑动过去
+        // 检查是否被中断
       setTimeout(() => {
         // 检查是否被中断
         if (capturedVersion !== this.paginationVersion || !this.isAnimating) {
@@ -2545,15 +2913,15 @@ export struct TextReaderComponent {
           return;
         }
         
-        // 切换章节
+        // 通知章节变化（外部会更新内容，分页完成后会检查 shouldJumpToLastPage）
         this.currentChapterIndex = prevChapterIndex;
         
-        // 通知章节变化（外部会更新内容，分页完成后会检查 shouldJumpToLastPage）
+        // 延迟一帧后滑动出过渡页
         this.onChapterChange(this.currentChapterIndex);
         
-        // 延迟一帧后滑动出过渡页
-        setTimeout(() => {
           // 检查是否被中断
+        setTimeout(() => {
+            // 内容变化可能提前把 isAnimating 置为 false，仍需收敛章节过渡态
           if (!this.isAnimating) {
             // 内容变化可能提前把 isAnimating 置为 false，仍需收敛章节过渡态
             this.isChapterTransition = false;
@@ -2574,7 +2942,7 @@ export struct TextReaderComponent {
             this.isChapterTransition = false;
             this.isAnimating = false;
             this.clearAnimationTimeout();
-            logger.info(TAG, `switchToPrevChapter: 切换到章节 ${this.currentChapterIndex}，将跳转到最后一页`);
+            logger.info(TAG, `switchToPrevChapter: switched to chapter ${this.currentChapterIndex}, jump to last page`);
           }, 150);
         }, 16);
       }, 100);
@@ -2582,24 +2950,24 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 卷页动画翻页（拟真翻页效果）
-   * 支持交互式拖拽和自动动画两种模式
-   */
+  * 卷页动画翻页（拟真翻页效果）
+  * 支持交互式拖拽和自动动画两种模式
+  */
   private performCurlAnimation(targetPageIndex: number): void {
     // 安全检查：确保页面数据有效
     if (this.pages.length === 0 || targetPageIndex < 0 || targetPageIndex >= this.pages.length) {
-      logger.warn(TAG, `performCurlAnimation: 页面数据无效，跳过动画`);
+      logger.warn(TAG, 'performCurlAnimation: invalid page data, skip');
       return;
     }
     
-    // 检查背景设置是否变化，如果变化则清除缓存
+    // 生成当前页和目标页的PixelMap
     this.checkAndInvalidatePixelMapCache();
     
-    // 生成当前页和目标页的PixelMap
+      // 再次检查页面数据是否仍然有效（可能在异步过程中发生了章节切换）
     this.generatePagePixelMaps(this.currentPageIndex, targetPageIndex).then(() => {
       // 再次检查页面数据是否仍然有效（可能在异步过程中发生了章节切换）
       if (this.pages.length === 0 || this.isPaginating || this.isLoading) {
-        logger.warn(TAG, `performCurlAnimation: 异步完成后页面数据已变化，取消动画`);
+        logger.warn(TAG, 'performCurlAnimation: page data changed after async work, cancel');
         this.isAnimating = false;
         this.clearAnimationTimeout();
         return;
@@ -2651,13 +3019,13 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 生成页面的PixelMap（用于卷页效果）
-   * 使用 componentSnapshot.createFromBuilder 截取真实的页面渲染结果
-   */
+  * 生成页面的PixelMap（用于卷页效果）
+  * 使用 componentSnapshot.createFromBuilder 截取真实的页面渲染结果
+  */
   private async generatePagePixelMaps(currentIndex: number, targetIndex: number): Promise<void> {
     if (this.isGeneratingPixelMap) {
       // 拖拽时会频繁触发，使用 debug 级别避免日志刷屏
-      logger.debug(TAG, '正在生成 PixelMap，跳过重复请求');
+      logger.debug(TAG, 'PixelMap is being cleaned up, skip new fetch');
       return;
     }
     
@@ -2674,7 +3042,7 @@ export struct TextReaderComponent {
       if (cachedCurrent) {
         this.currentPixelMap = cachedCurrent;
       } else {
-        // 生成当前页 PixelMap
+        // 检查版本是否变化（章节切换）
         this.currentPixelMap = await this.renderPageToPixelMap(currentIndex);
         
         // 检查版本是否变化（章节切换）
@@ -2697,7 +3065,7 @@ export struct TextReaderComponent {
       if (cachedTarget) {
         this.nextPixelMap = cachedTarget;
       } else if (targetIndex >= 0 && targetIndex < this.totalPages) {
-        // 生成目标页 PixelMap
+        // 检查版本是否变化
         this.nextPixelMap = await this.renderPageToPixelMap(targetIndex);
         
         // 检查版本是否变化
@@ -2718,8 +3086,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 预加载相邻页面的 PixelMap
-   */
+  * 预加载相邻页面的 PixelMap
+  */
   private async preloadAdjacentPagePixelMaps(): Promise<void> {
     if (this.settings.pageTurnAnimation !== TextPageTurnAnimation.CURL) {
       return;
@@ -2789,8 +3157,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 清理过远的 PixelMap 缓存
-   */
+  * 清理过远的 PixelMap 缓存
+  */
   private cleanupPixelMapCache(currentIndex: number, range: number): void {
     const keysToRemove: number[] = [];
     this.pagePixelMapCache.forEach((_, key) => {
@@ -2809,9 +3177,9 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 将页面内容渲染为 PixelMap
-   * 使用 componentSnapshot.createFromBuilder 截取真实的页面渲染
-   */
+  * 将页面内容渲染为 PixelMap
+  * 使用 componentSnapshot.createFromBuilder 截取真实的页面渲染
+  */
   private async renderPageToPixelMap(pageIndex: number): Promise<image.PixelMap | null> {
     if (pageIndex < 0 || pageIndex >= this.pages.length) {
       return null;
@@ -2828,8 +3196,8 @@ export struct TextReaderComponent {
     }
     
     try {
-      // 使用 componentSnapshot.createFromBuilder 截取页面
-      // 参数：builder 函数, delay(可选), checkImageStatus(可选), options(可选)
+      // 传递 pageIndex 以便在 PixelMap 中渲染页码
+      // 传递 pageIndex 以便在 PixelMap 中渲染页码
       // 传递 pageIndex 以便在 PixelMap 中渲染页码
       const pixelMap: image.PixelMap = await componentSnapshot.createFromBuilder(
         () => { this.buildPageForSnapshot(pageContent, width, height, pageIndex); }
@@ -2844,8 +3212,6 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 构建用于截图的页面内容
-   * 注意：需要指定固定尺寸，因为 createFromBuilder 需要知道组件大小
    * @param content 页面文本内容
    * @param width 页面宽度
    * @param height 页面高度
@@ -2871,7 +3237,7 @@ export struct TextReaderComponent {
           .opacity(this.settings.background.imageOpacity ?? 1)
       }
       
-      // 文本内容层
+      // 通过 padding 避让底部信息栏，与实际显示的 buildPageMode 一致
       // 通过 padding 避让底部信息栏，与实际显示的 buildPageMode 一致
       Text(content)
         .fontSize(this.settings.textStyle.fontSize)
@@ -2906,8 +3272,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 卷页动画完成回调
-   */
+  * 卷页动画完成回调
+  */
   private onCurlAnimationComplete(): void {
     this.stopCurlAnimation();
     const targetIndex = this.curlPendingPageIndex;
@@ -2932,8 +3298,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 卷页动画取消（回弹）
-   */
+  * 卷页动画取消（回弹）
+  */
   private animateCurlToCancel(): void {
     this.stopCurlAnimation();
     
@@ -2946,8 +3312,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 卷页动画完成（翻过去）
-   */
+  * 卷页动画完成（翻过去）
+  */
   private animateCurlToComplete(): void {
     this.stopCurlAnimation();
     
@@ -2969,8 +3335,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 停止卷页动画
-   */
+  * 停止卷页动画
+  */
   private stopCurlAnimation(): void {
     if (this.curlAnimationTimer !== -1) {
       clearTimeout(this.curlAnimationTimer);
@@ -2979,8 +3345,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 重置卷页状态
-   */
+  * 重置卷页状态
+  */
   private resetCurlState(): void {
     this.stopCurlAnimation();
     this.showCurlEffect = false;
@@ -2994,11 +3360,11 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 更新卷页进度（实时拖拽）
-   * 使用预加载的 PixelMap 提高响应速度
-   */
+  * 更新卷页进度（实时拖拽）
+  * 使用预加载的 PixelMap 提高响应速度
+  */
   private updateCurlProgress(deltaX: number): void {
-    const dragForward = deltaX < 0;  // 向左拖拽为翻到下一页
+    const dragForward = deltaX < 0;// 向左拖拽为翻到下一页
     const dragDistance = Math.abs(deltaX);
     
     // 确定目标页面
@@ -3029,8 +3395,8 @@ export struct TextReaderComponent {
     const showThreshold = 10;
     if (dragDistance > showThreshold) {
       if (!this.showCurlEffect) {
-        // 首次进入卷页模式
         // 检查背景设置是否变化，如果变化则清除缓存
+        // 优先使用预加载的 PixelMap
         this.checkAndInvalidatePixelMapCache();
         // 优先使用预加载的 PixelMap
         const cachedCurrent = this.pagePixelMapCache.get(this.currentPageIndex);
@@ -3056,7 +3422,7 @@ export struct TextReaderComponent {
           
           logger.debug(TAG, `进入卷页拖拽模式(缓存): ${this.currentPageIndex} -> ${targetIndex}`);
         } else {
-          // 没有缓存，先进入卷页模式（显示简化效果），同时异步生成 PixelMap
+          // 这样可以让用户立即看到翻页响应，而不是等待 PixelMap 生成
           // 这样可以让用户立即看到翻页响应，而不是等待 PixelMap 生成
           this.showCurlEffect = true;
           this.curlPendingPageIndex = targetIndex;
@@ -3083,8 +3449,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 通知页面变化
-   */
+  * 通知页面变化
+  */
   private notifyPageChange(): void {
     this.onPageChange(this.currentPageIndex, this.totalPages);
     this.notifyPageCharRangeChange();
@@ -3121,9 +3487,12 @@ export struct TextReaderComponent {
   
   // ========== 手势处理 ==========
   /**
-   * 处理点击位置（简化版本，直接使用坐标）
-   */
+  * 处理点击位置（简化版本，直接使用坐标）
+  */
   private handleTapAtPosition(x: number, y: number): void {
+    if (this.hasActiveSelectionRange()) {
+      return;
+    }
     if (!this.settings.tapToTurn) {
       // 创建简单的点击事件对象传递给回调
       this.onTapSimple();
@@ -3161,23 +3530,36 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 点击中间区域回调（用于显示/隐藏工具栏）
-   */
+  * 点击中间区域回调（用于显示/隐藏工具栏）
+  */
   private onTapSimple(): void {
-    // 直接调用外部回调，不传递事件对象
+    // TextReaderComponent 内部已经处理了点击区域判断，外部只需要知道"用户点击了中间区域"
     // TextReaderComponent 内部已经处理了点击区域判断，外部只需要知道"用户点击了中间区域"
     this.resetAutoPageTurnTimerForInteraction('tap-center');
     this.onTapCenter();
   }
+
+  /**
+   * Whether a text selection range is active.
+   * Used to block page-turn gestures while dragging selection handles.
+   */
+  private hasActiveSelectionRange(): boolean {
+    return this.selectionStart >= 0 && this.selectionEnd > this.selectionStart;
+  }
   
   /**
-   * 处理滑动手势开始
-   */
+  * 处理滑动手势开始
+  */
   private handlePanStart(event: GestureEvent): void {
+    if (this.hasActiveSelectionRange()) {
+      this.isDragging = false;
+      logger.debug(TAG, 'handlePanStart: skip page turn while text selection is active');
+      return;
+    }
     logger.info(TAG, `handlePanStart: offsetX=${event.offsetX}, offsetY=${event.offsetY}`);
     this.touchStartX = event.offsetX;
     this.touchStartY = event.offsetY;
-    this.initialTouchX = event.offsetX;  // 记录初始触摸位置用于卷页拖拽
+    this.initialTouchX = event.offsetX;// 记录初始触摸位置用于卷页拖拽
     // 记录卷曲触摸点（用于从触摸位置开始卷曲）
     this.curlTouchX = event.fingerList[0]?.localX || event.offsetX;
     this.curlTouchY = event.fingerList[0]?.localY || event.offsetY;
@@ -3187,9 +3569,13 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 处理滑动手势移动
-   */
+  * 处理滑动手势移动
+  */
   private handlePanUpdate(event: GestureEvent): void {
+    if (this.hasActiveSelectionRange()) {
+      this.isDragging = false;
+      return;
+    }
     if (!this.isDragging) {
       return;
     }
@@ -3197,7 +3583,7 @@ export struct TextReaderComponent {
     const deltaX = event.offsetX - this.initialTouchX;
     
     if (this.settings.readingMode === TextReadingMode.PAGE) {
-      // 卷页动画模式
+        // 如果已经在卷页动画中（非拖拽触发），不处理
       if (this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL) {
         // 如果已经在卷页动画中（非拖拽触发），不处理
         if (this.isAnimating && !this.showCurlEffect) {
@@ -3233,9 +3619,14 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 处理滑动手势结束
-   */
+  * 处理滑动手势结束
+  */
   private handlePanEnd(event: GestureEvent): void {
+    if (this.hasActiveSelectionRange()) {
+      this.isDragging = false;
+      logger.debug(TAG, 'handlePanEnd: skip page turn while text selection is active');
+      return;
+    }
     logger.info(TAG, `handlePanEnd called: isDragging=${this.isDragging}, offsetX=${event.offsetX}, initialTouchX=${this.initialTouchX}`);
     
     if (!this.isDragging) {
@@ -3247,17 +3638,17 @@ export struct TextReaderComponent {
     
     const deltaX = event.offsetX - this.initialTouchX;
     const threshold = this.componentWidth * 0.2;
-    const flipThreshold = this.novelCurlConfig.flipThreshold;  // 使用小说专用卷页阈值
+    const flipThreshold = this.novelCurlConfig.flipThreshold;// 使用小说专用卷页阈值
     
     logger.info(TAG, `handlePanEnd: deltaX=${deltaX.toFixed(2)}, threshold=${threshold.toFixed(2)}, componentWidth=${this.componentWidth}, animation=${this.settings.pageTurnAnimation}, readingMode=${this.settings.readingMode}`);
     
     // 只在翻页模式下处理翻页
     if (this.settings.readingMode !== TextReadingMode.PAGE) {
-      logger.info(TAG, `handlePanEnd: 非翻页模式，不处理翻页`);
+      logger.info(TAG, 'handlePanEnd: not page mode, skip');
       return;
     }
     
-    // 卷页动画模式 - 正在显示卷页效果
+      // 快速翻页检测：小范围快速滑动也能触发翻页
     if (this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL && this.showCurlEffect) {
       // 快速翻页检测：小范围快速滑动也能触发翻页
       const elapsed: number = Math.max(Date.now() - this.panStartTime, 1);
@@ -3291,7 +3682,7 @@ export struct TextReaderComponent {
     if (this.settings.pageTurnAnimation === TextPageTurnAnimation.SLIDE) {
       logger.info(TAG, `handlePanEnd: 滑动模式，|deltaX|=${Math.abs(deltaX).toFixed(2)} > threshold=${threshold.toFixed(2)} ? ${Math.abs(deltaX) > threshold}`);
       if (Math.abs(deltaX) > threshold) {
-        // 超过阈值，完成滑动翻页
+        // 回弹
         this.completeSlidePageTurn(deltaX < 0);
       } else {
         // 回弹
@@ -3305,10 +3696,10 @@ export struct TextReaderComponent {
       return;
     }
     
-    // 其他动画模式（无动画、淡入淡出等）
+        // 向左滑动，下一页
     if (Math.abs(deltaX) > threshold) {
       if (deltaX < 0) {
-        // 向左滑动，下一页
+        // 向右滑动，上一页
         this.goToNextPage();
       } else {
         // 向右滑动，上一页
@@ -3319,8 +3710,8 @@ export struct TextReaderComponent {
   
   // ========== 资源管理 ==========
   /**
-   * 释放当前使用的 PixelMap 引用（不释放缓存）
-   */
+  * 释放当前使用的 PixelMap 引用（不释放缓存）
+  */
   private releasePixelMaps(): void {
     // 只清除引用，不释放缓存中的 PixelMap
     this.currentPixelMap = null;
@@ -3329,8 +3720,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 释放所有 PixelMap 缓存（组件销毁时调用）
-   */
+  * 释放所有 PixelMap 缓存（组件销毁时调用）
+  */
   private releaseAllPixelMapCache(): void {
     this.pagePixelMapCache.forEach((pm) => {
       pm.release();
@@ -3342,9 +3733,9 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 获取渲染设置签名（用于检测影响 PixelMap 渲染的设置变化）
-   * 包含：背景设置、文字样式（颜色、字号、行高、字间距、字重、字体、字体路径、对齐方式）、页边距
-   */
+  * 获取渲染设置签名（用于检测影响 PixelMap 渲染的设置变化）
+  * 包含：背景设置、文字样式（颜色、字号、行高、字间距、字重、字体、字体路径、对齐方式）、页边距
+  */
   private getRenderSignature(): string {
     const bg = this.settings.background;
     const ts = this.settings.textStyle;
@@ -3355,9 +3746,9 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 检查渲染设置是否变化，如果变化则清除 PixelMap 缓存
-   * 优化：如果正在卷页动画中，不清除缓存（避免动画中断）
-   */
+  * 检查渲染设置是否变化，如果变化则清除 PixelMap 缓存
+  * 优化：如果正在卷页动画中，不清除缓存（避免动画中断）
+  */
   private checkAndInvalidatePixelMapCache(): void {
     // 如果正在卷页动画中，不清除缓存
     if (this.showCurlEffect) {
@@ -3381,8 +3772,8 @@ export struct TextReaderComponent {
   
   // ========== 辅助方法 ==========
   /**
-   * 获取背景样式（仅用于纯色背景模式）
-   */
+  * 获取背景样式（仅用于纯色背景模式）
+  */
   private getBackgroundColor(): ResourceColor {
     const bg = this.settings.background;
     if (bg.type === BackgroundType.COLOR && bg.color) {
@@ -3392,8 +3783,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 获取内容区背景色（图片背景时返回透明）
-   */
+  * 获取内容区背景色（图片背景时返回透明）
+  */
   private getContentBackgroundColor(): ResourceColor {
     if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
       return Color.Transparent;
@@ -3402,8 +3793,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 将文本分段（用于滚动模式优化）
-   */
+  * 将文本分段（用于滚动模式优化）
+  */
   private getTextSegments(): string[] {
     if (!this.content) {
       return [];
@@ -3432,9 +3823,9 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 获取有效的底部状态栏高度
-   * 只有当底部信息显示开启时才返回高度
-   */
+  * 获取有效的底部状态栏高度
+  * 只有当底部信息显示开启时才返回高度
+  */
   private getEffectiveBottomBarHeight(): number {
     const hasBottomInfo = this.settings.showPageNumber || 
                           this.settings.showProgress || 
@@ -3444,8 +3835,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 获取文字对齐方式
-   */
+  * 获取文字对齐方式
+  */
   private getTextAlign(): TextAlign {
     switch (this.settings.textStyle.textAlignment) {
       case TextAlignment.LEFT:
@@ -3462,22 +3853,22 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 是否为双页模式
-   */
+  * 是否为双页模式
+  */
   private isDualPageMode(): boolean {
     return this.settings.readingMode === TextReadingMode.DUAL_PAGE;
   }
   
   /**
-   * 获取双页模式下单页宽度
-   */
+  * 获取双页模式下单页宽度
+  */
   private getDualPageWidth(): number {
     return Math.floor(this.componentWidth / 2);
   }
   
   /**
-   * 更新双页模式左右页内容
-   */
+  * 更新双页模式左右页内容
+  */
   private updateDualPageContents(): void {
     if (this.pages.length === 0) {
       this.dualLeftPageContent = '';
@@ -3489,7 +3880,7 @@ export struct TextReaderComponent {
     this.dualPageBaseIndex = Math.max(0, this.dualPageBaseIndex - (this.dualPageBaseIndex % 2));
     
     const isRTL = this.settings.readingDirection === TextReadingDirection.HORIZONTAL;
-    // LTR: 左=baseIndex, 右=baseIndex+1 (default, like a real book in CJK)
+    // RTL方向暂不考虑，默认 LTR
     // RTL方向暂不考虑，默认 LTR
     this.dualLeftPageIndex = this.dualPageBaseIndex;
     this.dualRightPageIndex = this.dualPageBaseIndex + 1;
@@ -3507,8 +3898,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页模式翻到下一对页面
-   */
+  * 双页模式翻到下一对页面
+  */
   private goToNextDualPage(source: string = 'manual'): void {
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
     
@@ -3530,8 +3921,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页模式翻到上一对页面
-   */
+  * 双页模式翻到上一对页面
+  */
   private goToPrevDualPage(source: string = 'manual'): void {
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
     
@@ -3554,8 +3945,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 执行双页翻页动画
-   */
+  * 执行双页翻页动画
+  */
   private performDualPageTurn(targetBase: number): void {
     const animation = this.settings.pageTurnAnimation;
     const halfWidth = this.getDualPageWidth();
@@ -3608,7 +3999,7 @@ export struct TextReaderComponent {
         }, 150);
       }, 150);
     } else if (animation === TextPageTurnAnimation.CURL) {
-      // 双页卷页动画
+      // 无动画
       this.performDualCurlAnimation(targetBase);
     } else {
       // 无动画
@@ -3619,17 +4010,20 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页模式手势点击处理
-   */
+  * 双页模式手势点击处理
+  */
   private handleDualPageTap(x: number, _y: number): void {
+    if (this.hasActiveSelectionRange()) {
+      return;
+    }
     const halfWidth = this.getDualPageWidth();
     const isLeftSide = x < halfWidth;
     
     if (isLeftSide) {
-      // 左半区域
+        // 左页左侧1/3：上一页对
       const leftThird = halfWidth / 3;
       if (x < leftThird) {
-        // 左页左侧1/3：上一页对
+        // 左页右侧1/3（靠近中缝）：显示工具栏
         this.goToPrevDualPage();
       } else if (x > halfWidth - leftThird) {
         // 左页右侧1/3（靠近中缝）：显示工具栏
@@ -3642,7 +4036,7 @@ export struct TextReaderComponent {
       const rightX = x - halfWidth;
       const rightThird = halfWidth / 3;
       if (rightX > halfWidth - rightThird) {
-        // 右页右侧1/3：下一页对
+        // 右页左侧1/3（靠近中缝）：显示工具栏
         this.goToNextDualPage();
       } else if (rightX < rightThird) {
         // 右页左侧1/3（靠近中缝）：显示工具栏
@@ -3654,8 +4048,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页模式滑动手势结束处理
-   */
+  * 双页模式滑动手势结束处理
+  */
   private handleDualPagePanEnd(deltaX: number): void {
     // 双页卷页动画完成/取消
     if (this.showCurlEffect && this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL) {
@@ -3689,8 +4083,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页滑动动画（提取公用 + 卷页降级备用）
-   */
+  * 双页滑动动画（提取公用 + 卷页降级备用）
+  */
   private performDualSlideAnimation(targetBase: number): void {
     const halfWidth = this.getDualPageWidth();
     this.isAnimating = true;
@@ -3719,8 +4113,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 停止双页卷页动画定时器
-   */
+  * 停止双页卷页动画定时器
+  */
   private stopDualCurlAnimation(): void {
     if (this.dualCurlAnimTimer !== -1) {
       clearTimeout(this.dualCurlAnimTimer);
@@ -3729,9 +4123,9 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 父组件驱动的双页卷页动画
-   * 直接更新 curlProgress（映射到子组件的 externalProgress），完全绕过 @Watch/onReady 竞态
-   */
+  * 父组件驱动的双页卷页动画
+  * 直接更新 curlProgress（映射到子组件的 externalProgress），完全绕过 @Watch/onReady 竞态
+  */
   private animateDualCurlProgressTo(target: number, onComplete: () => void): void {
     this.stopDualCurlAnimation();
     
@@ -3745,13 +4139,13 @@ export struct TextReaderComponent {
     }
     
     const isForwardAnim: boolean = target > start;
-    // 双页卷页动画需要更长时间：
-    // - 第一阶段(0→0.5)：页面从边缘翻到书脊
     // - 第二阶段(0.5→1.0)：页面从书脊继续翻转落下
+    // 设置最小时长确保动画可见
+    // 设置最小时长确保动画可见
     // 设置最小时长确保动画可见
     const minDuration: number = isForwardAnim ? 450 : 250;
     const rawDuration: number = isForwardAnim
-      ? this.novelCurlConfig.animationDuration * delta * 2.0  // 增加系数
+      ? this.novelCurlConfig.animationDuration * delta * 2.0// 增加系数
       : this.novelCurlConfig.animationDuration * delta;
     const duration: number = Math.max(minDuration, rawDuration);
     const startTime: number = Date.now();
@@ -3785,8 +4179,6 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页卷页动画（tap 触发的自动播放）
-   * 生成 4 张 PixelMap：当前左/右 + 目标左/右
    * 动画由父组件定时器驱动 curlProgress，而非子组件内部 @Watch
    */
   private performDualCurlAnimation(targetBase: number): void {
@@ -3813,11 +4205,11 @@ export struct TextReaderComponent {
       
       logger.info(TAG, `[双页卷页] showCurlEffect=true, 延迟50ms启动动画`);
       
-      // 延迟启动动画定时器，确保 DualPageCurlEffect Canvas 已挂载并触发 onReady
-      // 如果立即启动，curlProgress @State 每16ms变化一次会触发父组件频繁重渲染，
+      // 可能阻塞 UI 线程导致 Canvas onReady 延迟甚至无法触发
+      // 可能阻塞 UI 线程导致 Canvas onReady 延迟甚至无法触发
       // 可能阻塞 UI 线程导致 Canvas onReady 延迟甚至无法触发
       setTimeout(() => {
-        logger.info(TAG, `[双页卷页] 启动动画定时器, curlProgress=${this.curlProgress}`);
+          logger.info(TAG, `[双页卷页] 动画完成`);
         this.animateDualCurlProgressTo(1.0, () => {
           logger.info(TAG, `[双页卷页] 动画完成`);
           this.onDualCurlAnimationComplete();
@@ -3831,8 +4223,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 生成双页卷页所需的 4 张 PixelMap
-   */
+  * 生成双页卷页所需的 4 张 PixelMap
+  */
   private async generateDualCurlPixelMaps(currentBase: number, targetBase: number): Promise<boolean> {
     const indices = [currentBase, currentBase + 1, targetBase, targetBase + 1];
     const results: (image.PixelMap | null)[] = [];
@@ -3866,8 +4258,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页卷页拖拽进度更新
-   */
+  * 双页卷页拖拽进度更新
+  */
   private updateDualCurlProgress(deltaX: number): void {
     const halfWidth = this.getDualPageWidth();
     const dragForward = deltaX < 0;
@@ -3911,13 +4303,12 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页卷页动画完成回调
-   * 
    * 时序关键：必须在同一帧内完成以下操作：
-   * 1. 先更新页面内容（dualLeftPageContent/dualRightPageContent）
+   * 
    * 2. 然后关闭动画层（showCurlEffect = false）
    * 
    * 这样当 Canvas 层被移除时，底层 UI 已经显示新页面内容，不会闪烁。
+   * 
    */
   private onDualCurlAnimationComplete(): void {
     const targetBase = this.curlPendingPageIndex;
@@ -3932,13 +4323,13 @@ export struct TextReaderComponent {
     }
     
     // 2. 然后关闭动画层（底层已显示新内容，无缝过渡）
-    logger.info(TAG, `[onDualCurlAnimationComplete] 2.关闭动画层`);
+    logger.info(TAG, '[onDualCurlAnimationComplete] 2. close animation layer');
     this.showCurlEffect = false;
     this.curlProgress = 0;
     this.stopDualCurlAnimation();
     
     // 3. 完整重置状态
-    logger.info(TAG, `[onDualCurlAnimationComplete] 3.重置状态`);
+    logger.info(TAG, '[onDualCurlAnimationComplete] 3. reset state');
     this.curlAnimateTarget = -1;
     this.curlAnimateFrom = 0;
     this.curlPendingPageIndex = -1;
@@ -3953,15 +4344,15 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 双页卷页完成动画（松手后继续翻到底）
-   */
+  * 双页卷页完成动画（松手后继续翻到底）
+  */
   private animateDualCurlToComplete(): void {
     this.stopDualCurlAnimation();
     
-    // 注意：不要在这里立即更新页面内容！
-    // 如果在动画开始前就更新 dualPageBaseIndex/dualLeftPageContent，
     // 底层 Row 会立即显示新页内容，导致用户看到“直接翻页”而不是卷曲动画。
     // 页面内容应该在动画完成后由 onDualCurlAnimationComplete 统一更新。
+    // 页面内容应该在动画完成后由 onDualCurlAnimationComplete 统一更新。
+    // 父组件驱动动画继续到 1.0
     
     // 父组件驱动动画继续到 1.0
     this.animateDualCurlProgressTo(1.0, () => {
@@ -3970,8 +4361,8 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 重置双页卷页状态（清理 4 张 PixelMap 引用）
-   */
+  * 重置双页卷页状态（清理 4 张 PixelMap 引用）
+  */
   private resetDualCurlState(): void {
     this.stopDualCurlAnimation();
     this.showCurlEffect = false;
@@ -3987,11 +4378,11 @@ export struct TextReaderComponent {
     this.dualCurlNextRightPM = null;
   }
   
-  // ========== UI构建 ==========
-  build() {
     // 使用 Stack 布局：所有层叠加，底部信息栏使用 position 定位
-    Stack() {
+  build() {
       // 背景层 - 图片模式下需要底色保证文字可读性
+    Stack() {
+        // 底层：半透明底色，确保文字可读
       if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
         // 底层：半透明底色，确保文字可读
         Column()
@@ -4015,16 +4406,16 @@ export struct TextReaderComponent {
           .backgroundColor(this.getBackgroundColor())
       }
       
-      // 内容层
+          // 章节切换过渡页
       Stack() {
         if (this.isChapterTransition) {
-          // 章节切换过渡页
+          // 滚动模式
           this.buildChapterTransitionPage()
         } else if (this.settings.readingMode === TextReadingMode.SCROLL) {
-          // 滚动模式
+          // 双页模式
           this.buildScrollMode()
         } else if (this.settings.readingMode === TextReadingMode.DUAL_PAGE) {
-          // 双页模式
+          // 翻页模式
           this.buildDualPageMode()
         } else {
           // 翻页模式
@@ -4065,7 +4456,7 @@ export struct TextReaderComponent {
         })
       }
       
-      // 双页卷页效果层（必须放在主 build() 中，与 PageCurlEffectV2 同级；
+      // 如果放在 @Builder buildDualPageMode() 内，Canvas 绘制调用产生的内容不可见）
       // 如果放在 @Builder buildDualPageMode() 内，Canvas 绘制调用产生的内容不可见）
       if (this.isDualPageMode() && this.showCurlEffect && (this.dualCurlLeftPM || this.dualCurlRightPM)) {
         DualPageCurlEffect({
@@ -4086,7 +4477,7 @@ export struct TextReaderComponent {
         })
       }
       
-      // 底部信息栏（使用 position 定位在底部）
+      // 双页模式不显示（页码已在各自页面组件内 + PixelMap 中）
       // 双页模式不显示（页码已在各自页面组件内 + PixelMap 中）
       if ((this.settings.showPageNumber || this.settings.showProgress || this.settings.showTime || this.settings.showBattery)
           && !this.isDualPageMode()) {
@@ -4134,6 +4525,10 @@ export struct TextReaderComponent {
           .onActionStart((event: GestureEvent) => this.handlePanStart(event))
           .onActionUpdate((event: GestureEvent) => this.handlePanUpdate(event))
           .onActionEnd((event: GestureEvent) => {
+            if (this.hasActiveSelectionRange()) {
+              this.isDragging = false;
+              return;
+            }
             if (this.isDualPageMode()) {
               this.isDragging = false;
               const deltaX = event.offsetX - this.initialTouchX;
@@ -4158,8 +4553,13 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 构建滚动模式视图（优化：分段加载避免卡顿）
-   */
+  * 构建用于截图的页面内容
+  * 注意：需要指定固定尺寸，因为 createFromBuilder 需要知道组件大小
+  * @param content 页面文本内容
+  * @param width 页面宽度
+  * @param height 页面高度
+  * @param pageIndex 页码索引（用于在 PixelMap 中渲染页码）
+  */
   @Builder
   buildScrollMode() {
     Scroll(this.scrollController) {
@@ -4190,10 +4590,30 @@ export struct TextReaderComponent {
             .fontFamily(this.settings.textStyle.fontFamily)
             .textAlign(this.getTextAlign())
             .width('100%')
+            .copyOption(CopyOptions.InApp)
+            .selection(this.selectionStart, this.selectionEnd)
+            .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+              this.handleTextSelectionChange(selectionStart, selectionEnd);
+            })
+            .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenuWithSymbol, TextResponseType.LONG_PRESS, {
+              onDisappear: () => {
+                this.clearSelection();
+              }
+            })
         } else {
           // 非听书高亮状态下使用分段渲染，避免一次性绘制大段文本导致卡顿
-          ForEach(this.getTextSegments(), (segment: string, _index: number) => {
-            Text(segment)
+          if (this.novelHighlightRanges.length > 0) {
+            Text() {
+              ForEach(this.buildTextRenderSegments(this.content, 0), (segment: TextRenderSegment) => {
+                if (segment.highlighted) {
+                  Span(segment.text)
+                    .decoration({ type: TextDecorationType.Underline, color: segment.color })
+                    .textBackgroundStyle({ color: `${segment.color}55` })
+                } else {
+                  Span(segment.text)
+                }
+              }, (segment: TextRenderSegment) => segment.key)
+            }
               .fontSize(this.settings.textStyle.fontSize)
               .fontColor(this.settings.textStyle.textColor)
               .lineHeight(this.getEffectiveTextLineHeight())
@@ -4202,7 +4622,51 @@ export struct TextReaderComponent {
               .fontFamily(this.settings.textStyle.fontFamily)
               .textAlign(this.getTextAlign())
               .width('100%')
-          })
+              .copyOption(CopyOptions.InApp)
+              .selection(this.selectionStart, this.selectionEnd)
+              .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+                this.handleTextSelectionChange(selectionStart, selectionEnd);
+              })
+              .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenuWithSymbol, TextResponseType.LONG_PRESS, {
+                onDisappear: () => {
+                  this.clearSelection();
+                }
+              })
+          } else {
+            if (this.enableNovelAnnotations) {
+              Text(this.content)
+                .fontSize(this.settings.textStyle.fontSize)
+                .fontColor(this.settings.textStyle.textColor)
+                .lineHeight(this.getEffectiveTextLineHeight())
+                .letterSpacing(this.settings.textStyle.letterSpacing)
+                .fontWeight(this.settings.textStyle.fontWeight)
+                .fontFamily(this.settings.textStyle.fontFamily)
+                .textAlign(this.getTextAlign())
+                .width('100%')
+                .copyOption(CopyOptions.InApp)
+                .selection(this.selectionStart, this.selectionEnd)
+                .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+                  this.handleTextSelectionChange(selectionStart, selectionEnd);
+                })
+                .bindSelectionMenu(TextSpanType.TEXT, this.buildTextSelectionMenuWithSymbol, TextResponseType.LONG_PRESS, {
+                  onDisappear: () => {
+                    this.clearSelection();
+                  }
+                })
+            } else {
+              ForEach(this.getTextSegments(), (segment: string, _index: number) => {
+                Text(segment)
+                  .fontSize(this.settings.textStyle.fontSize)
+                  .fontColor(this.settings.textStyle.textColor)
+                  .lineHeight(this.getEffectiveTextLineHeight())
+                  .letterSpacing(this.settings.textStyle.letterSpacing)
+                  .fontWeight(this.settings.textStyle.fontWeight)
+                  .fontFamily(this.settings.textStyle.fontFamily)
+                  .textAlign(this.getTextAlign())
+                  .width('100%')
+              })
+            }
+          }
         }
       }
       .padding(this.getEffectiveContentPadding())
@@ -4223,8 +4687,13 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 构建章节切换过渡页
-   */
+  * 构建用于截图的页面内容
+  * 注意：需要指定固定尺寸，因为 createFromBuilder 需要知道组件大小
+  * @param content 页面文本内容
+  * @param width 页面宽度
+  * @param height 页面高度
+  * @param pageIndex 页码索引（用于在 PixelMap 中渲染页码）
+  */
   @Builder
   buildChapterTransitionPage() {
     Column() {
@@ -4261,8 +4730,6 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 构建翻页模式视图
-   * 注意：分页时已经考虑了底部状态栏高度，所以这里的 padding.bottom 需要加上状态栏高度
    * 这样文字内容会在状态栏上方结束，不会被遮挡
    */
   @Builder
@@ -4284,12 +4751,12 @@ export struct TextReaderComponent {
           .backgroundColor(this.getContentBackgroundColor())
       }
       
-      // 当前页容器（支持卷曲效果）
-      Stack() {
         // 当前页内容（支持长按选择文本）
+      Stack() {
+        // 卷曲效果由 Canvas 层 PageCurlEffectV2 统一渲染（包含3D卷曲、光影、背面）
         this.buildCurrentPageTextLayer()
         
-        // 卷曲效果由 Canvas 层 PageCurlEffectV2 统一渲染（包含3D卷曲、光影、背面）
+        // 无需额外的 ArkUI 叠加层
         // 无需额外的 ArkUI 叠加层
         }
         .width('100%')
@@ -4303,15 +4770,19 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 构建双页模式视图
-   * Stack 包裹：底层 Row（左右两页）+ 卷页动画层（横跨全宽）
-   */
+  * 构建用于截图的页面内容
+  * 注意：需要指定固定尺寸，因为 createFromBuilder 需要知道组件大小
+  * @param content 页面文本内容
+  * @param width 页面宽度
+  * @param height 页面高度
+  * @param pageIndex 页码索引（用于在 PixelMap 中渲染页码）
+  */
   @Builder
   buildDualPageMode() {
     Stack() {
-      // === 底层：左右两页内容 ===
-      Row() {
         // === 左侧书页 ===
+      Row() {
+          // 左页背景
         Stack() {
           // 左页背景
           if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
@@ -4333,7 +4804,7 @@ export struct TextReaderComponent {
               .backgroundColor(this.getBackgroundColor())
           }
           
-          // 底层内容：滑动动画期间显示目标页内容
+              // 底层背景
           if (this.dualSlideOffset !== 0 && this.dualAnimSide === 'left') {
             Stack() {
               // 底层背景
@@ -4417,7 +4888,7 @@ export struct TextReaderComponent {
         .height('100%')
         .clip(true)
         
-        // === 右侧书页 ===
+          // 右页背景
         Stack() {
           // 右页背景
           if (this.settings.background.type === BackgroundType.IMAGE && this.settings.background.imagePath) {
@@ -4439,7 +4910,7 @@ export struct TextReaderComponent {
               .backgroundColor(this.getBackgroundColor())
           }
           
-          // 底层内容：滑动动画期间显示目标页内容
+              // 底层背景
           if (this.dualSlideOffset !== 0 && this.dualAnimSide === 'right') {
             Stack() {
               // 底层背景
@@ -4532,14 +5003,12 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 构建页码信息视图
-   * 单页布局：左下角(电量) | 中央(时间) | 右下角(页码或进度)
    * 双页布局：左下角(左页页码) | 中央(电量+时间) | 右下角(右页页码)
    */
   @Builder
   buildPageInfo() {
     if (this.isDualPageMode()) {
-      // 双页模式布局
+        // 左下角：左页页码（双页模式始终显示）
       Row() {
         // 左下角：左页页码（双页模式始终显示）
         Row() {
@@ -4707,6 +5176,64 @@ export struct TextReaderComponent {
    * 构建文本选择菜单
    */
   @Builder
+  buildTextSelectionMenuWithSymbol() {
+    Menu() {
+      MenuItem({
+        content: '复制',
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.doc_text')).fontSize('18vp')
+      })
+        .onClick(() => {
+          this.copySelectedText();
+        })
+      MenuItem({
+        content: '百科搜索',
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.magnifyingglass')).fontSize('18vp')
+      })
+        .onClick(() => {
+          this.searchEncyclopedia();
+        })
+      MenuItem({
+        content: '添加净化规则',
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.slider_vertical_3')).fontSize('18vp')
+      })
+        .onClick(() => {
+          this.addPurifyRuleFromSelection();
+        })
+      MenuItem({
+        content: '开始听书',
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.play_fill')).fontSize('18vp')
+      })
+        .onClick(() => {
+          this.startReadAloudFromSelection();
+        })
+      if (this.enableNovelAnnotations) {
+        MenuItem({
+          content: '划线',
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.square_and_pencil')).fontSize('18vp')
+        })
+          .onClick(() => {
+            this.addHighlightFromSelection(false);
+          })
+        MenuItem({
+          content: '添加想法',
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.doc_text')).fontSize('18vp')
+        })
+          .onClick(() => {
+            this.addThoughtFromSelection();
+          })
+      }
+      MenuItem({
+        content: '分享',
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.arrow_up')).fontSize('18vp')
+      })
+        .onClick(() => {
+          this.shareSelectedText();
+        })
+    }
+    .radius(8)
+    .backgroundColor($r('app.color.settings_panel_background'))
+  }
+  @Builder
   buildTextSelectionMenu() {
     Menu() {
       MenuItem({ content: '复制' })
@@ -4725,6 +5252,20 @@ export struct TextReaderComponent {
         .onClick(() => {
           this.startReadAloudFromSelection();
         })
+      if (this.enableNovelAnnotations) {
+        MenuItem({ content: '划线' })
+          .onClick(() => {
+            this.addHighlightFromSelection(false);
+          })
+        MenuItem({ content: '划线并添加想法' })
+          .onClick(() => {
+            this.addHighlightFromSelection(true);
+          })
+        MenuItem({ content: '添加想法' })
+          .onClick(() => {
+            this.addThoughtFromSelection();
+          })
+      }
       MenuItem({ content: '分享' })
         .onClick(() => {
           this.shareSelectedText();
@@ -4791,6 +5332,111 @@ export struct TextReaderComponent {
     this.clearSelection();
   }
 
+  private addHighlightFromSelection(withThought: boolean): void {
+    const range = this.getGlobalSelectionRange();
+    if (!range || !this.selectedText) {
+      promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+      this.clearSelection();
+      return;
+    }
+    if (withThought) {
+      this.onAddHighlightWithThought(this.selectedText, range.start, range.end);
+    } else {
+      this.onAddHighlight(this.selectedText, range.start, range.end);
+    }
+    this.clearSelection();
+  }
+
+  private addThoughtFromSelection(): void {
+    const range = this.getGlobalSelectionRange();
+    if (!range || !this.selectedText) {
+      promptAction.showToast({ message: '未获取到有效选区', duration: 1500 });
+      this.clearSelection();
+      return;
+    }
+    this.onAddThought(this.selectedText, range.start, range.end);
+    this.clearSelection();
+  }
+
+  private createSafeGlobalRange(start: number, end: number): SelectionRange | null {
+    if (this.content.length <= 0) {
+      return null;
+    }
+    const safeStart = Math.max(0, Math.min(Math.floor(start), this.content.length - 1));
+    const safeEnd = Math.max(safeStart + 1, Math.min(Math.floor(end), this.content.length));
+    if (safeEnd <= safeStart) {
+      return null;
+    }
+    const range: SelectionRange = { start: safeStart, end: safeEnd };
+    return range;
+  }
+
+  private isRangeMatchedSelectedText(range: SelectionRange | null): boolean {
+    if (!range || !this.selectedText || this.selectedText.length <= 0) {
+      return false;
+    }
+    return this.content.substring(range.start, range.end) === this.selectedText;
+  }
+
+  private getGlobalSelectionRange(): SelectionRange | null {
+    if (this.selectionStart < 0 || this.selectionEnd <= this.selectionStart || this.content.length <= 0) {
+      return null;
+    }
+
+    if (this.settings.readingMode === TextReadingMode.SCROLL) {
+      const start = Math.max(0, Math.min(this.selectionStart, this.content.length - 1));
+      const end = Math.max(start + 1, Math.min(this.selectionEnd, this.content.length));
+      const range: SelectionRange = { start, end };
+      return range;
+    }
+
+    if (this.pages.length <= 0) {
+      return null;
+    }
+    const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
+    const page = this.pages[safePageIndex];
+    if (!page) {
+      return null;
+    }
+    const safeLocalStart = Math.max(0, Math.min(this.selectionStart, this.currentPageContent.length));
+    const safeLocalEnd = Math.max(safeLocalStart + 1, Math.min(this.selectionEnd, this.currentPageContent.length));
+    const localCandidate = this.createSafeGlobalRange(
+      page.startCharIndex + safeLocalStart,
+      page.startCharIndex + safeLocalEnd
+    );
+    const globalCandidate = this.createSafeGlobalRange(this.selectionStart, this.selectionEnd);
+
+    const localMatch = this.isRangeMatchedSelectedText(localCandidate);
+    const globalMatch = this.isRangeMatchedSelectedText(globalCandidate);
+    if (globalMatch && !localMatch) {
+      return globalCandidate;
+    }
+    if (localMatch && !globalMatch) {
+      return localCandidate;
+    }
+    if (localMatch && globalMatch) {
+      return localCandidate;
+    }
+
+    const pageStart = Math.max(0, page.startCharIndex);
+    const pageEnd = page.endCharIndex > pageStart ? page.endCharIndex : (pageStart + this.currentPageContent.length);
+    const localInPage = !!localCandidate && localCandidate.start >= pageStart && localCandidate.end <= pageEnd;
+    const globalInPage = !!globalCandidate && globalCandidate.start >= pageStart && globalCandidate.end <= pageEnd;
+    if (globalInPage && !localInPage) {
+      return globalCandidate;
+    }
+    if (localInPage && !globalInPage) {
+      return localCandidate;
+    }
+
+    const selectionLooksGlobal =
+      this.selectionStart >= this.currentPageContent.length || this.selectionEnd > this.currentPageContent.length;
+    if (selectionLooksGlobal && globalCandidate) {
+      return globalCandidate;
+    }
+    return localCandidate || globalCandidate;
+  }
+
   private getReadAloudStartCharIndexFromSelection(): number {
     if (this.selectionStart < 0 || this.selectionEnd <= this.selectionStart) {
       return -1;
@@ -4807,27 +5453,11 @@ export struct TextReaderComponent {
   }
 
   private getGlobalSelectionStartCharIndex(): number {
-    if (this.settings.readingMode === TextReadingMode.SCROLL) {
-      if (this.content.length <= 0) {
-        return -1;
-      }
-      return Math.max(0, Math.min(this.selectionStart, this.content.length - 1));
-    }
-
-    if (this.pages.length <= 0) {
+    const range = this.getGlobalSelectionRange();
+    if (!range) {
       return -1;
     }
-    const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.pages.length - 1));
-    const page = this.pages[safePageIndex];
-    if (!page) {
-      return -1;
-    }
-    const safeLocalStart = Math.max(0, Math.min(this.selectionStart, this.currentPageContent.length));
-    const globalIndex = page.startCharIndex + safeLocalStart;
-    if (globalIndex < 0 || globalIndex >= this.content.length) {
-      return Math.max(0, Math.min(globalIndex, this.content.length - 1));
-    }
-    return globalIndex;
+    return range.start;
   }
 
   private resolveReadAloudSentenceStartCharIndex(charIndex: number): number {
@@ -4925,15 +5555,19 @@ export struct TextReaderComponent {
   }
   
   /**
-   * 处理文本选择变化
-   */
+  * 处理文本选择变化
+  */
   private handleTextSelectionChange(start: number, end: number): void {
     this.selectionStart = start;
     this.selectionEnd = end;
     if (start >= 0 && end > start && this.currentPageContent) {
+      this.isDragging = false;
       this.selectedText = this.currentPageContent.substring(start, end);
       this.onTextSelected(this.selectedText);
+    } else {
+      this.selectedText = '';
     }
   }
 }
+
 

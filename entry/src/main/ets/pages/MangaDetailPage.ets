@@ -3886,6 +3886,7 @@ struct MangaDetailPage {
     
     const readerParams: MangaReaderPageParams = {
       mangaId: mangaIdForReader,
+      contentType: MangaReaderContentType.Local,
       chapterId: chapterIdForReader,
       pageIndex: resumePageIndex,
       fromPage: 'MangaDetailPage',

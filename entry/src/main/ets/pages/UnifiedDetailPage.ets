@@ -67,6 +67,7 @@ import { getCacheStatusService, CacheStatusService, ContentCacheStats, CacheCont
 import { getUnifiedDownloadManager, UnifiedDownloadManager, UnifiedDownloadType, UnifiedTaskStatus, UnifiedDownloadTask, UnifiedDownloadCallback, MangaChapterDownloadItem, PageListFetcher } from '../Framework/Download/UnifiedDownloadManager';
 import { CoverCacheManager } from '../Framework/Cache/CoverCacheManager';
 import { getCoverImageManager, CoverImageManager } from '../Framework/Image/CoverImageManager';
+import { LibraryCoverManager, LibraryCoverType } from '../Framework/Storage/LibraryCoverManager';
 import { image } from '@kit.ImageKit';
 import { getNovelCoverGenerator, NovelCoverGenerator } from '../Framework/Novel/NovelCoverGenerator';
 import { ZLibraryReaderParams } from './ZLibraryReaderPage';
@@ -592,6 +593,7 @@ export struct UnifiedDetailPage {
       mangaId: mangaId,
       sourceId: sourceId ? Number(sourceId) : undefined,
       cachedTitle: this.pageParams.cachedTitle,
+      cachedCoverPath: this.pageParams.cachedCoverPath,
       cachedCover: this.pageParams.cachedCover,
       forceRefresh: false
     };
@@ -699,6 +701,10 @@ export struct UnifiedDetailPage {
           // 获取原始Manga对象以保留genres等元数据
           logger.debug(TAG, `[DEBUG-14] 开始获取原始Manga`);
           const originalManga = MangaAdapter.getOriginalManga(this.content);
+          const finalCoverPath = this.localCoverPath || this.content.coverUrl || originalManga?.coverImagePath || '';
+          const finalCoverSourceType = this.localCoverPath
+            ? ImageSourceType.LOCAL
+            : (this.content.isLocal ? ImageSourceType.LOCAL : ImageSourceType.NETWORK);
           logger.debug(TAG, `[DEBUG-15] 原始Manga获取完成: ${originalManga !== null}`);
           
           logger.debug(TAG, `[DEBUG-16] 开始构建 updatedManga`);
@@ -707,8 +713,8 @@ export struct UnifiedDetailPage {
             title: this.content.title,
             alternativeTitles: originalManga?.alternativeTitles || [],
             description: this.content.description,
-            coverImagePath: this.content.coverUrl,
-            coverSourceType: this.content.isLocal ? ImageSourceType.LOCAL : ImageSourceType.NETWORK,
+            coverImagePath: finalCoverPath,
+            coverSourceType: finalCoverSourceType,
             status: originalManga?.status || MangaStatus.UNKNOWN,
             metadata: {
               authors: this.content.author ? [this.content.author] : [],
@@ -1114,7 +1120,7 @@ export struct UnifiedDetailPage {
       
       // 先设置缓存的基本信息
       const cachedTitle = this.pageParams?.cachedTitle || '未知书名';
-      const cachedCover = this.pageParams?.cachedCover || '';
+      const cachedCover = this.pageParams?.cachedCoverPath || this.pageParams?.cachedCover || '';
       
       // 创建初始的UnifiedContent
       const emptyGenres: string[] = [];
@@ -1364,7 +1370,7 @@ export struct UnifiedDetailPage {
         author: bookInDb.author,
         kind: bookInDb.kind,
         intro: bookInDb.intro,
-        coverUrl: bookInDb.coverUrl,
+        coverUrl: bookInDb.coverLocalPath || bookInDb.coverUrl,
         tocUrl: bookInDb.tocUrl,
         latestChapterTitle: bookInDb.latestChapterTitle,
         wordCount: bookInDb.wordCount
@@ -1858,124 +1864,32 @@ export struct UnifiedDetailPage {
   /**
    * 切换收藏状态
    */
+  /**
+   * Toggle favorite state.
+   */
   private async toggleFavorite(): Promise<void> {
-    if (!this.content) return;
+    if (!this.content) {
+      return;
+    }
 
+    const previousState = this.isFavorite;
+    const targetState = !previousState;
     try {
-      this.isFavorite = !this.isFavorite;
-
-      switch (this.content.contentType) {
-        case UnifiedContentType.MANGA:
-          // 漫画收藏通过DataService处理
-          const dataService = DataService.getInstance();
-          if (this.isFavorite) {
-            await dataService.addToFavorites(this.content.id);
-          } else {
-            await dataService.removeFromFavorites(this.content.id);
-          }
-          logger.info(TAG, `漫画收藏状态切换: ${this.isFavorite}`);
-          break;
-        case UnifiedContentType.EBOOK:
-          // 电子书收藏需要重新保存整个对象
-          const ebook = EBookAdapter.getOriginalEBook(this.content);
-          // 检查是否是有效的本地电子书（有metadata属性）
-          if (ebook && ebook.metadata) {
-            ebook.isFavorite = this.isFavorite;
-            await this.ebookDataManager.saveEBook(ebook);
-          } else if (this.isFavorite && this.content.sourceId) {
-            // 在线电子书：创建新的EBook对象并保存
-            const now = Date.now();
-            const metadata: EBookMetadata = {
-              title: this.content.title,
-              author: this.content.author,
-              publisher: '',
-              publishDate: '',
-              isbn: '',
-              language: '',
-              description: this.content.description,
-              coverImagePath: this.content.coverUrl,
-              tags: this.content.tags || [],
-              rating: 0
-            };
-            const emptyChapters: EBookChapter[] = [];
-            logger.info(TAG, `创建在线电子书: id=${this.content.id}, title=${metadata.title}`);
-            // 将sourceId和onlineReaderUrl存储在filePath字段中（JSON格式）
-            const extendedDataMap = new Map<string, string>();
-            extendedDataMap.set('sourceId', this.content.sourceId || '');
-            extendedDataMap.set('sourceName', this.content.sourceName || '');
-            extendedDataMap.set('onlineReaderUrl', this.onlineReaderUrl || '');
-            const extendedDataObj: Record<string, string> = {};
-            extendedDataMap.forEach((value: string, key: string) => {
-              extendedDataObj[key] = value;
-            });
-            const extendedDataJson = JSON.stringify(extendedDataObj);
-            // 直接创建EBook对象并手动设置所有属性
-            const onlineEbook = new EBook(
-              this.content.id,
-              EBookFormat.EPUB,
-              extendedDataJson,  // 使用filePath存储扩展数据
-              0,
-              metadata,
-              emptyChapters
-            );
-            // 手动设置所有属性确保正确
-            onlineEbook.metadata = metadata;
-            onlineEbook.status = EBookStatus.UNREAD;
-            onlineEbook.addTime = now;
-            onlineEbook.lastUpdateTime = now;
-            onlineEbook.isFavorite = true;
-            onlineEbook.totalWordCount = 0;
-            onlineEbook.isPrivate = false;
-            onlineEbook.isNSFW = this.content.isNSFW || false;
-            logger.info(TAG, `保存前检查: metadata.title=${onlineEbook.metadata?.title}`);
-            await this.ebookDataManager.saveEBook(onlineEbook);
-            logger.info(TAG, `在线电子书已添加到书库: ${this.content.title}`);
-          }
-          break;
-        case UnifiedContentType.NOVEL:
-          // 小说收藏通过saveBook更新isFavorite字段
-          const novelBook = await this.novelDataManager.getBookByUrl(this.content.sourceId || '', this.content.id);
-          if (novelBook) {
-            novelBook.isFavorite = this.isFavorite;
-            await this.novelDataManager.saveBook(novelBook);
-          } else if (this.isFavorite) {
-            // 如果书籍不存在且要收藏，需要先创建
-            const now = Date.now();
-            const newBook: NovelBook = {
-              id: '',
-              sourceId: this.content.sourceId || '',
-              sourceName: this.content.sourceName || '',
-              bookUrl: this.content.id,
-              name: this.content.title,
-              author: this.content.author,
-              intro: this.content.description,
-              coverUrl: this.content.coverUrl,
-              chapterCount: this.content.totalChapters,
-              readStatus: NovelReadStatus.UNREAD,
-              totalReadingTime: 0,
-              isFavorite: true,
-              createTime: now,
-              updateDbTime: now
-            };
-            await this.novelDataManager.saveBook(newBook);
-          }
-          break;
-      }
-
+      await this.setFavoriteStatus(targetState);
       promptAction.showToast({
-        message: this.isFavorite ? '已添加到收藏' : '已取消收藏',
+        message: targetState ? 'Added to favorites' : 'Removed from favorites',
         duration: 1500
       });
     } catch (error) {
-      logger.error(TAG, '切换收藏状态失败', String(error));
-      this.isFavorite = !this.isFavorite; // 回滚
+      logger.error(TAG, `Failed to toggle favorite state: ${String(error)}`);
+      this.isFavorite = previousState;
+      this.content.isFavorite = previousState;
       promptAction.showToast({
-        message: '操作失败',
+        message: 'Operation failed',
         duration: 1500
       });
     }
   }
-
   /**
    * 获取过滤后的章节列表
    */
@@ -2504,7 +2418,7 @@ export struct UnifiedDetailPage {
           const item: RecommendationItem = {
             id: `rec_novel_${novel.id}`,
             title: novel.name || '未知标题',
-            coverUrl: novel.coverUrl || '',
+            coverUrl: novel.coverLocalPath || novel.coverUrl || '',
             contentType: UnifiedContentType.NOVEL,
             isLocal: false,
             sourceName: novel.sourceName,
@@ -2596,6 +2510,9 @@ export struct UnifiedDetailPage {
       contentId: item.navContentId,
       sourceId: item.navSourceId,
       cachedTitle: item.title,
+      cachedCoverPath: item.coverUrl && !item.coverUrl.startsWith('http://') && !item.coverUrl.startsWith('https://')
+        ? item.coverUrl
+        : undefined,
       cachedCover: item.coverUrl
     };
     logger.info(TAG, `跳转推荐内容: type=${item.contentType}, id=${item.navContentId}`);
@@ -2663,7 +2580,7 @@ export struct UnifiedDetailPage {
                 const item: ShelfContentItem = {
                   id: `shelf_novel_${catItem.itemId}`,
                   title: novel.name || '未知标题',
-                  coverUrl: novel.coverUrl || '',
+                  coverUrl: novel.coverLocalPath || novel.coverUrl || '',
                   contentType: UnifiedContentType.NOVEL,
                   navContentId: novel.bookUrl,
                   navSourceId: novel.sourceId
@@ -2711,6 +2628,9 @@ export struct UnifiedDetailPage {
       contentId: item.navContentId,
       sourceId: item.navSourceId,
       cachedTitle: item.title,
+      cachedCoverPath: item.coverUrl && !item.coverUrl.startsWith('http://') && !item.coverUrl.startsWith('https://')
+        ? item.coverUrl
+        : undefined,
       cachedCover: item.coverUrl
     };
     logger.info(TAG, `跳转同书架内容: type=${item.contentType}, id=${item.navContentId}`);
@@ -7112,6 +7032,7 @@ export struct UnifiedDetailPage {
       const params = context.pathInfo?.param as UnifiedDetailPageParams;
       if (params) {
         this.pageParams = params;
+        this.localCoverPath = params.cachedCoverPath || '';
         this.pendingInitialContentLoad = false;
         this.initialContentLoadTriggered = false;
         this.triggerInitialContentLoadIfReady();
@@ -9942,16 +9863,82 @@ export struct UnifiedDetailPage {
   /**
    * 设置收藏状态（内部方法）
    */
+  private resolveCoverSourceForPersistence(): string {
+    if (!this.content) {
+      return '';
+    }
+    const candidates: string[] = [
+      this.localCoverPath || '',
+      this.content.coverUrl || '',
+      this.pageParams?.cachedCoverPath || '',
+      this.pageParams?.cachedCover || ''
+    ];
+    for (const candidate of candidates) {
+      if (candidate && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+    return '';
+  }
+
+  private mapLibraryCoverType(contentType: UnifiedContentType): LibraryCoverType {
+    switch (contentType) {
+      case UnifiedContentType.NOVEL:
+        return LibraryCoverType.NOVEL;
+      case UnifiedContentType.EBOOK:
+        return LibraryCoverType.EBOOK;
+      case UnifiedContentType.MANGA:
+      default:
+        return LibraryCoverType.MANGA;
+    }
+  }
+
+  private async persistCoverForFavorite(contentType: UnifiedContentType): Promise<string> {
+    if (!this.content) {
+      return '';
+    }
+    const sourceCover = this.resolveCoverSourceForPersistence();
+    if (!sourceCover) {
+      return '';
+    }
+    const hostContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (!hostContext || !hostContext.filesDir) {
+      return '';
+    }
+
+    const persistedPath = await LibraryCoverManager.persistCoverByFilesDir(
+      hostContext.filesDir,
+      this.mapLibraryCoverType(contentType),
+      `${this.content.sourceId || 'local'}_${this.content.id}`,
+      sourceCover
+    );
+
+    if (persistedPath) {
+      logger.info(TAG, `封面持久化完成: ${persistedPath}`);
+      return persistedPath;
+    }
+    return '';
+  }
+
   private async setFavoriteStatus(isFavorite: boolean): Promise<void> {
     if (!this.content) return;
     
     this.isFavorite = isFavorite;
+    this.content.isFavorite = isFavorite;
+    const persistedCoverPath = isFavorite
+      ? await this.persistCoverForFavorite(this.content.contentType)
+      : '';
     
     switch (this.content.contentType) {
       case UnifiedContentType.MANGA:
         const dataService = DataService.getInstance();
         if (isFavorite) {
           await dataService.addToFavorites(this.content.id);
+          if (persistedCoverPath) {
+            await this.dataManager.updateComicCoverForLibrary(this.content.id, persistedCoverPath);
+            this.content.coverUrl = persistedCoverPath;
+            this.localCoverPath = persistedCoverPath;
+          }
         } else {
           await dataService.removeFromFavorites(this.content.id);
         }
@@ -9960,10 +9947,16 @@ export struct UnifiedDetailPage {
         const ebook = EBookAdapter.getOriginalEBook(this.content);
         if (ebook && ebook.metadata) {
           ebook.isFavorite = isFavorite;
+          if (isFavorite && persistedCoverPath) {
+            ebook.metadata.coverImagePath = persistedCoverPath;
+            this.content.coverUrl = persistedCoverPath;
+            this.localCoverPath = persistedCoverPath;
+          }
           await this.ebookDataManager.saveEBook(ebook);
         } else if (isFavorite && this.content.sourceId) {
           // 在线电子书：创建新的EBook对象并保存
           const now = Date.now();
+          const finalCoverPath = persistedCoverPath || this.content.coverUrl;
           const metadata: EBookMetadata = {
             title: this.content.title,
             author: this.content.author,
@@ -9972,7 +9965,7 @@ export struct UnifiedDetailPage {
             isbn: '',
             language: '',
             description: this.content.description,
-            coverImagePath: this.content.coverUrl,
+            coverImagePath: finalCoverPath,
             tags: this.content.tags || [],
             rating: 0
           };
@@ -10003,12 +9996,21 @@ export struct UnifiedDetailPage {
           onlineEbook.isPrivate = false;
           onlineEbook.isNSFW = this.content.isNSFW || false;
           await this.ebookDataManager.saveEBook(onlineEbook);
+          if (persistedCoverPath) {
+            this.content.coverUrl = persistedCoverPath;
+            this.localCoverPath = persistedCoverPath;
+          }
         }
         break;
       case UnifiedContentType.NOVEL:
         const novelBook = await this.novelDataManager.getBookByUrl(this.content.sourceId || '', this.content.id);
         if (novelBook) {
           novelBook.isFavorite = isFavorite;
+          if (isFavorite && persistedCoverPath) {
+            novelBook.coverLocalPath = persistedCoverPath;
+            this.content.coverUrl = persistedCoverPath;
+            this.localCoverPath = persistedCoverPath;
+          }
           await this.novelDataManager.saveBook(novelBook);
         } else if (isFavorite) {
           const now = Date.now();
@@ -10021,6 +10023,7 @@ export struct UnifiedDetailPage {
             author: this.content.author,
             intro: this.content.description,
             coverUrl: this.content.coverUrl,
+            coverLocalPath: persistedCoverPath || undefined,
             chapterCount: this.content.totalChapters,
             readStatus: NovelReadStatus.UNREAD,
             totalReadingTime: 0,
@@ -10029,6 +10032,10 @@ export struct UnifiedDetailPage {
             updateDbTime: now
           };
           await this.novelDataManager.saveBook(newBook);
+          if (persistedCoverPath) {
+            this.content.coverUrl = persistedCoverPath;
+            this.localCoverPath = persistedCoverPath;
+          }
         }
         break;
     }

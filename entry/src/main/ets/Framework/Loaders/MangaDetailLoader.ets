@@ -628,7 +628,9 @@ export class MangaDetailLoader {
       if ((!mangaInfo.title || mangaInfo.title.trim() === '') && params.cachedTitle) {
         mangaInfo.title = params.cachedTitle;
       }
-      if ((!mangaInfo.cover || mangaInfo.cover.trim() === '') && params.cachedCover) {
+      if (params.cachedCoverPath && params.cachedCoverPath.trim() !== '') {
+        mangaInfo.cover = params.cachedCoverPath;
+      } else if ((!mangaInfo.cover || mangaInfo.cover.trim() === '') && params.cachedCover) {
         mangaInfo.cover = params.cachedCover;
       }
       
@@ -1101,7 +1103,9 @@ export class MangaDetailLoader {
       if ((!mangaInfo.title || mangaInfo.title.trim() === '') && params.cachedTitle) {
         mangaInfo.title = params.cachedTitle;
       }
-      if ((!mangaInfo.cover || mangaInfo.cover.trim() === '') && params.cachedCover) {
+      if (params.cachedCoverPath && params.cachedCoverPath.trim() !== '') {
+        mangaInfo.cover = params.cachedCoverPath;
+      } else if ((!mangaInfo.cover || mangaInfo.cover.trim() === '') && params.cachedCover) {
         mangaInfo.cover = params.cachedCover;
       }
       

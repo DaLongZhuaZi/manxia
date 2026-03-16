@@ -2331,7 +2331,8 @@ export struct SourceDetailPage {
         contentId: comic.id,
         sourceId: this.sourceId?.toString(),
         cachedTitle: comic.title,
-        cachedCover: comic.coverUrl || localCoverPath || undefined
+        cachedCoverPath: localCoverPath || undefined,
+        cachedCover: localCoverPath || comic.coverUrl || undefined
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
     } else if (sourceType === 'ebook') {

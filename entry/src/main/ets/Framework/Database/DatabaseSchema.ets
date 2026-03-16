@@ -284,6 +284,7 @@ export interface CreateTableSQLCollection {
   ONLINE_READ_HISTORY?: string;
   TRACK_RECORD?: string;
   TRACK_RECORD_UNIQUE_INDEX?: string;
+  UNIFIED_ANNOTATION?: string;
 }
 
 // 数据库表创建SQL语句
@@ -810,6 +811,31 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
   TRACK_RECORD_UNIQUE_INDEX: `
     CREATE UNIQUE INDEX IF NOT EXISTS idx_track_record_unique 
     ON track_record (contentId, trackerId)
+  `,
+
+  UNIFIED_ANNOTATION: `
+    CREATE TABLE IF NOT EXISTS unified_annotation (
+      id TEXT PRIMARY KEY,
+      contentType TEXT NOT NULL,
+      contentId TEXT NOT NULL,
+      annotationType TEXT NOT NULL,
+      title TEXT DEFAULT '',
+      textContent TEXT DEFAULT '',
+      quoteText TEXT DEFAULT '',
+      chapterId TEXT DEFAULT '',
+      chapterTitle TEXT DEFAULT '',
+      chapterIndex INTEGER DEFAULT -1,
+      pageIndex INTEGER DEFAULT -1,
+      pageProgress REAL DEFAULT -1,
+      startOffset INTEGER DEFAULT -1,
+      endOffset INTEGER DEFAULT -1,
+      anchorJson TEXT DEFAULT '',
+      styleJson TEXT DEFAULT '',
+      linkedAnnotationId TEXT DEFAULT '',
+      createTime INTEGER NOT NULL,
+      updateTime INTEGER NOT NULL,
+      isDeleted INTEGER DEFAULT 0
+    )
   `
 };
 
@@ -864,7 +890,10 @@ export const CREATE_INDEX_SQL: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_track_record_content ON track_record (contentId)',
   'CREATE INDEX IF NOT EXISTS idx_track_record_tracker ON track_record (trackerId)',
   'CREATE INDEX IF NOT EXISTS idx_track_record_sync ON track_record (syncStatus)',
-  'CREATE INDEX IF NOT EXISTS idx_track_record_update ON track_record (updateTime)'
+  'CREATE INDEX IF NOT EXISTS idx_track_record_update ON track_record (updateTime)',
+  'CREATE INDEX IF NOT EXISTS idx_unified_annotation_content ON unified_annotation (contentType, contentId, createTime DESC)',
+  'CREATE INDEX IF NOT EXISTS idx_unified_annotation_type ON unified_annotation (annotationType, createTime DESC)',
+  'CREATE INDEX IF NOT EXISTS idx_unified_annotation_linked ON unified_annotation (linkedAnnotationId)'
 ];
 
 // 数据库版本升级脚本

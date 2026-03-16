@@ -1,6 +1,6 @@
 ﻿/**
  * 浠ｇ悊閰嶇疆瀵硅瘽妗?
- * 鐢ㄤ簬閰嶇疆HTTP/HTTPS浠ｇ悊
+ * 用于配置HTTP/HTTPS代理
  */
 
 import { ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
@@ -40,13 +40,13 @@ export struct ProxyConfigDialog {
   build() {
     Column() {
       Column() {
-        // 鏍囬
+        // 标题
         Row() {
           SymbolGlyph($r('sys.symbol.satellite'))
             .fontSize(24)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.currentTheme)])
           
-          Text('缃戠粶浠ｇ悊璁剧疆')
+          Text('网络代理设置')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
@@ -61,7 +61,7 @@ export struct ProxyConfigDialog {
           Column() {
             // 鍚敤寮€鍏?
             Row() {
-              Text('鍚敤浠ｇ悊')
+              Text('启用代理')
                 .fontSize(16)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
               
@@ -79,7 +79,7 @@ export struct ProxyConfigDialog {
               .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
               .margin({ top: 12, bottom: 12 })
 
-            // HTTP浠ｇ悊閰嶇疆
+            // HTTP代理配置
             Column({ space: 8 }) {
               Row() {
                 Toggle({ type: ToggleType.Checkbox, isOn: this.config.httpEnabled })
@@ -87,7 +87,7 @@ export struct ProxyConfigDialog {
                     this.config.httpEnabled = isOn;
                   })
                 
-                Text('HTTP浠ｇ悊')
+                Text('HTTP代理')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
@@ -96,7 +96,7 @@ export struct ProxyConfigDialog {
               .width('100%')
 
               Row({ space: 8 }) {
-                TextInput({ placeholder: '浠ｇ悊鍦板潃', text: this.httpHostInput })
+                TextInput({ placeholder: '代理地址', text: this.httpHostInput })
                   .layoutWeight(2)
                   .height(40)
                   .borderRadius(8)
@@ -107,7 +107,7 @@ export struct ProxyConfigDialog {
                   })
                   .enabled(this.config.httpEnabled)
 
-                TextInput({ placeholder: '绔彛', text: this.httpPortInput })
+                TextInput({ placeholder: '端口', text: this.httpPortInput })
                   .layoutWeight(1)
                   .height(40)
                   .borderRadius(8)
@@ -131,7 +131,7 @@ export struct ProxyConfigDialog {
               .color(ThemeAwareHelper.getTestManagementThemedColor('divider', this.currentTheme))
               .margin({ top: 12, bottom: 12 })
 
-            // HTTPS浠ｇ悊閰嶇疆
+            // HTTPS代理配置
             Column({ space: 8 }) {
               Row() {
                 Toggle({ type: ToggleType.Checkbox, isOn: this.config.httpsEnabled })
@@ -139,7 +139,7 @@ export struct ProxyConfigDialog {
                     this.config.httpsEnabled = isOn;
                   })
                 
-                Text('HTTPS浠ｇ悊')
+                Text('HTTPS代理')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.currentTheme))
@@ -153,7 +153,7 @@ export struct ProxyConfigDialog {
               .width('100%')
 
               Row({ space: 8 }) {
-                TextInput({ placeholder: '浠ｇ悊鍦板潃', text: this.httpsHostInput })
+                TextInput({ placeholder: '代理地址', text: this.httpsHostInput })
                   .layoutWeight(2)
                   .height(40)
                   .borderRadius(8)
@@ -164,7 +164,7 @@ export struct ProxyConfigDialog {
                   })
                   .enabled(this.config.httpsEnabled)
 
-                TextInput({ placeholder: '绔彛', text: this.httpsPortInput })
+                TextInput({ placeholder: '端口', text: this.httpsPortInput })
                   .layoutWeight(1)
                   .height(40)
                   .borderRadius(8)
@@ -184,8 +184,8 @@ export struct ProxyConfigDialog {
             .width('100%')
             .padding({ top: 8, bottom: 8 })
 
-            // 鎻愮ず淇℃伅
-            Text('鎻愮ず锛氫唬鐞嗗皢搴旂敤浜庡浘婧愮殑缃戠粶璇锋眰')
+            // 提示信息
+            Text('提示：代理将应用于图源的网络请求')
               .fontSize(12)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.currentTheme))
               .margin({ top: 12 })

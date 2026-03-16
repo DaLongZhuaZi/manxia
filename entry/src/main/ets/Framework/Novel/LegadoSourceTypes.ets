@@ -1,6 +1,6 @@
 /**
  * Legado书源类型定义
- * 兼容Legado阅读APP的书源格式
+ * 鍏煎Legado闃呰APP鐨勪功婧愭牸寮?
  * 
  * 文件路径: entry/src/main/ets/Framework/Novel/LegadoSourceTypes.ets
  * 职责: 定义Legado书源的数据结构和类型
@@ -11,7 +11,7 @@
  * 0: 文本小说
  * 1: 音频
  * 2: 图片（漫画）
- * 3: 文件（下载类）
+ * 3: 鏂囦欢锛堜笅杞界被锛?
  */
 export enum LegadoBookSourceType {
   TEXT = 0,
@@ -24,19 +24,19 @@ export enum LegadoBookSourceType {
  * 搜索规则
  */
 export interface LegadoSearchRule {
-  /** 校验关键字 */
+  /** 鏍￠獙鍏抽敭瀛?*/
   checkKeyWord?: string;
   /** 书籍列表规则 */
   bookList?: string;
   /** 书名规则 */
   name?: string;
-  /** 作者规则 */
+  /** 浣滆€呰鍒?*/
   author?: string;
-  /** 简介规则 */
+  /** 绠€浠嬭鍒?*/
   intro?: string;
   /** 分类规则 */
   kind?: string;
-  /** 最新章节规则 */
+  /** 鏈€鏂扮珷鑺傝鍒?*/
   lastChapter?: string;
   /** 更新时间规则 */
   updateTime?: string;
@@ -56,13 +56,13 @@ export interface LegadoExploreRule {
   bookList?: string;
   /** 书名规则 */
   name?: string;
-  /** 作者规则 */
+  /** 浣滆€呰鍒?*/
   author?: string;
-  /** 简介规则 */
+  /** 绠€浠嬭鍒?*/
   intro?: string;
   /** 分类规则 */
   kind?: string;
-  /** 最新章节规则 */
+  /** 鏈€鏂扮珷鑺傝鍒?*/
   lastChapter?: string;
   /** 更新时间规则 */
   updateTime?: string;
@@ -82,13 +82,13 @@ export interface LegadoBookInfoRule {
   init?: string;
   /** 书名规则 */
   name?: string;
-  /** 作者规则 */
+  /** 浣滆€呰鍒?*/
   author?: string;
-  /** 简介规则 */
+  /** 绠€浠嬭鍒?*/
   intro?: string;
   /** 分类规则 */
   kind?: string;
-  /** 最新章节规则 */
+  /** 鏈€鏂扮珷鑺傝鍒?*/
   lastChapter?: string;
   /** 更新时间规则 */
   updateTime?: string;
@@ -98,9 +98,9 @@ export interface LegadoBookInfoRule {
   tocUrl?: string;
   /** 字数规则 */
   wordCount?: string;
-  /** 是否允许重命名 */
+  /** 鏄惁鍏佽閲嶅懡鍚?*/
   canReName?: string;
-  /** 下载URL规则（文件类书源） */
+  /** 涓嬭浇URL瑙勫垯锛堟枃浠剁被涔︽簮锛?*/
   downloadUrls?: string;
 }
 
@@ -118,7 +118,7 @@ export interface LegadoTocRule {
   chapterUrl?: string;
   /** 格式化JS */
   formatJs?: string;
-  /** 是否卷标识 */
+  /** 鏄惁鍗锋爣璇?*/
   isVolume?: string;
   /** 是否VIP */
   isVip?: string;
@@ -142,7 +142,7 @@ export interface LegadoContentRule {
   nextContentUrl?: string;
   /** WebView执行的JS */
   webJs?: string;
-  /** 源正则 */
+  /** 婧愭鍒?*/
   sourceRegex?: string;
   /** 替换规则 */
   replaceRegex?: string;
@@ -162,7 +162,7 @@ export interface LegadoReviewRule {
   reviewList?: string;
   /** 段评内容规则 */
   content?: string;
-  /** 段评作者规则 */
+  /** 娈佃瘎浣滆€呰鍒?*/
   author?: string;
   /** 段评时间规则 */
   time?: string;
@@ -174,7 +174,7 @@ export interface LegadoReviewRule {
 export interface LegadoLoginUiStyle {
   /** Flex布局增长因子 */
   layout_flexGrow?: number;
-  /** Flex布局基础百分比 */
+  /** Flex甯冨眬鍩虹鐧惧垎姣?*/
   layout_flexBasisPercent?: number;
   /** 背景颜色 */
   background?: string;
@@ -189,17 +189,17 @@ export interface LegadoLoginUiStyle {
  * 支持Legado阅读APP的完整loginUi格式
  */
 export interface LegadoLoginUiItem {
-  /** 类型：text, password, button, checkbox, spinner等 */
+  /** 绫诲瀷锛歵ext, password, button, checkbox, spinner绛?*/
   type: string;
-  /** 名称（显示文本/字段名） */
+  /** 鍚嶇О锛堟樉绀烘枃鏈?瀛楁鍚嶏級 */
   name: string;
   /** 提示文本 */
   hint?: string;
-  /** 按钮点击时执行的JS函数名 */
+  /** 鎸夐挳鐐瑰嚮鏃舵墽琛岀殑JS鍑芥暟鍚?*/
   action?: string;
   /** 样式配置 */
   style?: LegadoLoginUiStyle;
-  /** 默认值 */
+  /** 榛樿鍊?*/
   value?: string;
 }
 
@@ -208,7 +208,7 @@ export interface LegadoLoginUiItem {
  * 完整兼容Legado阅读APP的书源JSON格式
  */
 export interface LegadoBookSource {
-  /** 书源URL（唯一标识） */
+  /** 涔︽簮URL锛堝敮涓€鏍囪瘑锛?*/
   bookSourceUrl: string;
   /** 书源名称 */
   bookSourceName: string;
@@ -224,27 +224,27 @@ export interface LegadoBookSource {
   enabled?: boolean;
   /** 启用发现 */
   enabledExplore?: boolean;
-  /** JS库 */
+  /** JS搴?*/
   jsLib?: string;
   /** 启用CookieJar */
   enabledCookieJar?: boolean;
-  /** 并发率 */
+  /** 骞跺彂鐜?*/
   concurrentRate?: string;
-  /** 请求头 */
+  /** 璇锋眰澶?*/
   header?: string;
   /** 登录地址/JS */
   loginUrl?: string;
   /** 登录UI配置 */
   loginUi?: string;
-  /** 登录检测JS */
+  /** 鐧诲綍妫€娴婮S */
   loginCheckJs?: string;
   /** 封面解密JS */
   coverDecodeJs?: string;
   /** 注释 */
   bookSourceComment?: string;
-  /** 自定义变量说明 */
+  /** 鑷畾涔夊彉閲忚鏄?*/
   variableComment?: string;
-  /** 最后更新时间 */
+  /** 鏈€鍚庢洿鏂版椂闂?*/
   lastUpdateTime?: number;
   /** 响应时间 */
   respondTime?: number;
@@ -252,7 +252,7 @@ export interface LegadoBookSource {
   weight?: number;
   /** 发现URL */
   exploreUrl?: string;
-  /** 发现筛选规则 */
+  /** 鍙戠幇绛涢€夎鍒?*/
   exploreScreen?: string;
   /** 发现规则 */
   ruleExplore?: LegadoExploreRule;
@@ -268,7 +268,7 @@ export interface LegadoBookSource {
   ruleContent?: LegadoContentRule;
   /** 段评规则 */
   ruleReview?: LegadoReviewRule;
-  /** 是否为NSFW源 */
+  /** 鏄惁涓篘SFW婧?*/
   isNSFW?: boolean;
 }
 
@@ -286,17 +286,18 @@ export interface LegadoBook {
   bookUrl: string;
   /** 书名 */
   name: string;
-  /** 作者 */
+  /** 浣滆€?*/
   author: string;
   /** 分类 */
   kind?: string;
-  /** 简介 */
+  /** 绠€浠?*/
   intro?: string;
   /** 封面URL */
   coverUrl?: string;
+  coverLocalPath?: string;
   /** 目录URL */
   tocUrl?: string;
-  /** 最新章节 */
+  /** 鏈€鏂扮珷鑺?*/
   latestChapterTitle?: string;
   /** 字数 */
   wordCount?: string;
@@ -304,13 +305,13 @@ export interface LegadoBook {
   updateTime?: number;
   /** 书源类型 */
   type: LegadoBookSourceType;
-  /** 自定义变量 */
+  /** 鑷畾涔夊彉閲?*/
   variable?: string;
   /** 目录HTML（缓存） */
   tocHtml?: string;
   /** 详情HTML（缓存） */
   infoHtml?: string;
-  /** 是否为隐私内容 */
+  /** 鏄惁涓洪殣绉佸唴瀹?*/
   isPrivate?: boolean;
   /** 是否为NSFW内容 */
   isNSFW?: boolean;
@@ -330,7 +331,7 @@ export interface LegadoChapter {
   title: string;
   /** 章节索引 */
   index: number;
-  /** 是否卷标题 */
+  /** 鏄惁鍗锋爣棰?*/
   isVolume?: boolean;
   /** 是否VIP */
   isVip?: boolean;
@@ -338,7 +339,7 @@ export interface LegadoChapter {
   isPay?: boolean;
   /** 更新时间 */
   updateTime?: number;
-  /** 自定义变量 */
+  /** 鑷畾涔夊彉閲?*/
   variable?: string;
   /** 标签 */
   tag?: string;
@@ -356,15 +357,15 @@ export interface LegadoSearchBook {
   bookUrl: string;
   /** 书名 */
   name: string;
-  /** 作者 */
+  /** 浣滆€?*/
   author: string;
   /** 分类 */
   kind?: string;
-  /** 简介 */
+  /** 绠€浠?*/
   intro?: string;
   /** 封面URL */
   coverUrl?: string;
-  /** 最新章节 */
+  /** 鏈€鏂扮珷鑺?*/
   latestChapterTitle?: string;
   /** 字数 */
   wordCount?: string;
@@ -372,7 +373,7 @@ export interface LegadoSearchBook {
   type: LegadoBookSourceType;
   /** 详情HTML（缓存） */
   infoHtml?: string;
-  /** 自定义变量 */
+  /** 鑷畾涔夊彉閲?*/
   variable?: string;
 }
 
@@ -388,7 +389,7 @@ export enum LegadoRuleMode {
   Json = 'json',
   /** JavaScript模式 */
   Js = 'js',
-  /** 正则表达式模式 */
+  /** 姝ｅ垯琛ㄨ揪寮忔ā寮?*/
   Regex = 'regex'
 }
 
@@ -404,7 +405,7 @@ export interface LegadoParsedRule {
   replaceRegex?: string;
   /** 替换内容 */
   replacement?: string;
-  /** 是否只替换第一个 */
+  /** 鏄惁鍙浛鎹㈢涓€涓?*/
   replaceFirst?: boolean;
   /** put变量映射 */
   putMap?: Record<string, string>;
@@ -416,11 +417,11 @@ export interface LegadoParsedRule {
 export interface LegadoUrlOption {
   /** 请求方法 */
   method?: string;
-  /** 字符集 */
+  /** 瀛楃闆?*/
   charset?: string;
-  /** 请求头 */
+  /** 璇锋眰澶?*/
   headers?: Record<string, string>;
-  /** 请求体 */
+  /** 璇锋眰浣?*/
   body?: string;
   /** 重试次数 */
   retry?: number;
@@ -482,7 +483,7 @@ export interface LegadoSourceImportResult {
 export interface LegadoSourceTestResult {
   /** 是否成功 */
   success: boolean;
-  /** 测试项 */
+  /** 娴嬭瘯椤?*/
   testItem: string;
   /** 耗时（毫秒） */
   duration: number;
