@@ -739,6 +739,10 @@ export default class EntryAbility extends UIAbility {
         case 'open_recent_read_aloud':
           AppStorage.setOrCreate('widgetTargetPage', 'continueReadAloud');
           break;
+        case 'inspiration':
+        case 'open_inspiration':
+          AppStorage.setOrCreate('widgetTargetPage', 'inspiration');
+          break;
         case 'library':
         case 'open_library':
           AppStorage.setOrCreate('widgetTargetPage', 'library');

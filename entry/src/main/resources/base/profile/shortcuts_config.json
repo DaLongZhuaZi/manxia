@@ -59,6 +59,21 @@
           }
         }
       ]
+    },
+    {
+      "shortcutId": "inspiration",
+      "label": "$string:shortcut_inspiration",
+      "icon": "$media:shortcut_icon_inspiration",
+      "wants": [
+        {
+          "bundleName": "com.dlzz.manxia",
+          "moduleName": "entry",
+          "abilityName": "EntryAbility",
+          "parameters": {
+            "shortcutId": "inspiration"
+          }
+        }
+      ]
     }
   ]
 }

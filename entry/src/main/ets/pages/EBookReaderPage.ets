@@ -48,6 +48,7 @@ import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framew
 import { ReadAloudSettingsInfoPanel } from '../components/ReadAloudSettingsInfoPanel';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 
 const TAG = 'EBookReaderPage';
@@ -64,6 +65,17 @@ interface ReaderKitViewerControllerLike {
 export interface EBookReaderParams {
   bookId: string;
   coverComponentId?: string;
+}
+
+interface EBookBookmarkContext {
+  chapterId: string;
+  chapterTitle: string;
+  chapterIndex: number;
+  pageIndex: number;
+  progress: number;
+  startOffset: number;
+  endOffset: number;
+  isTextMode: boolean;
 }
 
 @Component
@@ -142,6 +154,8 @@ struct EBookReaderPage {
   @State textCurrentPageEndCharIndex: number = 0;
   @State textReadAloudPlaying: boolean = false;
   @State textReadAloudCurrentCharIndex: number = -1;
+  @State isCurrentPageBookmarked: boolean = false;
+  @State currentPageBookmarkId: string = '';
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   @State showReadAloudPanel: boolean = false;
   @State readAloudPanelSettings: ReadAloudSettings = DEFAULT_READ_ALOUD_SETTINGS;
@@ -290,6 +304,7 @@ struct EBookReaderPage {
 
   onPageShow(): void {
     this.setupFullscreenMode();
+    this.refreshCurrentEBookBookmarkState('on_page_show');
   }
 
   onPageHide(): void {
@@ -533,6 +548,8 @@ struct EBookReaderPage {
       this.transitionLoadingProgress = 0;
       this.isLoading = true;
       this.errorMessage = '';
+      this.isCurrentPageBookmarked = false;
+      this.currentPageBookmarkId = '';
       this.reportTransitionLoadingProgress(0.06, 'load_start');
 
       logger.info(TAG, `开始加载电子书: ${bookId}`);
@@ -691,10 +708,13 @@ struct EBookReaderPage {
       
       // 设置沉浸式模式
       this.setupFullscreenMode();
+      this.refreshCurrentEBookBookmarkState('load_ebook_success');
       
     } catch (error) {
       this.errorMessage = `Load chapter failed: ${String(error instanceof Error ? error.message : error)}`;
       this.isLoading = false;
+      this.isCurrentPageBookmarked = false;
+      this.currentPageBookmarkId = '';
       logger.error(TAG, 'Failed to load chapter content', String(error instanceof Error ? error.message : error));
       this.notifyTransitionReaderReadyOnce('ebook_load_failed');
     }
@@ -1120,6 +1140,7 @@ struct EBookReaderPage {
       }
     }
     this.updateTextReadAloudContextByPosition();
+    this.refreshCurrentEBookBookmarkState('text_page_char_range_change');
   }
 
   private onTextUserPageTurnStart(): void {
@@ -1712,6 +1733,7 @@ struct EBookReaderPage {
       this.textCurrentPageStartCharIndex = 0;
       this.textCurrentPageEndCharIndex = 0;
       this.textReadAloudCurrentCharIndex = 0;
+      this.refreshCurrentEBookBookmarkState('jump_to_chapter_text');
       // 计算全书进度：当前章节索引 / 总章节数 * 100
       this.textContent = this.getTextContent();
       this.updateTextReadAloudContextByPosition();
@@ -1727,9 +1749,11 @@ struct EBookReaderPage {
     } else if (this.readerKitController && this.readerKitController.isControllerReady()) {
       // 其他格式：保存阅读进度
       await this.readerKitController.goToChapter(chapterIndex, '');
+      this.refreshCurrentEBookBookmarkState('jump_to_chapter_readerkit');
       // 其他格式：保存阅读进度
       this.saveReadingProgress();
     } else {
+      this.refreshCurrentEBookBookmarkState('jump_to_chapter_fallback');
       // 其他格式：保存阅读进度
       this.saveReadingProgress();
     }
@@ -2348,6 +2372,7 @@ struct EBookReaderPage {
             if (this.ebook && this.ebook.chapters.length > this.currentChapterIndex) {
               this.currentChapter = this.ebook.chapters[this.currentChapterIndex];
             }
+            this.refreshCurrentEBookBookmarkState('pdf_page_change');
             // 保存阅读进度
             this.handlePdfProgressChange(currentPage, totalPages);
           },
@@ -2384,6 +2409,7 @@ struct EBookReaderPage {
     this.ebook.readingProgress.currentChapterIndex = currentPage - 1;
     this.ebook.readingProgress.progress = progress;
     this.ebook.readingProgress.lastReadTime = Date.now();
+    this.refreshCurrentEBookBookmarkState('pdf_progress_change');
     
     // 保存进度
     this.saveReadingProgress();
@@ -2411,6 +2437,7 @@ struct EBookReaderPage {
         bottomStatusBarHeight: 28,// 底部状态栏高度，避让时间、电量、页码显示区域
         onPageChange: (pageIndex: number, totalPages: number) => {
           this.textCurrentPageIndex = pageIndex;
+          this.refreshCurrentEBookBookmarkState('text_reader_page_change');
           this.readAloudController.updatePageIndex(pageIndex);
           this.updateTextReadAloudContextByPosition();
           // 公式: (当前章节索引 + 当前页在章节内的比例) / 总章节数 * 100
@@ -2439,6 +2466,7 @@ struct EBookReaderPage {
           this.textCurrentPageStartCharIndex = 0;
           this.textCurrentPageEndCharIndex = 0;
           this.textReadAloudCurrentCharIndex = 0;
+          this.refreshCurrentEBookBookmarkState('text_reader_chapter_change');
           // 章节切换时更新文本内容
           this.textContent = this.getTextContent();
           this.updateTextReadAloudContextByPosition();
@@ -2749,64 +2777,169 @@ struct EBookReaderPage {
   /**
    * 添加当前电子书书签
    */
-  private addCurrentEBookBookmark(): void {
+  private getCurrentEBookBookmarkContext(): EBookBookmarkContext | null {
+    if (!this.ebook) {
+      return null;
+    }
+    const chapterTitle = this.currentChapter?.title || `第${this.currentChapterIndex + 1}章`;
+    const chapterId = this.currentChapter?.id || '';
+    const isTextMode = this.isUsingTextReader();
+    const persistedPosition = this.ebook.readingProgress?.currentPosition;
+    const nonTextPageIndex = (typeof persistedPosition === 'number' && Number.isFinite(persistedPosition) && persistedPosition >= 0)
+      ? Math.floor(persistedPosition)
+      : Math.max(0, this.currentChapterIndex);
+    const pageIndex = isTextMode ? Math.max(0, this.textCurrentPageIndex) : nonTextPageIndex;
+    const progress = this.ebook.readingProgress
+      ? Math.max(0, Math.min(1, (this.ebook.readingProgress.progress || 0) / 100))
+      : -1;
+    return {
+      chapterId,
+      chapterTitle,
+      chapterIndex: this.currentChapterIndex,
+      pageIndex,
+      progress,
+      startOffset: isTextMode ? Math.max(0, this.textCurrentPageStartCharIndex) : -1,
+      endOffset: isTextMode ? Math.max(0, this.textCurrentPageEndCharIndex) : -1,
+      isTextMode
+    };
+  }
+
+  private buildEBookBookmarkTitle(context: EBookBookmarkContext): string {
+    return `${context.chapterTitle} · P${context.pageIndex + 1}`;
+  }
+
+  private buildCurrentEBookBookmarkAnchor(context: EBookBookmarkContext): AnnotationAnchor {
+    return {
+      chapterId: context.chapterId,
+      chapterTitle: context.chapterTitle,
+      chapterIndex: context.chapterIndex,
+      pageIndex: context.pageIndex,
+      progress: context.progress,
+      startOffset: context.startOffset,
+      endOffset: context.endOffset
+    };
+  }
+
+  private refreshCurrentEBookBookmarkState(trigger: string): void {
+    void this.refreshCurrentEBookBookmarkStateInternal(trigger);
+  }
+
+  private async refreshCurrentEBookBookmarkStateInternal(trigger: string): Promise<void> {
+    if (!this.ebook) {
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      return;
+    }
+    const context = this.getCurrentEBookBookmarkContext();
+    if (!context) {
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      return;
+    }
+    try {
+      const bookmarks = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.EBOOK,
+        this.ebook.id,
+        UnifiedAnnotationType.BOOKMARK,
+        context.chapterId,
+        context.chapterIndex
+      );
+      let matchedId = '';
+      for (let i = 0; i < bookmarks.length; i++) {
+        const item = bookmarks[i];
+        if (item.pageIndex >= 0 && item.pageIndex === context.pageIndex) {
+          matchedId = item.id;
+          break;
+        }
+        if (
+          context.isTextMode &&
+          context.endOffset > context.startOffset &&
+          item.startOffset >= 0 &&
+          item.endOffset >= 0
+        ) {
+          const itemStart = Math.max(0, Math.floor(item.startOffset));
+          const itemEnd = Math.max(itemStart + 1, Math.floor(item.endOffset));
+          if (itemStart < context.endOffset && itemEnd > context.startOffset) {
+            matchedId = item.id;
+            break;
+          }
+        }
+      }
+      this.currentPageBookmarkId = matchedId;
+      this.isCurrentPageBookmarked = matchedId.length > 0;
+      logger.debug(
+        TAG,
+        `刷新电子书书签状态: trigger=${trigger}, chapterIndex=${context.chapterIndex}, pageIndex=${context.pageIndex}, bookmarked=${this.isCurrentPageBookmarked}, bookmarkId=${matchedId || 'none'}`
+      );
+    } catch (error) {
+      logger.error(TAG, `刷新电子书书签状态失败: trigger=${trigger}, error=${String(error)}`);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+    }
+  }
+
+  private async createCurrentEBookBookmark(): Promise<void> {
     if (!this.ebook) {
       promptAction.showToast({ message: '电子书信息未就绪' });
       return;
     }
-    const currentEbook = this.ebook;
+    const context = this.getCurrentEBookBookmarkContext();
+    if (!context) {
+      promptAction.showToast({ message: '电子书信息未就绪' });
+      return;
+    }
+    try {
+      const bookmark = await this.annotationManager.createBookmark({
+        contentType: UnifiedContentType.EBOOK,
+        contentId: this.ebook.id,
+        title: this.buildEBookBookmarkTitle(context),
+        anchor: this.buildCurrentEBookBookmarkAnchor(context)
+      });
+      this.currentPageBookmarkId = bookmark.id;
+      this.isCurrentPageBookmarked = true;
+      promptAction.showToast({ message: '书签已添加' });
+      logger.info(
+        TAG,
+        `电子书书签添加成功: chapterIndex=${context.chapterIndex}, pageIndex=${context.pageIndex}, bookmarkId=${bookmark.id}`
+      );
+    } catch (error) {
+      logger.error(TAG, `添加电子书书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '添加书签失败' });
+    }
+  }
 
-    const chapterTitle = this.currentChapter?.title || `第${this.currentChapterIndex + 1}章`;
-    const chapterId = this.currentChapter?.id || '';
-    const isTextMode = this.isUsingTextReader();
-    const currentPage = isTextMode ? Math.max(0, this.textCurrentPageIndex) : Math.max(0, this.currentChapterIndex);
-    const totalChapterCount = this.ebook.chapters.length || 0;
-    const pageLabel = isTextMode
-      ? `P${currentPage + 1}`
-      : `${currentPage + 1}/${Math.max(1, totalChapterCount)}`;
+  private async removeCurrentEBookBookmark(): Promise<void> {
+    let bookmarkId = this.currentPageBookmarkId;
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      await this.refreshCurrentEBookBookmarkStateInternal('remove_before_refresh');
+      bookmarkId = this.currentPageBookmarkId;
+    }
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      promptAction.showToast({ message: '当前页暂无书签' });
+      return;
+    }
+    try {
+      await this.annotationManager.deleteAnnotation(bookmarkId);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      promptAction.showToast({ message: '书签已移除' });
+      logger.info(TAG, `电子书书签移除成功: bookmarkId=${bookmarkId}`);
+    } catch (error) {
+      logger.error(TAG, `移除电子书书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '移除书签失败' });
+    }
+  }
 
-    promptAction.showActionMenu({
-      title: '添加电子书书签',
-      buttons: [
-        { text: chapterTitle, color: '#007AFF' },
-        { text: `${chapterTitle} - ${pageLabel}`, color: '#007AFF' },
-        { text: '仅记录位置', color: '#007AFF' },
-        { text: '取消', color: '#999999' }
-      ]
-    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === 3) {
-        return;
-      }
-      let marker = '';
-      if (result.index === 0) {
-        marker = chapterTitle;
-      } else if (result.index === 1) {
-        marker = `${chapterTitle} - ${pageLabel}`;
-      }
-      const progress = currentEbook.readingProgress
-        ? Math.max(0, Math.min(1, (currentEbook.readingProgress.progress || 0) / 100))
-        : -1;
-      try {
-        await this.annotationManager.createBookmark({
-          contentType: UnifiedContentType.EBOOK,
-          contentId: currentEbook.id,
-          title: marker,
-          anchor: {
-            chapterId,
-            chapterTitle,
-            chapterIndex: this.currentChapterIndex,
-            pageIndex: currentPage,
-            progress,
-            startOffset: isTextMode ? this.textCurrentPageStartCharIndex : -1,
-            endOffset: isTextMode ? this.textCurrentPageEndCharIndex : -1
-          }
-        });
-        promptAction.showToast({ message: '书签已添加' });
-      } catch (error) {
-        logger.error(TAG, `添加电子书书签失败: ${String(error)}`);
-        promptAction.showToast({ message: '添加书签失败' });
-      }
-    }).catch(() => {});
+  private toggleCurrentEBookBookmark(): void {
+    if (this.isCurrentPageBookmarked) {
+      void this.removeCurrentEBookBookmark();
+      return;
+    }
+    void this.createCurrentEBookBookmark();
+  }
+
+  private addCurrentEBookBookmark(): void {
+    this.toggleCurrentEBookBookmark();
   }
 
   private openCurrentEBookAnnotationCenter(): void {
@@ -2814,16 +2947,26 @@ struct EBookReaderPage {
       promptAction.showToast({ message: '电子书信息未就绪' });
       return;
     }
+    const isTextMode = this.ebook.format === EBookFormat.TXT;
+    const bookmarkContext = this.getCurrentEBookBookmarkContext();
     const params: AnnotationCenterPageParams = {
       contentType: UnifiedContentType.EBOOK,
       contentId: this.ebook.id,
-      contentTitle: this.ebook.metadata.title || ''
+      contentTitle: this.ebook.metadata.title || '',
+      readerContext: {
+        ebook: {
+          chapterIndex: this.currentChapterIndex,
+          pageIndex: bookmarkContext ? bookmarkContext.pageIndex : (isTextMode ? this.textCurrentPageIndex : this.currentChapterIndex),
+          startOffset: bookmarkContext && bookmarkContext.startOffset >= 0 ? bookmarkContext.startOffset : undefined
+        }
+      }
     };
     try {
+      this.restoreNormalMode();
       this.pathStack.pushPathByName('AnnotationCenterPage', params);
     } catch (error) {
-      logger.error(TAG, `打开摘录中心失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开摘录中心失败' });
+      logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+      promptAction.showToast({ message: '打开灵感页面失败' });
     }
   }
 
@@ -2851,7 +2994,8 @@ struct EBookReaderPage {
         .fontFamily(this.appFontFamily)
 
       Button() {
-        SymbolGlyph($r('sys.symbol.bookmark'))
+        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
+          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary')])
       }
       .width(48)
       .height(48)
@@ -2861,7 +3005,7 @@ struct EBookReaderPage {
       })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.list_bullet'))
+        SymbolGlyph($r('sys.symbol.stickers'))
       }
       .width(48)
       .height(48)

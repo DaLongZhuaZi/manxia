@@ -32,6 +32,9 @@ export interface AnnotationAnchor {
   progress?: number;
   startOffset?: number;
   endOffset?: number;
+  paragraphIndex?: number;
+  paragraphStartOffset?: number;
+  paragraphEndOffset?: number;
   quoteText?: string;
   contextBefore?: string;
   contextAfter?: string;

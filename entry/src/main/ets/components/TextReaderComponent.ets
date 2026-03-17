@@ -25,6 +25,7 @@ import {
   BackgroundType,
   DEFAULT_TEXT_READER_SETTINGS
 } from '../Models/TextReaderModels';
+import { HighlightLineType } from '../Models/AnnotationModels';
 import { PageCurlEffectV2, PageCurlConfigV2, CurlStartPosition } from './PageCurlEffectV2';
 import { DualPageCurlEffect } from './DualPageCurlEffect';
 import { InteractionManager, VibrationScene } from '../Framework/Managers/InteractionManager';
@@ -34,6 +35,7 @@ const TAG = 'TextReaderComponent';
 const READ_ALOUD_HISTORY_HIGHLIGHT = '#334A90E2';
 const READ_ALOUD_READ_HIGHLIGHT = '#CC66BB6A';
 const READ_ALOUD_CURRENT_SENTENCE_HIGHLIGHT = '#CCFFCA28';
+const HIGHLIGHT_POPUP_COLOR_OPTIONS: string[] = ['#E8A317', '#3B82F6', '#EF4444', '#22C55E', '#A855F7'];
 
 /**
  * RGB颜色接口
@@ -54,14 +56,20 @@ export interface TextReaderHighlightRange {
   startOffset: number;
   endOffset: number;
   color: string;
+  lineType?: HighlightLineType;
   quoteText?: string;
   pageIndex?: number;
+  thoughtText?: string;
 }
 
 interface LocalHighlightRange {
+  id: string;
   start: number;
   end: number;
   color: string;
+  lineType: HighlightLineType;
+  thoughtText: string;
+  quoteText: string;
 }
 
 interface TextRenderSegment {
@@ -69,6 +77,10 @@ interface TextRenderSegment {
   text: string;
   highlighted: boolean;
   color: string;
+  lineType: HighlightLineType;
+  highlightId: string;
+  thoughtText: string;
+  quoteText: string;
 }
 
 interface CompactTextMapping {
@@ -110,7 +122,7 @@ export struct TextReaderComponent {
   /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
   @Prop paginationMode: PaginationMode = PaginationMode.LOCAL;
   @Prop enableNovelAnnotations: boolean = false;
-  @Prop novelHighlightRanges: TextReaderHighlightRange[] = [];
+  @Prop @Watch('onNovelHighlightRangesChange') novelHighlightRanges: TextReaderHighlightRange[] = [];
   
   // ========== 内容变化追踪 ==========
   /** 上一次的内容（用于检测变化） */
@@ -143,6 +155,8 @@ export struct TextReaderComponent {
   onAddHighlight: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
   onAddHighlightWithThought: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
   onAddThought: (selectedText: string, globalStart: number, globalEnd: number) => void = () => {};
+  onUpdateHighlightStyle: (highlightId: string, lineType: HighlightLineType, color: string) => void = () => {};
+  onUpdateHighlightThought: (highlightId: string, thoughtText: string) => void = () => {};
   
   // ========== 文本选择状态 ==========
   /** 当前选中的文本 */
@@ -151,6 +165,31 @@ export struct TextReaderComponent {
   @State private selectionEnd: number = -1;
   /** 分页后的页面列表 */
   @State private selectedText: string = '';
+  @State private showHighlightThoughtPopup: boolean = false;
+  @State private highlightThoughtPopupText: string = '';
+  @State private highlightThoughtPopupIsPlaceholder: boolean = false;
+  @State private highlightThoughtPopupHighlightId: string = '';
+  @State private highlightThoughtPopupColor: string = '#E8A317';
+  @State private highlightThoughtPopupLineType: HighlightLineType = HighlightLineType.UNDERLINE;
+  @State private highlightThoughtPopupQuoteText: string = '';
+  @State private highlightThoughtPopupEditing: boolean = false;
+  @State private highlightThoughtPopupInputText: string = '';
+  @State private highlightThoughtPopupMaskOpacity: number = 0;
+  @State private highlightThoughtPopupOpacity: number = 0;
+  @State private highlightThoughtPopupScale: number = 0.92;
+  @State private highlightThoughtPopupTranslateY: number = 10;
+  @State private highlightThoughtPopupLeftVp: number = 16;
+  @State private highlightThoughtPopupTopVp: number = 16;
+  private highlightThoughtPopupTimer: number = -1;
+  private highlightThoughtPopupHideTimer: number = -1;
+  private pendingThoughtPopupTimer: number = -1;
+  private pendingThoughtPopupStartOffset: number = -1;
+  private pendingThoughtPopupEndOffset: number = -1;
+  private pendingThoughtPopupQuoteText: string = '';
+  private pendingThoughtPopupRetryCount: number = 0;
+  private static readonly PENDING_THOUGHT_POPUP_MAX_RETRIES: number = 24;
+  private suppressNextTapEvent: boolean = false;
+  private suppressNextTapResetTimer: number = -1;
   
   // ========== 内部状态 ==========
   /** 当前显示的文本内容 */
@@ -163,6 +202,8 @@ export struct TextReaderComponent {
   @State private nextPageContent: string = '';
   /** 上一页的文本内容 */
   @State private prevPageContent: string = '';
+  private scrollHighlightSegmentsCacheSignature: string = '';
+  private scrollHighlightSegmentsCache: TextRenderSegment[] = [];
   
   // ========== 翻页动画状态 ==========
   @State private componentWidth: number = 0;
@@ -941,6 +982,12 @@ export struct TextReaderComponent {
     );
   }
 
+  private onNovelHighlightRangesChange(): void {
+    this.scrollHighlightSegmentsCacheSignature = '';
+    this.scrollHighlightSegmentsCache = [];
+    this.tryPresentPendingThoughtPopup('highlight_ranges_change');
+  }
+
   private tryFollowPageForReadAloud(): void {
     if (!this.readAloudFollowEnabled) {
       return;
@@ -1039,6 +1086,20 @@ export struct TextReaderComponent {
     }
     this.clearAutoPageTurnTimer();
     this.clearAutoScrollStepGuard();
+    if (this.highlightThoughtPopupTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupTimer);
+      this.highlightThoughtPopupTimer = -1;
+    }
+    if (this.highlightThoughtPopupHideTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupHideTimer);
+      this.highlightThoughtPopupHideTimer = -1;
+    }
+    this.clearPendingThoughtPopupRequest();
+    if (this.suppressNextTapResetTimer !== -1) {
+      clearTimeout(this.suppressNextTapResetTimer);
+      this.suppressNextTapResetTimer = -1;
+    }
+    this.suppressNextTapEvent = false;
     this.pendingAnchorCharIndex = -1;
     this.pendingRelayoutAnimation = false;
     this.relayoutOpacity = 1;
@@ -1178,6 +1239,10 @@ export struct TextReaderComponent {
   * @returns 是否消费了该按键事件
   */
   private handleVolumeKeyPageTurn(keyCode: number): boolean {
+    if (this.isHighlightThoughtPopupActive()) {
+      logger.debug(TAG, '已屏蔽音量键翻页: 划线悬浮窗显示中');
+      return true;
+    }
     if (!this.settings.volumeKeyNavigation) {
       return false;
     }
@@ -2235,9 +2300,15 @@ export struct TextReaderComponent {
       }
 
       const highlightRange: LocalHighlightRange = {
+        id: sourceRange.id,
         start: resolvedLocalStart,
         end: resolvedLocalEnd,
-        color: sourceRange.color && sourceRange.color.trim().length > 0 ? sourceRange.color : '#E8A317'
+        color: sourceRange.color && sourceRange.color.trim().length > 0 ? sourceRange.color : '#E8A317',
+        lineType: sourceRange.lineType === HighlightLineType.WAVY ? HighlightLineType.WAVY : HighlightLineType.UNDERLINE,
+        thoughtText: sourceRange.thoughtText ? sourceRange.thoughtText : '',
+        quoteText: sourceRange.quoteText && sourceRange.quoteText.trim().length > 0
+          ? sourceRange.quoteText
+          : pageContent.substring(resolvedLocalStart, resolvedLocalEnd)
       };
       ranges.push(highlightRange);
     }
@@ -2258,7 +2329,11 @@ export struct TextReaderComponent {
         key: 'plain_0',
         text: pageContent,
         highlighted: false,
-        color: ''
+        color: '',
+        lineType: HighlightLineType.UNDERLINE,
+        highlightId: '',
+        thoughtText: '',
+        quoteText: ''
       };
       segments.push(plainSegment);
       return segments;
@@ -2292,19 +2367,34 @@ export struct TextReaderComponent {
 
       let highlighted = false;
       let color = '#E8A317';
+      let lineType: HighlightLineType = HighlightLineType.UNDERLINE;
+      let highlightId = '';
+      let thoughtText = '';
+      let quoteText = '';
       for (let j = 0; j < ranges.length; j++) {
         const range = ranges[j];
         if (start >= range.start && end <= range.end) {
           highlighted = true;
           color = range.color;
+          lineType = range.lineType;
+          highlightId = range.id;
+          thoughtText = range.thoughtText;
+          quoteText = range.quoteText;
         }
+      }
+      if (highlighted && quoteText.length <= 0) {
+        quoteText = segmentText;
       }
 
       const segment: TextRenderSegment = {
-        key: `${start}_${end}_${highlighted ? 1 : 0}`,
+        key: `${start}_${end}_${highlighted ? 1 : 0}_${color}_${lineType}_${highlightId}_${thoughtText.length}_${quoteText.length}`,
         text: segmentText,
         highlighted,
-        color
+        color,
+        lineType,
+        highlightId,
+        thoughtText,
+        quoteText
       };
       segments.push(segment);
     }
@@ -2314,7 +2404,11 @@ export struct TextReaderComponent {
         key: 'fallback_0',
         text: pageContent,
         highlighted: false,
-        color: ''
+        color: '',
+        lineType: HighlightLineType.UNDERLINE,
+        highlightId: '',
+        thoughtText: '',
+        quoteText: ''
       };
       segments.push(fallbackSegment);
     }
@@ -2322,8 +2416,591 @@ export struct TextReaderComponent {
     return segments;
   }
 
+  private buildScrollHighlightSegmentsSignature(): string {
+    const contentHead = this.content.substring(0, Math.min(24, this.content.length));
+    const contentTail = this.content.length > 24
+      ? this.content.substring(Math.max(0, this.content.length - 24))
+      : this.content;
+    let signature = `${this.content.length}|${contentHead}|${contentTail}|${this.novelHighlightRanges.length}|`;
+    for (let i = 0; i < this.novelHighlightRanges.length; i++) {
+      const range = this.novelHighlightRanges[i];
+      signature += `${range.id}_${range.startOffset}_${range.endOffset}_${range.color}_${range.lineType || ''}_${range.thoughtText || ''}|`;
+    }
+    return signature;
+  }
+
+  private getScrollHighlightSegments(): TextRenderSegment[] {
+    if (this.novelHighlightRanges.length <= 0 || this.content.length <= 0) {
+      this.scrollHighlightSegmentsCacheSignature = '';
+      this.scrollHighlightSegmentsCache = [];
+      return [];
+    }
+    const signature = this.buildScrollHighlightSegmentsSignature();
+    if (signature === this.scrollHighlightSegmentsCacheSignature) {
+      return this.scrollHighlightSegmentsCache;
+    }
+    const segments = this.buildTextRenderSegments(this.content, 0);
+    this.scrollHighlightSegmentsCacheSignature = signature;
+    this.scrollHighlightSegmentsCache = segments;
+    return segments;
+  }
+
   private hasHighlightInPage(pageContent: string, pageStartCharIndex: number, pageIndex: number = -1): boolean {
     return this.getLocalHighlightRanges(pageContent, pageStartCharIndex, pageIndex).length > 0;
+  }
+
+  private isHighlightThoughtPopupActive(): boolean {
+    return this.showHighlightThoughtPopup || this.highlightThoughtPopupOpacity > 0.01;
+  }
+
+  private clearPendingThoughtPopupRequest(): void {
+    if (this.pendingThoughtPopupTimer !== -1) {
+      clearTimeout(this.pendingThoughtPopupTimer);
+      this.pendingThoughtPopupTimer = -1;
+    }
+    this.pendingThoughtPopupStartOffset = -1;
+    this.pendingThoughtPopupEndOffset = -1;
+    this.pendingThoughtPopupQuoteText = '';
+    this.pendingThoughtPopupRetryCount = 0;
+  }
+
+  private preparePendingThoughtPopupBySelection(
+    startOffset: number,
+    endOffset: number,
+    quoteText: string
+  ): void {
+    this.clearPendingThoughtPopupRequest();
+    const safeStart = Math.max(0, Math.floor(startOffset));
+    const safeEnd = Math.max(safeStart + 1, Math.floor(endOffset));
+    this.pendingThoughtPopupStartOffset = safeStart;
+    this.pendingThoughtPopupEndOffset = safeEnd;
+    this.pendingThoughtPopupQuoteText = quoteText;
+    this.pendingThoughtPopupRetryCount = 0;
+    this.pendingThoughtPopupTimer = setTimeout(() => {
+      this.pendingThoughtPopupTimer = -1;
+      this.tryPresentPendingThoughtPopup('initial_schedule');
+    }, 180);
+    logger.info(
+      TAG,
+      `已登记划线想法悬浮窗待显示请求: start=${safeStart}, end=${safeEnd}, quoteLength=${quoteText.length}`
+    );
+  }
+
+  private findPendingThoughtPopupTargetRange(): TextReaderHighlightRange | null {
+    if (this.pendingThoughtPopupStartOffset < 0 || this.pendingThoughtPopupEndOffset <= this.pendingThoughtPopupStartOffset) {
+      return null;
+    }
+    let exactHit: TextReaderHighlightRange | null = null;
+    let containHit: TextReaderHighlightRange | null = null;
+    let overlapHit: TextReaderHighlightRange | null = null;
+    const pendingQuote = this.pendingThoughtPopupQuoteText;
+    const targetLength = this.pendingThoughtPopupEndOffset - this.pendingThoughtPopupStartOffset;
+    let bestContainLength = Number.MAX_SAFE_INTEGER;
+    let bestOverlapLength = Number.MAX_SAFE_INTEGER;
+
+    for (let i = 0; i < this.novelHighlightRanges.length; i++) {
+      const range = this.novelHighlightRanges[i];
+      const rangeStart = Math.floor(range.startOffset);
+      const rangeEnd = Math.floor(range.endOffset);
+      const rangeLength = rangeEnd - rangeStart;
+      if (rangeEnd <= rangeStart) {
+        continue;
+      }
+      if (rangeStart === this.pendingThoughtPopupStartOffset && rangeEnd === this.pendingThoughtPopupEndOffset) {
+        exactHit = range;
+        break;
+      }
+      const contains = rangeStart <= this.pendingThoughtPopupStartOffset && rangeEnd >= this.pendingThoughtPopupEndOffset;
+      if (contains) {
+        if (rangeLength < bestContainLength) {
+          bestContainLength = rangeLength;
+          containHit = range;
+        }
+      }
+      const overlaps = !(rangeEnd <= this.pendingThoughtPopupStartOffset || rangeStart >= this.pendingThoughtPopupEndOffset);
+      if (overlaps) {
+        if (rangeLength < bestOverlapLength) {
+          bestOverlapLength = rangeLength;
+          overlapHit = range;
+        }
+      }
+      if (pendingQuote.length > 0 && range.quoteText && range.quoteText.length > 0) {
+        if (range.quoteText === pendingQuote && Math.abs(rangeLength - targetLength) <= 2) {
+          containHit = range;
+          bestContainLength = rangeLength;
+        }
+      }
+    }
+
+    if (exactHit) {
+      return exactHit;
+    }
+    if (containHit) {
+      return containHit;
+    }
+    if (overlapHit) {
+      return overlapHit;
+    }
+    return null;
+  }
+
+  private tryPresentPendingThoughtPopup(trigger: string): void {
+    if (this.pendingThoughtPopupStartOffset < 0 || this.pendingThoughtPopupEndOffset <= this.pendingThoughtPopupStartOffset) {
+      return;
+    }
+    const targetRange = this.findPendingThoughtPopupTargetRange();
+    if (!targetRange) {
+      if (this.pendingThoughtPopupRetryCount >= TextReaderComponent.PENDING_THOUGHT_POPUP_MAX_RETRIES) {
+        logger.warn(
+          TAG,
+          `划线想法悬浮窗待显示超时，未找到目标划线: trigger=${trigger}, start=${this.pendingThoughtPopupStartOffset}, end=${this.pendingThoughtPopupEndOffset}`
+        );
+        this.clearPendingThoughtPopupRequest();
+        return;
+      }
+      this.pendingThoughtPopupRetryCount += 1;
+      if (this.pendingThoughtPopupTimer !== -1) {
+        clearTimeout(this.pendingThoughtPopupTimer);
+      }
+      this.pendingThoughtPopupTimer = setTimeout(() => {
+        this.pendingThoughtPopupTimer = -1;
+        this.tryPresentPendingThoughtPopup(`retry_${this.pendingThoughtPopupRetryCount}`);
+      }, 130);
+      return;
+    }
+
+    const thoughtText = targetRange.thoughtText ? targetRange.thoughtText.trim() : '';
+    const popupText = thoughtText.length > 0 ? thoughtText : '补充想法';
+    this.highlightThoughtPopupHighlightId = targetRange.id;
+    this.highlightThoughtPopupColor = targetRange.color && targetRange.color.trim().length > 0 ? targetRange.color : '#E8A317';
+    this.highlightThoughtPopupLineType = targetRange.lineType === HighlightLineType.WAVY
+      ? HighlightLineType.WAVY
+      : HighlightLineType.UNDERLINE;
+    const quoteText = targetRange.quoteText && targetRange.quoteText.trim().length > 0
+      ? targetRange.quoteText
+      : this.pendingThoughtPopupQuoteText;
+    this.highlightThoughtPopupQuoteText = quoteText;
+    this.highlightThoughtPopupEditing = false;
+    this.highlightThoughtPopupInputText = thoughtText;
+    const anchorXVp = this.px2vp(this.componentWidth > 0 ? (this.componentWidth / 2) : 180);
+    const anchorYVp = this.getHighlightThoughtPopupTopPadding() + 56;
+    this.presentHighlightThoughtPopup(popupText, thoughtText.length <= 0, anchorXVp, anchorYVp);
+    this.suppressNextTapEvent = true;
+    if (this.suppressNextTapResetTimer !== -1) {
+      clearTimeout(this.suppressNextTapResetTimer);
+    }
+    this.suppressNextTapResetTimer = setTimeout(() => {
+      this.suppressNextTapEvent = false;
+      this.suppressNextTapResetTimer = -1;
+    }, 180);
+    if (thoughtText.length <= 0) {
+      setTimeout(() => {
+        this.startHighlightThoughtPopupEdit();
+      }, 60);
+    }
+    logger.info(
+      TAG,
+      `自动展示划线想法悬浮窗成功: trigger=${trigger}, highlightId=${targetRange.id}, needInput=${thoughtText.length <= 0}`
+    );
+    this.clearPendingThoughtPopupRequest();
+  }
+
+  private showThoughtPopupForSegment(segment: TextRenderSegment, event?: ClickEvent): void {
+    if (!segment.highlighted) {
+      return;
+    }
+    const thoughtText = segment.thoughtText ? segment.thoughtText.trim() : '';
+    const popupText = thoughtText.length > 0 ? thoughtText : '补充想法';
+    this.highlightThoughtPopupHighlightId = segment.highlightId;
+    this.highlightThoughtPopupColor = segment.color && segment.color.trim().length > 0 ? segment.color : '#E8A317';
+    this.highlightThoughtPopupLineType = segment.lineType === HighlightLineType.WAVY
+      ? HighlightLineType.WAVY
+      : HighlightLineType.UNDERLINE;
+    const quoteText = segment.quoteText && segment.quoteText.trim().length > 0 ? segment.quoteText : segment.text;
+    this.highlightThoughtPopupQuoteText = quoteText;
+    this.highlightThoughtPopupEditing = false;
+    this.highlightThoughtPopupInputText = thoughtText;
+    const anchorXVp = event ? event.displayX : this.px2vp(this.componentWidth / 2);
+    const anchorYVp = event ? event.displayY : this.getHighlightThoughtPopupTopPadding() + 56;
+    this.presentHighlightThoughtPopup(popupText, thoughtText.length <= 0, anchorXVp, anchorYVp);
+    logger.info(TAG, `点击划线文本，展示想法悬浮窗: highlightId=${segment.highlightId}, hasThought=${thoughtText.length > 0}`);
+    this.suppressNextTapEvent = true;
+    if (this.suppressNextTapResetTimer !== -1) {
+      clearTimeout(this.suppressNextTapResetTimer);
+    }
+    this.suppressNextTapResetTimer = setTimeout(() => {
+      this.suppressNextTapEvent = false;
+      this.suppressNextTapResetTimer = -1;
+    }, 120);
+  }
+
+  private applyHighlightStyleFromPopup(lineType: HighlightLineType, color: string): void {
+    const targetColor = color && color.trim().length > 0 ? color : '#E8A317';
+    this.highlightThoughtPopupLineType = lineType;
+    this.highlightThoughtPopupColor = targetColor;
+    if (!this.highlightThoughtPopupHighlightId || this.highlightThoughtPopupHighlightId.length <= 0) {
+      return;
+    }
+    this.onUpdateHighlightStyle(this.highlightThoughtPopupHighlightId, lineType, targetColor);
+    if (this.highlightThoughtPopupTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupTimer);
+      this.highlightThoughtPopupTimer = -1;
+    }
+    logger.info(
+      TAG,
+      `触发划线样式更新: highlightId=${this.highlightThoughtPopupHighlightId}, lineType=${lineType}, color=${targetColor}`
+    );
+  }
+
+  private startHighlightThoughtPopupEdit(): void {
+    this.highlightThoughtPopupInputText = this.highlightThoughtPopupIsPlaceholder ? '' : this.highlightThoughtPopupText;
+    this.highlightThoughtPopupEditing = true;
+    logger.info(TAG, `进入划线想法编辑状态: highlightId=${this.highlightThoughtPopupHighlightId}`);
+  }
+
+  private cancelHighlightThoughtPopupEdit(): void {
+    this.highlightThoughtPopupEditing = false;
+    this.highlightThoughtPopupInputText = this.highlightThoughtPopupIsPlaceholder ? '' : this.highlightThoughtPopupText;
+    logger.info(TAG, `取消划线想法编辑: highlightId=${this.highlightThoughtPopupHighlightId}`);
+  }
+
+  private submitHighlightThoughtFromPopup(): void {
+    if (!this.highlightThoughtPopupHighlightId || this.highlightThoughtPopupHighlightId.length <= 0) {
+      logger.warn(TAG, '提交划线想法失败: highlightId 为空');
+      return;
+    }
+    const nextThoughtText = this.highlightThoughtPopupInputText.trim();
+    this.highlightThoughtPopupText = nextThoughtText.length > 0 ? nextThoughtText : '补充想法';
+    this.highlightThoughtPopupIsPlaceholder = nextThoughtText.length <= 0;
+    this.highlightThoughtPopupEditing = false;
+    this.onUpdateHighlightThought(this.highlightThoughtPopupHighlightId, nextThoughtText);
+    logger.info(
+      TAG,
+      `触发划线想法更新: highlightId=${this.highlightThoughtPopupHighlightId}, textLength=${nextThoughtText.length}`
+    );
+  }
+
+  private presentHighlightThoughtPopup(text: string, isPlaceholder: boolean, anchorXVp: number, anchorYVp: number): void {
+    this.highlightThoughtPopupText = text;
+    this.highlightThoughtPopupIsPlaceholder = isPlaceholder;
+    this.highlightThoughtPopupEditing = false;
+    this.highlightThoughtPopupInputText = isPlaceholder ? '' : text;
+    this.updateHighlightThoughtPopupPosition(anchorXVp, anchorYVp);
+    this.showHighlightThoughtPopup = true;
+    this.highlightThoughtPopupMaskOpacity = 0;
+    this.highlightThoughtPopupOpacity = 0;
+    this.highlightThoughtPopupScale = 0.88;
+    this.highlightThoughtPopupTranslateY = 14;
+    if (this.highlightThoughtPopupTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupTimer);
+      this.highlightThoughtPopupTimer = -1;
+    }
+    if (this.highlightThoughtPopupHideTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupHideTimer);
+      this.highlightThoughtPopupHideTimer = -1;
+    }
+    animateTo({ duration: 180, curve: curves.cubicBezierCurve(0.22, 0.92, 0.28, 1.08) }, () => {
+      this.highlightThoughtPopupMaskOpacity = 1;
+      this.highlightThoughtPopupOpacity = 1;
+      this.highlightThoughtPopupScale = 1.04;
+      this.highlightThoughtPopupTranslateY = -3;
+    });
+    this.highlightThoughtPopupTimer = setTimeout(() => {
+      animateTo({ duration: 120, curve: curves.cubicBezierCurve(0.2, 0, 0.2, 1) }, () => {
+        this.highlightThoughtPopupScale = 1;
+        this.highlightThoughtPopupTranslateY = 0;
+      });
+      this.highlightThoughtPopupTimer = -1;
+    }, 170);
+  }
+
+  private dismissHighlightThoughtPopup(): void {
+    if (this.highlightThoughtPopupTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupTimer);
+      this.highlightThoughtPopupTimer = -1;
+    }
+    if (this.highlightThoughtPopupHideTimer !== -1) {
+      clearTimeout(this.highlightThoughtPopupHideTimer);
+      this.highlightThoughtPopupHideTimer = -1;
+    }
+    if (!this.showHighlightThoughtPopup) {
+      return;
+    }
+    animateTo({ duration: 90, curve: curves.cubicBezierCurve(0.4, 0, 0.2, 1) }, () => {
+      this.highlightThoughtPopupScale = 1.02;
+      this.highlightThoughtPopupTranslateY = -2;
+    });
+    this.highlightThoughtPopupTimer = setTimeout(() => {
+      animateTo({ duration: 170, curve: Curve.EaseIn }, () => {
+        this.highlightThoughtPopupMaskOpacity = 0;
+        this.highlightThoughtPopupOpacity = 0;
+        this.highlightThoughtPopupScale = 0.9;
+        this.highlightThoughtPopupTranslateY = 12;
+      });
+      this.highlightThoughtPopupHideTimer = setTimeout(() => {
+        if (this.highlightThoughtPopupOpacity <= 0.01) {
+          this.showHighlightThoughtPopup = false;
+          this.highlightThoughtPopupQuoteText = '';
+          this.highlightThoughtPopupEditing = false;
+          this.highlightThoughtPopupInputText = '';
+        }
+        this.highlightThoughtPopupHideTimer = -1;
+      }, 180);
+      this.highlightThoughtPopupTimer = -1;
+    }, 70);
+  }
+
+  private getHighlightThoughtPopupTopPadding(): number {
+    const padding = this.getEffectiveContentPadding();
+    return Math.max(16, padding.top + 8);
+  }
+
+  private getHighlightThoughtPopupWidthVp(): number {
+    const screenWidthVp = this.getScreenWidthVp();
+    return Math.max(180, Math.min(300, screenWidthVp * 0.78));
+  }
+
+  private getScreenWidthVp(): number {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      return this.px2vp(displayInfo.width);
+    } catch (_error) {
+      if (this.componentWidth > 0) {
+        return this.px2vp(this.componentWidth);
+      }
+      return 360;
+    }
+  }
+
+  private getScreenHeightVp(): number {
+    try {
+      const displayInfo = display.getDefaultDisplaySync();
+      return this.px2vp(displayInfo.height);
+    } catch (_error) {
+      if (this.componentHeight > 0) {
+        return this.px2vp(this.componentHeight);
+      }
+      return 640;
+    }
+  }
+
+  private updateHighlightThoughtPopupPosition(anchorXVp: number, anchorYVp: number): void {
+    const popupWidth = this.getHighlightThoughtPopupWidthVp();
+    const estimatedHeight = 196;
+    const horizontalMargin = 12;
+    const verticalGap = 12;
+    const minTop = this.getHighlightThoughtPopupTopPadding();
+    const screenWidth = this.getScreenWidthVp();
+    const screenHeight = this.getScreenHeightVp();
+    const maxLeft = Math.max(horizontalMargin, screenWidth - popupWidth - horizontalMargin);
+    let left = anchorXVp - popupWidth / 2;
+    if (left < horizontalMargin) {
+      left = horizontalMargin;
+    }
+    if (left > maxLeft) {
+      left = maxLeft;
+    }
+
+    let top = anchorYVp - estimatedHeight - verticalGap;
+    if (top < minTop) {
+      top = anchorYVp + verticalGap;
+    }
+    const maxTop = Math.max(minTop, screenHeight - estimatedHeight - 12);
+    if (top > maxTop) {
+      top = maxTop;
+    }
+    if (top < minTop) {
+      top = minTop;
+    }
+    this.highlightThoughtPopupLeftVp = left;
+    this.highlightThoughtPopupTopVp = top;
+  }
+
+  @Builder
+  private buildHighlightThoughtPopupLayer() {
+    if (this.showHighlightThoughtPopup) {
+      Stack() {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#14000000')
+          .backgroundBlurStyle(BlurStyle.Thin)
+          .opacity(this.highlightThoughtPopupMaskOpacity)
+          .clip(true)
+          .zIndex(0)
+          .hitTestBehavior(HitTestMode.Block)
+          .onClick(() => {
+            this.dismissHighlightThoughtPopup();
+          })
+
+        Column() {
+          Row({ space: 10 }) {
+            Column({ space: 8 }) {
+              Button() {
+                SymbolGlyph($r('sys.symbol.highlighter_line'))
+                  .fontSize(16)
+                  .fontColor([
+                    this.highlightThoughtPopupLineType === HighlightLineType.UNDERLINE ? '#FFFFFF' : this.settings.textStyle.textColor
+                  ])
+              }
+              .width(28)
+              .height(28)
+              .borderRadius(14)
+              .backgroundColor(
+                this.highlightThoughtPopupLineType === HighlightLineType.UNDERLINE ? this.highlightThoughtPopupColor : '#1A000000'
+              )
+              .onClick(() => {
+                this.applyHighlightStyleFromPopup(HighlightLineType.UNDERLINE, this.highlightThoughtPopupColor);
+              })
+
+              Button() {
+                SymbolGlyph($r('sys.symbol.scribble'))
+                  .fontSize(16)
+                  .fontColor([
+                    this.highlightThoughtPopupLineType === HighlightLineType.WAVY ? '#FFFFFF' : this.settings.textStyle.textColor
+                  ])
+              }
+              .width(28)
+              .height(28)
+              .borderRadius(14)
+              .backgroundColor(
+                this.highlightThoughtPopupLineType === HighlightLineType.WAVY ? this.highlightThoughtPopupColor : '#1A000000'
+              )
+              .onClick(() => {
+                this.applyHighlightStyleFromPopup(HighlightLineType.WAVY, this.highlightThoughtPopupColor);
+              })
+
+              ForEach(HIGHLIGHT_POPUP_COLOR_OPTIONS, (colorItem: string) => {
+                Button() {}
+                  .width(18)
+                  .height(18)
+                  .borderRadius(9)
+                  .backgroundColor(colorItem)
+                  .border({
+                    width: this.highlightThoughtPopupColor === colorItem ? 2 : 1,
+                    color: this.highlightThoughtPopupColor === colorItem ? this.settings.textStyle.textColor : '#33000000'
+                  })
+                  .onClick(() => {
+                    this.applyHighlightStyleFromPopup(this.highlightThoughtPopupLineType, colorItem);
+                  })
+              }, (colorItem: string) => colorItem)
+            }
+            .width(32)
+            .alignItems(HorizontalAlign.Center)
+
+            Column({ space: 8 }) {
+              if (this.highlightThoughtPopupEditing) {
+                TextInput({
+                  text: this.highlightThoughtPopupInputText,
+                  placeholder: '补充想法'
+                })
+                  .fontSize(14)
+                  .fontColor(this.settings.textStyle.textColor)
+                  .fontFamily(this.settings.textStyle.fontFamily)
+                  .width('100%')
+                  .onChange((value: string) => {
+                    this.highlightThoughtPopupInputText = value;
+                  })
+                  .onSubmit(() => {
+                    this.submitHighlightThoughtFromPopup();
+                  })
+
+                Row({ space: 8 }) {
+                  Button('保存')
+                    .fontSize(12)
+                    .fontColor('#FFFFFF')
+                    .backgroundColor('#2563EB')
+                    .borderRadius(10)
+                    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                    .onClick(() => {
+                      this.submitHighlightThoughtFromPopup();
+                    })
+
+                  Button('取消')
+                    .fontSize(12)
+                    .fontColor(this.settings.textStyle.textColor)
+                    .backgroundColor('#1A000000')
+                    .borderRadius(10)
+                    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                    .onClick(() => {
+                      this.cancelHighlightThoughtPopupEdit();
+                    })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.End)
+              } else {
+                Text(this.highlightThoughtPopupText)
+                  .fontSize(14)
+                  .fontColor(this.highlightThoughtPopupIsPlaceholder ? '#777777' : this.settings.textStyle.textColor)
+                  .lineHeight(20)
+                  .maxLines(4)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .fontFamily(this.settings.textStyle.fontFamily)
+                  .width('100%')
+                  .onClick(() => {
+                    this.startHighlightThoughtPopupEdit();
+                  })
+              }
+
+              Column({ space: 6 }) {
+                Text('当前划线内容（实时预览）')
+                  .fontSize(11)
+                  .fontColor('#777777')
+                  .fontFamily(this.settings.textStyle.fontFamily)
+                  .width('100%')
+
+                if (this.highlightThoughtPopupQuoteText.trim().length > 0) {
+                  Text() {
+                    Span(this.highlightThoughtPopupQuoteText)
+                      .decoration({ type: TextDecorationType.Underline, color: this.highlightThoughtPopupColor })
+                      .textBackgroundStyle(
+                        this.highlightThoughtPopupLineType === HighlightLineType.WAVY
+                          ? { color: `${this.highlightThoughtPopupColor}33` }
+                          : { color: '#00000000' }
+                      )
+                  }
+                    .fontSize(13)
+                    .fontColor(this.settings.textStyle.textColor)
+                    .lineHeight(20)
+                    .maxLines(4)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .fontFamily(this.settings.textStyle.fontFamily)
+                    .width('100%')
+                } else {
+                  Text('暂无划线内容')
+                    .fontSize(12)
+                    .fontColor('#999999')
+                    .fontFamily(this.settings.textStyle.fontFamily)
+                    .width('100%')
+                }
+              }
+              .width('100%')
+              .padding({ left: 8, right: 8, top: 8, bottom: 8 })
+              .borderRadius(8)
+              .backgroundColor('#12000000')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            .justifyContent(FlexAlign.Center)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+        }
+        .width(this.getHighlightThoughtPopupWidthVp())
+        .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+        .backgroundColor(this.getContentBackgroundColor())
+        .borderRadius(12)
+        .position({ x: this.highlightThoughtPopupLeftVp, y: this.highlightThoughtPopupTopVp })
+        .opacity(this.highlightThoughtPopupOpacity)
+        .scale({ x: this.highlightThoughtPopupScale, y: this.highlightThoughtPopupScale })
+        .translate({ y: this.highlightThoughtPopupTranslateY })
+        .hitTestBehavior(HitTestMode.Default)
+        .zIndex(1)
+      }
+      .width('100%')
+      .height('100%')
+      .zIndex(50)
+    }
   }
 
   @Builder
@@ -2333,7 +3010,12 @@ export struct TextReaderComponent {
         if (segment.highlighted) {
           Span(segment.text)
             .decoration({ type: TextDecorationType.Underline, color: segment.color })
-            .textBackgroundStyle({ color: `${segment.color}55` })
+            .textBackgroundStyle(
+              segment.lineType === HighlightLineType.WAVY ? { color: `${segment.color}33` } : { color: '#00000000' }
+            )
+            .onClick((event: ClickEvent) => {
+              this.showThoughtPopupForSegment(segment, event);
+            })
         } else {
           Span(segment.text)
         }
@@ -2369,7 +3051,12 @@ export struct TextReaderComponent {
         if (segment.highlighted) {
           Span(segment.text)
             .decoration({ type: TextDecorationType.Underline, color: segment.color })
-            .textBackgroundStyle({ color: `${segment.color}55` })
+            .textBackgroundStyle(
+              segment.lineType === HighlightLineType.WAVY ? { color: `${segment.color}33` } : { color: '#00000000' }
+            )
+            .onClick((event: ClickEvent) => {
+              this.showThoughtPopupForSegment(segment, event);
+            })
         } else {
           Span(segment.text)
         }
@@ -2512,6 +3199,10 @@ export struct TextReaderComponent {
   * 翻到下一页
   */
   private goToNextPage(source: string = 'manual'): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      logger.debug(TAG, `goToNextPage 被阻止: 划线悬浮窗显示中, source=${source}`);
+      return;
+    }
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToNextPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
@@ -2532,6 +3223,10 @@ export struct TextReaderComponent {
   * 翻到上一页
   */
   private goToPrevPage(source: string = 'manual'): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      logger.debug(TAG, `goToPrevPage 被阻止: 划线悬浮窗显示中, source=${source}`);
+      return;
+    }
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToPrevPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
@@ -2552,6 +3247,10 @@ export struct TextReaderComponent {
   * 跳转到指定页面
   */
   private goToPage(pageIndex: number, source: string = 'programmatic'): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      logger.debug(TAG, `goToPage 被阻止: 划线悬浮窗显示中, target=${pageIndex}, source=${source}`);
+      return;
+    }
     // 安全检查
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
@@ -3452,6 +4151,7 @@ export struct TextReaderComponent {
   * 通知页面变化
   */
   private notifyPageChange(): void {
+    this.dismissHighlightThoughtPopup();
     this.onPageChange(this.currentPageIndex, this.totalPages);
     this.notifyPageCharRangeChange();
     
@@ -3490,6 +4190,9 @@ export struct TextReaderComponent {
   * 处理点击位置（简化版本，直接使用坐标）
   */
   private handleTapAtPosition(x: number, y: number): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      return;
+    }
     if (this.hasActiveSelectionRange()) {
       return;
     }
@@ -3533,6 +4236,9 @@ export struct TextReaderComponent {
   * 点击中间区域回调（用于显示/隐藏工具栏）
   */
   private onTapSimple(): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      return;
+    }
     // TextReaderComponent 内部已经处理了点击区域判断，外部只需要知道"用户点击了中间区域"
     // TextReaderComponent 内部已经处理了点击区域判断，外部只需要知道"用户点击了中间区域"
     this.resetAutoPageTurnTimerForInteraction('tap-center');
@@ -3551,6 +4257,10 @@ export struct TextReaderComponent {
   * 处理滑动手势开始
   */
   private handlePanStart(event: GestureEvent): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      this.isDragging = false;
+      return;
+    }
     if (this.hasActiveSelectionRange()) {
       this.isDragging = false;
       logger.debug(TAG, 'handlePanStart: skip page turn while text selection is active');
@@ -3572,6 +4282,10 @@ export struct TextReaderComponent {
   * 处理滑动手势移动
   */
   private handlePanUpdate(event: GestureEvent): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      this.isDragging = false;
+      return;
+    }
     if (this.hasActiveSelectionRange()) {
       this.isDragging = false;
       return;
@@ -3622,6 +4336,10 @@ export struct TextReaderComponent {
   * 处理滑动手势结束
   */
   private handlePanEnd(event: GestureEvent): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      this.isDragging = false;
+      return;
+    }
     if (this.hasActiveSelectionRange()) {
       this.isDragging = false;
       logger.debug(TAG, 'handlePanEnd: skip page turn while text selection is active');
@@ -3901,6 +4619,10 @@ export struct TextReaderComponent {
   * 双页模式翻到下一对页面
   */
   private goToNextDualPage(source: string = 'manual'): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      logger.debug(TAG, `goToNextDualPage 被阻止: 划线悬浮窗显示中, source=${source}`);
+      return;
+    }
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
     
     const nextBase = this.dualPageBaseIndex + 2;
@@ -3924,6 +4646,10 @@ export struct TextReaderComponent {
   * 双页模式翻到上一对页面
   */
   private goToPrevDualPage(source: string = 'manual'): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      logger.debug(TAG, `goToPrevDualPage 被阻止: 划线悬浮窗显示中, source=${source}`);
+      return;
+    }
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) return;
     
     const prevBase = this.dualPageBaseIndex - 2;
@@ -4013,6 +4739,9 @@ export struct TextReaderComponent {
   * 双页模式手势点击处理
   */
   private handleDualPageTap(x: number, _y: number): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      return;
+    }
     if (this.hasActiveSelectionRange()) {
       return;
     }
@@ -4051,6 +4780,9 @@ export struct TextReaderComponent {
   * 双页模式滑动手势结束处理
   */
   private handleDualPagePanEnd(deltaX: number): void {
+    if (this.isHighlightThoughtPopupActive()) {
+      return;
+    }
     // 双页卷页动画完成/取消
     if (this.showCurlEffect && this.settings.pageTurnAnimation === TextPageTurnAnimation.CURL) {
       const flipThreshold = this.novelCurlConfig.flipThreshold;
@@ -4483,9 +5215,11 @@ export struct TextReaderComponent {
           && !this.isDualPageMode()) {
         this.buildPageInfo()
       }
+      this.buildHighlightThoughtPopupLayer()
     }
     .width('100%')
     .height('100%')
+    .hitTestBehavior(HitTestMode.Default)
     .onAreaChange((_, newArea) => {
       this.componentWidth = Number(newArea.width);
       this.componentHeight = Number(newArea.height);
@@ -4513,13 +5247,29 @@ export struct TextReaderComponent {
       GestureGroup(GestureMode.Exclusive,
         TapGesture({ count: 1 })
           .onAction((event: GestureEvent) => {
+            if (this.suppressNextTapEvent) {
+              this.suppressNextTapEvent = false;
+              return;
+            }
+            if (this.isHighlightThoughtPopupActive()) {
+              return;
+            }
             const x = event.fingerList[0]?.localX || 0;
             const y = event.fingerList[0]?.localY || 0;
-            if (this.isDualPageMode()) {
-              this.handleDualPageTap(x, y);
-            } else {
-              this.handleTapAtPosition(x, y);
-            }
+            setTimeout(() => {
+              if (this.suppressNextTapEvent) {
+                this.suppressNextTapEvent = false;
+                return;
+              }
+              if (this.isHighlightThoughtPopupActive()) {
+                return;
+              }
+              if (this.isDualPageMode()) {
+                this.handleDualPageTap(x, y);
+              } else {
+                this.handleTapAtPosition(x, y);
+              }
+            }, 0);
           }),
         PanGesture({ direction: PanDirection.Horizontal })
           .onActionStart((event: GestureEvent) => this.handlePanStart(event))
@@ -4540,6 +5290,12 @@ export struct TextReaderComponent {
       )
     )
     .onKeyEvent((event: KeyEvent) => {
+      if (this.isHighlightThoughtPopupActive() &&
+        event.type === KeyType.Up &&
+        (event.keyCode === KeyCode.KEYCODE_VOLUME_UP || event.keyCode === KeyCode.KEYCODE_VOLUME_DOWN)) {
+        event.stopPropagation();
+        return;
+      }
       // 处理音量键翻页
       if (event.type === KeyType.Up) {
         const consumed = this.handleVolumeKeyPageTurn(event.keyCode);
@@ -4604,11 +5360,16 @@ export struct TextReaderComponent {
           // 非听书高亮状态下使用分段渲染，避免一次性绘制大段文本导致卡顿
           if (this.novelHighlightRanges.length > 0) {
             Text() {
-              ForEach(this.buildTextRenderSegments(this.content, 0), (segment: TextRenderSegment) => {
+              ForEach(this.getScrollHighlightSegments(), (segment: TextRenderSegment) => {
                 if (segment.highlighted) {
                   Span(segment.text)
                     .decoration({ type: TextDecorationType.Underline, color: segment.color })
-                    .textBackgroundStyle({ color: `${segment.color}55` })
+                    .textBackgroundStyle(
+                      segment.lineType === HighlightLineType.WAVY ? { color: `${segment.color}33` } : { color: '#00000000' }
+                    )
+                    .onClick((event: ClickEvent) => {
+                      this.showThoughtPopupForSegment(segment, event);
+                    })
                 } else {
                   Span(segment.text)
                 }
@@ -5215,11 +5976,11 @@ export struct TextReaderComponent {
             this.addHighlightFromSelection(false);
           })
         MenuItem({
-          content: '添加想法',
-          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.doc_text')).fontSize('18vp')
+          content: '划线并添加想法',
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.square_and_pencil')).fontSize('18vp')
         })
           .onClick(() => {
-            this.addThoughtFromSelection();
+            this.addHighlightFromSelection(true);
           })
       }
       MenuItem({
@@ -5260,10 +6021,6 @@ export struct TextReaderComponent {
         MenuItem({ content: '划线并添加想法' })
           .onClick(() => {
             this.addHighlightFromSelection(true);
-          })
-        MenuItem({ content: '添加想法' })
-          .onClick(() => {
-            this.addThoughtFromSelection();
           })
       }
       MenuItem({ content: '分享' })
@@ -5340,7 +6097,9 @@ export struct TextReaderComponent {
       return;
     }
     if (withThought) {
+      this.preparePendingThoughtPopupBySelection(range.start, range.end, this.selectedText);
       this.onAddHighlightWithThought(this.selectedText, range.start, range.end);
+      logger.info(TAG, `触发“划线并添加想法”: start=${range.start}, end=${range.end}, textLength=${this.selectedText.length}`);
     } else {
       this.onAddHighlight(this.selectedText, range.start, range.end);
     }

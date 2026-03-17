@@ -17,6 +17,7 @@ export interface RestoreOptions {
   restoreReadProgress: boolean;
   restoreSettings: boolean;
   restoreHistory: boolean;
+  restoreAnnotations: boolean;
   restoreWebViewConfig: boolean;
   restoreDownloadTasks: boolean;
   restoreFavorites: boolean;
@@ -44,6 +45,7 @@ export struct RestoreOptionsDialog {
     restoreReadProgress: true,
     restoreSettings: true,
     restoreHistory: true,
+    restoreAnnotations: true,
     restoreWebViewConfig: false,
     restoreDownloadTasks: false,
     restoreFavorites: true,
@@ -159,6 +161,7 @@ export struct RestoreOptionsDialog {
         this.buildContentItem('⚙️ 应用设置', this.backupData.settings ? 1 : 0, '组配置')
         this.buildContentItem('🕒 浏览历史', this.backupData.history?.browse?.length || 0, '条记录')
         this.buildContentItem('🔍 搜索历史', this.backupData.history?.search?.length || 0, '条记录')
+        this.buildContentItem('📝 统一标注', this.backupData.annotations?.records?.length || 0, '条记录')
         
         if (this.backupData.webview?.configs?.length) {
           this.buildContentItem('🌐 WebView配置', this.backupData.webview.configs.length, '个配置')
@@ -221,6 +224,10 @@ export struct RestoreOptionsDialog {
         
         if ((this.backupData.history?.browse?.length || 0) + (this.backupData.history?.search?.length || 0) > 0) {
           this.buildRestoreOption('浏览历史', this.restoreOptions.restoreHistory, (value: boolean) => { this.restoreOptions.restoreHistory = value; })
+        }
+
+        if ((this.backupData.annotations?.records?.length || 0) > 0) {
+          this.buildRestoreOption('统一标注（书签/划线/想法）', this.restoreOptions.restoreAnnotations, (value: boolean) => { this.restoreOptions.restoreAnnotations = value; })
         }
         
         if (this.backupData.webview?.configs?.length) {

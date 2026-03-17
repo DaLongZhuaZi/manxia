@@ -78,6 +78,8 @@ export interface NovelReaderPageParams {
   chapterTitle: string;
   chapterIndex: number;
   totalChapters: number;
+  chapterPageIndex?: number; // 可选：进入章节后的页码定位
+  chapterStartOffset?: number; // 可选：进入章节后的字符偏移定位
   tocUrl?: string; // 目录URL，用于加载章节列表
   // [修复] 添加用于记录浏览历史的字段
   author?: string;

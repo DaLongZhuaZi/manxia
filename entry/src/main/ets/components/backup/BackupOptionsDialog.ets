@@ -23,6 +23,7 @@ export struct BackupOptionsDialog {
     includeReadProgress: true,
     includeSettings: true,
     includeHistory: true,
+    includeAnnotations: true,
     includeWebViewConfig: false,
     includeDownloadTasks: false,
     includeCacheInfo: false,
@@ -50,12 +51,14 @@ export struct BackupOptionsDialog {
     this.backupOptions.includeReadProgress = this.isAllSelected;
     this.backupOptions.includeSettings = this.isAllSelected;
     this.backupOptions.includeHistory = this.isAllSelected;
+    this.backupOptions.includeAnnotations = this.isAllSelected;
     this.backupOptions.includeWebViewConfig = this.isAllSelected;
     this.backupOptions.includeDownloadTasks = this.isAllSelected;
     this.backupOptions.includeCacheInfo = this.isAllSelected;
     this.backupOptions.includePlugins = this.isAllSelected;
     this.backupOptions.includeFavorites = this.isAllSelected;
     this.backupOptions.includeOnlineData = this.isAllSelected;
+    this.backupOptions.includeCloudConfig = this.isAllSelected;
     this.backupOptions.includeCoverImages = this.isAllSelected;
     this.backupOptions.includeChapterImages = this.isAllSelected;
     this.backupOptions.includeEBookFiles = this.isAllSelected;
@@ -232,6 +235,13 @@ export struct BackupOptionsDialog {
           this.backupOptions.includeFavorites,
           (value: boolean) => { this.backupOptions.includeFavorites = value; }
         )
+
+        this.buildOptionItem(
+          '统一标注',
+          '包含书签、划线、想法及其样式与定位信息',
+          this.backupOptions.includeAnnotations,
+          (value: boolean) => { this.backupOptions.includeAnnotations = value; }
+        )
       }
       .width('100%')
       .padding(16)
@@ -321,6 +331,13 @@ export struct BackupOptionsDialog {
           '包含在线漫画平台的同步数据',
           this.backupOptions.includeOnlineData,
           (value: boolean) => { this.backupOptions.includeOnlineData = value; }
+        )
+
+        this.buildOptionItem(
+          '云存储配置',
+          '包含 WebDAV、Suwayomi、FTP 的连接配置',
+          this.backupOptions.includeCloudConfig,
+          (value: boolean) => { this.backupOptions.includeCloudConfig = value; }
         )
       }
       .width('100%')

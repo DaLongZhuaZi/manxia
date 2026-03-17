@@ -1510,13 +1510,6 @@ export struct MangaReaderSettings {
               .margin({ top: 12, bottom: 12 })
               .color($r('app.color.divider'))
             
-            // 翻页动画（横向紧凑布局）
-            this.buildLandscapePageTurnAnimation()
-            
-            Divider()
-              .margin({ top: 12, bottom: 12 })
-              .color($r('app.color.divider'))
-            
             // 开关设置（横向布局）
             this.buildLandscapeToggleSettings()
           }
@@ -1674,32 +1667,6 @@ export struct MangaReaderSettings {
         .width('100%')
         .margin({ bottom: 8 })
 
-      // 页面间距（紧凑布局）
-      Row() {
-        Text('页间距')
-          .fontSize(11)
-          .fontColor($r('app.color.text_primary'))
-          .width(40)
-        
-        Slider({
-          value: this.currentSettings.pageSpacing,
-          min: 0,
-          max: 50,
-          step: 5
-        })
-          .layoutWeight(1)
-          .trackColor($r('app.color.divider'))
-          .selectedColor($r('app.color.accent'))
-          .onChange((value: number) => this.updatePageSpacing(value))
-        
-        Text(`${this.currentSettings.pageSpacing}px`)
-          .fontSize(10)
-          .fontColor($r('app.color.text_secondary'))
-          .width(35)
-      }
-      .width('100%')
-      .margin({ bottom: 8 })
-
       // 两列布局
       Row() {
         // 左列
@@ -1825,17 +1792,6 @@ export struct MangaReaderSettings {
                 Divider()
                   .margin({ top: 16, bottom: 16 })
                   .color($r('app.color.divider'))
-                
-                // ===== 翻页动画设置 =====
-                this.buildSectionTitle('翻页动画')
-                this.buildPageTurnAnimationSettings()
-                
-                Divider()
-                  .margin({ top: 16, bottom: 16 })
-                  .color($r('app.color.divider'))
-                
-                // ===== 页面间距 =====
-                this.buildPageSpacingControl()
                 
                 // ===== 显示设置 =====
                 this.buildToggleSettings()

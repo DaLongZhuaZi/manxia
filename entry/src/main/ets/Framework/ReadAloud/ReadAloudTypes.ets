@@ -36,13 +36,17 @@ export class ReadAloudVoiceOption {
   public person: number;
   public online: number;
   public status: string;
+  public style: string;
+  public gender: string;
 
-  constructor(id: string, language: string, person: number, online: number, status: string) {
+  constructor(id: string, language: string, person: number, online: number, status: string, style: string = '', gender: string = '') {
     this.id = id;
     this.language = language;
     this.person = person;
     this.online = online;
     this.status = status;
+    this.style = style;
+    this.gender = gender;
   }
 }
 

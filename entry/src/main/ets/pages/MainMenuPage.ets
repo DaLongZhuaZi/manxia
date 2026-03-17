@@ -112,7 +112,7 @@ import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } fr
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
-import { AnnotationCenterPage } from './AnnotationCenterPage';
+import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { AvifImage } from '../components/AvifImage';
@@ -1327,6 +1327,14 @@ struct MainMenuPage {
         setTimeout(() => {
           void this.navigateFromShortcutContinueReadAloud();
         }, 200);
+        return;
+      }
+
+      if (targetPage === 'inspiration' || targetPage === 'open_inspiration') {
+        const params: AnnotationCenterPageParams = {
+          contentTitle: '全部内容'
+        };
+        this.pathStack.pushPathByName('AnnotationCenterPage', params);
         return;
       }
 
@@ -19874,6 +19882,18 @@ struct MainMenuPage {
             } catch (error) {
               logger.error(TAG, '导航到全局设置页面失败', String(error));
               this.showToast('打开全局设置页面失败');
+            }
+          })
+          this.buildSettingItem('灵感', '查看和管理全部内容的书签、划线与想法', $r('sys.symbol.stickers'), () => {
+            try {
+              const params: AnnotationCenterPageParams = {
+                contentTitle: '全部内容'
+              };
+              this.pathStack.pushPathByName('AnnotationCenterPage', params);
+              logger.info(TAG, '导航到灵感页面');
+            } catch (error) {
+              logger.error(TAG, '导航到灵感页面失败', String(error));
+              this.showToast('打开灵感页面失败');
             }
           })
           // 下载管理仅在高级模式下显示

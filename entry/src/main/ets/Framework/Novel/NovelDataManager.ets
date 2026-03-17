@@ -14,6 +14,8 @@ import { NovelBook, NovelChapter, NovelReadProgress, NovelReaderSettings, DEFAUL
 import { getNovelLoginManager } from './NovelLoginManager';
 import { getNovelCoverGenerator } from './NovelCoverGenerator';
 import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
+import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
+import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 
 const TAG = 'NovelDataManager';
 
@@ -656,6 +658,8 @@ export class NovelDataManager {
     await store.executeSql('DELETE FROM novel_read_progress WHERE bookId = ?', [bookId]);
     // 删除书籍
     await store.executeSql('DELETE FROM novel_book WHERE id = ?', [bookId]);
+    // 删除统一标注，避免书籍删除后灵感页仍保留该书记录。
+    await getUnifiedAnnotationManager().deleteContentAnnotations(UnifiedContentType.NOVEL, bookId);
     if (book && this.filesDir) {
       const coverCandidates = [book.coverLocalPath || '', book.coverUrl || ''];
       for (const coverPath of coverCandidates) {
@@ -708,6 +712,42 @@ export class NovelDataManager {
     );
     const books = this.parseBookResults(rs);
     return books.length > 0 ? books[0] : null;
+  }
+
+  /**
+   * 根据书籍ID与章节索引获取章节信息
+   */
+  async getChapterByIndex(bookId: string, chapterIndex: number): Promise<NovelChapter | null> {
+    const store = this.getStore();
+    if (!bookId || bookId.trim().length <= 0) {
+      return null;
+    }
+    const safeIndex = Math.max(0, Math.floor(chapterIndex));
+    const rs = await store.querySql(
+      'SELECT * FROM novel_chapter WHERE bookId = ? AND chapterIndex = ? LIMIT 1',
+      [bookId, safeIndex]
+    );
+    if (!rs.goToFirstRow()) {
+      rs.close();
+      return null;
+    }
+    const chapter: NovelChapter = {
+      id: rs.getString(rs.getColumnIndex('id')),
+      bookId: rs.getString(rs.getColumnIndex('bookId')),
+      url: rs.getString(rs.getColumnIndex('url')),
+      title: rs.getString(rs.getColumnIndex('title')),
+      index: rs.getLong(rs.getColumnIndex('chapterIndex')),
+      isVolume: rs.getLong(rs.getColumnIndex('isVolume')) === 1,
+      isVip: rs.getLong(rs.getColumnIndex('isVip')) === 1,
+      isPay: rs.getLong(rs.getColumnIndex('isPay')) === 1,
+      isDownloaded: rs.getLong(rs.getColumnIndex('isDownloaded')) === 1,
+      contentPath: rs.getString(rs.getColumnIndex('contentPath')),
+      wordCount: rs.getLong(rs.getColumnIndex('wordCount')),
+      updateTime: rs.getLong(rs.getColumnIndex('updateTime')),
+      createTime: rs.getLong(rs.getColumnIndex('createTime'))
+    };
+    rs.close();
+    return chapter;
   }
 
   /**

@@ -10,6 +10,8 @@ import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookF
 import { logger } from '../../Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
+import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
+import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
 
 const TAG = 'EBookDataManager';
@@ -1137,6 +1139,9 @@ export class EBookDataManager {
       
       // 删除电子书信息
       await this.dbManager.executeSql(`DELETE FROM ebook_info WHERE id = ?`, [bookId]);
+
+      // 删除统一标注，避免删除书籍后仍残留灵感页记录。
+      await getUnifiedAnnotationManager().deleteContentAnnotations(UnifiedContentType.EBOOK, bookId);
       
       // 删除电子书文件和封面
       if (ebook) {

@@ -28,6 +28,9 @@ import { MangaDetailPageParams } from './MangaDetailPage';
 import { EBookDetailPageParams } from './EBookDetailPage';
 import { NovelDetailPageParams } from './NovelBookshelfPage';
 import { widgetDataSync } from '../Utils/WidgetDataSync';
+import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { UnifiedAnnotationRecord, UnifiedAnnotationType } from '../Models/AnnotationModels';
+import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 
 const TAG = 'ReadingAnalyticsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -192,6 +195,13 @@ interface KeywordStatData {
   type: InterestType;
 }
 
+interface InspirationStatistics {
+  totalCount: number;
+  bookmarkCount: number;
+  highlightCount: number;
+  thoughtCount: number;
+}
+
 @Component
 struct ReadingAnalyticsPage {
   @State pathStack: NavPathStack = new NavPathStack();
@@ -217,6 +227,7 @@ struct ReadingAnalyticsPage {
   private dataManager: DataManager = DataManager.getInstance();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private analyticsManager: ReadingAnalyticsManager = ReadingAnalyticsManager.getInstance();
+  private annotationManager: UnifiedAnnotationManager = getUnifiedAnnotationManager();
 
   // 统计数据状态
   @State isLoading: boolean = true;
@@ -243,6 +254,18 @@ struct ReadingAnalyticsPage {
 
   @State dailyData: DailyReadingData[] = [];
   @State hourlyDistribution: HourlyDistribution[] = [];
+  @State inspirationStats: InspirationStatistics = {
+    totalCount: 0,
+    bookmarkCount: 0,
+    highlightCount: 0,
+    thoughtCount: 0
+  };
+  @State dailyInspirationStats: InspirationStatistics = {
+    totalCount: 0,
+    bookmarkCount: 0,
+    highlightCount: 0,
+    thoughtCount: 0
+  };
   
   // 阅读时长排行
   @State readingRankList: ReadingRankItem[] = [];
@@ -511,6 +534,18 @@ struct ReadingAnalyticsPage {
       this.hourlyDistribution = [];
       this.readingRankList = [];
       this.interestItems = [];
+      this.inspirationStats = {
+        totalCount: 0,
+        bookmarkCount: 0,
+        highlightCount: 0,
+        thoughtCount: 0
+      };
+      this.dailyInspirationStats = {
+        totalCount: 0,
+        bookmarkCount: 0,
+        highlightCount: 0,
+        thoughtCount: 0
+      };
       
       this.showClearDataDialog = false;
       logger.info(TAG, '阅读统计数据已清除（阅读记录保留）');
@@ -558,6 +593,18 @@ struct ReadingAnalyticsPage {
       this.hourlyDistribution = [];
       this.readingRankList = [];
       this.interestItems = [];
+      this.inspirationStats = {
+        totalCount: 0,
+        bookmarkCount: 0,
+        highlightCount: 0,
+        thoughtCount: 0
+      };
+      this.dailyInspirationStats = {
+        totalCount: 0,
+        bookmarkCount: 0,
+        highlightCount: 0,
+        thoughtCount: 0
+      };
       
       this.showClearDataDialog = false;
       logger.info(TAG, '阅读报告功能已关闭，权限状态已重置（阅读记录保留），准备返回');
@@ -566,6 +613,95 @@ struct ReadingAnalyticsPage {
       this.pathStack.pop();
     } catch (error) {
       logger.error(TAG, `关闭阅读报告功能失败: ${String(error)}`);
+    }
+  }
+
+  private normalizeInspirationType(type: UnifiedAnnotationType): UnifiedAnnotationType {
+    const raw = String(type);
+    if (raw === UnifiedAnnotationType.BOOKMARK || raw === 'bookmark' || raw === '0' || raw === '书签') {
+      return UnifiedAnnotationType.BOOKMARK;
+    }
+    if (raw === UnifiedAnnotationType.HIGHLIGHT || raw === 'highlight' || raw === '1' || raw === '划线') {
+      return UnifiedAnnotationType.HIGHLIGHT;
+    }
+    return UnifiedAnnotationType.THOUGHT;
+  }
+
+  private buildInspirationStatistics(records: UnifiedAnnotationRecord[]): InspirationStatistics {
+    let bookmarkCount = 0;
+    let highlightCount = 0;
+    let thoughtCount = 0;
+    for (let i = 0; i < records.length; i++) {
+      const type = this.normalizeInspirationType(records[i].annotationType);
+      if (type === UnifiedAnnotationType.BOOKMARK) {
+        bookmarkCount += 1;
+      } else if (type === UnifiedAnnotationType.HIGHLIGHT) {
+        highlightCount += 1;
+      } else {
+        thoughtCount += 1;
+      }
+    }
+    return {
+      totalCount: records.length,
+      bookmarkCount,
+      highlightCount,
+      thoughtCount
+    };
+  }
+
+  private async loadInspirationStats(startTime: number): Promise<void> {
+    try {
+      const allRecords = await this.annotationManager.getAllAnnotations();
+      const filteredRecords = allRecords.filter((record: UnifiedAnnotationRecord) => record.createdAt >= startTime);
+      this.inspirationStats = this.buildInspirationStatistics(filteredRecords);
+      logger.info(
+        TAG,
+        `加载灵感统计成功: total=${this.inspirationStats.totalCount}, bookmark=${this.inspirationStats.bookmarkCount}, highlight=${this.inspirationStats.highlightCount}, thought=${this.inspirationStats.thoughtCount}`
+      );
+    } catch (error) {
+      logger.warn(TAG, `加载灵感统计失败: ${String(error)}`);
+      this.inspirationStats = {
+        totalCount: 0,
+        bookmarkCount: 0,
+        highlightCount: 0,
+        thoughtCount: 0
+      };
+    }
+  }
+
+  private async loadDailyInspirationStats(date: Date): Promise<void> {
+    const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime();
+    const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999).getTime();
+    try {
+      const allRecords = await this.annotationManager.getAllAnnotations();
+      const filteredRecords = allRecords.filter((record: UnifiedAnnotationRecord) =>
+        record.createdAt >= startOfDay && record.createdAt <= endOfDay
+      );
+      this.dailyInspirationStats = this.buildInspirationStatistics(filteredRecords);
+      logger.debug(
+        TAG,
+        `加载当日灵感统计成功: date=${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}, total=${this.dailyInspirationStats.totalCount}`
+      );
+    } catch (error) {
+      logger.warn(TAG, `加载当日灵感统计失败: ${String(error)}`);
+      this.dailyInspirationStats = {
+        totalCount: 0,
+        bookmarkCount: 0,
+        highlightCount: 0,
+        thoughtCount: 0
+      };
+    }
+  }
+
+  private openInspirationCenter(trigger: string): void {
+    try {
+      const params: AnnotationCenterPageParams = {
+        contentTitle: '全部内容'
+      };
+      this.pathStack.pushPathByName('AnnotationCenterPage', params);
+      logger.info(TAG, `从阅读报告跳转灵感页: trigger=${trigger}`);
+    } catch (error) {
+      logger.error(TAG, `跳转灵感页失败: trigger=${trigger}, error=${String(error)}`);
     }
   }
 
@@ -658,6 +794,8 @@ struct ReadingAnalyticsPage {
     
     logger.debug(TAG, `日视图数据: ${dateKey}, 时长: ${this.dailyViewData?.readingTime || 0}秒, 漫画数: ${this.dailyMangaList.length}, 电子书数: ${this.dailyEBookList.length}, 小说数: ${this.dailyNovelList.length}`);
     logger.debug(TAG, `阅读目标进度: 漫画=${this.dailyMangaReadingMinutes}分钟, 电子书=${this.dailyEbookReadingMinutes}分钟, 小说=${this.dailyNovelReadingMinutes}分钟`);
+
+    await this.loadDailyInspirationStats(date);
     
     this.isDailyLoading = false;
   }
@@ -916,9 +1054,14 @@ struct ReadingAnalyticsPage {
       const ebooksWithProgress: EBook[] = await this.ebookDataManager.getEBooksWithReadingProgress();
       logger.debug(TAG, `获取到 ${ebooksWithProgress.length} 本有阅读记录的电子书`);
 
+      const now = Date.now();
+      const timeRangeMs = this.selectedTimeRange * 24 * 60 * 60 * 1000;
+      const startTime = now - timeRangeMs;
+
       // 如果漫画和电子书都没有阅读记录
       if (readHistory.length === 0 && ebooksWithProgress.length === 0) {
         logger.info(TAG, '暂无阅读记录');
+        await this.loadInspirationStats(startTime);
         this.isLoading = false;
         return;
       }
@@ -927,9 +1070,6 @@ struct ReadingAnalyticsPage {
       await this.analyzeReadingData(readHistory);
       
       // 分析电子书数据（传入时间范围进行过滤）
-      const now = Date.now();
-      const timeRangeMs = this.selectedTimeRange * 24 * 60 * 60 * 1000;
-      const startTime = now - timeRangeMs;
       this.analyzeEBookData(ebooksWithProgress, startTime);
       
       // 分析小说数据
@@ -949,6 +1089,9 @@ struct ReadingAnalyticsPage {
       
       // 分析用户兴趣
       await this.analyzeUserInterests();
+
+      // 加载灵感统计（按当前时间范围）
+      await this.loadInspirationStats(startTime);
 
       logger.info(TAG, '阅读数据加载完成');
     } catch (error) {
@@ -2334,6 +2477,8 @@ struct ReadingAnalyticsPage {
       .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
       .border({ width: 1, color: this.getBlurPanelBorder() })
       .margin({ left: 16, right: 16 })
+
+      this.buildDailyInspirationSection()
       
       // 当天阅读的漫画列表
       if (this.dailyMangaList.length > 0) {
@@ -3147,6 +3292,142 @@ struct ReadingAnalyticsPage {
       .rowsGap(12)
       .columnsGap(12)
       .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+  }
+
+  @Builder
+  private buildInspirationMetricItem(label: string, value: number) {
+    Column({ space: 4 }) {
+      Text(`${value}`)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 8, bottom: 8 })
+  }
+
+  @Builder
+  buildInspirationOverviewSection() {
+    Column({ space: 12 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.stickers'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('灵感总览')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('查看')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(28)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+        .borderRadius(14)
+        .onClick(() => {
+          this.openInspirationCenter('long_term');
+        })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Column() {
+        Row({ space: 8 }) {
+          this.buildInspirationMetricItem('总数', this.inspirationStats.totalCount)
+          this.buildInspirationMetricItem('书签', this.inspirationStats.bookmarkCount)
+          this.buildInspirationMetricItem('划线', this.inspirationStats.highlightCount)
+          this.buildInspirationMetricItem('想法', this.inspirationStats.thoughtCount)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(this.getBlurPanelBackground())
+      .borderRadius(12)
+      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: 1, color: this.getBlurPanelBorder() })
+    }
+    .width('100%')
+    .padding(16)
+  }
+
+  @Builder
+  buildDailyInspirationSection() {
+    Column({ space: 12 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.stickers'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text('当日灵感')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Blank()
+        Button() {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.arrowshape_turn_up_right'))
+              .fontSize(12)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('查看')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+        }
+        .height(28)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+        .borderRadius(14)
+        .onClick(() => {
+          this.openInspirationCenter('daily_view');
+        })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Text(`${this.selectedDate.getMonth() + 1}月${this.selectedDate.getDate()}日创建`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .alignSelf(ItemAlign.Start)
+
+      Column() {
+        Row({ space: 8 }) {
+          this.buildInspirationMetricItem('总数', this.dailyInspirationStats.totalCount)
+          this.buildInspirationMetricItem('书签', this.dailyInspirationStats.bookmarkCount)
+          this.buildInspirationMetricItem('划线', this.dailyInspirationStats.highlightCount)
+          this.buildInspirationMetricItem('想法', this.dailyInspirationStats.thoughtCount)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(this.getBlurPanelBackground())
+      .borderRadius(12)
+      .backdropBlur(this.themeState.currentTheme === ThemeType.DARK ? BlurStyle.BACKGROUND_THICK : BlurStyle.BACKGROUND_THIN)
+      .shadow({ radius: 12, color: this.getBlurPanelShadowColor(), offsetX: 0, offsetY: 4 })
+      .border({ width: 1, color: this.getBlurPanelBorder() })
     }
     .width('100%')
     .padding(16)
@@ -4350,6 +4631,8 @@ struct ReadingAnalyticsPage {
           .width('100%')
           .padding(this.responsive_contentPadding)
 
+          this.buildInspirationOverviewSection()
+
           // 第二行：阅读习惯和兴趣分析（左右布局）
           Row({ space: 16 }) {
             Column() {
@@ -4424,6 +4707,7 @@ struct ReadingAnalyticsPage {
                   this.buildEmptyState()
                 } else {
                   this.buildStatisticsOverview()
+                  this.buildInspirationOverviewSection()
                   this.buildReadingHabits()
                   this.buildInterestAnalysis()
                   this.buildReadingRank()
