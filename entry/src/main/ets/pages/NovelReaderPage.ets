@@ -33,7 +33,14 @@ import {
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
-import { AnnotationAnchor, HighlightLineType, HighlightStyle, UnifiedAnnotationType, UnifiedAnnotationRecord } from '../Models/AnnotationModels';
+import {
+  AnnotationAnchor,
+  HighlightLineType,
+  HighlightStyle,
+  UnifiedAnnotationType,
+  UnifiedAnnotationRecord,
+  CreateThoughtInput
+} from '../Models/AnnotationModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { getNovelSettingsManager, BrowseHistoryInput } from '../Framework/Novel/NovelSettingsManager';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
@@ -95,7 +102,10 @@ export struct NovelReaderPage {
   @State readAloudCurrentCharIndex: number = -1;
   @State currentPageStartCharIndex: number = 0;
   @State currentPageEndCharIndex: number = 0;
+  @State overallReadProgressPercent: number = 0;
   @State currentChapterHighlightRanges: TextReaderHighlightRange[] = [];
+  @State isCurrentPageBookmarked: boolean = false;
+  @State currentPageBookmarkId: string = '';
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   private sourceCoverComponentId: string = '';
   private hasNotifiedTransitionReaderReady: boolean = false;
@@ -153,6 +163,8 @@ export struct NovelReaderPage {
   private readAloudProgressSaveInterval: number = 4000;
   private transitionLoadingProgress: number = 0;
   private currentChapterTotalPages: number = 0;
+  private pendingSeekChapterIndex: number = -1;
+  private pendingSeekChapterFraction: number = -1;
   private shouldAutoStartReadAloud: boolean = false;
   private shouldAutoOpenReadAloudPlayer: boolean = false;
   private lastReadAloudResumePersistTime: number = 0;
@@ -246,6 +258,7 @@ export struct NovelReaderPage {
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
     this.syncReadAloudStateFromController();
     this.updateReadAloudContextByPosition();
+    this.refreshCurrentNovelBookmarkState('on_page_show');
     this.readAloudController.refreshMediaSession();
   }
 
@@ -678,6 +691,99 @@ export struct NovelReaderPage {
     }
   }
 
+  private async persistReplaceRulesEnabled(enabled: boolean, trigger: string): Promise<void> {
+    this.replaceRulesEnabled = enabled;
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_SETTINGS_STORE);
+      await store.put(NOVEL_SETTING_ENABLE_REPLACE_RULES, enabled);
+      await store.flush();
+      logger.info(TAG, `净化规则总开关已更新: enabled=${enabled}, trigger=${trigger}`);
+    } catch (error) {
+      logger.warn(TAG, `保存净化规则总开关失败: trigger=${trigger}, error=${String(error)}`);
+    }
+  }
+
+  private async appendScopedReplaceRuleIdIfNeeded(ruleId: string): Promise<void> {
+    if (!ruleId || ruleId.length <= 0) {
+      return;
+    }
+    if (this.scopedReplaceRuleIds === null) {
+      return;
+    }
+    if (this.scopedReplaceRuleIds.indexOf(ruleId) >= 0) {
+      return;
+    }
+    const nextRuleIds = this.scopedReplaceRuleIds.slice();
+    nextRuleIds.push(ruleId);
+    this.scopedReplaceRuleIds = nextRuleIds;
+
+    if (!this.bookId || this.bookId.length <= 0) {
+      return;
+    }
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      const store = await preferences.getPreferences(context, NOVEL_BOOK_RULE_SETTINGS_STORE);
+      await store.put(this.buildScopedReplaceRuleKey(), JSON.stringify(nextRuleIds));
+      await store.flush();
+      logger.info(TAG, `已将新增净化规则纳入当前书籍作用域: ruleId=${ruleId}, total=${nextRuleIds.length}`);
+    } catch (error) {
+      logger.warn(TAG, `保存书籍净化规则作用域失败: ruleId=${ruleId}, error=${String(error)}`);
+    }
+  }
+
+  private async refreshCurrentChapterAfterPurifyRuleAdded(trigger: string): Promise<void> {
+    try {
+      if (this.content && this.content.length > 0) {
+        const ruleManager = NovelReplaceRuleManager.getInstance();
+        const replacedContent = ruleManager.applyRules(this.content, ReplaceScope.CONTENT, this.sourceId);
+        if (replacedContent !== this.content) {
+          this.content = replacedContent;
+          this.readerKey += 1;
+          await this.refreshCurrentChapterHighlightRanges('purify_rule_local_apply');
+          this.syncOverallReadProgress('purify_rule_local_apply');
+          this.refreshCurrentNovelBookmarkState('purify_rule_local_apply');
+          logger.info(TAG, `净化规则已完成本地即时刷新: trigger=${trigger}, chapterIndex=${this.currentChapterIndex}`);
+          return;
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `净化规则本地即时刷新失败，将尝试章节重处理: trigger=${trigger}, error=${String(error)}`);
+    }
+
+    try {
+      let rawContent = await this.cacheManager.getChapterCache(this.bookId, this.currentChapterIndex);
+      if (!rawContent || rawContent.length <= 0) {
+        const currentChapter = this.chapterList[this.currentChapterIndex];
+        if (currentChapter) {
+          rawContent = await this.sourceManager.getContent(this.sourceId, currentChapter);
+        }
+      }
+
+      if (rawContent && rawContent.length > 0) {
+        this.content = this.processChapterContent(
+          rawContent,
+          this.chapterTitle,
+          this.currentChapterIndex,
+          `purify_rule_${trigger}`
+        );
+        this.readerKey += 1;
+        await this.refreshCurrentChapterHighlightRanges('purify_rule_realtime_refresh');
+        this.syncOverallReadProgress('purify_rule_realtime_refresh');
+        this.refreshCurrentNovelBookmarkState('purify_rule_realtime_refresh');
+        logger.info(TAG, `净化规则已实时刷新当前章节: trigger=${trigger}, chapterIndex=${this.currentChapterIndex}`);
+        return;
+      }
+
+      logger.warn(TAG, `净化规则实时刷新未命中原始内容，回退完整重载: trigger=${trigger}`);
+    } catch (error) {
+      logger.warn(TAG, `净化规则实时刷新失败，回退完整重载: trigger=${trigger}, error=${String(error)}`);
+    }
+
+    this.stopCrossChapterPrefetch(true);
+    await this.loadContent();
+  }
+
   private normalizePreloadChapterCount(rawValue: number): number {
     if (!Number.isFinite(rawValue)) {
       return NOVEL_DEFAULT_PRELOAD_CHAPTERS;
@@ -826,6 +932,8 @@ export struct NovelReaderPage {
     this.isLoading = true;
     this.isReadProgressReady = false;
     this.currentChapterHighlightRanges = [];
+    this.isCurrentPageBookmarked = false;
+    this.currentPageBookmarkId = '';
     this.reportTransitionLoadingProgress(0.06, 'load_start');
     try {
       // [优化] 确保净化规则管理器已初始化并加载最新规则
@@ -896,11 +1004,18 @@ export struct NovelReaderPage {
       this.tryHandleAutoReadAloudEntry();
       this.reportTransitionLoadingProgress(0.9, 'progress_restored');
       this.scheduleCrossChapterPrefetch();
+      this.syncOverallReadProgress('load_content_success');
+      this.refreshCurrentNovelBookmarkState('load_content_success');
     } catch (error) {
       logger.error(TAG, `加载正文失败: ${String(error)}`);
       this.content = '加载失败: ' + String(error);
       this.currentChapterHighlightRanges = [];
+      this.pendingSeekChapterIndex = -1;
+      this.pendingSeekChapterFraction = -1;
+      this.isCurrentPageBookmarked = false;
+      this.currentPageBookmarkId = '';
       this.reportTransitionLoadingProgress(0.9, 'load_failed_fallback');
+      this.syncOverallReadProgress('load_content_failed');
     }
     this.isLoading = false;
   }
@@ -926,6 +1041,26 @@ export struct NovelReaderPage {
       if (chapters && chapters.length > 0) {
         this.chapterList = chapters;
         this.totalChapters = chapters.length;
+        let matchedChapterIndex = -1;
+        for (let i = 0; i < chapters.length; i++) {
+          const chapterItem = chapters[i];
+          if (
+            (this.chapterUrl.length > 0 && chapterItem.url === this.chapterUrl) ||
+            (this.chapterId.length > 0 && chapterItem.id && chapterItem.id === this.chapterId)
+          ) {
+            matchedChapterIndex = i;
+            break;
+          }
+        }
+        if (matchedChapterIndex >= 0 && matchedChapterIndex !== this.currentChapterIndex) {
+          logger.info(
+            TAG,
+            `对齐在线小说章节索引: oldIndex=${this.currentChapterIndex}, newIndex=${matchedChapterIndex}, chapterUrl=${this.chapterUrl}`
+          );
+          this.currentChapterIndex = matchedChapterIndex;
+          this.chapterTitle = chapters[matchedChapterIndex].title;
+          this.chapterId = `${this.bookId}_${matchedChapterIndex}`;
+        }
         
         // 转换为TextChapter格式供TextReaderComponent使用
         this.chapters = chapters.map((chapter: LegadoChapter, index: number): TextChapter => {
@@ -940,6 +1075,7 @@ export struct NovelReaderPage {
         });
         
         logger.info(TAG, `Loaded chapter list: ${chapters.length}`);
+        this.syncOverallReadProgress('load_chapter_list');
       }
     } catch (error) {
       logger.error(TAG, `加载章节列表失败: ${String(error)}`);
@@ -1096,15 +1232,21 @@ export struct NovelReaderPage {
     if (!pattern || pattern.trim().length === 0) {
       return;
     }
-    
+
+    const normalizedPattern = pattern.trim();
     try {
+      await this.ensurePreloadSettingsLoaded();
       const ruleManager = NovelReplaceRuleManager.getInstance();
       await ruleManager.initialize();
-      
+
+      if (!this.replaceRulesEnabled) {
+        await this.persistReplaceRulesEnabled(true, 'add_purify_rule_from_selection');
+      }
+
       // 创建新规则
       const ruleParams: AddRuleParams = {
-        name: `Encyclopedia: ${pattern.substring(0, 20)}${pattern.length > 20 ? '...' : ''}` ,
-        pattern: pattern,
+        name: `净化：${normalizedPattern.substring(0, 20)}${normalizedPattern.length > 20 ? '...' : ''}`,
+        pattern: normalizedPattern,
         replacement: '',
         isRegex: false,
         scope: ReplaceScope.CONTENT,
@@ -1112,12 +1254,17 @@ export struct NovelReaderPage {
         order: 100
       };
       
-      await ruleManager.addRule(ruleParams);
-      logger.info(TAG, `已添加净化规则: ${pattern.substring(0, 50)}`);
+      const createdRule = await ruleManager.addRule(ruleParams);
+      await this.appendScopedReplaceRuleIdIfNeeded(createdRule.id);
+      await ruleManager.refreshRules();
+      logger.info(TAG, `已添加净化规则: ${normalizedPattern.substring(0, 50)}`);
       
       // 重新加载当前章节内容以应用新规则
-      this.stopCrossChapterPrefetch(true);
-      this.loadContent();
+      logger.info(
+        TAG,
+        `已添加净化规则并启用: ruleId=${createdRule.id}, chapterIndex=${this.currentChapterIndex}, pattern=${normalizedPattern.substring(0, 50)}`
+      );
+      await this.refreshCurrentChapterAfterPurifyRuleAdded('add_from_selection');
     } catch (error) {
       logger.error(TAG, `添加净化规则失败: ${String(error)}`);
     }
@@ -1126,8 +1273,15 @@ export struct NovelReaderPage {
   onPageChange(pageIndex: number, totalPages: number): void {
     this.currentPageIndex = pageIndex;
     this.currentChapterTotalPages = Math.max(0, totalPages);
+    if (this.tryApplyPendingSeekPage(pageIndex, this.currentChapterTotalPages)) {
+      this.syncOverallReadProgress('page_change_apply_pending_seek');
+      this.refreshCurrentNovelBookmarkState('page_change_apply_pending_seek');
+      return;
+    }
     this.readAloudController.updatePageIndex(pageIndex);
     this.updateReadAloudContextByPosition();
+    this.syncOverallReadProgress('page_change');
+    this.refreshCurrentNovelBookmarkState('page_change');
     logger.debug(TAG, `页面切换: ${pageIndex + 1}/${totalPages}`);
 
     // 页码变化立即落库，避免短时阅读/异常退出时进度丢失
@@ -1146,7 +1300,7 @@ export struct NovelReaderPage {
   /**
   * 切换到指定章节
   */
-  async switchToChapter(chapterIndex: number): Promise<void> {
+  async switchToChapter(chapterIndex: number, pendingChapterFraction: number = -1): Promise<void> {
     if (chapterIndex < 0 || chapterIndex >= this.totalChapters) {
       logger.warn(TAG, '章节列表为空，无法切换');
       return;
@@ -1168,9 +1322,16 @@ export struct NovelReaderPage {
     this.chapterUrl = targetChapter.url;
     this.chapterTitle = targetChapter.title;
     this.chapterId = `${this.bookId}_${chapterIndex}`;
+    this.pendingSeekChapterIndex = pendingChapterFraction >= 0 ? chapterIndex : -1;
+    this.pendingSeekChapterFraction = pendingChapterFraction >= 0
+      ? Math.max(0, Math.min(0.9999, pendingChapterFraction))
+      : -1;
     this.currentPageIndex = 0;
+    this.isCurrentPageBookmarked = false;
+    this.currentPageBookmarkId = '';
     this.stopCrossChapterPrefetch(false);
-    
+    this.syncOverallReadProgress('switch_chapter');
+
     // 重新加载内容
     await this.loadContent();
   }
@@ -1222,6 +1383,105 @@ export struct NovelReaderPage {
     const safeChapterIndex = Math.max(0, Math.min(this.currentChapterIndex, Math.max(0, this.totalChapters - 1)));
     const progressPercent = ((safeChapterIndex + chapterFraction) / this.totalChapters) * 100;
     return Math.max(0, Math.min(100, progressPercent));
+  }
+
+  private clampProgressPercent(value: number): number {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    return Math.max(0, Math.min(100, value));
+  }
+
+  private syncOverallReadProgress(trigger: string): void {
+    const nextPercent = this.clampProgressPercent(this.calculateReadProgressPercent());
+    if (Math.abs(nextPercent - this.overallReadProgressPercent) < 0.01) {
+      return;
+    }
+    this.overallReadProgressPercent = nextPercent;
+    logger.debug(TAG, `同步小说总进度: trigger=${trigger}, progress=${nextPercent.toFixed(2)}%`);
+  }
+
+  private getCurrentPageIndicatorText(): string {
+    const safePageNumber = Math.max(1, this.currentPageIndex + 1);
+    if (this.currentChapterTotalPages > 0) {
+      const boundedPageNumber = Math.max(1, Math.min(safePageNumber, this.currentChapterTotalPages));
+      return `P${boundedPageNumber}/${this.currentChapterTotalPages}`;
+    }
+    return `P${safePageNumber}`;
+  }
+
+  private getCurrentPagePercentText(): string {
+    if (this.currentChapterTotalPages <= 0) {
+      return '0%';
+    }
+    const safePageNumber = Math.max(1, Math.min(this.currentPageIndex + 1, this.currentChapterTotalPages));
+    const percent = Math.round((safePageNumber / this.currentChapterTotalPages) * 100);
+    return `${percent}%`;
+  }
+
+  private buildBottomProgressIndicatorText(): string {
+    return `${this.getCurrentPageIndicatorText()} · ${this.getCurrentPagePercentText()} · 全书${this.overallReadProgressPercent.toFixed(1)}%`;
+  }
+
+  private tryApplyPendingSeekPage(currentPageIndex: number, totalPages: number): boolean {
+    if (this.pendingSeekChapterIndex !== this.currentChapterIndex || this.pendingSeekChapterFraction < 0) {
+      return false;
+    }
+    if (totalPages <= 0) {
+      return false;
+    }
+    const safeFraction = Math.max(0, Math.min(0.9999, this.pendingSeekChapterFraction));
+    const targetPageIndex = Math.max(0, Math.min(totalPages - 1, Math.floor(totalPages * safeFraction)));
+    this.pendingSeekChapterIndex = -1;
+    this.pendingSeekChapterFraction = -1;
+    if (targetPageIndex === currentPageIndex) {
+      return false;
+    }
+    this.currentPageIndex = targetPageIndex;
+    logger.info(
+      TAG,
+      `应用跨章节进度定位: chapterIndex=${this.currentChapterIndex}, pageIndex=${targetPageIndex}, totalPages=${totalPages}`
+    );
+    return true;
+  }
+
+  private seekToOverallProgress(targetPercent: number): void {
+    if (this.totalChapters <= 0) {
+      return;
+    }
+    const safePercent = this.clampProgressPercent(targetPercent);
+    const normalized = safePercent / 100;
+    const chapterFloat = normalized * this.totalChapters;
+    let targetChapterIndex = Math.floor(chapterFloat);
+    if (targetChapterIndex >= this.totalChapters) {
+      targetChapterIndex = this.totalChapters - 1;
+    }
+    targetChapterIndex = Math.max(0, targetChapterIndex);
+    const chapterFraction = Math.max(0, Math.min(0.9999, chapterFloat - targetChapterIndex));
+
+    if (targetChapterIndex === this.currentChapterIndex) {
+      if (this.currentChapterTotalPages > 0) {
+        const targetPageIndex = Math.max(
+          0,
+          Math.min(this.currentChapterTotalPages - 1, Math.floor(this.currentChapterTotalPages * chapterFraction))
+        );
+        if (targetPageIndex !== this.currentPageIndex) {
+          this.currentPageIndex = targetPageIndex;
+          logger.info(
+            TAG,
+            `小说进度条定位当前章节页: progress=${safePercent.toFixed(2)}%, chapterIndex=${targetChapterIndex}, pageIndex=${targetPageIndex}`
+          );
+        }
+      }
+      this.syncOverallReadProgress('seek_same_chapter');
+      return;
+    }
+
+    logger.info(
+      TAG,
+      `小说进度条定位章节: progress=${safePercent.toFixed(2)}%, fromChapter=${this.currentChapterIndex}, toChapter=${targetChapterIndex}, fraction=${chapterFraction.toFixed(3)}`
+    );
+    void this.switchToChapter(targetChapterIndex, chapterFraction);
   }
 
   async saveReadProgress(): Promise<void> {
@@ -1390,6 +1650,8 @@ export struct NovelReaderPage {
       this.readAloudCurrentCharIndex = this.currentPageStartCharIndex;
     }
     this.updateReadAloudContextByPosition();
+    this.syncOverallReadProgress('page_char_range_change');
+    this.refreshCurrentNovelBookmarkState('page_char_range_change');
   }
 
   private onTextUserPageTurnStart(): void {
@@ -1539,6 +1801,221 @@ export struct NovelReaderPage {
     this.toggleToolbar();
   }
 
+  private getNovelBookmarkPageLabel(): string {
+    if (this.currentChapterTotalPages > 0) {
+      const safePage = Math.max(1, Math.min(this.currentPageIndex + 1, this.currentChapterTotalPages));
+      return `${safePage}/${this.currentChapterTotalPages}`;
+    }
+    return `${Math.max(1, this.currentPageIndex + 1)}`;
+  }
+
+  private buildNovelBookmarkTitle(): string {
+    const chapterName = this.chapterTitle || `第${this.currentChapterIndex + 1}章`;
+    return `${chapterName} · P${this.getNovelBookmarkPageLabel()}`;
+  }
+
+  private computeParagraphIndexByOffset(offset: number): number {
+    if (!this.content || this.content.length <= 0) {
+      return -1;
+    }
+    const safeOffset = Math.max(0, Math.min(Math.floor(offset), this.content.length - 1));
+    let paragraphIndex = 0;
+    for (let i = 0; i < safeOffset; i++) {
+      const ch = this.content.charAt(i);
+      if (ch === '\n') {
+        paragraphIndex += 1;
+      }
+    }
+    return paragraphIndex;
+  }
+
+  private resolveNovelBookmarkParagraphRange(): HighlightOffsetRange {
+    const contentLength = this.content ? this.content.length : 0;
+    const fallbackStart = Math.max(0, Math.floor(this.currentPageStartCharIndex));
+    const fallbackEnd = Math.max(fallbackStart + 1, Math.floor(this.currentPageEndCharIndex));
+    if (contentLength <= 0) {
+      return {
+        start: fallbackStart,
+        end: fallbackEnd
+      };
+    }
+
+    const safePageStart = Math.max(0, Math.min(fallbackStart, contentLength - 1));
+    const safePageEnd = Math.max(
+      safePageStart + 1,
+      Math.min(Math.max(fallbackEnd, safePageStart + 1), contentLength)
+    );
+    let paragraphStart = safePageStart;
+    for (let index = safePageStart - 1; index >= 0; index--) {
+      const ch = this.content.charAt(index);
+      if (ch === '\n' || ch === '\r') {
+        paragraphStart = index + 1;
+        break;
+      }
+      if (index === 0) {
+        paragraphStart = 0;
+      }
+    }
+    paragraphStart = Math.max(safePageStart, Math.min(paragraphStart, safePageEnd - 1));
+
+    let paragraphEnd = safePageEnd;
+    for (let index = paragraphStart; index < contentLength; index++) {
+      const ch = this.content.charAt(index);
+      if (ch === '\n' || ch === '\r') {
+        paragraphEnd = index;
+        break;
+      }
+      if (index >= safePageEnd - 1) {
+        paragraphEnd = safePageEnd;
+        break;
+      }
+    }
+    paragraphEnd = Math.max(paragraphStart + 1, Math.min(paragraphEnd, safePageEnd));
+    return {
+      start: paragraphStart,
+      end: paragraphEnd
+    };
+  }
+
+  private buildCurrentNovelBookmarkAnchor(): AnnotationAnchor {
+    const paragraphRange = this.resolveNovelBookmarkParagraphRange();
+    const contentLength = this.content ? this.content.length : 0;
+    let quoteText = '';
+    if (contentLength > 0 && paragraphRange.end > paragraphRange.start) {
+      quoteText = this.content.substring(paragraphRange.start, paragraphRange.end).trim();
+    }
+    const normalizedQuote = quoteText.length > 120 ? quoteText.substring(0, 120) : quoteText;
+    const anchor = this.buildCurrentAnchor(normalizedQuote, paragraphRange.start, paragraphRange.end);
+    anchor.paragraphIndex = this.computeParagraphIndexByOffset(paragraphRange.start);
+    anchor.paragraphStartOffset = paragraphRange.start;
+    anchor.paragraphEndOffset = paragraphRange.end;
+    return anchor;
+  }
+
+  private isNovelBookmarkInCurrentPage(record: UnifiedAnnotationRecord): boolean {
+    if (record.pageIndex >= 0 && record.pageIndex === this.currentPageIndex) {
+      return true;
+    }
+    const pageStart = this.currentPageStartCharIndex;
+    const pageEnd = this.currentPageEndCharIndex;
+    if (pageEnd <= pageStart) {
+      return false;
+    }
+    const recordStart = Math.max(0, Math.floor(record.startOffset));
+    const recordEnd = Math.max(recordStart + 1, Math.floor(record.endOffset));
+    if (record.startOffset >= 0 && record.endOffset >= 0 && recordStart < pageEnd && recordEnd > pageStart) {
+      return true;
+    }
+    const anchorStart = typeof record.anchor.paragraphStartOffset === 'number'
+      ? Math.max(0, Math.floor(record.anchor.paragraphStartOffset))
+      : -1;
+    const anchorEnd = typeof record.anchor.paragraphEndOffset === 'number'
+      ? Math.max(anchorStart + 1, Math.floor(record.anchor.paragraphEndOffset))
+      : -1;
+    if (anchorStart >= 0 && anchorEnd > anchorStart && anchorStart < pageEnd && anchorEnd > pageStart) {
+      return true;
+    }
+    return false;
+  }
+
+  private refreshCurrentNovelBookmarkState(trigger: string): void {
+    void this.refreshCurrentNovelBookmarkStateInternal(trigger);
+  }
+
+  private async refreshCurrentNovelBookmarkStateInternal(trigger: string): Promise<void> {
+    if (!this.bookId) {
+      this.isCurrentPageBookmarked = false;
+      this.currentPageBookmarkId = '';
+      return;
+    }
+    try {
+      const bookmarks = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.NOVEL,
+        this.bookId,
+        UnifiedAnnotationType.BOOKMARK,
+        this.chapterId,
+        this.currentChapterIndex
+      );
+      let matchedId = '';
+      for (let i = 0; i < bookmarks.length; i++) {
+        const item = bookmarks[i];
+        if (this.isNovelBookmarkInCurrentPage(item)) {
+          matchedId = item.id;
+          break;
+        }
+      }
+      this.currentPageBookmarkId = matchedId;
+      this.isCurrentPageBookmarked = matchedId.length > 0;
+      logger.debug(
+        TAG,
+        `刷新小说书签状态: trigger=${trigger}, chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, bookmarked=${this.isCurrentPageBookmarked}, bookmarkId=${matchedId || 'none'}`
+      );
+    } catch (error) {
+      logger.error(TAG, `刷新小说书签状态失败: trigger=${trigger}, error=${String(error)}`);
+      this.isCurrentPageBookmarked = false;
+      this.currentPageBookmarkId = '';
+    }
+  }
+
+  private async createCurrentNovelBookmark(): Promise<void> {
+    if (!this.bookId) {
+      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
+      return;
+    }
+    try {
+      const anchor = this.buildCurrentNovelBookmarkAnchor();
+      const bookmark = await this.annotationManager.createBookmark({
+        contentType: UnifiedContentType.NOVEL,
+        contentId: this.bookId,
+        title: this.buildNovelBookmarkTitle(),
+        anchor
+      });
+      this.currentPageBookmarkId = bookmark.id;
+      this.isCurrentPageBookmarked = true;
+      promptAction.showToast({ message: '书签已添加', duration: 1200 });
+      logger.info(
+        TAG,
+        `小说书签添加成功: chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, paragraphIndex=${anchor.paragraphIndex ?? -1}, bookmarkId=${bookmark.id}`
+      );
+    } catch (error) {
+      logger.error(TAG, `添加小说书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '添加书签失败', duration: 1500 });
+    }
+  }
+
+  private async removeCurrentNovelBookmark(): Promise<void> {
+    let bookmarkId = this.currentPageBookmarkId;
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      await this.refreshCurrentNovelBookmarkStateInternal('remove_before_refresh');
+      bookmarkId = this.currentPageBookmarkId;
+    }
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      promptAction.showToast({ message: '当前页暂无书签', duration: 1200 });
+      return;
+    }
+    try {
+      await this.annotationManager.deleteAnnotation(bookmarkId);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      promptAction.showToast({ message: '书签已移除', duration: 1200 });
+      logger.info(
+        TAG,
+        `小说书签移除成功: chapterIndex=${this.currentChapterIndex}, pageIndex=${this.currentPageIndex}, bookmarkId=${bookmarkId}`
+      );
+    } catch (error) {
+      logger.error(TAG, `移除小说书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '移除书签失败', duration: 1500 });
+    }
+  }
+
+  private toggleCurrentNovelBookmark(): void {
+    if (this.isCurrentPageBookmarked) {
+      void this.removeCurrentNovelBookmark();
+      return;
+    }
+    void this.createCurrentNovelBookmark();
+  }
+
   private buildCurrentAnchor(selectedText?: string, startOffset?: number, endOffset?: number): AnnotationAnchor {
     const hasTotalPages = this.currentChapterTotalPages > 0;
     const safePageIndex = Math.max(0, this.currentPageIndex);
@@ -1586,6 +2063,70 @@ export struct NovelReaderPage {
     }
   }
 
+  private parseHighlightLineType(styleJson: string): HighlightLineType {
+    if (!styleJson || styleJson.trim().length <= 0) {
+      return HighlightLineType.UNDERLINE;
+    }
+    try {
+      const style = JSON.parse(styleJson) as HighlightStyle;
+      if (style && style.lineType === HighlightLineType.WAVY) {
+        return HighlightLineType.WAVY;
+      }
+      return HighlightLineType.UNDERLINE;
+    } catch (_error) {
+      return HighlightLineType.UNDERLINE;
+    }
+  }
+
+  private calculateContextMatchScore(position: number, quoteText: string, contextBefore: string, contextAfter: string): number {
+    if (!this.content || this.content.length <= 0) {
+      return 0;
+    }
+    let score = 0;
+    const safeQuoteLength = quoteText.length;
+
+    if (contextBefore.length > 0) {
+      const beforeStart = Math.max(0, position - contextBefore.length);
+      const actualBefore = this.content.substring(beforeStart, position);
+      if (actualBefore === contextBefore) {
+        score += contextBefore.length * 2;
+      } else {
+        let suffixMatch = 0;
+        const minLen = Math.min(actualBefore.length, contextBefore.length);
+        for (let i = 1; i <= minLen; i++) {
+          const actualChar = actualBefore.charAt(actualBefore.length - i);
+          const expectedChar = contextBefore.charAt(contextBefore.length - i);
+          if (actualChar !== expectedChar) {
+            break;
+          }
+          suffixMatch += 1;
+        }
+        score += suffixMatch;
+      }
+    }
+
+    if (contextAfter.length > 0) {
+      const afterStart = Math.min(this.content.length, position + safeQuoteLength);
+      const afterEnd = Math.min(this.content.length, afterStart + contextAfter.length);
+      const actualAfter = this.content.substring(afterStart, afterEnd);
+      if (actualAfter === contextAfter) {
+        score += contextAfter.length * 2;
+      } else {
+        let prefixMatch = 0;
+        const minLen = Math.min(actualAfter.length, contextAfter.length);
+        for (let i = 0; i < minLen; i++) {
+          if (actualAfter.charAt(i) !== contextAfter.charAt(i)) {
+            break;
+          }
+          prefixMatch += 1;
+        }
+        score += prefixMatch;
+      }
+    }
+
+    return score;
+  }
+
   private resolveHighlightOffsetRange(record: UnifiedAnnotationRecord): HighlightOffsetRange | null {
     const contentLength = this.content ? this.content.length : 0;
     if (contentLength <= 0) {
@@ -1614,22 +2155,37 @@ export struct NovelReaderPage {
     const searchPivot = Math.max(0, Math.min(rawStart, contentLength - 1));
     const searchFrom = Math.max(0, searchPivot - 1200);
     const searchTo = Math.min(contentLength, searchPivot + 1200);
-    let resolvedStart = -1;
+    const candidates: number[] = [];
     let cursor = this.content.indexOf(quote, searchFrom);
-    let nearestDistance = Number.MAX_SAFE_INTEGER;
     while (cursor >= 0 && cursor < searchTo) {
-      const distance = Math.abs(cursor - searchPivot);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        resolvedStart = cursor;
-      }
+      candidates.push(cursor);
       cursor = this.content.indexOf(quote, cursor + 1);
     }
-    if (resolvedStart < 0) {
-      resolvedStart = this.content.indexOf(quote);
+    if (candidates.length <= 0) {
+      let globalCursor = this.content.indexOf(quote);
+      while (globalCursor >= 0 && candidates.length < 24) {
+        candidates.push(globalCursor);
+        globalCursor = this.content.indexOf(quote, globalCursor + 1);
+      }
     }
-    if (resolvedStart < 0) {
+    if (candidates.length <= 0) {
       return null;
+    }
+
+    const contextBefore = record.anchor && record.anchor.contextBefore ? record.anchor.contextBefore : '';
+    const contextAfter = record.anchor && record.anchor.contextAfter ? record.anchor.contextAfter : '';
+    let resolvedStart = candidates[0];
+    let bestScore = -1;
+    let nearestDistance = Number.MAX_SAFE_INTEGER;
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      const score = this.calculateContextMatchScore(candidate, quote, contextBefore, contextAfter);
+      const distance = Math.abs(candidate - searchPivot);
+      if (score > bestScore || (score === bestScore && distance < nearestDistance)) {
+        bestScore = score;
+        nearestDistance = distance;
+        resolvedStart = candidate;
+      }
     }
 
     start = resolvedStart;
@@ -1654,10 +2210,44 @@ export struct NovelReaderPage {
       const records = await this.annotationManager.getContentAnnotations(
         UnifiedContentType.NOVEL,
         this.bookId,
-        UnifiedAnnotationType.HIGHLIGHT
+        UnifiedAnnotationType.HIGHLIGHT,
+        this.chapterId,
+        this.currentChapterIndex
       );
+      const thoughtRecords = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.NOVEL,
+        this.bookId,
+        UnifiedAnnotationType.THOUGHT,
+        this.chapterId,
+        this.currentChapterIndex
+      );
+      const thoughtByHighlightId: Map<string, string> = new Map<string, string>();
+      const thoughtByAnchorKey: Map<string, string> = new Map<string, string>();
+      for (let i = 0; i < thoughtRecords.length; i++) {
+        const thoughtRecord = thoughtRecords[i];
+        let thoughtSameChapter = false;
+        if (thoughtRecord.chapterId && this.chapterId) {
+          thoughtSameChapter = thoughtRecord.chapterId === this.chapterId;
+        } else if (thoughtRecord.chapterIndex >= 0) {
+          thoughtSameChapter = thoughtRecord.chapterIndex === this.currentChapterIndex;
+        }
+        if (!thoughtSameChapter) {
+          continue;
+        }
+        const thoughtText = (thoughtRecord.textContent || '').trim();
+        if (thoughtRecord.linkedAnnotationId && thoughtRecord.linkedAnnotationId.length > 0) {
+          if (!thoughtByHighlightId.has(thoughtRecord.linkedAnnotationId)) {
+            thoughtByHighlightId.set(thoughtRecord.linkedAnnotationId, thoughtText);
+          }
+        }
+        const thoughtAnchorKey = `${Math.floor(thoughtRecord.startOffset)}_${Math.floor(thoughtRecord.endOffset)}_${thoughtRecord.quoteText || ''}`;
+        if (!thoughtByAnchorKey.has(thoughtAnchorKey)) {
+          thoughtByAnchorKey.set(thoughtAnchorKey, thoughtText);
+        }
+      }
       const ranges: TextReaderHighlightRange[] = [];
       let fallbackByQuoteCount = 0;
+      let linkedThoughtCount = 0;
       for (let i = 0; i < records.length; i++) {
         const record = records[i];
 
@@ -1685,13 +2275,24 @@ export struct NovelReaderPage {
         }
         const finalStart = resolvedRange ? resolvedRange.start : rawStart;
         const finalEnd = resolvedRange ? resolvedRange.end : rawEnd;
+        let thoughtText = thoughtByHighlightId.get(record.id) || '';
+        if (thoughtText.length <= 0) {
+          const finalAnchorKey = `${finalStart}_${finalEnd}_${quoteText}`;
+          const rawAnchorKey = `${rawStart}_${rawEnd}_${quoteText}`;
+          thoughtText = thoughtByAnchorKey.get(finalAnchorKey) || thoughtByAnchorKey.get(rawAnchorKey) || '';
+        }
+        if (thoughtText.trim().length > 0) {
+          linkedThoughtCount += 1;
+        }
         const range: TextReaderHighlightRange = {
           id: record.id,
           startOffset: finalStart,
           endOffset: finalEnd,
           color: this.parseHighlightColor(record.styleJson),
+          lineType: this.parseHighlightLineType(record.styleJson),
           quoteText,
-          pageIndex: record.pageIndex
+          pageIndex: record.pageIndex,
+          thoughtText
         };
         ranges.push(range);
       }
@@ -1715,7 +2316,7 @@ export struct NovelReaderPage {
       logger.info(TAG, `小说划线刷新摘要: trigger=${trigger}, quoteFallback=${fallbackByQuoteCount}, preview=[${preview}]`);
       logger.info(
         TAG,
-        `刷新小说划线渲染数据成功: trigger=${trigger}, chapterIndex=${this.currentChapterIndex}, count=${ranges.length}, pageRange=${this.currentPageStartCharIndex}-${this.currentPageEndCharIndex}, hitInPage=${currentPageHitCount}`
+        `刷新小说划线渲染数据成功: trigger=${trigger}, chapterIndex=${this.currentChapterIndex}, count=${ranges.length}, thoughtLinked=${linkedThoughtCount}, pageRange=${this.currentPageStartCharIndex}-${this.currentPageEndCharIndex}, hitInPage=${currentPageHitCount}`
       );
     } catch (error) {
       this.currentChapterHighlightRanges = [];
@@ -1724,46 +2325,7 @@ export struct NovelReaderPage {
   }
 
   private addCurrentNovelBookmark(): void {
-    if (!this.bookId) {
-      promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
-      return;
-    }
-    const chapterName = this.chapterTitle || `第${this.currentChapterIndex + 1}章`;
-    const pageLabel = this.currentChapterTotalPages > 0
-      ? `${this.currentPageIndex + 1}/${this.currentChapterTotalPages}`
-      : `${this.currentPageIndex + 1}`;
-
-    promptAction.showActionMenu({
-      title: '书签标题',
-      buttons: [
-        { text: chapterName, color: '#007AFF' },
-        { text: `${chapterName} | P${pageLabel}`, color: '#007AFF' },
-        { text: '仅记录位置', color: '#007AFF' },
-        { text: '取消', color: '#999999' }
-      ]
-    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === 3) {
-        return;
-      }
-      let marker = '';
-      if (result.index === 0) {
-        marker = chapterName;
-      } else if (result.index === 1) {
-        marker = `${chapterName} | P${pageLabel}`;
-      }
-      try {
-        await this.annotationManager.createBookmark({
-          contentType: UnifiedContentType.NOVEL,
-          contentId: this.bookId,
-          title: marker,
-          anchor: this.buildCurrentAnchor(undefined, this.currentPageStartCharIndex, this.currentPageEndCharIndex)
-        });
-        promptAction.showToast({ message: '书签已添加', duration: 1500 });
-      } catch (error) {
-        logger.error(TAG, `添加小说书签失败: ${String(error)}`);
-        promptAction.showToast({ message: '添加书签失败', duration: 1500 });
-      }
-    }).catch(() => {});
+    this.toggleCurrentNovelBookmark();
   }
 
   private openCurrentNovelAnnotationCenter(): void {
@@ -1774,13 +2336,21 @@ export struct NovelReaderPage {
     const params: AnnotationCenterPageParams = {
       contentType: UnifiedContentType.NOVEL,
       contentId: this.bookId,
-      contentTitle: this.bookName
+      contentTitle: this.bookName,
+      readerContext: {
+        novel: {
+          sourceId: this.sourceId,
+          bookUrl: this.bookUrl,
+          tocUrl: this.tocUrl
+        }
+      }
     };
     try {
+      this.restoreNormalMode();
       this.pathStack.pushPathByName('AnnotationCenterPage', params);
     } catch (error) {
-      logger.error(TAG, `打开摘录中心失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开摘录中心失败', duration: 1500 });
+      logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+      promptAction.showToast({ message: '打开灵感页面失败', duration: 1500 });
     }
   }
 
@@ -1800,6 +2370,154 @@ export struct NovelReaderPage {
     void this.createNovelHighlightByStyle(selectedText, globalStart, globalEnd, true);
   }
 
+  private onUpdateNovelHighlightStyle(highlightId: string, lineType: HighlightLineType, color: string): void {
+    this.applyLocalNovelHighlightStyle(highlightId, lineType, color);
+    void this.updateNovelHighlightStyle(highlightId, lineType, color);
+  }
+
+  private onUpdateNovelHighlightThought(highlightId: string, thoughtText: string): void {
+    this.applyLocalNovelHighlightThought(highlightId, thoughtText);
+    void this.updateNovelHighlightThought(highlightId, thoughtText);
+  }
+
+  private applyLocalNovelHighlightStyle(highlightId: string, lineType: HighlightLineType, color: string): void {
+    if (!highlightId || highlightId.length <= 0 || this.currentChapterHighlightRanges.length <= 0) {
+      return;
+    }
+    const safeColor = color && color.trim().length > 0 ? color : '#E8A317';
+    let changed = false;
+    const updatedRanges: TextReaderHighlightRange[] = [];
+    for (let i = 0; i < this.currentChapterHighlightRanges.length; i++) {
+      const item = this.currentChapterHighlightRanges[i];
+      if (item.id === highlightId) {
+        updatedRanges.push({
+          id: item.id,
+          startOffset: item.startOffset,
+          endOffset: item.endOffset,
+          color: safeColor,
+          lineType,
+          quoteText: item.quoteText,
+          pageIndex: item.pageIndex,
+          thoughtText: item.thoughtText
+        });
+        changed = true;
+      } else {
+        updatedRanges.push(item);
+      }
+    }
+    if (changed) {
+      this.currentChapterHighlightRanges = updatedRanges;
+      logger.info(TAG, `小说划线样式本地刷新成功: highlightId=${highlightId}, lineType=${lineType}, color=${safeColor}`);
+    }
+  }
+
+  private applyLocalNovelHighlightThought(highlightId: string, thoughtText: string): void {
+    if (!highlightId || highlightId.length <= 0 || this.currentChapterHighlightRanges.length <= 0) {
+      return;
+    }
+    const safeThoughtText = thoughtText.trim();
+    let changed = false;
+    const updatedRanges: TextReaderHighlightRange[] = [];
+    for (let i = 0; i < this.currentChapterHighlightRanges.length; i++) {
+      const item = this.currentChapterHighlightRanges[i];
+      if (item.id === highlightId) {
+        updatedRanges.push({
+          id: item.id,
+          startOffset: item.startOffset,
+          endOffset: item.endOffset,
+          color: item.color,
+          lineType: item.lineType,
+          quoteText: item.quoteText,
+          pageIndex: item.pageIndex,
+          thoughtText: safeThoughtText
+        });
+        changed = true;
+      } else {
+        updatedRanges.push(item);
+      }
+    }
+    if (changed) {
+      this.currentChapterHighlightRanges = updatedRanges;
+      logger.info(TAG, `小说划线想法本地刷新成功: highlightId=${highlightId}, textLength=${safeThoughtText.length}`);
+    }
+  }
+
+  private async updateNovelHighlightStyle(highlightId: string, lineType: HighlightLineType, color: string): Promise<void> {
+    if (!this.bookId || !highlightId || highlightId.length <= 0) {
+      return;
+    }
+    const safeColor = color && color.trim().length > 0 ? color : '#E8A317';
+    logger.info(
+      TAG,
+      `开始更新小说划线样式: highlightId=${highlightId}, lineType=${lineType}, color=${safeColor}`
+    );
+    try {
+      await this.annotationManager.updateHighlightStyle(highlightId, {
+        lineType,
+        color: safeColor
+      });
+      await this.refreshCurrentChapterHighlightRanges('update_highlight_style');
+      logger.info(
+        TAG,
+        `小说划线样式更新成功: highlightId=${highlightId}, lineType=${lineType}, color=${safeColor}`
+      );
+    } catch (error) {
+      logger.error(TAG, `更新小说划线样式失败: highlightId=${highlightId}, error=${String(error)}`);
+    }
+  }
+
+  private async updateNovelHighlightThought(highlightId: string, thoughtText: string): Promise<void> {
+    if (!this.bookId || !highlightId || highlightId.length <= 0) {
+      return;
+    }
+    const safeThoughtText = thoughtText.trim();
+    logger.info(
+      TAG,
+      `开始更新小说划线想法: highlightId=${highlightId}, textLength=${safeThoughtText.length}`
+    );
+    try {
+      const linkedThought = await this.annotationManager.getLinkedThoughtByHighlightId(
+        UnifiedContentType.NOVEL,
+        this.bookId,
+        highlightId
+      );
+
+      if (linkedThought) {
+        await this.annotationManager.updateAnnotationText(linkedThought.id, linkedThought.title || '', safeThoughtText);
+      } else if (safeThoughtText.length > 0) {
+        const targetHighlight = await this.annotationManager.getAnnotationById(highlightId);
+        if (!targetHighlight) {
+          logger.warn(TAG, `更新小说划线想法失败: 未找到对应划线, highlightId=${highlightId}`);
+          return;
+        }
+        const anchor: AnnotationAnchor = {
+          chapterId: targetHighlight.chapterId,
+          chapterTitle: targetHighlight.chapterTitle,
+          chapterIndex: targetHighlight.chapterIndex,
+          pageIndex: targetHighlight.pageIndex,
+          progress: targetHighlight.pageProgress,
+          startOffset: targetHighlight.startOffset,
+          endOffset: targetHighlight.endOffset,
+          quoteText: targetHighlight.quoteText
+        };
+        await this.annotationManager.createThought({
+          contentId: this.bookId,
+          anchor,
+          textContent: safeThoughtText,
+          linkedAnnotationId: highlightId
+        });
+      }
+
+      await this.refreshCurrentChapterHighlightRanges('update_highlight_thought');
+      logger.info(
+        TAG,
+        `小说划线想法更新成功: highlightId=${highlightId}, textLength=${safeThoughtText.length}`
+      );
+    } catch (error) {
+      logger.error(TAG, `更新小说划线想法失败: highlightId=${highlightId}, error=${String(error)}`);
+    }
+  }
+
   private async onAddNovelThought(selectedText: string, globalStart: number, globalEnd: number): Promise<void> {
     if (!this.bookId) {
       promptAction.showToast({ message: '书籍信息未就绪', duration: 1500 });
@@ -1811,6 +2529,7 @@ export struct NovelReaderPage {
         anchor: this.buildCurrentAnchor(selectedText, globalStart, globalEnd),
         textContent: ''
       });
+      await this.refreshCurrentChapterHighlightRanges('create_thought');
       promptAction.showToast({ message: '想法已保存', duration: 1500 });
     } catch (error) {
       logger.error(TAG, `创建小说想法失败: ${String(error)}`);
@@ -1837,26 +2556,28 @@ export struct NovelReaderPage {
     );
 
     try {
-      const highlight = await this.annotationManager.createHighlight({
+      const anchor = this.buildCurrentAnchor(selectedText, globalStart, globalEnd);
+      const thoughtPayload: CreateThoughtInput | undefined = withThought
+        ? {
+            contentId: this.bookId,
+            anchor: anchor,
+            textContent: ''
+          }
+        : undefined;
+      const highlight = await this.annotationManager.createHighlightWithThoughtTransaction({
         contentId: this.bookId,
-        anchor: this.buildCurrentAnchor(selectedText, globalStart, globalEnd),
+        anchor,
         style: {
           lineType,
           color
         }
-      });
+      }, thoughtPayload);
       logger.info(
         TAG,
         `小说划线创建成功: annotationId=${highlight.id}, chapterIndex=${this.currentChapterIndex}, start=${globalStart}, end=${globalEnd}`
       );
 
       if (withThought) {
-        await this.annotationManager.createThought({
-          contentId: this.bookId,
-          anchor: this.buildCurrentAnchor(selectedText, globalStart, globalEnd),
-          textContent: '',
-          linkedAnnotationId: highlight.id
-        });
         logger.info(TAG, `划线关联想法创建成功: linkedAnnotationId=${highlight.id}`);
       }
 
@@ -2166,6 +2887,14 @@ export struct NovelReaderPage {
         this.chapterTitle = param.chapterTitle;
         this.currentChapterIndex = param.chapterIndex;
         this.totalChapters = param.totalChapters;
+        if (typeof param.chapterPageIndex === 'number' && Number.isFinite(param.chapterPageIndex) && param.chapterPageIndex >= 0) {
+          this.currentPageIndex = Math.floor(param.chapterPageIndex);
+          logger.info(TAG, `应用小说定位页码参数: pageIndex=${this.currentPageIndex}`);
+        }
+        if (typeof param.chapterStartOffset === 'number' && Number.isFinite(param.chapterStartOffset) && param.chapterStartOffset >= 0) {
+          this.currentPageStartCharIndex = Math.floor(param.chapterStartOffset);
+          logger.info(TAG, `应用小说定位字符偏移参数: startOffset=${this.currentPageStartCharIndex}`);
+        }
         this.tocUrl = param.tocUrl || param.bookUrl; // 使用传递的tocUrl或bookUrl
         // 生成bookId和chapterId
         this.bookId = `${param.sourceId}_${encodeURIComponent(param.bookUrl)}`;
@@ -2173,6 +2902,7 @@ export struct NovelReaderPage {
         this.bookCoverUrl = param.coverUrl || '';
         this.shouldAutoStartReadAloud = param.autoStartReadAloud === true;
         this.shouldAutoOpenReadAloudPlayer = param.autoOpenReadAloudPlayer === true;
+        this.syncOverallReadProgress('on_ready_params');
         AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
         this.loadSettings();
         this.loadContent();
@@ -2256,7 +2986,11 @@ export struct NovelReaderPage {
       onAddHighlightWithThought: (selectedText: string, globalStart: number, globalEnd: number) =>
         this.onAddNovelHighlightWithThought(selectedText, globalStart, globalEnd),
       onAddThought: (selectedText: string, globalStart: number, globalEnd: number) =>
-        this.onAddNovelThought(selectedText, globalStart, globalEnd)
+        this.onAddNovelThought(selectedText, globalStart, globalEnd),
+      onUpdateHighlightStyle: (highlightId: string, lineType: HighlightLineType, color: string) =>
+        this.onUpdateNovelHighlightStyle(highlightId, lineType, color),
+      onUpdateHighlightThought: (highlightId: string, thoughtText: string) =>
+        this.onUpdateNovelHighlightThought(highlightId, thoughtText)
     })
       .width('100%')
       .height('100%')
@@ -2292,9 +3026,9 @@ export struct NovelReaderPage {
         .margin({ left: 12 })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.bookmark'))
+        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
           .fontSize(20)
-          .fontColor([$r('app.color.text_primary')])
+          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary')])
       }
       .width(48)
       .height(48)
@@ -2304,7 +3038,7 @@ export struct NovelReaderPage {
       })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.list_bullet'))
+        SymbolGlyph($r('sys.symbol.stickers'))
           .fontSize(20)
           .fontColor([$r('app.color.text_primary')])
       }
@@ -2340,7 +3074,7 @@ export struct NovelReaderPage {
           .layoutWeight(1)
           .fontFamily(this.appFontFamily)
         
-        Text(`${this.currentChapterIndex + 1} / ${this.totalChapters}`)
+        Text(this.buildBottomProgressIndicatorText())
           .fontSize(12)
           .fontColor($r('app.color.text_secondary'))
           .fontFamily(this.appFontFamily)
@@ -2351,20 +3085,17 @@ export struct NovelReaderPage {
       // 章节进度条
       Row() {
         Slider({
-          value: this.currentChapterIndex,
+          value: this.overallReadProgressPercent,
           min: 0,
-          max: Math.max(0, this.totalChapters - 1),
-          step: 1
+          max: 100,
+          step: 0.1
         })
           .layoutWeight(1)
           .trackColor($r('app.color.divider_primary'))
           .selectedColor($r('app.color.accent_primary'))
           .onChange((value: number, mode: SliderChangeMode) => {
             if (mode === SliderChangeMode.End) {
-              const targetIndex = Math.round(value);
-              if (targetIndex !== this.currentChapterIndex) {
-                this.switchToChapter(targetIndex);
-              }
+              this.seekToOverallProgress(value);
             }
           })
       }

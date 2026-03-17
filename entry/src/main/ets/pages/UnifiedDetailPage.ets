@@ -4551,13 +4551,21 @@ export struct UnifiedDetailPage {
 
   private openNovelTxtTocRulePage(): void {
     void this.requestCloseNovelSettingsDialog(() => {
-      this.pathStack.pushPathByName('NovelTxtTocRulePage', null);
+      try {
+        this.pathStack.pushPathByName('NovelTxtTocRulePage', null);
+      } catch (error) {
+        logger.error(TAG, `打开TXT目录规则页失败: ${String(error)}`);
+      }
     });
   }
 
   private openNovelReplaceRulePage(): void {
     void this.requestCloseNovelSettingsDialog(() => {
-      this.pathStack.pushPathByName('NovelReplaceRulePage', null);
+      try {
+        this.pathStack.pushPathByName('NovelReplaceRulePage', null);
+      } catch (error) {
+        logger.error(TAG, `打开净化规则页失败: ${String(error)}`);
+      }
     });
   }
 

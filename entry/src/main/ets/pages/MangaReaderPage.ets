@@ -5,6 +5,7 @@
   */
 
 import { logger } from '../Utils/Logger';
+import { common } from '@kit.AbilityKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
@@ -55,6 +56,8 @@ import { ChapterPreloadManager } from '../Framework/Preload/ChapterPreloadManage
 import { webview } from '@kit.ArkWeb';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileUri } from '@kit.CoreFileKit';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { KeyCode, inputConsumer } from '@kit.InputKit';
 import type { KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -65,6 +68,7 @@ import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { PageLifecycleManager, CancellationError } from '../Framework/Lifecycle';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
+import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
 
 const TAG = 'MangaReaderPage';
@@ -243,6 +247,15 @@ interface WebtoonAdjacentChapterLoadTarget {
   chapter: MangaChapter;
 }
 
+interface MangaBookmarkContext {
+  mangaId: string;
+  chapter: MangaChapter;
+  chapterIndex: number;
+  currentPage: number;
+  totalPages: number;
+  chapterTitle: string;
+}
+
 @Component
 export struct MangaReaderPage {
   @State isNetworkConfigReady: boolean = false;// 新增状态：网络配置是否就绪
@@ -326,6 +339,8 @@ export struct MangaReaderPage {
     zoomScale: 1.0,
     errorMessage: ''
   };
+  @State isCurrentPageBookmarked: boolean = false;
+  @State currentPageBookmarkId: string = '';
 
   // UI控制状态 - 默认隐藏工具栏实现完全沉浸式体验
   @State readingSettings: ReadingSettings = DEFAULT_READING_SETTINGS;
@@ -455,6 +470,7 @@ export struct MangaReaderPage {
 
   onPageShow() {
     this.setupFullscreenMode();
+    this.refreshCurrentMangaBookmarkState('on_page_show');
     logger.lifecycle(TAG, '漫画阅读器页面开始显示');
     
     // 通知预加载管理器：阅读器已激活
@@ -2480,6 +2496,7 @@ export struct MangaReaderPage {
       
       // 确保页面索引在有效范围内
       this.readerState.currentPageIndex = Math.max(0, Math.min(requestedPageIndex, maxPageIndex));
+      this.refreshCurrentMangaBookmarkState('initialize_reader_page_index');
       
       if (requestedPageIndex !== this.readerState.currentPageIndex) {
         logger.warn(TAG, `⚠️ 请求的页面索引 ${requestedPageIndex} 超出范围 [0, ${maxPageIndex}]，已调整为 ${this.readerState.currentPageIndex}`);
@@ -5502,6 +5519,7 @@ export struct MangaReaderPage {
             
             // 加载成功且有有效页面，更新页面索引
             this.readerState.currentPageIndex = targetPageIndex;
+            this.refreshCurrentMangaBookmarkState('switch_prev_chapter_loaded');
             this.readerState.isLoading = false;
             // 切换章节后重置阅读会话计时
             this.sessionStartTimestamp = Date.now();
@@ -5552,6 +5570,7 @@ export struct MangaReaderPage {
             
             // 加载成功，更新页面索引
             this.readerState.currentPageIndex = targetPageIndex;
+            this.refreshCurrentMangaBookmarkState('switch_prev_chapter_cached');
             this.readerState.isLoading = false;
             // 切换章节后重置阅读会话计时
             this.sessionStartTimestamp = Date.now();
@@ -5634,6 +5653,7 @@ export struct MangaReaderPage {
             
             // 加载成功且有有效页面，更新页面索引
             this.readerState.currentPageIndex = targetPageIndex;
+            this.refreshCurrentMangaBookmarkState('switch_next_chapter_loaded');
             this.readerState.isLoading = false;
             // 切换章节后重置阅读会话计时
             this.sessionStartTimestamp = Date.now();
@@ -5684,6 +5704,7 @@ export struct MangaReaderPage {
             
             // 加载成功，更新页面索引
             this.readerState.currentPageIndex = targetPageIndex;
+            this.refreshCurrentMangaBookmarkState('switch_next_chapter_cached');
             this.readerState.isLoading = false;
             // 切换章节后重置阅读会话计时
             this.sessionStartTimestamp = Date.now();
@@ -5734,57 +5755,189 @@ export struct MangaReaderPage {
   /**
    * 添加当前漫画书签
    */
-  private addCurrentMangaBookmark(): void {
+  private getCurrentMangaBookmarkContext(): MangaBookmarkContext | null {
     const mangaId = this.readerState.currentManga?.id || this.pageParams?.mangaId || '';
     const chapter = this.readerState.currentChapter;
     if (!mangaId || !chapter) {
-      promptAction.showToast({ message: '漫画信息未就绪' });
-      return;
+      return null;
     }
-
     const chapterIndex = this.readerState.currentManga?.chapters.findIndex((item: MangaChapter) => item.id === chapter.id) ?? -1;
     const currentPage = Math.max(0, this.readerState.currentPageIndex);
     const totalPages = chapter.totalPages || chapter.pages.length || 0;
-    const pageLabel = totalPages > 0 ? `${currentPage + 1}/${totalPages}` : `${currentPage + 1}`;
     const chapterTitle = chapter.title || `第${chapterIndex + 1}话`;
+    return {
+      mangaId,
+      chapter,
+      chapterIndex,
+      currentPage,
+      totalPages,
+      chapterTitle
+    };
+  }
 
-    promptAction.showActionMenu({
-      title: '添加漫画书签',
-      buttons: [
-        { text: chapterTitle, color: '#007AFF' },
-        { text: `${chapterTitle} - P${pageLabel}`, color: '#007AFF' },
-        { text: '仅记录位置', color: '#007AFF' },
-        { text: '取消', color: '#999999' }
-      ]
-    }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
-      if (result.index === 3) {
+  private buildMangaBookmarkTitle(context: MangaBookmarkContext): string {
+    const pageLabel = context.totalPages > 0
+      ? `${context.currentPage + 1}/${context.totalPages}`
+      : `${context.currentPage + 1}`;
+    return `${context.chapterTitle} · P${pageLabel}`;
+  }
+
+  private buildCurrentMangaBookmarkAnchor(context: MangaBookmarkContext): AnnotationAnchor {
+    return {
+      chapterId: context.chapter.id,
+      chapterTitle: context.chapterTitle,
+      chapterIndex: context.chapterIndex,
+      pageIndex: context.currentPage,
+      progress: context.totalPages > 0 ? Math.max(0, Math.min(1, (context.currentPage + 1) / context.totalPages)) : -1
+    };
+  }
+
+  private refreshCurrentMangaBookmarkState(trigger: string): void {
+    void this.refreshCurrentMangaBookmarkStateInternal(trigger);
+  }
+
+  private async refreshCurrentMangaBookmarkStateInternal(trigger: string): Promise<void> {
+    const context = this.getCurrentMangaBookmarkContext();
+    if (!context) {
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      return;
+    }
+    try {
+      const bookmarks = await this.annotationManager.getContentAnnotations(
+        UnifiedContentType.MANGA,
+        context.mangaId,
+        UnifiedAnnotationType.BOOKMARK,
+        context.chapter.id,
+        context.chapterIndex
+      );
+      let matchedId = '';
+      for (let i = 0; i < bookmarks.length; i++) {
+        const item = bookmarks[i];
+        if (item.pageIndex >= 0 && item.pageIndex === context.currentPage) {
+          matchedId = item.id;
+          break;
+        }
+      }
+      this.currentPageBookmarkId = matchedId;
+      this.isCurrentPageBookmarked = matchedId.length > 0;
+      logger.debug(
+        TAG,
+        `刷新漫画书签状态: trigger=${trigger}, chapterIndex=${context.chapterIndex}, pageIndex=${context.currentPage}, bookmarked=${this.isCurrentPageBookmarked}, bookmarkId=${matchedId || 'none'}`
+      );
+    } catch (error) {
+      logger.error(TAG, `刷新漫画书签状态失败: trigger=${trigger}, error=${String(error)}`);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+    }
+  }
+
+  /**
+   * 分享当前页面图片（系统安全分享）
+   */
+  private async shareCurrentPageImage(): Promise<void> {
+    try {
+      const chapter = this.readerState.currentChapter;
+      const pageIndex = this.readerState.currentPageIndex;
+      if (!chapter || !chapter.pages || pageIndex < 0 || pageIndex >= chapter.pages.length) {
+        logger.error(TAG, '无法分享：当前页面无效');
+        AlertDialog.show({ message: '无法分享：当前页面无效' });
         return;
       }
-      let marker = '';
-      if (result.index === 0) {
-        marker = chapterTitle;
-      } else if (result.index === 1) {
-        marker = `${chapterTitle} - P${pageLabel}`;
+
+      const currentPage = chapter.pages[pageIndex];
+      const imagePath = currentPage.imagePath;
+      if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        logger.warn(TAG, `当前页为网络图片，无法直接分享: ${imagePath}`);
+        AlertDialog.show({ message: '当前页为网络图片，请先缓存后再分享' });
+        return;
       }
-      try {
-        await this.annotationManager.createBookmark({
-          contentType: UnifiedContentType.MANGA,
-          contentId: mangaId,
-          title: marker,
-          anchor: {
-            chapterId: chapter.id,
-            chapterTitle,
-            chapterIndex,
-            pageIndex: currentPage,
-            progress: totalPages > 0 ? Math.max(0, Math.min(1, (currentPage + 1) / totalPages)) : -1
-          }
-        });
-        promptAction.showToast({ message: '书签已添加' });
-      } catch (error) {
-        logger.error(TAG, `添加漫画书签失败: ${String(error)}`);
-        promptAction.showToast({ message: '添加书签失败' });
+      if (!imagePath.startsWith('/')) {
+        logger.error(TAG, `无法分享：图片路径无效: ${imagePath}`);
+        AlertDialog.show({ message: '分享失败：图片路径无效' });
+        return;
       }
-    }).catch(() => {});
+
+      const context = getContext(this) as common.UIAbilityContext;
+      const shareUri = fileUri.getUriFromPath(imagePath);
+      const title = `${this.readerState.currentManga?.title || '漫画'} 第${pageIndex + 1}页`;
+      const shareData: systemShare.SharedData = new systemShare.SharedData({
+        utd: utd.UniformDataType.JPEG,
+        uri: shareUri,
+        title: title,
+        description: title
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(shareData);
+      await controller.show(context, {
+        previewMode: systemShare.SharePreviewMode.DETAIL,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+      logger.info(TAG, `分享当前页面成功: page=${pageIndex + 1}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `分享当前页面失败: ${errorMessage}`);
+      AlertDialog.show({ message: `分享失败: ${errorMessage}` });
+    }
+  }
+
+  private async createCurrentMangaBookmark(): Promise<void> {
+    const context = this.getCurrentMangaBookmarkContext();
+    if (!context) {
+      promptAction.showToast({ message: '漫画信息未就绪' });
+      return;
+    }
+    try {
+      const bookmark = await this.annotationManager.createBookmark({
+        contentType: UnifiedContentType.MANGA,
+        contentId: context.mangaId,
+        title: this.buildMangaBookmarkTitle(context),
+        anchor: this.buildCurrentMangaBookmarkAnchor(context)
+      });
+      this.currentPageBookmarkId = bookmark.id;
+      this.isCurrentPageBookmarked = true;
+      promptAction.showToast({ message: '书签已添加' });
+      logger.info(
+        TAG,
+        `漫画书签添加成功: chapterIndex=${context.chapterIndex}, pageIndex=${context.currentPage}, bookmarkId=${bookmark.id}`
+      );
+    } catch (error) {
+      logger.error(TAG, `添加漫画书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '添加书签失败' });
+    }
+  }
+
+  private async removeCurrentMangaBookmark(): Promise<void> {
+    let bookmarkId = this.currentPageBookmarkId;
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      await this.refreshCurrentMangaBookmarkStateInternal('remove_before_refresh');
+      bookmarkId = this.currentPageBookmarkId;
+    }
+    if (!bookmarkId || bookmarkId.trim().length <= 0) {
+      promptAction.showToast({ message: '当前页暂无书签' });
+      return;
+    }
+    try {
+      await this.annotationManager.deleteAnnotation(bookmarkId);
+      this.currentPageBookmarkId = '';
+      this.isCurrentPageBookmarked = false;
+      promptAction.showToast({ message: '书签已移除' });
+      logger.info(TAG, `漫画书签移除成功: bookmarkId=${bookmarkId}`);
+    } catch (error) {
+      logger.error(TAG, `移除漫画书签失败: ${String(error)}`);
+      promptAction.showToast({ message: '移除书签失败' });
+    }
+  }
+
+  private toggleCurrentMangaBookmark(): void {
+    if (this.isCurrentPageBookmarked) {
+      void this.removeCurrentMangaBookmark();
+      return;
+    }
+    void this.createCurrentMangaBookmark();
+  }
+
+  private addCurrentMangaBookmark(): void {
+    this.toggleCurrentMangaBookmark();
   }
 
   private openCurrentMangaAnnotationCenter(): void {
@@ -5797,13 +5950,23 @@ export struct MangaReaderPage {
     const params: AnnotationCenterPageParams = {
       contentType: UnifiedContentType.MANGA,
       contentId: mangaId,
-      contentTitle: manga?.title || ''
+      contentTitle: manga?.title || '',
+      readerContext: {
+        manga: {
+          sourceId: this.currentSourceId > 0 ? this.currentSourceId : undefined,
+          sourceName: this.pageParams?.sourceName,
+          contentType: this.pageParams?.contentType,
+          chapterId: this.readerState.currentChapter?.id,
+          pageIndex: this.readerState.currentPageIndex
+        }
+      }
     };
     try {
+      this.restoreNormalMode();
       this.pathStack.pushPathByName('AnnotationCenterPage', params);
     } catch (error) {
-      logger.error(TAG, `打开摘录中心失败: ${String(error)}`);
-      promptAction.showToast({ message: '打开摘录中心失败' });
+      logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+      promptAction.showToast({ message: '打开灵感页面失败' });
     }
   }
 
@@ -5844,7 +6007,8 @@ export struct MangaReaderPage {
       .margin({ left: 12 })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.bookmark'))
+        SymbolGlyph(this.isCurrentPageBookmarked ? $r('sys.symbol.bookmark_fill') : $r('sys.symbol.bookmark'))
+          .fontColor([this.isCurrentPageBookmarked ? $r('app.color.accent_primary') : $r('app.color.text_primary')])
       }
       .width(48)
       .height(48)
@@ -5854,7 +6018,7 @@ export struct MangaReaderPage {
       })
 
       Button() {
-        SymbolGlyph($r('sys.symbol.list_bullet'))
+        SymbolGlyph($r('sys.symbol.stickers'))
       }
       .width(48)
       .height(48)
@@ -5911,6 +6075,7 @@ export struct MangaReaderPage {
           .onChange((value: number) => {
             const targetPage = Math.round(value);
             this.readerState.currentPageIndex = targetPage;
+            this.refreshCurrentMangaBookmarkState('toolbar_slider_change');
             
         // 自动翻页设置按钮（最右侧）
             if (this.isWebtoonMode() && this.mangaViewerComponent) {
@@ -6229,6 +6394,7 @@ export struct MangaReaderPage {
                 zoomScale: this.readerState.zoomScale,
                 errorMessage: this.readerState.errorMessage
               };
+              this.refreshCurrentMangaBookmarkState('viewer_page_change');
               // 使用 setTimeout 确保 MangaViewer 的初始化回调（如 onPageChange）已经执行完毕
               this.delayAutoPageTurnForInteraction();
               this.startAutoHideTimer();
@@ -6384,7 +6550,7 @@ export struct MangaReaderPage {
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
             Blank().layoutWeight(1)
-              Button('Done')
+              Button('完成')
               .fontSize(14)
               .fontFamily(this.appFontFamily)
               .fontColor($r('app.color.text_primary'))
@@ -6724,7 +6890,7 @@ export struct MangaReaderPage {
                 Column() {
               // 竖屏：顶部右侧下拉菜单
                   Row() {
-                  Text('保存本页到图库')
+                  Text('更多选项')
                       .fontSize(16)
                       .fontWeight(FontWeight.Bold)
                       .fontColor($r('app.color.text_primary'))
@@ -6747,7 +6913,7 @@ export struct MangaReaderPage {
 
         // 跳转到页面对话框
                   Row() {
-                    Text('Open ReaderKit')
+                    Text('跳转页面')
                       .fontColor($r('app.color.text_primary'))
                       .fontSize(14)
                       .fontFamily(this.appFontFamily)
@@ -6760,7 +6926,7 @@ export struct MangaReaderPage {
                   .height(44)
                   .width('100%')
                   .onClick(() => {
-                  logger.info(TAG, 'MoreMenu: 保存本页到图库');
+                  logger.info(TAG, 'MoreMenu: 跳转页面');
                     this.hideMoreMenuWithAnimation();
                     setTimeout(() => { this.showJumpToPageDialogWithAnimation(); }, 200);
                   })
@@ -6769,7 +6935,7 @@ export struct MangaReaderPage {
 
             // 半透明遮罩（显示漫画背景）
                   Row() {
-                    Text('Reset Reader')
+                    Text('保存本张到图库')
                       .fontColor($r('app.color.text_primary'))
                       .fontSize(14)
                       .fontFamily(this.appFontFamily)
@@ -6778,9 +6944,26 @@ export struct MangaReaderPage {
                   .height(44)
                   .width('100%')
                   .onClick(() => {
-                  logger.info(TAG, 'MoreMenu: 保存本页到图库');
+                  logger.info(TAG, 'MoreMenu: 保存本张到图库');
                     this.hideMoreMenuWithAnimation();
                     this.saveCurrentPageToGallery();
+                  })
+
+                  Divider().color($r('app.color.divider'))
+
+                  Row() {
+                    Text('分享本张图片')
+                      .fontColor($r('app.color.text_primary'))
+                      .fontSize(14)
+                      .fontFamily(this.appFontFamily)
+                    Blank().layoutWeight(1)
+                  }
+                  .height(44)
+                  .width('100%')
+                  .onClick(() => {
+                    logger.info(TAG, 'MoreMenu: 分享本张图片');
+                    this.hideMoreMenuWithAnimation();
+                    this.shareCurrentPageImage();
                   })
                 }
                 .width(320)
@@ -6798,7 +6981,7 @@ export struct MangaReaderPage {
                   // 标题栏
               Column() {
                 Row() {
-                  Text('Open ReaderKit')
+                  Text('跳转页面')
                     .fontColor($r('app.color.text_primary'))
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
@@ -6811,7 +6994,7 @@ export struct MangaReaderPage {
                 .height(44)
                 .padding({ left: 16, right: 16 })
                 .onClick(() => {
-                  logger.info(TAG, 'MoreMenu: 保存本页到图库');
+                  logger.info(TAG, 'MoreMenu: 跳转页面');
                   this.hideMoreMenuWithAnimation();
                   setTimeout(() => { this.showJumpToPageDialogWithAnimation(); }, 200);
                 })
@@ -6819,7 +7002,7 @@ export struct MangaReaderPage {
                 Divider().color($r('app.color.divider'))
 
                 Row() {
-                  Text('Reset Reader')
+                  Text('保存本张到图库')
                     .fontColor($r('app.color.text_primary'))
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
@@ -6828,9 +7011,26 @@ export struct MangaReaderPage {
                 .height(44)
                 .padding({ left: 16, right: 16 })
                 .onClick(() => {
-                  logger.info(TAG, 'MoreMenu: 保存本页到图库');
+                  logger.info(TAG, 'MoreMenu: 保存本张到图库');
                   this.hideMoreMenuWithAnimation();
                   this.saveCurrentPageToGallery();
+                })
+
+                Divider().color($r('app.color.divider'))
+
+                Row() {
+                  Text('分享本张图片')
+                    .fontColor($r('app.color.text_primary'))
+                    .fontSize(16)
+                    .fontFamily(this.appFontFamily)
+                  Blank().layoutWeight(1)
+                }
+                .height(44)
+                .padding({ left: 16, right: 16 })
+                .onClick(() => {
+                  logger.info(TAG, 'MoreMenu: 分享本张图片');
+                  this.hideMoreMenuWithAnimation();
+                  this.shareCurrentPageImage();
                 })
               }
               .backgroundColor(ThemeManager.getInstance().getGlassEffectOptions(GlassEffectContext.MENU).backgroundColorResource)
@@ -6877,7 +7077,7 @@ export struct MangaReaderPage {
                 Column() {
               // 竖屏：居中对话框
                   Row() {
-                    Text('Open ReaderKit')
+                    Text('跳转到指定页')
                       .fontSize(18)
                       .fontWeight(FontWeight.Bold)
                       .fontColor($r('app.color.text_primary'))
@@ -6906,7 +7106,7 @@ export struct MangaReaderPage {
                     .fontFamily(this.appFontFamily)
                     .margin({ bottom: 16 })
 
-                  TextInput({ placeholder: 'Enter page number', text: this.jumpToPageInput })
+                  TextInput({ placeholder: '输入页码', text: this.jumpToPageInput })
                     .type(InputType.Number)
                     .width('100%')
                     .height(44)
@@ -7047,7 +7247,7 @@ export struct MangaReaderPage {
                 Column() {
                       // 拟真动画
                   Row() {
-                            Text('卷页背面透明度')
+                            Text('翻页动画设置')
                       .fontSize(18)
                       .fontWeight(FontWeight.Bold)
                       .fontColor($r('app.color.text_primary'))
@@ -7073,7 +7273,7 @@ export struct MangaReaderPage {
                   Scroll() {
                     Column() {
               // 竖屏：居中面板
-                            Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                            Text('选择翻页动画')
                         .fontSize(14)
                         .fontColor($r('app.color.text_secondary'))
                         .width('100%')
@@ -7081,7 +7281,7 @@ export struct MangaReaderPage {
                         .fontFamily(this.appFontFamily)
 
                       Row() {
-                        this.buildAnimButton('None', PageTurnAnimationType.NONE)
+                        this.buildAnimButton('无', PageTurnAnimationType.NONE)
                         this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
                         this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
                       }
@@ -7090,16 +7290,16 @@ export struct MangaReaderPage {
                       .margin({ bottom: 8 })
 
                       Row() {
-                        this.buildAnimButton('Cube', PageTurnAnimationType.CUBE)
+                        this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
                         this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
-                        this.buildAnimButton('Depth', PageTurnAnimationType.DEPTH)
+                        this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
                       }
                       .width('100%')
                       .justifyContent(FlexAlign.SpaceBetween)
                       .margin({ bottom: 16 })
 
                 // 标题
-                  Text('翻页动画设置')
+                  Text('卷页参数')
                         .fontSize(14)
                         .fontColor($r('app.color.text_secondary'))
                         .width('100%')
@@ -7111,11 +7311,11 @@ export struct MangaReaderPage {
                           this.buildAnimButton('卷页', PageTurnAnimationType.CURL)
                         } else {
                           Column() {
-                  Text('翻页动画设置')
+                  Text('卷页模式')
                               .fontSize(13)
                               .fontColor($r('app.color.text_secondary'))
                               .fontFamily(this.appFontFamily)
-                Text('基础动画')
+                Text('设备不支持')
                               .fontSize(10)
                               .fontColor($r('app.color.text_secondary'))
                               .margin({ top: 2 })
@@ -7135,7 +7335,7 @@ export struct MangaReaderPage {
                       if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
                         Column() {
                           Row() {
-                            Text('Tap to preview this animation')
+                            Text('卷页背面透明度')
                               .fontSize(14)
                               .fontColor($r('app.color.text_secondary'))
                               .fontFamily(this.appFontFamily)
@@ -7188,7 +7388,7 @@ export struct MangaReaderPage {
               Column() {
                 // 卷页透明度设置（仅在选择卷页动画且模式支持时显示）
                 Row() {
-                      Text('卷页背面透明度')
+                      Text('翻页动画设置')
                     .fontSize(18)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.text_primary'))
@@ -7212,7 +7412,7 @@ export struct MangaReaderPage {
                 .margin({ bottom: 16 })
 
                 // 卷页透明度设置（仅在选择卷页动画且模式支持时显示）
-                      Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                      Text('选择翻页动画')
                   .fontSize(14)
                   .fontColor($r('app.color.text_secondary'))
                   .width('100%')
@@ -7221,7 +7421,7 @@ export struct MangaReaderPage {
 
         // 交互区域提示overlay（最高层级）
                 Row() {
-                  this.buildAnimButton('None', PageTurnAnimationType.NONE)
+                  this.buildAnimButton('无', PageTurnAnimationType.NONE)
                   this.buildAnimButton('滑动', PageTurnAnimationType.SLIDE)
                   this.buildAnimButton('淡入淡出', PageTurnAnimationType.FADE)
                 }
@@ -7231,16 +7431,16 @@ export struct MangaReaderPage {
 
         // 交互区域提示overlay（最高层级）
                 Row() {
-                  this.buildAnimButton('Cube', PageTurnAnimationType.CUBE)
+                  this.buildAnimButton('立方体', PageTurnAnimationType.CUBE)
                   this.buildAnimButton('覆盖', PageTurnAnimationType.COVER)
-                  this.buildAnimButton('Depth', PageTurnAnimationType.DEPTH)
+                  this.buildAnimButton('景深', PageTurnAnimationType.DEPTH)
                 }
                 .width('100%')
                 .justifyContent(FlexAlign.SpaceBetween)
                 .margin({ bottom: 16 })
 
         // 确保与handleHorizontalTap等交互判断使用相同的尺寸来源
-                      Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                      Text('卷页参数')
                   .fontSize(14)
                   .fontColor($r('app.color.text_secondary'))
                   .width('100%')
@@ -7254,11 +7454,11 @@ export struct MangaReaderPage {
                   } else {
         // 调试：点击位置指示器（已禁用，用于调试点击坐标）
                     Column() {
-                      Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                      Text('卷页模式')
                         .fontSize(13)
                         .fontColor($r('app.color.text_secondary'))
                         .fontFamily(this.appFontFamily)
-                      Text(`${this.readingSettings.curlBackOpacity ?? 90}%`)
+                      Text('设备不支持')
                         .fontSize(10)
                         .fontColor($r('app.color.text_secondary'))
                         .margin({ top: 2 })
@@ -7279,7 +7479,7 @@ export struct MangaReaderPage {
                 if (this.readingSettings.pageTurnAnimation === PageTurnAnimationType.CURL && this.isCurlAnimationSupported()) {
                   Column() {
                     Row() {
-                      Text('Tap to preview this animation')
+                      Text('卷页背面透明度')
                         .fontSize(14)
                         .fontColor($r('app.color.text_secondary'))
                         .fontFamily(this.appFontFamily)
@@ -7523,4 +7723,3 @@ export enum MangaReaderContentType {
   OnlineUndownloaded = 'OnlineUndownloaded',
   OnlineDownloaded = 'OnlineDownloaded'
 }
-

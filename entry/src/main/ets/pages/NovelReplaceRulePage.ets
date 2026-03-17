@@ -33,6 +33,8 @@ export struct NovelReplaceRulePage {
   private componentId: string = `NovelReplaceRulePage_${Date.now()}`;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
+  private hasCapturedDisplayMode: boolean = false;
   
   @State rules: ReplaceRule[] = [];
   @State isLoading: boolean = true;
@@ -49,6 +51,11 @@ export struct NovelReplaceRulePage {
   private ruleManager = getNovelReplaceRuleManager();
 
   aboutToAppear(): void {
+    if (!this.hasCapturedDisplayMode) {
+      this.previousDisplayMode = WindowManager.getCurrentMode();
+      this.hasCapturedDisplayMode = true;
+      logger.info(TAG, `记录进入净化规则页前显示模式: mode=${this.previousDisplayMode}`);
+    }
     WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -59,7 +66,8 @@ export struct NovelReplaceRulePage {
   }
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    logger.info(TAG, `离开净化规则页，恢复显示模式: mode=${this.previousDisplayMode}`);
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
   }
@@ -379,6 +387,10 @@ export struct NovelReplaceRulePage {
       this.ruleManager.initialize().then(() => {
         this.loadRules();
       });
+    })
+    .onShown(() => {
+      WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
+      logger.info(TAG, '净化规则页 onShown 重新应用沉浸模式');
     })
   }
 

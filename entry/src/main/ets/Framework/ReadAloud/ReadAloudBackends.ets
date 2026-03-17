@@ -6,7 +6,7 @@ import { textToSpeech } from '@kit.CoreSpeechKit';
 
 const TAG = 'ReadAloudBackends';
 const MAX_SPEAK_CHUNK_LENGTH = 240;
-const MAX_CANDIDATE_VOICES = 5;
+const MAX_CANDIDATE_VOICES = 12;
 const BASE_ESTIMATED_CHARS_PER_SECOND = 6.0;
 const CHUNK_PROGRESS_TIMER_INTERVAL_MS = 100;
 const CHUNK_PROGRESS_MIN_DURATION_MS = 420;
@@ -17,6 +17,7 @@ const SYSTEM_TTS_ONLINE_MODE: number = 0;
 const SYSTEM_TTS_OFFLINE_MODE: number = 1;
 const SYNTH_COMPLETE_FALLBACK_INTERVAL_MS: number = 420;
 const SYNTH_COMPLETE_FALLBACK_MAX_RETRY: number = 80;
+const SYSTEM_TTS_CREATE_ENGINE_FAILED_CODE: number = 1002300005;
 const SYSTEM_TTS_SERVICE_NOT_INITIALIZED_CODE: number = 1002300007;
 const SYSTEM_TTS_INVALID_CHUNK_EMPTY: string = 'SYSTEM_TTS_INVALID_CHUNK_EMPTY';
 const SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR: string = 'SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR';
@@ -182,6 +183,8 @@ class BaseReadAloudBackend implements IReadAloudBackend {
 }
 
 class SystemReadAloudBackend extends BaseReadAloudBackend {
+  private static sharedBlockedVoiceKeys: Set<string> = new Set<string>();
+  private static sharedUnsupportedVoiceOnlineModes: Set<number> = new Set<number>();
   // TODO(听书): 接入 AudioSession/AudioFocus，中断与抢焦点策略统一到控制器层。
   private ttsEngine: textToSpeech.TextToSpeechEngine | null = null;
   private preferredEngineParams: textToSpeech.CreateEngineParams | null = null;
@@ -208,6 +211,7 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
   private serviceRecoveryInProgress: boolean = false;
   private lastVoiceQueryFailed: boolean = false;
   private lastVoiceQueryErrorMessage: string = '';
+  private validatedVoiceKeys: Set<string> = new Set<string>();
 
   private readonly speakListener: textToSpeech.SpeakListener = {
     onStart: (requestId: string, _response: textToSpeech.StartResponse): void => {
@@ -257,6 +261,10 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
       if (this.stopRequested || this.pauseRequested) {
         return;
       }
+      if (this.isInvalidVoiceErrorText(errorMessage)) {
+        this.handleInvalidVoiceAndRecoverSafely('speak_listener_error', `code=${errorCode}, message=${errorMessage}`);
+        return;
+      }
       if (this.isServiceNotInitializedError(errorCode, errorMessage)) {
         this.recoverEngineAndReplayCurrentChunkSafely('speak_listener_error');
         return;
@@ -274,7 +282,17 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     }
 
     const selectedParams = this.buildSelectedEngineParamsFromSettings(this.settings);
-    this.preferredEngineParams = selectedParams;
+    if (selectedParams) {
+      const selectedVoiceKey = this.createVoiceKey(selectedParams.language, selectedParams.person, selectedParams.online);
+      if (this.isVoiceKeyBlocked(selectedVoiceKey)) {
+        logger.warn(TAG, `SYSTEM TTS 选中音色已被标记不可用，自动忽略: voiceKey=${selectedVoiceKey}`);
+        this.preferredEngineParams = null;
+      } else {
+        this.preferredEngineParams = selectedParams;
+      }
+    } else {
+      this.preferredEngineParams = null;
+    }
     if (!this.ttsEngine) {
       logger.info(TAG, `SYSTEM TTS 音色参数已更新: ${this.describeVoiceIdentity(nextVoiceIdentity)}`);
       return;
@@ -460,6 +478,17 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
 
     this.appendVoiceOptions(options, seenIds, onlineVoices, SYSTEM_TTS_ONLINE_MODE);
     this.appendVoiceOptions(options, seenIds, offlineVoices, SYSTEM_TTS_OFFLINE_MODE);
+    const filteredOptions = await this.filterUnavailableVoiceOptions(options);
+    if (filteredOptions.length > 0) {
+      return filteredOptions;
+    }
+
+    const safeDefaults = await this.buildSafeDefaultVoiceOptions();
+    if (safeDefaults.length > 0) {
+      logger.warn(TAG, `SYSTEM TTS 音色列表过滤后为空，已回退稳定音色: count=${safeDefaults.length}`);
+      return safeDefaults;
+    }
+
     if (options.length === 0 && this.lastVoiceQueryFailed) {
       throw new Error(`SYSTEM_TTS_VOICE_QUERY_FAILED: ${this.lastVoiceQueryErrorMessage}`);
     }
@@ -475,15 +504,24 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     let lastError: string = 'unknown';
 
     for (const params of candidates) {
+      const voiceKey = this.createVoiceKey(params.language, params.person, params.online);
+      if (this.isVoiceKeyBlocked(voiceKey)) {
+        logger.info(TAG, `SYSTEM TTS 跳过已屏蔽候选音色: ${voiceKey}`);
+        continue;
+      }
       try {
         const engine = await textToSpeech.createEngine(params);
         engine.setListener(this.speakListener);
         this.ttsEngine = engine;
         this.preferredEngineParams = params;
+        this.validatedVoiceKeys.add(voiceKey);
         logger.info(TAG, `SYSTEM TTS 引擎就绪: language=${params.language}, person=${params.person}, online=${params.online}`);
         return;
       } catch (error) {
         lastError = formatReadAloudError(error);
+        if (this.isInvalidVoiceErrorText(lastError)) {
+          this.blockVoiceKey(voiceKey, lastError);
+        }
         logger.warn(TAG, `SYSTEM TTS 候选引擎初始化失败: language=${params.language}, person=${params.person}, online=${params.online}, error=${lastError}`);
       }
     }
@@ -496,7 +534,16 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     const candidateKeys: Set<string> = new Set<string>();
 
     const addCandidate = (language: string, person: number, online: number): void => {
+      if (!language || language.length <= 0) {
+        return;
+      }
+      if (SystemReadAloudBackend.sharedUnsupportedVoiceOnlineModes.has(online)) {
+        return;
+      }
       const key = `${language}#${person}#${online}`;
+      if (this.isVoiceKeyBlocked(key)) {
+        return;
+      }
       if (candidateKeys.has(key)) {
         return;
       }
@@ -537,6 +584,10 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
 
   private async listVoicesSafely(online: number): Promise<textToSpeech.VoiceInfo[]> {
     const safeOnline = online === SYSTEM_TTS_OFFLINE_MODE ? SYSTEM_TTS_OFFLINE_MODE : SYSTEM_TTS_ONLINE_MODE;
+    if (SystemReadAloudBackend.sharedUnsupportedVoiceOnlineModes.has(safeOnline)) {
+      logger.info(TAG, `SYSTEM TTS 已记录当前设备不支持该online模式，跳过查询: online=${safeOnline}`);
+      return [];
+    }
     if (this.ttsEngine) {
       let lastActiveErrorText: string = '';
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -588,6 +639,7 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     } catch (fallbackError) {
       const fallbackErrorText = formatReadAloudError(fallbackError);
       this.appendVoiceQueryError(fallbackErrorText);
+      this.markOnlineModeUnsupportedIfNeeded(safeOnline, fallbackErrorText);
       if (this.shouldRetryVoiceQueryWithAlternateOnline(fallbackErrorText)) {
         const alternateOnline = this.getAlternateOnlineMode(safeOnline);
         try {
@@ -644,6 +696,10 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
         return voices;
       } catch (error) {
         lastErrorText = formatReadAloudError(error);
+        const voiceKey = this.createVoiceKey(candidate.language, candidate.person, candidate.online);
+        if (this.isInvalidVoiceErrorText(lastErrorText)) {
+          this.blockVoiceKey(voiceKey, lastErrorText);
+        }
         logger.debug(
           TAG,
           `SYSTEM TTS 引擎回退查询失败: language=${candidate.language}, person=${candidate.person}, online=${candidate.online}, error=${lastErrorText}`
@@ -664,12 +720,18 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
   private buildVoiceQueryCandidates(online: number): textToSpeech.CreateEngineParams[] {
     const candidates: textToSpeech.CreateEngineParams[] = [];
     const candidateKeys: Set<string> = new Set<string>();
+    if (SystemReadAloudBackend.sharedUnsupportedVoiceOnlineModes.has(online)) {
+      return candidates;
+    }
 
     const addCandidate = (language: string, person: number): void => {
       if (!language || language.length === 0) {
         return;
       }
       const key = `${language}#${person}#${online}`;
+      if (this.isVoiceKeyBlocked(key)) {
+        return;
+      }
       if (candidateKeys.has(key)) {
         return;
       }
@@ -740,12 +802,136 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
       const language = voice.language ?? '';
       const person = voice.person ?? 0;
       const status = voice.description ?? '';
+      const style = voice.style ?? '';
+      const gender = voice.gender ?? '';
       const voiceId = `${language}#${person}#${online}`;
+      if (this.isVoiceKeyBlocked(voiceId)) {
+        logger.info(TAG, `SYSTEM TTS 跳过已屏蔽音色: voiceId=${voiceId}`);
+        continue;
+      }
       if (seenIds.has(voiceId)) {
         continue;
       }
       seenIds.add(voiceId);
-      target.push(new ReadAloudVoiceOption(voiceId, language, person, online, status));
+      target.push(new ReadAloudVoiceOption(voiceId, language, person, online, status, style, gender));
+    }
+  }
+
+  private async filterUnavailableVoiceOptions(options: ReadAloudVoiceOption[]): Promise<ReadAloudVoiceOption[]> {
+    const filtered: ReadAloudVoiceOption[] = [];
+    for (const option of options) {
+      const voiceKey = this.createVoiceKey(option.language, option.person, option.online);
+      if (this.isVoiceKeyBlocked(voiceKey)) {
+        continue;
+      }
+      if (this.validatedVoiceKeys.has(voiceKey)) {
+        filtered.push(option);
+        continue;
+      }
+      const isUsable = await this.validateVoiceOptionByCreateEngine(option.language, option.person, option.online);
+      if (!isUsable) {
+        continue;
+      }
+      filtered.push(option);
+    }
+    return filtered;
+  }
+
+  private async buildSafeDefaultVoiceOptions(): Promise<ReadAloudVoiceOption[]> {
+    const safeOptions: ReadAloudVoiceOption[] = [];
+    const seen: Set<string> = new Set<string>();
+    const defaults: textToSpeech.CreateEngineParams[] = [
+      { language: 'zh-CN', person: 0, online: SYSTEM_TTS_OFFLINE_MODE },
+      { language: 'zh_CN', person: 0, online: SYSTEM_TTS_OFFLINE_MODE },
+      { language: 'en-US', person: 0, online: SYSTEM_TTS_OFFLINE_MODE },
+      { language: 'en_US', person: 0, online: SYSTEM_TTS_OFFLINE_MODE },
+      { language: 'zh-CN', person: 0, online: SYSTEM_TTS_ONLINE_MODE },
+      { language: 'zh_CN', person: 0, online: SYSTEM_TTS_ONLINE_MODE },
+      { language: 'en-US', person: 0, online: SYSTEM_TTS_ONLINE_MODE },
+      { language: 'en_US', person: 0, online: SYSTEM_TTS_ONLINE_MODE }
+    ];
+
+    for (const item of defaults) {
+      const voiceKey = this.createVoiceKey(item.language, item.person, item.online);
+      if (seen.has(voiceKey) || this.isVoiceKeyBlocked(voiceKey)) {
+        continue;
+      }
+      seen.add(voiceKey);
+      const isUsable = await this.validateVoiceOptionByCreateEngine(item.language, item.person, item.online);
+      if (!isUsable) {
+        continue;
+      }
+      safeOptions.push(new ReadAloudVoiceOption(voiceKey, item.language, item.person, item.online, '默认稳定音色'));
+    }
+    return safeOptions;
+  }
+
+  private createVoiceKey(language: string, person: number, online: number): string {
+    return `${language}#${person}#${online}`;
+  }
+
+  private isVoiceKeyBlocked(voiceKey: string): boolean {
+    return SystemReadAloudBackend.sharedBlockedVoiceKeys.has(voiceKey);
+  }
+
+  private blockVoiceKey(voiceKey: string, reason: string): void {
+    if (SystemReadAloudBackend.sharedBlockedVoiceKeys.has(voiceKey)) {
+      return;
+    }
+    SystemReadAloudBackend.sharedBlockedVoiceKeys.add(voiceKey);
+    this.validatedVoiceKeys.delete(voiceKey);
+    logger.warn(TAG, `SYSTEM TTS 标记音色不可用: voiceKey=${voiceKey}, reason=${reason}`);
+  }
+
+  private isInvalidVoiceErrorText(errorText: string): boolean {
+    const normalized = errorText.toLowerCase();
+    if (normalized.includes('invalid relative path')) {
+      return true;
+    }
+    if (normalized.includes(String(SYSTEM_TTS_CREATE_ENGINE_FAILED_CODE))) {
+      return true;
+    }
+    return normalized.includes('create engine error') || normalized.includes('createengine error');
+  }
+
+  private markOnlineModeUnsupportedIfNeeded(online: number, errorText: string): void {
+    if (SystemReadAloudBackend.sharedUnsupportedVoiceOnlineModes.has(online)) {
+      return;
+    }
+    const normalized = errorText.toLowerCase();
+    if (!normalized.includes('online type error')) {
+      return;
+    }
+    SystemReadAloudBackend.sharedUnsupportedVoiceOnlineModes.add(online);
+    logger.warn(TAG, `SYSTEM TTS 标记online模式暂不可用: online=${online}, reason=${errorText}`);
+  }
+
+  private async validateVoiceOptionByCreateEngine(language: string, person: number, online: number): Promise<boolean> {
+    const voiceKey = this.createVoiceKey(language, person, online);
+    if (this.isVoiceKeyBlocked(voiceKey)) {
+      return false;
+    }
+    let engine: textToSpeech.TextToSpeechEngine | null = null;
+    try {
+      engine = await textToSpeech.createEngine({ language, person, online });
+      this.validatedVoiceKeys.add(voiceKey);
+      return true;
+    } catch (error) {
+      const errorText = formatReadAloudError(error);
+      if (this.isInvalidVoiceErrorText(errorText)) {
+        this.blockVoiceKey(voiceKey, errorText);
+        return false;
+      }
+      logger.warn(TAG, `SYSTEM TTS 音色预校验失败但暂不屏蔽: voiceKey=${voiceKey}, error=${errorText}`);
+      return true;
+    } finally {
+      if (engine) {
+        try {
+          engine.shutdown();
+        } catch (shutdownError) {
+          logger.debug(TAG, `SYSTEM TTS 音色预校验引擎释放失败: ${String(shutdownError)}`);
+        }
+      }
     }
   }
 
@@ -795,6 +981,10 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
       await this.speakCurrentChunk();
     } catch (error) {
       const errorText = formatReadAloudError(error);
+      if (this.isInvalidVoiceErrorText(errorText)) {
+        await this.handleInvalidVoiceAndRecover(`speak_current_chunk: ${errorText}`);
+        return;
+      }
       if (this.isServiceNotInitializedErrorText(errorText)) {
         await this.recoverEngineAndReplayCurrentChunk(`speak_current_chunk: ${errorText}`);
         return;
@@ -889,6 +1079,50 @@ class SystemReadAloudBackend extends BaseReadAloudBackend {
     const normalized = errorText.toLowerCase();
     return normalized.includes(String(SYSTEM_TTS_SERVICE_NOT_INITIALIZED_CODE)) ||
       normalized.includes('service not initialized');
+  }
+
+  private handleInvalidVoiceAndRecoverSafely(reason: string, errorText: string): void {
+    this.handleInvalidVoiceAndRecover(`${reason}: ${errorText}`).catch((error: Object | string) => {
+      const finalErrorText = formatReadAloudError(error);
+      logger.warn(TAG, `SYSTEM TTS 无效音色回退失败: reason=${reason}, error=${finalErrorText}`);
+      this.skipFailedChunkAndContinue(finalErrorText);
+    });
+  }
+
+  private async handleInvalidVoiceAndRecover(reason: string): Promise<void> {
+    if (this.pauseRequested || this.stopRequested) {
+      return;
+    }
+    this.excludeCurrentPreferredVoice(reason);
+    await this.recoverEngineAndReplayCurrentChunk(`invalid_voice: ${reason}`);
+  }
+
+  private excludeCurrentPreferredVoice(reason: string): void {
+    if (!this.preferredEngineParams) {
+      return;
+    }
+    const voiceKey = this.createVoiceKey(
+      this.preferredEngineParams.language,
+      this.preferredEngineParams.person,
+      this.preferredEngineParams.online
+    );
+    this.blockVoiceKey(voiceKey, `runtime_failure: ${reason}`);
+    this.preferredEngineParams = null;
+
+    if (this.ttsEngine) {
+      try {
+        this.ttsEngine.stop();
+      } catch (_stopError) {
+      }
+      try {
+        this.ttsEngine.shutdown();
+      } catch (_shutdownError) {
+      }
+      this.ttsEngine = null;
+    }
+    this.pendingRequestId = '';
+    this.clearChunkCompleteFallback();
+    this.stopChunkProgressTimer();
   }
 
   private recoverEngineAndReplayCurrentChunkSafely(reason: string): void {

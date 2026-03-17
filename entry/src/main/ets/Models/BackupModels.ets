@@ -33,6 +33,9 @@ export interface BackupData {
   
   // 历史记录
   history: HistoryBackupSection;
+
+  // 统一标注（书签/划线/想法）
+  annotations?: AnnotationBackupSection;
   
   // WebView配置
   webview?: WebViewBackupSection;
@@ -328,6 +331,38 @@ export interface SearchHistoryBackup {
 }
 
 /**
+ * 统一标注备份项
+ */
+export interface UnifiedAnnotationBackupItem {
+  id: string;
+  contentType: 'manga' | 'novel' | 'ebook';
+  contentId: string;
+  annotationType: string;
+  title: string;
+  textContent: string;
+  quoteText: string;
+  chapterId: string;
+  chapterTitle: string;
+  chapterIndex: number;
+  pageIndex: number;
+  pageProgress: number;
+  startOffset: number;
+  endOffset: number;
+  anchorJson: string;
+  styleJson: string;
+  linkedAnnotationId: string;
+  createTime: number;
+  updateTime: number;
+}
+
+/**
+ * 统一标注备份数据段
+ */
+export interface AnnotationBackupSection {
+  records: UnifiedAnnotationBackupItem[];
+}
+
+/**
  * 备份元数据
  */
 /**
@@ -498,6 +533,7 @@ export interface BackupItemCounts {
   novel: number;
   ebook: number;
   sources: number;
+  annotations?: number;
 }
 
 /**
@@ -686,6 +722,7 @@ export interface BackupOptions {
   includeReadProgress: boolean;       // 阅读进度
   includeSettings: boolean;           // 应用设置
   includeHistory: boolean;            // 浏览/搜索历史
+  includeAnnotations: boolean;        // 统一标注（书签/划线/想法）
   
   // 高级选项
   includeWebViewConfig: boolean;      // WebView配置
@@ -714,6 +751,7 @@ export const DEFAULT_BACKUP_OPTIONS: BackupOptions = {
   includeReadProgress: true,
   includeSettings: true,
   includeHistory: true,
+  includeAnnotations: true,
   includeWebViewConfig: false,
   includeDownloadTasks: false,
   includeCacheInfo: false,

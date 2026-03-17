@@ -58,6 +58,7 @@ export struct TextFontSettingsPanel {
   @State private backdropOpacity: number = 0;
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private isLandscape: boolean = false;
+  @State private isClosing: boolean = false;
 
   // 字体列表
   @State private systemFonts: SystemFont[] = [];
@@ -140,36 +141,50 @@ export struct TextFontSettingsPanel {
   }
 
   private hidePanel(): void {
-    if (this.callbacks.onClose) {
+    if (this.isClosing) {
+      return;
+    }
+    this.isClosing = true;
+
+    if (!this.uiContext) {
+      this.panelOpacity = 0;
+      this.panelTranslateY = 300;
+      this.panelTranslateX = 320;
+      this.backdropOpacity = 0;
       this.callbacks.onClose();
+      this.isClosing = false;
+      return;
     }
 
-    if (this.uiContext) {
-      if (this.isLandscape) {
-        this.uiContext.animateTo({
-          duration: 200,
-          curve: curves.initCurve(Curve.EaseIn)
-        }, () => {
-          this.panelOpacity = 0;
-          this.panelTranslateX = 320;
-        });
-      } else {
-        this.uiContext.animateTo({
-          duration: 200,
-          curve: curves.initCurve(Curve.EaseIn)
-        }, () => {
-          this.panelOpacity = 0;
-          this.panelTranslateY = 300;
-        });
-      }
-
+    if (this.isLandscape) {
       this.uiContext.animateTo({
         duration: 200,
         curve: curves.initCurve(Curve.EaseIn)
       }, () => {
-        this.backdropOpacity = 0;
+        this.panelOpacity = 0;
+        this.panelTranslateX = 320;
+      });
+    } else {
+      this.uiContext.animateTo({
+        duration: 200,
+        curve: curves.initCurve(Curve.EaseIn)
+      }, () => {
+        this.panelOpacity = 0;
+        this.panelTranslateY = 300;
       });
     }
+
+    this.uiContext.animateTo({
+      duration: 200,
+      curve: curves.initCurve(Curve.EaseIn)
+    }, () => {
+      this.backdropOpacity = 0;
+    });
+
+    setTimeout(() => {
+      this.callbacks.onClose();
+      this.isClosing = false;
+    }, 220);
   }
 
   /**

@@ -46,9 +46,9 @@ import {
   SearchHistoryBackup,
   SettingsBackupSection,
   HistoryBackupSection,
-  BackupItemCounts,
   OnlineDataBackupSection,
   CloudConfigBackupSection,
+  UnifiedAnnotationBackupItem,
   ProxyConfigBackup,
   FontSettingsBackup,
   CustomFontBackup,
@@ -98,6 +98,30 @@ interface WebDAVSettingsForRestore {
 const TAG = 'EnhancedBackupManager';
 const BACKUP_VERSION = '2.0';
 const BACKUP_EXTENSION = '.mxbak';
+const CREATE_UNIFIED_ANNOTATION_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS unified_annotation (
+    id TEXT PRIMARY KEY,
+    contentType TEXT NOT NULL,
+    contentId TEXT NOT NULL,
+    annotationType TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    textContent TEXT DEFAULT '',
+    quoteText TEXT DEFAULT '',
+    chapterId TEXT DEFAULT '',
+    chapterTitle TEXT DEFAULT '',
+    chapterIndex INTEGER DEFAULT -1,
+    pageIndex INTEGER DEFAULT -1,
+    pageProgress REAL DEFAULT -1,
+    startOffset INTEGER DEFAULT -1,
+    endOffset INTEGER DEFAULT -1,
+    anchorJson TEXT DEFAULT '',
+    styleJson TEXT DEFAULT '',
+    linkedAnnotationId TEXT DEFAULT '',
+    createTime INTEGER NOT NULL,
+    updateTime INTEGER NOT NULL,
+    isDeleted INTEGER DEFAULT 0
+  )
+`;
 
 /**
  * 恢复选项接口
@@ -110,6 +134,7 @@ export interface RestoreOptions {
   restoreReadProgress: boolean;
   restoreSettings: boolean;
   restoreHistory: boolean;
+  restoreAnnotations: boolean;
   restoreWebViewConfig: boolean;
   restoreDownloadTasks: boolean;
   restoreFavorites: boolean;
@@ -245,6 +270,7 @@ export class EnhancedBackupManager {
       restoreReadProgress: true,
       restoreSettings: true,
       restoreHistory: true,
+      restoreAnnotations: true,
       restoreWebViewConfig: true,
       restoreDownloadTasks: true,
       restoreFavorites: true,
@@ -325,7 +351,8 @@ export class EnhancedBackupManager {
             manga: backupData.manga?.library?.length || 0,
             novel: backupData.novel?.library?.length || 0,
             ebook: backupData.ebook?.library?.length || 0,
-            sources: (backupData.sources?.manga?.length || 0) + (backupData.sources?.novel?.length || 0)
+            sources: (backupData.sources?.manga?.length || 0) + (backupData.sources?.novel?.length || 0),
+            annotations: backupData.annotations?.records?.length || 0
           },
           options: DEFAULT_BACKUP_OPTIONS,
           fileSize: stat.size
@@ -432,6 +459,10 @@ export class EnhancedBackupManager {
       history: {
         browse: options.includeHistory ? await this.exportBrowseHistory() : [],
         search: options.includeHistory ? await this.exportSearchHistory() : []
+      },
+
+      annotations: {
+        records: options.includeAnnotations ? await this.exportUnifiedAnnotations() : []
       },
       
       cloudConfig: options.includeCloudConfig ? await this.exportCloudConfig() : undefined
@@ -541,6 +572,7 @@ export class EnhancedBackupManager {
       restoreReadProgress: true,
       restoreSettings: true,
       restoreHistory: true,
+      restoreAnnotations: true,
       restoreWebViewConfig: true,
       restoreDownloadTasks: true,
       restoreFavorites: true,
@@ -637,6 +669,14 @@ export class EnhancedBackupManager {
       }
     } catch (error) {
       logger.error(TAG, `恢复历史记录失败: ${error}`);
+    }
+
+    try {
+      if (options.restoreAnnotations && backupData.annotations?.records) {
+        await this.restoreUnifiedAnnotationsWithStrategy(backupData.annotations.records, options.conflictStrategy);
+      }
+    } catch (error) {
+      logger.error(TAG, `恢复统一标注失败: ${error}`);
     }
     
     try {
@@ -3043,6 +3083,224 @@ export class EnhancedBackupManager {
    */
   private async exportSearchHistory(): Promise<SearchHistoryBackup[]> {
     return [];
+  }
+
+  /**
+   * 导出统一标注（书签/划线/想法）
+   */
+  private async exportUnifiedAnnotations(): Promise<UnifiedAnnotationBackupItem[]> {
+    try {
+      await this.ensureUnifiedAnnotationTable();
+      const sql = `
+        SELECT
+          id, contentType, contentId, annotationType, title, textContent, quoteText,
+          chapterId, chapterTitle, chapterIndex, pageIndex, pageProgress,
+          startOffset, endOffset, anchorJson, styleJson, linkedAnnotationId,
+          createTime, updateTime
+        FROM unified_annotation
+        WHERE isDeleted = 0
+        ORDER BY createTime DESC
+      `;
+      const results = await this.dbManager.querySql(sql);
+      const records: UnifiedAnnotationBackupItem[] = [];
+      for (const row of results) {
+        const rec = row as Record<string, DatabaseRecord>;
+        records.push({
+          id: String(rec['id'] || ''),
+          contentType: this.normalizeAnnotationContentTypeForBackup(String(rec['contentType'] || 'novel')),
+          contentId: String(rec['contentId'] || ''),
+          annotationType: this.normalizeAnnotationTypeForBackup(String(rec['annotationType'] || 'bookmark')),
+          title: String(rec['title'] || ''),
+          textContent: String(rec['textContent'] || ''),
+          quoteText: String(rec['quoteText'] || ''),
+          chapterId: String(rec['chapterId'] || ''),
+          chapterTitle: String(rec['chapterTitle'] || ''),
+          chapterIndex: Number(rec['chapterIndex'] ?? -1),
+          pageIndex: Number(rec['pageIndex'] ?? -1),
+          pageProgress: Number(rec['pageProgress'] ?? -1),
+          startOffset: Number(rec['startOffset'] ?? -1),
+          endOffset: Number(rec['endOffset'] ?? -1),
+          anchorJson: this.normalizeAnnotationAnchorJson(String(rec['anchorJson'] || '')),
+          styleJson: String(rec['styleJson'] || ''),
+          linkedAnnotationId: String(rec['linkedAnnotationId'] || ''),
+          createTime: Number(rec['createTime'] ?? 0),
+          updateTime: Number(rec['updateTime'] ?? 0)
+        });
+      }
+      logger.info(TAG, `导出统一标注成功: ${records.length} 条`);
+      return records;
+    } catch (error) {
+      logger.warn(TAG, `导出统一标注失败，已跳过: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 恢复统一标注（支持冲突策略）
+   */
+  private async restoreUnifiedAnnotationsWithStrategy(
+    items: UnifiedAnnotationBackupItem[],
+    strategy: 'skip' | 'replace' | 'merge'
+  ): Promise<void> {
+    if (!items || items.length <= 0) {
+      logger.info(TAG, '无需恢复统一标注');
+      return;
+    }
+    await this.ensureUnifiedAnnotationTable();
+    const insertSql = `
+      INSERT OR REPLACE INTO unified_annotation (
+        id, contentType, contentId, annotationType, title, textContent, quoteText,
+        chapterId, chapterTitle, chapterIndex, pageIndex, pageProgress,
+        startOffset, endOffset, anchorJson, styleJson, linkedAnnotationId,
+        createTime, updateTime, isDeleted
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `;
+
+    let restoredCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const rawItem of items) {
+      const item = this.normalizeUnifiedAnnotationBackupItem(rawItem);
+      if (item.id.length <= 0 || item.contentId.length <= 0) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        const existingRows = await this.dbManager.querySql(
+          'SELECT updateTime FROM unified_annotation WHERE id = ? LIMIT 1',
+          [item.id]
+        );
+        if (existingRows.length > 0) {
+          if (strategy === 'skip') {
+            skippedCount++;
+            continue;
+          }
+          if (strategy === 'merge') {
+            const existingRecord = existingRows[0] as Record<string, DatabaseRecord>;
+            const existingUpdateTime = Number(existingRecord['updateTime'] || 0);
+            if (existingUpdateTime > item.updateTime) {
+              skippedCount++;
+              continue;
+            }
+          }
+        }
+
+        await this.dbManager.executeSql(insertSql, [
+          item.id,
+          item.contentType,
+          item.contentId,
+          item.annotationType,
+          item.title,
+          item.textContent,
+          item.quoteText,
+          item.chapterId,
+          item.chapterTitle,
+          item.chapterIndex,
+          item.pageIndex,
+          item.pageProgress,
+          item.startOffset,
+          item.endOffset,
+          item.anchorJson,
+          item.styleJson,
+          item.linkedAnnotationId,
+          item.createTime,
+          item.updateTime
+        ]);
+        restoredCount++;
+      } catch (error) {
+        failedCount++;
+        logger.warn(TAG, `恢复统一标注失败: id=${item.id}, error=${error}`);
+      }
+    }
+
+    logger.info(
+      TAG,
+      `统一标注恢复完成: success=${restoredCount}, skipped=${skippedCount}, failed=${failedCount}, strategy=${strategy}`
+    );
+  }
+
+  private normalizeUnifiedAnnotationBackupItem(item: UnifiedAnnotationBackupItem): UnifiedAnnotationBackupItem {
+    const now = Date.now();
+    return {
+      id: String(item.id || ''),
+      contentType: this.normalizeAnnotationContentTypeForBackup(String(item.contentType || 'novel')),
+      contentId: String(item.contentId || ''),
+      annotationType: this.normalizeAnnotationTypeForBackup(String(item.annotationType || 'bookmark')),
+      title: String(item.title || ''),
+      textContent: String(item.textContent || ''),
+      quoteText: String(item.quoteText || ''),
+      chapterId: String(item.chapterId || ''),
+      chapterTitle: String(item.chapterTitle || ''),
+      chapterIndex: Number(item.chapterIndex ?? -1),
+      pageIndex: Number(item.pageIndex ?? -1),
+      pageProgress: Number(item.pageProgress ?? -1),
+      startOffset: Number(item.startOffset ?? -1),
+      endOffset: Number(item.endOffset ?? -1),
+      anchorJson: this.normalizeAnnotationAnchorJson(String(item.anchorJson || '')),
+      styleJson: String(item.styleJson || ''),
+      linkedAnnotationId: String(item.linkedAnnotationId || ''),
+      createTime: Number(item.createTime ?? now),
+      updateTime: Number(item.updateTime ?? now)
+    };
+  }
+
+  private normalizeAnnotationContentTypeForBackup(contentType: string): 'manga' | 'novel' | 'ebook' {
+    const normalized = contentType.trim().toLowerCase();
+    if (normalized === 'manga') {
+      return 'manga';
+    }
+    if (normalized === 'ebook') {
+      return 'ebook';
+    }
+    return 'novel';
+  }
+
+  private normalizeAnnotationTypeForBackup(annotationType: string): string {
+    const normalized = annotationType.trim().toLowerCase();
+    if (
+      normalized === 'highlight' ||
+      normalized === '1' ||
+      normalized === '划线' ||
+      normalized === 'underline'
+    ) {
+      return 'highlight';
+    }
+    if (
+      normalized === 'thought' ||
+      normalized === '2' ||
+      normalized === '想法' ||
+      normalized === 'note'
+    ) {
+      return 'thought';
+    }
+    return 'bookmark';
+  }
+
+  private normalizeAnnotationAnchorJson(anchorJson: string): string {
+    const trimmed = anchorJson.trim();
+    if (trimmed.length <= 0) {
+      return '{}';
+    }
+    try {
+      JSON.parse(trimmed);
+      return trimmed;
+    } catch {
+      return '{}';
+    }
+  }
+
+  private async ensureUnifiedAnnotationTable(): Promise<void> {
+    await this.dbManager.executeSql(CREATE_UNIFIED_ANNOTATION_TABLE_SQL);
+    await this.dbManager.executeSql(
+      'CREATE INDEX IF NOT EXISTS idx_unified_annotation_content ON unified_annotation (contentType, contentId, createTime DESC)'
+    );
+    await this.dbManager.executeSql(
+      'CREATE INDEX IF NOT EXISTS idx_unified_annotation_type ON unified_annotation (annotationType, createTime DESC)'
+    );
+    await this.dbManager.executeSql(
+      'CREATE INDEX IF NOT EXISTS idx_unified_annotation_linked ON unified_annotation (linkedAnnotationId)'
+    );
   }
 
   /**

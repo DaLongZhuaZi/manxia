@@ -84,6 +84,7 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE = 'global_text_read_aloud_voice_language';
   static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON = 'global_text_read_aloud_voice_person';
   static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE = 'global_text_read_aloud_voice_online';
+  static readonly GLOBAL_TEXT_READ_ALOUD_FAVORITE_VOICE_IDS = 'global_text_read_aloud_favorite_voice_ids';
   
   // 下载设置
   static readonly DOWNLOAD_WIFI_ONLY = 'download_wifi_only';

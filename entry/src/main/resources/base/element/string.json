@@ -75,6 +75,10 @@
     {
       "name": "shortcut_continue_read_aloud",
       "value": "继续听书"
+    },
+    {
+      "name": "shortcut_inspiration",
+      "value": "灵感"
     }
   ]
 }

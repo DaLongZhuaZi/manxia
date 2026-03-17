@@ -31,9 +31,11 @@ import {
 } from '../Database/DatabaseTypes';
 import { SandboxManager } from '../Storage/SandboxManager';
 import { LibraryCoverManager } from '../Storage/LibraryCoverManager';
+import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { ImageCacheManager, ImageCacheConfig, MemoryCacheConfig, DiskCacheConfig} from '../Cache/ImageCacheManager';
 import { ComicArchiveManager, ComicChapterInfo, ComicPageInfo } from '../Compress/ComicArchiveManager';
 import { HSPPluginManager } from '../Plugin/HSPPluginManager';
+import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -3281,6 +3283,10 @@ export class DataManager {
       
       await this.databaseManager.executeSql('DELETE FROM download_task WHERE comicId = ?', [comicId]);
       logger.debug(TAG, `删除漫画下载任务: ${comicId}`);
+
+      // 删除统一标注，避免遗留孤儿标注数据。
+      await getUnifiedAnnotationManager().deleteContentAnnotations(UnifiedContentType.MANGA, comicId);
+      logger.debug(TAG, `删除漫画统一标注: ${comicId}`);
 
       // 4. 删除本地文件
       try {

@@ -59,6 +59,7 @@ export struct TextReadingSettingsPanel2 {
   @State private readAloudVoiceOptions: ReadAloudVoiceOption[] = [];
   @State private showReadAloudPanel: boolean = false;
   @State private readAloudStatusMessage: string = '';
+  @State private isClosing: boolean = false;
 
   private uiContext: UIContext | undefined = undefined;
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
@@ -74,6 +75,9 @@ export struct TextReadingSettingsPanel2 {
     });
 
     setTimeout(() => {
+      if (this.initialShowReadAloudPanel) {
+        return;
+      }
       this.showPanel();
     }, 50);
   }
@@ -131,36 +135,50 @@ export struct TextReadingSettingsPanel2 {
   }
 
   private hidePanel(): void {
-    if (this.callbacks.onClose) {
+    if (this.isClosing) {
+      return;
+    }
+    this.isClosing = true;
+
+    if (!this.uiContext) {
+      this.panelOpacity = 0;
+      this.panelTranslateY = 300;
+      this.panelTranslateX = 320;
+      this.backdropOpacity = 0;
       this.callbacks.onClose();
+      this.isClosing = false;
+      return;
     }
 
-    if (this.uiContext) {
-      if (this.isLandscape) {
-        this.uiContext.animateTo({
-          duration: 200,
-          curve: curves.initCurve(Curve.EaseIn)
-        }, () => {
-          this.panelOpacity = 0;
-          this.panelTranslateX = 320;
-        });
-      } else {
-        this.uiContext.animateTo({
-          duration: 200,
-          curve: curves.initCurve(Curve.EaseIn)
-        }, () => {
-          this.panelOpacity = 0;
-          this.panelTranslateY = 300;
-        });
-      }
-
+    if (this.isLandscape) {
       this.uiContext.animateTo({
         duration: 200,
         curve: curves.initCurve(Curve.EaseIn)
       }, () => {
-        this.backdropOpacity = 0;
+        this.panelOpacity = 0;
+        this.panelTranslateX = 320;
+      });
+    } else {
+      this.uiContext.animateTo({
+        duration: 200,
+        curve: curves.initCurve(Curve.EaseIn)
+      }, () => {
+        this.panelOpacity = 0;
+        this.panelTranslateY = 300;
       });
     }
+
+    this.uiContext.animateTo({
+      duration: 200,
+      curve: curves.initCurve(Curve.EaseIn)
+    }, () => {
+      this.backdropOpacity = 0;
+    });
+
+    setTimeout(() => {
+      this.callbacks.onClose();
+      this.isClosing = false;
+    }, 220);
   }
 
   private notifyChange(): void {
@@ -1112,20 +1130,22 @@ export struct TextReadingSettingsPanel2 {
   build() {
     if (this.isVisible) {
       Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.background_overlay'))
-          .opacity(this.backdropOpacity)
-          .hitTestBehavior(HitTestMode.Block)
-          .onClick(() => {
-            this.hidePanel();
-          })
+        if (!(this.initialShowReadAloudPanel && this.showReadAloudPanel)) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor($r('app.color.background_overlay'))
+            .opacity(this.backdropOpacity)
+            .hitTestBehavior(HitTestMode.Block)
+            .onClick(() => {
+              this.hidePanel();
+            })
 
-        if (this.isLandscape) {
-          this.buildLandscapePanel()
-        } else {
-          this.buildPortraitPanel()
+          if (this.isLandscape) {
+            this.buildLandscapePanel()
+          } else {
+            this.buildPortraitPanel()
+          }
         }
 
         if (this.showReadAloudPanel) {
@@ -1138,6 +1158,10 @@ export struct TextReadingSettingsPanel2 {
             appFontFamily: this.appFontFamily,
             callbacks: {
               onClose: () => {
+                if (this.initialShowReadAloudPanel) {
+                  this.callbacks.onClose();
+                  return;
+                }
                 this.showReadAloudPanel = false;
               },
               onRefresh: () => {
