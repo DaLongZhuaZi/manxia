@@ -785,6 +785,20 @@ struct MainMenuPage {
   private readonly BOTTOM_BAR_HIDE_THRESHOLD: number = 80; // 底栏完全隐藏的阈值
   private bottomBarScrollAccumulator: number = 0; // 累计同方向滚动量，用于速度判断
   private bottomBarLastScrollDirection: number = 0; // 上次滚动方向（1=下，-1=上）
+  @State private windowModeTransitionOverlayVisible: boolean = false;
+  @State private windowModeTransitionOverlayOpacity: number = 0;
+  private windowModeTransitionTriggerTimer: number = -1;
+  private windowModeTransitionSwitchTimer: number = -1;
+  private windowModeTransitionCleanupTimer: number = -1;
+  private readonly WINDOW_MODE_TRANSITION_SWITCH_DELAY: number = 24;
+  private readonly WINDOW_MODE_TRANSITION_TRIGGER_RETRY_MAX: number = 20;
+  private readonly WINDOW_MODE_TRANSITION_TRIGGER_RETRY_INTERVAL: number = 24;
+  private readonly WINDOW_MODE_TRANSITION_FADE_OUT_DURATION: number = 220;
+  private readonly WINDOW_MODE_TRANSITION_PEAK_OPACITY: number = 0.22;
+  private mainMenuReentryNeedsTransition: boolean = false;
+  private windowModeTransitionTriggerRetryCount: number = 0;
+  private navStackReturnWatchTimer: number = -1;
+  private lastObservedNavStackSize: number = 0;
 
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -867,14 +881,55 @@ struct MainMenuPage {
 
   private applyWindowModeForDestination(name: string): void {
     if (!name || this.destinationSelfManagedWindowPages.has(name)) {
+      if (name && this.destinationSelfManagedWindowPages.has(name)) {
+        this.mainMenuReentryNeedsTransition = true;
+      }
       return;
     }
     const uiContext = this.getUIContext();
     if (this.hdsDestinationPages.has(name)) {
+      this.mainMenuReentryNeedsTransition = true;
       WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, uiContext);
       return;
     }
+    this.mainMenuReentryNeedsTransition = false;
     WindowManager.setDisplayMode(DisplayMode.DEFAULT, uiContext);
+  }
+
+  private scheduleMainMenuReturnTransitionFromDestination(name: string): void {
+    if (!name) {
+      return;
+    }
+    const shouldTryTransition = this.destinationSelfManagedWindowPages.has(name) || this.hdsDestinationPages.has(name);
+    if (!shouldTryTransition) {
+      return;
+    }
+    if (this.windowModeTransitionTriggerTimer >= 0) {
+      clearTimeout(this.windowModeTransitionTriggerTimer);
+      this.windowModeTransitionTriggerTimer = -1;
+    }
+    this.windowModeTransitionTriggerRetryCount = 0;
+    this.mainMenuReentryNeedsTransition = true;
+
+    const tryTrigger = (): void => {
+      if (this.pathStack.size() === 0) {
+        this.windowModeTransitionTriggerTimer = setTimeout(() => {
+          this.windowModeTransitionTriggerTimer = -1;
+          this.applyMainMenuWindowModeWithTransition();
+        }, this.WINDOW_MODE_TRANSITION_SWITCH_DELAY);
+        return;
+      }
+
+      if (this.windowModeTransitionTriggerRetryCount >= this.WINDOW_MODE_TRANSITION_TRIGGER_RETRY_MAX) {
+        this.windowModeTransitionTriggerTimer = -1;
+        return;
+      }
+
+      this.windowModeTransitionTriggerRetryCount++;
+      this.windowModeTransitionTriggerTimer = setTimeout(tryTrigger, this.WINDOW_MODE_TRANSITION_TRIGGER_RETRY_INTERVAL);
+    };
+
+    this.windowModeTransitionTriggerTimer = setTimeout(tryTrigger, this.WINDOW_MODE_TRANSITION_SWITCH_DELAY);
   }
 
   /**
@@ -1078,6 +1133,7 @@ struct MainMenuPage {
   @State private tempVisibleTabIndices: number[] = [];
 
   aboutToAppear() {
+    this.startNavStackReturnWatch();
     logger.lifecycle(TAG, '🚀 漫画阅读应用启动');
     logger.info(TAG, `初始化时appFontFamily值: ${this.appFontFamily}`);
 
@@ -5540,12 +5596,16 @@ struct MainMenuPage {
   }
 
   aboutToDisappear() {
+    this.stopNavStackReturnWatch();
     logger.lifecycle(TAG, '应用主页面即将销毁');
 
     if (this.sideTabCenterTimer >= 0) {
       clearTimeout(this.sideTabCenterTimer);
       this.sideTabCenterTimer = -1;
     }
+    this.clearWindowModeTransitionTimers();
+    this.windowModeTransitionOverlayVisible = false;
+    this.windowModeTransitionOverlayOpacity = 0;
 
     // 移除隐私模式监听器
     if (this.privacyModeListener) {
@@ -5598,6 +5658,80 @@ struct MainMenuPage {
     }
   }
 
+  // Window-mode transition helpers for smooth return from immersive pages.
+  private clearWindowModeTransitionTimers(): void {
+    if (this.windowModeTransitionTriggerTimer >= 0) {
+      clearTimeout(this.windowModeTransitionTriggerTimer);
+      this.windowModeTransitionTriggerTimer = -1;
+    }
+    this.windowModeTransitionTriggerRetryCount = 0;
+    if (this.windowModeTransitionSwitchTimer >= 0) {
+      clearTimeout(this.windowModeTransitionSwitchTimer);
+      this.windowModeTransitionSwitchTimer = -1;
+    }
+    if (this.windowModeTransitionCleanupTimer >= 0) {
+      clearTimeout(this.windowModeTransitionCleanupTimer);
+      this.windowModeTransitionCleanupTimer = -1;
+    }
+  }
+
+  private applyMainMenuWindowModeWithTransition(): void {
+    if (this.windowModeTransitionOverlayVisible || this.windowModeTransitionSwitchTimer >= 0 ||
+      this.windowModeTransitionCleanupTimer >= 0) {
+      return;
+    }
+    const uiContext = this.getUIContext();
+    const previousMode = WindowManager.getCurrentMode();
+    const needsVisualTransition = previousMode !== DisplayMode.DEFAULT || this.mainMenuReentryNeedsTransition;
+    this.mainMenuReentryNeedsTransition = false;
+    if (!needsVisualTransition) {
+      this.clearWindowModeTransitionTimers();
+      this.windowModeTransitionOverlayVisible = false;
+      this.windowModeTransitionOverlayOpacity = 0;
+      return;
+    }
+
+    this.clearWindowModeTransitionTimers();
+    this.windowModeTransitionOverlayVisible = true;
+    this.windowModeTransitionOverlayOpacity = this.WINDOW_MODE_TRANSITION_PEAK_OPACITY;
+
+    // Keep anti-flash priority: switch mode right after overlay is in place.
+    this.windowModeTransitionSwitchTimer = setTimeout(() => {
+      this.windowModeTransitionSwitchTimer = -1;
+      WindowManager.setDisplayMode(DisplayMode.DEFAULT, uiContext);
+      animateTo({
+        duration: this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION,
+        curve: Curve.EaseOut
+      }, () => {
+        this.windowModeTransitionOverlayOpacity = 0;
+      });
+      this.windowModeTransitionCleanupTimer = setTimeout(() => {
+        this.windowModeTransitionCleanupTimer = -1;
+        this.windowModeTransitionOverlayVisible = false;
+      }, this.WINDOW_MODE_TRANSITION_FADE_OUT_DURATION + 40);
+    }, this.WINDOW_MODE_TRANSITION_SWITCH_DELAY);
+  }
+
+  private startNavStackReturnWatch(): void {
+    this.stopNavStackReturnWatch();
+    this.lastObservedNavStackSize = this.pathStack.size();
+    this.navStackReturnWatchTimer = setInterval(() => {
+      const currentSize = this.pathStack.size();
+      if (this.lastObservedNavStackSize > 0 && currentSize === 0) {
+        this.mainMenuReentryNeedsTransition = true;
+        this.applyMainMenuWindowModeWithTransition();
+      }
+      this.lastObservedNavStackSize = currentSize;
+    }, this.WINDOW_MODE_TRANSITION_TRIGGER_RETRY_INTERVAL);
+  }
+
+  private stopNavStackReturnWatch(): void {
+    if (this.navStackReturnWatchTimer >= 0) {
+      clearInterval(this.navStackReturnWatchTimer);
+      this.navStackReturnWatchTimer = -1;
+    }
+  }
+
   /**
    * 页面显示时静默刷新数据
    * 确保从任何页面返回时都能正确显示最新的阅读情况
@@ -5605,7 +5739,7 @@ struct MainMenuPage {
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.applyMainMenuWindowModeWithTransition();
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
     this.checkPendingFileImport();
@@ -20376,6 +20510,9 @@ struct MainMenuPage {
     .onAppear(() => {
       this.applyWindowModeForDestination(name);
     })
+    .onDisAppear(() => {
+      this.scheduleMainMenuReturnTransitionFromDestination(name);
+    })
   }
 
   /**
@@ -21103,6 +21240,16 @@ struct MainMenuPage {
 
     // 听书悬浮球（放在最顶层，避免被导航目的页或后台模糊遮罩覆盖）
     ReadAloudFloatingBall()
+
+    if (this.windowModeTransitionOverlayVisible) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.themeState.currentTheme === ThemeType.DARK ? '#66000000' : '#4A000000')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .opacity(this.windowModeTransitionOverlayOpacity)
+        .zIndex(99998)
+    }
 
     // 冷启动快捷路由遮罩：在目标页解析完成前屏蔽 MainMenu，避免闪现
     if (this.startupRoutePending) {

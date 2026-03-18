@@ -34,7 +34,6 @@ export struct NovelReplaceRulePage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
-  private hasCapturedDisplayMode: boolean = false;
   
   @State rules: ReplaceRule[] = [];
   @State isLoading: boolean = true;
@@ -51,12 +50,11 @@ export struct NovelReplaceRulePage {
   private ruleManager = getNovelReplaceRuleManager();
 
   aboutToAppear(): void {
-    if (!this.hasCapturedDisplayMode) {
-      this.previousDisplayMode = WindowManager.getCurrentMode();
-      this.hasCapturedDisplayMode = true;
-      logger.info(TAG, `记录进入净化规则页前显示模式: mode=${this.previousDisplayMode}`);
-    }
-    WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
+    // Re-capture mode on each enter to avoid stale restore target.
+    this.previousDisplayMode = WindowManager.getCurrentMode();
+    logger.info(TAG, `记录进入净化规则页前显示模式: mode=${this.previousDisplayMode}`);
+    // Use default mode so system status bar avoidance works reliably.
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -389,8 +387,8 @@ export struct NovelReplaceRulePage {
       });
     })
     .onShown(() => {
-      WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
-      logger.info(TAG, '净化规则页 onShown 重新应用沉浸模式');
+      WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+      logger.info(TAG, '净化规则页 onShown 重新应用默认显示模式');
     })
   }
 

@@ -62,6 +62,7 @@ struct MangaSettingsPage {
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'MangaSettingsPage';
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -158,6 +159,8 @@ struct MangaSettingsPage {
    * 对齐 MangaReaderPage 的实现：在页面显示时从 AppStorage 绑定全局导航栈，并解析最新参数
    */
   aboutToAppear(): void {
+    // Capture mode before forcing settings page to normal layout.
+    this.previousDisplayMode = WindowManager.getCurrentMode();
     WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
   }
 
@@ -242,7 +245,8 @@ struct MangaSettingsPage {
   private lifecycle = new PageLifecycleManager('MangaSettingsPage', { enableDebug: true });
 
   aboutToDisappear() {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    // Restore the mode of the source page to avoid polluting return layout.
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
