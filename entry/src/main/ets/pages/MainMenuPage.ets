@@ -484,7 +484,7 @@ struct MainMenuPage {
   private prePrivacyViewMode: LibraryViewMode = LibraryViewMode.GRID;
 
   // 底部导航状态
-  @State currentTabIndex: number = TabIndex.HOME;
+  @State currentTabIndex: number = TabIndex.LIBRARY;
   private tabsController: TabsController = new TabsController();
 
   // 引导相关状态
@@ -509,10 +509,14 @@ struct MainMenuPage {
   // 书库筛选和视图相关状态
   @State libraryContentType: LibraryContentType = LibraryContentType.MANGA; // 书库内容类型（漫画/电子书）
   @State libraryFilterType: LibraryFilterType = LibraryFilterType.ALL; // 默认选择"全部"
+  @State libraryDefaultSortType: 'name_asc' | 'name_desc' | 'recent' | 'add_asc' | 'add_desc' = 'add_desc';
   @State libraryViewMode: LibraryViewMode = LibraryViewMode.GRID; // 默认网格视图，会在loadLibraryViewMode中从持久化存储加载
   @State showLibraryFilterDialog: boolean = false;
   @State showLibraryFilterPopup: boolean = false;
+  @State showLibrarySortPopup: boolean = false;
+  @State showLibraryRefreshFloatingBar: boolean = false;
   @State filteredMangaList: Manga[] = [];
+  private libraryRefreshFloatingBarTimer: number = -1;
   
   // 分类书架相关状态
   private categoryManager: BookshelfCategoryManager = BookshelfCategoryManager.getInstance();
@@ -774,6 +778,11 @@ struct MainMenuPage {
   private readonly BOTTOM_BAR_MARGIN_BOTTOM: number = 24;
   private readonly BOTTOM_BAR_MARGIN_LEFT: number = 12;
   private readonly BOTTOM_BAR_MARGIN_RIGHT: number = 12;
+  private readonly FLOAT_SEARCH_BUTTON_SIZE: number = 48;
+  private readonly FLOAT_SEARCH_BUTTON_MARGIN: number = 12;
+  private readonly LIBRARY_FLOATING_BAR_MAX_WIDTH: number = 560;
+  private readonly LIBRARY_FLOATING_BAR_MIN_WIDTH: number = 300;
+  private readonly LIBRARY_FLOATING_BAR_TOP_MARGIN: number = 8;
   private readonly TABLET_TOP_BAR_HORIZONTAL_MARGIN: number = 16;
   private readonly TABLET_TOP_BAR_VERTICAL_MARGIN: number = 8;
   private readonly NORMAL_TOP_BAR_HEIGHT_WITH_MARGIN: number = 88;
@@ -1051,16 +1060,6 @@ struct MainMenuPage {
   // 导航标签配置
   private tabConfigs: TabConfig[] = [
     {
-      title: '首页',
-      icon: $r('app.media.ic_home_normal'),
-      selectedIcon: $r('app.media.ic_home_selected'),
-      systemIcon: $r('sys.symbol.house_fill'),
-      useSystemIcon: true,
-      hasMultiColor: true, // 首页图标支持多色效果
-      index: TabIndex.HOME,
-      required: false
-    },
-    {
       title: '书库',
       icon: $r('app.media.ic_library_normal'),
       selectedIcon: $r('app.media.ic_library_selected'),
@@ -1283,7 +1282,7 @@ struct MainMenuPage {
     this.initializeUserManualIfNeeded(); // 首次运行时添加使用手册
     this.checkAndShowChangelog(); // 新版本首次启动显示更新日志
     this.initializeContentData(); // 加载漫画、电子书并提取标签作者
-    this.loadLibraryViewMode();
+    void this.loadLibraryViewMode();
     this.loadRecentReadingList();
     this.initializeRepositoryManager(); // 初始化仓库管理器（会在完成后自动加载图源列表）
     this.checkSourceUpdates(); // 检查图源更新
@@ -1882,18 +1881,21 @@ struct MainMenuPage {
     if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'left') {
       return 0;
     }
-    return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2 - 4;
+    return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
   }
 
   private getTabletTopNavigationRightInset(): number {
     if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'right') {
       return 0;
     }
-    return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2 - 4;
+    return this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
   }
 
   private getTabletTopNavigationBottomInset(): number {
-    return 0;
+    if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'bottom') {
+      return 0;
+    }
+    return this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM + 8;
   }
 
   /**
@@ -2062,12 +2064,37 @@ struct MainMenuPage {
   }
 
   private getInitialTopOverlaySpacerHeight(): number {
-    if (!this.shouldApplyTopOverlayInitialInset()) {
+    if (!this.useTopTabsNavigation || this.getEffectiveTabletTopBarPosition() !== 'top') {
       return 0;
     }
-    return this.useTopTabsNavigation
-      ? this.TABLET_TOP_BAR_HEIGHT_WITH_MARGIN
-      : this.NORMAL_TOP_BAR_HEIGHT_WITH_MARGIN;
+    return this.getAdaptiveTopOperationBarY() + this.BOTTOM_BAR_HEIGHT + this.TABLET_TOP_BAR_VERTICAL_MARGIN;
+  }
+
+  private getAdaptiveTopOperationBarY(): number {
+    return this.statusBarHeight + this.TABLET_TOP_BAR_VERTICAL_MARGIN;
+  }
+
+  private getAdaptiveSideOperationBarY(): number {
+    return this.statusBarHeight + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
+  }
+
+  private getAdaptiveSideOperationBarHeight(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const h: number = deviceInfo.screenHeight
+      - this.statusBarHeight
+      - this.navigationBarHeight
+      - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2;
+    return h > this.BOTTOM_BAR_HEIGHT ? h : this.BOTTOM_BAR_HEIGHT;
+  }
+
+  private getAdaptiveLeftOperationBarX(): number {
+    return this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
+  }
+
+  private getAdaptiveRightOperationBarX(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const x: number = deviceInfo.screenWidth - this.TABLET_SIDE_BAR_WIDTH - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
+    return x > 0 ? x : 0;
   }
 
   private getFloatingTopBarY(): number {
@@ -2101,6 +2128,106 @@ struct MainMenuPage {
       - this.navigationBarHeight
       - this.TABLET_TOP_BAR_HORIZONTAL_MARGIN;
     return h > 0 ? h : deviceInfo.screenHeight;
+  }
+
+  private getFloatingSearchButtonX(): number {
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    if (!this.useTopTabsNavigation) {
+      const x: number = this.getBottomBarX() + this.getBottomBarWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return x > 0 ? x : Math.max(0, deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
+    }
+
+    const effectivePosition = this.getEffectiveTabletTopBarPosition();
+    if (effectivePosition === 'left') {
+      const x = deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
+    }
+    if (effectivePosition === 'right') {
+      const sideBarLeftX = this.getAdaptiveRightOperationBarX();
+      const x = sideBarLeftX - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
+    }
+
+    const x: number = this.getBottomBarX() + this.getBottomBarWidth() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+    return x > 0 ? x : Math.max(0, deviceInfo.screenWidth - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN);
+  }
+
+  private getFloatingSearchButtonY(): number {
+    if (!this.useTopTabsNavigation) {
+      const y: number = this.getBottomBarY()
+        - this.FLOAT_SEARCH_BUTTON_SIZE
+        - this.FLOAT_SEARCH_BUTTON_MARGIN
+        + this.bottomBarOffsetY;
+      return y > this.statusBarHeight ? y : this.statusBarHeight;
+    }
+
+    const effectivePosition = this.getEffectiveTabletTopBarPosition();
+    if (effectivePosition === 'left' || effectivePosition === 'right') {
+      const y: number = this.statusBarHeight + this.TABLET_TOP_BAR_VERTICAL_MARGIN;
+      return y > this.statusBarHeight ? y : this.statusBarHeight;
+    }
+    if (effectivePosition === 'bottom') {
+      const y: number = this.getBottomBarY() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      return y > this.statusBarHeight ? y : this.statusBarHeight;
+    }
+    return this.getAdaptiveTopOperationBarY() + (this.BOTTOM_BAR_HEIGHT - this.FLOAT_SEARCH_BUTTON_SIZE) / 2;
+  }
+
+  private getLibraryFloatingBarWidth(): number {
+    const available = this.getBottomBarWidth() - 24;
+    if (available <= this.LIBRARY_FLOATING_BAR_MIN_WIDTH) {
+      return available > 0 ? available : this.LIBRARY_FLOATING_BAR_MIN_WIDTH;
+    }
+    return Math.min(this.LIBRARY_FLOATING_BAR_MAX_WIDTH, available);
+  }
+
+  private getLibraryFloatingBarX(): number {
+    const width = this.getLibraryFloatingBarWidth();
+    return this.getBottomBarX() + (this.getBottomBarWidth() - width) / 2;
+  }
+
+  private getLibraryFloatingBarY(): number {
+    const topInset = this.getMainContentTopInset() + this.getInitialTopOverlaySpacerHeight() + this.LIBRARY_FLOATING_BAR_TOP_MARGIN;
+    const safeTop = this.statusBarHeight + this.LIBRARY_FLOATING_BAR_TOP_MARGIN;
+    return topInset > safeTop ? topInset : safeTop;
+  }
+
+  private getLibraryDefaultBottomSpacerHeight(): number {
+    if (!this.useTopTabsNavigation) {
+      return this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM + this.FLOAT_SEARCH_BUTTON_SIZE + 24;
+    }
+    const effectivePosition = this.getEffectiveTabletTopBarPosition();
+    if (effectivePosition === 'bottom') {
+      return this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM + 20;
+    }
+    return 96;
+  }
+
+  private shouldAttachLibraryFloatingBar(): boolean {
+    return this.currentTabIndex === TabIndex.LIBRARY && this.libraryViewMode !== LibraryViewMode.CATEGORY;
+  }
+
+  private showLibraryRefreshFloatingBarTemporarily(): void {
+    if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
+      return;
+    }
+    if (this.libraryRefreshFloatingBarTimer !== -1) {
+      clearTimeout(this.libraryRefreshFloatingBarTimer);
+      this.libraryRefreshFloatingBarTimer = -1;
+    }
+    this.showLibraryRefreshFloatingBar = true;
+    this.libraryRefreshFloatingBarTimer = setTimeout(() => {
+      this.showLibraryRefreshFloatingBar = false;
+      this.libraryRefreshFloatingBarTimer = -1;
+    }, 10000) as number;
+  }
+
+  private hideLibraryRefreshFloatingBarImmediately(): void {
+    if (this.libraryRefreshFloatingBarTimer !== -1) {
+      clearTimeout(this.libraryRefreshFloatingBarTimer);
+      this.libraryRefreshFloatingBarTimer = -1;
+    }
+    this.showLibraryRefreshFloatingBar = false;
   }
 
   // ==================== 动画控制器绑定方法 ====================
@@ -3377,6 +3504,9 @@ struct MainMenuPage {
         this.libraryViewMode = LibraryViewMode.GRID;
       }
       logger.info(TAG, `加载书库视图模式: ${this.libraryViewMode}`);
+      if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
+        this.hideLibraryRefreshFloatingBarImmediately();
+      }
     } catch (error) {
       logger.warn(TAG, `加载书库视图模式失败，使用默认值: ${String(error)}`);
       this.libraryViewMode = LibraryViewMode.GRID;
@@ -3389,6 +3519,9 @@ struct MainMenuPage {
   private async saveLibraryViewMode(mode: LibraryViewMode): Promise<void> {
     try {
       await this.dataManager.saveUserSetting('default_user', 'library_view_mode', mode);
+      if (mode === LibraryViewMode.CATEGORY) {
+        this.hideLibraryRefreshFloatingBarImmediately();
+      }
       logger.info(TAG, `保存书库视图模式: ${mode}`);
     } catch (error) {
       logger.error(TAG, `保存书库视图模式失败: ${String(error)}`);
@@ -4031,10 +4164,10 @@ struct MainMenuPage {
       const pdfEbooks = this.mangaList.filter((manga: Manga) => manga.contentType === 'ebook');
       logger.info(TAG, `从漫画列表获取到 ${pdfEbooks.length} 本PDF电子书`);
 
-      // [修复] 书库只显示已收藏内容（未收藏内容仅应出现在“历史”）
-      this.ebookList = ebookList.filter((e: EBook): boolean => e.isFavorite);
-      this.pdfEbookList = pdfEbooks.filter((m: Manga): boolean => m.isFavorite);
-      logger.info(TAG, `过滤后保留 ${this.ebookList.length} 本收藏电子书（总共 ${ebookList.length} 本），${this.pdfEbookList.length} 本收藏PDF（总共 ${pdfEbooks.length} 本）`);
+      // 保留完整列表，交由 applyEBookFilter 根据当前筛选类型统一处理
+      this.ebookList = ebookList;
+      this.pdfEbookList = pdfEbooks;
+      logger.info(TAG, `电子书列表加载完成: 普通电子书 ${this.ebookList.length} 本，PDF电子书 ${this.pdfEbookList.length} 本`);
 
       this.applyEBookFilter(); // 应用筛选
 
@@ -4172,9 +4305,9 @@ struct MainMenuPage {
         logger.info(TAG, `普通模式：从数据库获取到 ${novels.length} 本非隐私小说`);
       }
 
-      // [修复] 书库只显示已收藏内容（未收藏内容仅应出现在“历史”）
-      this.novelList = novels.filter((n: NovelBook): boolean => n.isFavorite);
-      logger.info(TAG, `过滤后保留 ${this.novelList.length} 本收藏小说（总共 ${novels.length} 本）`);
+      // 保留完整列表，交由 applyNovelFilter 根据当前筛选类型统一处理
+      this.novelList = novels;
+      logger.info(TAG, `小说列表加载完成: ${this.novelList.length} 本`);
       this.applyNovelFilter(); // 应用筛选
 
     } catch (error) {
@@ -4268,6 +4401,122 @@ struct MainMenuPage {
         this.applyLibraryFilter();
       }
     }
+  }
+
+  private applyLibraryFilterForAllTypes(): void {
+    void this.applyLibraryFilter();
+    this.applyEBookFilter();
+    this.applyNovelFilter();
+  }
+
+  private applyLibraryFilterSelection(filterType: LibraryFilterType): void {
+    animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
+      this.libraryFilterType = filterType;
+    });
+    this.applyLibraryFilterForAllTypes();
+  }
+
+  private getLibraryDefaultMixedItems(): ShelfMixedItem[] {
+    const mixedItems: ShelfMixedItem[] = [];
+
+    for (const manga of this.filteredMangaList) {
+      mixedItems.push({
+        id: manga.id,
+        type: 'manga',
+        name: manga.title,
+        lastReadTime: manga.readingProgress?.lastReadAt || 0,
+        addTime: manga.addedToLibraryAt || 0,
+        data: manga
+      });
+    }
+
+    for (const ebook of this.filteredEbookList) {
+      mixedItems.push({
+        id: ebook.id,
+        type: 'ebook',
+        name: ebook.metadata.title,
+        lastReadTime: ebook.readingProgress?.lastReadTime || 0,
+        addTime: ebook.addTime || 0,
+        data: ebook
+      });
+    }
+
+    for (const pdfEbook of this.filteredPdfEbookList) {
+      mixedItems.push({
+        id: pdfEbook.id,
+        type: 'pdfebook',
+        name: pdfEbook.title,
+        lastReadTime: pdfEbook.readingProgress?.lastReadAt || 0,
+        addTime: pdfEbook.addedToLibraryAt || 0,
+        data: pdfEbook
+      });
+    }
+
+    for (const novel of this.filteredNovelList) {
+      mixedItems.push({
+        id: novel.id,
+        type: 'novel',
+        name: novel.name,
+        lastReadTime: novel.lastReadTime || 0,
+        addTime: novel.createTime || 0,
+        data: novel
+      });
+    }
+
+    return this.sortLibraryDefaultItems(mixedItems);
+  }
+
+  private sortLibraryDefaultItems(items: ShelfMixedItem[]): ShelfMixedItem[] {
+    const sorted = items.slice();
+    switch (this.libraryDefaultSortType) {
+      case 'name_asc':
+        return sorted.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+      case 'name_desc':
+        return sorted.sort((a, b) => b.name.localeCompare(a.name, 'zh-CN'));
+      case 'recent':
+        return sorted.sort((a, b) => b.lastReadTime - a.lastReadTime);
+      case 'add_asc':
+        return sorted.sort((a, b) => a.addTime - b.addTime);
+      case 'add_desc':
+      default:
+        return sorted.sort((a, b) => b.addTime - a.addTime);
+    }
+  }
+
+  private applyLibraryDefaultSortType(sortType: 'name_asc' | 'name_desc' | 'recent' | 'add_asc' | 'add_desc'): void {
+    if (this.libraryDefaultSortType === sortType) {
+      this.showLibrarySortPopup = false;
+      return;
+    }
+    animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
+      this.libraryDefaultSortType = sortType;
+    });
+    this.showLibrarySortPopup = false;
+  }
+
+  private getLibraryDefaultSortTypeName(): string {
+    switch (this.libraryDefaultSortType) {
+      case 'name_asc':
+        return '名称升序';
+      case 'name_desc':
+        return '名称降序';
+      case 'recent':
+        return '最近阅读';
+      case 'add_asc':
+        return '最早添加';
+      case 'add_desc':
+      default:
+        return '最近添加';
+    }
+  }
+
+  private isLibraryDefaultViewLoading(): boolean {
+    return this.isLoadingMangaList && this.isLoadingEbookList && this.isLoadingNovelList;
+  }
+
+  private isLibraryDataCompletelyEmpty(): boolean {
+    return this.mangaList.length === 0 && this.ebookList.length === 0 &&
+      this.pdfEbookList.length === 0 && this.novelList.length === 0;
   }
 
   /**
@@ -4927,7 +5176,12 @@ struct MainMenuPage {
 
       // 增量更新电子书列表
       try {
-        const newEbookList = await this.ebookDataManager.getEBookList();
+        let newEbookList: EBook[] = [];
+        if (this.isPrivacyMode) {
+          newEbookList = await this.ebookDataManager.getPrivateEBooks();
+        } else {
+          newEbookList = await this.ebookDataManager.getNonPrivateEBooks();
+        }
         const newPdfEbooks = newMangaList.filter((manga: Manga) => manga.contentType === 'ebook');
 
         this.incrementalUpdateEBookList(this.ebookList, newEbookList);
@@ -5603,6 +5857,7 @@ struct MainMenuPage {
       clearTimeout(this.sideTabCenterTimer);
       this.sideTabCenterTimer = -1;
     }
+    this.hideLibraryRefreshFloatingBarImmediately();
     this.clearWindowModeTransitionTimers();
     this.windowModeTransitionOverlayVisible = false;
     this.windowModeTransitionOverlayOpacity = 0;
@@ -5740,6 +5995,7 @@ struct MainMenuPage {
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
     this.applyMainMenuWindowModeWithTransition();
+    void this.loadLibraryViewMode();
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
     this.checkPendingFileImport();
@@ -5895,34 +6151,41 @@ struct MainMenuPage {
     this.fontState.appFontFamily = this.appFontFamily;
   }
   
+  private getDefaultVisibleTabIndices(): number[] {
+    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SETTINGS];
+  }
+
   private async loadVisibleTabs(): Promise<void> {
+    const defaultVisibleTabs = this.getDefaultVisibleTabIndices();
     try {
-      // 从持久化存储读取
       const settingsManager = SettingsManager.getInstance();
       const savedTabs = await settingsManager.getVisibleTabs();
+      const allowedIndices = this.tabConfigs.map(cfg => cfg.index);
+      const filteredDefaultTabs = defaultVisibleTabs.filter((idx: number) => allowedIndices.includes(idx));
+
       if (savedTabs && savedTabs.length > 0) {
-        this.visibleTabIndices = savedTabs;
-        logger.info(TAG, `已加载自定义标签配置: ${JSON.stringify(savedTabs)}`);
+        const filteredTabs = savedTabs.filter((idx: number) => idx !== TabIndex.HOME && allowedIndices.includes(idx));
+        this.visibleTabIndices = filteredTabs.length > 0 ? filteredTabs : filteredDefaultTabs;
+        logger.info(TAG, `已加载自定义标签配置: ${JSON.stringify(this.visibleTabIndices)}`);
       } else {
-        // 默认显示所有标签
-        this.visibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+        this.visibleTabIndices = filteredDefaultTabs;
         logger.info(TAG, '使用默认标签配置');
       }
-      // 同步到 AppStorage 以便 UI 响应
+
       AppStorage.setOrCreate('visible_tabs', this.visibleTabIndices);
-      // 更新缓存
       this.updateCachedVisibleTabConfigs();
-      // 确保 currentTabIndex 指向可见标签（首次加载时强制选中第一个）
       this.ensureCurrentTabIsVisible(this.isFirstTabLoad);
       this.isFirstTabLoad = false;
     } catch (error) {
       logger.error(TAG, '加载可见标签配置失败', String(error));
-      this.visibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+      const allowedIndices = this.tabConfigs.map(cfg => cfg.index);
+      this.visibleTabIndices = defaultVisibleTabs.filter((idx: number) => allowedIndices.includes(idx));
       this.updateCachedVisibleTabConfigs();
       this.ensureCurrentTabIsVisible(this.isFirstTabLoad);
       this.isFirstTabLoad = false;
     }
   }
+
 
   /**
    * 确保 currentTabIndex 指向一个可见的标签
@@ -5999,10 +6262,12 @@ struct MainMenuPage {
       const requiredIndices = this.tabConfigs
         .filter(cfg => cfg.required)
         .map(cfg => cfg.index);
+      const allowedIndices = this.tabConfigs.map(cfg => cfg.index);
+      const requestedIndices = indices.filter((idx: number) => idx !== TabIndex.HOME && allowedIndices.includes(idx));
       
       // 合并索引并去重
       const combined: number[] = [];
-      for (const idx of indices) {
+      for (const idx of requestedIndices) {
         if (!combined.includes(idx)) {
           combined.push(idx);
         }
@@ -6189,9 +6454,9 @@ struct MainMenuPage {
         manga.chapters = []; // 书库列表不需要章节数据
       }
 
-      // [修复] 书库只显示已收藏内容（未收藏内容仅应出现在“历史”）
-      this.mangaList = mangaList.filter((m: Manga): boolean => m.isFavorite);
-      logger.info(TAG, `成功加载 ${this.mangaList.length} 部收藏漫画（总共 ${mangaList.length} 部，未加载章节）`);
+      // 保留完整列表，交由 applyLibraryFilter 根据当前筛选类型统一处理
+      this.mangaList = mangaList;
+      logger.info(TAG, `成功加载 ${this.mangaList.length} 部漫画（未加载章节）`);
 
       // 预加载网络封面图片（支持AVIF格式）
       this.preloadNetworkCovers(this.mangaList);
@@ -7227,6 +7492,50 @@ struct MainMenuPage {
    * 获取当前页面标题
    * 根据 currentTabIndex 查找对应的标签配置获取标题
    */
+  @Builder
+  buildFloatingSearchButton() {
+    Button() {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(22)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+    }
+    .type(ButtonType.Circle)
+    .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(30, 30, 30, 0.45)'
+      : 'rgba(255, 255, 255, 0.45)')
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .border({
+      width: 1,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(255, 255, 255, 0.22)'
+        : 'rgba(255, 255, 255, 0.60)'
+    })
+    .shadow({
+      radius: 12,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(0, 0, 0, 0.35)'
+        : 'rgba(0, 0, 0, 0.12)',
+      offsetX: 0,
+      offsetY: 3
+    })
+    .onClick(() => {
+      try {
+        this.pathStack.pushPath({ name: 'GlobalSearchPage' });
+        logger.info(TAG, '导航到全局搜索页面');
+      } catch (error) {
+        const message: string = error instanceof Error ? error.message : String(error);
+        logger.error(TAG, '导航到搜索页面失败', message);
+        this.showToast('打开搜索页面失败');
+      }
+    })
+  }
+
   private getPageTitle(): string {
     // 如果在书库页面且处于隐私模式，显示"隐私书架"
     if (this.currentTabIndex === TabIndex.LIBRARY && this.isPrivacyMode) {
@@ -7861,25 +8170,6 @@ struct MainMenuPage {
           }
 
           Blank()
-
-          // 切换回网格视图按钮
-          Button() {
-            SymbolGlyph($r('sys.symbol.book_pages_fill_1'))
-              .fontSize(22)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          }
-          .type(ButtonType.Circle)
-          .width(40)
-          .height(40)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-          .onClick(() => {
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-              this.libraryViewMode = LibraryViewMode.GRID;
-              this.showCategoryDetail = false;
-              this.selectedCategoryId = '';
-            });
-            this.saveLibraryViewMode(LibraryViewMode.GRID);
-          })
         }
         .width('100%')
         .padding({ top: 8, bottom: 8, left: 16, right: 16 })
@@ -7903,498 +8193,24 @@ struct MainMenuPage {
         )
       )
     } else {
-    // 非分类视图模式：显示原有书库内容
+    this.buildLibraryDefaultExpandedViewContainer()
+    }
+  }
+
+  @Builder
+  buildLibraryDefaultExpandedViewContainer() {
     Column({ space: 16 }) {
-      // 多选工具栏（漫画多选模式时显示）
-      if (this.isMultiSelectMode && this.libraryContentType === LibraryContentType.MANGA) {
+      if (this.isMultiSelectMode) {
         this.buildMultiSelectToolbar()
-      }
-
-      // 电子书多选工具栏
-      if (this.isEBookMultiSelectMode && this.libraryContentType === LibraryContentType.EBOOK) {
+      } else if (this.isEBookMultiSelectMode) {
         this.buildEBookMultiSelectToolbar()
-      }
-
-      // 小说多选工具栏
-      if (this.isNovelMultiSelectMode && this.libraryContentType === LibraryContentType.NOVEL) {
+      } else if (this.isNovelMultiSelectMode) {
         this.buildNovelMultiSelectToolbar()
       }
 
-      // 内容类型切换栏
-      if (!this.isMultiSelectMode && !this.isEBookMultiSelectMode && !this.isNovelMultiSelectMode) {
-        Row({ space: 12 }) {
-            Button('漫画')
-              .fontSize(16)
-              .height(40)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(this.libraryContentType === LibraryContentType.MANGA
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : Color.Transparent)
-              .fontColor(this.libraryContentType === LibraryContentType.MANGA
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .onClick(() => {
-                this.toggleLibraryContentType(LibraryContentType.MANGA);
-              })
-
-            Button('电子书')
-              .fontSize(16)
-              .height(40)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(this.libraryContentType === LibraryContentType.EBOOK
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : Color.Transparent)
-              .fontColor(this.libraryContentType === LibraryContentType.EBOOK
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .onClick(() => {
-                this.toggleLibraryContentType(LibraryContentType.EBOOK);
-              })
-
-            Button('小说')
-              .fontSize(16)
-              .height(40)
-              .fontFamily(this.appFontFamily)
-              .backgroundColor(this.libraryContentType === LibraryContentType.NOVEL
-                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-                : Color.Transparent)
-              .fontColor(this.libraryContentType === LibraryContentType.NOVEL
-                ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-              .onClick(() => {
-                this.toggleLibraryContentType(LibraryContentType.NOVEL);
-              })
-
-          Blank()
-
-          // 分类视图切换按钮
-          Button() {
-            SymbolGlyph($r('sys.symbol.book_pages_fill_1'))
-              .fontSize(22)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
-          }
-          .type(ButtonType.Circle)
-          .width(40)
-          .height(40)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => {
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-              this.libraryViewMode = LibraryViewMode.CATEGORY;
-            });
-            this.saveLibraryViewMode(LibraryViewMode.CATEGORY);
-          })
-        }
-        .width('100%')
-        .padding({ top: 8, bottom: 8 })
-      }
-
-      // 筛选栏
-      Row({ space: 12 }) {
-        Button('全部')
-          .fontSize(14)
-          .height(36)
-          .fontFamily(this.appFontFamily)
-          .type(ButtonType.ROUNDED_RECTANGLE)
-          .backgroundColor(this.libraryFilterType === LibraryFilterType.ALL
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryFilterType === LibraryFilterType.ALL
-            ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-              this.libraryFilterType = LibraryFilterType.ALL;
-              if (this.libraryContentType === LibraryContentType.MANGA) {
-                this.applyLibraryFilter();
-              } else if (this.libraryContentType === LibraryContentType.NOVEL) {
-                this.applyNovelFilter();
-              } else {
-                this.applyEBookFilter();
-              }
-            });
-          })
-
-        Button('未读')
-          .fontSize(14)
-          .height(36)
-          .fontFamily(this.appFontFamily)
-          .type(ButtonType.ROUNDED_RECTANGLE)
-          .backgroundColor(this.libraryFilterType === LibraryFilterType.UNREAD
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryFilterType === LibraryFilterType.UNREAD
-            ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-              this.libraryFilterType = LibraryFilterType.UNREAD;
-              if (this.libraryContentType === LibraryContentType.MANGA) {
-                this.applyLibraryFilter();
-              } else if (this.libraryContentType === LibraryContentType.NOVEL) {
-                this.applyNovelFilter();
-              } else {
-                this.applyEBookFilter();
-              }
-            });
-          })
-
-        Button('阅读中')
-          .fontSize(14)
-          .height(36)
-          .fontFamily(this.appFontFamily)
-          .type(ButtonType.ROUNDED_RECTANGLE)
-          .backgroundColor(this.libraryFilterType === LibraryFilterType.READING
-            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
-            : Color.Transparent)
-          .fontColor(this.libraryFilterType === LibraryFilterType.READING
-            ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
-            : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          .onClick(() => {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-              this.libraryFilterType = LibraryFilterType.READING;
-              if (this.libraryContentType === LibraryContentType.MANGA) {
-                this.applyLibraryFilter();
-              } else if (this.libraryContentType === LibraryContentType.NOVEL) {
-                this.applyNovelFilter();
-              } else {
-                this.applyEBookFilter();
-              }
-            });
-          })
-
-        Blank()
-
-        // 视图切换按钮（LIST/GRID切换）
-        Button() {
-          SymbolGlyph(this.libraryViewMode === LibraryViewMode.LIST
-            ? $r('sys.symbol.list_bullet')
-            : $r('sys.symbol.square_grid_2x2'))
-            .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.toggleLibraryViewMode();
-        })
-
-        // 筛选按钮
-        Button() {
-          SymbolGlyph($r('sys.symbol.slider_vertical_3'))
-            .fontSize(20)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-        }
-        .type(ButtonType.Circle)
-        .width(36)
-        .height(36)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.showLibraryFilterPopup = true;
-        })
-        .bindPopup(this.showLibraryFilterPopup, {
-          builder: this.buildLibraryFilterPopup(),
-          placement: Placement.Bottom,
-          width: '200vp',
-          onStateChange: (e) => {
-            if (!e.isVisible) {
-              this.showLibraryFilterPopup = false;
-            }
-          }
-        })
-      }
-      .width('100%')
-
-      // 内容列表（根据类型显示漫画或电子书）
-      if (this.libraryContentType === LibraryContentType.MANGA) {
-        // 漫画列表 - 增量更新模式：始终显示列表，避免加载动画闪烁
-        if (this.filteredMangaList.length === 0 && !this.isLoadingMangaList) {
-          // 空状态
-          Column({ space: 16 }) {
-            Image($r('sys.symbol.archivebox'))
-              .width(80)
-              .height(80)
-
-
-            Text(this.mangaList.length === 0 ? '书库为空' : '没有符合条件的漫画')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text(this.mangaList.length === 0 ? '导入一些漫画开始阅读吧' : '尝试更换筛选条件')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-            if (this.mangaList.length === 0) {
-              Button('导入漫画')
-                .fontSize(14)
-                .height(36)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-                .onClick(() => {
-                  // 直接导航到数据管理页面
-                  this.pathStack.pushPath({ name: 'DataManagementPage' });
-                })
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          // 漫画列表容器 - 使用Stack实现平滑切换
-          Stack() {
-            // 列表视图
-            if (this.libraryViewMode === LibraryViewMode.LIST) {
-              List({ space: 16 }) {
-                ForEach(this.filteredMangaList, (manga: Manga, index: number) => {
-                  ListItem() {
-                    this.buildMangaCard(manga)
-                  }
-                }, (manga: Manga) => `list_${manga.id}`)
-              }
-              .width('100%')
-              .height('100%')
-              .padding({ left: 16, right: 16, top: 16 })
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
-            }
-            
-            // 网格视图
-            if (this.libraryViewMode === LibraryViewMode.GRID) {
-              List() {
-                ListItem() {
-                  Column() {
-                    this.buildLibraryMangaGridContent();
-                  }
-                  .width('100%')
-                }
-              }
-              .width('100%')
-              .height('100%')
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
-            }
-          }
-          .width('100%')
-          .layoutWeight(1)
-        }
-      } else if (this.libraryContentType === LibraryContentType.EBOOK) {
-        // 电子书列表
-        if (this.isLoadingEbookList) {
-          // 加载状态
-          Column({ space: 16 }) {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-            Text('正在加载电子书列表...')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else if (this.filteredEbookList.length === 0 && this.filteredPdfEbookList.length === 0) {
-          // 空状态
-          Column({ space: 16 }) {
-            Image($r('sys.symbol.archivebox'))
-              .width(80)
-              .height(80)
-
-
-            Text((this.ebookList.length === 0 && this.pdfEbookList.length === 0) ? '电子书库为空' : '没有符合条件的电子书')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text((this.ebookList.length === 0 && this.pdfEbookList.length === 0) ? '导入一些电子书开始阅读吧' : '尝试更换筛选条件')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-            if (this.ebookList.length === 0 && this.pdfEbookList.length === 0) {
-              Button('导入电子书')
-                .fontSize(14)
-                .height(36)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-                .onClick(() => {
-                  // 直接导航到数据管理页面
-                  this.pathStack.pushPath({ name: 'DataManagementPage' });
-                })
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          // 电子书列表容器 - 使用Stack实现平滑切换
-          Stack() {
-            // 列表视图
-            if (this.libraryViewMode === LibraryViewMode.LIST) {
-              List({ space: 16 }) {
-                // 普通电子书
-                ForEach(this.filteredEbookList, (ebook: EBook, index: number) => {
-                  ListItem() {
-                    this.buildEBookCard(ebook)
-                  }
-                }, (ebook: EBook) => `list_${ebook.id}`)
-                // PDF电子书
-                ForEach(this.filteredPdfEbookList, (manga: Manga, index: number) => {
-                  ListItem() {
-                    this.buildPdfEBookCard(manga)
-                  }
-                }, (manga: Manga) => `list_pdf_${manga.id}`)
-              }
-              .width('100%')
-              .height('100%')
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
-            }
-            
-            // 网格视图
-            if (this.libraryViewMode === LibraryViewMode.GRID) {
-              Grid() {
-                // 普通电子书
-                ForEach(this.filteredEbookList, (ebook: EBook, index: number) => {
-                  GridItem() {
-                    this.buildEBookGridCard(ebook)
-                  }
-                }, (ebook: EBook) => `grid_${ebook.id}`)
-                // PDF电子书
-                ForEach(this.filteredPdfEbookList, (manga: Manga, index: number) => {
-                  GridItem() {
-                    this.buildPdfEBookGridCard(manga)
-                  }
-                }, (manga: Manga) => `grid_pdf_${manga.id}`)
-              }
-              .columnsTemplate(this.getLibraryGridColumnsTemplate())
-              .columnsGap(this.responsive_gridGap)
-              .rowsGap(this.responsive_gridGap)
-              .width('100%')
-              .height('100%')
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
-            }
-          }
-          .width('100%')
-          .layoutWeight(1)
-        }
-      } else if (this.libraryContentType === LibraryContentType.NOVEL) {
-        // 小说列表
-        if (this.isLoadingNovelList) {
-          // 加载状态
-          Column({ space: 16 }) {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-            Text('正在加载小说列表...')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else if (this.filteredNovelList.length === 0) {
-          // 空状态
-          Column({ space: 16 }) {
-            Image($r('sys.symbol.archivebox'))
-              .width(80)
-              .height(80)
-
-
-            Text(this.novelList.length === 0 ? '小说书架为空' : '没有符合条件的小说')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-
-            Text(this.novelList.length === 0 ? '去小说书架添加一些小说吧' : '尝试更换筛选条件')
-              .fontSize(14)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-            if (this.novelList.length === 0) {
-              Button('前往小说书架')
-                .fontSize(14)
-                .height(36)
-                .fontFamily(this.appFontFamily)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-                .onClick(() => {
-                  this.pathStack.pushPathByName('NovelBookshelfPage', null);
-                })
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          // 小说列表容器 - 使用Stack实现平滑切换
-          Stack() {
-            // 列表视图
-            if (this.libraryViewMode === LibraryViewMode.LIST) {
-              List({ space: 16 }) {
-                ForEach(this.filteredNovelList, (novel: NovelBook, index: number) => {
-                  ListItem() {
-                    this.buildNovelCard(novel)
-                  }
-                }, (novel: NovelBook) => `list_${novel.id}`)
-              }
-              .width('100%')
-              .height('100%')
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
-            }
-            
-            // 网格视图
-            if (this.libraryViewMode === LibraryViewMode.GRID) {
-              Grid() {
-                ForEach(this.filteredNovelList, (novel: NovelBook, index: number) => {
-                  GridItem() {
-                    this.buildNovelGridCard(novel)
-                  }
-                }, (novel: NovelBook) => `grid_${novel.id}`)
-              }
-              .columnsTemplate(this.getLibraryGridColumnsTemplate())
-              .columnsGap(this.responsive_gridGap)
-              .rowsGap(this.responsive_gridGap)
-              .width('100%')
-              .height('100%')
-              .scrollBar(BarState.Auto)
-              .edgeEffect(EdgeEffect.Spring)
-              .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
-            }
-          }
-          .width('100%')
-          .layoutWeight(1)
-        }
-      }
-
+      this.buildLibraryDefaultExpandedContent()
     }
     .width('100%')
-    .height('100%')
     .padding({ left: 16, right: 16, top: 16, bottom: 16 })
     .transition(
       TransitionEffect.asymmetric(
@@ -8403,7 +8219,231 @@ struct MainMenuPage {
         TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
       )
     )
+  }
+
+  @Builder
+  buildLibraryDefaultExpandedContent() {
+    if (this.isLibraryDefaultViewLoading() && this.getLibraryDefaultMixedItems().length === 0) {
+      Row({ space: 8 }) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+        Text('正在加载书库...')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .padding({ left: 4, right: 4, top: 4, bottom: 4 })
+    } else if (this.getLibraryDefaultMixedItems().length === 0) {
+      this.buildLibraryDefaultEmptyState(
+        this.isLibraryDataCompletelyEmpty() ? '书库为空，先导入一些内容吧' : '当前筛选条件下没有匹配内容'
+      )
+    } else if (this.libraryViewMode === LibraryViewMode.LIST) {
+      Column({ space: 12 }) {
+        ForEach(this.getLibraryDefaultMixedItems(), (item: ShelfMixedItem) => {
+          this.buildLibraryDefaultMixedListCard(item)
+        }, (item: ShelfMixedItem) => `default_mix_list_${item.type}_${item.id}`)
+        Blank().height(this.getLibraryDefaultBottomSpacerHeight())
+      }
+      .width('100%')
+      .animation({ duration: 260, curve: Curve.EaseInOut })
+    } else {
+      Column({ space: 0 }) {
+        Grid() {
+          ForEach(this.getLibraryDefaultMixedItems(), (item: ShelfMixedItem) => {
+            GridItem() {
+              this.buildLibraryDefaultMixedGridCard(item)
+            }
+          }, (item: ShelfMixedItem) => `default_mix_grid_${item.type}_${item.id}`)
+        }
+        .columnsTemplate(this.getLibraryGridColumnsTemplate())
+        .columnsGap(this.responsive_gridGap)
+        .rowsGap(this.responsive_gridGap)
+        .width('100%')
+        Blank().height(this.getLibraryDefaultBottomSpacerHeight())
+      }
+      .width('100%')
+      .animation({ duration: 260, curve: Curve.EaseInOut })
     }
+  }
+
+
+  @Builder
+  buildLibraryDefaultEmptyState(message: string) {
+    Row() {
+      Text(message)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(10)
+  }
+
+  @Builder
+  buildLibraryDefaultMixedListCard(item: ShelfMixedItem) {
+    if (item.type === 'manga') {
+      this.buildMangaCard(item.data as Manga)
+    } else if (item.type === 'ebook') {
+      this.buildEBookCard(item.data as EBook)
+    } else if (item.type === 'pdfebook') {
+      this.buildPdfEBookCard(item.data as Manga)
+    } else {
+      this.buildNovelCard(item.data as NovelBook)
+    }
+  }
+
+  @Builder
+  buildLibraryDefaultMixedGridCard(item: ShelfMixedItem) {
+    if (item.type === 'manga') {
+      this.buildMangaGridCard(item.data as Manga)
+    } else if (item.type === 'ebook') {
+      this.buildEBookGridCard(item.data as EBook)
+    } else if (item.type === 'pdfebook') {
+      this.buildPdfEBookGridCard(item.data as Manga)
+    } else {
+      this.buildNovelGridCard(item.data as NovelBook)
+    }
+  }
+
+  @Builder
+  buildLibrarySortOption(label: string, sortType: 'name_asc' | 'name_desc' | 'recent' | 'add_asc' | 'add_desc') {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.libraryDefaultSortType === sortType
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .layoutWeight(1)
+      if (this.libraryDefaultSortType === sortType) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      }
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 10, bottom: 10 })
+    .borderRadius(8)
+    .backgroundColor(this.libraryDefaultSortType === sortType
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme)
+      : Color.Transparent)
+    .onClick(() => {
+      this.applyLibraryDefaultSortType(sortType);
+    })
+  }
+
+  @Builder
+  buildLibrarySortPopup() {
+    Column({ space: 6 }) {
+      Text('排序方式')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .margin({ bottom: 4 })
+      this.buildLibrarySortOption('最近添加', 'add_desc')
+      this.buildLibrarySortOption('最早添加', 'add_asc')
+      this.buildLibrarySortOption('最近阅读', 'recent')
+      this.buildLibrarySortOption('名称升序', 'name_asc')
+      this.buildLibrarySortOption('名称降序', 'name_desc')
+    }
+    .padding(12)
+  }
+
+  @Builder
+  buildLibraryRefreshFilterButton(label: string, filterType: LibraryFilterType) {
+    Button(label)
+      .fontSize(12)
+      .height(30)
+      .fontFamily(this.appFontFamily)
+      .type(ButtonType.ROUNDED_RECTANGLE)
+      .backgroundColor(this.libraryFilterType === filterType
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        : Color.Transparent)
+      .fontColor(this.libraryFilterType === filterType
+        ? ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+      .onClick(() => {
+        this.applyLibraryFilterSelection(filterType);
+      })
+  }
+
+  @Builder
+  buildLibraryRefreshFloatingBar() {
+    Row({ space: 8 }) {
+      this.buildLibraryRefreshFilterButton('全部', LibraryFilterType.ALL)
+      this.buildLibraryRefreshFilterButton('未读', LibraryFilterType.UNREAD)
+      this.buildLibraryRefreshFilterButton('阅读中', LibraryFilterType.READING)
+
+      Blank()
+
+      Button() {
+        SymbolGlyph(this.libraryViewMode === LibraryViewMode.LIST
+          ? $r('sys.symbol.list_bullet')
+          : $r('sys.symbol.square_grid_2x2'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(34)
+      .height(34)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.toggleLibraryViewMode();
+      })
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.arrow_left_arrow_right'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(34)
+      .height(34)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.showLibrarySortPopup = true;
+      })
+      .bindPopup(this.showLibrarySortPopup, {
+        builder: this.buildLibrarySortPopup(),
+        placement: Placement.Bottom,
+        width: '220vp',
+        onStateChange: (e) => {
+          if (!e.isVisible) {
+            this.showLibrarySortPopup = false;
+          }
+        }
+      })
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(30, 30, 30, 0.56)'
+      : 'rgba(255, 255, 255, 0.66)')
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THICK, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .border({
+      width: 1,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(255,255,255,0.18)'
+        : 'rgba(255,255,255,0.72)'
+    })
+    .borderRadius(18)
+    .shadow({
+      radius: 14,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(0,0,0,0.32)'
+        : 'rgba(0,0,0,0.14)',
+      offsetX: 0,
+      offsetY: 4
+    })
   }
 
   /**
@@ -8430,7 +8470,7 @@ struct MainMenuPage {
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .borderRadius(this.getGlassRadius())
-      .opacity(this.activeSwipeId === manga.id ? Math.min(1, this.getItemSwipeOffset(manga.id) / this.swipeThreshold) : 0.15)
+      .opacity(this.activeSwipeId === manga.id ? Math.min(1, this.getItemSwipeOffset(manga.id) / this.swipeThreshold) : 0)
       .position({ x: '100%', y: 0 })
 
       // 卡片内容层
@@ -13367,7 +13407,7 @@ struct MainMenuPage {
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .borderRadius(this.getGlassRadius())
-      .opacity(this.activeEBookSwipeId === ebook.id ? Math.min(1, this.getEBookSwipeOffset(ebook.id) / this.swipeThreshold) : 0.15)
+      .opacity(this.activeEBookSwipeId === ebook.id ? Math.min(1, this.getEBookSwipeOffset(ebook.id) / this.swipeThreshold) : 0)
       .position({ x: '100%', y: 0 })
 
       // 卡片内容层
@@ -14367,6 +14407,8 @@ struct MainMenuPage {
       .justifyContent(FlexAlign.Center)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .borderRadius({ topRight: this.getGlassRadius(), bottomRight: this.getGlassRadius() })
+      .opacity(this.activeNovelSwipeId === novel.id ? Math.min(1, this.getNovelSwipeOffset(novel.id) / this.swipeThreshold) : 0)
+
 
       Row({ space: 12 }) {
         // 封面图片
@@ -14913,7 +14955,7 @@ struct MainMenuPage {
   @Builder
   buildLibraryFilterPopup() {
     Column() {
-      Text(this.libraryContentType === LibraryContentType.MANGA ? '筛选漫画' : '筛选电子书')
+      Text('筛选书库')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
         .fontFamily(this.appFontFamily)
@@ -14924,12 +14966,7 @@ struct MainMenuPage {
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
-          this.libraryFilterType = LibraryFilterType.ALL;
-          if (this.libraryContentType === LibraryContentType.MANGA) {
-            this.applyLibraryFilter();
-          } else {
-            this.applyEBookFilter();
-          }
+          this.applyLibraryFilterSelection(LibraryFilterType.ALL);
           this.showLibraryFilterPopup = false;
         })
 
@@ -14938,12 +14975,7 @@ struct MainMenuPage {
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
-          this.libraryFilterType = LibraryFilterType.UNREAD;
-          if (this.libraryContentType === LibraryContentType.MANGA) {
-            this.applyLibraryFilter();
-          } else {
-            this.applyEBookFilter();
-          }
+          this.applyLibraryFilterSelection(LibraryFilterType.UNREAD);
           this.showLibraryFilterPopup = false;
         })
 
@@ -14952,12 +14984,7 @@ struct MainMenuPage {
         .fontFamily(this.appFontFamily)
         .margin({ bottom: 8 })
         .onClick(() => {
-          this.libraryFilterType = LibraryFilterType.READING;
-          if (this.libraryContentType === LibraryContentType.MANGA) {
-            this.applyLibraryFilter();
-          } else {
-            this.applyEBookFilter();
-          }
+          this.applyLibraryFilterSelection(LibraryFilterType.READING);
           this.showLibraryFilterPopup = false;
         })
     }
@@ -14983,7 +15010,7 @@ struct MainMenuPage {
       Column({ space: 16 }) {
         // 标题
         Row() {
-          Text(this.libraryContentType === LibraryContentType.MANGA ? '筛选漫画' : '筛选电子书')
+          Text('筛选书库')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontFamily(this.appFontFamily)
@@ -15049,12 +15076,7 @@ struct MainMenuPage {
       : Color.Transparent)
     .borderRadius(8)
     .onClick(() => {
-      this.libraryFilterType = filterType;
-      if (this.libraryContentType === LibraryContentType.MANGA) {
-        this.applyLibraryFilter();
-      } else {
-        this.applyEBookFilter();
-      }
+      this.applyLibraryFilterSelection(filterType);
       this.showLibraryFilterDialog = false;
       logger.info(TAG, `筛选已更改为: ${filterType}`);
     })
@@ -20576,8 +20598,8 @@ struct MainMenuPage {
           }
           .width('100%')
         }
-          .width('100%').height('100%').scrollBar(BarState.Off).backgroundColor(Color.Transparent)
-          .onScroll((_xOffset: number, yOffset: number) => {
+        .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring).backgroundColor(Color.Transparent)
+        .onScroll((_xOffset: number, yOffset: number) => {
             this.handleScrollForBottomBar(yOffset);
           })
           .onScrollStop(() => {
@@ -20585,6 +20607,7 @@ struct MainMenuPage {
           })
       }
       .onRefreshing(() => {
+        this.showLibraryRefreshFloatingBarTemporarily();
         this.refreshMangaList();
       })
       .width('100%')
@@ -20658,6 +20681,89 @@ struct MainMenuPage {
   /**
    * 触发轻微震动反馈
    */
+  @Builder
+  buildAdaptiveOperationTabButton(config: TabConfig, vertical: boolean) {
+    Column({ space: 4 }) {
+      this.buildSharedTabIcon(config)
+
+      Text(config.title)
+        .fontSize(vertical ? 10 : 12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(this.currentTabIndex === config.index
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .fontWeight(this.currentTabIndex === config.index ? FontWeight.Medium : FontWeight.Normal)
+        .maxLines(vertical ? 2 : 1)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .height(vertical ? 56 : this.BOTTOM_BAR_HEIGHT)
+    .layoutWeight(vertical ? 0 : 1)
+    .justifyContent(FlexAlign.Center)
+    .padding(vertical ? { left: 6, right: 6, top: 6, bottom: 6 } : 0)
+    .margin(vertical ? { top: 4, bottom: 4 } : { left: 12, right: 12 })
+    .borderRadius(10)
+    .backgroundColor(this.currentTabIndex === config.index
+      ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255, 255, 255, 0.10)' : 'rgba(0, 0, 0, 0.06)')
+      : Color.Transparent)
+    .onClick(() => {
+      this.handleTabButtonClick(config.index);
+    })
+  }
+
+  @Builder
+  buildAdaptiveTopOperationBar() {
+    Row({ space: 0 }) {
+      ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
+        this.buildAdaptiveOperationTabButton(cfg, false)
+      })
+    }
+    .width(this.getBottomBarWidth())
+    .height(this.BOTTOM_BAR_HEIGHT)
+    .padding({ left: 8, right: 8 })
+    .borderRadius(this.getGlassRadius())
+    .backgroundColor(Color.Transparent)
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
+    .opacity(this.getTabBarOpacity())
+  }
+
+  @Builder
+  buildAdaptiveSideOperationBar() {
+    Column() {
+      List({ scroller: this.sideTabListScroller, space: 2 }) {
+        ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig, _idx: number) => {
+          ListItem() {
+            this.buildAdaptiveOperationTabButton(cfg, true)
+          }
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .onAppear(() => {
+        this.scrollSideTabToCenter(this.currentTabIndex);
+      })
+    }
+    .width(this.TABLET_SIDE_BAR_WIDTH)
+    .height(this.getAdaptiveSideOperationBarHeight())
+    .padding({ top: 8, bottom: 8, left: 8, right: 8 })
+    .borderRadius(this.getGlassRadius())
+    .backgroundColor(Color.Transparent)
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
+    .opacity(this.getTabBarOpacity())
+  }
+
   private triggerHapticFeedback(): void {
     InteractionManager.getInstance().vibrate(VibrationScene.BUTTON_CLICK);
   }
@@ -21002,6 +21108,7 @@ struct MainMenuPage {
                 logger.info(TAG, '从设置页返回，重新加载用户配置');
                 this.loadUserThemeConfig();
                 this.loadVisibleTabs();
+                void this.loadLibraryViewMode();
               }
 
               // 切换标签时静默刷新对应数据（不显示加载状态，避免闪屏）
@@ -21049,50 +21156,29 @@ struct MainMenuPage {
         .height('100%')
         .backgroundColor(Color.Transparent) // 透明背景以显示全局背景层
 
-        if (!this.useTopTabsNavigation) {
-          Column() {
-            this.buildTopBar()
-          }
-          .width('100%')
-          .position({ x: 0, y: this.getFloatingTopBarY() })
-          .zIndex(10)
-          .key(`topBar_${this.barRenderKey}`)
+        Column() {
+          this.buildFloatingSearchButton()
         }
+        .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+        .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+        .position({ x: this.getFloatingSearchButtonX(), y: this.getFloatingSearchButtonY() })
+        .zIndex(20)
+        .key(`floatingSearch_${this.barRenderKey}`)
 
-        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'top') {
+        if (this.shouldAttachLibraryFloatingBar()) {
           Column() {
-            this.buildTabletTopBar()
+            this.buildLibraryRefreshFloatingBar()
           }
-          .width('100%')
-          .position({ x: 0, y: this.getFloatingTopBarY() })
-          .zIndex(10)
-          .key(`tabletTopTopBar_${this.barRenderKey}`)
-        }
-
-        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'bottom') {
-          Column() {
-            this.buildTabletTopBar()
-          }
-          .width('100%')
-          .position({ x: 0, y: this.getFloatingBottomTopBarY() })
-          .key(`tabletBottomTopBar_${this.barRenderKey}`)
-        }
-
-        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'left') {
-          Column() {
-            this.buildTabletSideBar()
-          }
-          .position({ x: 0, y: this.getFloatingLeftSideBarY() })
-          .key(`tabletLeftTopBar_${this.barRenderKey}`)
-        }
-
-        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'right') {
-          Column() {
-            this.buildTabletSideBar()
-          }
-          .position({ x: '100%', y: this.getFloatingLeftSideBarY() })
-          .translate({ x: -(this.TABLET_SIDE_BAR_WIDTH + this.TABLET_TOP_BAR_HORIZONTAL_MARGIN * 2), y: 0 })
-          .key(`tabletRightTopBar_${this.barRenderKey}`)
+          .width(this.getLibraryFloatingBarWidth())
+          .position({ x: this.getLibraryFloatingBarX(), y: this.getLibraryFloatingBarY() })
+          .translate({ y: this.showLibraryRefreshFloatingBar ? 0 : -14 })
+          .opacity(this.showLibraryRefreshFloatingBar ? 1 : 0)
+          .animation({
+            duration: 260,
+            curve: Curve.EaseInOut
+          })
+          .hitTestBehavior(this.showLibraryRefreshFloatingBar ? HitTestMode.Default : HitTestMode.None)
+          .zIndex(19)
         }
 
         // 底栏：使用barRenderKey触发重新渲染（屏幕方向或折叠状态变化时）
@@ -21113,8 +21199,44 @@ struct MainMenuPage {
           .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .translate({ y: this.bottomBarOffsetY })
-          .opacity(1 - this.bottomBarOffsetY / this.BOTTOM_BAR_HIDE_THRESHOLD * 0.3) // 隐藏时略微降低透明度
+          .opacity(1 - this.bottomBarOffsetY / this.BOTTOM_BAR_HIDE_THRESHOLD * 0.3)
           .key(`bottomBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'top') {
+          Column() {
+            this.buildAdaptiveTopOperationBar()
+          }
+          .position({ x: this.getBottomBarX(), y: this.getAdaptiveTopOperationBarY() })
+          .zIndex(15)
+          .key(`adaptiveTopOperationBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'bottom') {
+          Column() {
+            this.buildAdaptiveTopOperationBar()
+          }
+          .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
+          .zIndex(15)
+          .key(`adaptiveBottomOperationBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'left') {
+          Column() {
+            this.buildAdaptiveSideOperationBar()
+          }
+          .position({ x: this.getAdaptiveLeftOperationBarX(), y: this.getAdaptiveSideOperationBarY() })
+          .zIndex(15)
+          .key(`adaptiveLeftOperationBar_${this.barRenderKey}`)
+        }
+
+        if (this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'right') {
+          Column() {
+            this.buildAdaptiveSideOperationBar()
+          }
+          .position({ x: this.getAdaptiveRightOperationBarX(), y: this.getAdaptiveSideOperationBarY() })
+          .zIndex(15)
+          .key(`adaptiveRightOperationBar_${this.barRenderKey}`)
         }
 
 
@@ -21292,3 +21414,5 @@ struct MainMenuPage {
 }
 
 export { MainMenuPage };
+
+

@@ -164,6 +164,17 @@ interface FilterHistoryItem {
   timestamp: number;        // 创建时间
 }
 
+interface AdaptiveCoverRowItem {
+  comic: ComicInfo;
+  span: number;
+}
+
+interface AdaptiveCoverRow {
+  key: string;
+  usedSpan: number;
+  items: AdaptiveCoverRowItem[];
+}
+
 @Component
 export struct SourceDetailPage {
   @Consume('NavPathStack') pathStack: NavPathStack;
@@ -212,7 +223,8 @@ export struct SourceDetailPage {
   @State tabDisplayModes: Map<string, DisplayMode> = new Map(); // 每个标签的显示模式
   
   // 首次加载标记（用于控制空状态显示）
-  @State hasLoadedOnce: boolean = false; // 是否已完成首次加载
+  @State hasLoadedOnce: boolean = false;
+  @State comicContentRenderVersion: number = 0;
   
   // 筛选历史记录（可折叠显示上次筛选结果）
   @State filterHistory: FilterHistoryItem[] = []; // 筛选历史列表
@@ -241,6 +253,7 @@ export struct SourceDetailPage {
   private scroller: Scroller = new Scroller();
   @State comicDataSource: ComicListDataSource = new ComicListDataSource([]);
   @State private coverPixelMaps: Map<string, image.PixelMap> = new Map();
+  @State private coverAspectRatios: Map<string, number> = new Map();
   
   // 设备方向检测
   @State private isLandscape: boolean = false;
@@ -383,11 +396,13 @@ export struct SourceDetailPage {
           }
           this.addOrUpdateSearchTab();
           this.currentTabId = 'search';
+          this.loadTabDisplayMode('search');
         } else {
           // 切换到指定标签
           const targetTab = this.tabsConfig.find(t => t.id === initialTab);
           if (targetTab) {
             this.currentTabId = initialTab;
+            this.loadTabDisplayMode(initialTab);
             logger.info(TAG, `初始化切换到标签: ${initialTab}`);
           }
         }
@@ -518,8 +533,9 @@ export struct SourceDetailPage {
       
       // 更新 UI
       this.searchResults = comics;
-      this.comicList = comics;
-      this.comicDataSource.updateItems(comics);
+      this.comicList = [...comics];
+      this.comicDataSource.updateItems([...this.comicList]);
+      this.touchComicContentRender();
       this.hasMore = false;  // 全局搜索缓存不支持分页
       this.lastSearchKeyword = keyword;
       
@@ -538,6 +554,10 @@ export struct SourceDetailPage {
   /**
    * 加载漫画列表（带缓存支持）
    */
+  private touchComicContentRender(): void {
+    this.comicContentRenderVersion = this.comicContentRenderVersion + 1;
+  }
+
   private async loadComics(): Promise<void> {
     if (this.isLoading) return;
 
@@ -552,9 +572,10 @@ export struct SourceDetailPage {
         const cached = this.contentCache.get(this.sourceId, workflowKey);
         if (cached) {
           logger.info(TAG, `从缓存加载数据: ${cached.comics.length} 条`);
-          this.comicList = cached.comics;
+          this.comicList = [...cached.comics];
           this.hasMore = cached.hasMore;
-          this.comicDataSource.updateItems(this.comicList);
+          this.comicDataSource.updateItems([...this.comicList]);
+          this.touchComicContentRender();
           
           // 检查是否需要刷新
           if (!this.contentCache.needsRefresh(this.sourceId, workflowKey)) {
@@ -605,15 +626,16 @@ export struct SourceDetailPage {
 
       // 5. 更新UI
       if (this.currentPage === 1) {
-        this.comicList = comics;
+        this.comicList = [...comics];
       } else {
-        this.comicList = this.comicList.concat(comics);
+        this.comicList = [...this.comicList, ...comics];
       }
 
       // 后台异步处理封面缓存（不阻塞 UI）
       this.processCoverCacheAsync(comics);
       this.hasMore = comics.length >= 20;
-      this.comicDataSource.updateItems(this.comicList);
+      this.comicDataSource.updateItems([...this.comicList]);
+      this.touchComicContentRender();
       logger.info(TAG, `数据源已刷新: ${this.comicList.length} 条数据`);
 
     } catch (error) {
@@ -777,7 +799,8 @@ export struct SourceDetailPage {
       
       if (localPath) {
         const imageSource = image.createImageSource(localPath);
-        const pm = await imageSource.createPixelMap({ desiredSize: { width: 160, height: 220 } });
+        await this.updateCoverAspectRatioFromImageSource(comic.id, imageSource);
+        const pm = await this.createCoverThumbnailPixelMap(imageSource);
         const newMap: Map<string, image.PixelMap> = new Map(this.coverPixelMaps);
         newMap.set(comic.id, pm);
         this.coverPixelMaps = newMap;
@@ -1144,6 +1167,114 @@ export struct SourceDetailPage {
     return base;
   }
 
+  private updateCoverAspectRatio(comicId: string, width: number, height: number): void {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    const ratio = width / height;
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      return;
+    }
+    const newMap: Map<string, number> = new Map(this.coverAspectRatios);
+    newMap.set(comicId, ratio);
+    this.coverAspectRatios = newMap;
+  }
+
+  private async updateCoverAspectRatioFromImageSource(comicId: string, imageSource: image.ImageSource): Promise<void> {
+    try {
+      const imageInfo = await imageSource.getImageInfo();
+      this.updateCoverAspectRatio(comicId, imageInfo.size.width, imageInfo.size.height);
+    } catch (_e) {}
+  }
+
+  private async updateCoverAspectRatioFromPixelMap(comicId: string, pixelMap: image.PixelMap): Promise<void> {
+    try {
+      const imageInfo = await pixelMap.getImageInfo();
+      this.updateCoverAspectRatio(comicId, imageInfo.size.width, imageInfo.size.height);
+    } catch (_e) {}
+  }
+
+  private async createCoverThumbnailPixelMap(imageSource: image.ImageSource): Promise<image.PixelMap> {
+    try {
+      const imageInfo = await imageSource.getImageInfo();
+      const maxEdge = Math.max(imageInfo.size.width, imageInfo.size.height);
+      const targetMaxEdge = 360;
+      if (maxEdge > targetMaxEdge) {
+        const ratio = Math.ceil(maxEdge / targetMaxEdge);
+        let sampleSize = 1;
+        while (sampleSize * 2 <= ratio) {
+          sampleSize *= 2;
+        }
+        return await imageSource.createPixelMap({
+          sampleSize: sampleSize,
+          editable: false
+        });
+      }
+    } catch (_e) {}
+    return await imageSource.createPixelMap();
+  }
+
+  private getComicCoverAspectRatio(comic: ComicInfo): number {
+    const ratio = this.coverAspectRatios.get(comic.id);
+    if (ratio && Number.isFinite(ratio) && ratio > 0) {
+      return ratio;
+    }
+    return 0.7;
+  }
+
+  private isLandscapeCover(comic: ComicInfo): boolean {
+    return this.getComicCoverAspectRatio(comic) > 1.02;
+  }
+
+  private getAdaptiveGridColumnCount(): number {
+    return this.isLandscape ? 5 : 3;
+  }
+
+  private getComicGridSpan(comic: ComicInfo, columnCount: number): number {
+    const desiredSpan = this.isLandscapeCover(comic) ? 2 : 1;
+    return Math.max(1, Math.min(desiredSpan, columnCount));
+  }
+
+  private buildAdaptiveCoverRows(comics: ComicInfo[], keyPrefix: string): AdaptiveCoverRow[] {
+    const rows: AdaptiveCoverRow[] = [];
+    const columnCount = this.getAdaptiveGridColumnCount();
+
+    let rowItems: AdaptiveCoverRowItem[] = [];
+    let usedSpan = 0;
+    let rowIndex = 0;
+
+    comics.forEach((comic: ComicInfo) => {
+      const span = this.getComicGridSpan(comic, columnCount);
+      if (rowItems.length > 0 && usedSpan + span > columnCount) {
+        rows.push({
+          key: `${keyPrefix}_row_${rowIndex}`,
+          usedSpan: usedSpan,
+          items: rowItems
+        });
+        rowItems = [];
+        usedSpan = 0;
+        rowIndex++;
+      }
+
+      rowItems.push({ comic: comic, span: span });
+      usedSpan += span;
+    });
+
+    if (rowItems.length > 0) {
+      rows.push({
+        key: `${keyPrefix}_row_${rowIndex}`,
+        usedSpan: usedSpan,
+        items: rowItems
+      });
+    }
+
+    return rows;
+  }
+
+  private getCoverFrameBorderColor(): string {
+    return 'rgba(0,0,0,0)';
+  }
+
   private async loadCoverPixelMap(comic: ComicInfo): Promise<void> {
     try {
       // 如果已经加载过，直接返回
@@ -1162,7 +1293,8 @@ export struct SourceDetailPage {
       if (localPath) {
         try {
           const imageSource = image.createImageSource(localPath);
-          const pm = await imageSource.createPixelMap({ desiredSize: { width: 160, height: 220 } });
+          await this.updateCoverAspectRatioFromImageSource(comic.id, imageSource);
+          const pm = await this.createCoverThumbnailPixelMap(imageSource);
           const newMap: Map<string, image.PixelMap> = new Map(this.coverPixelMaps);
           newMap.set(comic.id, pm);
           this.coverPixelMaps = newMap;
@@ -1187,6 +1319,7 @@ export struct SourceDetailPage {
       } as LoadOptions;
       const pm: image.PixelMap | null = await cacheMgr.loadImage(url, opts);
       if (pm) {
+        await this.updateCoverAspectRatioFromPixelMap(comic.id, pm);
         const newMap: Map<string, image.PixelMap> = new Map(this.coverPixelMaps);
         newMap.set(comic.id, pm);
         this.coverPixelMaps = newMap;
@@ -1479,13 +1612,16 @@ export struct SourceDetailPage {
     
     // 如果切换到搜索标签，使用缓存的搜索结果
     if (tabId === 'search') {
-      this.comicList = this.searchResults;
-      this.comicDataSource.updateItems(this.searchResults);
+      this.comicList = [...this.searchResults];
+      this.comicDataSource.updateItems([...this.comicList]);
+      this.touchComicContentRender();
       return;
     }
     
     // 切换到其他标签时，清空列表并重新加载
     this.comicList = [];
+    this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
     await this.loadComics();
   }
 
@@ -1852,6 +1988,7 @@ export struct SourceDetailPage {
     this.searchResults = [];
     this.comicList = [];
     this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
 
     try {
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
@@ -1863,8 +2000,9 @@ export struct SourceDetailPage {
           if (result.success && result.data) {
             const comics = this.convertMangaInfoToComicInfo(result.data.mangas);
             this.searchResults = comics;
-            this.comicList = comics;
-            this.comicDataSource.updateItems(comics);
+            this.comicList = [...comics];
+            this.comicDataSource.updateItems([...this.comicList]);
+            this.touchComicContentRender();
             this.hasMore = result.data.hasNext || false;
             logger.info(TAG, `标签搜索完成，找到 ${comics.length} 个结果`);
           } else {
@@ -1907,6 +2045,7 @@ export struct SourceDetailPage {
     this.searchResults = [];
     this.comicList = [];
     this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
 
     try {
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
@@ -1928,8 +2067,9 @@ export struct SourceDetailPage {
             } else if (directResult.type === 'list' && directResult.mangas && directResult.mangas.length > 0) {
               // 作品列表：显示在搜索结果中
               this.searchResults = this.convertMangaInfoToComicInfo(directResult.mangas);
-              this.comicList = this.searchResults;
-              this.comicDataSource.updateItems(this.comicList);
+              this.comicList = [...this.searchResults];
+              this.comicDataSource.updateItems([...this.comicList]);
+              this.touchComicContentRender();
               this.hasMore = directResult.hasNext || false;
               logger.info(TAG, `直达搜索完成，找到 ${directResult.mangas.length} 个结果`);
             } else if (directResult.type === 'redirect' && directResult.redirectUrl) {
@@ -1999,6 +2139,7 @@ export struct SourceDetailPage {
     this.searchResults = [];
     this.comicList = []; // 清空列表以显示加载动画
     this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
 
     try {
       let comics: ComicInfo[] = [];
@@ -2015,8 +2156,9 @@ export struct SourceDetailPage {
       }
 
       this.searchResults = comics;
-      this.comicList = comics;
-      this.comicDataSource.updateItems(this.searchResults);
+      this.comicList = [...comics];
+      this.comicDataSource.updateItems([...this.comicList]);
+      this.touchComicContentRender();
       this.hasMore = comics.length >= 20;
       logger.info(TAG, `搜索完成，找到 ${comics.length} 个结果`);
     } catch (error) {
@@ -2070,6 +2212,7 @@ export struct SourceDetailPage {
     this.searchResults = [];
     this.comicList = [];
     this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
 
     try {
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
@@ -2080,8 +2223,9 @@ export struct SourceDetailPage {
 
           if (result.success && result.data) {
             this.searchResults = this.convertMangaInfoToComicInfo(result.data.mangas);
-            this.comicList = this.searchResults;
-            this.comicDataSource.updateItems(this.comicList);
+            this.comicList = [...this.searchResults];
+            this.comicDataSource.updateItems([...this.comicList]);
+            this.touchComicContentRender();
             this.hasMore = result.data.hasNext;
             logger.info(TAG, `作者搜索完成，找到 ${result.data.mangas.length} 个结果`);
             return;
@@ -2120,6 +2264,7 @@ export struct SourceDetailPage {
     this.searchResults = [];
     this.comicList = [];
     this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
 
     try {
       if (this.useWebView && this.webViewReady && this.mangaSourceEngine) {
@@ -2130,8 +2275,9 @@ export struct SourceDetailPage {
 
           if (result.success && result.data) {
             this.searchResults = this.convertMangaInfoToComicInfo(result.data.mangas);
-            this.comicList = this.searchResults;
-            this.comicDataSource.updateItems(this.comicList);
+            this.comicList = [...this.searchResults];
+            this.comicDataSource.updateItems([...this.comicList]);
+            this.touchComicContentRender();
             this.hasMore = result.data.hasNext;
             logger.info(TAG, `系列搜索完成，找到 ${result.data.mangas.length} 个结果`);
             return;
@@ -2386,7 +2532,7 @@ export struct SourceDetailPage {
           Stack() {
             // 1. 底层：漫画列表网格
             // 始终渲染 Grid，确保 IDataSource 监听器一直保持连接
-            this.buildComicGrid()
+            this.buildComicGrid(this.comicContentRenderVersion)
 
             // 2. 中层：空状态视图
             // 仅在首次加载完成后、非加载中且数据为空时覆盖显示
@@ -2583,6 +2729,9 @@ export struct SourceDetailPage {
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+    })
+    .onShown(() => {
+      this.touchComicContentRender();
     })
     .backgroundColor(Color.Transparent)
     .bindContentCover(this.showSearchDialog, this.buildSearchDialog(), {
@@ -3271,6 +3420,7 @@ export struct SourceDetailPage {
     this.currentPage = 1;
     this.comicList = [];
     this.comicDataSource.updateItems([]);
+    this.touchComicContentRender();
     
     // 根据当前标签类型决定调用哪个方法
     if (this.currentTabId === 'search') {
@@ -3347,7 +3497,8 @@ export struct SourceDetailPage {
         }, () => {
           // 在顶部插入新项
           this.comicList = [...newItems, ...this.comicList];
-          this.comicDataSource.updateItems(this.comicList);
+          this.comicDataSource.updateItems([...this.comicList]);
+          this.touchComicContentRender();
           
           // 后台异步处理封面缓存
           this.processCoverCacheAsync(newItems);
@@ -3360,7 +3511,9 @@ export struct SourceDetailPage {
         this.scroller.scrollTo({ xOffset: 0, yOffset: 0, animation: { duration: 300 } });
       } else if (updatedItems.size > 0) {
         // 无新内容但有更新：更新现有项
+        this.comicList = this.comicList.map((item: ComicInfo) => updatedItems.get(item.id) || item);
         this.comicDataSource.updateExistingItems(updatedItems);
+        this.touchComicContentRender();
         this.showRefreshHint('内容已是最新', 'info');
       } else {
         // 完全无变化
@@ -3865,6 +4018,8 @@ export struct SourceDetailPage {
     const newMap = new Map(this.tabDisplayModes);
     newMap.set(this.currentTabId, mode);
     this.tabDisplayModes = newMap;
+    // 显式触发内容重绘，避免首帧或切换后渲染不同步
+    this.touchComicContentRender();
     // 异步保存到持久化存储
     this.saveTabDisplayModes();
   }
@@ -3880,6 +4035,20 @@ export struct SourceDetailPage {
       // 默认使用网格模式
       this.displayMode = DisplayMode.GRID;
     }
+    this.touchComicContentRender();
+  }
+
+  private parseDisplayModeValue(value: string | number | null | undefined): DisplayMode {
+    if (value === DisplayMode.GRID || value === 0 || value === '0') {
+      return DisplayMode.GRID;
+    }
+    if (value === DisplayMode.LIST || value === 1 || value === '1') {
+      return DisplayMode.LIST;
+    }
+    if (value === DisplayMode.LARGE_COVER || value === 2 || value === '2') {
+      return DisplayMode.LARGE_COVER;
+    }
+    return DisplayMode.GRID;
   }
 
   /**
@@ -3887,9 +4056,9 @@ export struct SourceDetailPage {
    */
   private async saveTabDisplayModes(): Promise<void> {
     try {
-      const modesObj: Record<string, number> = {};
+      const modesObj: Record<string, string> = {};
       this.tabDisplayModes.forEach((mode, tabId) => {
-        modesObj[tabId] = Number(mode);
+        modesObj[tabId] = mode;
       });
       await this.dataManager.saveUserSetting(
         String(this.sourceId),
@@ -3912,20 +4081,11 @@ export struct SourceDetailPage {
         'tabDisplayModes'
       );
       if (modesJson) {
-        const modesObj = JSON.parse(modesJson) as Record<string, number>;
+        const modesObj = JSON.parse(modesJson) as Record<string, string | number | null | undefined>;
         const newMap = new Map<string, DisplayMode>();
         Object.keys(modesObj).forEach(tabId => {
-          const modeValue = modesObj[tabId];
-          // 根据数字值转换为DisplayMode枚举
-          if (modeValue === 0) {
-            newMap.set(tabId, DisplayMode.GRID);
-          } else if (modeValue === 1) {
-            newMap.set(tabId, DisplayMode.LIST);
-          } else if (modeValue === 2) {
-            newMap.set(tabId, DisplayMode.LARGE_COVER);
-          } else {
-            newMap.set(tabId, DisplayMode.GRID); // 默认网格模式
-          }
+          const modeValue: string | number | null | undefined = modesObj[tabId];
+          newMap.set(tabId, this.parseDisplayModeValue(modeValue));
         });
         this.tabDisplayModes = newMap;
         logger.debug(TAG, `已加载标签显示模式: ${this.tabDisplayModes.size}个`);
@@ -4229,23 +4389,26 @@ export struct SourceDetailPage {
             }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
           } else {
             // 网格模式
-            Grid() {
-              ForEach(historyItem.results, (comic: ComicInfo) => {
-                GridItem() {
-                  if (this.displayMode === DisplayMode.LARGE_COVER) {
+            if (this.displayMode === DisplayMode.GRID) {
+              Column() {
+                this.buildAdaptiveCoverGrid(historyItem.results, `history_${historyItem.id}`)
+              }
+              .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
+            } else {
+              Grid() {
+                ForEach(historyItem.results, (comic: ComicInfo) => {
+                  GridItem() {
                     this.buildComicLargeCoverCard(comic)
-                  } else {
-                    this.buildComicCard(comic)
                   }
-                }
-              }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
+                }, (comic: ComicInfo) => `history_${historyItem.id}_${comic.id}`)
+              }
+              .columnsTemplate(this.getGridColumnsTemplate())
+              .columnsGap(this.isLandscape ? 16 : 12)
+              .rowsGap(this.isLandscape ? 16 : 12)
+              .width('100%')
+              .layoutDirection(GridDirection.Row)
+              .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
             }
-            .columnsTemplate(this.getGridColumnsTemplate())
-            .columnsGap(this.isLandscape ? 16 : 12)
-            .rowsGap(this.isLandscape ? 16 : 12)
-            .width('100%')
-            .layoutDirection(GridDirection.Row)
-            .padding(this.isLandscape ? { left: 8, right: 8, top: 12, bottom: 12 } : { left: 4, right: 4, top: 8, bottom: 8 })
           }
         }
         .width('100%')
@@ -4375,7 +4538,7 @@ export struct SourceDetailPage {
    * 构建漫画网格/列表
    */
   @Builder
-  buildComicGrid() {
+  buildComicGrid(renderVersion: number) {
     Stack({ alignContent: Alignment.Top }) {
       Refresh({ refreshing: $$this.isRefreshing }) {
         Scroll(this.scroller) {
@@ -4387,33 +4550,45 @@ export struct SourceDetailPage {
           if (this.displayMode === DisplayMode.LIST) {
             // 列表模式
             List({ space: 0 }) {
-              LazyForEach(this.comicDataSource, (comic: ComicInfo, index: number) => {
+              ForEach(this.comicList, (comic: ComicInfo) => {
                 ListItem() {
                   this.buildComicListItem(comic)
                 }
-              }, (comic: ComicInfo) => comic.id)
+              }, (comic: ComicInfo) => `${renderVersion}_${comic.id}`)
             }
             .width('100%')
             .padding(this.isLandscape ? { left: 24, right: 24, top: 12, bottom: 12 } : { left: 12, right: 12, top: 8, bottom: 8 })
           } else {
             // 网格模式和大封面模式
-            Grid() {
-              LazyForEach(this.comicDataSource, (comic: ComicInfo, index: number) => {
-                GridItem() {
-                  if (this.displayMode === DisplayMode.LARGE_COVER) {
-                    this.buildComicLargeCoverCard(comic)
-                  } else {
+            if (this.displayMode === DisplayMode.GRID) {
+              Grid() {
+                ForEach(this.comicList, (comic: ComicInfo) => {
+                  GridItem() {
                     this.buildComicCard(comic)
                   }
+                }, (comic: ComicInfo) => `${renderVersion}_${comic.id}`)
+              }
+              .columnsTemplate(this.getGridColumnsTemplate())
+              .columnsGap(this.isLandscape ? 16 : 12)
+              .rowsGap(this.isLandscape ? 16 : 12)
+              .width('100%')
+              .layoutDirection(GridDirection.Row)
+              .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
+            } else {
+              Grid() {
+                ForEach(this.comicList, (comic: ComicInfo) => {
+                GridItem() {
+                    this.buildComicLargeCoverCard(comic)
                 }
-              }, (comic: ComicInfo) => comic.id)
+                }, (comic: ComicInfo) => `${renderVersion}_${comic.id}`)
+              }
+              .columnsTemplate(this.getGridColumnsTemplate())
+              .columnsGap(this.isLandscape ? 16 : 12)
+              .rowsGap(this.isLandscape ? 16 : 12)
+              .width('100%')
+              .layoutDirection(GridDirection.Row)
+              .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
             }
-            .columnsTemplate(this.getGridColumnsTemplate())
-            .columnsGap(this.isLandscape ? 16 : 12)
-            .rowsGap(this.isLandscape ? 16 : 12)
-            .width('100%')
-            .layoutDirection(GridDirection.Row)
-            .padding(this.isLandscape ? { left: 24, right: 24, top: 16, bottom: 16 } : 16)
           }
 
           if (this.isLoading && this.currentPage > 1) {
@@ -4533,6 +4708,36 @@ export struct SourceDetailPage {
   /**
    * 构建漫画卡片
    */
+  /**
+   * Adaptive cover grid in normal grid mode.
+   */
+  @Builder
+  private buildAdaptiveCoverGrid(comics: ComicInfo[], keyPrefix: string) {
+    Column({ space: this.isLandscape ? 16 : 12 }) {
+      ForEach(this.buildAdaptiveCoverRows(comics, keyPrefix), (row: AdaptiveCoverRow) => {
+        Row({ space: this.isLandscape ? 16 : 12 }) {
+          ForEach(row.items, (item: AdaptiveCoverRowItem) => {
+            Column() {
+              this.buildComicCard(item.comic)
+            }
+            .layoutWeight(item.span)
+          }, (item: AdaptiveCoverRowItem) => `${row.key}_${item.comic.id}`)
+
+          if (row.usedSpan < this.getAdaptiveGridColumnCount()) {
+            Blank()
+              .layoutWeight(this.getAdaptiveGridColumnCount() - row.usedSpan)
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (row: AdaptiveCoverRow) => row.key)
+    }
+    .width('100%')
+  }
+
+  /**
+   * Build a standard comic card.
+   */
   @Builder
   buildComicCard(comic: ComicInfo) {
     Column({ space: 8 }) {
@@ -4541,9 +4746,9 @@ export struct SourceDetailPage {
         // 封面 - 横屏时高度为屏幕高度的一半，宽度自适应
         if (this.isLandscape && this.screenHeight > 0) {
           Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
-            .height(this.screenHeight * 0.5)
-            .aspectRatio(0.7)
-            .borderRadius(8)
+            .width('100%')
+            .height('100%')
+            .borderRadius(0)
             .objectFit(ImageFit.Contain)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
             .onAppear(() => {
@@ -4554,8 +4759,8 @@ export struct SourceDetailPage {
           // 竖屏时使用原有样式
           Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
             .width('100%')
-            .aspectRatio(0.7)
-            .borderRadius(8)
+            .height('100%')
+            .borderRadius(0)
             .objectFit(ImageFit.Contain)
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
             .onAppear(() => {
@@ -4565,6 +4770,10 @@ export struct SourceDetailPage {
         }
       }
       .width('100%')
+      .aspectRatio(this.getComicCoverAspectRatio(comic))
+      .padding(4)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .border({ width: 1, color: this.getCoverFrameBorderColor() })
 
       // 标题 - 固定高度确保卡片一致
       Text(comic.title)
@@ -4619,7 +4828,7 @@ export struct SourceDetailPage {
         Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
           .width(72)
           .aspectRatio(0.72)
-          .borderRadius(10)
+          .borderRadius(0)
           .objectFit(ImageFit.Contain)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .onAppear(() => {
@@ -4627,6 +4836,9 @@ export struct SourceDetailPage {
           })
           .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
       }
+      .padding(3)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .border({ width: 1, color: this.getCoverFrameBorderColor() })
       .shadow({
         radius: 6,
         color: '#15000000',
@@ -4711,8 +4923,8 @@ export struct SourceDetailPage {
       Stack() {
         Image(this.coverPixelMaps.has(comic.id) ? (this.coverPixelMaps.get(comic.id) as image.PixelMap) : $r('app.media.ic_placeholder'))
           .width('100%')
-          .aspectRatio(0.7)
-          .borderRadius(12)
+          .height('100%')
+          .borderRadius(0)
           .objectFit(ImageFit.Contain)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
           .onAppear(() => {
@@ -4721,6 +4933,10 @@ export struct SourceDetailPage {
           .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut }))
       }
       .width('100%')
+      .aspectRatio(this.getComicCoverAspectRatio(comic))
+      .padding(4)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+      .border({ width: 1, color: this.getCoverFrameBorderColor() })
 
       // 标题
       Text(comic.title)

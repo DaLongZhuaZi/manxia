@@ -354,7 +354,7 @@ export class EnhancedBackupManager {
             sources: (backupData.sources?.manga?.length || 0) + (backupData.sources?.novel?.length || 0),
             annotations: backupData.annotations?.records?.length || 0
           },
-          options: DEFAULT_BACKUP_OPTIONS,
+          options: backupData.options || DEFAULT_BACKUP_OPTIONS,
           fileSize: stat.size
         };
         
@@ -465,7 +465,27 @@ export class EnhancedBackupManager {
         records: options.includeAnnotations ? await this.exportUnifiedAnnotations() : []
       },
       
-      cloudConfig: options.includeCloudConfig ? await this.exportCloudConfig() : undefined
+      cloudConfig: options.includeCloudConfig ? await this.exportCloudConfig() : undefined,
+      options: options,
+      webview: {
+        configs: options.includeWebViewConfig ? await this.exportWebViewConfigs() : []
+      },
+      downloads: {
+        tasks: options.includeDownloadTasks ? await this.exportDownloadTasks() : []
+      },
+      cache: {
+        items: options.includeCacheInfo ? await this.exportCacheInfo() : []
+      },
+      plugins: {
+        plugins: options.includePlugins ? await this.exportPlugins() : []
+      },
+      favorites: {
+        favorites: options.includeFavorites ? await this.exportFavorites() : []
+      },
+      onlineData: options.includeOnlineData ? await this.exportOnlineData() : {
+        comics: [],
+        readHistory: []
+      }
     };
     
     return data;
@@ -2140,7 +2160,7 @@ export class EnhancedBackupManager {
         await this.dbManager.executeSql(sqlManga, [
           item.id, 
           item.sourceId, 
-          item.id,  // externalId使用id
+          item.externalId || item.id,
           item.title,
           item.author || '',
           item.description || '',
@@ -2698,6 +2718,7 @@ export class EnhancedBackupManager {
         
         backupItems.push({
           id: mangaId,
+          externalId: String(manga['externalId'] || ''),
           sourceId: String(manga['sourceId'] || ''),
           sourceName: String(manga['sourceName'] || ''),
           url: String(manga['url'] || ''),
@@ -3082,7 +3103,371 @@ export class EnhancedBackupManager {
    * 导出搜索历史
    */
   private async exportSearchHistory(): Promise<SearchHistoryBackup[]> {
-    return [];
+    const historyMap = new Map<string, SearchHistoryBackup>();
+    const now = Date.now();
+    
+    try {
+      const settingsHistory = this.novelSettingsManager.getSearchHistory();
+      settingsHistory.forEach((keyword: string, index: number) => {
+        const normalizedKeyword = keyword.trim();
+        if (!normalizedKeyword) {
+          return;
+        }
+        historyMap.set(normalizedKeyword, {
+          keyword: normalizedKeyword,
+          searchTime: now - index,
+          contentType: 'novel'
+        });
+      });
+    } catch (error) {
+      logger.warn(TAG, `Failed to read search history from settings: ${error}`);
+    }
+    
+    try {
+      const sql = 'SELECT keyword, searchTime FROM novel_search_history ORDER BY searchTime DESC';
+      const results = await this.dbManager.querySql(sql);
+      for (const row of results) {
+        const record = row as Record<string, DatabaseRecord>;
+        const keyword = String(record['keyword'] || '').trim();
+        if (!keyword) {
+          continue;
+        }
+        const searchTime = Number(record['searchTime'] || now);
+        const existing = historyMap.get(keyword);
+        if (!existing || searchTime > existing.searchTime) {
+          historyMap.set(keyword, {
+            keyword: keyword,
+            searchTime: searchTime,
+            contentType: 'novel'
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `Failed to export search history from table novel_search_history: ${error}`);
+    }
+    
+    return Array.from(historyMap.values()).sort((a, b) => b.searchTime - a.searchTime);
+  }
+
+  /**
+   * 导出 WebView 源配置
+   */
+  private async exportWebViewConfigs(): Promise<WebViewConfigBackup[]> {
+    try {
+      const sql = `
+        SELECT
+          id, sourceId, userAgent, referer, headers, cookies,
+          timeout, retryCount, enableCache, cacheExpireTime,
+          enableJavaScript, enableImages, enableCookies, enableLocalStorage,
+          createTime, updateTime
+        FROM webview_source_config
+      `;
+      const results = await this.dbManager.querySql(sql);
+      const configs: WebViewConfigBackup[] = [];
+      
+      for (const row of results) {
+        const rec = row as Record<string, DatabaseRecord>;
+        configs.push({
+          id: Number(rec['id'] || 0),
+          sourceId: Number(rec['sourceId'] || 0),
+          userAgent: String(rec['userAgent'] || ''),
+          referer: String(rec['referer'] || ''),
+          headers: String(rec['headers'] || '{}'),
+          cookies: String(rec['cookies'] || '{}'),
+          timeout: Number(rec['timeout'] || 30000),
+          retryCount: Number(rec['retryCount'] || 3),
+          enableCache: Boolean(rec['enableCache']),
+          cacheExpireTime: Number(rec['cacheExpireTime'] || 3600),
+          enableJavaScript: Boolean(rec['enableJavaScript']),
+          enableImages: Boolean(rec['enableImages']),
+          enableCookies: Boolean(rec['enableCookies']),
+          enableLocalStorage: Boolean(rec['enableLocalStorage']),
+          createTime: Number(rec['createTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+      
+      return configs;
+    } catch (error) {
+      logger.error(TAG, `Failed to export webview source configs: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出下载任务
+   */
+  private async exportDownloadTasks(): Promise<DownloadTaskBackup[]> {
+    try {
+      const sql = `
+        SELECT
+          id, comicId, chapterId, taskType, status, progress, downloadedSize, totalSize,
+          downloadSpeed, errorMessage, priority, createTime, startTime, completeTime
+        FROM download_task
+      `;
+      const results = await this.dbManager.querySql(sql);
+      const tasks: DownloadTaskBackup[] = [];
+      
+      for (const row of results) {
+        const rec = row as Record<string, DatabaseRecord>;
+        tasks.push({
+          id: Number(rec['id'] || 0),
+          comicId: String(rec['comicId'] || ''),
+          chapterId: rec['chapterId'] ? String(rec['chapterId']) : undefined,
+          taskType: String(rec['taskType'] || ''),
+          status: String(rec['status'] || 'pending'),
+          progress: Number(rec['progress'] || 0),
+          downloadedSize: Number(rec['downloadedSize'] || 0),
+          totalSize: Number(rec['totalSize'] || 0),
+          downloadSpeed: Number(rec['downloadSpeed'] || 0),
+          errorMessage: rec['errorMessage'] ? String(rec['errorMessage']) : undefined,
+          priority: Number(rec['priority'] || 0),
+          createTime: Number(rec['createTime'] || 0),
+          startTime: Number(rec['startTime'] || 0),
+          completeTime: Number(rec['completeTime'] || 0)
+        });
+      }
+      
+      return tasks;
+    } catch (error) {
+      logger.error(TAG, `Failed to export download tasks: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出缓存信息
+   */
+  private async exportCacheInfo(): Promise<CacheInfoBackup[]> {
+    try {
+      const sql = `
+        SELECT
+          id, cacheKey, cacheType, filePath, fileSize, expireTime,
+          accessCount, lastAccessTime, createTime
+        FROM cache_info
+      `;
+      const results = await this.dbManager.querySql(sql);
+      const items: CacheInfoBackup[] = [];
+      
+      for (const row of results) {
+        const rec = row as Record<string, DatabaseRecord>;
+        const fileSize = Number(rec['fileSize'] || 0);
+        const expireTime = Number(rec['expireTime'] || 0);
+        items.push({
+          id: Number(rec['id'] || 0),
+          cacheKey: String(rec['cacheKey'] || ''),
+          cacheType: String(rec['cacheType'] || ''),
+          filePath: String(rec['filePath'] || ''),
+          fileSize: fileSize,
+          expireTime: expireTime,
+          accessCount: Number(rec['accessCount'] || 0),
+          lastAccessTime: Number(rec['lastAccessTime'] || 0),
+          createTime: Number(rec['createTime'] || 0),
+          // 兼容旧字段
+          cacheSize: fileSize,
+          expiryTime: expireTime
+        });
+      }
+      
+      return items;
+    } catch (error) {
+      logger.error(TAG, `Failed to export cache info: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出插件信息
+   */
+  private async exportPlugins(): Promise<PluginBackup[]> {
+    try {
+      const sql = `
+        SELECT
+          id, pluginId, name, version, description, author,
+          hspPath, configSchema, isEnabled, installTime, updateTime
+        FROM plugin
+      `;
+      const results = await this.dbManager.querySql(sql);
+      const plugins: PluginBackup[] = [];
+      
+      for (const row of results) {
+        const rec = row as Record<string, DatabaseRecord>;
+        const isEnabled = Boolean(rec['isEnabled']);
+        plugins.push({
+          id: Number(rec['id'] || 0),
+          pluginId: String(rec['pluginId'] || ''),
+          name: String(rec['name'] || ''),
+          version: String(rec['version'] || ''),
+          author: String(rec['author'] || ''),
+          description: String(rec['description'] || ''),
+          hspPath: String(rec['hspPath'] || ''),
+          configSchema: String(rec['configSchema'] || ''),
+          isEnabled: isEnabled,
+          // 兼容旧字段
+          enabled: isEnabled,
+          installTime: Number(rec['installTime'] || 0),
+          updateTime: Number(rec['updateTime'] || 0)
+        });
+      }
+      
+      return plugins;
+    } catch (error) {
+      logger.error(TAG, `Failed to export plugins: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出收藏信息
+   */
+  private async exportFavorites(): Promise<FavoriteBackup[]> {
+    try {
+      const sql = `
+        SELECT
+          id, comicId, userId, folderName, addTime,
+          lastReadChapterId, lastReadPageNumber, lastReadTime, readProgress
+        FROM favorite
+      `;
+      const results = await this.dbManager.querySql(sql);
+      const favorites: FavoriteBackup[] = [];
+      
+      for (const row of results) {
+        const rec = row as Record<string, DatabaseRecord>;
+        favorites.push({
+          id: Number(rec['id'] || 0),
+          comicId: String(rec['comicId'] || ''),
+          userId: String(rec['userId'] || ''),
+          folderName: String(rec['folderName'] || 'default'),
+          addTime: Number(rec['addTime'] || 0),
+          lastReadChapterId: String(rec['lastReadChapterId'] || ''),
+          lastReadPageNumber: Number(rec['lastReadPageNumber'] || 0),
+          lastReadTime: Number(rec['lastReadTime'] || 0),
+          readProgress: Number(rec['readProgress'] || 0)
+        });
+      }
+      
+      return favorites;
+    } catch (error) {
+      logger.error(TAG, `Failed to export favorites: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * 导出在线漫画相关数据
+   */
+  private async exportOnlineData(): Promise<OnlineDataBackupSection> {
+    const comics: OnlineComicBackup[] = [];
+    const readHistory: OnlineReadHistoryBackup[] = [];
+    
+    try {
+      const comicResults = await this.dbManager.querySql('SELECT * FROM online_comic_info ORDER BY updateTime DESC');
+      for (const comicRow of comicResults) {
+        const comicRecord = comicRow as Record<string, DatabaseRecord>;
+        const comicId = String(comicRecord['id'] || '');
+        
+        const chapterResults = await this.dbManager.querySql(
+          'SELECT * FROM online_chapter WHERE comicId = ? ORDER BY `index` ASC, addTime ASC',
+          [comicId]
+        );
+        const chapters: OnlineChapterBackup[] = [];
+        
+        for (const chapterRow of chapterResults) {
+          const chapterRecord = chapterRow as Record<string, DatabaseRecord>;
+          const chapterId = String(chapterRecord['id'] || '');
+          
+          const pageResults = await this.dbManager.querySql(
+            'SELECT * FROM online_page WHERE chapterId = ? ORDER BY pageNumber ASC',
+            [chapterId]
+          );
+          const pages: OnlinePageBackup[] = [];
+          
+          for (const pageRow of pageResults) {
+            const pageRecord = pageRow as Record<string, DatabaseRecord>;
+            pages.push({
+              id: String(pageRecord['id'] || ''),
+              chapterId: String(pageRecord['chapterId'] || ''),
+              pageNumber: Number(pageRecord['pageNumber'] || 0),
+              imageUrl: String(pageRecord['imageUrl'] || ''),
+              localPath: String(pageRecord['localPath'] || ''),
+              width: Number(pageRecord['width'] || 0),
+              height: Number(pageRecord['height'] || 0),
+              fileSize: Number(pageRecord['fileSize'] || 0),
+              isDownloaded: Boolean(pageRecord['isDownloaded']),
+              createTime: Number(pageRecord['createTime'] || 0)
+            });
+          }
+          
+          chapters.push({
+            id: String(chapterRecord['id'] || ''),
+            comicId: String(chapterRecord['comicId'] || ''),
+            externalId: String(chapterRecord['externalId'] || ''),
+            title: String(chapterRecord['title'] || ''),
+            chapterNumber: Number(chapterRecord['chapterNumber'] || 0),
+            url: String(chapterRecord['url'] || ''),
+            pageCount: Number(chapterRecord['pageCount'] || 0),
+            publishTime: Number(chapterRecord['publishTime'] || 0),
+            addTime: Number(chapterRecord['addTime'] || 0),
+            createTime: Number(chapterRecord['createTime'] || 0),
+            updateTime: Number(chapterRecord['updateTime'] || 0),
+            isDownloaded: Boolean(chapterRecord['isDownloaded']),
+            downloadPath: String(chapterRecord['downloadPath'] || ''),
+            index: Number(chapterRecord['index'] || 0),
+            pages: pages
+          });
+        }
+        
+        comics.push({
+          id: String(comicRecord['id'] || ''),
+          sourceId: String(comicRecord['sourceId'] || ''),
+          externalId: String(comicRecord['externalId'] || ''),
+          title: String(comicRecord['title'] || ''),
+          author: String(comicRecord['author'] || ''),
+          coverUrl: String(comicRecord['coverUrl'] || ''),
+          description: String(comicRecord['description'] || ''),
+          tags: String(comicRecord['tags'] || ''),
+          rating: Number(comicRecord['rating'] || 0),
+          lastUpdateTime: Number(comicRecord['lastUpdateTime'] || 0),
+          addTime: Number(comicRecord['addTime'] || 0),
+          createTime: Number(comicRecord['createTime'] || 0),
+          updateTime: Number(comicRecord['updateTime'] || 0),
+          sourceName: String(comicRecord['sourceName'] || ''),
+          sourcePkg: String(comicRecord['sourcePkg'] || ''),
+          isNSFW: Boolean(comicRecord['isNSFW']),
+          isPrivate: Boolean(comicRecord['isPrivate']),
+          chapters: chapters
+        });
+      }
+    } catch (error) {
+      logger.warn(TAG, `Failed to export online comic data: ${error}`);
+    }
+    
+    try {
+      const historyResults = await this.dbManager.querySql('SELECT * FROM online_read_history ORDER BY readTime DESC');
+      for (const historyRow of historyResults) {
+        const historyRecord = historyRow as Record<string, DatabaseRecord>;
+        const pageNumber = Number(historyRecord['pageNumber'] || 0);
+        readHistory.push({
+          id: Number(historyRecord['id'] || 0),
+          comicId: String(historyRecord['comicId'] || ''),
+          chapterId: String(historyRecord['chapterId'] || ''),
+          userId: String(historyRecord['userId'] || ''),
+          pageNumber: pageNumber,
+          readTime: Number(historyRecord['readTime'] || 0),
+          duration: Number(historyRecord['duration'] || 0),
+          createTime: Number(historyRecord['createTime'] || 0),
+          // 兼容旧字段
+          pageIndex: pageNumber
+        });
+      }
+    } catch (error) {
+      logger.warn(TAG, `Failed to export online read history: ${error}`);
+    }
+    
+    return {
+      comics: comics,
+      readHistory: readHistory
+    };
   }
 
   /**
@@ -3547,17 +3932,30 @@ export class EnhancedBackupManager {
     try {
       if (history.browse && Array.isArray(history.browse)) {
         for (const item of history.browse as BrowseHistoryBackup[]) {
-          if (item.contentType === 'novel') {
-            const browseInput: BrowseHistoryInput = {
-              sourceId: item.sourceId,
-              bookUrl: item.contentId,
-              bookName: item.title,
-              author: '',
-              coverUrl: item.coverUrl || '',
-              sourceName: ''
-            };
-            await this.novelSettingsManager.addBrowseHistory(browseInput);
+          if (item.contentType !== 'novel') {
+            logger.debug(TAG, `Skip unsupported browse history contentType: ${item.contentType}`);
+            continue;
           }
+          
+          const browseInput: BrowseHistoryInput = {
+            sourceId: item.sourceId,
+            bookUrl: item.contentId,
+            bookName: item.title,
+            author: '',
+            coverUrl: item.coverUrl || '',
+            sourceName: ''
+          };
+          await this.novelSettingsManager.addBrowseHistory(browseInput);
+        }
+      }
+      
+      if (history.search && Array.isArray(history.search)) {
+        for (const item of history.search as SearchHistoryBackup[]) {
+          const keyword = String(item.keyword || '').trim();
+          if (!keyword) {
+            continue;
+          }
+          await this.novelSettingsManager.addSearchHistory(keyword);
         }
       }
       
@@ -3575,13 +3973,31 @@ export class EnhancedBackupManager {
     
     for (const config of configs) {
       try {
-        const sql = 'INSERT OR REPLACE INTO webview_source_config (id, sourceId, userAgent, enableJavaScript, enableCookies, customHeaders, refererPolicy, imageLoadingStrategy, timeout, retryCount, lastUpdateTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+        const now = Date.now();
+        const updateTime = Number(config.updateTime || config.lastUpdateTime || now);
+        const createTime = Number(config.createTime || updateTime || now);
+        const enableImages = config.enableImages !== undefined
+          ? config.enableImages
+          : config.imageLoadingStrategy !== 'none';
+        const sql = 'INSERT OR REPLACE INTO webview_source_config (id, sourceId, userAgent, referer, headers, cookies, timeout, retryCount, enableCache, cacheExpireTime, enableJavaScript, enableImages, enableCookies, enableLocalStorage, createTime, updateTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
         
         await this.dbManager.executeSql(sql, [
-          config.id, config.sourceId, config.userAgent,
-          config.enableJavaScript ? 1 : 0, config.enableCookies ? 1 : 0,
-          config.customHeaders, config.refererPolicy, config.imageLoadingStrategy,
-          config.timeout, config.retryCount, config.lastUpdateTime
+          config.id > 0 ? config.id : null,
+          config.sourceId,
+          config.userAgent || '',
+          config.referer || '',
+          config.headers || config.customHeaders || '{}',
+          config.cookies || '{}',
+          config.timeout || 30000,
+          config.retryCount || 3,
+          config.enableCache !== undefined ? (config.enableCache ? 1 : 0) : 1,
+          config.cacheExpireTime || 3600,
+          config.enableJavaScript !== undefined ? (config.enableJavaScript ? 1 : 0) : 1,
+          enableImages ? 1 : 0,
+          config.enableCookies !== undefined ? (config.enableCookies ? 1 : 0) : 1,
+          config.enableLocalStorage !== undefined ? (config.enableLocalStorage ? 1 : 0) : 1,
+          createTime,
+          updateTime
         ]);
       } catch (error) {
         logger.error(TAG, `Failed to restore WebView config: ${error}`);
@@ -3599,13 +4015,28 @@ export class EnhancedBackupManager {
     
     for (const task of tasks) {
       try {
-        const sql = 'INSERT OR REPLACE INTO download_task (id, comicId, chapterId, taskType, status, progress, totalSize, downloadedSize, createTime, updateTime, errorMessage) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+        const startTime = Number(task.startTime ?? task.updateTime ?? 0);
+        const completeTime = Number(
+          task.completeTime ??
+          ((task.status === 'completed' || task.status === 'success') ? (task.updateTime ?? 0) : 0)
+        );
+        const sql = 'INSERT OR REPLACE INTO download_task (id, comicId, chapterId, taskType, status, progress, downloadedSize, totalSize, downloadSpeed, errorMessage, priority, createTime, startTime, completeTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
         
         await this.dbManager.executeSql(sql, [
-          task.id, task.comicId, task.chapterId || null,
-          task.taskType, task.status, task.progress,
-          task.totalSize, task.downloadedSize, task.createTime,
-          task.updateTime, task.errorMessage || null
+          task.id > 0 ? task.id : null,
+          task.comicId,
+          task.chapterId || null,
+          task.taskType,
+          task.status,
+          task.progress,
+          task.downloadedSize,
+          task.totalSize,
+          task.downloadSpeed || 0,
+          task.errorMessage || null,
+          task.priority || 0,
+          task.createTime,
+          startTime,
+          completeTime
         ]);
       } catch (error) {
         logger.error(TAG, `Failed to restore download task: ${error}`);
@@ -3623,12 +4054,19 @@ export class EnhancedBackupManager {
     
     for (const fav of favorites) {
       try {
-        const sql = 'INSERT OR REPLACE INTO favorite (id, comicId, userId, tags, note, rating, addTime, updateTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+        const lastReadTime = Number(fav.lastReadTime ?? fav.updateTime ?? 0);
+        const sql = 'INSERT OR REPLACE INTO favorite (id, comicId, userId, folderName, addTime, lastReadChapterId, lastReadPageNumber, lastReadTime, readProgress) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
         
         await this.dbManager.executeSql(sql, [
-          fav.id, fav.comicId, fav.userId,
-          JSON.stringify(fav.tags), fav.note, fav.rating,
-          fav.addTime, fav.updateTime
+          fav.id > 0 ? fav.id : null,
+          fav.comicId,
+          fav.userId,
+          fav.folderName || 'default',
+          fav.addTime,
+          fav.lastReadChapterId || '',
+          fav.lastReadPageNumber || 0,
+          lastReadTime,
+          fav.readProgress || 0
         ]);
       } catch (error) {
         logger.error(TAG, `Failed to restore favorite: ${error}`);
@@ -3650,32 +4088,70 @@ export class EnhancedBackupManager {
     if (comics && comics.length > 0) {
       for (const comic of comics) {
         try {
-          const sqlComic = 'INSERT OR REPLACE INTO online_comic_info (id, sourceId, externalId, title, author, coverUrl, description, status, lastUpdateTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+          const now = Date.now();
+          const sqlComic = 'INSERT OR REPLACE INTO online_comic_info (id, sourceId, externalId, title, author, description, coverUrl, tags, rating, lastUpdateTime, addTime, createTime, updateTime, sourceName, sourcePkg, isNSFW, isPrivate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
           
           await this.dbManager.executeSql(sqlComic, [
-            comic.id, comic.sourceId, comic.externalId, comic.title,
-            comic.author, comic.coverUrl, comic.description, comic.status,
-            comic.lastUpdateTime
+            comic.id,
+            comic.sourceId,
+            comic.externalId,
+            comic.title,
+            comic.author || '',
+            comic.description || '',
+            comic.coverUrl || '',
+            comic.tags || '',
+            comic.rating || 0,
+            comic.lastUpdateTime || now,
+            comic.addTime || now,
+            comic.createTime || now,
+            comic.updateTime || now,
+            comic.sourceName || '',
+            comic.sourcePkg || '',
+            comic.isNSFW ? 1 : 0,
+            comic.isPrivate ? 1 : 0
           ]);
           
           const chapters = comic.chapters as OnlineChapterBackup[] | undefined;
           if (chapters) {
             for (const chapter of chapters) {
-              const sqlChapter = 'INSERT OR REPLACE INTO online_chapter (id, comicId, externalId, title, chapterNumber, publishTime) VALUES (?, ?, ?, ?, ?, ?)';
+              const chapterNow = Date.now();
+              const chapterNumber = Number(chapter.chapterNumber || 0);
+              const chapterIndex = Number(chapter.index || 0);
+              const sqlChapter = 'INSERT OR REPLACE INTO online_chapter (id, comicId, externalId, title, chapterNumber, url, pageCount, publishTime, addTime, createTime, updateTime, isDownloaded, downloadPath, `index`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
               
               await this.dbManager.executeSql(sqlChapter, [
-                chapter.id, chapter.comicId, chapter.externalId,
-                chapter.title, chapter.chapterNumber, chapter.publishTime
+                chapter.id,
+                chapter.comicId || comic.id,
+                chapter.externalId,
+                chapter.title,
+                Number.isNaN(chapterNumber) ? 0 : chapterNumber,
+                chapter.url || '',
+                chapter.pageCount || 0,
+                chapter.publishTime || 0,
+                chapter.addTime || chapterNow,
+                chapter.createTime || chapterNow,
+                chapter.updateTime || chapterNow,
+                chapter.isDownloaded ? 1 : 0,
+                chapter.downloadPath || '',
+                Number.isNaN(chapterIndex) ? 0 : chapterIndex
               ]);
               
               const pages = chapter.pages as OnlinePageBackup[] | undefined;
               if (pages) {
                 for (const page of pages) {
-                  const sqlPage = 'INSERT OR REPLACE INTO online_page (id, chapterId, pageNumber, imageUrl, width, height) VALUES (?, ?, ?, ?, ?, ?)';
+                  const sqlPage = 'INSERT OR REPLACE INTO online_page (id, chapterId, pageNumber, imageUrl, localPath, width, height, fileSize, isDownloaded, createTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
                   
                   await this.dbManager.executeSql(sqlPage, [
-                    page.id, page.chapterId, page.pageNumber,
-                    page.imageUrl, page.width, page.height
+                    page.id,
+                    page.chapterId || chapter.id,
+                    page.pageNumber,
+                    page.imageUrl,
+                    page.localPath || '',
+                    page.width || 0,
+                    page.height || 0,
+                    page.fileSize || 0,
+                    page.isDownloaded ? 1 : 0,
+                    page.createTime || Date.now()
                   ]);
                 }
               }
@@ -3690,11 +4166,22 @@ export class EnhancedBackupManager {
     if (readHistory && readHistory.length > 0) {
       for (const history of readHistory) {
         try {
-          const sql = 'INSERT OR REPLACE INTO online_read_history (id, comicId, chapterId, pageIndex, readTime) VALUES (?, ?, ?, ?, ?)';
+          const pageNumber = Number(
+            history.pageNumber !== undefined
+              ? history.pageNumber
+              : (history.pageIndex || 0)
+          );
+          const sql = 'INSERT OR REPLACE INTO online_read_history (id, comicId, chapterId, userId, pageNumber, readTime, duration, createTime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
           
           await this.dbManager.executeSql(sql, [
-            history.id, history.comicId, history.chapterId,
-            history.pageIndex, history.readTime
+            history.id > 0 ? history.id : null,
+            history.comicId,
+            history.chapterId,
+            history.userId || 'default',
+            pageNumber,
+            history.readTime,
+            history.duration || 0,
+            history.createTime || history.readTime || Date.now()
           ]);
         } catch (error) {
           logger.error(TAG, `Failed to restore online read history: ${error}`);
@@ -3888,8 +4375,8 @@ export class EnhancedBackupManager {
     
     for (const item of items) {
       try {
-        const existingResults = await this.dbManager.querySql('SELECT id, currentPage, readProgress, lastReadTime FROM ebook_info WHERE id = ?', [item.id]);
-        const exists = existingResults.length > 0;
+        const existingBookResults = await this.dbManager.querySql('SELECT id FROM ebook_info WHERE id = ?', [item.id]);
+        const exists = existingBookResults.length > 0;
         
         if (exists && strategy === 'skip') {
           logger.debug(TAG, `Skipping existing ebook: ${item.title}`);
@@ -3898,14 +4385,20 @@ export class EnhancedBackupManager {
         
         // 对于merge策略，保留更新的阅读进度
         if (exists && strategy === 'merge') {
-          const existing = existingResults[0] as Record<string, DatabaseRecord>;
-          const existingReadTime = Number(existing['lastReadTime'] || 0);
-          const backupReadTime = item.lastReadTime || 0;
-          
-          if (existingReadTime > backupReadTime) {
-            item.currentPage = Number(existing['currentPage'] || item.currentPage);
-            item.readProgress = Number(existing['readProgress'] || item.readProgress);
-            item.lastReadTime = existingReadTime;
+          const progressResults = await this.dbManager.querySql(
+            'SELECT currentPosition, progress, lastReadTime FROM ebook_reading_progress WHERE bookId = ? ORDER BY lastReadTime DESC LIMIT 1',
+            [item.id]
+          );
+          if (progressResults.length > 0) {
+            const existingProgress = progressResults[0] as Record<string, DatabaseRecord>;
+            const existingReadTime = Number(existingProgress['lastReadTime'] || 0);
+            const backupReadTime = item.lastReadTime || 0;
+            
+            if (existingReadTime > backupReadTime) {
+              item.currentPage = Number(existingProgress['currentPosition'] || item.currentPage);
+              item.readProgress = Number(existingProgress['progress'] || item.readProgress);
+              item.lastReadTime = existingReadTime;
+            }
           }
         }
         

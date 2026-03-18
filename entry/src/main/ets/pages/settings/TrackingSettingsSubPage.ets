@@ -38,6 +38,9 @@ interface TrackerLoginStatus {
 export struct TrackingSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
+  @State private settingsTapEnabled: boolean = true;
+  private settingsTapUnlockTimer: number = -1;
+  private readonly scrollTapGuardDurationMs: number = 140;
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -62,6 +65,26 @@ export struct TrackingSettingsSubPage {
 
   private lifecycle = new PageLifecycleManager('TrackingSettingsSubPage', { enableDebug: true });
 
+  private markSettingsScrolling(): void {
+    if (this.settingsTapEnabled) {
+      this.settingsTapEnabled = false;
+    }
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+    }
+    this.settingsTapUnlockTimer = setTimeout(() => {
+      this.settingsTapEnabled = true;
+      this.settingsTapUnlockTimer = -1;
+    }, this.scrollTapGuardDurationMs);
+  }
+
+  private cleanupSettingsTapGuard(): void {
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+      this.settingsTapUnlockTimer = -1;
+    }
+    this.settingsTapEnabled = true;
+  }
   onPageShow(): void {
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
@@ -96,6 +119,7 @@ export struct TrackingSettingsSubPage {
   }
 
   aboutToDisappear(): void {
+    this.cleanupSettingsTapGuard();
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -495,6 +519,7 @@ export struct TrackingSettingsSubPage {
 
             Blank().height(40)
           }
+          .enabled(this.settingsTapEnabled)
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_maxContentWidth })
           .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
@@ -504,6 +529,9 @@ export struct TrackingSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .onScroll((_xOffset: number, _yOffset: number) => {
+          this.markSettingsScrolling();
+        })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
