@@ -173,6 +173,7 @@ export struct UnifiedDetailPage {
   // 沉浸式显示状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -394,6 +395,7 @@ export struct UnifiedDetailPage {
   @State isLoadingRecommendations: boolean = false;
 
   aboutToAppear(): void {
+    this.previousDisplayMode = WindowManager.getCurrentMode();
     WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -431,7 +433,7 @@ export struct UnifiedDetailPage {
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
