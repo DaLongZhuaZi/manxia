@@ -309,6 +309,7 @@ export struct UnifiedDetailPage {
   @State addToShelfDialogOpacity: number = 0;           // 对话框背景透明度
   @State addToShelfDialogScale: number = 0.8;           // 对话框缩放
   @State availableCustomShelves: TypeShelf[] = [];      // 可用的自定义书架列表
+  @State isShelfActionPending: boolean = false;         // 书架操作进行中（防重复点击）
   
   // 同书架内容状态
   @State shelfContentItems: ShelfContentItem[] = [];    // 同书架的其他内容
@@ -1538,6 +1539,9 @@ export struct UnifiedDetailPage {
   }
 
   private getShelfButtonLabel(): string {
+    if (this.isShelfActionPending) {
+      return '处理中...';
+    }
     if (!this.isInShelf) {
       return '添加书架';
     }
@@ -2902,6 +2906,7 @@ export struct UnifiedDetailPage {
                 : ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
               .height(32)
               .width('100%')
+              .enabled(!this.isShelfActionPending)
               .onClick(() => this.showAddToShelfSelection())
           }
 
@@ -6756,6 +6761,7 @@ export struct UnifiedDetailPage {
             .height(36)
             .width('100%')
             .borderRadius(18)
+            .enabled(!this.isShelfActionPending)
             .onClick(() => this.showAddToShelfSelection())
         }
 
@@ -9250,6 +9256,7 @@ export struct UnifiedDetailPage {
             .width(32)
             .height(32)
             .backgroundColor(Color.Transparent)
+            .enabled(!this.isShelfActionPending)
             .onClick(() => this.closeAddToShelfDialog())
           }
           .width('100%')
@@ -9296,6 +9303,9 @@ export struct UnifiedDetailPage {
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
               .borderRadius(12)
               .onClick(async () => {
+                if (this.isShelfActionPending) {
+                  return;
+                }
                 await this.addToFavoriteOnly();
                 this.closeAddToShelfDialog();
               })
@@ -9345,7 +9355,12 @@ export struct UnifiedDetailPage {
                 .padding({ left: 12, right: 12, top: 10, bottom: 10 })
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                 .borderRadius(12)
-                .onClick(() => this.addToShelf(shelf))
+                .onClick(() => {
+                  if (this.isShelfActionPending) {
+                    return;
+                  }
+                  void this.addToShelf(shelf);
+                })
               }
             }, (shelf: TypeShelf) => shelf.id)
           }
@@ -9655,7 +9670,7 @@ export struct UnifiedDetailPage {
    * 显示添加书架选择
    */
   private async showAddToShelfSelection(): Promise<void> {
-    if (!this.content) return;
+    if (!this.content || this.isShelfActionPending) return;
     
     // 如果已在书架中，提示用户
     if (this.isInShelf) {
@@ -9665,25 +9680,33 @@ export struct UnifiedDetailPage {
       });
       return;
     }
-    
-    // 获取可用的自定义书架
-    await this.getAvailableCustomShelves();
-    
-    // 始终显示对话框（包含默认书架选项）
-    this.showAddToShelfDialog = true;
-    animateTo({
-      duration: 300,
-      curve: curves.springMotion(0.6, 0.9)
-    }, () => {
-      this.addToShelfDialogOpacity = 1;
-      this.addToShelfDialogScale = 1;
-    });
+
+    this.isShelfActionPending = true;
+    try {
+      // 获取可用的自定义书架
+      await this.getAvailableCustomShelves();
+      
+      // 始终显示对话框（包含默认书架选项）
+      this.showAddToShelfDialog = true;
+      animateTo({
+        duration: 300,
+        curve: curves.springMotion(0.6, 0.9)
+      }, () => {
+        this.addToShelfDialogOpacity = 1;
+        this.addToShelfDialogScale = 1;
+      });
+    } finally {
+      this.isShelfActionPending = false;
+    }
   }
 
   /**
    * 关闭添加书架对话框
    */
-  private closeAddToShelfDialog(): void {
+  private closeAddToShelfDialog(force: boolean = false): void {
+    if (this.isShelfActionPending && !force) {
+      return;
+    }
     animateTo({
       duration: 250,
       curve: Curve.EaseOut
@@ -9796,8 +9819,9 @@ export struct UnifiedDetailPage {
    * 添加到指定书架
    */
   private async addToShelf(shelf: TypeShelf): Promise<void> {
-    if (!this.content) return;
+    if (!this.content || this.isShelfActionPending) return;
     
+    this.isShelfActionPending = true;
     try {
       // 根据内容类型获取类型
       let contentType: ContentType;
@@ -9829,7 +9853,7 @@ export struct UnifiedDetailPage {
       this.currentShelfId = shelf.id;
       
       // 关闭对话框
-      this.closeAddToShelfDialog();
+      this.closeAddToShelfDialog(true);
       
       // 加载同书架内容
       this.loadShelfContent();
@@ -9844,6 +9868,8 @@ export struct UnifiedDetailPage {
         message: '添加失败，请重试',
         duration: 1500 
       });
+    } finally {
+      this.isShelfActionPending = false;
     }
   }
 
@@ -9851,8 +9877,9 @@ export struct UnifiedDetailPage {
    * 仅添加到收藏（没有自定义书架时调用）
    */
   private async addToFavoriteOnly(): Promise<void> {
-    if (!this.content) return;
+    if (!this.content || this.isShelfActionPending) return;
     
+    this.isShelfActionPending = true;
     try {
       await this.setFavoriteStatus(true);
       this.isInShelf = true;
@@ -9867,6 +9894,8 @@ export struct UnifiedDetailPage {
         message: '添加失败，请重试',
         duration: 1500 
       });
+    } finally {
+      this.isShelfActionPending = false;
     }
   }
 

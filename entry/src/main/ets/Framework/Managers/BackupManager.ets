@@ -571,7 +571,50 @@ export class BackupManager {
   }
 
   private async exportSearchHistory(): Promise<SearchHistoryBackup[]> {
-    return [];
+    const historyMap = new Map<string, SearchHistoryBackup>();
+    const now = Date.now();
+    
+    try {
+      const settingsHistory = this.novelSettingsManager.getSearchHistory();
+      settingsHistory.forEach((keyword: string, index: number) => {
+        const normalizedKeyword = keyword.trim();
+        if (!normalizedKeyword) {
+          return;
+        }
+        historyMap.set(normalizedKeyword, {
+          keyword: normalizedKeyword,
+          searchTime: now - index,
+          contentType: 'novel'
+        });
+      });
+    } catch (error) {
+      logger.warn(TAG, `Failed to read search history from settings: ${error}`);
+    }
+    
+    try {
+      const sql = 'SELECT keyword, searchTime FROM novel_search_history ORDER BY searchTime DESC';
+      const results = await this.dbManager.querySql(sql);
+      for (const row of results) {
+        const record = row as Record<string, DatabaseRecord>;
+        const keyword = String(record['keyword'] || '').trim();
+        if (!keyword) {
+          continue;
+        }
+        const searchTime = Number(record['searchTime'] || now);
+        const existing = historyMap.get(keyword);
+        if (!existing || searchTime > existing.searchTime) {
+          historyMap.set(keyword, {
+            keyword: keyword,
+            searchTime: searchTime,
+            contentType: 'novel'
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn(TAG, `Failed to export search history from table novel_search_history: ${error}`);
+    }
+    
+    return Array.from(historyMap.values()).sort((a, b) => b.searchTime - a.searchTime);
   }
 
   private async exportUnifiedAnnotations(): Promise<UnifiedAnnotationBackupItem[]> {
@@ -835,18 +878,31 @@ export class BackupManager {
     
     try {
       if (history.browse && Array.isArray(history.browse)) {
-        for (const item of history.browse) {
-          if (item.contentType === 'novel') {
-            const browseInput: BrowseHistoryInput = {
-              sourceId: item.sourceId,
-              bookUrl: item.contentId,
-              bookName: item.title,
-              author: '',
-              coverUrl: item.coverUrl || '',
-              sourceName: ''
-            };
-            await this.novelSettingsManager.addBrowseHistory(browseInput);
+        for (const item of history.browse as BrowseHistoryBackup[]) {
+          if (item.contentType !== 'novel') {
+            logger.debug(TAG, `Skip unsupported browse history contentType: ${item.contentType}`);
+            continue;
           }
+          
+          const browseInput: BrowseHistoryInput = {
+            sourceId: item.sourceId,
+            bookUrl: item.contentId,
+            bookName: item.title,
+            author: '',
+            coverUrl: item.coverUrl || '',
+            sourceName: ''
+          };
+          await this.novelSettingsManager.addBrowseHistory(browseInput);
+        }
+      }
+      
+      if (history.search && Array.isArray(history.search)) {
+        for (const item of history.search as SearchHistoryBackup[]) {
+          const keyword = String(item.keyword || '').trim();
+          if (!keyword) {
+            continue;
+          }
+          await this.novelSettingsManager.addSearchHistory(keyword);
         }
       }
       

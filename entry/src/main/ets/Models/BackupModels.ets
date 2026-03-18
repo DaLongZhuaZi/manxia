@@ -15,6 +15,7 @@ export interface BackupData {
   appVersion: string;                 // 应用版本
   timestamp: number;                  // 备份时间戳
   deviceInfo?: string;                // 设备信息
+  options?: BackupOptions;            // backup options used during creation
   
   // 漫画数据
   manga: MangaBackupSection;
@@ -120,6 +121,7 @@ export interface FTPConnectionBackup {
  */
 export interface MangaBackupItem {
   id: string;
+  externalId?: string;
   sourceId: string;
   sourceName: string;
   url: string;
@@ -545,12 +547,22 @@ export interface WebViewConfigBackup {
   userAgent: string;
   enableJavaScript: boolean;
   enableCookies: boolean;
-  customHeaders: string;
-  refererPolicy: string;
-  imageLoadingStrategy: string;
   timeout: number;
   retryCount: number;
-  lastUpdateTime: number;
+  referer?: string;
+  headers?: string;
+  cookies?: string;
+  enableCache?: boolean;
+  cacheExpireTime?: number;
+  enableImages?: boolean;
+  enableLocalStorage?: boolean;
+  createTime?: number;
+  updateTime?: number;
+  // legacy compatibility fields
+  customHeaders?: string;
+  refererPolicy?: string;
+  imageLoadingStrategy?: string;
+  lastUpdateTime?: number;
 }
 
 /**
@@ -565,8 +577,13 @@ export interface DownloadTaskBackup {
   progress: number;
   totalSize: number;
   downloadedSize: number;
+  downloadSpeed?: number;
+  priority?: number;
   createTime: number;
-  updateTime: number;
+  startTime?: number;
+  completeTime?: number;
+  // legacy compatibility fields
+  updateTime?: number;
   errorMessage?: string;
 }
 
@@ -577,10 +594,15 @@ export interface CacheInfoBackup {
   id: number;
   cacheKey: string;
   cacheType: string;
-  cacheSize: number;
+  filePath?: string;
+  fileSize?: number;
+  expireTime?: number;
+  accessCount?: number;
+  // legacy compatibility fields
+  cacheSize?: number;
   createTime: number;
   lastAccessTime: number;
-  expiryTime: number;
+  expiryTime?: number;
 }
 
 /**
@@ -593,7 +615,11 @@ export interface PluginBackup {
   version: string;
   author: string;
   description: string;
-  enabled: boolean;
+  hspPath?: string;
+  configSchema?: string;
+  isEnabled?: boolean;
+  // legacy compatibility fields
+  enabled?: boolean;
   installTime: number;
   updateTime: number;
 }
@@ -605,11 +631,17 @@ export interface FavoriteBackup {
   id: number;
   comicId: string;
   userId: string;
-  tags: string[];
-  note: string;
-  rating: number;
+  folderName?: string;
   addTime: number;
-  updateTime: number;
+  lastReadChapterId?: string;
+  lastReadPageNumber?: number;
+  lastReadTime?: number;
+  readProgress?: number;
+  // legacy compatibility fields
+  tags?: string[];
+  note?: string;
+  rating?: number;
+  updateTime?: number;
 }
 
 /**
@@ -623,9 +655,19 @@ export interface OnlineComicBackup {
   author: string;
   coverUrl: string;
   description: string;
-  status: string;
+  tags?: string;
+  rating?: number;
   lastUpdateTime: number;
-  chapters: OnlineChapterBackup[];
+  addTime?: number;
+  createTime?: number;
+  updateTime?: number;
+  sourceName?: string;
+  sourcePkg?: string;
+  isNSFW?: boolean;
+  isPrivate?: boolean;
+  chapters?: OnlineChapterBackup[];
+  // legacy compatibility fields
+  status?: string;
 }
 
 /**
@@ -636,9 +678,17 @@ export interface OnlineChapterBackup {
   comicId: string;
   externalId: string;
   title: string;
-  chapterNumber: string;
+  chapterNumber: number | string;
+  url?: string;
+  pageCount?: number;
   publishTime: number;
-  pages: OnlinePageBackup[];
+  addTime?: number;
+  createTime?: number;
+  updateTime?: number;
+  isDownloaded?: boolean;
+  downloadPath?: string;
+  index?: number;
+  pages?: OnlinePageBackup[];
 }
 
 /**
@@ -649,8 +699,12 @@ export interface OnlinePageBackup {
   chapterId: string;
   pageNumber: number;
   imageUrl: string;
+  localPath?: string;
   width: number;
   height: number;
+  fileSize?: number;
+  isDownloaded?: boolean;
+  createTime?: number;
 }
 
 /**
@@ -703,8 +757,13 @@ export interface OnlineReadHistoryBackup {
   id: number;
   comicId: string;
   chapterId: string;
-  pageIndex: number;
+  userId?: string;
+  pageNumber?: number;
   readTime: number;
+  duration?: number;
+  createTime?: number;
+  // legacy compatibility fields
+  pageIndex?: number;
 }
 
 /**

@@ -93,6 +93,9 @@ export struct PageSettingsSubPage {
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'PageSettingsSubPage';
   private scroller: Scroller = new Scroller();
+  @State private settingsTapEnabled: boolean = true;
+  private settingsTapUnlockTimer: number = -1;
+  private readonly scrollTapGuardDurationMs: number = 140;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -134,6 +137,26 @@ export struct PageSettingsSubPage {
   @State tabletTopBarPosition: TabletTopBarPosition = 'top';
   private tabletTopBarPositions: TabletTopBarPosition[] = ['top', 'bottom', 'left', 'right'];
 
+  private markSettingsScrolling(): void {
+    if (this.settingsTapEnabled) {
+      this.settingsTapEnabled = false;
+    }
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+    }
+    this.settingsTapUnlockTimer = setTimeout(() => {
+      this.settingsTapEnabled = true;
+      this.settingsTapUnlockTimer = -1;
+    }, this.scrollTapGuardDurationMs);
+  }
+
+  private cleanupSettingsTapGuard(): void {
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+      this.settingsTapUnlockTimer = -1;
+    }
+    this.settingsTapEnabled = true;
+  }
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -155,6 +178,7 @@ export struct PageSettingsSubPage {
   private lifecycle = new PageLifecycleManager('PageSettingsSubPage', { enableDebug: true });
 
   aboutToDisappear(): void {
+    this.cleanupSettingsTapGuard();
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -1118,6 +1142,7 @@ export struct PageSettingsSubPage {
 
             Blank().height(40)
           }
+          .enabled(this.settingsTapEnabled)
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_maxContentWidth })
           .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
@@ -1126,6 +1151,9 @@ export struct PageSettingsSubPage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
+        .onScroll((_xOffset: number, _yOffset: number) => {
+          this.markSettingsScrolling();
+        })
         .edgeEffect(EdgeEffect.Spring)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }

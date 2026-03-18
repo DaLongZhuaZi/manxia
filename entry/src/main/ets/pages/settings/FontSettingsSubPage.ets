@@ -23,6 +23,9 @@ const TITLE_BAR_HEIGHT_MINI: number = 56;
 export struct FontSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
+  @State private settingsTapEnabled: boolean = true;
+  private settingsTapUnlockTimer: number = -1;
+  private readonly scrollTapGuardDurationMs: number = 140;
   
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -49,6 +52,26 @@ export struct FontSettingsSubPage {
   // 预览文本
   private previewText: string = '漫侠 - 您的漫画阅读伴侣\nThe quick brown fox jumps over the lazy dog.\n1234567890';
 
+  private markSettingsScrolling(): void {
+    if (this.settingsTapEnabled) {
+      this.settingsTapEnabled = false;
+    }
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+    }
+    this.settingsTapUnlockTimer = setTimeout(() => {
+      this.settingsTapEnabled = true;
+      this.settingsTapUnlockTimer = -1;
+    }, this.scrollTapGuardDurationMs);
+  }
+
+  private cleanupSettingsTapGuard(): void {
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+      this.settingsTapUnlockTimer = -1;
+    }
+    this.settingsTapEnabled = true;
+  }
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {});
     FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (newState: FontAwareState) => {
@@ -100,6 +123,7 @@ export struct FontSettingsSubPage {
   }
 
   aboutToDisappear(): void {
+    this.cleanupSettingsTapGuard();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
     if (this.deviceChangeListener) {
@@ -538,6 +562,7 @@ export struct FontSettingsSubPage {
 
             Blank().height(40)
           }
+          .enabled(this.settingsTapEnabled)
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_maxContentWidth })
           .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
@@ -546,6 +571,9 @@ export struct FontSettingsSubPage {
         .height('100%')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
+        .onScroll((_xOffset: number, _yOffset: number) => {
+          this.markSettingsScrolling();
+        })
         .edgeEffect(EdgeEffect.Spring)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }

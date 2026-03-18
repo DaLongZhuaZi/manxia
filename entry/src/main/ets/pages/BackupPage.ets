@@ -35,6 +35,7 @@ import { SavedFTPConnection, DEFAULT_FTP_CONNECTION, createFTPConnection } from 
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
+import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -76,6 +77,7 @@ struct BackupPage {
   
   // Tab状态
   @Local currentTab: 'local' | 'cloud' | 'native_test' | 'ftp' = 'local';
+  @Local searchHighlightTab: 'local' | 'cloud' | 'native_test' | 'ftp' | '' = '';
   
   // 横向滑动切换标签页相关状态
   private readonly tabOrder: ('local' | 'cloud' | 'native_test' | 'ftp')[] = ['local', 'cloud', 'native_test', 'ftp'];
@@ -169,6 +171,42 @@ struct BackupPage {
     const nextIndex = (currentIndex + 1) % this.tabOrder.length;
     this.currentTab = this.tabOrder[nextIndex];
     this.onTabChanged();
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('BackupPage');
+    if (!target) {
+      return;
+    }
+    let nextTab: 'local' | 'cloud' | 'native_test' | 'ftp' = 'local';
+    if (target.anchorId === 'backup_cloud') {
+      nextTab = 'cloud';
+    } else if (target.anchorId === 'backup_ftp') {
+      nextTab = 'ftp';
+    } else if (target.anchorId === 'backup_native') {
+      nextTab = 'native_test';
+    }
+
+    this.currentTab = nextTab;
+    this.onTabChanged();
+    this.searchHighlightTab = nextTab;
+    setTimeout(() => {
+      this.searchHighlightTab = '';
+    }, 2200);
+  }
+
+  private getTabBackground(tabId: 'local' | 'cloud' | 'native_test' | 'ftp'): ResourceColor {
+    if (this.searchHighlightTab === tabId) {
+      return this.themeState.currentTheme === ThemeType.DARK ? 'rgba(102, 180, 255, 0.16)' : 'rgba(24, 144, 255, 0.12)';
+    }
+    if (this.currentTab === tabId) {
+      return ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme);
+    }
+    return Color.Transparent;
+  }
+
+  private getTabTopBorderWidth(tabId: 'local' | 'cloud' | 'native_test' | 'ftp'): number {
+    return (this.currentTab === tabId || this.searchHighlightTab === tabId) ? 2 : 0;
   }
   
   /**
@@ -276,6 +314,7 @@ struct BackupPage {
     
     // 检查是否有外部导入的备份文件
     this.checkPendingBackupImport();
+    this.applyPendingSearchTarget();
   }
   
   /**
@@ -1829,11 +1868,9 @@ struct BackupPage {
         .padding({ left: 12, right: 12, top: 0, bottom: 0 })
         .height(35)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.currentTab === 'local'
-          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
-          : Color.Transparent)
+        .backgroundColor(this.getTabBackground('local'))
         .border({
-          width: { top: this.currentTab === 'local' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          width: { top: this.getTabTopBorderWidth('local'), bottom: 0, left: 0, right: 0 },
           color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         })
         .onClick(() => {
@@ -1868,11 +1905,9 @@ struct BackupPage {
         .padding({ left: 12, right: 12, top: 0, bottom: 0 })
         .height(35)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.currentTab === 'cloud'
-          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
-          : Color.Transparent)
+        .backgroundColor(this.getTabBackground('cloud'))
         .border({
-          width: { top: this.currentTab === 'cloud' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          width: { top: this.getTabTopBorderWidth('cloud'), bottom: 0, left: 0, right: 0 },
           color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
         })
         .onClick(() => {
@@ -1902,11 +1937,9 @@ struct BackupPage {
         .padding({ left: 12, right: 12, top: 0, bottom: 0 })
         .height(35)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.currentTab === 'native_test'
-          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
-          : Color.Transparent)
+        .backgroundColor(this.getTabBackground('native_test'))
         .border({
-          width: { top: this.currentTab === 'native_test' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          width: { top: this.getTabTopBorderWidth('native_test'), bottom: 0, left: 0, right: 0 },
           color: '#4CAF50'
         })
         .onClick(() => {
@@ -1933,11 +1966,9 @@ struct BackupPage {
         .padding({ left: 12, right: 12, top: 0, bottom: 0 })
         .height(35)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.currentTab === 'ftp'
-          ? ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme)
-          : Color.Transparent)
+        .backgroundColor(this.getTabBackground('ftp'))
         .border({
-          width: { top: this.currentTab === 'ftp' ? 2 : 0, bottom: 0, left: 0, right: 0 },
+          width: { top: this.getTabTopBorderWidth('ftp'), bottom: 0, left: 0, right: 0 },
           color: '#FF9800'
         })
         .onClick(() => {

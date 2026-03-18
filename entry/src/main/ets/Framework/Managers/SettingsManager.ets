@@ -293,7 +293,7 @@ export class SettingsManager {
    * 新增的书源(4)和Suwayomi(5)默认不显示，用户可在设置中启用
    */
   async getVisibleTabs(): Promise<number[]> {
-    const defaultTabs = [0, 1, 2, 3, 6];
+    const defaultTabs = [1, 3, 4, 6];
     return this.getJSON<number[]>(SettingKeys.VISIBLE_TABS, defaultTabs);
   }
 

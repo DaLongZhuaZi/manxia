@@ -22,6 +22,9 @@ interface SuwayomiWebUIParams {
 @Component
 export struct SuwayomiSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
+  @State private settingsTapEnabled: boolean = true;
+  private settingsTapUnlockTimer: number = -1;
+  private readonly scrollTapGuardDurationMs: number = 140;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
@@ -43,6 +46,26 @@ export struct SuwayomiSettingsPage {
   private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
   private componentId: string = 'SuwayomiSettingsPage';
 
+  private markSettingsScrolling(): void {
+    if (this.settingsTapEnabled) {
+      this.settingsTapEnabled = false;
+    }
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+    }
+    this.settingsTapUnlockTimer = setTimeout(() => {
+      this.settingsTapEnabled = true;
+      this.settingsTapUnlockTimer = -1;
+    }, this.scrollTapGuardDurationMs);
+  }
+
+  private cleanupSettingsTapGuard(): void {
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+      this.settingsTapUnlockTimer = -1;
+    }
+    this.settingsTapEnabled = true;
+  }
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (newTheme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${newTheme}`);
@@ -53,6 +76,7 @@ export struct SuwayomiSettingsPage {
   }
 
   aboutToDisappear(): void {
+    this.cleanupSettingsTapGuard();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -391,6 +415,7 @@ export struct SuwayomiSettingsPage {
 
             Blank().height(40)
           }
+          .enabled(this.settingsTapEnabled)
           .width('100%')
           .padding(16)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -400,6 +425,9 @@ export struct SuwayomiSettingsPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
+        .onScroll((_xOffset: number, _yOffset: number) => {
+          this.markSettingsScrolling();
+        })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
     }
