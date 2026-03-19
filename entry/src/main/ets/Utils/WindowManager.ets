@@ -6,6 +6,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { display } from '@kit.ArkUI';
 import { logger } from './Logger';
+import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 
 /**
  * 系统栏高度信息接口
@@ -45,6 +46,12 @@ interface SystemBarConfig {
   isNavigationBarLightIcon?: boolean;
 }
 
+interface ThemeSystemBarStyle {
+  isDarkTheme: boolean;
+  contentColor: string;
+  backgroundColor: string;
+}
+
 /**
  * 窗口管理器 - 基于HarmonyOS NEXT API 12最新规范
  * 提供完整的显示模式管理、沉浸式显示、系统栏设置等功能
@@ -55,6 +62,7 @@ export class WindowManager {
   private static readonly BACKGROUND_STORAGE_KEY = 'isInBackground';
   private static windowStageRef: window.WindowStage | null = null;
   private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
+  private static themeChangeCallback: ((theme: ThemeType) => void) | null = null;
 
   /**
    * 获取当前 Ability 的主窗口（已废弃，仅用于内部兼容）
@@ -344,7 +352,7 @@ export class WindowManager {
       mainWindow.setWindowSystemBarEnable(['status', 'navigation']).then(() => {
         logger.info(WindowManager.TAG, '✅ 已恢复默认显示模式');
         WindowManager.currentMode = DisplayMode.DEFAULT;
-        WindowManager.setNormalSystemBar(mainWindow);
+        WindowManager.setDefaultSystemBar(mainWindow);
       }).catch((err: BusinessError) => {
         logger.error(WindowManager.TAG, `❌ 恢复默认显示模式失败: ${JSON.stringify(err)}`);
       });
@@ -504,14 +512,19 @@ export class WindowManager {
    * @param mainWindow 主窗口实例
    */
   private static setTransparentSystemBar(mainWindow: window.Window): void {
+    if (AppStorage.get<boolean>('window_manager_theme_bar_enabled') !== false) {
+      WindowManager.applyThemeAwareSystemBar(mainWindow, true);
+      return;
+    }
     try {
+      const themeStyle = WindowManager.resolveThemeSystemBarStyle();
       const systemBarProperties: window.SystemBarProperties = {
         statusBarColor: '#00000000', // 透明状态栏背景
         navigationBarColor: '#00000000', // 透明导航栏背景
-        statusBarContentColor: '#ffffff', // 状态栏内容颜色（白色）
-        navigationBarContentColor: '#ffffff', // 导航栏内容颜色（白色）
-        isStatusBarLightIcon: false, // 状态栏图标高亮
-        isNavigationBarLightIcon: false, // 导航栏图标高亮
+        statusBarContentColor: themeStyle.contentColor, // 状态栏内容颜色（跟随主题）
+        navigationBarContentColor: themeStyle.contentColor, // 导航栏内容颜色（跟随主题）
+        isStatusBarLightIcon: themeStyle.isDarkTheme, // 深色主题下使用浅色图标
+        isNavigationBarLightIcon: themeStyle.isDarkTheme, // 深色主题下使用浅色图标
         enableStatusBarAnimation: true, // 启用状态栏动画
         enableNavigationBarAnimation: true // 启用导航栏动画
       };
@@ -527,20 +540,134 @@ export class WindowManager {
     }
   }
 
+  private static resolveThemeSystemBarStyle(): ThemeSystemBarStyle {
+    try {
+      const themeManager = ThemeManager.getInstance();
+      const isDarkTheme = themeManager.isDarkThemeSync();
+      const themeConfig = themeManager.getCurrentThemeConfigSync();
+      const backgroundColor = themeConfig.backgroundColor || (isDarkTheme ? '#121214' : '#FAFAFA');
+      const themeStyle: ThemeSystemBarStyle = {
+        isDarkTheme,
+        contentColor: isDarkTheme ? '#FFFFFFFF' : '#E5000000',
+        backgroundColor
+      };
+      return themeStyle;
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `系统栏主题样式解析失败，使用兜底值: ${(error as Error).message}`);
+      const fallbackStyle: ThemeSystemBarStyle = {
+        isDarkTheme: true,
+        contentColor: '#FFFFFFFF',
+        backgroundColor: '#121214'
+      };
+      return fallbackStyle;
+    }
+  }
+
+  private static setDefaultSystemBar(mainWindow: window.Window): void {
+    try {
+      const themeStyle = WindowManager.resolveThemeSystemBarStyle();
+      const systemBarProperties: window.SystemBarProperties = {
+        statusBarColor: themeStyle.backgroundColor,
+        navigationBarColor: themeStyle.backgroundColor,
+        statusBarContentColor: themeStyle.contentColor,
+        navigationBarContentColor: themeStyle.contentColor,
+        isStatusBarLightIcon: themeStyle.isDarkTheme,
+        isNavigationBarLightIcon: themeStyle.isDarkTheme,
+        enableStatusBarAnimation: true,
+        enableNavigationBarAnimation: true
+      };
+
+      mainWindow.setWindowSystemBarProperties(systemBarProperties).then(() => {
+        logger.info(WindowManager.TAG, '✅ 非沉浸场景系统栏样式设置成功');
+      }).catch((err: BusinessError) => {
+        logger.error(WindowManager.TAG, `❌ 非沉浸场景系统栏样式设置失败: ${JSON.stringify(err)}`);
+      });
+    } catch (error) {
+      logger.error(WindowManager.TAG, `❌ 非沉浸场景系统栏样式设置异常: ${(error as Error).message}`);
+    }
+  }
+
+  private static applyThemeAwareSystemBar(mainWindow: window.Window, transparentBackground: boolean): void {
+    try {
+      const themeStyle = WindowManager.resolveThemeSystemBarStyle();
+      const barColor = transparentBackground ? '#00000000' : themeStyle.backgroundColor;
+      const systemBarProperties: window.SystemBarProperties = {
+        statusBarColor: barColor,
+        navigationBarColor: barColor,
+        statusBarContentColor: themeStyle.contentColor,
+        navigationBarContentColor: themeStyle.contentColor,
+        isStatusBarLightIcon: themeStyle.isDarkTheme,
+        isNavigationBarLightIcon: themeStyle.isDarkTheme,
+        enableStatusBarAnimation: true,
+        enableNavigationBarAnimation: true
+      };
+
+      mainWindow.setWindowSystemBarProperties(systemBarProperties).then(() => {
+        logger.info(WindowManager.TAG, '✅ 系统栏样式按主题更新成功');
+      }).catch((err: BusinessError) => {
+        logger.error(WindowManager.TAG, `❌ 系统栏样式按主题更新失败: ${JSON.stringify(err)}`);
+      });
+    } catch (error) {
+      logger.error(WindowManager.TAG, `❌ 系统栏样式按主题更新异常: ${(error as Error).message}`);
+    }
+  }
+
+  private static registerThemeChangeMonitor(mainWindow: window.Window): void {
+    try {
+      WindowManager.unregisterThemeChangeMonitor();
+      WindowManager.themeChangeCallback = (_theme: ThemeType): void => {
+        switch (WindowManager.currentMode) {
+          case DisplayMode.DEFAULT:
+            WindowManager.setDefaultSystemBar(mainWindow);
+            break;
+          case DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE:
+            WindowManager.setNormalSystemBar(mainWindow);
+            break;
+          case DisplayMode.IMMERSIVE_WITH_BARS:
+            WindowManager.setTransparentSystemBar(mainWindow);
+            break;
+          default:
+            break;
+        }
+      };
+      ThemeManager.getInstance().onThemeChange(WindowManager.themeChangeCallback);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `注册主题变化监听失败: ${(error as Error).message}`);
+    }
+  }
+
+  private static unregisterThemeChangeMonitor(): void {
+    if (!WindowManager.themeChangeCallback) {
+      return;
+    }
+    try {
+      ThemeManager.getInstance().offThemeChange(WindowManager.themeChangeCallback);
+    } catch (error) {
+      logger.warn(WindowManager.TAG, `移除主题变化监听失败: ${(error as Error).message}`);
+    } finally {
+      WindowManager.themeChangeCallback = null;
+    }
+  }
+
   /**
    * 设置正常系统栏
    * @param mainWindow 主窗口实例
    */
 
   static setNormalSystemBar(mainWindow: window.Window): void {
+    if (AppStorage.get<boolean>('window_manager_theme_bar_enabled') !== false) {
+      WindowManager.applyThemeAwareSystemBar(mainWindow, true);
+      return;
+    }
     try {
+      const themeStyle = WindowManager.resolveThemeSystemBarStyle();
       const systemBarProperties: window.SystemBarProperties = {
         statusBarColor: '#00000000', // 状态栏默认颜色
         navigationBarColor: '#00000000', // 导航栏默认颜色
-        statusBarContentColor: '#e5000000', // 状态栏内容颜色（黑色）
-        navigationBarContentColor: '#e5000000', // 导航栏内容颜色（黑色）
-        isStatusBarLightIcon: false, // 状态栏图标高亮
-        isNavigationBarLightIcon: false, // 导航栏图标高亮
+        statusBarContentColor: themeStyle.contentColor, // 状态栏内容颜色（跟随主题）
+        navigationBarContentColor: themeStyle.contentColor, // 导航栏内容颜色（跟随主题）
+        isStatusBarLightIcon: themeStyle.isDarkTheme, // 深色主题下使用浅色图标
+        isNavigationBarLightIcon: themeStyle.isDarkTheme, // 深色主题下使用浅色图标
         enableStatusBarAnimation: true, // 启用状态栏动画
         enableNavigationBarAnimation: true // 启用导航栏动画
       };
@@ -688,8 +815,9 @@ export class WindowManager {
       });
 
       WindowManager.currentMode = DisplayMode.DEFAULT;
-      // 设置默认的正常系统栏样式
-      WindowManager.setNormalSystemBar(mainWindow);
+      // 设置默认的非沉浸系统栏样式
+      WindowManager.setDefaultSystemBar(mainWindow);
+      WindowManager.registerThemeChangeMonitor(mainWindow);
       WindowManager.syncBackgroundState(false, '窗口管理器初始化');
       
       logger.info(WindowManager.TAG, '✅ WindowManager初始化完成');
@@ -700,6 +828,7 @@ export class WindowManager {
   }
 
   static dispose(): void {
+    WindowManager.unregisterThemeChangeMonitor();
     WindowManager.unregisterWindowStageStateMonitor();
   }
 }

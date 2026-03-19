@@ -289,6 +289,11 @@ export class ThemeManager {
       if (this.preferencesStore) {
         const savedTheme = await this.preferencesStore.get(this.THEME_KEY, ThemeType.AUTO);
         this.currentTheme = savedTheme as ThemeType;
+        if (this.currentTheme === ThemeType.PRIVACY) {
+          this.currentTheme = ThemeType.AUTO;
+          await this.saveTheme(ThemeType.AUTO);
+          logger.warn(TAG, '检测到持久化的隐私主题，已重置为AUTO以恢复系统主题跟随');
+        }
         
         // 临时重置：如果保存的是特定主题，重置为AUTO以跟随系统
         // if (this.currentTheme !== ThemeType.AUTO) {

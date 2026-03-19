@@ -109,6 +109,7 @@ import { SystemResourcePreviewPage } from './SystemResourcePreviewPage';
 import { HelpCenterPage } from './HelpCenterPage';
 import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
 import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } from './settings/PageSettingsSubPage';
+import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
@@ -184,7 +185,7 @@ import { PrivacyModeManager } from '../Framework/Managers/PrivacyModeManager';
 import { PrivacyAuthDialog } from '../components/PrivacyAuthDialog';
 import { ProxyManager, ProxyConfig, DEFAULT_PROXY_CONFIG } from '../Framework/Network/ProxyManager';
 import { BookshelfCategoryManager, BookshelfCategory, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
-import { SettingsManager } from '../Framework/Managers/SettingsManager';
+import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { TypeShelfManager, TypeShelf, ShelfType, ShelfContentType, CreateShelfParams, SHELF_COLORS, SHELF_ICONS, getTypeShelfManager, DynamicShelfFilter, smartTokenize, matchesDynamicFilter, DynamicMatchItem } from '../Framework/Data/TypeShelfManager';
 
 // 导入响应式布局
@@ -482,6 +483,7 @@ struct MainMenuPage {
   @State private isPrivacyMode: boolean = false;
   // 隐私模式进入前的视图模式（用于退出时恢复）
   private prePrivacyViewMode: LibraryViewMode = LibraryViewMode.GRID;
+  private readonly PRIVACY_VIRTUAL_SHELF_ID: string = 'system_privacy_virtual';
 
   // 底部导航状态
   @State currentTabIndex: number = TabIndex.LIBRARY;
@@ -504,6 +506,7 @@ struct MainMenuPage {
   @State isRefreshingHome: boolean = false; // 首页下拉刷新状态
   private dataManager: DataManager = DataManager.getInstance();
   private dataService: DataService = DataService.getInstance();
+  private settingsManager: SettingsManager = SettingsManager.getInstance();
   @State recentCoverAspectInfos: CoverAspectInfo[] = [];
 
   // 书库筛选和视图相关状态
@@ -523,6 +526,9 @@ struct MainMenuPage {
   @State bookshelfCategories: BookshelfCategory[] = [];
   @State selectedCategoryId: string = ''; // 当前选中的分类ID（用于展开详情）
   @State showCategoryDetail: boolean = false; // 是否显示分类详情
+  @State shelfDetailTransitionScale: number = 1; // 书架详情进入缩放动画
+  @State shelfDetailTransitionOpacity: number = 1; // 书架详情进入透明度动画
+  @State shelfDetailContentDeferred: boolean = false; // 详情内容延迟渲染，降低首帧卡顿
   @State showCreateCategoryDialog: boolean = false; // 是否显示创建分类对话框
   @State showEditCategoryDialog: boolean = false; // 是否显示编辑分类对话框
   @State editingCategory: BookshelfCategory | null = null; // 正在编辑的分类
@@ -794,6 +800,8 @@ struct MainMenuPage {
   private readonly BOTTOM_BAR_HIDE_THRESHOLD: number = 80; // 底栏完全隐藏的阈值
   private bottomBarScrollAccumulator: number = 0; // 累计同方向滚动量，用于速度判断
   private bottomBarLastScrollDirection: number = 0; // 上次滚动方向（1=下，-1=上）
+  private suppressTabClickUntil: number = 0;
+  private readonly TAB_LONG_PRESS_SUPPRESS_MS: number = 650;
   @State private windowModeTransitionOverlayVisible: boolean = false;
   @State private windowModeTransitionOverlayOpacity: number = 0;
   private windowModeTransitionTriggerTimer: number = -1;
@@ -808,6 +816,7 @@ struct MainMenuPage {
   private windowModeTransitionTriggerRetryCount: number = 0;
   private navStackReturnWatchTimer: number = -1;
   private lastObservedNavStackSize: number = 0;
+  @State private showMainMenuGlobalBackground: boolean = true;
 
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -836,6 +845,7 @@ struct MainMenuPage {
     'MangaDetailPage',
     'MangaFeedbackPage',
     'MangaSourceTestPage',
+    'MainMenuSettingsSubPage',
     'NetworkSettingsSubPage',
     'NotificationSettingsSubPage',
     'NovelBookshelfPage',
@@ -939,6 +949,55 @@ struct MainMenuPage {
     };
 
     this.windowModeTransitionTriggerTimer = setTimeout(tryTrigger, this.WINDOW_MODE_TRANSITION_SWITCH_DELAY);
+  }
+
+  private markTabLongPressHandled(): void {
+    this.suppressTabClickUntil = Date.now() + this.TAB_LONG_PRESS_SUPPRESS_MS;
+  }
+
+  private async handleTabButtonLongPress(tabIndex: number): Promise<void> {
+    if (tabIndex !== TabIndex.LIBRARY && tabIndex !== TabIndex.SETTINGS) {
+      return;
+    }
+    this.markTabLongPressHandled();
+
+    if (tabIndex === TabIndex.LIBRARY) {
+      if (this.currentTabIndex !== TabIndex.LIBRARY) {
+        this.handleTabButtonClick(TabIndex.LIBRARY, true);
+      }
+      if (this.isPrivacyMode) {
+        this.showToast('已在隐私书库');
+        return;
+      }
+      await this.handlePrivacyModeAuth();
+      return;
+    }
+
+    if (this.currentTabIndex !== TabIndex.SETTINGS) {
+      this.handleTabButtonClick(TabIndex.SETTINGS, true);
+    }
+    await this.enableSfwModeAndRefreshFromLongPress();
+  }
+
+  private async enableSfwModeAndRefreshFromLongPress(): Promise<void> {
+    try {
+      const wasSfwEnabled = this.contentFilterManager.isSFWModeEnabled();
+      const nextSfwEnabled = !wasSfwEnabled;
+      await this.contentFilterManager.setSFWMode(nextSfwEnabled);
+      logger.info(TAG, `[长按管理] SFW模式切换: ${wasSfwEnabled} -> ${nextSfwEnabled}`);
+
+      await this.silentRefreshRecentReadingList();
+      await this.silentRefreshLibrary();
+      await this.extractTagsAndAuthors();
+      this.applyDiscoverFilter();
+      await this.silentRefreshSources();
+      this.filterBookSourceList(this.bookSourceSearchKeyword);
+
+      this.showToast(nextSfwEnabled ? '已开启SFW模式，相关页面已刷新' : '已退出SFW模式，相关页面已刷新');
+    } catch (error) {
+      logger.error(TAG, `长按管理入口切换SFW失败: ${String(error)}`);
+      this.showToast('SFW模式切换失败，请稍后重试');
+    }
   }
 
   /**
@@ -1135,6 +1194,7 @@ struct MainMenuPage {
     this.startNavStackReturnWatch();
     logger.lifecycle(TAG, '🚀 漫画阅读应用启动');
     logger.info(TAG, `初始化时appFontFamily值: ${this.appFontFamily}`);
+    this.initShelfGridColumnsSetting();
 
     // 加载用户主题配置（延迟加载，避免实时监听导致的崩溃）
     this.loadUserThemeConfig();
@@ -1224,14 +1284,17 @@ struct MainMenuPage {
       logger.info(TAG, `隐私模式状态变化: ${isPrivacy}`);
       this.isPrivacyMode = isPrivacy;
       if (isPrivacy) {
-        // 进入隐私模式：保存当前视图模式，然后切换到传统视图（不支持书架视图）
+        // 进入隐私模式：保存当前视图模式
         this.prePrivacyViewMode = this.libraryViewMode;
-        if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
-          this.libraryViewMode = LibraryViewMode.GRID;
-        }
+        this.showCategoryDetail = false;
+        this.selectedShelf = null;
+        this.isShelfEditMode = false;
+        logger.info(TAG, '[隐私书架] 已解锁，书架视图将显示置顶隐私书架');
       } else {
         // 退出隐私模式：恢复之前的视图模式
         this.libraryViewMode = this.prePrivacyViewMode;
+        this.showCategoryDetail = false;
+        this.selectedShelf = null;
       }
       // 静默刷新书库内容（增量更新，避免闪烁）
       this.silentRefreshLibrary();
@@ -2154,10 +2217,29 @@ struct MainMenuPage {
 
   private getFloatingSearchButtonY(): number {
     if (!this.useTopTabsNavigation) {
-      const y: number = this.getBottomBarY()
+      if (this.currentTabIndex === TabIndex.SUWAYOMI) {
+        const deviceInfo = this.deviceManager.getDeviceInfo();
+        const y: number = deviceInfo.screenHeight
+          - this.getSuwayomiBottomSpacerHeight()
+          - this.FLOAT_SEARCH_BUTTON_SIZE
+          - this.FLOAT_SEARCH_BUTTON_MARGIN;
+        return y > this.statusBarHeight ? y : this.statusBarHeight;
+      }
+      const baseY: number = this.getBottomBarY()
         - this.FLOAT_SEARCH_BUTTON_SIZE
-        - this.FLOAT_SEARCH_BUTTON_MARGIN
-        + this.bottomBarOffsetY;
+        - this.FLOAT_SEARCH_BUTTON_MARGIN;
+      // 底栏隐藏时采用“部分跟随 + 隐藏态固定悬浮位”，避免搜索按钮下沉过低
+      const hiddenRatio: number = this.BOTTOM_BAR_HIDE_THRESHOLD > 0
+        ? this.bottomBarOffsetY / this.BOTTOM_BAR_HIDE_THRESHOLD
+        : 0;
+      let y: number;
+      if (hiddenRatio >= 0.85) {
+        y = baseY + this.BOTTOM_BAR_HIDE_THRESHOLD * 0.30;
+      } else if (hiddenRatio > 0) {
+        y = baseY + this.bottomBarOffsetY * 0.35;
+      } else {
+        y = baseY;
+      }
       return y > this.statusBarHeight ? y : this.statusBarHeight;
     }
 
@@ -2171,6 +2253,23 @@ struct MainMenuPage {
       return y > this.statusBarHeight ? y : this.statusBarHeight;
     }
     return this.getAdaptiveTopOperationBarY() + (this.BOTTOM_BAR_HEIGHT - this.FLOAT_SEARCH_BUTTON_SIZE) / 2;
+  }
+
+  private shouldShowPrivacyExitButton(): boolean {
+    return this.isPrivacyMode;
+  }
+
+  private getFloatingPrivacyExitButtonX(): number {
+    const x = this.getFloatingSearchButtonX() - this.FLOAT_SEARCH_BUTTON_SIZE - this.FLOAT_SEARCH_BUTTON_MARGIN;
+    return x > this.FLOAT_SEARCH_BUTTON_MARGIN ? x : this.FLOAT_SEARCH_BUTTON_MARGIN;
+  }
+
+  private exitPrivacyLibrary(): void {
+    if (!this.isPrivacyMode) {
+      return;
+    }
+    this.privacyModeManager.exitPrivacyMode();
+    this.showToast('已退出隐私书库');
   }
 
   private getLibraryFloatingBarWidth(): number {
@@ -2203,6 +2302,20 @@ struct MainMenuPage {
     return 96;
   }
 
+  private getMainTabBottomSpacerHeight(): number {
+    if (!this.useTopTabsNavigation) {
+      return this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM + 20;
+    }
+    if (this.getEffectiveTabletTopBarPosition() === 'bottom') {
+      return this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM + 20;
+    }
+    return 96;
+  }
+
+  private getSuwayomiBottomSpacerHeight(): number {
+    return 80;
+  }
+
   private shouldAttachLibraryFloatingBar(): boolean {
     return this.currentTabIndex === TabIndex.LIBRARY && this.libraryViewMode !== LibraryViewMode.CATEGORY;
   }
@@ -2211,9 +2324,9 @@ struct MainMenuPage {
     if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
       return;
     }
-    if (this.libraryRefreshFloatingBarTimer !== -1) {
-      clearTimeout(this.libraryRefreshFloatingBarTimer);
-      this.libraryRefreshFloatingBarTimer = -1;
+    // 工具栏已显示时不重复刷新计时，避免每次交互都把倒计时重置
+    if (this.showLibraryRefreshFloatingBar || this.libraryRefreshFloatingBarTimer !== -1) {
+      return;
     }
     this.showLibraryRefreshFloatingBar = true;
     this.libraryRefreshFloatingBarTimer = setTimeout(() => {
@@ -5930,6 +6043,14 @@ struct MainMenuPage {
     }
   }
 
+  private updateMainMenuGlobalBackgroundVisibility(stackSize?: number): void {
+    const size = typeof stackSize === 'number' ? stackSize : this.pathStack.size();
+    const shouldShow = size === 0;
+    if (this.showMainMenuGlobalBackground !== shouldShow) {
+      this.showMainMenuGlobalBackground = shouldShow;
+    }
+  }
+
   private applyMainMenuWindowModeWithTransition(): void {
     if (this.windowModeTransitionOverlayVisible || this.windowModeTransitionSwitchTimer >= 0 ||
       this.windowModeTransitionCleanupTimer >= 0) {
@@ -5970,8 +6091,10 @@ struct MainMenuPage {
   private startNavStackReturnWatch(): void {
     this.stopNavStackReturnWatch();
     this.lastObservedNavStackSize = this.pathStack.size();
+    this.updateMainMenuGlobalBackgroundVisibility(this.lastObservedNavStackSize);
     this.navStackReturnWatchTimer = setInterval(() => {
       const currentSize = this.pathStack.size();
+      this.updateMainMenuGlobalBackgroundVisibility(currentSize);
       if (this.lastObservedNavStackSize > 0 && currentSize === 0) {
         this.mainMenuReentryNeedsTransition = true;
         this.applyMainMenuWindowModeWithTransition();
@@ -5994,6 +6117,7 @@ struct MainMenuPage {
    */
   onPageShow(): void {
     logger.lifecycle(TAG, '📱 页面显示，静默刷新数据');
+    this.updateMainMenuGlobalBackgroundVisibility();
     this.applyMainMenuWindowModeWithTransition();
     void this.loadLibraryViewMode();
 
@@ -6516,6 +6640,32 @@ struct MainMenuPage {
       ]);
     } catch (error) {
       logger.error(TAG, `刷新书库失败: ${String(error instanceof Error ? error.message : error)}`);
+      this.showToast('刷新失败，请稍后重试');
+    } finally {
+      this.isRefreshing = false;
+    }
+  }
+
+  private async refreshShelfViewContent(): Promise<void> {
+    if (this.isRefreshing || this.isLoadingMangaList || this.isLoadingEbookList || this.isLoadingNovelList) {
+      logger.debug(TAG, '[书架视图] 下拉刷新忽略：已有刷新任务进行中');
+      return;
+    }
+
+    this.isRefreshing = true;
+    logger.info(TAG, `[书架视图] 开始下拉刷新 (隐私模式=${this.isPrivacyMode})`);
+    try {
+      await Promise.all([
+        this.loadMangaList(),
+        this.loadEBookList(),
+        this.loadNovelList()
+      ]);
+      this.typeShelves = this.typeShelfManager.getShelves();
+      this.bookshelfCategories = this.categoryManager.getCategories();
+      logger.info(TAG, '[书架视图] 下拉刷新完成');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `[书架视图] 下拉刷新失败: ${message}`);
       this.showToast('刷新失败，请稍后重试');
     } finally {
       this.isRefreshing = false;
@@ -7138,7 +7288,7 @@ struct MainMenuPage {
 
         // 隐私模式按钮
         Button() {
-          SymbolGlyph($r('sys.symbol.key_shield_fill'))
+          SymbolGlyph(this.shouldShowPrivacyExitButton() ? $r('sys.symbol.lock_open') : $r('sys.symbol.key_shield_fill'))
             .fontSize(24)
             .fontColor([this.isPrivacyMode ? 
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -7149,7 +7299,11 @@ struct MainMenuPage {
         .height(40)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          this.handlePrivacyModeAuth();
+          if (this.shouldShowPrivacyExitButton()) {
+            this.exitPrivacyLibrary();
+          } else {
+            this.handlePrivacyModeAuth();
+          }
         })
         .margin({ right: 8 })
 
@@ -7230,7 +7384,7 @@ struct MainMenuPage {
 
         // 隐私书库入口（与常规顶栏保持一致）
         Button() {
-          SymbolGlyph($r('sys.symbol.key_shield_fill'))
+          SymbolGlyph(this.shouldShowPrivacyExitButton() ? $r('sys.symbol.lock_open') : $r('sys.symbol.key_shield_fill'))
             .fontSize(22)
             .fontColor([this.isPrivacyMode ?
               ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) :
@@ -7241,7 +7395,11 @@ struct MainMenuPage {
         .height(40)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          this.handlePrivacyModeAuth();
+          if (this.shouldShowPrivacyExitButton()) {
+            this.exitPrivacyLibrary();
+          } else {
+            this.handlePrivacyModeAuth();
+          }
         })
 
         Button() {
@@ -7308,21 +7466,21 @@ struct MainMenuPage {
   @Builder
   buildSharedTabIcon(config: TabConfig) {
     Stack() {
-      if (config.useSystemIcon && config.systemIcon) {
-        if (config.hasMultiColor && this.currentTabIndex === config.index) {
-          SymbolGlyph(config.systemIcon)
+      if (config.useSystemIcon) {
+        if (this.shouldUseSharedTabMultiColor(config) && this.isSharedTabSelected(config)) {
+          SymbolGlyph(this.getSharedTabSystemIcon(config))
             .fontSize(24)
             .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
-            .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.currentTabIndex === config.index)
+            .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.isSharedTabSelected(config))
         } else {
-          SymbolGlyph(config.systemIcon)
+          SymbolGlyph(this.getSharedTabSystemIcon(config))
             .fontSize(24)
-            .fontColor([this.currentTabIndex === config.index
+            .fontColor([this.isSharedTabSelected(config)
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
               : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
             .renderingStrategy(SymbolRenderingStrategy.SINGLE)
-            .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.currentTabIndex === config.index)
+            .symbolEffect(new BounceSymbolEffect(EffectScope.WHOLE, EffectDirection.UP), this.isSharedTabSelected(config))
         }
       } else {
         Image(this.currentTabIndex === config.index ? config.selectedIcon : config.icon)
@@ -7343,6 +7501,28 @@ struct MainMenuPage {
     }
     .width(24)
     .height(24)
+  }
+
+  private isSharedTabSelected(config: TabConfig): boolean {
+    return this.currentTabIndex === config.index;
+  }
+
+  private shouldUsePrivacyLibraryTabIcon(config: TabConfig): boolean {
+    return config.index === TabIndex.LIBRARY && this.shouldShowPrivacyExitButton();
+  }
+
+  private getSharedTabSystemIcon(config: TabConfig): Resource {
+    if (this.shouldUsePrivacyLibraryTabIcon(config)) {
+      return $r('sys.symbol.lock');
+    }
+    if (config.systemIcon) {
+      return config.systemIcon;
+    }
+    return $r('sys.symbol.book');
+  }
+
+  private shouldUseSharedTabMultiColor(config: TabConfig): boolean {
+    return !!config.hasMultiColor && !this.shouldUsePrivacyLibraryTabIcon(config);
   }
 
   @Builder
@@ -7421,7 +7601,7 @@ struct MainMenuPage {
 
       Column({ space: 4 }) {
         Button() {
-          SymbolGlyph($r('sys.symbol.key_shield_fill'))
+          SymbolGlyph(this.shouldShowPrivacyExitButton() ? $r('sys.symbol.lock_open') : $r('sys.symbol.key_shield_fill'))
             .fontSize(20)
             .fontColor([this.isPrivacyMode
               ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
@@ -7432,7 +7612,11 @@ struct MainMenuPage {
         .height(34)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          this.handlePrivacyModeAuth();
+          if (this.shouldShowPrivacyExitButton()) {
+            this.exitPrivacyLibrary();
+          } else {
+            this.handlePrivacyModeAuth();
+          }
         })
 
         Button() {
@@ -7533,6 +7717,43 @@ struct MainMenuPage {
         logger.error(TAG, '导航到搜索页面失败', message);
         this.showToast('打开搜索页面失败');
       }
+    })
+  }
+
+  @Builder
+  buildFloatingPrivacyExitButton() {
+    Button() {
+      SymbolGlyph($r('sys.symbol.lock_open'))
+        .fontSize(22)
+        .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+    }
+    .type(ButtonType.Circle)
+    .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(30, 30, 30, 0.45)'
+      : 'rgba(255, 255, 255, 0.45)')
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .border({
+      width: 1,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(255, 255, 255, 0.22)'
+        : 'rgba(255, 255, 255, 0.60)'
+    })
+    .shadow({
+      radius: 12,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(0, 0, 0, 0.35)'
+        : 'rgba(0, 0, 0, 0.12)',
+      offsetX: 0,
+      offsetY: 3
+    })
+    .onClick(() => {
+      this.exitPrivacyLibrary();
     })
   }
 
@@ -8122,10 +8343,9 @@ struct MainMenuPage {
     // 分类视图模式
     if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
       Column() {
-        // 顶部栏：返回按钮（详情模式）或切换按钮（卡片模式）
-        Row() {
-          if (this.showCategoryDetail) {
-            // 详情模式：显示返回按钮和书架类型名称
+        if (this.showCategoryDetail) {
+          // 详情模式：显示返回按钮和书架类型名称
+          Row() {
             Button() {
               SymbolGlyph($r('sys.symbol.arrow_left'))
                 .fontSize(24)
@@ -8135,21 +8355,17 @@ struct MainMenuPage {
             .height(44)
             .backgroundColor(Color.Transparent)
             .onClick(() => {
-              // 用动画关闭详情
-              animateTo({
-                duration: 300,
-                curve: Curve.EaseIn
-              }, () => {
-                this.categoryDetailAnimationProgress = 0;
-                this.showCategoryDetail = false;
-              });
-              // 清除自定义书架筛选状态
-              this.selectedShelf = null;
-              this.customShelfSelectedTags.clear();
-              this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
-              this.customShelfSelectedAuthors.clear();
-              this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
-              this.customShelfSortType = 'add_desc';
+              // 线性缩放动画关闭详情
+              this.beginShelfDetailExitAnimation();
+              // 关闭动画结束后清除筛选状态，避免标题跳变
+              setTimeout(() => {
+                this.selectedShelf = null;
+                this.customShelfSelectedTags.clear();
+                this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+                this.customShelfSelectedAuthors.clear();
+                this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+                this.customShelfSortType = 'add_desc';
+              }, 200);
             })
 
             // 显示书架名称：自定义书架显示其名称，系统书架显示类型名称
@@ -8159,25 +8375,30 @@ struct MainMenuPage {
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
               .layoutWeight(1)
-          } else {
-            // 卡片模式：显示标题
-            Text('我的书架')
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .layoutWeight(1)
           }
-
-          Blank()
+          .width('100%')
+          .padding({ top: 8, bottom: 8, left: 16, right: 16 })
         }
-        .width('100%')
-        .padding({ top: 8, bottom: 8, left: 16, right: 16 })
-
         // 内容区域：卡片视图或详情视图
         if (this.showCategoryDetail) {
-          // 分类详情视图（在同一Column内显示）
-          this.buildCategoryDetailContent()
+          Stack() {
+            if (this.shelfDetailContentDeferred) {
+              Column() {
+                Blank()
+                  .layoutWeight(1)
+              }
+              .width('100%')
+              .layoutWeight(1)
+            } else {
+              // 分类详情视图（在同一Column内显示）
+              this.buildCategoryDetailContent()
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scale({ x: this.shelfDetailTransitionScale, y: this.shelfDetailTransitionScale })
+          .opacity(this.shelfDetailTransitionOpacity)
+          .animation({ duration: 280, curve: Curve.Linear })
         } else {
           // 分类卡片视图
           this.buildCategoryView()
@@ -8187,14 +8408,38 @@ struct MainMenuPage {
       .height('100%')
       .transition(
         TransitionEffect.asymmetric(
-          TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.95, y: 0.95 }))
-            .animation({ duration: 300, curve: Curve.EaseOut }),
-          TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseIn })
+          TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.98, y: 0.98 }))
+            .animation({ duration: 220, curve: Curve.Linear }),
+          TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.Linear })
         )
       )
     } else {
     this.buildLibraryDefaultExpandedViewContainer()
     }
+  }
+
+  @Builder
+  private buildShelfManageButton() {
+    Button() {
+      Row({ space: 4 }) {
+        SymbolGlyph(this.isShelfEditMode ? $r('sys.symbol.checkmark') : $r('sys.symbol.square_and_pencil'))
+          .fontSize(16)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        Text(this.isShelfEditMode ? '完成' : '管理')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+    }
+    .height(30)
+    .padding({ left: 10, right: 10 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+    .borderRadius(15)
+    .onClick(() => {
+      animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.isShelfEditMode = !this.isShelfEditMode;
+      });
+    })
   }
 
   @Builder
@@ -8452,27 +8697,6 @@ struct MainMenuPage {
   @Builder
   buildMangaCard(manga: Manga) {
     Stack() {
-      // 右侧删除提示面板
-      Column() {
-        Text(this.getSwipeProgressText(manga.id))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-        Text('松手删除')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-      }
-      .width(96)
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-      .borderRadius(this.getGlassRadius())
-      .opacity(this.activeSwipeId === manga.id ? Math.min(1, this.getItemSwipeOffset(manga.id) / this.swipeThreshold) : 0)
-      .position({ x: '100%', y: 0 })
-
       // 卡片内容层
       Row({ space: 12 }) {
         // 封面图片
@@ -8502,6 +8726,9 @@ struct MainMenuPage {
         .justifyContent(FlexAlign.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
         .id(`cover_manga_lib_${manga.id}`)
+        .onClick(() => {
+          this.handleLibraryMangaCoverClick(manga, `cover_manga_lib_${manga.id}`);
+        })
 
         Column({ space: 8 }) {
           // 漫画标题
@@ -8512,6 +8739,9 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .onClick(() => {
+              this.handleLibraryMangaTitleClick(manga);
+            })
 
           // 漫画章节数和状态
           Text(`${manga.chapters.length}话 · ${StatusConverter.mangaStatusToDisplayText(manga.status)}`)
@@ -8541,8 +8771,11 @@ struct MainMenuPage {
         .alignItems(HorizontalAlign.Start)
         .justifyContent(FlexAlign.SpaceBetween)
       }
-      .translate({ x: -this.getItemSwipeOffset(manga.id), y: 0 })
-      .onClick(() => { this.openMangaDetail(manga); })
+      .onClick(() => {
+        if (this.isMultiSelectMode) {
+          this.toggleMangaSelection(manga.id);
+        }
+      })
       .width('100%')
       .height(140)
       .padding(12)
@@ -8552,89 +8785,478 @@ struct MainMenuPage {
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
       .gesture(
-        GestureGroup(GestureMode.Parallel,
-          LongPressGesture({ repeat: false })
-            .onAction(() => { this.activateSwipeFor(manga.id); }),
-          PanGesture({ fingers: 1, direction: PanDirection.Left, distance: 1 })
-            .onActionUpdate((event: GestureEvent) => { this.updateSwipeOffset(manga.id, event); })
-            .onActionEnd((event: GestureEvent) => { this.endSwipe(manga.id); })
-        )
+        LongPressGesture({ repeat: false, duration: 500 })
+          .onAction(() => {
+            if (!this.isMultiSelectMode) {
+              this.showMangaActionMenu(manga);
+            }
+          })
       )
     }
     .width('100%')
     .height(140)
+    .bindPopup(this.showMangaContextMenu && this.contextMenuManga?.id === manga.id, {
+      builder: this.buildMangaCustomContextMenu(manga),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideMangaContextMenu();
+        }
+      }
+    })
   }
 
   /**
    * 构建书架视图（类型书架：漫画书架、电子书书架、小说书架 + 自定义书架）
    * 根据内容自动显示对应书架，没有内容则不显示，至少保留一个默认书架
    */
+  @StorageProp('library_shelf_grid_columns')
+  private shelfGridColumnsSetting: number = 3;
+  @StorageProp('library_hide_wood_shelf_texture')
+  private hideWoodShelfTexture: boolean = false;
+  private lastShelfGridColumnsLogged: number = -1;
+
+  private parseShelfGridColumnsValue(value: number | string | null | undefined): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return this.normalizeShelfGridColumns(value);
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return this.normalizeShelfGridColumns(parsed);
+      }
+    }
+    return null;
+  }
+
+  private parseShelfBooleanValue(value: boolean | number | string | null | undefined): boolean | null {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number' && !Number.isNaN(value)) {
+      if (value === 1) return true;
+      if (value === 0) return false;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1') return true;
+      if (normalized === 'false' || normalized === '0') return false;
+    }
+    return null;
+  }
+
+  private persistShelfGridColumnsSetting(value: number): void {
+    const normalized = this.normalizeShelfGridColumns(value);
+    if (!this.settingsManager.isInitialized()) {
+      logger.warn(TAG, `[ShelfGrid] Skip saving columns because SettingsManager is not initialized: ${normalized}`);
+      return;
+    }
+    void this.settingsManager.setNumber(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS, normalized)
+      .catch((error: Object) => {
+        logger.error(TAG, `[ShelfGrid] Save columns failed`, String(error));
+      });
+  }
+
+
+  private persistHideWoodShelfTextureSetting(hidden: boolean): void {
+    if (!this.settingsManager.isInitialized()) {
+      logger.warn(TAG, `[ShelfGrid] Skip saving wood shelf toggle because SettingsManager is not initialized: ${hidden}`);
+      return;
+    }
+    void this.settingsManager.setBoolean(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, hidden)
+      .catch((error: Object) => {
+        logger.error(TAG, `[ShelfGrid] Save wood shelf toggle failed`, String(error));
+      });
+  }
+
+  private normalizeShelfGridColumns(value: number): number {
+    return Math.max(1, Math.min(10, Math.round(value)));
+  }
+
+  private getShelfGridColumnsForDisplay(): number {
+    const responsiveDefault = this.responsive_gridColumns > 0 ? this.responsive_gridColumns : 3;
+    const configured = this.shelfGridColumnsSetting > 0 ? this.shelfGridColumnsSetting : responsiveDefault;
+    return this.normalizeShelfGridColumns(configured);
+  }
+
+  private getShelfGridColumnsTemplate(): string {
+    const template: string[] = [];
+    const columns = this.getShelfGridColumnsForDisplay();
+    if (this.lastShelfGridColumnsLogged !== columns) {
+      this.lastShelfGridColumnsLogged = columns;
+      logger.debug(TAG, `[书架网格] 当前每行书架数量=${columns}`);
+    }
+    let i: number = 0;
+    while (i < columns) {
+      template.push('1fr');
+      i = i + 1;
+    }
+    return template.join(' ');
+  }
+
+  private initShelfGridColumnsSetting(): void {
+    const defaultColumns = this.normalizeShelfGridColumns(
+      this.responsive_gridColumns > 0 ? this.responsive_gridColumns : 3
+    );
+
+    const settingsColumnsRaw = this.settingsManager.getNumber(
+      SettingKeys.LIBRARY_SHELF_GRID_COLUMNS,
+      Number.NaN
+    );
+    const settingsColumns = Number.isNaN(settingsColumnsRaw)
+      ? null
+      : this.normalizeShelfGridColumns(settingsColumnsRaw);
+
+    const appStorageColumns = this.parseShelfGridColumnsValue(
+      AppStorage.get(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS) as number | string | null | undefined
+    );
+
+    const finalColumns = settingsColumns ?? appStorageColumns ?? defaultColumns;
+    this.shelfGridColumnsSetting = finalColumns;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS, finalColumns);
+
+    if (settingsColumns === null || settingsColumns !== finalColumns) {
+      this.persistShelfGridColumnsSetting(finalColumns);
+    }
+
+    const settingsHideWood = this.parseShelfBooleanValue(
+      this.settingsManager.getString(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, '')
+    );
+    const appStorageHideWood = this.parseShelfBooleanValue(
+      AppStorage.get(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE) as boolean | number | string | null | undefined
+    );
+
+    const finalHideWood = settingsHideWood ?? appStorageHideWood ?? false;
+    this.hideWoodShelfTexture = finalHideWood;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, finalHideWood);
+
+    if (settingsHideWood === null || settingsHideWood !== finalHideWood) {
+      this.persistHideWoodShelfTextureSetting(finalHideWood);
+    }
+
+    logger.info(TAG, `[ShelfGrid] Init columns=${this.shelfGridColumnsSetting}, hideWood=${this.hideWoodShelfTexture}`);
+  }
+
+
+  private getShelfPreviewCountForDisplay(): number {
+    const columns = this.getShelfGridColumnsForDisplay();
+    const deviceInfo = this.deviceManager.getDeviceInfo();
+    const isPhoneLike = !this.forceTabletMode
+      && (deviceInfo.breakpoint === Breakpoint.XS || deviceInfo.breakpoint === Breakpoint.SM);
+    if (isPhoneLike) {
+      if (columns >= 3) return 1;
+      if (columns === 2) return 2;
+      return 3;
+    }
+    if (columns <= 1) return 3;
+    if (columns <= 4) return 2;
+    return 1;
+  }
+
+  private updateShelfGridColumns(value: number): void {
+    const nextValue = this.normalizeShelfGridColumns(value);
+    if (nextValue === this.shelfGridColumnsSetting) {
+      return;
+    }
+
+    const fromValue = this.shelfGridColumnsSetting;
+    animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
+      this.shelfGridColumnsSetting = nextValue;
+      AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS, nextValue);
+    });
+
+    this.persistShelfGridColumnsSetting(nextValue);
+    logger.info(TAG, `[ShelfGrid] Columns changed ${fromValue} -> ${nextValue}`);
+    logger.debug(TAG, `[ShelfGrid] Preview count rule -> ${this.getShelfPreviewCountForDisplay()}`);
+  }
+
+
+  private updateHideWoodShelfTexture(hidden: boolean): void {
+    if (this.hideWoodShelfTexture === hidden) {
+      return;
+    }
+
+    animateTo({ duration: 200, curve: Curve.Linear }, () => {
+      this.hideWoodShelfTexture = hidden;
+      AppStorage.setOrCreate(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, hidden);
+    });
+
+    this.persistHideWoodShelfTextureSetting(hidden);
+    logger.info(TAG, `[ShelfGrid] Wood shelf texture: ${hidden ? 'off' : 'on'}`);
+  }
+
+  private completeShelfPreviewAdjustments(): void {
+    const columns = this.normalizeShelfGridColumns(this.getShelfGridColumnsForDisplay());
+    const hideWood = this.hideWoodShelfTexture;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS, columns);
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, hideWood);
+    this.persistShelfGridColumnsSetting(columns);
+    this.persistHideWoodShelfTextureSetting(hideWood);
+    animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+      this.isShelfEditMode = false;
+    });
+    this.showToast('已保存当前书架显示设置');
+    logger.info(TAG, `[ShelfGrid] 完成调整并退出管理模式: columns=${columns}, hideWood=${hideWood}`);
+  }
+
+
+  private shouldShowShelfPreviewSlider(): boolean {
+    return this.currentTabIndex === TabIndex.LIBRARY
+      && this.libraryViewMode === LibraryViewMode.CATEGORY
+      && this.isShelfEditMode
+      && !this.showCategoryDetail;
+  }
+
+  private getShelfPreviewSliderWidth(): number {
+    const minWidth = 170;
+    const maxWidth = 320;
+    const available = this.getFloatingSearchButtonX() - this.responsive_contentPadding - 12;
+    if (available < minWidth) return minWidth;
+    return available > maxWidth ? maxWidth : available;
+  }
+
+  private getShelfPreviewSliderX(): number {
+    const x = this.getFloatingSearchButtonX() - this.getShelfPreviewSliderWidth() - 12;
+    return x > this.responsive_contentPadding ? x : this.responsive_contentPadding;
+  }
+
+  private getShelfPreviewSliderY(): number {
+    const y = this.getFloatingSearchButtonY() - 20;
+    return y > this.statusBarHeight ? y : this.statusBarHeight;
+  }
+
+  private getShelfCoverOffsetY(): number {
+    return this.hideWoodShelfTexture ? 0 : -12;
+  }
+
+  private shouldShowShelfBaseDecoration(): boolean {
+    return !this.hideWoodShelfTexture;
+  }
+
+  private getShelfBaseLayerColor(): string {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(28, 36, 50, 0.46)'
+      : 'rgba(255, 255, 255, 0.12)';
+  }
+
+  private getShelfBaseLayerBorderColor(): string {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(128, 150, 180, 0.24)'
+      : 'rgba(255, 255, 255, 0.22)';
+  }
+
+  private getShelfPreviewPrimaryWidth(): number {
+    const count = this.getShelfPreviewCountForDisplay();
+    if (count <= 1) return 56;
+    if (count === 2) return 50;
+    return 46;
+  }
+
+  private getShelfPreviewPrimaryHeight(): number {
+    const count = this.getShelfPreviewCountForDisplay();
+    if (count <= 1) return 76;
+    if (count === 2) return 70;
+    return 64;
+  }
+
+  private getShelfPreviewSecondaryWidth(): number {
+    const count = this.getShelfPreviewCountForDisplay();
+    if (count <= 1) return 0;
+    if (count === 2) return 34;
+    return 32;
+  }
+
+  private getShelfPreviewSecondaryHeight(): number {
+    const count = this.getShelfPreviewCountForDisplay();
+    if (count <= 1) return 0;
+    if (count === 2) return 50;
+    return 46;
+  }
+
+  private getShelfPreviewSpacing(): number {
+    const count = this.getShelfPreviewCountForDisplay();
+    if (count <= 1) return 0;
+    if (count === 2) return 4;
+    return 3;
+  }
+
+  private isShelfDetailViewActive(): boolean {
+    return this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail;
+  }
+
+  private getLibraryCoverBackgroundColor(
+    colorRole: 'comp_background_tertiary' | 'background_secondary' = 'comp_background_tertiary'
+  ): ResourceColor {
+    if (this.isShelfDetailViewActive()) {
+      if (this.themeState.currentTheme === ThemeType.DARK) {
+        return '#00000000';
+      }
+      return Color.Transparent;
+    }
+    return ThemeAwareHelper.getTestManagementThemedColor(colorRole, this.themeState.currentTheme);
+  }
+
+
+  private isPrivacyVirtualShelf(shelf: TypeShelf | null): boolean {
+    return shelf !== null && shelf.id === this.PRIVACY_VIRTUAL_SHELF_ID;
+  }
+
+  private getPrivacyVirtualShelf(): TypeShelf {
+    return {
+      id: this.PRIVACY_VIRTUAL_SHELF_ID,
+      name: '隐私书架',
+      shelfType: ShelfType.DYNAMIC,
+      contentTypes: [ShelfContentType.MANGA, ShelfContentType.EBOOK, ShelfContentType.NOVEL],
+      icon: '🔒',
+      color: '#1D2433',
+      order: -999,
+      isSystem: true,
+      createTime: 0,
+      updateTime: 0,
+      dynamicFilter: {
+        authors: [],
+        tags: [],
+        titleKeywords: [],
+        sourceNames: [],
+        customKeywords: [],
+        nsfwFilter: 'all'
+      }
+    };
+  }
+
+  private getShelfCardBackgroundColorById(shelfId: string) {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(20, 25, 35, 0.78)'
+        : 'rgba(32, 44, 64, 0.78)';
+    }
+    return this.getGlassBackground();
+  }
+
+  private getShelfCardBorderColorById(shelfId: string): string {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(132, 158, 196, 0.46)'
+        : 'rgba(196, 214, 240, 0.52)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(128, 150, 180, 0.22)'
+      : 'rgba(255, 255, 255, 0.28)';
+  }
+
+  private getShelfCardShadowColorById(shelfId: string): string {
+    if (shelfId === this.PRIVACY_VIRTUAL_SHELF_ID) {
+      return 'rgba(8, 12, 20, 0.46)';
+    }
+    return 'rgba(0, 0, 0, 0.28)';
+  }
+
+  private getShelfCardFixedHeight(): number {
+    return 152;
+  }
+
+  private beginShelfDetailEnterAnimation(): void {
+    this.shelfDetailTransitionScale = 0.9;
+    this.shelfDetailTransitionOpacity = 0;
+    this.shelfDetailContentDeferred = true;
+    this.showCategoryDetail = true;
+    this.categoryDetailAnimationProgress = 0;
+    animateTo({ duration: 260, curve: Curve.Linear }, () => {
+      this.shelfDetailTransitionScale = 1;
+      this.shelfDetailTransitionOpacity = 1;
+      this.categoryDetailAnimationProgress = 1;
+    });
+    setTimeout(() => {
+      if (this.showCategoryDetail) {
+        this.shelfDetailContentDeferred = false;
+      }
+    }, 100);
+  }
+
+  private beginShelfDetailExitAnimation(): void {
+    this.shelfDetailContentDeferred = false;
+    animateTo({ duration: 200, curve: Curve.Linear }, () => {
+      this.shelfDetailTransitionScale = 1.06;
+      this.shelfDetailTransitionOpacity = 0;
+      this.categoryDetailAnimationProgress = 0;
+    });
+    setTimeout(() => {
+      this.showCategoryDetail = false;
+      this.shelfDetailTransitionScale = 1;
+      this.shelfDetailTransitionOpacity = 1;
+      this.shelfDetailContentDeferred = false;
+    }, 200);
+  }
+
   @Builder
   buildCategoryView() {
-    Column({ space: 16 }) {
-      // 标题栏
-      Row() {
-        Text('我的书架')
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        
-        Blank()
-
-        // 管理按钮（进入/退出编辑模式）
-        Button() {
-          Row({ space: 4 }) {
-            SymbolGlyph(this.isShelfEditMode ? $r('sys.symbol.checkmark') : $r('sys.symbol.square_and_pencil'))
-              .fontSize(16)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-            Text(this.isShelfEditMode ? '完成' : '管理')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+    Column() {
+      Grid() {
+          if (this.isPrivacyMode) {
+            GridItem() {
+              this.buildPrivacyShelfCard()
+            }
+            .transition(
+              TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }),
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 180, curve: Curve.EaseIn })
+              )
+            )
+            .animation({ duration: 220, curve: Curve.Linear })
           }
-        }
-        .height(28)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
-        .borderRadius(14)
-        .onClick(() => {
-          animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
-            this.isShelfEditMode = !this.isShelfEditMode;
-          });
-        })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 8 })
 
-      // 类型书架网格（使用Scroll包裹实现丝滑滚动和回弹）
-      Scroll() {
-        Grid() {
-          // 漫画书架（有漫画内容时显示）
           if (this.mangaList.length > 0) {
             GridItem() {
               this.buildTypeShelfCard(LibraryContentType.MANGA, '漫画书架', this.mangaList.length, this.getMangaShelfCovers())
             }
+            .transition(
+              TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }),
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 180, curve: Curve.EaseIn })
+              )
+            )
+            .animation({ duration: 220, curve: Curve.Linear })
           }
-          
-          // 电子书书架（有电子书内容时显示）
+
           if (this.ebookList.length > 0 || this.pdfEbookList.length > 0) {
             GridItem() {
               this.buildTypeShelfCard(LibraryContentType.EBOOK, '电子书书架', this.ebookList.length + this.pdfEbookList.length, this.getEBookShelfCovers())
             }
+            .transition(
+              TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }),
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 180, curve: Curve.EaseIn })
+              )
+            )
+            .animation({ duration: 220, curve: Curve.Linear })
           }
-          
-          // 小说书架（有小说内容时显示）
+
           if (this.novelList.length > 0) {
             GridItem() {
               this.buildTypeShelfCard(LibraryContentType.NOVEL, '小说书架', this.novelList.length, this.getNovelShelfCovers())
             }
+            .transition(
+              TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }),
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 180, curve: Curve.EaseIn })
+              )
+            )
+            .animation({ duration: 220, curve: Curve.Linear })
           }
-          
-          // 自定义书架（从 TypeShelfManager 获取，SFW模式下隐藏nsfwFilter='nsfw'的动态书架）
+
           ForEach(this.typeShelves.filter((shelf: TypeShelf) => {
             if (shelf.isSystem) return false;
-            // SFW模式下隐藏专为NSFW内容创建的动态书架
             if (this.contentFilterManager.isSFWModeEnabled() &&
               shelf.shelfType === ShelfType.DYNAMIC &&
               shelf.dynamicFilter !== undefined &&
@@ -8646,39 +9268,82 @@ struct MainMenuPage {
             GridItem() {
               this.buildCustomShelfCard(shelf)
             }
+            .transition(
+              TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }),
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+                  .animation({ duration: 180, curve: Curve.EaseIn })
+              )
+            )
             .scale({ x: this.deletingShelfId === shelf.id ? 0 : 1, y: this.deletingShelfId === shelf.id ? 0 : 1 })
             .opacity(this.deletingShelfId === shelf.id ? 0 : 1)
-            .animation({ duration: 300, curve: Curve.EaseIn })
+            .animation({ duration: 220, curve: Curve.Linear })
           }, (shelf: TypeShelf) => shelf.id)
-          
-          // 新增书架卡片
+
+          GridItem() {
+            this.buildShelfManageCard()
+          }
+          .transition(
+            TransitionEffect.asymmetric(
+              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                .animation({ duration: 220, curve: Curve.EaseOut }),
+              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                .animation({ duration: 180, curve: Curve.EaseIn })
+            )
+          )
+          .scale({ x: this.shelfCardAnimationScale, y: this.shelfCardAnimationScale })
+          .animation({ duration: 220, curve: Curve.Linear })
+
           GridItem() {
             this.buildAddShelfCard()
           }
+          .transition(
+            TransitionEffect.asymmetric(
+              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                .animation({ duration: 220, curve: Curve.EaseOut }),
+              TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                .animation({ duration: 180, curve: Curve.EaseIn })
+            )
+          )
           .scale({ x: this.shelfCardAnimationScale, y: this.shelfCardAnimationScale })
-          .animation({ duration: 300, curve: Curve.EaseOut })
-          
-          // 如果所有书架都没有内容且没有自定义书架，显示一个默认的空书架
+          .animation({ duration: 220, curve: Curve.Linear })
+
           if (this.mangaList.length === 0 && this.ebookList.length === 0 && this.pdfEbookList.length === 0 && this.novelList.length === 0 && this.typeShelves.filter((s: TypeShelf) => !s.isSystem).length === 0) {
             GridItem() {
               this.buildTypeShelfCard(LibraryContentType.MANGA, '默认书架', 0, [])
             }
+            .transition(
+              TransitionEffect.asymmetric(
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 220, curve: Curve.EaseOut }),
+                TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.92, y: 0.92 }))
+                  .animation({ duration: 180, curve: Curve.EaseIn })
+              )
+            )
+            .animation({ duration: 220, curve: Curve.Linear })
           }
         }
-        .columnsTemplate('1fr 1fr')
-        .rowsGap(16)
-        .columnsGap(16)
+        .columnsTemplate(this.getShelfGridColumnsTemplate())
+        .rowsGap(this.responsive_gridGap)
+        .columnsGap(this.responsive_gridGap)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .animation({ duration: 220, curve: Curve.Linear })
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 16 })
-      }
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
-      .friction(0.6)
-      .width('100%')
-      .layoutWeight(1)
+      .padding({
+        left: this.responsive_contentPadding,
+        right: this.responsive_contentPadding,
+        top: 4,
+        bottom: this.getMainTabBottomSpacerHeight()
+      })
     }
     .width('100%')
-    .layoutWeight(1)
+  }
+
+  @Builder
+  buildPrivacyShelfCard() {
+    this.buildCustomShelfCard(this.getPrivacyVirtualShelf())
   }
 
   /**
@@ -8686,36 +9351,51 @@ struct MainMenuPage {
    */
   @Builder
   buildCustomShelfCard(shelf: TypeShelf) {
-    Column({ space: 4 }) {
-      // 书架容器
+    Column({ space: 8 }) {
+      // 书架容器（轻玻璃卡片 + 底部书架装饰）
       Stack({ alignContent: Alignment.Bottom }) {
-        // 书架背景图片
-        Image($r('app.media.bookshelf'))
-          .width('100%')
-          .height(40)
-          .objectFit(ImageFit.Fill)
-        
+        // 底层玻璃托板（关闭木质书架时不显示）
+        if (this.shouldShowShelfBaseDecoration()) {
+          Row()
+            .width('100%')
+            .height(16)
+            .backgroundColor(this.getShelfBaseLayerColor())
+            .borderRadius(8)
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+        }
+
+        // 木质书架装饰（关闭木质书架时不显示）
+        if (this.shouldShowShelfBaseDecoration()) {
+          Image($r('app.media.bookshelf'))
+            .width('100%')
+            .height(10)
+            .objectFit(ImageFit.Fill)
+            .opacity(this.isPrivacyVirtualShelf(shelf) ? 0.36 : 0.45)
+        }
+
+
         // 书本封面排列（在书架上方）
         if (this.getCustomShelfItemCount(shelf) > 0) {
-          Row({ space: 2 }) {
-            ForEach(this.getCustomShelfCovers(shelf).slice(0, 3), (coverPath: string, index: number) => {
+          Row({ space: this.getShelfPreviewSpacing() }) {
+            ForEach(this.getCustomShelfCovers(shelf).slice(0, this.getShelfPreviewCountForDisplay()), (coverPath: string, index: number) => {
               if (this.isNetworkUrl(coverPath)) {
                 // 网络封面：优先使用CoverImageManager缓存的PixelMap
                 if (getCoverImageManager().getCachedPixelMap(coverPath)) {
                   Image(getCoverImageManager().getCachedPixelMap(coverPath))
-                    .width(index === 0 ? 40 : 30)
-                    .height(index === 0 ? 56 : 42)
+                    .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
+                    .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                     .objectFit(ImageFit.Cover)
-                    .borderRadius(2)
+                    .borderRadius(4)
                     .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                     .zIndex(index === 0 ? 10 : 5)
                 } else {
                   AvifImage({
                     src: coverPath,
-                    imageWidth: index === 0 ? 40 : 30,
-                    imageHeight: index === 0 ? 56 : 42,
+                    imageWidth: index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth(),
+                    imageHeight: index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight(),
                     objectFit: ImageFit.Cover,
-                    imageBorderRadius: 2,
+                    imageBorderRadius: 4,
                     placeholder: $r('app.media.mangabook'),
                   })
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
@@ -8723,10 +9403,10 @@ struct MainMenuPage {
                 }
               } else {
                 Image(coverPath)
-                  .width(index === 0 ? 40 : 30)
-                  .height(index === 0 ? 56 : 42)
+                  .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
+                  .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                   .objectFit(ImageFit.Cover)
-                  .borderRadius(2)
+                  .borderRadius(4)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
               }
@@ -8735,14 +9415,48 @@ struct MainMenuPage {
           .justifyContent(FlexAlign.Center)
           .alignItems(VerticalAlign.Bottom)
           .width('100%')
-          .offset({ y: -28 })
+          .offset({ y: this.getShelfCoverOffsetY() })
         } else {
-          // 空状态：显示图标
-          Text(shelf.icon)
-            .fontSize(32)
-            .offset({ y: -30 })
+          // 空状态：统一占位图标
+          Image($r('app.media.mangabook'))
+            .width(26)
+            .height(36)
+            .objectFit(ImageFit.Cover)
+            .opacity(0.6)
+            .offset({ y: this.getShelfCoverOffsetY() })
         }
-        
+        if (this.isPrivacyVirtualShelf(shelf)) {
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.lock'))
+              .fontSize(12)
+              .fontColor(['#E8F1FF'])
+            Text('隐私')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor('#E8F1FF')
+          }
+          .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+          .backgroundColor('rgba(14, 20, 31, 0.72)')
+          .borderRadius(999)
+          .position({ x: 8, y: 6 })
+        }
+
+        if (shelf.shelfType === ShelfType.DYNAMIC && !this.isPrivacyVirtualShelf(shelf)) {
+          Row({ space: 3 }) {
+            SymbolGlyph($r('sys.symbol.intelligent_services'))
+              .fontSize(11)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+            Text('动态')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
+          .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .borderRadius(999)
+          .position({ x: 8, y: 6 })
+        }
+
         // 编辑模式下显示删除按钮
         if (this.isShelfEditMode && !shelf.isSystem) {
           Button() {
@@ -8754,7 +9468,7 @@ struct MainMenuPage {
           .height(32)
           .backgroundColor(Color.Transparent)
           .position({ x: '100%', y: 0 })
-          .translate({ x: -36, y: 4 })
+          .translate({ x: -32, y: 2 })
           .onClick(() => {
             this.shelfToDelete = shelf;
             animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
@@ -8764,46 +9478,38 @@ struct MainMenuPage {
         }
       }
       .width('100%')
-      .height(70)
+      .height(102)
       
-      // 书架名称和数量
-      Column({ space: 2 }) {
-        Row({ space: 4 }) {
-          if (shelf.shelfType === ShelfType.DYNAMIC) {
-            SymbolGlyph($r('sys.symbol.intelligent_services'))
-              .fontSize(14)
-              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
-          } else {
-            Text(shelf.icon)
-              .fontSize(14)
-          }
-          Text(shelf.name)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        
-        Row({ space: 4 }) {
-          Text(`${this.getCustomShelfItemCount(shelf)} 项`)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-          if (shelf.shelfType === ShelfType.DYNAMIC) {
-            Text('·动态')
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-        }
+      // 书架名称
+      Column({ space: 4 }) {
+        Text(shelf.name)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.isPrivacyVirtualShelf(shelf)
+            ? '#EAF2FF'
+            : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      .alignItems(HorizontalAlign.Center)
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
+    .height(this.getShelfCardFixedHeight())
+    .padding(10)
+    .backgroundColor(this.getShelfCardBackgroundColorById(shelf.id))
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById(shelf.id), offsetY: 4 })
+    .border({ width: 1, color: this.getShelfCardBorderColorById(shelf.id) })
     .onClick(() => {
       if (this.isShelfEditMode) {
+        if (this.isPrivacyVirtualShelf(shelf)) {
+          this.showToast('隐私书架不可编辑');
+          return;
+        }
         // 编辑模式下：点击书架进行重命名
         this.renamingShelf = shelf;
         this.renameShelfName = shelf.name;
@@ -8813,6 +9519,11 @@ struct MainMenuPage {
         return;
       }
       // 设置选中的自定义书架
+      if (this.isPrivacyVirtualShelf(shelf)) {
+        logger.info(TAG, '[隐私书架] 打开隐私书架详情');
+      }
+      // 先触发详情容器入场，避免当前网格因状态连锁更新造成首帧掉帧
+      this.beginShelfDetailEnterAnimation();
       this.selectedShelf = shelf;
       this.shelfContentFilter = 'all';
       // 重置排序和筛选状态
@@ -8833,15 +9544,17 @@ struct MainMenuPage {
           this.selectedShelfType = LibraryContentType.NOVEL;
         }
       }
-      // 动态书架：预计算匹配内容
+      // 动态书架的匹配计算延后到入场动画后，避免点击首帧阻塞
       if (shelf.shelfType === ShelfType.DYNAMIC) {
-        this.dynamicShelfMatchedItems = this.getDynamicShelfMatchedItems(shelf);
+        this.dynamicShelfMatchedItems = [];
+        setTimeout(() => {
+          if (this.showCategoryDetail && this.selectedShelf !== null && this.selectedShelf.id === shelf.id) {
+            this.dynamicShelfMatchedItems = this.getDynamicShelfMatchedItems(shelf);
+          }
+        }, 140);
+      } else {
+        this.dynamicShelfMatchedItems = [];
       }
-      // 混合书架和动态书架会在buildCategoryDetailContent中显示所有类型
-      animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-        this.showCategoryDetail = true;
-        this.categoryDetailAnimationProgress = 1;
-      });
     })
   }
 
@@ -8850,45 +9563,201 @@ struct MainMenuPage {
    */
   @Builder
   buildAddShelfCard() {
-    Column({ space: 4 }) {
-      // 书架容器
+    Column({ space: 8 }) {
+      // 书架容器（与普通书架卡片保持一致）
       Stack({ alignContent: Alignment.Bottom }) {
-        // 书架背景图片
-        Image($r('app.media.bookshelf'))
-          .width('100%')
-          .height(40)
-          .objectFit(ImageFit.Fill)
-          .opacity(0.5)
-        
-        // 添加图标
-        Column({ space: 4 }) {
-          SymbolGlyph($r('sys.symbol.plus_circle'))
-            .fontSize(32)
-            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        if (this.shouldShowShelfBaseDecoration()) {
+          Row()
+            .width('100%')
+            .height(16)
+            .backgroundColor(this.getShelfBaseLayerColor())
+            .borderRadius(8)
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
         }
-        .offset({ y: -28 })
+
+        if (this.shouldShowShelfBaseDecoration()) {
+          Image($r('app.media.bookshelf'))
+            .width('100%')
+            .height(10)
+            .objectFit(ImageFit.Fill)
+            .opacity(0.45)
+        }
+
+        SymbolGlyph($r('sys.symbol.plus_circle'))
+          .fontSize(30)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          .offset({ y: this.getShelfCoverOffsetY() })
       }
       .width('100%')
-      .height(70)
+      .height(102)
       
       // 文字
       Column({ space: 2 }) {
         Text('新建书架')
-          .fontSize(14)
+          .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       }
-      .alignItems(HorizontalAlign.Center)
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 2, color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme), style: BorderStyle.Dashed })
+    .height(this.getShelfCardFixedHeight())
+    .padding(10)
+    .backgroundColor(this.getShelfCardBackgroundColorById('system_add_shelf'))
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_add_shelf'), offsetY: 4 })
+    .border({ width: 1, color: this.getShelfCardBorderColorById('system_add_shelf') })
     .onClick(() => {
       animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
         this.showAddShelfDialog = true;
       });
+    })
+  }
+
+  /**
+   * 构建管理书架卡片（替代顶部管理按钮）
+   */
+  @Builder
+  buildShelfManageCard() {
+    Column({ space: 8 }) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        if (this.shouldShowShelfBaseDecoration()) {
+          Row()
+            .width('100%')
+            .height(16)
+            .backgroundColor(this.getShelfBaseLayerColor())
+            .borderRadius(8)
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+        }
+
+        if (this.shouldShowShelfBaseDecoration()) {
+          Image($r('app.media.bookshelf'))
+            .width('100%')
+            .height(10)
+            .objectFit(ImageFit.Fill)
+            .opacity(0.45)
+        }
+
+        SymbolGlyph(this.isShelfEditMode ? $r('sys.symbol.checkmark') : $r('sys.symbol.square_and_pencil'))
+          .fontSize(30)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          .offset({ y: this.getShelfCoverOffsetY() })
+      }
+      .width('100%')
+      .height(102)
+
+      Column({ space: 2 }) {
+        Text(this.isShelfEditMode ? '完成管理' : '管理书架')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height(this.getShelfCardFixedHeight())
+    .padding(10)
+    .backgroundColor(this.getShelfCardBackgroundColorById(`system_type_${ShelfType}`))
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById(`system_type_${ShelfType}`), offsetY: 4 })
+    .border({ width: 1, color: this.getShelfCardBorderColorById(`system_type_${ShelfType}`) })
+    .onClick(() => {
+      animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+        this.isShelfEditMode = !this.isShelfEditMode;
+      });
+    })
+  }
+
+  /**
+   * 构建书架每行数量滑条（与全局搜索按钮同高度）
+   */
+  @Builder
+  buildShelfPreviewSliderFloatingBar() {
+    Column({ space: 6 }) {
+      Row({ space: 8 }) {
+        Text('不显示木质书架')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.hideWoodShelfTexture })
+          .onChange((isOn: boolean) => {
+            this.updateHideWoodShelfTexture(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text(`每行书架 ${this.getShelfGridColumnsForDisplay()}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Slider({
+          value: this.getShelfGridColumnsForDisplay(),
+          min: 1,
+          max: 10,
+          step: 1,
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .onChange((value: number) => {
+            this.updateShelfGridColumns(value)
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Button('完成调整')
+        .width('100%')
+        .height(28)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(14)
+        .onClick(() => {
+          this.completeShelfPreviewAdjustments();
+        })
+    }
+    .width(this.getShelfPreviewSliderWidth())
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(30, 30, 30, 0.45)'
+      : 'rgba(255, 255, 255, 0.45)')
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .border({
+      width: 1,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(255, 255, 255, 0.22)'
+        : 'rgba(255, 255, 255, 0.60)'
+    })
+    .borderRadius(22)
+    .shadow({
+      radius: 12,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(0, 0, 0, 0.35)'
+        : 'rgba(0, 0, 0, 0.12)',
+      offsetX: 0,
+      offsetY: 3
     })
   }
 
@@ -8911,7 +9780,7 @@ struct MainMenuPage {
       const covers: string[] = [];
       const matchedItems = this.getDynamicShelfMatchedItems(shelf);
       for (const item of matchedItems) {
-        if (covers.length >= 3) break;
+        if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
         if (item.type === 'manga' || item.type === 'pdfebook') {
           const manga = item.data as Manga;
           const path = this.normalizeDisplayPathForManga(manga);
@@ -8933,7 +9802,7 @@ struct MainMenuPage {
     const items = this.typeShelfManager.getShelfItems(shelf.id);
     
     for (const item of items) {
-      if (covers.length >= 3) break;
+      if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
       
       switch (item.contentType) {
         case ContentType.MANGA:
@@ -9072,12 +9941,12 @@ struct MainMenuPage {
   }
 
   /**
-   * 获取漫画书架封面列表（取前3个）
+   * 获取漫画书架封面列表（按当前预览规则）
    */
   private getMangaShelfCovers(): string[] {
     const covers: string[] = [];
     for (const manga of this.mangaList) {
-      if (covers.length >= 3) break;
+      if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
       const normalizedPath = this.normalizeDisplayPathForManga(manga);
       if (normalizedPath) {
         covers.push(normalizedPath);
@@ -9087,14 +9956,14 @@ struct MainMenuPage {
   }
 
   /**
-   * 获取电子书书架封面列表（取前3个）
+   * 获取电子书书架封面列表（按当前预览规则）
    * [修复] 改进封面获取逻辑，支持多种图片来源
    */
   private getEBookShelfCovers(): string[] {
     const covers: string[] = [];
     // 从电子书获取封面
     for (const ebook of this.ebookList) {
-      if (covers.length >= 3) break;
+      if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
       const coverPath = this.getValidEBookCoverPath(ebook);
       if (coverPath) {
         covers.push(coverPath);
@@ -9102,7 +9971,7 @@ struct MainMenuPage {
     }
     // 从PDF电子书获取封面
     for (const pdfEbook of this.pdfEbookList) {
-      if (covers.length >= 3) break;
+      if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
       const normalizedPath = this.normalizeDisplayPathForManga(pdfEbook);
       if (normalizedPath) {
         covers.push(normalizedPath);
@@ -9153,12 +10022,12 @@ struct MainMenuPage {
   }
 
   /**
-   * 获取小说书架封面列表（取前3个）
+   * 获取小说书架封面列表（按当前预览规则）
    */
   private getNovelShelfCovers(): string[] {
     const covers: string[] = [];
     for (const novel of this.novelList) {
-      if (covers.length >= 3) break;
+      if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
       const coverPath = novel.coverLocalPath || novel.coverUrl;
       if (coverPath) {
         covers.push(this.normalizeCoverPath(coverPath));
@@ -9188,37 +10057,49 @@ struct MainMenuPage {
    */
   @Builder
   buildTypeShelfCard(shelfType: LibraryContentType, shelfName: string, itemCount: number, coverImages: string[]) {
-    Column({ space: 4 }) {
-      // 书架容器
+    Column({ space: 8 }) {
+      // 书架容器（轻玻璃卡片 + 底部书架装饰）
       Stack({ alignContent: Alignment.Bottom }) {
-        // 书架背景图片
-        Image($r('app.media.bookshelf'))
-          .width('100%')
-          .height(40)
-          .objectFit(ImageFit.Fill)
+        if (this.shouldShowShelfBaseDecoration()) {
+          Row()
+            .width('100%')
+            .height(16)
+            .backgroundColor(this.getShelfBaseLayerColor())
+            .borderRadius(8)
+            .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
+            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+        }
+
+        if (this.shouldShowShelfBaseDecoration()) {
+          Image($r('app.media.bookshelf'))
+            .width('100%')
+            .height(10)
+            .objectFit(ImageFit.Fill)
+            .opacity(0.45)
+        }
         
         // 书本封面排列（在书架上方，向上偏移）
         if (itemCount > 0 && coverImages.length > 0) {
-          // 有内容且有有效封面：中间大两边小的布局
-          Row({ space: 2 }) {
-            ForEach(coverImages, (coverPath: string, index: number) => {
+          // 有内容且有有效封面：左主右辅布局
+          Row({ space: this.getShelfPreviewSpacing() }) {
+            ForEach(coverImages.slice(0, this.getShelfPreviewCountForDisplay()), (coverPath: string, index: number) => {
               if (this.isNetworkUrl(coverPath)) {
                 // 网络封面：优先使用CoverImageManager缓存的PixelMap，避免重复下载和透明问题
                 if (getCoverImageManager().getCachedPixelMap(coverPath)) {
                   Image(getCoverImageManager().getCachedPixelMap(coverPath))
-                    .width(index === 0 ? 40 : 30)
-                    .height(index === 0 ? 56 : 42)
+                    .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
+                    .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                     .objectFit(ImageFit.Cover)
-                    .borderRadius(2)
+                    .borderRadius(4)
                     .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                     .zIndex(index === 0 ? 10 : 5)
                 } else {
                   AvifImage({
                     src: coverPath,
-                    imageWidth: index === 0 ? 40 : 30,
-                    imageHeight: index === 0 ? 56 : 42,
+                    imageWidth: index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth(),
+                    imageHeight: index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight(),
                     objectFit: ImageFit.Cover,
-                    imageBorderRadius: 2,
+                    imageBorderRadius: 4,
                     placeholder: $r('app.media.mangabook'),
                   })
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
@@ -9226,10 +10107,10 @@ struct MainMenuPage {
                 }
               } else {
                 Image(coverPath)
-                  .width(index === 0 ? 40 : 30)
-                  .height(index === 0 ? 56 : 42)
+                  .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
+                  .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                   .objectFit(ImageFit.Cover)
-                  .borderRadius(2)
+                  .borderRadius(4)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
               }
@@ -9238,57 +10119,59 @@ struct MainMenuPage {
           .justifyContent(FlexAlign.Center)
           .alignItems(VerticalAlign.Bottom)
           .width('100%')
-          .offset({ y: -28 })
+          .offset({ y: this.getShelfCoverOffsetY() })
         } else if (itemCount > 0) {
           // 有内容但无有效封面：显示默认书本图标和数量提示
-          Column({ space: 4 }) {
-            Image($r('app.media.mangabook'))
-              .width(40)
-              .height(56)
-              .objectFit(ImageFit.Cover)
-              .borderRadius(2)
-              .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
-          }
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-          .width('100%')
-          .offset({ y: -28 })
+          Image($r('app.media.mangabook'))
+            .width(this.getShelfPreviewPrimaryWidth())
+            .height(this.getShelfPreviewPrimaryHeight())
+            .objectFit(ImageFit.Cover)
+            .borderRadius(4)
+            .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
+            .offset({ y: this.getShelfCoverOffsetY() })
         } else {
-          // 真正的空状态：显示"空无一物"提示（向上偏移）
-          Text('空无一物')
-            .fontSize(24)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .offset({ y: -30 })
+          // 统一空状态占位
+          Image($r('app.media.mangabook'))
+            .width(24)
+            .height(34)
+            .objectFit(ImageFit.Cover)
+            .opacity(0.55)
+            .offset({ y: this.getShelfCoverOffsetY() })
         }
       }
       .width('100%')
-      .height(70)
+      .height(102)
       
-      // 书架名称和数量
-      Column({ space: 2 }) {
+      // 书架名称
+      Column({ space: 4 }) {
         Text(shelfName)
-          .fontSize(14)
+          .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        
-        Text(`${itemCount} 项`)
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
       }
-      .alignItems(HorizontalAlign.Center)
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
+    .height(this.getShelfCardFixedHeight())
+    .padding(10)
+    .backgroundColor(this.getShelfCardBackgroundColorById('system_manage_shelf'))
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius())
+    .opacity(this.getCardOpacity())
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getShelfCardShadowColorById('system_manage_shelf'), offsetY: 4 })
+    .border({ width: 1, color: this.getShelfCardBorderColorById('system_manage_shelf') })
     .onClick(() => {
       // 编辑模式下：默认书架不支持重命名
       if (this.isShelfEditMode) {
         this.showToast('默认书架不支持重命名');
         return;
       }
+      // 先触发详情容器入场，减少网格区状态切换引发的卡顿
+      this.beginShelfDetailEnterAnimation();
       // 设置选中的书架类型，清除自定义书架选中状态
       this.selectedShelfType = shelfType;
       this.selectedShelf = null; // 系统书架不需要selectedShelf
@@ -9299,14 +10182,7 @@ struct MainMenuPage {
       this.customShelfSelectedAuthors.clear();
       this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
       this.customShelfSortType = 'add_desc';
-      // 用动画展开详情
-      animateTo({
-        duration: 300,
-        curve: Curve.EaseOut
-      }, () => {
-        this.showCategoryDetail = true;
-        this.categoryDetailAnimationProgress = 1;
-      });
+      this.dynamicShelfMatchedItems = [];
     })
   }
 
@@ -10438,7 +11314,7 @@ struct MainMenuPage {
           .width('100%')
         }
         .layoutWeight(1)
-        .scrollBar(BarState.Auto)
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
       } else {
         Column() {
@@ -11101,6 +11977,9 @@ struct MainMenuPage {
           } else {
             this.buildShelfNovelList()
           }
+          if (this.selectedShelf === null) {
+            Blank().height(this.getMainTabBottomSpacerHeight())
+          }
         }
         .width('100%')
       }
@@ -11130,6 +12009,8 @@ struct MainMenuPage {
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
       .columnsGap(this.responsive_gridGap)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
     } else {
@@ -11158,6 +12039,8 @@ struct MainMenuPage {
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
       .columnsGap(this.responsive_gridGap)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
     } else {
@@ -11181,6 +12064,8 @@ struct MainMenuPage {
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
       .columnsGap(this.responsive_gridGap)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
     } else {
@@ -11505,6 +12390,8 @@ struct MainMenuPage {
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
       .columnsGap(this.responsive_gridGap)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .padding(16)
     } else {
@@ -12302,7 +13189,7 @@ struct MainMenuPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ bottom: this.BOTTOM_BAR_HEIGHT }) // 避让底栏
+    .padding({ bottom: this.getMainTabBottomSpacerHeight() }) // 避让底栏
     .backgroundColor(Color.Transparent) // 透明背景
     .scale({ x: this.categoryDetailAnimationProgress, y: this.categoryDetailAnimationProgress })
     .opacity(this.categoryDetailAnimationProgress)
@@ -12360,6 +13247,7 @@ struct MainMenuPage {
           }
           .width('100%')
         }
+        .scrollBar(BarState.Off)
         .width('100%')
         .constraintSize({ maxHeight: 300 })
 
@@ -12551,7 +13439,7 @@ struct MainMenuPage {
             objectFit: ImageFit.Cover,
             imageBorderRadius: this.getGlassRadius(),
           })
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .backgroundColor(this.getLibraryCoverBackgroundColor('background_secondary'))
           .shadow({
             radius: 8,
             color: AppColors.getShadowColor(4),
@@ -12564,7 +13452,7 @@ struct MainMenuPage {
             .aspectRatio(0.7)
             .objectFit(ImageFit.Cover)
             .borderRadius(this.getGlassRadius())
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+            .backgroundColor(this.getLibraryCoverBackgroundColor('background_secondary'))
             .shadow({
               radius: 8,
               color: AppColors.getShadowColor(4),
@@ -12623,6 +13511,9 @@ struct MainMenuPage {
       }
       .width('100%')
       .aspectRatio(0.7)
+      .onClick(() => {
+        this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
+      })
 
       // 漫画标题
       Text(manga.title)
@@ -12634,6 +13525,9 @@ struct MainMenuPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .textAlign(TextAlign.Center)
+        .onClick(() => {
+          this.handleLibraryMangaTitleClick(manga);
+        })
 
       // 阅读进度（GRID模式）- 显示当前阅读页数
       if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
@@ -12651,11 +13545,7 @@ struct MainMenuPage {
     .opacity(this.getCardOpacity())
     .onClick(() => {
       if (this.isMultiSelectMode) {
-        // 多选模式：切换选中状态
         this.toggleMangaSelection(manga.id);
-      } else {
-        // 普通模式：打开详情页
-        this.openMangaDetail(manga);
       }
     })
     .gesture(
@@ -13389,27 +14279,6 @@ struct MainMenuPage {
   @Builder
   buildEBookCard(ebook: EBook) {
     Stack() {
-      // 右侧删除提示面板
-      Column() {
-        Text(this.getEBookSwipeProgressText(ebook.id))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-        Text('松手删除')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-      }
-      .width(96)
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-      .borderRadius(this.getGlassRadius())
-      .opacity(this.activeEBookSwipeId === ebook.id ? Math.min(1, this.getEBookSwipeOffset(ebook.id) / this.swipeThreshold) : 0)
-      .position({ x: '100%', y: 0 })
-
       // 卡片内容层
       Row({ space: 12 }) {
         // 封面图片
@@ -13492,32 +14361,11 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Blank()
-
-          // 开始阅读按钮
-          Row({ space: 12 }) {
-            Blank()
-
-            Button(this.hasEBookReadingProgress(ebook) ? '继续阅读' : '开始阅读')
-              .fontSize(14)
-              .height(32)
-              .fontFamily(this.appFontFamily)
-              .padding({ left: 16, right: 16 })
-              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-              .onClick(() => {
-                // 使用电子书阅读器打开（带翻开动画）
-                this.openEBookReader(ebook);
-              })
-          }
-          .width('100%')
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         .justifyContent(FlexAlign.SpaceBetween)
       }
-      .translate({ x: -this.getEBookSwipeOffset(ebook.id), y: 0 })
       .onClick(() => { this.openEBookDetail(ebook); })
       .width('100%')
       .height(140)
@@ -13528,17 +14376,28 @@ struct MainMenuPage {
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
       .gesture(
-        GestureGroup(GestureMode.Parallel,
-          LongPressGesture({ repeat: false })
-            .onAction(() => { this.activateEBookSwipeFor(ebook.id); }),
-          PanGesture({ fingers: 1, direction: PanDirection.Left, distance: 1 })
-            .onActionUpdate((event: GestureEvent) => { this.updateEBookSwipeOffset(ebook.id, event); })
-            .onActionEnd((event: GestureEvent) => { this.endEBookSwipe(ebook.id); })
-        )
+        LongPressGesture({ repeat: false, duration: 500 })
+          .onAction(() => {
+            if (!this.isEBookMultiSelectMode) {
+              this.showEBookActionMenu(ebook);
+            }
+          })
       )
     }
     .width('100%')
     .height(140)
+    .bindPopup(this.showEBookContextMenu && this.contextMenuEBook?.id === ebook.id, {
+      builder: this.buildEBookCustomContextMenu(ebook),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideEBookContextMenu();
+        }
+      }
+    })
   }
 
   /**
@@ -13842,6 +14701,138 @@ struct MainMenuPage {
       return true;
     }
     return false;
+  }
+
+  private isLibraryCoverReadEnabled(): boolean {
+    return this.settingsManager.getBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
+  }
+
+  private canStartReadingFromLibraryCover(): boolean {
+    return this.currentTabIndex === TabIndex.LIBRARY && this.isLibraryCoverReadEnabled();
+  }
+
+  private handleLibraryMangaCoverClick(manga: Manga, coverComponentId: string): void {
+    if (this.isMultiSelectMode) {
+      this.toggleMangaSelection(manga.id);
+      return;
+    }
+    if (this.canStartReadingFromLibraryCover()) {
+      void this.openMangaReaderWithAnimation(manga, coverComponentId);
+      return;
+    }
+    this.openMangaDetail(manga);
+  }
+
+  private handleLibraryMangaTitleClick(manga: Manga): void {
+    if (this.isMultiSelectMode) {
+      this.toggleMangaSelection(manga.id);
+      return;
+    }
+    this.openMangaDetail(manga);
+  }
+
+  private handleLibraryNovelCoverClick(novel: NovelBook, coverComponentId: string): void {
+    if (this.isNovelMultiSelectMode) {
+      this.toggleNovelSelection(novel.id);
+      return;
+    }
+    void this.openNovelReaderWithAnimation(novel, coverComponentId);
+  }
+
+  private handleLibraryNovelTitleClick(novel: NovelBook): void {
+    if (this.isNovelMultiSelectMode) {
+      this.toggleNovelSelection(novel.id);
+      return;
+    }
+    this.openNovelDetail(novel);
+  }
+
+  private getNovelTransitionBookId(novel: NovelBook): string {
+    if (novel.sourceId && novel.sourceId.length > 0) {
+      return `${novel.sourceId}_${encodeURIComponent(novel.bookUrl)}`;
+    }
+    return novel.bookUrl || novel.id;
+  }
+
+  private async openNovelReaderWithAnimation(novel: NovelBook, coverComponentId: string): Promise<void> {
+    try {
+      if (!novel.sourceId || !novel.bookUrl) {
+        this.showToast('小说信息不完整，已打开详情页');
+        this.openNovelDetail(novel);
+        return;
+      }
+
+      const sourceManager = getNovelSourceManager();
+      const parsedBook = await sourceManager.getBookInfo(novel.sourceId, novel.bookUrl);
+      const resolvedBook: LegadoBook = parsedBook ?? {
+        id: `${novel.sourceId}_${encodeURIComponent(novel.bookUrl)}`,
+        origin: novel.sourceId,
+        originName: novel.sourceName || '',
+        bookUrl: novel.bookUrl,
+        name: novel.name,
+        author: novel.author,
+        kind: novel.kind,
+        intro: novel.intro,
+        coverUrl: novel.coverUrl,
+        tocUrl: novel.tocUrl || novel.bookUrl,
+        latestChapterTitle: novel.latestChapterTitle,
+        wordCount: novel.wordCount,
+        updateTime: novel.lastReadTime,
+        type: LegadoBookSourceType.TEXT
+      };
+
+      const chapters = await sourceManager.getChapterList(novel.sourceId, resolvedBook);
+      if (chapters.length <= 0) {
+        this.showToast('未找到章节，已打开小说详情');
+        this.openNovelDetail(novel);
+        return;
+      }
+
+      const lastReadChapterIndex = novel.lastReadChapterIndex ?? 0;
+      const safeChapterIndex = Math.max(0, Math.min(lastReadChapterIndex, chapters.length - 1));
+      const chapter = chapters[safeChapterIndex];
+      const readerParams: NovelReaderPageParams = {
+        sourceId: novel.sourceId,
+        bookUrl: novel.bookUrl,
+        bookName: resolvedBook.name || novel.name,
+        chapterUrl: chapter.url,
+        chapterTitle: chapter.title || `第${safeChapterIndex + 1}章`,
+        chapterIndex: safeChapterIndex,
+        totalChapters: chapters.length,
+        tocUrl: resolvedBook.tocUrl || novel.tocUrl || novel.bookUrl,
+        author: resolvedBook.author || novel.author,
+        coverUrl: resolvedBook.coverUrl || novel.coverUrl,
+        sourceName: novel.sourceName || resolvedBook.originName || '',
+        coverComponentId: coverComponentId
+      };
+
+      const lastReadPosition = novel.lastReadPosition ?? 0;
+      if (lastReadPosition > 0) {
+        readerParams.chapterStartOffset = lastReadPosition;
+      }
+
+      const coverPath = this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl);
+      const transitionBookId = this.getNovelTransitionBookId(novel);
+      startBookOpenTransitionWithComponentId(
+        coverPath,
+        coverComponentId,
+        transitionBookId,
+        'novel',
+        () => {
+          this.pathStack.pushPathByName('NovelReaderPage', readerParams);
+        },
+        undefined,
+        {
+          title: novel.name,
+          author: novel.author || '',
+          intro: novel.intro || ''
+        }
+      );
+    } catch (error) {
+      logger.error(TAG, `打开小说阅读器（带动画）失败: ${String(error)}`);
+      this.showToast('打开阅读器失败，已打开小说详情');
+      this.openNovelDetail(novel);
+    }
   }
 
   /**
@@ -14251,7 +15242,7 @@ struct MainMenuPage {
           }
         .width('100%')
         .aspectRatio(0.7)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
@@ -14396,20 +15387,6 @@ struct MainMenuPage {
   @Builder
   buildNovelCard(novel: NovelBook) {
     Stack({ alignContent: Alignment.End }) {
-      // 删除提示背景
-      Row() {
-        SymbolGlyph($r('sys.symbol.trash'))
-          .fontSize(24)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
-      }
-      .width(80)
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
-      .borderRadius({ topRight: this.getGlassRadius(), bottomRight: this.getGlassRadius() })
-      .opacity(this.activeNovelSwipeId === novel.id ? Math.min(1, this.getNovelSwipeOffset(novel.id) / this.swipeThreshold) : 0)
-
-
       Row({ space: 12 }) {
         // 封面图片
         Column() {
@@ -14439,6 +15416,10 @@ struct MainMenuPage {
         .clip(true)
         .justifyContent(FlexAlign.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
+        .id(`cover_novel_lib_${novel.id}`)
+        .onClick(() => {
+          this.handleLibraryNovelCoverClick(novel, `cover_novel_lib_${novel.id}`);
+        })
 
         // 小说信息
         Column({ space: 6 }) {
@@ -14449,6 +15430,9 @@ struct MainMenuPage {
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .onClick(() => {
+              this.handleLibraryNovelTitleClick(novel);
+            })
 
           Text(novel.author || '未知作者')
             .fontSize(13)
@@ -14485,8 +15469,11 @@ struct MainMenuPage {
         .alignItems(HorizontalAlign.Start)
         .height(120)
       }
-      .translate({ x: -this.getNovelSwipeOffset(novel.id), y: 0 })
-      .onClick(() => { this.openNovelDetail(novel); })
+      .onClick(() => {
+        if (this.isNovelMultiSelectMode) {
+          this.toggleNovelSelection(novel.id);
+        }
+      })
       .width('100%')
       .height(144)
       .padding(12)
@@ -14496,17 +15483,28 @@ struct MainMenuPage {
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
       .gesture(
-        GestureGroup(GestureMode.Parallel,
-          LongPressGesture({ repeat: false })
-            .onAction(() => { this.activateNovelSwipeFor(novel.id); }),
-          PanGesture({ fingers: 1, direction: PanDirection.Left, distance: 1 })
-            .onActionUpdate((event: GestureEvent) => { this.updateNovelSwipeOffset(novel.id, event); })
-            .onActionEnd((event: GestureEvent) => { this.endNovelSwipe(novel.id); })
-        )
+        LongPressGesture({ repeat: false, duration: 500 })
+          .onAction(() => {
+            if (!this.isNovelMultiSelectMode) {
+              this.showNovelActionMenu(novel);
+            }
+          })
       )
     }
     .width('100%')
     .height(144)
+    .bindPopup(this.showNovelContextMenu && this.contextMenuNovel?.id === novel.id, {
+      builder: this.buildNovelCustomContextMenu(novel),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideNovelContextMenu();
+        }
+      }
+    })
   }
 
   /**
@@ -14539,7 +15537,7 @@ struct MainMenuPage {
         }
         .width('100%')
         .aspectRatio(0.7)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
@@ -14606,6 +15604,10 @@ struct MainMenuPage {
       .aspectRatio(0.7)
       .borderRadius(this.getGlassRadius())
       .clip(true)
+      .id(`library_novel_${novel.id}`)
+      .onClick(() => {
+        this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
+      })
 
       // 小说标题
       Text(novel.name)
@@ -14616,6 +15618,9 @@ struct MainMenuPage {
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
+        .onClick(() => {
+          this.handleLibraryNovelTitleClick(novel);
+        })
 
       // 作者
       Text(novel.author || '未知作者')
@@ -14634,11 +15639,7 @@ struct MainMenuPage {
     .opacity(this.getCardOpacity())
     .onClick(() => {
       if (this.isNovelMultiSelectMode) {
-        // 多选模式：切换选中状态
         this.toggleNovelSelection(novel.id);
-      } else {
-        // 普通模式：打开详情页
-        this.openNovelDetail(novel);
       }
     })
     .gesture(
@@ -14803,33 +15804,12 @@ struct MainMenuPage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Blank()
-
-        // 操作按钮
-        Row({ space: 12 }) {
-          if (manga.readingProgress && manga.readingProgress.currentPageIndex > 0) {
-            Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
-              .fontSize(12)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-          }
-
-          Blank()
-
-          // 根据阅读进度显示不同的按钮文本
-          Button(this.hasMangaReadingProgress(manga) ? '继续阅读' : '开始阅读')
-            .fontSize(14)
-            .height(32)
+        if (manga.readingProgress && manga.readingProgress.currentPageIndex > 0) {
+          Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
+            .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .padding({ left: 16, right: 16 })
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .onClick(() => {
-              // 使用漫画阅读器打开PDF电子书
-              this.openMangaReader(manga);
-            })
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         }
-        .width('100%')
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -14849,6 +15829,26 @@ struct MainMenuPage {
     .onClick(() => {
       // 点击卡片打开漫画详情页
       this.openMangaDetail(manga);
+    })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          if (!this.isMultiSelectMode) {
+            this.showMangaActionMenu(manga);
+          }
+        })
+    )
+    .bindPopup(this.showMangaContextMenu && this.contextMenuManga?.id === manga.id, {
+      builder: this.buildMangaCustomContextMenu(manga),
+      placement: Placement.Bottom,
+      popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
+      enableArrow: true,
+      autoCancel: true,
+      onStateChange: (e) => {
+        if (!e.isVisible) {
+          this.hideMangaContextMenu();
+        }
+      }
     })
   }
 
@@ -14878,7 +15878,7 @@ struct MainMenuPage {
           }
           .width('100%')
           .aspectRatio(0.7)
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .backgroundColor(this.getLibraryCoverBackgroundColor())
           .borderRadius(this.getGlassRadius())
           .clip(true)
           .justifyContent(FlexAlign.Center)
@@ -15811,9 +16811,14 @@ struct MainMenuPage {
               }
             }
           }
+          ListItem() {
+            Column()
+              .width('100%')
+              .height(this.getMainTabBottomSpacerHeight())
+          }
         }
         .layoutWeight(1)
-        .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+        .padding({ left: 16, right: 16, top: 12, bottom: 0 })
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
         .onScrollStop(() => {
@@ -15833,6 +16838,7 @@ struct MainMenuPage {
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
+        .padding({ bottom: this.getMainTabBottomSpacerHeight() })
       }
     }
     .width('100%')
@@ -16452,6 +17458,7 @@ struct MainMenuPage {
 
         // 使用说明（根据筛选模式显示不同内容）
         this.buildSourceUsageGuide()
+        Blank().height(this.getMainTabBottomSpacerHeight())
           }
           .width('100%')
         }
@@ -17391,6 +18398,7 @@ struct MainMenuPage {
             .padding({ left: 16, right: 16 })
             .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
           }
+          Blank().height(this.getMainTabBottomSpacerHeight())
         }
         .width('100%')
       }
@@ -18410,7 +19418,7 @@ struct MainMenuPage {
                   .columnsGap(8)
                   .rowsGap(8)
                   .width('100%')
-                  Blank().height(80)
+                  Blank().height(this.getSuwayomiBottomSpacerHeight())
                 }
                 .width('100%')
                 .padding(16)
@@ -18427,7 +19435,7 @@ struct MainMenuPage {
                   ForEach(this.getFilteredSuwayomiSources(), (source: SuwayomiExtensionSource) => {
                     this.buildSuwayomiSourceListItem(source)
                   })
-                  Blank().height(80)
+                  Blank().height(this.getSuwayomiBottomSpacerHeight())
                 }
                 .width('100%')
                 .padding(16)
@@ -18484,7 +19492,7 @@ struct MainMenuPage {
                       this.loadSuwayomiLibrary(false);
                     })
                 }
-                Blank().height(80)
+                Blank().height(this.getSuwayomiBottomSpacerHeight())
               }
               .width('100%')
               .padding(16)
@@ -18511,7 +19519,7 @@ struct MainMenuPage {
                       this.loadSuwayomiLibrary(false);
                     })
                 }
-                Blank().height(80)
+                Blank().height(this.getSuwayomiBottomSpacerHeight())
               }
               .width('100%')
               .padding(16)
@@ -18556,6 +19564,7 @@ struct MainMenuPage {
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .onAppear(() => {
       this.initializeSuwayomi();
     })
@@ -18879,6 +19888,7 @@ struct MainMenuPage {
       scale: 0.5
     })
     .shadow({ radius: 16, color: this.themeState.currentTheme === ThemeType.DARK ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.15)', offsetX: 0, offsetY: -4 })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -20282,6 +21292,8 @@ struct MainMenuPage {
         .backgroundBlurStyle(this.getGlassBlur())
         .borderRadius(this.getGlassRadius())
         .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
+
+        Blank().height(this.getMainTabBottomSpacerHeight())
       }
       .width('100%')
       .padding(16)
@@ -20510,6 +21522,8 @@ struct MainMenuPage {
         FontSettingsSubPage()
       } else if (name === 'PageSettingsSubPage') {
         PageSettingsSubPage()
+      } else if (name === 'MainMenuSettingsSubPage') {
+        MainMenuSettingsSubPage()
       } else if (name === 'UnifiedDetailPage') {
         UnifiedDetailPage()
       } else if (name === 'AnnotationCenterPage') {
@@ -20570,6 +21584,7 @@ struct MainMenuPage {
           Column({ space: 0 }) {
             Blank().height(this.getInitialTopOverlaySpacerHeight())
             this.buildHomeContent()
+            Blank().height(this.getMainTabBottomSpacerHeight())
           }
           .width('100%')
         }
@@ -20588,6 +21603,7 @@ struct MainMenuPage {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.LIBRARY) {
       // 书库标签
       Refresh({ refreshing: this.isRefreshing }) {
@@ -20606,13 +21622,21 @@ struct MainMenuPage {
             this.handleScrollEndForBottomBar();
           })
       }
-      .onRefreshing(() => {
+      .onRefreshing(async () => {
+        logger.info(TAG, `[书库下拉刷新] onRefreshing已触发，当前模式=${this.libraryViewMode}`);
         this.showLibraryRefreshFloatingBarTemporarily();
-        this.refreshMangaList();
+        if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
+          logger.info(TAG, '[书库下拉刷新] 触发书架视图刷新');
+          await this.refreshShelfViewContent();
+        } else {
+          logger.info(TAG, '[书库下拉刷新] 触发默认书库刷新');
+          await this.refreshMangaList();
+        }
       })
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.DISCOVER) {
       // 发现标签
       Refresh({ refreshing: $$this.isRefreshingDiscover }) {
@@ -20628,9 +21652,19 @@ struct MainMenuPage {
       .onRefreshing(() => {
         this.refreshDiscoverData();
       })
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.SOURCE) {
       // 图源标签（高级模式）
-      this.buildSourceContent()
+      Column() {
+        this.buildSourceContent()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.BOOK_SOURCE) {
       // 书源标签（小说源发现+搜索）
       Refresh({ refreshing: $$this.isRefreshingBookSource }) {
@@ -20641,6 +21675,8 @@ struct MainMenuPage {
       })
       .width('100%')
       .height('100%')
+      .backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.SUWAYOMI) {
       // Suwayomi标签
       Refresh({ refreshing: $$this.isRefreshingSuwayomi }) {
@@ -20651,10 +21687,13 @@ struct MainMenuPage {
       })
       .width('100%')
       .height('100%')
+      .backgroundColor(Color.Transparent)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     } else if (tabIndex === TabIndex.SETTINGS) {
       // 设置标签
       Column() { this.buildSettingsContent() }
         .width('100%').height('100%').backgroundColor(Color.Transparent)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     }
   }
 
@@ -20709,6 +21748,12 @@ struct MainMenuPage {
     .onClick(() => {
       this.handleTabButtonClick(config.index);
     })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          void this.handleTabButtonLongPress(config.index);
+        })
+    )
   }
 
   @Builder
@@ -20810,8 +21855,12 @@ struct MainMenuPage {
    * 底栏按钮点击处理：将 TabIndex 转换为实际 Tabs 组件位置
    * @param tabIndex TabIndex 枚举值（如 TabIndex.HOME = 0）
    */
-  private handleTabButtonClick(tabIndex: number): void {
+  private handleTabButtonClick(tabIndex: number, ignoreSuppression: boolean = false): void {
     try {
+      if (!ignoreSuppression && Date.now() < this.suppressTabClickUntil) {
+        this.suppressTabClickUntil = 0;
+        return;
+      }
       // 触发震动反馈
       this.triggerHapticFeedback();
 
@@ -20842,6 +21891,12 @@ struct MainMenuPage {
     .padding(0)
     .margin({ left: 12, right: 12 })
     .onClick(() => { this.handleTabButtonClick(config.index) })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          void this.handleTabButtonLongPress(config.index);
+        })
+    )
   }
 
 
@@ -20883,9 +21938,9 @@ struct MainMenuPage {
    */
   private getGlassBackground(): ResourceColor {
     if (this.themeState.currentTheme === ThemeType.LIGHT) {
-      return 'rgba(255, 255, 255, 0.7)'; // 浅色模式：半透明白色
+      return 'rgba(255, 255, 255, 0.68)'; // 浅色模式：亮玻璃
     } else {
-      return 'rgba(30, 30, 30, 0.7)'; // 深色模式：半透明深灰色
+      return 'rgba(16, 22, 32, 0.78)'; // 深色模式：深色玻璃，抑制白雾底
     }
   }
 
@@ -20903,7 +21958,8 @@ struct MainMenuPage {
     if (this.themeState.currentTheme === ThemeType.LIGHT) {
       return BlurStyle.Thin;
     } else {
-      return BlurStyle.Regular;
+      // 深色模式使用更克制的模糊强度，避免出现泛白底层
+      return BlurStyle.Thin;
     }
   }
 
@@ -21046,13 +22102,16 @@ struct MainMenuPage {
 
   build() {
     Stack() {
+    // 仅在 MainMenu 根页面显示全局背景，避免子页面状态栏透出 MainMenu 背景层
+    if (this.showMainMenuGlobalBackground) {
+      GlobalBackgroundLayer({
+        defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
+      })
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    }
+
     Navigation(this.pathStack) {
       Stack({ alignContent: Alignment.TopStart }) {
-        // 背景层 - 自动显示自定义主题背景或默认背景色
-        GlobalBackgroundLayer({
-          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_primary', this.themeState.currentTheme)
-        })
-
         // 主内容区域（透明背景以显示自定义主题）
         Column() {
           // 顶部标题栏：平板横屏显示专用顶栏，其他设备显示默认顶栏
@@ -21066,15 +22125,26 @@ struct MainMenuPage {
               // 动态渲染可见的标签页（使用缓存数组避免ForEach无限渲染）
               ForEach(this.cachedVisibleTabConfigs, (cfg: TabConfig) => {
                 TabContent() {
-                  this.buildTabContentForIndex(cfg.index)
+                  Stack() {
+                    this.buildTabContentForIndex(cfg.index)
+                  }
+                  .width('100%')
+                  .height('100%')
+                  .backgroundColor(Color.Transparent)
+                  .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+                  .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
                 }
                 .backgroundColor(Color.Transparent)
+                .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+                .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
               }, (cfg: TabConfig) => `tab_${cfg.index}`)
             }
             .layoutWeight(1)
             .backgroundColor(Color.Transparent)
             .barBackgroundColor(Color.Transparent)
             .barHeight(0)
+            .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+            .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
             .onChange((actualIndex: number) => {
               // 将实际 Tabs 位置索引转换为 TabIndex 枚举值
               const previousTabIndex = this.currentTabIndex;
@@ -21150,11 +22220,35 @@ struct MainMenuPage {
             right: this.getTabletTopNavigationRightInset(),
             bottom: this.getTabletTopNavigationBottomInset()
           })
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+          .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
 
         }
         .width('100%')
         .height('100%')
         .backgroundColor(Color.Transparent) // 透明背景以显示全局背景层
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
+
+        if (this.shouldShowPrivacyExitButton()) {
+          Column() {
+            this.buildFloatingPrivacyExitButton()
+          }
+          .width(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .height(this.FLOAT_SEARCH_BUTTON_SIZE)
+          .position({ x: this.getFloatingPrivacyExitButtonX(), y: this.getFloatingSearchButtonY() })
+          .zIndex(20)
+          .key(`floatingPrivacyExit_${this.barRenderKey}`)
+        }
+
+        if (this.shouldShowShelfPreviewSlider()) {
+          Column() {
+            this.buildShelfPreviewSliderFloatingBar()
+          }
+          .position({ x: this.getShelfPreviewSliderX(), y: this.getShelfPreviewSliderY() })
+          .zIndex(20)
+          .key(`shelfPreviewSlider_${this.barRenderKey}`)
+        }
 
         Column() {
           this.buildFloatingSearchButton()
@@ -21328,6 +22422,8 @@ struct MainMenuPage {
     .width('100%')
     .height('100%')
     .hideTitleBar(true)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
     .onAppear(() => {
       // 注册全局WebView容器
       // 注意：由于组件引用限制，这里暂时无法直接获取WebViewContainer实例
@@ -21403,6 +22499,8 @@ struct MainMenuPage {
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
   }
 
   // 页面过渡动画：从 SplashPage 进入时淡入

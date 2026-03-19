@@ -314,6 +314,14 @@ struct SplashPage {
     return ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme);
   }
 
+  /**
+   * 获取开屏页兜底背景色
+   * 说明：避免透明背景在部分设备/系统主题下透出窗口默认白底
+   */
+  private getSplashBaseBackgroundColor(): ResourceStr {
+    return ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme);
+  }
+
   build() {
     // 沉浸式显示设计：Stack双层布局
     Stack() {
@@ -347,7 +355,7 @@ struct SplashPage {
         Row()
           .width('100%')
           .height('100%')
-          .backgroundColor(Color.Transparent)
+          .backgroundColor(this.getSplashBaseBackgroundColor())
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
 
@@ -421,6 +429,7 @@ struct SplashPage {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(this.getSplashBaseBackgroundColor())
   }
 
   // 页面过渡动画

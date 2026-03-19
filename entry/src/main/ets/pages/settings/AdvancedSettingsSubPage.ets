@@ -17,6 +17,7 @@ import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from '../../Utils
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+import { SettingsSearchSupport } from './SettingsSearchSupport';
 
 const TAG = 'AdvancedSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -123,6 +124,23 @@ export struct AdvancedSettingsSubPage {
 
     // 加载保存的设置
     this.loadSettings();
+    this.applyPendingSearchTarget();
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('AdvancedSettingsSubPage');
+    if (!target) {
+      return;
+    }
+    const offset = Math.max(0, target.scrollOffset);
+    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
+      } catch (error) {
+        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
+      }
+    }, 140);
   }
 
   private lifecycle = new PageLifecycleManager('AdvancedSettingsSubPage', { enableDebug: true });

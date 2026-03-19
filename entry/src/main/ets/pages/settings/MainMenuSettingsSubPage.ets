@@ -1,7 +1,7 @@
-// 文件路径: entry/src/main/ets/pages/settings/PageSettingsSubPage.ets
+﻿// 文件路径: entry/src/main/ets/pages/settings/MainMenuSettingsSubPage.ets
 /**
- * 页面设置子页面
- * 允许用户选择不同场景使用的详情页类型
+ * 主页面设置子页面
+ * 集中管理 MainMenuPage 相关设置
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
@@ -12,12 +12,18 @@ import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
+import { DataManager } from '../../Framework/Data/DataManager';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
+import {
+  AnimationSettingsManager,
+  DEFAULT_ANIMATION_SETTINGS
+} from '../../Framework/Animation/AnimationSettingsManager';
+import { getSuwayomiTracker, SuwayomiTracker, SuwayomiConfig } from '../../Framework/Tracking/trackers/SuwayomiTracker';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
 
-const TAG = 'PageSettingsSubPage';
+const TAG = 'MainMenuSettingsSubPage';
 const TITLE_BAR_HEIGHT = 56;
 
 /**
@@ -87,12 +93,12 @@ export class PageSettingKeys {
 }
 
 @Component
-export struct PageSettingsSubPage {
+export struct MainMenuSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
-  private componentId: string = 'PageSettingsSubPage';
+  private componentId: string = 'MainMenuSettingsSubPage';
   private scroller: Scroller = new Scroller();
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
@@ -111,9 +117,16 @@ export struct PageSettingsSubPage {
   @State novelDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State recommendationEnabled: boolean = true;
   @State shelfContentEnabled: boolean = true;
+  @State libraryCoverOpenReaderEnabled: boolean = true;
+  @State mainPageBottomBarAnimationEnabled: boolean = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
+  @State suwayomiBrowsePageAsEntryEnabled: boolean = false;
+  @State libraryDisplayMode: string = 'flat';
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
+  private animationSettingsManager: AnimationSettingsManager = AnimationSettingsManager.getInstance();
+  private suwayomiTracker: SuwayomiTracker = getSuwayomiTracker();
+  private dataManager: DataManager = DataManager.getInstance();
 
   // 详情页选项列表（只保留默认和统一详情页两项）
   private detailPageOptions: DetailPageOption[] = [
@@ -173,9 +186,12 @@ export struct PageSettingsSubPage {
 
     this.initializeResponsiveLayout();
     this.loadSettings();
+    this.loadVisibleTabs();
+    this.loadSuwayomiEntrySettings();
+    this.loadLibraryDisplayMode();
   }
 
-  private lifecycle = new PageLifecycleManager('PageSettingsSubPage', { enableDebug: true });
+  private lifecycle = new PageLifecycleManager('MainMenuSettingsSubPage', { enableDebug: true });
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
@@ -223,25 +239,8 @@ export struct PageSettingsSubPage {
     }
   }
 
-  /**
-   * 加载设置
-   */
-  private loadSettings(): void {
-    const mangaType = this.settingsManager.getString(PageSettingKeys.MANGA_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
-    const ebookType = this.settingsManager.getString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
-    const novelType = this.settingsManager.getString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
-
-    this.mangaDetailPageType = mangaType as DetailPageType;
-    this.ebookDetailPageType = ebookType as DetailPageType;
-    this.novelDetailPageType = novelType as DetailPageType;
-    this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
-    this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
-
-    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
-  }
-
   private applyPendingSearchTarget(): void {
-    const target = SettingsSearchSupport.consumePendingTarget('PageSettingsSubPage');
+    const target = SettingsSearchSupport.consumePendingTarget('MainMenuSettingsSubPage');
     if (!target) {
       return;
     }
@@ -257,8 +256,80 @@ export struct PageSettingsSubPage {
   }
 
   /**
+   * 加载设置
+   */
+  private loadSettings(): void {
+    const mangaType = this.settingsManager.getString(PageSettingKeys.MANGA_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
+    const ebookType = this.settingsManager.getString(PageSettingKeys.EBOOK_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
+    const novelType = this.settingsManager.getString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, DetailPageType.DEFAULT);
+    const tabletTopBarPosition = this.settingsManager.getString(SettingKeys.MAIN_MENU_TABLET_TOP_BAR_POSITION, 'left');
+
+    this.mangaDetailPageType = mangaType as DetailPageType;
+    this.ebookDetailPageType = ebookType as DetailPageType;
+    this.novelDetailPageType = novelType as DetailPageType;
+    this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
+    this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
+    this.libraryCoverOpenReaderEnabled = this.settingsManager.getBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
+    this.tabletTopBarPosition = this.normalizeTabletTopBarPosition(tabletTopBarPosition);
+    AppStorage.setOrCreate('main_menu_tablet_top_bar_position', this.tabletTopBarPosition);
+    this.mainPageBottomBarAnimationEnabled = this.animationSettingsManager.getSettings().mainPageBottomBarAnimationEnabled;
+
+    logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}`);
+  }
+
+  private async loadSuwayomiEntrySettings(): Promise<void> {
+    try {
+      await this.suwayomiTracker.initialize();
+      const config = this.suwayomiTracker.getConfig();
+      this.suwayomiBrowsePageAsEntryEnabled = config.useBrowsePageAsEntry ?? false;
+    } catch (error) {
+      logger.error(TAG, '加载 Suwayomi 入口设置失败', String(error));
+    }
+  }
+
+  /**
    * 保存设置
    */
+  private async loadLibraryDisplayMode(): Promise<void> {
+    try {
+      const viewMode: string | null = await this.dataManager.getUserSetting('default_user', 'library_view_mode');
+      this.libraryDisplayMode = viewMode === 'category' ? 'shelf' : 'flat';
+    } catch (error) {
+      logger.error(TAG, '加载主页面书库显示模式失败', String(error));
+      this.libraryDisplayMode = 'flat';
+    }
+  }
+
+  private async saveLibraryDisplayMode(mode: string): Promise<void> {
+    if (mode === this.libraryDisplayMode) {
+      return;
+    }
+
+    const targetMode: string = mode === 'shelf' ? 'category' : 'grid';
+    try {
+      await this.dataManager.saveUserSetting('default_user', 'library_view_mode', targetMode);
+      this.libraryDisplayMode = mode;
+      promptAction.showDialog({
+        title: '配置已保存',
+        message: '主页面书库显示模式已更新，需要重启APP后生效。\n\n是否立即重启？',
+        buttons: [
+          { text: '稍后重启', color: ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme) },
+          { text: '立即重启', color: ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) }
+        ]
+      }).then((result) => {
+        if (result.index === 1) {
+          this.restartApp();
+        }
+      });
+    } catch (error) {
+      logger.error(TAG, '保存主页面书库显示模式失败', String(error));
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
+    }
+  }
+
   private normalizeTabletTopBarPosition(value: string): TabletTopBarPosition {
     switch (value) {
       case 'top':
@@ -370,13 +441,57 @@ export struct PageSettingsSubPage {
     this.settingsManager.setString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, this.novelDetailPageType);
     this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
     this.settingsManager.setBoolean(SettingKeys.SHELF_CONTENT_ENABLED, this.shelfContentEnabled);
+    this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, this.libraryCoverOpenReaderEnabled);
 
-    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
+    logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}, libraryCoverRead=${this.libraryCoverOpenReaderEnabled}`);
 
     promptAction.showToast({
       message: '设置已保存',
       duration: 1500
     });
+  }
+
+  private async saveMainPageBottomBarAnimationSetting(enabled: boolean): Promise<void> {
+    try {
+      await this.animationSettingsManager.setMainPageBottomBarAnimationEnabled(enabled);
+      this.mainPageBottomBarAnimationEnabled = enabled;
+    } catch (error) {
+      logger.error(TAG, '保存主页面底栏动画设置失败', String(error));
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
+    }
+  }
+
+  private async saveSuwayomiBrowseEntrySetting(enabled: boolean): Promise<void> {
+    try {
+      await this.suwayomiTracker.initialize();
+      const config = this.suwayomiTracker.getConfig();
+      const nextConfig: SuwayomiConfig = {
+        serverUrl: config.serverUrl,
+        username: config.username,
+        password: config.password,
+        useAuth: config.useAuth,
+        useBrowsePageAsEntry: enabled
+      };
+      const success = await this.suwayomiTracker.saveConfig(nextConfig);
+      if (!success) {
+        throw new Error('saveConfig failed');
+      }
+      this.suwayomiBrowsePageAsEntryEnabled = enabled;
+      promptAction.showToast({
+        message: '设置已保存',
+        duration: 1500
+      });
+    } catch (error) {
+      logger.error(TAG, '保存 Suwayomi 入口设置失败', String(error));
+      this.suwayomiBrowsePageAsEntryEnabled = !enabled;
+      promptAction.showToast({
+        message: '保存失败，请重试',
+        duration: 1500
+      });
+    }
   }
 
   /**
@@ -639,8 +754,94 @@ export struct PageSettingsSubPage {
   }
 
   @Builder
+  buildLibraryDisplayModeSetting() {
+    Column({ space: 10 }) {
+      Text('主页面书库显示模式')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      Text('平铺为默认模式；书架为书架视图。修改后需重启APP生效。')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        Row({ space: 8 }) {
+          Text('平铺（默认模式）')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.libraryDisplayMode === 'flat'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          if (this.libraryDisplayMode === 'flat') {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+        }
+        .height(42)
+        .padding({ left: 14, right: 14 })
+        .margin({ right: 8, bottom: 8 })
+        .borderRadius(10)
+        .backgroundColor(this.libraryDisplayMode === 'flat'
+          ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+          : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderWidth(this.libraryDisplayMode === 'flat' ? 1.5 : 1)
+        .borderColor(this.libraryDisplayMode === 'flat'
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
+        .onClick(() => {
+          this.saveLibraryDisplayMode('flat');
+        })
+
+        Row({ space: 8 }) {
+          Text('书架（书架视图）')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(this.libraryDisplayMode === 'shelf'
+              ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+          if (this.libraryDisplayMode === 'shelf') {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+        }
+        .height(42)
+        .padding({ left: 14, right: 14 })
+        .margin({ right: 8, bottom: 8 })
+        .borderRadius(10)
+        .backgroundColor(this.libraryDisplayMode === 'shelf'
+          ? (this.themeState.currentTheme === ThemeType.DARK ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)')
+          : ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderWidth(this.libraryDisplayMode === 'shelf' ? 1.5 : 1)
+        .borderColor(this.libraryDisplayMode === 'shelf'
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('comp_divider', this.themeState.currentTheme))
+        .onClick(() => {
+          this.saveLibraryDisplayMode('shelf');
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+  }
+
+  @Builder
   buildResetButton() {
-    Button('恢复页面设置默认值')
+    Button('恢复主页面设置默认值')
       .fontSize(14)
       .fontFamily(this.appFontFamily)
       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
@@ -653,17 +854,20 @@ export struct PageSettingsSubPage {
       .onClick(() => {
         promptAction.showDialog({
           title: '确认重置',
-          message: '这将重置页面设置为默认值，是否继续？',
+          message: '这将重置主页面相关设置和底栏配置为默认值，是否继续？',
           buttons: [
             { text: '取消', color: '#888888' },
             { text: '确认重置', color: '#FF4444' }
           ]
-        }).then((result) => {
+        }).then(async (result) => {
           if (result.index === 1) {
-            this.mangaDetailPageType = DetailPageType.DEFAULT;
-            this.ebookDetailPageType = DetailPageType.DEFAULT;
-            this.novelDetailPageType = DetailPageType.DEFAULT;
-            this.saveSettings();
+            this.libraryCoverOpenReaderEnabled = true;
+            this.mainPageBottomBarAnimationEnabled = DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled;
+            this.suwayomiBrowsePageAsEntryEnabled = false;
+            this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, true);
+            await this.saveMainPageBottomBarAnimationSetting(DEFAULT_ANIMATION_SETTINGS.mainPageBottomBarAnimationEnabled);
+            await this.saveSuwayomiBrowseEntrySetting(false);
+            this.resetTabsToDefault();
           }
         });
       })
@@ -986,64 +1190,31 @@ export struct PageSettingsSubPage {
               justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
             }) {
 
-            // 详情页设置部分
+            // 主页面交互设置
             Column({ space: 8 }) {
-              // 分段标题
-              Text('详情页设置')
+              Text('主页面交互')
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                 .padding({ left: 4 })
 
-              Text('选择在不同场景下使用的详情页类型')
+              Text('控制主页面书库点击行为、底栏动画和 Suwayomi 入口跳转行为')
                 .fontSize(13)
                 .fontFamily(this.appFontFamily)
                 .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                 .padding({ left: 4, bottom: 8 })
 
-              // 漫画场景设置
-              this.buildSceneSettings(
-              '漫画详情页',
-              '打开漫画时使用的详情页类型',
-              this.mangaDetailPageType,
-              (type: DetailPageType) => {
-                this.mangaDetailPageType = type;
-                this.saveSettings();
-              }
-            )
+              this.buildLibraryDisplayModeSetting()
 
-            // 电子书场景设置
-            this.buildSceneSettings(
-              '电子书详情页',
-              '打开电子书时使用的详情页类型',
-              this.ebookDetailPageType,
-              (type: DetailPageType) => {
-                this.ebookDetailPageType = type;
-                this.saveSettings();
-              }
-            )
-
-              // 小说场景设置
-              this.buildSceneSettings(
-                '小说详情页',
-                '打开小说时使用的详情页类型',
-                this.novelDetailPageType,
-                (type: DetailPageType) => {
-                  this.novelDetailPageType = type;
-                  this.saveSettings();
-                }
-              )
-
-              // 相关推荐开关
               Row() {
                 Column({ space: 4 }) {
-                  Text('相关推荐')
+                  Text('书库封面点击直达阅读')
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  Text('在统一详情页内展示根据内容属性匹配的推荐内容')
+                  Text('开启后：书库内点击封面直接阅读；点击标题打开详情页')
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1053,12 +1224,16 @@ export struct PageSettingsSubPage {
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
 
-                Toggle({ type: ToggleType.Switch, isOn: this.recommendationEnabled })
+                Toggle({ type: ToggleType.Switch, isOn: this.libraryCoverOpenReaderEnabled })
                   .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                   .switchPointColor(Color.White)
                   .onChange((isOn: boolean) => {
-                    this.recommendationEnabled = isOn;
-                    this.saveSettings();
+                    this.libraryCoverOpenReaderEnabled = isOn;
+                    this.settingsManager.setBoolean(SettingKeys.MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED, isOn);
+                    promptAction.showToast({
+                      message: '设置已保存',
+                      duration: 1500
+                    });
                   })
               }
               .width('100%')
@@ -1066,20 +1241,15 @@ export struct PageSettingsSubPage {
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
               .borderRadius(12)
               .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
-              .onClick(() => {
-                this.recommendationEnabled = !this.recommendationEnabled;
-                this.saveSettings();
-              })
 
-              // 同书架内容开关
               Row() {
                 Column({ space: 4 }) {
-                  Text('同书架内容')
+                  Text('底栏动画效果')
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                  Text('在统一详情页内展示当前内容所在书架的其他内容')
+                  Text('关闭后底部导航栏将常驻显示，不会自动隐藏')
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -1089,12 +1259,12 @@ export struct PageSettingsSubPage {
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
 
-                Toggle({ type: ToggleType.Switch, isOn: this.shelfContentEnabled })
+                Toggle({ type: ToggleType.Switch, isOn: this.mainPageBottomBarAnimationEnabled })
                   .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
                   .switchPointColor(Color.White)
                   .onChange((isOn: boolean) => {
-                    this.shelfContentEnabled = isOn;
-                    this.saveSettings();
+                    this.mainPageBottomBarAnimationEnabled = isOn;
+                    this.saveMainPageBottomBarAnimationSetting(isOn);
                   })
               }
               .width('100%')
@@ -1102,15 +1272,72 @@ export struct PageSettingsSubPage {
               .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
               .borderRadius(12)
               .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
-              .onClick(() => {
-                this.shelfContentEnabled = !this.shelfContentEnabled;
-                this.saveSettings();
-              })
 
+              Row() {
+                Column({ space: 4 }) {
+                  Text('Suwayomi 入口直达浏览页')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('开启后，主页面 Suwayomi 入口将直接跳转到浏览页面')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.suwayomiBrowsePageAsEntryEnabled })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.suwayomiBrowsePageAsEntryEnabled = isOn;
+                    this.saveSuwayomiBrowseEntrySetting(isOn);
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(12)
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
             .margin({ bottom: 16 })
+
+            // 底栏自定义部分
+            Column({ space: 8 }) {
+              // 分段标题
+              Text('底栏自定义')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .padding({ left: 4 })
+
+              Text('自定义底部导航栏显示的标签及顺序')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                .padding({ left: 4, bottom: 8 })
+
+              // 底栏标签自定义
+              this.buildTabCustomization()
+            }
+            .width(this.responsive_isLandscape ? '48%' : '100%')
+            .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 16 })
+
+            if (this.isTabletDevice()) {
+              Column() {
+                this.buildAdaptiveTopBarPositionSettings()
+              }
+              .width(this.responsive_isLandscape ? '48%' : '100%')
+              .margin({ bottom: 16 })
+            }
 
             // 恢复默认按钮
             Column() {
@@ -1155,7 +1382,7 @@ export struct PageSettingsSubPage {
         }
       },
       content: {
-        title: { mainTitle: '页面设置' }
+        title: { mainTitle: '主页面设置' }
       }
     })
     .onReady((context: NavDestinationContext) => {
