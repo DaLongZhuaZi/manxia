@@ -21,6 +21,7 @@ import {
 } from '../../Framework/Tracking/TrackingModels';
 import { getAniListTracker, AniListTracker } from '../../Framework/Tracking/trackers/AniListTracker';
 import { getSuwayomiTracker, SuwayomiTracker } from '../../Framework/Tracking/trackers/SuwayomiTracker';
+import { SettingsSearchSupport } from './SettingsSearchSupport';
 
 const TAG = 'TrackingSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -116,6 +117,23 @@ export struct TrackingSettingsSubPage {
 
     // 初始化进度记录状态
     this.initializeTrackerStatus();
+    this.applyPendingSearchTarget();
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('TrackingSettingsSubPage');
+    if (!target) {
+      return;
+    }
+    const offset = Math.max(0, target.scrollOffset);
+    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
+      } catch (error) {
+        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
+      }
+    }, 140);
   }
 
   aboutToDisappear(): void {

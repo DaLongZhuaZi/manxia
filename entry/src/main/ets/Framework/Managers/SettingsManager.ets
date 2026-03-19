@@ -114,6 +114,8 @@ export class SettingKeys {
   // 底部导航栏自定义设置
   static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
   static readonly MAIN_MENU_TABLET_TOP_BAR_POSITION = 'main_menu_tablet_top_bar_position';
+  static readonly LIBRARY_SHELF_GRID_COLUMNS = 'library_shelf_grid_columns';
+  static readonly LIBRARY_HIDE_WOOD_SHELF_TEXTURE = 'library_hide_wood_shelf_texture';
   
   // 内容过滤设置
   static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）
@@ -143,6 +145,7 @@ export class SettingKeys {
   // 详情页推荐功能
   static readonly RECOMMENDATION_ENABLED = 'recommendation_enabled'; // 统一详情页相关推荐功能开关（默认开启）
   static readonly SHELF_CONTENT_ENABLED = 'shelf_content_enabled'; // 统一详情页同书架内容功能开关（默认开启）
+  static readonly MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED = 'main_menu_library_cover_open_reader_enabled'; // 主页面书库封面点击直接阅读开关（默认开启）
 }
 
 /**

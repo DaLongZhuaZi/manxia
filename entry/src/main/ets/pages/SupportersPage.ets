@@ -64,7 +64,7 @@ export struct SupportersPage {
   // ==================== 支持者名单 ====================
   // 在此处添加支持者，格式：{ name: '用户名', level: '等级（可选）' }
   private supporters: SupporterInfo[] = [
-    { name: '爱发电用户_Xvtc' },
+    { name: '柠檬玥' },
     { name: 'Ring' },
     { name: '据我所知' },
     { name: 'kironal' }

@@ -53,10 +53,13 @@ export class SettingsSearchSupport {
     // 页面设置
     { id: 'page_detail_type', title: '详情页类型', description: '漫画/电子书/小说详情页类型与统一详情页', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['详情页设置', '漫画详情页', '电子书详情页', '小说详情页', '统一详情页'] },
     { id: 'page_recommendation', title: '相关推荐', description: '统一详情页相关推荐开关', targetPage: 'PageSettingsSubPage', anchorId: 'page_detail', scrollOffset: 0, keywords: ['相关推荐', '同书架内容'] },
-    { id: 'page_library_view', title: '书库默认视图', description: '默认视图与书架视图切换', targetPage: 'PageSettingsSubPage', anchorId: 'page_library_view', scrollOffset: 520, keywords: ['书库默认视图', '书架视图', '默认视图', '分类书架'] },
-    { id: 'page_nav_tabs', title: '主导航栏标签显示与顺序', description: '自定义主导航栏标签及顺序', targetPage: 'PageSettingsSubPage', anchorId: 'page_navigation', scrollOffset: 900, keywords: ['主导航栏自定义', '标签顺序', '已启用', '未启用', '保存配置'] },
-    { id: 'page_tablet_nav', title: '平板横屏主导航栏位置', description: '平板/折叠屏主导航布局位置', targetPage: 'PageSettingsSubPage', anchorId: 'page_adaptive_nav', scrollOffset: 1450, keywords: ['平板横屏主导航栏位置', '折叠屏主导航布局', '上方', '下方', '左侧', '右侧'] },
-    { id: 'page_reset', title: '页面设置恢复默认', description: '恢复页面设置和主导航栏配置', targetPage: 'PageSettingsSubPage', anchorId: 'page_reset', scrollOffset: 2100, keywords: ['恢复所有默认设置', '确认重置'] },
+    { id: 'main_menu_library_view', title: '主页面书库显示模式', description: '平铺/书架视图切换，重启后生效', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['书库默认视图', '书架视图', '默认视图', '分类书架', '主页面书库显示模式', '平铺', '书架'] },
+    { id: 'main_menu_cover_click', title: '书库封面点击行为', description: '书库封面点击直达阅读开关', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['封面点击', '直达阅读', '书库封面'] },
+    { id: 'main_menu_suwayomi_entry', title: 'Suwayomi入口行为', description: '主页面 Suwayomi 入口直达浏览页', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['Suwayomi入口', '浏览页面作为入口'] },
+    { id: 'main_menu_nav_tabs', title: '主导航栏标签显示与顺序', description: '自定义主导航栏标签及顺序', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_navigation', scrollOffset: 820, keywords: ['主导航栏自定义', '标签顺序', '已启用', '未启用', '保存配置'] },
+    { id: 'main_menu_tablet_nav', title: '平板横屏主导航栏位置', description: '平板/折叠屏主导航布局位置', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_adaptive_nav', scrollOffset: 1360, keywords: ['平板横屏主导航栏位置', '折叠屏主导航布局', '上方', '下方', '左侧', '右侧'] },
+    { id: 'main_menu_reset', title: '主页面设置恢复默认', description: '恢复主页面相关设置和主导航栏配置', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_reset', scrollOffset: 2000, keywords: ['恢复主页面设置', '确认重置'] },
+    { id: 'page_reset', title: '页面设置恢复默认', description: '恢复详情页和推荐相关设置', targetPage: 'PageSettingsSubPage', anchorId: 'page_reset', scrollOffset: 1500, keywords: ['恢复页面设置', '确认重置'] },
 
     // 字体设置
     { id: 'font_custom_manage', title: '自定义字体管理', description: '导入、预览与管理自定义字体', targetPage: 'FontSettingsSubPage', anchorId: 'font_custom', scrollOffset: 0, keywords: ['自定义字体管理', '导入字体', '系统字体', '自定义字体'] },
@@ -73,7 +76,7 @@ export class SettingsSearchSupport {
 
     // 动画设置
     { id: 'animation_book', title: '书籍开关动画', description: '书籍打开动画、关闭动画及速度', targetPage: 'AnimationSettingsSubPage', anchorId: 'animation_book', scrollOffset: 0, keywords: ['书籍打开动画', '书籍关闭动画', '打开动画速度', '关闭动画速度'] },
-    { id: 'animation_main', title: '主页面动画', description: '主导航栏滚动隐藏/显示动画', targetPage: 'AnimationSettingsSubPage', anchorId: 'animation_main', scrollOffset: 620, keywords: ['主页面动画', '主导航栏动画效果', '滚动隐藏'] },
+    { id: 'main_menu_animation', title: '主页面动画', description: '主导航栏滚动隐藏/显示动画', targetPage: 'MainMenuSettingsSubPage', anchorId: 'main_menu_behavior', scrollOffset: 0, keywords: ['主页面动画', '主导航栏动画效果', '滚动隐藏', '底栏动画'] },
     { id: 'animation_reset', title: '动画设置恢复默认', description: '恢复全部动画设置默认值', targetPage: 'AnimationSettingsSubPage', anchorId: 'animation_reset', scrollOffset: 1220, keywords: ['恢复所有动画设置为默认值'] },
 
     // 进度记录

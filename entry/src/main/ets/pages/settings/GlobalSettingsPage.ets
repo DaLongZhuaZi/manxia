@@ -14,6 +14,7 @@ import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
+import { SettingsSearchSupport, SettingsSearchResult } from './SettingsSearchSupport';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -36,6 +37,8 @@ interface SettingsGroupItem {
 export struct GlobalSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
+  @State private searchKeyword: string = '';
+  @State private searchResults: SettingsSearchResult[] = [];
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
@@ -69,6 +72,13 @@ export struct GlobalSettingsPage {
       subtitle: '详情页类型选择、页面显示偏好',
       icon: $r('sys.symbol.doc_text'),
       targetPage: 'PageSettingsSubPage'
+    },
+    {
+      id: 'main_menu',
+      title: '主页面设置',
+      subtitle: '主页面入口交互、底栏标签与平板顶栏布局',
+      icon: $r('sys.symbol.doc_text'),
+      targetPage: 'MainMenuSettingsSubPage'
     },
     {
       id: 'font',
@@ -263,6 +273,184 @@ export struct GlobalSettingsPage {
     }
   }
 
+  private updateSearchResults(input: string): void {
+    this.searchKeyword = input;
+    const query = input.trim();
+    if (query.length === 0) {
+      this.searchResults = [];
+      return;
+    }
+    this.searchResults = SettingsSearchSupport.search(query);
+  }
+
+  private clearSearch(): void {
+    this.searchKeyword = '';
+    this.searchResults = [];
+  }
+
+  private navigateToSearchResult(result: SettingsSearchResult): void {
+    if (!this.settingsTapEnabled) {
+      return;
+    }
+    try {
+      const query = this.searchKeyword.trim();
+      const target = SettingsSearchSupport.createTargetFromResult(result, query);
+      SettingsSearchSupport.setPendingTarget(target);
+      logger.info(TAG, `设置搜索命中跳转: ${result.id} -> ${result.targetPage}, anchor=${result.anchorId}, offset=${result.scrollOffset}`);
+      this.pathStack.pushPathByName(result.targetPage, null);
+    } catch (error) {
+      logger.error(TAG, `设置搜索跳转失败: ${String(error)}`);
+    }
+  }
+
+  private isSearchMode(): boolean {
+    return this.searchKeyword.trim().length > 0;
+  }
+
+  private resolvePageLabel(pageName: string): string {
+    switch (pageName) {
+      case 'ReadingSettingsSubPage':
+        return '阅读设置';
+      case 'PageSettingsSubPage':
+        return '页面设置';
+      case 'MainMenuSettingsSubPage':
+        return '主页面设置';
+      case 'FontSettingsSubPage':
+        return '字体设置';
+      case 'InteractionSettingsSubPage':
+        return '交互设置';
+      case 'AnimationSettingsSubPage':
+        return '动画设置';
+      case 'TrackingSettingsSubPage':
+        return '进度记录';
+      case 'NetworkSettingsSubPage':
+        return '下载与网络';
+      case 'NotificationSettingsSubPage':
+        return '通知设置';
+      case 'AdvancedSettingsSubPage':
+        return '高级设置';
+      case 'ErrorManagementSubPage':
+        return '错误管理';
+      case 'BackupPage':
+        return '数据管理';
+      default:
+        return pageName;
+    }
+  }
+
+  @Builder
+  buildSearchResultItem(item: SettingsSearchResult) {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text(item.title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.resolvePageLabel(item.targetPage))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+      }
+      .width('100%')
+
+      Text(item.description)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`匹配：${item.matchedKeyword}`)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .onClick(() => {
+      this.navigateToSearchResult(item);
+    })
+  }
+
+  @Builder
+  buildSearchBar() {
+    Column({ space: 8 }) {
+      Search({ value: this.searchKeyword, placeholder: '搜索设置项（如：翻页动画、主导航栏）' })
+        .searchButton('搜索')
+        .onChange((value: string) => {
+          this.updateSearchResults(value);
+        })
+        .onSubmit(() => {
+          this.updateSearchResults(this.searchKeyword);
+        })
+
+      if (this.isSearchMode()) {
+        Row() {
+          Text(`找到 ${this.searchResults.length} 项`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+          Blank()
+
+          Button('清空')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .height(28)
+            .padding({ left: 10, right: 10 })
+            .borderRadius(8)
+            .onClick(() => {
+              this.clearSearch();
+            })
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  buildSearchResultList() {
+    Column({ space: 10 }) {
+      if (this.searchResults.length === 0) {
+        Column({ space: 8 }) {
+          Text('未找到匹配的设置项')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text('可尝试搜索：阅读模式、翻页动画、主导航栏、备份、日志')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+      } else {
+        ForEach(this.searchResults, (item: SettingsSearchResult) => {
+          this.buildSearchResultItem(item)
+        }, (item: SettingsSearchResult) => item.id)
+      }
+    }
+    .width('100%')
+  }
+
   /**
    * 构建设置分组项
    */
@@ -332,23 +520,28 @@ export struct GlobalSettingsPage {
         Scroll(this.scroller) {
           Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
+            this.buildSearchBar()
 
-            if (this.responsive_isLandscape) {
-              // 横屏：使用Grid布局，每行2个
-              Grid() {
-                ForEach(this.settingsGroups, (item: SettingsGroupItem) => {
-                  GridItem() {
-                    this.buildSettingsGroupItem(item)
-                  }
-                })
-              }
-              .columnsTemplate('1fr 1fr')
-              .columnsGap(12)
-              .rowsGap(12)
-              .width('100%')
+            if (this.isSearchMode()) {
+              this.buildSearchResultList()
             } else {
-              // 竖屏：列表布局
-              this.buildSettingsGroupList()
+              if (this.responsive_isLandscape) {
+                // 横屏：使用Grid布局，每行2个
+                Grid() {
+                  ForEach(this.settingsGroups, (item: SettingsGroupItem) => {
+                    GridItem() {
+                      this.buildSettingsGroupItem(item)
+                    }
+                  })
+                }
+                .columnsTemplate('1fr 1fr')
+                .columnsGap(12)
+                .rowsGap(12)
+                .width('100%')
+              } else {
+                // 竖屏：列表布局
+                this.buildSettingsGroupList()
+              }
             }
 
             Blank().height(40)

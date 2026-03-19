@@ -272,33 +272,6 @@ export struct SuwayomiSettingsPage {
               .width('100%')
               .padding({ top: 8, bottom: 8 })
 
-              // 使用浏览页面作为入口开关
-              Row() {
-                Column({ space: 2 }) {
-                  Text('使用浏览页面作为入口')
-                    .fontSize(14)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .fontFamily(this.appFontFamily)
-
-                  Text('开启后，主页面的Suwayomi入口将跳转到浏览页面')
-                    .fontSize(12)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                    .fontFamily(this.appFontFamily)
-                }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
-
-                Toggle({ type: ToggleType.Switch, isOn: this.useBrowsePageAsEntry })
-                  .onChange((isOn: boolean) => {
-                    this.useBrowsePageAsEntry = isOn;
-                    logger.info(TAG, `使用浏览页面作为入口: ${isOn}`);
-                    // 立即保存配置
-                    this.saveConfigSilently();
-                  })
-              }
-              .width('100%')
-              .padding({ top: 8, bottom: 8 })
-
               // 认证信息（条件显示）
               if (this.useAuth) {
                 Column({ space: 8 }) {

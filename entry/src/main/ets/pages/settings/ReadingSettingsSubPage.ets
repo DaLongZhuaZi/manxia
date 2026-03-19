@@ -27,6 +27,7 @@ import { ReadAloudController } from '../../Framework/ReadAloud/ReadAloudControll
 import { ReadAloudVoiceOption } from '../../Framework/ReadAloud/ReadAloudTypes';
 import { ReadAloudSettingsInfoPanel } from '../../components/ReadAloudSettingsInfoPanel';
 import { getFontManager, SystemFont, CustomFont } from '../../Framework/Managers/FontManager';
+import { SettingsSearchSupport } from './SettingsSearchSupport';
 
 const TAG = 'ReadingSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -209,6 +210,23 @@ export struct ReadingSettingsSubPage {
     this.loadGlobalSettings();
     this.refreshNovelFontOptions();
     this.refreshReadAloudAvailability();
+    this.applyPendingSearchTarget();
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('ReadingSettingsSubPage');
+    if (!target) {
+      return;
+    }
+    const offset = Math.max(0, target.scrollOffset);
+    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
+      } catch (error) {
+        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
+      }
+    }, 140);
   }
 
   private lifecycle = new PageLifecycleManager('ReadingSettingsSubPage', { enableDebug: true });

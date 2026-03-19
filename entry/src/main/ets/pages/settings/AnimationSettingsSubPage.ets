@@ -19,6 +19,7 @@ import {
   DEFAULT_ANIMATION_SETTINGS,
   AnimationSettingsListener
 } from '../../Framework/Animation/AnimationSettingsManager';
+import { SettingsSearchSupport } from './SettingsSearchSupport';
 
 const TAG = 'AnimationSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -113,6 +114,23 @@ export struct AnimationSettingsSubPage {
       this.updateLocalState(settings);
     };
     this.animationSettingsManager.addListener(this.settingsListener);
+    this.applyPendingSearchTarget();
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('AnimationSettingsSubPage');
+    if (!target) {
+      return;
+    }
+    const offset = Math.max(0, target.scrollOffset);
+    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
+      } catch (error) {
+        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
+      }
+    }, 140);
   }
 
   aboutToDisappear(): void {
@@ -438,10 +456,13 @@ export struct AnimationSettingsSubPage {
         .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
         .borderRadius(10)
         .onClick(async () => {
-          await this.animationSettingsManager.resetToDefault();
+          await this.animationSettingsManager.setBookOpenAnimationEnabled(DEFAULT_ANIMATION_SETTINGS.bookOpenEnabled);
+          await this.animationSettingsManager.setBookCloseAnimationEnabled(DEFAULT_ANIMATION_SETTINGS.bookCloseEnabled);
+          await this.animationSettingsManager.setBookOpenDuration(DEFAULT_ANIMATION_SETTINGS.bookOpenDuration);
+          await this.animationSettingsManager.setBookCloseDuration(DEFAULT_ANIMATION_SETTINGS.bookCloseDuration);
         })
 
-      Text('恢复所有动画设置为默认值')
+      Text('恢复书籍开关动画设置为默认值')
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
@@ -475,13 +496,6 @@ export struct AnimationSettingsSubPage {
               .width(this.responsive_isLandscape ? '48%' : '100%')
               .margin({ bottom: 16 })
               
-              // 主页面动画设置
-              Column() {
-                this.buildMainPageAnimationSettings()
-              }
-              .width(this.responsive_isLandscape ? '48%' : '100%')
-              .margin({ bottom: 16 })
-
               // 重置按钮
               Column() {
                 this.buildResetSection()

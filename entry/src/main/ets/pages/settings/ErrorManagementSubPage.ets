@@ -21,6 +21,7 @@ import { ErrorRecordManager, ErrorRecord, ErrorSource, ErrorSummary, TagCount, C
 import { getErrorMonitorService } from '../../Framework/Debug/ErrorMonitorService';
 import { getCrashRecorderService } from '../../Framework/Debug/CrashRecorderService';
 import { DownloadDirManager } from '../../Framework/Storage/DownloadDirManager';
+import { SettingsSearchSupport } from './SettingsSearchSupport';
 
 const TAG = 'ErrorManagementSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -142,6 +143,23 @@ export struct ErrorManagementSubPage {
     FontAwareHelper.initializeFontAware(this.componentId, this.fontState, (s: FontAwareState) => { this.fontState = s; });
     this.initializeResponsiveLayout();
     this.loadData();
+    this.applyPendingSearchTarget();
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('ErrorManagementSubPage');
+    if (!target) {
+      return;
+    }
+    const offset = Math.max(0, target.scrollOffset);
+    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
+      } catch (error) {
+        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
+      }
+    }, 140);
   }
 
   private lifecycle = new PageLifecycleManager('ErrorManagementSubPage', { enableDebug: true });
