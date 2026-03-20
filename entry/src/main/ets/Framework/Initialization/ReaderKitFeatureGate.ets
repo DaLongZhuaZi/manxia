@@ -1,9 +1,22 @@
 /**
- * ReaderKit 临时开关（用于模拟器/调试环境）。
- * 需要重新启用 ReaderKit 时，将其改为 `true`。
+ * ReaderKit 能力开关。
+ * 默认启用，可通过 SettingsManager 持久化控制。
  */
-export const READER_KIT_ENABLED: boolean = true;
+import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
 
 export function isReaderKitEnabled(): boolean {
-  return READER_KIT_ENABLED;
+  try {
+    const settingsManager = SettingsManager.getInstance();
+    return settingsManager.getBoolean(SettingKeys.READER_KIT_ENABLED, true);
+  } catch (_ignored) {
+    return true;
+  }
+}
+
+export async function setReaderKitEnabled(enabled: boolean): Promise<void> {
+  try {
+    const settingsManager = SettingsManager.getInstance();
+    await settingsManager.setBoolean(SettingKeys.READER_KIT_ENABLED, enabled);
+  } catch (_ignored) {
+  }
 }

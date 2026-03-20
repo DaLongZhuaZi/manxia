@@ -1,5 +1,10 @@
 import { logger } from '../../Utils/Logger';
-import { DEFAULT_READ_ALOUD_SETTINGS, ReadAloudEngineType, ReadAloudSettings } from '../../Models/TextReaderModels';
+import {
+  DEFAULT_READ_ALOUD_SETTINGS,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  normalizeReadAloudSettings
+} from '../../Models/TextReaderModels';
 import { eventBus, GameEvent, ReadAloudStatePayload } from '../EventBus';
 import {
   ReadAloudPlaybackState,
@@ -381,35 +386,11 @@ export class ReadAloudController {
   }
 
   private static mergeSettingsWithDefaults(settings?: ReadAloudSettings): ReadAloudSettings {
-    return {
-      enabled: settings?.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
-      engineType: settings?.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType,
-      speed: settings?.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed,
-      pitch: settings?.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch,
-      volume: settings?.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume,
-      continueInBackground: settings?.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
-      autoPlayNextChapter: settings?.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
-      pauseOnManualPageTurn: settings?.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
-      voiceLanguage: settings?.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage,
-      voicePerson: settings?.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson,
-      voiceOnline: settings?.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline
-    };
+    return normalizeReadAloudSettings(settings ?? DEFAULT_READ_ALOUD_SETTINGS);
   }
 
   private static copySettings(settings: ReadAloudSettings): ReadAloudSettings {
-    return {
-      enabled: settings.enabled,
-      engineType: settings.engineType,
-      speed: settings.speed,
-      pitch: settings.pitch,
-      volume: settings.volume,
-      continueInBackground: settings.continueInBackground,
-      autoPlayNextChapter: settings.autoPlayNextChapter,
-      pauseOnManualPageTurn: settings.pauseOnManualPageTurn,
-      voiceLanguage: settings.voiceLanguage,
-      voicePerson: settings.voicePerson,
-      voiceOnline: settings.voiceOnline
-    };
+    return normalizeReadAloudSettings(settings);
   }
 
   private switchBackend(engineType: ReadAloudEngineType): void {

@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../../Utils/Logger';
 
@@ -44,6 +45,7 @@ export class LibraryCoverManager {
       const safeName = LibraryCoverManager.sanitizeFileName(uniqueId || `${Date.now()}`);
       const ext = LibraryCoverManager.getFileExtension(source);
       const targetPath = `${typeDir}/${safeName}${ext}`;
+      const normalizedTargetPath = `${typeDir}/${safeName}.webp`;
 
       if (LibraryCoverManager.isNetworkUrl(source)) {
         const downloaded = await LibraryCoverManager.downloadCoverToPath(source, targetPath);
@@ -56,6 +58,14 @@ export class LibraryCoverManager {
       if (!fs.accessSync(normalizedSource)) {
         logger.warn(TAG, `封面源文件不存在: ${normalizedSource}`);
         return null;
+      }
+
+      const normalizedPersistedPath = await LibraryCoverManager.normalizeLocalCoverToManagedPath(
+        normalizedSource,
+        normalizedTargetPath
+      );
+      if (normalizedPersistedPath) {
+        return normalizedPersistedPath;
       }
 
       if (LibraryCoverManager.samePath(normalizedSource, targetPath)) {
@@ -143,6 +153,60 @@ export class LibraryCoverManager {
       return false;
     } finally {
       request.destroy();
+    }
+  }
+
+  private static async normalizeLocalCoverToManagedPath(
+    sourcePath: string,
+    targetPath: string
+  ): Promise<string | null> {
+    let file: fs.File | null = null;
+    let pixelMap: image.PixelMap | null = null;
+    try {
+      if (LibraryCoverManager.samePath(sourcePath, targetPath) && fs.accessSync(sourcePath)) {
+        return sourcePath;
+      }
+
+      file = fs.openSync(sourcePath, fs.OpenMode.READ_ONLY);
+      const imageSource = image.createImageSource(file.fd);
+      pixelMap = await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      });
+
+      const imagePacker = image.createImagePacker();
+      const packedBuffer = await imagePacker.packing(pixelMap, {
+        format: 'image/webp',
+        quality: 90
+      });
+      imagePacker.release();
+      imageSource.release();
+
+      if (fs.accessSync(targetPath)) {
+        fs.unlinkSync(targetPath);
+      }
+      const outputFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      try {
+        fs.writeSync(outputFile.fd, packedBuffer);
+      } finally {
+        fs.closeSync(outputFile);
+      }
+
+      logger.info(TAG, `灏侀潰宸叉爣鍑嗗寲涓?WebP: source='${sourcePath}', target='${targetPath}'`);
+      return targetPath;
+    } catch (error) {
+      logger.warn(TAG, `灏侀潰鏍囧噯鍖栧け璐ワ紝灏嗗洖閫€鍒板師鏂囦欢澶嶅埗: source='${sourcePath}', error=${String(error)}`);
+      return null;
+    } finally {
+      try {
+        pixelMap?.release();
+      } catch (_error) {
+      }
+      try {
+        if (file) {
+          fs.closeSync(file);
+        }
+      } catch (_error) {
+      }
     }
   }
 

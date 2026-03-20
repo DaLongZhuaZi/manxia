@@ -2248,7 +2248,7 @@ A: 不会，原文件保持不变。`;
       this.updateProgress(ImportStatus.PARSING, `正在解析第 ${currentIndex}/${totalCount} 个电子书...`, (currentIndex / totalCount) * 50);
       
       // 创建临时目录用于解析
-      const ebooksBasePath = `${this.downloadDirPath}/ebooks`;
+      const ebooksBasePath = this.getSandboxEbooksBasePath();
       try { fs.mkdirSync(ebooksBasePath); } catch (e) { /* 已存在 */ }
       
       const bookName = filename.replace(/\.(txt|epub|mobi|azw|azw3|pdf)$/i, '').replace(/[<>:"/\\|?*]/g, '_');
@@ -2291,6 +2291,22 @@ A: 不会，原文件保持不变。`;
       logger.error(TAG, `解析电子书失败 ${relativePath}: ${String(error)}`);
       promptAction.showToast({ message: `解析失败: ${filename}` });
       return false;
+    }
+  }
+
+  /**
+   * 获取应用沙箱中的电子书目录
+   */
+  private getSandboxEbooksBasePath(): string {
+    try {
+      return this.sandboxManager.getDirectory('ebooks');
+    } catch (error) {
+      logger.warn(TAG, `SandboxManager获取ebooks目录失败，尝试使用Context.filesDir回退: ${String(error)}`);
+      const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+      if (!context || !context.filesDir) {
+        throw new Error('无法获取应用沙箱ebooks目录');
+      }
+      return `${context.filesDir}/ebooks`;
     }
   }
 

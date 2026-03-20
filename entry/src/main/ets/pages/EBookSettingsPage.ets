@@ -68,6 +68,7 @@ export struct EBookSettingsPage {
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'EBookSettingsPage';
   private scroller: Scroller = new Scroller();
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 电子书数据
   @State ebook: EBook | null = null;
@@ -147,6 +148,7 @@ export struct EBookSettingsPage {
   @State coverImagePath: string = '';
 
   aboutToAppear(): void {
+    this.previousDisplayMode = WindowManager.getCurrentMode();
     WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
@@ -176,6 +178,10 @@ export struct EBookSettingsPage {
     
     // 加载字体列表
     this.loadFontLists();
+  }
+
+  onPageShow(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
   }
   
   /**
@@ -248,7 +254,7 @@ export struct EBookSettingsPage {
   private lifecycle = new PageLifecycleManager('EBookSettingsPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -265,7 +271,7 @@ export struct EBookSettingsPage {
 
 ## 功能介绍
 
-电子书设置页面允许您配置电子书的阅读体验，包括字体、背景、翻页动画等。
+电子书设置页面允许您配置电子书的阅读体验。
 
 ## 字体设置
 
@@ -275,13 +281,6 @@ export struct EBookSettingsPage {
 ### 行间距
 调整行与行之间的距离，让阅读更舒适。
 
-### 字体选择
-支持多种字体：
-- 系统默认
-- 宋体
-- 黑体
-- 楷体
-
 ## 背景设置
 
 ### 预设背景
@@ -290,31 +289,6 @@ export struct EBookSettingsPage {
 - 护眼黄
 - 护眼绿
 - 夜间模式
-
-### 自定义背景
-- 支持选择图片作为背景
-- 可调整背景透明度
-
-## 翻页动画
-
-| 动画类型 | 说明 |
-|---------|------|
-| 无动画 | 直接切换 |
-| 滑动 | 左右滑动效果 |
-| 仿真翻页 | 模拟真实翻书 |
-| 淡入淡出 | 渐变切换 |
-
-## 显示设置
-
-- **页码显示**: 在右下角显示当前页码
-- **进度显示**: 显示阅读百分比
-- **时间显示**: 在底部显示当前时间
-- **电量显示**: 显示设备电量
-
-## 阅读模式
-
-- **翻页模式**: 点击或滑动翻页
-- **滚动模式**: 垂直连续滚动
 
 ## 注意事项
 

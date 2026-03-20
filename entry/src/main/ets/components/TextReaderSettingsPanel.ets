@@ -19,7 +19,9 @@ import {
   SavedBackgroundImage,
   ReadAloudEngineType,
   ReadAloudSettings,
+  RemoteReadAloudSettings,
   DEFAULT_READ_ALOUD_SETTINGS,
+  normalizeReadAloudSettings,
   DEFAULT_TEXT_STYLE,
   DEFAULT_PAGE_MARGINS
 } from '../Models/TextReaderModels';
@@ -178,7 +180,7 @@ export struct TextReaderSettingsPanel {
         imagePath: this.settings.background.imagePath,
         imageOpacity: this.settings.background.imageOpacity
       },
-      savedBackgroundImages: this.settings.savedBackgroundImages ? [...this.settings.savedBackgroundImages] : [],
+      savedBackgroundImages: this.settings.savedBackgroundImages ? this.settings.savedBackgroundImages.slice() : [],
       textStyle: {
         fontSize: this.settings.textStyle.fontSize,
         lineHeight: this.settings.textStyle.lineHeight,
@@ -214,84 +216,59 @@ export struct TextReaderSettingsPanel {
   }
 
   private getSafeReadAloudSettings(): ReadAloudSettings {
-    const current = this.settings.readAloud;
-    const rawEngine = current?.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType;
-    const safeEngine = (
-      rawEngine === ReadAloudEngineType.SYSTEM ||
-      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
-      rawEngine === ReadAloudEngineType.REMOTE
-    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
-
-    const speed = Math.max(
-      0.5,
-      Math.min(2.0, current?.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed)
-    );
-    const pitch = Math.max(
-      0.5,
-      Math.min(2.0, current?.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch)
-    );
-    const volume = Math.max(
-      0,
-      Math.min(1, current?.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume)
-    );
-    const voiceLanguage = current?.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '';
-    const voicePersonRaw = current?.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
-    const voiceOnlineRaw = current?.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
-    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
-    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
-
-    return {
-      enabled: current?.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
-      engineType: safeEngine,
-      speed,
-      pitch,
-      volume,
-      continueInBackground: current?.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
-      autoPlayNextChapter: current?.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
-      pauseOnManualPageTurn: current?.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
-      voiceLanguage,
-      voicePerson,
-      voiceOnline
-    };
+    return normalizeReadAloudSettings(this.settings.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS);
   }
 
   private updateReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
     const current = this.getSafeReadAloudSettings();
-    const rawEngine = partial.engineType ?? current.engineType;
-    const safeEngine = (
-      rawEngine === ReadAloudEngineType.SYSTEM ||
-      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
-      rawEngine === ReadAloudEngineType.REMOTE
-    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
-
-    const speed = Math.max(0.5, Math.min(2.0, partial.speed ?? current.speed));
-    const pitch = Math.max(0.5, Math.min(2.0, partial.pitch ?? current.pitch));
-    const volume = Math.max(0, Math.min(1, partial.volume ?? current.volume));
-    const voiceLanguage = partial.voiceLanguage ?? current.voiceLanguage ?? '';
-    const voicePersonRaw = partial.voicePerson ?? current.voicePerson ?? -1;
-    const voiceOnlineRaw = partial.voiceOnline ?? current.voiceOnline ?? -1;
-    const voicePerson = voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1;
-    const voiceOnline = (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1;
-
-    this.settings.readAloud = {
+    const currentRemote = current.remote;
+    const partialRemote = partial.remote;
+    let mergedRemote = currentRemote;
+    if (partialRemote && currentRemote) {
+      const remoteValue: RemoteReadAloudSettings = {
+        endpoint: partialRemote.endpoint ?? currentRemote.endpoint,
+        apiPath: partialRemote.apiPath ?? currentRemote.apiPath,
+        apiKey: partialRemote.apiKey ?? currentRemote.apiKey,
+        model: partialRemote.model ?? currentRemote.model,
+        voice: partialRemote.voice ?? currentRemote.voice,
+        audioFormat: partialRemote.audioFormat ?? currentRemote.audioFormat,
+        streamEnabled: partialRemote.streamEnabled ?? currentRemote.streamEnabled,
+        prefetchSegments: partialRemote.prefetchSegments ?? currentRemote.prefetchSegments,
+        connectTimeoutMs: partialRemote.connectTimeoutMs ?? currentRemote.connectTimeoutMs,
+        readTimeoutMs: partialRemote.readTimeoutMs ?? currentRemote.readTimeoutMs,
+        maxInputChars: partialRemote.maxInputChars ?? currentRemote.maxInputChars,
+        reservedInputChars: partialRemote.reservedInputChars ?? currentRemote.reservedInputChars,
+        minChunkChars: partialRemote.minChunkChars ?? currentRemote.minChunkChars,
+        targetChunkChars: partialRemote.targetChunkChars ?? currentRemote.targetChunkChars,
+        maxChunkChars: partialRemote.maxChunkChars ?? currentRemote.maxChunkChars,
+        cacheAudioFiles: partialRemote.cacheAudioFiles ?? currentRemote.cacheAudioFiles,
+        autoConcatAudio: partialRemote.autoConcatAudio ?? currentRemote.autoConcatAudio,
+        customHeadersJson: partialRemote.customHeadersJson ?? currentRemote.customHeadersJson,
+        extraBodyJson: partialRemote.extraBodyJson ?? currentRemote.extraBodyJson
+      };
+      mergedRemote = remoteValue;
+    }
+    this.settings.readAloud = normalizeReadAloudSettings({
       enabled: partial.enabled ?? current.enabled,
-      engineType: safeEngine,
-      speed,
-      pitch,
-      volume,
+      engineType: partial.engineType ?? current.engineType,
+      speed: partial.speed ?? current.speed,
+      pitch: partial.pitch ?? current.pitch,
+      volume: partial.volume ?? current.volume,
       continueInBackground: partial.continueInBackground ?? current.continueInBackground,
       autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
       pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
-      voiceLanguage,
-      voicePerson,
-      voiceOnline
-    };
+      voiceLanguage: partial.voiceLanguage ?? current.voiceLanguage,
+      voicePerson: partial.voicePerson ?? current.voicePerson,
+      voiceOnline: partial.voiceOnline ?? current.voiceOnline,
+      remote: mergedRemote
+    });
     this.updateAndNotify();
     if (
       partial.engineType !== undefined ||
       partial.voiceLanguage !== undefined ||
       partial.voicePerson !== undefined ||
-      partial.voiceOnline !== undefined
+      partial.voiceOnline !== undefined ||
+      partial.remote !== undefined
     ) {
       this.refreshReadAloudVoices();
     }
@@ -304,6 +281,12 @@ export struct TextReaderSettingsPanel {
         const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
         if (probeError.length > 0) {
           this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        }
+      }
+      if (!map.REMOTE && this.getSafeReadAloudSettings().engineType === ReadAloudEngineType.REMOTE) {
+        const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
         }
       }
       this.refreshReadAloudVoices();
@@ -337,6 +320,13 @@ export struct TextReaderSettingsPanel {
           this.readAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
         } else {
           this.readAloudStatusMessage = '系统 TTS 当前不可用，请点击刷新重试';
+        }
+      } else if (engineType === ReadAloudEngineType.REMOTE) {
+        const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.readAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
+        } else {
+          this.readAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice';
         }
       } else {
         this.readAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';

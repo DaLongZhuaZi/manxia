@@ -103,6 +103,10 @@ export struct MainMenuSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -195,6 +199,7 @@ export struct MainMenuSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -244,6 +249,7 @@ export struct MainMenuSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -1306,6 +1312,32 @@ export struct MainMenuSettingsSubPage {
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'main_menu_behavior'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'main_menu_behavior') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'main_menu_behavior'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_behavior', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_behavior', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'main_menu_behavior',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
             .margin({ bottom: 16 })
 
             // 底栏自定义部分
@@ -1329,6 +1361,32 @@ export struct MainMenuSettingsSubPage {
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'main_menu_navigation'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'main_menu_navigation') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'main_menu_navigation'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_navigation', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_navigation', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'main_menu_navigation',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
             .margin({ bottom: 16 })
 
             if (this.isTabletDevice()) {
@@ -1336,6 +1394,32 @@ export struct MainMenuSettingsSubPage {
                 this.buildAdaptiveTopBarPositionSettings()
               }
               .width(this.responsive_isLandscape ? '48%' : '100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'main_menu_adaptive_nav'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'main_menu_adaptive_nav') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'main_menu_adaptive_nav'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_adaptive_nav', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_adaptive_nav', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'main_menu_adaptive_nav',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
               .margin({ bottom: 16 })
             }
 
@@ -1344,6 +1428,32 @@ export struct MainMenuSettingsSubPage {
               this.buildResetButton()
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'main_menu_reset'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'main_menu_reset') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'main_menu_reset'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_reset', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'main_menu_reset', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'main_menu_reset',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
             .margin({ bottom: 16 })
 
             }

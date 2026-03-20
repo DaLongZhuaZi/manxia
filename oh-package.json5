@@ -1,5 +1,5 @@
 {
-  "modelVersion": "5.1.1",
+  "modelVersion": "6.0.1",
   "description": "Please describe the basic information.",
   "dependencies": {
     "@ohos/commons-compress": "^2.0.6"

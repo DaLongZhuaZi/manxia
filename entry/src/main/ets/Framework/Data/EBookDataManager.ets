@@ -6,13 +6,14 @@
 
 import { DatabaseManager } from '../Database/DatabaseManager';
 import { DatabaseRecord } from '../Database/DatabaseTypes';
-import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookFormat, EBookStatus, EBookPageMode } from '../../Models/EBookModels';
+import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookFormat, EBookStatus, EBookPageMode, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 import { logger } from '../../Utils/Logger';
 import { SettingsManager, SettingKeys } from '../Managers/SettingsManager';
 import { PRESET_BACKGROUNDS } from '../../Models/TextReaderModels';
 import { getUnifiedAnnotationManager } from '../Annotations/UnifiedAnnotationManager';
 import { UnifiedContentType } from '../../Models/UnifiedContentModels';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import DownloadDirManager from '../Storage/DownloadDirManager';
 
 const TAG = 'EBookDataManager';
 
@@ -377,7 +378,7 @@ export class EBookDataManager {
     const now = Date.now();
     
     // 检查是否是新记录（没有自定义设置），如果是则应用全局设置
-    const finalSettings = await this.applyGlobalSettingsIfNew(settings);
+    const finalSettings = await this.applyGlobalSettingsIfNew(bookId, settings);
     
     try {
       // 1. 先删除旧记录
@@ -480,8 +481,18 @@ export class EBookDataManager {
    * 对于新电子书，应用全局设置中的纯文本阅读器默认值
    * 检测方式：如果设置是默认值（没有自定义背景图片路径），则应用全局设置
    */
-  private async applyGlobalSettingsIfNew(settings: EBookReadingSettings): Promise<EBookReadingSettings> {
+  private async applyGlobalSettingsIfNew(bookId: string, settings: EBookReadingSettings): Promise<EBookReadingSettings> {
     try {
+      const existingSql = `SELECT bookId FROM ebook_reading_settings WHERE bookId = ? AND userId = ? LIMIT 1`;
+      const existingRecords = await this.dbManager.querySql(existingSql, [bookId, 'default_user']);
+      if (existingRecords && existingRecords.length > 0) {
+        return settings;
+      }
+      if (!this.shouldApplyGlobalDefaultsForNewBook(settings)) {
+        logger.info(TAG, `Skip applying global defaults for custom settings: bookId=${bookId}`);
+        return settings;
+      }
+
       const settingsManager = SettingsManager.getInstance();
       
       // 检查是否使用全局背景图片设置
@@ -608,6 +619,21 @@ export class EBookDataManager {
   /**
    * 更新电子书封面
    */
+  private shouldApplyGlobalDefaultsForNewBook(settings: EBookReadingSettings): boolean {
+    if (settings.followSystemTheme === false) {
+      return false;
+    }
+    if (settings.backgroundImagePath && settings.backgroundImagePath.length > 0) {
+      return false;
+    }
+
+    const currentBg = (settings.backgroundColor || '').toUpperCase();
+    const currentText = (settings.textColor || '').toUpperCase();
+    const defaultBg = (DEFAULT_EBOOK_READING_SETTINGS.backgroundColor || '').toUpperCase();
+    const defaultText = (DEFAULT_EBOOK_READING_SETTINGS.textColor || '').toUpperCase();
+    return currentBg === defaultBg && currentText === defaultText;
+  }
+
   public async updateEBookCover(bookId: string, coverPath: string): Promise<void> {
     try {
       const sql = `UPDATE ebook_info SET coverImagePath = ?, lastUpdateTime = ? WHERE id = ?`;
@@ -1161,37 +1187,171 @@ export class EBookDataManager {
    */
   private async deleteEBookFiles(ebook: EBook): Promise<void> {
     try {
-      // [修复] 尝试删除整个电子书文件夹
-      if (ebook.filePath) {
-        // 获取电子书所在的文件夹路径
-        const folderPath = ebook.filePath.substring(0, ebook.filePath.lastIndexOf('/'));
-        
-        // 检查是否是ebooks子目录下的文件夹（避免误删其他目录）
-        if (folderPath.includes('/ebooks/') || folderPath.includes('/novel/')) {
-          try {
-            if (fs.accessSync(folderPath)) {
-              // 递归删除文件夹
-              this.deleteDirectoryRecursive(folderPath);
-              logger.info(TAG, `成功删除电子书文件夹: ${folderPath}`);
-            }
-          } catch (e) {
-            logger.warn(TAG, `删除电子书文件夹失败: ${folderPath}, 错误: ${String(e)}`);
-            // 回退：尝试只删除文件
-            this.deleteFileIfExists(ebook.filePath);
-            if (ebook.metadata.coverImagePath) {
-              this.deleteFileIfExists(ebook.metadata.coverImagePath);
-            }
-          }
-        } else {
-          // 不是标准目录结构，只删除文件
-          this.deleteFileIfExists(ebook.filePath);
-          if (ebook.metadata.coverImagePath) {
-            this.deleteFileIfExists(ebook.metadata.coverImagePath);
-          }
+      const candidateDirectories: Set<string> = this.collectManagedEBookDirectories(ebook);
+      const candidateFiles: Set<string> = this.collectManagedEBookFiles(ebook);
+      const deletedDirectories: string[] = [];
+
+      for (const dirPath of Array.from(candidateDirectories).sort((left, right) => right.length - left.length)) {
+        if (this.deleteManagedDirectoryIfExists(dirPath)) {
+          deletedDirectories.push(dirPath);
+        }
+      }
+
+      for (const filePath of candidateFiles) {
+        const shouldSkip: boolean = deletedDirectories.some((dirPath: string) =>
+          filePath === dirPath || filePath.startsWith(`${dirPath}/`)
+        );
+        if (!shouldSkip) {
+          this.deleteFileIfExists(filePath);
         }
       }
     } catch (error) {
       logger.error(TAG, `删除电子书文件失败: ${String(error)}`);
+    }
+  }
+
+  private collectManagedEBookDirectories(ebook: EBook): Set<string> {
+    const directories: Set<string> = new Set<string>();
+    this.addManagedLibraryDirectoryCandidate(directories, ebook.filePath);
+    this.addManagedLibraryDirectoryCandidate(directories, ebook.metadata?.coverImagePath || '');
+
+    const downloadScopedDir = this.getDownloadScopedEBookDirectory(ebook);
+    if (downloadScopedDir) {
+      directories.add(downloadScopedDir);
+    }
+    return directories;
+  }
+
+  private collectManagedEBookFiles(ebook: EBook): Set<string> {
+    const files: Set<string> = new Set<string>();
+    const normalizedFilePath = this.normalizeManagedLocalPath(ebook.filePath);
+    const normalizedCoverPath = this.normalizeManagedLocalPath(ebook.metadata?.coverImagePath || '');
+
+    if (normalizedFilePath) {
+      files.add(normalizedFilePath);
+    }
+    if (normalizedCoverPath) {
+      files.add(normalizedCoverPath);
+    }
+    return files;
+  }
+
+  private normalizeManagedLocalPath(rawPath: string): string {
+    const trimmedPath = (rawPath || '').trim();
+    if (!trimmedPath) {
+      return '';
+    }
+    return trimmedPath.startsWith('file://') ? trimmedPath.substring(7) : trimmedPath;
+  }
+
+  private addManagedLibraryDirectoryCandidate(target: Set<string>, rawPath: string): void {
+    const normalizedPath = this.normalizeManagedLocalPath(rawPath);
+    if (!normalizedPath || !normalizedPath.startsWith('/')) {
+      return;
+    }
+
+    const managedSegments: string[] = ['/ebooks/', '/novel/'];
+    for (const segment of managedSegments) {
+      const segmentIndex = normalizedPath.indexOf(segment);
+      if (segmentIndex < 0) {
+        continue;
+      }
+
+      const contentStart = segmentIndex + segment.length;
+      const remainingPath = normalizedPath.substring(contentStart);
+      const slashIndex = remainingPath.indexOf('/');
+      if (slashIndex < 0) {
+        return;
+      }
+
+      const directoryPath = normalizedPath.substring(0, contentStart + slashIndex);
+      try {
+        if (fs.accessSync(directoryPath) && fs.statSync(directoryPath).isDirectory()) {
+          target.add(directoryPath);
+        }
+      } catch (_error) {
+        // 目录不存在时直接跳过，继续走文件级删除回退
+      }
+      return;
+    }
+  }
+
+  private getDownloadScopedEBookDirectory(ebook: EBook): string {
+    if (!DownloadDirManager.isReady()) {
+      return '';
+    }
+
+    const title = (ebook.metadata?.title || '').trim();
+    if (!title) {
+      return '';
+    }
+
+    const sanitizedTitle = title.replace(/[\\/:*?"<>|]/g, '_').substring(0, 100);
+    if (!sanitizedTitle) {
+      return '';
+    }
+
+    const candidatePath = `${DownloadDirManager.getPath()}/ebooks/${sanitizedTitle}`;
+    try {
+      if (!fs.accessSync(candidatePath)) {
+        return '';
+      }
+      const stat = fs.statSync(candidatePath);
+      if (!stat.isDirectory()) {
+        return '';
+      }
+      if (this.containsManagedEBookArtifacts(candidatePath)) {
+        return candidatePath;
+      }
+    } catch (_error) {
+      return '';
+    }
+    return '';
+  }
+
+  private containsManagedEBookArtifacts(dirPath: string): boolean {
+    try {
+      const entries: string[] = fs.listFileSync(dirPath);
+      for (const entry of entries) {
+        if (/^cover([_-].+)?\.(jpg|jpeg|png|webp)$/i.test(entry)) {
+          return true;
+        }
+        if (/\.(txt|epub|mobi|azw|azw3|pdf|xml)$/i.test(entry)) {
+          return true;
+        }
+      }
+    } catch (_error) {
+      return false;
+    }
+    return false;
+  }
+
+  private deleteManagedDirectoryIfExists(dirPath: string): boolean {
+    const normalizedPath = this.normalizeManagedLocalPath(dirPath);
+    if (!normalizedPath) {
+      return false;
+    }
+
+    try {
+      if (!fs.accessSync(normalizedPath)) {
+        return false;
+      }
+      const stat = fs.statSync(normalizedPath);
+      if (!stat.isDirectory()) {
+        return false;
+      }
+
+      this.deleteDirectoryRecursive(normalizedPath);
+      const deleted = !fs.accessSync(normalizedPath);
+      if (deleted) {
+        logger.info(TAG, `成功删除电子书目录: ${normalizedPath}`);
+      } else {
+        logger.warn(TAG, `电子书目录删除后仍然存在: ${normalizedPath}`);
+      }
+      return deleted;
+    } catch (error) {
+      logger.warn(TAG, `删除电子书目录失败: ${normalizedPath}, 错误: ${String(error)}`);
+      return false;
     }
   }
 

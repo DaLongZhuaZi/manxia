@@ -7152,7 +7152,11 @@ export struct UnifiedDetailPage {
     try {
       const ebook: EBook | null = await this.ebookDataManager.getEBookById(this.content.id);
       if (ebook) {
-        const currentChapterIndex: number = ebook.readingProgress?.currentChapterIndex || 0;
+        const rawChapterIndex: number = ebook.readingProgress?.currentChapterIndex || 0;
+        const chapterCount = ebook.chapters?.length || 0;
+        const currentChapterIndex: number = chapterCount > 0
+          ? Math.max(0, Math.min(rawChapterIndex, chapterCount - 1))
+          : 0;
         const progress: number = ebook.readingProgress?.progress || 0;
         
         this.content.lastReadChapterIndex = currentChapterIndex;

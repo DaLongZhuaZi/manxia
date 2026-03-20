@@ -188,6 +188,15 @@ export class NovelDataManager {
     return id;
   }
 
+  async updateBookCoverLocalPath(bookId: string, coverLocalPath: string): Promise<void> {
+    const store = this.getStore();
+    await store.executeSql(
+      'UPDATE novel_book SET coverLocalPath = ?, updateTime = ? WHERE id = ?',
+      [coverLocalPath, Date.now(), bookId]
+    );
+    logger.info(TAG, `已更新小说本地封面路径: ${bookId} -> ${coverLocalPath}`);
+  }
+
   /**
    * 获取所有书源
    */

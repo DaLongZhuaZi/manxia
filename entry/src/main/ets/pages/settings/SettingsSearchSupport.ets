@@ -5,6 +5,7 @@
  * - 提供跨页面跳转目标暂存/消费能力
  */
 
+import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { logger } from '../../Utils/Logger';
 
 const TAG = 'SettingsSearchSupport';
@@ -32,6 +33,20 @@ export interface SettingsSearchTarget {
   anchorId: string;
   scrollOffset: number;
   token: number;
+}
+
+interface SettingsSearchHighlightHost {
+  activeSearchAnchorId: string;
+  searchHighlightPulse: boolean;
+  searchHighlightPulseTimer: number;
+  searchHighlightClearTimer: number;
+}
+
+interface SettingsSearchHighlightShadowStyle {
+  radius: number;
+  color: string;
+  offsetX: number;
+  offsetY: number;
 }
 
 const SETTINGS_SEARCH_STORAGE_KEY = 'settings_search_target_payload';
@@ -202,6 +217,84 @@ export class SettingsSearchSupport {
       anchorId: result.anchorId,
       scrollOffset: result.scrollOffset,
       token: Date.now()
+    };
+  }
+
+  static activateHighlight(host: Object | undefined, anchorId: string, keepMs: number = 2800): void {
+    if (!host) {
+      return;
+    }
+    const highlightHost = host as SettingsSearchHighlightHost;
+    SettingsSearchSupport.clearHighlight(host);
+    highlightHost.activeSearchAnchorId = anchorId;
+    highlightHost.searchHighlightPulse = true;
+    highlightHost.searchHighlightPulseTimer = setTimeout(() => {
+      highlightHost.searchHighlightPulse = false;
+      highlightHost.searchHighlightPulseTimer = -1;
+    }, 520);
+    highlightHost.searchHighlightClearTimer = setTimeout(() => {
+      highlightHost.activeSearchAnchorId = '';
+      highlightHost.searchHighlightPulse = false;
+      highlightHost.searchHighlightClearTimer = -1;
+    }, keepMs);
+  }
+
+  static clearHighlight(host: Object | undefined): void {
+    if (!host) {
+      return;
+    }
+    const highlightHost = host as SettingsSearchHighlightHost;
+    if (typeof highlightHost.searchHighlightPulseTimer === 'number' && highlightHost.searchHighlightPulseTimer >= 0) {
+      clearTimeout(highlightHost.searchHighlightPulseTimer);
+      highlightHost.searchHighlightPulseTimer = -1;
+    }
+    if (typeof highlightHost.searchHighlightClearTimer === 'number' && highlightHost.searchHighlightClearTimer >= 0) {
+      clearTimeout(highlightHost.searchHighlightClearTimer);
+      highlightHost.searchHighlightClearTimer = -1;
+    }
+    highlightHost.searchHighlightPulse = false;
+    highlightHost.activeSearchAnchorId = '';
+  }
+
+  static isHighlightActive(activeAnchorId: string, anchorId: string): boolean {
+    return activeAnchorId === anchorId;
+  }
+
+  static getHighlightScale(activeAnchorId: string, anchorId: string, pulsing: boolean): number {
+    if (!SettingsSearchSupport.isHighlightActive(activeAnchorId, anchorId)) {
+      return 1;
+    }
+    return pulsing ? 1.015 : 1;
+  }
+
+  static getHighlightOverlayBackground(theme: ThemeType, activeAnchorId: string, anchorId: string): string {
+    if (!SettingsSearchSupport.isHighlightActive(activeAnchorId, anchorId)) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+    return theme === ThemeType.DARK ? 'rgba(66, 153, 225, 0.16)' : 'rgba(33, 150, 243, 0.10)';
+  }
+
+  static getHighlightOverlayBorder(theme: ThemeType, activeAnchorId: string, anchorId: string): string {
+    if (!SettingsSearchSupport.isHighlightActive(activeAnchorId, anchorId)) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+    return theme === ThemeType.DARK ? 'rgba(120, 201, 255, 0.88)' : 'rgba(33, 150, 243, 0.82)';
+  }
+
+  static getHighlightOverlayShadow(
+    theme: ThemeType,
+    activeAnchorId: string,
+    anchorId: string,
+    pulsing: boolean
+  ): SettingsSearchHighlightShadowStyle | undefined {
+    if (!SettingsSearchSupport.isHighlightActive(activeAnchorId, anchorId)) {
+      return undefined;
+    }
+    return {
+      radius: pulsing ? 20 : 14,
+      color: theme === ThemeType.DARK ? 'rgba(33, 150, 243, 0.28)' : 'rgba(33, 150, 243, 0.18)',
+      offsetX: 0,
+      offsetY: pulsing ? 8 : 4
     };
   }
 }
