@@ -2,7 +2,13 @@ import { curves, UIContext } from '@kit.ArkUI';
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
-import { ReadAloudEngineType, ReadAloudSettings } from '../Models/TextReaderModels';
+import {
+  DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  RemoteReadAloudSettings,
+  normalizeRemoteReadAloudSettings
+} from '../Models/TextReaderModels';
 import { ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
 import { logger } from '../Utils/Logger';
@@ -179,7 +185,7 @@ export struct ReadAloudSettingsInfoPanel {
     if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
       return '兼容后端开发中，当前请使用系统引擎';
     }
-    return '远程后端开发中，当前请使用系统引擎';
+    return '远程 TTS 当前不可用，请检查 endpoint/model/voice 后点击“刷新”';
   }
 
   private getReadAloudVoiceLabel(voice: ReadAloudVoiceOption): string {
@@ -624,6 +630,135 @@ export struct ReadAloudSettingsInfoPanel {
     .padding({ top: 2, bottom: 2 })
   }
 
+  private getRemoteSettings(): RemoteReadAloudSettings {
+    return normalizeRemoteReadAloudSettings(this.settings.remote ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS);
+  }
+
+  private updateRemoteSettings(partial: Partial<RemoteReadAloudSettings>): void {
+    const current = this.getRemoteSettings();
+    const merged: RemoteReadAloudSettings = {
+      endpoint: partial.endpoint ?? current.endpoint,
+      apiPath: partial.apiPath ?? current.apiPath,
+      apiKey: partial.apiKey ?? current.apiKey,
+      model: partial.model ?? current.model,
+      voice: partial.voice ?? current.voice,
+      audioFormat: partial.audioFormat ?? current.audioFormat,
+      streamEnabled: partial.streamEnabled ?? current.streamEnabled,
+      prefetchSegments: partial.prefetchSegments ?? current.prefetchSegments,
+      connectTimeoutMs: partial.connectTimeoutMs ?? current.connectTimeoutMs,
+      readTimeoutMs: partial.readTimeoutMs ?? current.readTimeoutMs,
+      maxInputChars: partial.maxInputChars ?? current.maxInputChars,
+      reservedInputChars: partial.reservedInputChars ?? current.reservedInputChars,
+      minChunkChars: partial.minChunkChars ?? current.minChunkChars,
+      targetChunkChars: partial.targetChunkChars ?? current.targetChunkChars,
+      maxChunkChars: partial.maxChunkChars ?? current.maxChunkChars,
+      cacheAudioFiles: partial.cacheAudioFiles ?? current.cacheAudioFiles,
+      autoConcatAudio: partial.autoConcatAudio ?? current.autoConcatAudio,
+      customHeadersJson: partial.customHeadersJson ?? current.customHeadersJson,
+      extraBodyJson: partial.extraBodyJson ?? current.extraBodyJson
+    };
+    this.callbacks.onChange({
+      remote: merged
+    });
+  }
+
+  private parseIntegerInput(text: string, fallback: number, min: number, max: number): number {
+    const parsed = Math.floor(Number(text));
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.max(min, Math.min(max, parsed));
+  }
+
+  @Builder
+  private buildRemoteTextInput(label: string, value: string, placeholder: string, onChange: (value: string) => void) {
+    Column({ space: 6 }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      TextInput({ text: value, placeholder })
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_primary'))
+        .placeholderColor($r('app.color.text_secondary'))
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(8)
+        .height(36)
+        .padding({ left: 10, right: 10 })
+        .width('100%')
+        .onChange((nextValue: string) => {
+          onChange(nextValue);
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildRemoteNumberInput(
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    onChange: (value: number) => void
+  ) {
+    Column({ space: 6 }) {
+      Row() {
+        Text(label)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(`${value}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.accent_primary'))
+      }
+      .width('100%')
+      TextInput({ text: `${value}`, placeholder: `${min}-${max}` })
+        .type(InputType.Number)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_primary'))
+        .placeholderColor($r('app.color.text_secondary'))
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(8)
+        .height(36)
+        .padding({ left: 10, right: 10 })
+        .width('100%')
+        .onChange((nextValue: string) => {
+          onChange(this.parseIntegerInput(nextValue, value, min, max));
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildRemoteJsonInput(label: string, value: string, placeholder: string, onChange: (value: string) => void) {
+    Column({ space: 6 }) {
+      Text(label)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      TextArea({ text: value, placeholder })
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_primary'))
+        .placeholderColor($r('app.color.text_secondary'))
+        .backgroundColor($r('app.color.background_secondary'))
+        .borderRadius(8)
+        .padding(10)
+        .height(88)
+        .width('100%')
+        .onChange((nextValue: string) => {
+          onChange(nextValue);
+        })
+    }
+    .width('100%')
+  }
+
   @Builder
   private buildPanelContent() {
     Column() {
@@ -862,6 +997,140 @@ export struct ReadAloudSettingsInfoPanel {
                 .fontColor($r('app.color.text_secondary'))
                 .width('100%')
             }
+          }
+          .width('100%')
+          .padding({ top: 4, bottom: 4 })
+
+          Divider().color($r('app.color.divider'))
+
+          Column({ space: 10 }) {
+            Text('远程 TTS 参数')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            Text('以下配置会持久化保存，切换到“远程”引擎时生效')
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
+            this.buildRemoteTextInput(
+              'Endpoint',
+              this.getRemoteSettings().endpoint,
+              'https://api.example.com',
+              (value: string) => this.updateRemoteSettings({ endpoint: value.trim() })
+            )
+            this.buildRemoteTextInput(
+              'API Path',
+              this.getRemoteSettings().apiPath,
+              '/v1/audio/speech',
+              (value: string) => this.updateRemoteSettings({ apiPath: value.trim() })
+            )
+            this.buildRemoteTextInput(
+              'API Key',
+              this.getRemoteSettings().apiKey,
+              'Bearer Token',
+              (value: string) => this.updateRemoteSettings({ apiKey: value })
+            )
+            this.buildRemoteTextInput(
+              'Model',
+              this.getRemoteSettings().model,
+              'gpt-4o-mini-tts',
+              (value: string) => this.updateRemoteSettings({ model: value.trim() })
+            )
+            this.buildRemoteTextInput(
+              'Voice',
+              this.getRemoteSettings().voice,
+              'alloy',
+              (value: string) => this.updateRemoteSettings({ voice: value.trim() })
+            )
+            this.buildRemoteTextInput(
+              'Audio Format',
+              this.getRemoteSettings().audioFormat,
+              'mp3/wav',
+              (value: string) => this.updateRemoteSettings({ audioFormat: value.trim() })
+            )
+
+            this.buildToggleRow('启用流式响应', this.getRemoteSettings().streamEnabled, (value: boolean) => {
+              this.updateRemoteSettings({ streamEnabled: value });
+            })
+            this.buildToggleRow('缓存音频文件', this.getRemoteSettings().cacheAudioFiles, (value: boolean) => {
+              this.updateRemoteSettings({ cacheAudioFiles: value });
+            })
+            this.buildToggleRow('章节自动拼接', this.getRemoteSettings().autoConcatAudio, (value: boolean) => {
+              this.updateRemoteSettings({ autoConcatAudio: value });
+            })
+
+            this.buildRemoteNumberInput(
+              '预取分片数量',
+              this.getRemoteSettings().prefetchSegments,
+              1,
+              8,
+              (value: number) => this.updateRemoteSettings({ prefetchSegments: value })
+            )
+            this.buildRemoteNumberInput(
+              '连接超时(ms)',
+              this.getRemoteSettings().connectTimeoutMs,
+              3000,
+              120000,
+              (value: number) => this.updateRemoteSettings({ connectTimeoutMs: value })
+            )
+            this.buildRemoteNumberInput(
+              '读取超时(ms)',
+              this.getRemoteSettings().readTimeoutMs,
+              5000,
+              300000,
+              (value: number) => this.updateRemoteSettings({ readTimeoutMs: value })
+            )
+            this.buildRemoteNumberInput(
+              '最大输入字符',
+              this.getRemoteSettings().maxInputChars,
+              256,
+              12000,
+              (value: number) => this.updateRemoteSettings({ maxInputChars: value })
+            )
+            this.buildRemoteNumberInput(
+              '保留字符预算',
+              this.getRemoteSettings().reservedInputChars,
+              0,
+              2000,
+              (value: number) => this.updateRemoteSettings({ reservedInputChars: value })
+            )
+            this.buildRemoteNumberInput(
+              '最小分片字符',
+              this.getRemoteSettings().minChunkChars,
+              32,
+              5000,
+              (value: number) => this.updateRemoteSettings({ minChunkChars: value })
+            )
+            this.buildRemoteNumberInput(
+              '目标分片字符',
+              this.getRemoteSettings().targetChunkChars,
+              64,
+              7000,
+              (value: number) => this.updateRemoteSettings({ targetChunkChars: value })
+            )
+            this.buildRemoteNumberInput(
+              '最大分片字符',
+              this.getRemoteSettings().maxChunkChars,
+              80,
+              9000,
+              (value: number) => this.updateRemoteSettings({ maxChunkChars: value })
+            )
+
+            this.buildRemoteJsonInput(
+              '自定义请求头(JSON)',
+              this.getRemoteSettings().customHeadersJson,
+              '{"X-Client":"ManXia"}',
+              (value: string) => this.updateRemoteSettings({ customHeadersJson: value })
+            )
+            this.buildRemoteJsonInput(
+              '额外请求体(JSON)',
+              this.getRemoteSettings().extraBodyJson,
+              '{"temperature":0.6}',
+              (value: string) => this.updateRemoteSettings({ extraBodyJson: value })
+            )
           }
           .width('100%')
           .padding({ top: 4, bottom: 4 })

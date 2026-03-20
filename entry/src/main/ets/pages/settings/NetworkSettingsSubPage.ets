@@ -31,6 +31,10 @@ export struct NetworkSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -113,6 +117,7 @@ export struct NetworkSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -128,6 +133,7 @@ export struct NetworkSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -406,18 +412,129 @@ export struct NetworkSettingsSubPage {
                   this.buildDownloadSettings()
                 }
                 .width('48%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'network_download'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'network_download') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'network_download'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_download', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_download', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'network_download',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
                   this.buildUserAgentSettings()
                 }
                 .width('48%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'network_request'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'network_request') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'network_request'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_request', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_request', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'network_request',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
               .width('100%')
             } else {
-              this.buildDownloadSettings()
-              this.buildUserAgentSettings()
+              Column() {
+                this.buildDownloadSettings()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'network_download'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'network_download') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'network_download'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_download', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_download', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'network_download',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
+
+              Column() {
+                this.buildUserAgentSettings()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'network_request'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'network_request') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'network_request'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_request', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'network_request', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'network_request',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
             }
 
             Blank().height(40)

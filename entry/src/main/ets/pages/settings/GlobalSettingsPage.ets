@@ -276,16 +276,20 @@ export struct GlobalSettingsPage {
   private updateSearchResults(input: string): void {
     this.searchKeyword = input;
     const query = input.trim();
-    if (query.length === 0) {
-      this.searchResults = [];
-      return;
-    }
-    this.searchResults = SettingsSearchSupport.search(query);
+    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      if (query.length === 0) {
+        this.searchResults = [];
+        return;
+      }
+      this.searchResults = SettingsSearchSupport.search(query);
+    });
   }
 
   private clearSearch(): void {
-    this.searchKeyword = '';
-    this.searchResults = [];
+    animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
+      this.searchKeyword = '';
+      this.searchResults = [];
+    });
   }
 
   private navigateToSearchResult(result: SettingsSearchResult): void {
@@ -339,7 +343,7 @@ export struct GlobalSettingsPage {
   }
 
   @Builder
-  buildSearchResultItem(item: SettingsSearchResult) {
+  buildSearchResultItem(item: SettingsSearchResult, index: number) {
     Column({ space: 8 }) {
       Row({ space: 8 }) {
         Text(item.title)
@@ -377,6 +381,12 @@ export struct GlobalSettingsPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .transition(TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut, delay: Math.min(index, 6) * 28 })
+        .combine(TransitionEffect.translate({ y: 10 }).animation({ duration: 220, curve: Curve.EaseOut, delay: Math.min(index, 6) * 28 })),
+      TransitionEffect.OPACITY.animation({ duration: 150, curve: Curve.EaseIn })
+    ))
+    .animation({ duration: 180, curve: Curve.EaseOut })
     .onClick(() => {
       this.navigateToSearchResult(item);
     })
@@ -416,6 +426,8 @@ export struct GlobalSettingsPage {
             })
         }
         .width('100%')
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+          .combine(TransitionEffect.translate({ y: -6 })))
       }
     }
     .width('100%')
@@ -442,9 +454,11 @@ export struct GlobalSettingsPage {
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius(12)
         .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
+          .combine(TransitionEffect.translate({ y: 10 })))
       } else {
-        ForEach(this.searchResults, (item: SettingsSearchResult) => {
-          this.buildSearchResultItem(item)
+        ForEach(this.searchResults, (item: SettingsSearchResult, index: number) => {
+          this.buildSearchResultItem(item, index)
         }, (item: SettingsSearchResult) => item.id)
       }
     }

@@ -11,13 +11,13 @@ import { getNovelContentProcessor, ContentProcessConfig } from '../Framework/Nov
 import { LegadoBook, LegadoBookSourceType, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
-  ReadAloudEngineType,
   ReadAloudSettings
 } from '../Models/TextReaderModels';
-import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
+import { SettingsManager } from '../Framework/Managers/SettingsManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
+import { loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings } from '../Framework/ReadAloud/ReadAloudSettingsStore';
 
 const TAG = 'NovelReadAloudPage';
 
@@ -119,41 +119,7 @@ export struct NovelReadAloudPage {
   }
 
   private loadGlobalReadAloudSettings(): ReadAloudSettings {
-    const engineRaw = this.settingsManager.getString(
-      SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE,
-      DEFAULT_READ_ALOUD_SETTINGS.engineType
-    ) as ReadAloudEngineType;
-    return {
-      enabled: this.settingsManager.getBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED, DEFAULT_READ_ALOUD_SETTINGS.enabled),
-      engineType: engineRaw,
-      speed: this.settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED, DEFAULT_READ_ALOUD_SETTINGS.speed),
-      pitch: this.settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH, DEFAULT_READ_ALOUD_SETTINGS.pitch),
-      volume: this.settingsManager.getNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME, DEFAULT_READ_ALOUD_SETTINGS.volume),
-      continueInBackground: this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG,
-        DEFAULT_READ_ALOUD_SETTINGS.continueInBackground
-      ),
-      autoPlayNextChapter: this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
-        DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter
-      ),
-      pauseOnManualPageTurn: this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
-        DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn
-      ),
-      voiceLanguage: this.settingsManager.getString(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE,
-        DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? ''
-      ),
-      voicePerson: this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON,
-        DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1
-      ),
-      voiceOnline: this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE,
-        DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1
-      )
-    };
+    return loadStoredGlobalReadAloudSettings(this.settingsManager);
   }
 
   private getReadAloudResumeKey(): string {

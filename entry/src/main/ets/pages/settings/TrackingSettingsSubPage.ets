@@ -42,6 +42,10 @@ export struct TrackingSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -125,6 +129,7 @@ export struct TrackingSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -138,6 +143,7 @@ export struct TrackingSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -524,6 +530,32 @@ export struct TrackingSettingsSubPage {
                 this.buildTrackerSection()
               }
               .width(this.responsive_isLandscape ? '48%' : '100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'tracking_services'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'tracking_services') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'tracking_services'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'tracking_services', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'tracking_services', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'tracking_services',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
               .margin({ bottom: 16 })
 
               // 说明信息
@@ -531,6 +563,32 @@ export struct TrackingSettingsSubPage {
                 this.buildInfoSection()
               }
               .width(this.responsive_isLandscape ? '48%' : '100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'tracking_info'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'tracking_info') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'tracking_info'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'tracking_info', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'tracking_info', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'tracking_info',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
               .margin({ bottom: 16 })
             }
             .width('100%')

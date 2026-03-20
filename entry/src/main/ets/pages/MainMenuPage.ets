@@ -116,6 +116,8 @@ import { UnifiedDetailPage } from './UnifiedDetailPage';
 import { AnnotationCenterPage, AnnotationCenterPageParams } from './AnnotationCenterPage';
 import { AvifTestPage, AvifTestPageParams } from './AvifTestPage';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
+import { LocalImageCacheManager } from '../Framework/Cache/LocalImageCacheManager';
+import { LibraryCoverManager } from '../Framework/Storage/LibraryCoverManager';
 import { AvifImage } from '../components/AvifImage';
 
 // 测试页面导入已移除
@@ -138,7 +140,7 @@ import { SearchTypeOption, SearchConfig } from '../Framework/WebView/MangaSource
 import { SourceRepositoryManager, SavedRepository, SourceRepositoryEntry, SyncResult, SyncProgressCallback } from '../Framework/Source/SourceRepositoryManager';
 
 // 导入数据管理器
-import { DataManager, ComicInfo, ReadHistory, PageInfo, ChapterInfo,
+import { DataManager, ComicInfo, ReadHistory, ChapterInfo,
   OnlineComicInfo } from '../Framework/Data/DataManager';
 import { ComicSourceDatabaseRecord } from '../Framework/Database/DatabaseTypes';
 import { DatabaseManager } from '../Framework/Database/DatabaseManager';
@@ -446,6 +448,9 @@ interface DynamicFilterTabConfig {
   count: number;
 }
 
+type ShelfToolbarPlacement = 'top' | 'bottom';
+type LibraryGridInfoDisplayMode = 'hidden' | 'smart' | 'always';
+
 @Entry
 @Component
 struct MainMenuPage {
@@ -508,6 +513,10 @@ struct MainMenuPage {
   private dataService: DataService = DataService.getInstance();
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   @State recentCoverAspectInfos: CoverAspectInfo[] = [];
+  @State private localLibraryCoverRenderVersion: number = 0;
+  private localLibraryCoverCacheManager: LocalImageCacheManager = LocalImageCacheManager.getInstance();
+  private localLibraryCoverLoadingKeys: Set<string> = new Set();
+  private localLibraryCoverFailedKeys: Set<string> = new Set();
 
   // 书库筛选和视图相关状态
   @State libraryContentType: LibraryContentType = LibraryContentType.MANGA; // 书库内容类型（漫画/电子书）
@@ -517,6 +526,7 @@ struct MainMenuPage {
   @State showLibraryFilterDialog: boolean = false;
   @State showLibraryFilterPopup: boolean = false;
   @State showLibrarySortPopup: boolean = false;
+  @State showLibraryGridSettingsPopup: boolean = false;
   @State showLibraryRefreshFloatingBar: boolean = false;
   @State filteredMangaList: Manga[] = [];
   private libraryRefreshFloatingBarTimer: number = -1;
@@ -998,6 +1008,86 @@ struct MainMenuPage {
       logger.error(TAG, `长按管理入口切换SFW失败: ${String(error)}`);
       this.showToast('SFW模式切换失败，请稍后重试');
     }
+  }
+
+  @Builder
+  buildShelfDetailDisplayFloatingBar() {
+    Column({ space: 6 }) {
+      Row({ space: 8 }) {
+        Text('筛选栏置底')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Toggle({ type: ToggleType.Switch, isOn: this.isShelfToolbarAtBottom() })
+          .onChange((isOn: boolean) => {
+            this.updateShelfToolbarPlacement(isOn ? 'bottom' : 'top');
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('作者显示')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridAuthorDisplayModeSetting))
+          .height(28)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(14)
+          .bindMenu(this.buildLibraryGridDisplayModeMenu('author'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('进度显示')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridProgressDisplayModeSetting))
+          .height(28)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(14)
+          .bindMenu(this.buildLibraryGridDisplayModeMenu('progress'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .width(this.getShelfPreviewSliderWidth())
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(30, 30, 30, 0.45)'
+      : 'rgba(255, 255, 255, 0.45)')
+    .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN, {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: 1.0
+    })
+    .border({
+      width: 1,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(255, 255, 255, 0.22)'
+        : 'rgba(255, 255, 255, 0.60)'
+    })
+    .borderRadius(22)
+    .shadow({
+      radius: 12,
+      color: this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(0, 0, 0, 0.35)'
+        : 'rgba(0, 0, 0, 0.12)',
+      offsetX: 0,
+      offsetY: 3
+    })
   }
 
   /**
@@ -2073,8 +2163,17 @@ struct MainMenuPage {
    */
   private getLibraryGridColumnsTemplate(): string {
     const template: string[] = [];
+    const useLibraryDefaultColumns = this.currentTabIndex === TabIndex.LIBRARY
+      && this.libraryViewMode !== LibraryViewMode.CATEGORY;
+    const columns = useLibraryDefaultColumns
+      ? this.getLibraryDefaultGridColumnsForDisplay()
+      : (this.responsive_libraryGridColumns > 0 ? this.responsive_libraryGridColumns : 3);
+    if (useLibraryDefaultColumns && this.lastLibraryDefaultGridColumnsLogged !== columns) {
+      this.lastLibraryDefaultGridColumnsLogged = columns;
+      logger.debug(TAG, `[书库网格] 当前默认视图每行内容数量=${columns}`);
+    }
     let i: number = 0;
-    while (i < this.responsive_libraryGridColumns) {
+    while (i < columns) {
       template.push('1fr');
       i = i + 1;
     }
@@ -2273,7 +2372,7 @@ struct MainMenuPage {
   }
 
   private getLibraryFloatingBarWidth(): number {
-    const available = this.getBottomBarWidth() - 24;
+    const available = this.getBottomBarWidth() - 8;
     if (available <= this.LIBRARY_FLOATING_BAR_MIN_WIDTH) {
       return available > 0 ? available : this.LIBRARY_FLOATING_BAR_MIN_WIDTH;
     }
@@ -3543,17 +3642,28 @@ struct MainMenuPage {
   // ==================== 书库长按菜单状态 ====================
   @State showMangaContextMenu: boolean = false;
   @State contextMenuManga: Manga | null = null;
+  @State mangaContextMenuAnchorKey: string = '';
   @State showEBookContextMenu: boolean = false;
   @State contextMenuEBook: EBook | null = null;
+  @State ebookContextMenuAnchorKey: string = '';
   @State showNovelContextMenu: boolean = false;
   @State contextMenuNovel: NovelBook | null = null;
+  @State novelContextMenuAnchorKey: string = '';
+
+  private getPopupAnchorKey(anchorScope: string, contentType: 'manga' | 'ebook' | 'novel', id: string | number): string {
+    return `${anchorScope}_${contentType}_${String(id)}`;
+  }
 
   /**
    * 显示漫画操作菜单（长按触发）
    */
-  private showMangaActionMenu(manga: Manga): void {
+  private showMangaActionMenu(manga: Manga, anchorKey: string = `library_manga_${manga.id}`): void {
     logger.info(TAG, `显示漫画操作菜单: ${manga.title}`);
+    this.hideEBookContextMenu();
+    this.hideNovelContextMenu();
+    this.showMangaContextMenu = false;
     this.contextMenuManga = manga;
+    this.mangaContextMenuAnchorKey = anchorKey;
     this.showMangaContextMenu = true;
   }
 
@@ -3563,14 +3673,19 @@ struct MainMenuPage {
   private hideMangaContextMenu(): void {
     this.showMangaContextMenu = false;
     this.contextMenuManga = null;
+    this.mangaContextMenuAnchorKey = '';
   }
 
   /**
    * 显示电子书操作菜单（长按触发）
    */
-  private showEBookActionMenu(ebook: EBook): void {
+  private showEBookActionMenu(ebook: EBook, anchorKey: string = `library_ebook_${ebook.id}`): void {
     logger.info(TAG, `显示电子书操作菜单: ${ebook.metadata.title}`);
+    this.hideMangaContextMenu();
+    this.hideNovelContextMenu();
+    this.showEBookContextMenu = false;
     this.contextMenuEBook = ebook;
+    this.ebookContextMenuAnchorKey = anchorKey;
     this.showEBookContextMenu = true;
   }
 
@@ -3580,14 +3695,19 @@ struct MainMenuPage {
   private hideEBookContextMenu(): void {
     this.showEBookContextMenu = false;
     this.contextMenuEBook = null;
+    this.ebookContextMenuAnchorKey = '';
   }
 
   /**
    * 显示小说操作菜单（长按触发）
    */
-  private showNovelActionMenu(novel: NovelBook): void {
+  private showNovelActionMenu(novel: NovelBook, anchorKey: string = `library_novel_${novel.id}`): void {
     logger.info(TAG, `显示小说操作菜单: ${novel.name}`);
+    this.hideMangaContextMenu();
+    this.hideEBookContextMenu();
+    this.showNovelContextMenu = false;
     this.contextMenuNovel = novel;
+    this.novelContextMenuAnchorKey = anchorKey;
     this.showNovelContextMenu = true;
   }
 
@@ -3597,6 +3717,7 @@ struct MainMenuPage {
   private hideNovelContextMenu(): void {
     this.showNovelContextMenu = false;
     this.contextMenuNovel = null;
+    this.novelContextMenuAnchorKey = '';
   }
   // ==================== 书库长按菜单状态结束 ====================
 
@@ -3785,6 +3906,7 @@ struct MainMenuPage {
   private async loadRecentEBookList(): Promise<EBook[]> {
     try {
       const allEbooks = await this.ebookDataManager.getEBookList();
+      await this.normalizeEBookCoversForDisplay(allEbooks);
       
       // 筛选有阅读记录的电子书并按最后阅读时间排序
       const recentEbooks = allEbooks
@@ -3814,7 +3936,9 @@ struct MainMenuPage {
         this.novelDataManager = getNovelDataManager();
         await this.novelDataManager.initialize(context);
       }
-      return await this.novelDataManager.getRecentBooks(20);
+      const novels = await this.novelDataManager.getRecentBooks(20);
+      await this.normalizeNovelCoversForDisplay(novels);
+      return novels;
     } catch (error) {
       logger.warn(TAG, `加载最近阅读小说失败: ${String(error)}`);
       return [];
@@ -4140,7 +4264,7 @@ struct MainMenuPage {
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .id(`cover_ebook_home_${ebook.id}`)
               } else {
-                Image(this.normalizeDisplayPathForEBook(ebook) || $r('app.media.mangabook'))
+                Image(this.getDisplayEBookCoverSource(ebook))
                   .width('100%')
                   .height('100%')
                   .objectFit(ImageFit.Cover)
@@ -4182,9 +4306,9 @@ struct MainMenuPage {
         GridItem() {
           Column({ space: 8 }) {
             Stack() {
-              if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+              if (this.isNetworkUrl(this.getNovelCoverPath(novel))) {
                 AvifImage({
-                  src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+                  src: this.getNovelDisplayCoverPath(novel),
                   imageWidth: '100%',
                   imageHeight: '100%',
                   objectFit: ImageFit.Cover,
@@ -4193,7 +4317,7 @@ struct MainMenuPage {
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
                 .id(`cover_novel_home_${novel.id}`)
               } else {
-                Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || $r('app.media.mangabook'))
+                Image(this.getNovelCoverSource(novel))
                   .width('100%')
                   .height('100%')
                   .objectFit(ImageFit.Cover)
@@ -4274,6 +4398,7 @@ struct MainMenuPage {
       }
 
       // 2. 加载PDF电子书（contentType='ebook'的漫画）
+      await this.normalizeEBookCoversForDisplay(ebookList);
       const pdfEbooks = this.mangaList.filter((manga: Manga) => manga.contentType === 'ebook');
       logger.info(TAG, `从漫画列表获取到 ${pdfEbooks.length} 本PDF电子书`);
 
@@ -4419,6 +4544,7 @@ struct MainMenuPage {
       }
 
       // 保留完整列表，交由 applyNovelFilter 根据当前筛选类型统一处理
+      await this.normalizeNovelCoversForDisplay(novels);
       this.novelList = novels;
       logger.info(TAG, `小说列表加载完成: ${this.novelList.length} 本`);
       this.applyNovelFilter(); // 应用筛选
@@ -4522,11 +4648,18 @@ struct MainMenuPage {
     this.applyNovelFilter();
   }
 
+  private getLibraryDefaultContentTransitionKey(): string {
+    return `${this.libraryViewMode}_${this.libraryFilterType}`;
+  }
+
   private applyLibraryFilterSelection(filterType: LibraryFilterType): void {
+    if (this.libraryFilterType === filterType) {
+      return;
+    }
     animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
       this.libraryFilterType = filterType;
+      this.applyLibraryFilterForAllTypes();
     });
-    this.applyLibraryFilterForAllTypes();
   }
 
   private getLibraryDefaultMixedItems(): ShelfMixedItem[] {
@@ -5295,6 +5428,7 @@ struct MainMenuPage {
         } else {
           newEbookList = await this.ebookDataManager.getNonPrivateEBooks();
         }
+        await this.normalizeEBookCoversForDisplay(newEbookList);
         const newPdfEbooks = newMangaList.filter((manga: Manga) => manga.contentType === 'ebook');
 
         this.incrementalUpdateEBookList(this.ebookList, newEbookList);
@@ -5320,6 +5454,7 @@ struct MainMenuPage {
         } else {
           newNovelList = await this.novelDataManager.getNonPrivateBooks();
         }
+        await this.normalizeNovelCoversForDisplay(newNovelList);
         this.incrementalUpdateNovelList(this.novelList, newNovelList);
         this.applyNovelFilter();
         logger.debug(TAG, `静默刷新小说列表完成: ${newNovelList.length} 本`);
@@ -7173,6 +7308,63 @@ struct MainMenuPage {
     return raw;
   }
 
+  private getDisplayEBookCoverSource(ebook: EBook): ResourceStr | image.PixelMap | string {
+    // 显式建立对本地封面异步解码完成的响应式依赖。
+    // ensureLocalLibraryCoverPrepared() 成功后会递增 localLibraryCoverRenderVersion，
+    // 这里读取它，ArkUI 才会重新执行本方法并从缓存里取出 PixelMap。
+    this.localLibraryCoverRenderVersion;
+
+    const raw = this.getEBookCoverPath(ebook);
+    const fallbackCover: ResourceStr = $r('app.media.ic_ebook');
+    if (!raw) {
+      return fallbackCover;
+    }
+
+    if (raw.startsWith('app.media.')) {
+      return this.resolveAppMediaCoverResource(raw, fallbackCover);
+    }
+
+    if (this.isNetworkUrl(raw)) {
+      return this.normalizeDisplayPathForEBook(ebook);
+    }
+
+    const cachedPixelMap = this.getCachedLocalLibraryCoverPixelMap(raw);
+    if (cachedPixelMap) {
+      return cachedPixelMap;
+    }
+
+    this.ensureLocalLibraryCoverPrepared(raw);
+    return fallbackCover;
+  }
+
+  private getNovelCoverSource(novel: NovelBook): ResourceStr | image.PixelMap | string {
+    // 显式建立对本地封面异步解码完成的响应式依赖。
+    // 否则即使 PixelMap 已经异步加载成功，小说封面区域也不会自动重绘。
+    this.localLibraryCoverRenderVersion;
+
+    const raw = this.getNovelCoverPath(novel);
+    if (!raw) {
+      return $r('app.media.ic_source_novel');
+    }
+
+    if (raw.startsWith('app.media.')) {
+      return this.resolveAppMediaCoverResource(raw, $r('app.media.ic_source_novel'));
+    }
+
+    if (this.isNetworkUrl(raw)) {
+      return this.getNovelDisplayCoverPath(novel);
+    }
+
+    const cachedPixelMap = this.getCachedLocalLibraryCoverPixelMap(raw);
+    if (cachedPixelMap) {
+      return cachedPixelMap;
+    }
+
+    this.ensureLocalLibraryCoverPrepared(raw);
+    return $r('app.media.ic_source_novel');
+  }
+
+
   /**
    * 获取封面图片源（支持AVIF格式）
    * 优先使用预加载的PixelMap，否则返回URL字符串
@@ -7208,12 +7400,268 @@ struct MainMenuPage {
    * 检查URL是否为网络地址
    */
   private isNetworkUrl(url: string | undefined): boolean {
-    if (!url) return false;
-    return url.startsWith('http://') || url.startsWith('https://');
+    const normalized = typeof url === 'string' ? url.trim() : '';
+    if (!normalized) return false;
+    return normalized.startsWith('http://') || normalized.startsWith('https://');
+  }
+
+  private hasAccessibleLocalLibraryCover(rawPath: string): boolean {
+    const normalizedPath = this.getNormalizedLocalLibraryCoverPath(rawPath);
+    if (!normalizedPath) {
+      return false;
+    }
+
+    if (this.getCachedLocalLibraryCoverPixelMap(normalizedPath)) {
+      return true;
+    }
+
+    try {
+      return fs.accessSync(normalizedPath);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private getLocalLibraryCoverDirectory(rawPath: string): string {
+    const normalizedPath = this.getNormalizedLocalLibraryCoverPath(rawPath);
+    if (!normalizedPath) {
+      return '';
+    }
+
+    try {
+      if (fs.accessSync(normalizedPath)) {
+        try {
+          fs.listFileSync(normalizedPath);
+          return normalizedPath;
+        } catch (_error) {
+          // 当前路径不是目录，继续回退到父目录。
+        }
+      }
+    } catch (_error) {
+      // 路径不存在时继续尝试父目录。
+    }
+
+    const lastSlashIndex = normalizedPath.lastIndexOf('/');
+    return lastSlashIndex > 0 ? normalizedPath.substring(0, lastSlashIndex) : '';
+  }
+
+  private getLocalLibraryCoverFileName(rawPath: string): string {
+    const normalizedPath = this.getNormalizedLocalLibraryCoverPath(rawPath);
+    if (!normalizedPath) {
+      return '';
+    }
+    const lastSlashIndex = normalizedPath.lastIndexOf('/');
+    return lastSlashIndex >= 0 ? normalizedPath.substring(lastSlashIndex + 1) : normalizedPath;
+  }
+
+  private isSupportedLocalLibraryCoverFile(entry: string): boolean {
+    return /\.(jpg|jpeg|png|webp)$/i.test(entry);
+  }
+
+  private findSiblingLocalLibraryCoverPath(containerPath: string, preferredCoverPath: string = ''): string {
+    const coverDir = this.getLocalLibraryCoverDirectory(containerPath);
+    if (!coverDir) {
+      return '';
+    }
+
+    try {
+      const entries: string[] = fs.listFileSync(coverDir);
+      if (!entries || entries.length === 0) {
+        return '';
+      }
+
+      const preferredFileName = this.getLocalLibraryCoverFileName(preferredCoverPath).toLowerCase();
+      if (preferredFileName) {
+        for (const entry of entries) {
+          if (!this.isSupportedLocalLibraryCoverFile(entry)) {
+            continue;
+          }
+          if (entry.toLowerCase() === preferredFileName) {
+            return `${coverDir}/${entry}`;
+          }
+        }
+      }
+
+      const coverCandidates = entries.filter((entry: string) =>
+        /^cover([_-].+)?\.(jpg|jpeg|png|webp)$/i.test(entry)
+      );
+      if (coverCandidates.length > 0) {
+        coverCandidates.sort((left: string, right: string) => left.localeCompare(right));
+        return `${coverDir}/${coverCandidates[0]}`;
+      }
+    } catch (_error) {
+      return '';
+    }
+
+    return '';
+  }
+
+  private getEBookCoverPath(ebook: EBook): string {
+    const raw = ebook?.metadata?.coverImagePath?.trim() || '';
+    if (raw.startsWith('app.media.') || raw.startsWith('$r(')) {
+      return raw;
+    }
+    if (this.isNetworkUrl(raw)) {
+      return raw;
+    }
+
+    const recoveredPath = this.findSiblingLocalLibraryCoverPath(ebook?.filePath || '', raw);
+    const normalizedRaw = this.getNormalizedLocalLibraryCoverPath(raw).replace(/\\/g, '/');
+    const shouldPreferSiblingCover = recoveredPath.length > 0
+      && normalizedRaw.includes('/library_covers/');
+
+    if (shouldPreferSiblingCover) {
+      logger.info(
+        TAG,
+        `[封面修复] 电子书封面优先使用书籍同目录封面: id=${ebook.id}, stored='${raw}', recovered='${recoveredPath}'`
+      );
+      return recoveredPath;
+    }
+
+    if (this.hasAccessibleLocalLibraryCover(raw)) {
+      return raw;
+    }
+
+    return recoveredPath || raw;
+  }
+
+
+  private async normalizeEBookCoversForDisplay(ebooks: EBook[]): Promise<EBook[]> {
+    if (!ebooks || ebooks.length === 0) {
+      return ebooks;
+    }
+    for (const ebook of ebooks) {
+      const resolvedCoverPath = this.getEBookCoverPath(ebook);
+      if (resolvedCoverPath && resolvedCoverPath !== (ebook?.metadata?.coverImagePath || '')) {
+        logger.info(
+          TAG,
+          `[封面修复] 电子书封面仅在显示层回退到同目录封面: id=${ebook.id}, stored='${ebook?.metadata?.coverImagePath || ''}', resolved='${resolvedCoverPath}'`
+        );
+      }
+      this.ensureLocalLibraryCoverPrepared(resolvedCoverPath);
+    }
+    return ebooks;
+  }
+
+
+  private async normalizeNovelCoversForDisplay(novels: NovelBook[]): Promise<NovelBook[]> {
+    if (!novels || novels.length === 0) {
+      return novels;
+    }
+    for (const novel of novels) {
+      const storedCoverPath = (novel.coverLocalPath?.trim() || novel.coverUrl?.trim() || '');
+      const resolvedCoverPath = this.getNovelCoverPath(novel);
+      if (resolvedCoverPath && resolvedCoverPath !== storedCoverPath) {
+        logger.info(TAG, `[封面修复] 小说封面回退到同目录封面: id=${novel.id}, stored='${storedCoverPath}', resolved='${resolvedCoverPath}'`);
+      }
+      // 显示层只做本地封面预加载，不能改写数据库中的原始封面路径。
+      this.ensureLocalLibraryCoverPrepared(resolvedCoverPath);
+    }
+    return novels;
+  }
+
+  private getNormalizedLocalLibraryCoverPath(rawPath: string): string {
+    const normalizedPath = LibraryCoverManager.normalizeLocalPath((rawPath || '').trim());
+    if (!normalizedPath) {
+      return '';
+    }
+    if (this.isNetworkUrl(normalizedPath)) {
+      return '';
+    }
+    if (normalizedPath.startsWith('app.media.') || normalizedPath.startsWith('$r(')) {
+      return '';
+    }
+    if (!normalizedPath.startsWith('/')) {
+      return '';
+    }
+    return normalizedPath;
+  }
+
+  private getLocalLibraryCoverCacheKey(rawPath: string): string {
+    const normalizedPath = this.getNormalizedLocalLibraryCoverPath(rawPath);
+    return normalizedPath.length > 0 ? `main_menu_cover:${normalizedPath}` : '';
+  }
+
+  private getCachedLocalLibraryCoverPixelMap(rawPath: string): image.PixelMap | null {
+    const cacheKey = this.getLocalLibraryCoverCacheKey(rawPath);
+    if (!cacheKey) {
+      return null;
+    }
+
+    const cachedPixelMap = this.localLibraryCoverCacheManager.get(cacheKey);
+    if (!cachedPixelMap) {
+      return null;
+    }
+
+    try {
+      const imageInfo = cachedPixelMap.getImageInfoSync();
+      if (imageInfo.size.width > 0 && imageInfo.size.height > 0) {
+        return cachedPixelMap;
+      }
+    } catch (_error) {
+      this.localLibraryCoverCacheManager.remove(cacheKey);
+    }
+
+    return null;
+  }
+
+  private ensureLocalLibraryCoverPrepared(rawPath: string): void {
+    const normalizedPath = this.getNormalizedLocalLibraryCoverPath(rawPath);
+    const cacheKey = this.getLocalLibraryCoverCacheKey(rawPath);
+    if (!normalizedPath || !cacheKey) {
+      return;
+    }
+    if (this.getCachedLocalLibraryCoverPixelMap(normalizedPath)) {
+      return;
+    }
+    if (this.localLibraryCoverLoadingKeys.has(cacheKey) || this.localLibraryCoverFailedKeys.has(cacheKey)) {
+      return;
+    }
+
+    this.localLibraryCoverLoadingKeys.add(cacheKey);
+    void this.localLibraryCoverCacheManager.loadImage(cacheKey, normalizedPath, {
+      maxWidth: 720,
+      maxHeight: 1080
+    }).then((pixelMap: image.PixelMap | null) => {
+      if (pixelMap) {
+        this.localLibraryCoverFailedKeys.delete(cacheKey);
+        this.localLibraryCoverRenderVersion = this.localLibraryCoverRenderVersion + 1;
+        logger.info(TAG, `[封面修复] 本地封面已切换为 PixelMap 渲染: path='${normalizedPath}'`);
+        return;
+      }
+
+      this.localLibraryCoverFailedKeys.add(cacheKey);
+      logger.warn(TAG, `[封面修复] 本地封面解码失败，无法用于稳定渲染: path='${normalizedPath}'`);
+    }).catch((error: Object) => {
+      this.localLibraryCoverFailedKeys.add(cacheKey);
+      logger.warn(TAG, `[封面修复] 本地封面解码异常: path='${normalizedPath}', error=${String(error)}`);
+    }).finally(() => {
+      this.localLibraryCoverLoadingKeys.delete(cacheKey);
+    });
+  }
+
+  private resolveAppMediaCoverResource(raw: string, fallback: ResourceStr): ResourceStr {
+    const resourceName = raw.substring('app.media.'.length);
+    if (resourceName === 'mangabook') {
+      return $r('app.media.mangabook');
+    }
+    if (resourceName === 'ebook') {
+      return $r('app.media.ebook');
+    }
+    if (resourceName === 'ic_ebook') {
+      return $r('app.media.ic_ebook');
+    }
+    if (resourceName === 'icon') {
+      return $r('app.media.icon');
+    }
+    if (resourceName === 'ic_source_novel' || resourceName === 'ic_novel') {
+      return $r('app.media.ic_source_novel');
+    }
+    return fallback;
   }
 
   private normalizeDisplayPathForEBook(ebook: EBook): string {
-    const raw: string = ebook && ebook.metadata && ebook.metadata.coverImagePath ? ebook.metadata.coverImagePath : '';
+    const raw: string = this.getEBookCoverPath(ebook);
     if (raw.length === 0) {
       return '';
     }
@@ -7232,16 +7680,25 @@ struct MainMenuPage {
    * 检查电子书是否有有效封面
    */
   private hasValidEBookCover(ebook: EBook): boolean {
-    const raw = ebook?.metadata?.coverImagePath || '';
-    return raw.length > 0;
+    const raw = this.getEBookCoverPath(ebook);
+    if (raw.length === 0) {
+      return false;
+    }
+    if (raw.startsWith('app.media.') || raw.startsWith('$r(')) {
+      return true;
+    }
+    if (this.isNetworkUrl(raw)) {
+      return true;
+    }
+    return this.hasAccessibleLocalLibraryCover(raw);
   }
 
   /**
    * 获取电子书封面图片源
    * 支持本地文件路径、网络URL和应用资源路径
    */
-  private getEBookCoverSource(ebook: EBook): ResourceStr {
-    const raw = ebook?.metadata?.coverImagePath || '';
+  private getEBookCoverSource(ebook: EBook): ResourceStr | image.PixelMap | string {
+    const raw = this.getEBookCoverPath(ebook);
     if (raw.length === 0) {
       return $r('sys.symbol.doc_plaintext_fill');
     }
@@ -8453,7 +8910,12 @@ struct MainMenuPage {
         this.buildNovelMultiSelectToolbar()
       }
 
-      this.buildLibraryDefaultExpandedContent()
+      Column() {
+        this.buildLibraryDefaultExpandedContent()
+      }
+      .width('100%')
+      .key(this.getLibraryDefaultContentTransitionKey())
+      .transition(TransitionEffect.OPACITY.animation({ duration: 200, curve: Curve.EaseInOut }))
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 16, bottom: 16 })
@@ -8600,6 +9062,84 @@ struct MainMenuPage {
   }
 
   @Builder
+  buildLibraryGridSettingsPopup() {
+    Column({ space: 10 }) {
+      Text('默认视图显示设置')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+      Text('仅影响默认网格视图')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .opacity(0.88)
+
+      Row({ space: 8 }) {
+        Text(`每行内容 ${this.getLibraryDefaultGridColumnsForDisplay()}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        Slider({
+          value: this.getLibraryDefaultGridColumnsForDisplay(),
+          min: 1,
+          max: 10,
+          step: 1,
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .trackColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+          .onChange((value: number) => {
+            this.updateLibraryDefaultGridColumns(value);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('作者显示')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridAuthorDisplayModeSetting))
+          .height(28)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(14)
+          .bindMenu(this.buildLibraryGridDisplayModeMenu('author'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text('阅读进度')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Blank()
+        Button(this.getLibraryGridInfoDisplayModeShortLabel(this.libraryGridProgressDisplayModeSetting))
+          .height(28)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          .borderRadius(14)
+          .bindMenu(this.buildLibraryGridDisplayModeMenu('progress'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .padding(12)
+  }
+
+  @Builder
   buildLibraryRefreshFilterButton(label: string, filterType: LibraryFilterType) {
     Button(label)
       .fontSize(12)
@@ -8619,53 +9159,83 @@ struct MainMenuPage {
 
   @Builder
   buildLibraryRefreshFloatingBar() {
-    Row({ space: 8 }) {
-      this.buildLibraryRefreshFilterButton('全部', LibraryFilterType.ALL)
-      this.buildLibraryRefreshFilterButton('未读', LibraryFilterType.UNREAD)
-      this.buildLibraryRefreshFilterButton('阅读中', LibraryFilterType.READING)
+    Row({ space: 6 }) {
+      Row({ space: 6 }) {
+        this.buildLibraryRefreshFilterButton('全部', LibraryFilterType.ALL)
+        this.buildLibraryRefreshFilterButton('未读', LibraryFilterType.UNREAD)
+        this.buildLibraryRefreshFilterButton('阅读中', LibraryFilterType.READING)
+      }
 
       Blank()
 
-      Button() {
-        SymbolGlyph(this.libraryViewMode === LibraryViewMode.LIST
-          ? $r('sys.symbol.list_bullet')
-          : $r('sys.symbol.square_grid_2x2'))
-          .fontSize(18)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-      }
-      .type(ButtonType.Circle)
-      .width(34)
-      .height(34)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.toggleLibraryViewMode();
-      })
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.arrow_left_arrow_right'))
-          .fontSize(18)
-          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-      }
-      .type(ButtonType.Circle)
-      .width(34)
-      .height(34)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.showLibrarySortPopup = true;
-      })
-      .bindPopup(this.showLibrarySortPopup, {
-        builder: this.buildLibrarySortPopup(),
-        placement: Placement.Bottom,
-        width: '220vp',
-        onStateChange: (e) => {
-          if (!e.isVisible) {
-            this.showLibrarySortPopup = false;
-          }
+      Row({ space: 4 }) {
+        Button() {
+          SymbolGlyph(this.libraryViewMode === LibraryViewMode.LIST
+            ? $r('sys.symbol.list_bullet')
+            : $r('sys.symbol.square_grid_2x2'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
         }
-      })
+        .type(ButtonType.Circle)
+        .width(34)
+        .height(34)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.toggleLibraryViewMode();
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(34)
+        .height(34)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.showLibrarySortPopup = false;
+          this.showLibraryGridSettingsPopup = true;
+        })
+        .bindPopup(this.showLibraryGridSettingsPopup, {
+          builder: this.buildLibraryGridSettingsPopup(),
+          placement: Placement.Bottom,
+          width: '248vp',
+          onStateChange: (e) => {
+            if (!e.isVisible) {
+              this.showLibraryGridSettingsPopup = false;
+            }
+          }
+        })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_left_arrow_right'))
+            .fontSize(18)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+        }
+        .type(ButtonType.Circle)
+        .width(34)
+        .height(34)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.showLibraryGridSettingsPopup = false;
+          this.showLibrarySortPopup = true;
+        })
+        .bindPopup(this.showLibrarySortPopup, {
+          builder: this.buildLibrarySortPopup(),
+          placement: Placement.Bottom,
+          width: '220vp',
+          onStateChange: (e) => {
+            if (!e.isVisible) {
+              this.showLibrarySortPopup = false;
+            }
+          }
+        })
+      }
     }
     .width('100%')
-    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 8, right: 8, top: 8, bottom: 8 })
     .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
       ? 'rgba(30, 30, 30, 0.56)'
       : 'rgba(255, 255, 255, 0.66)')
@@ -8695,7 +9265,7 @@ struct MainMenuPage {
    * 构建漫画卡片
    */
   @Builder
-  buildMangaCard(manga: Manga) {
+  buildMangaCard(manga: Manga, anchorScope: string = 'library_list') {
     Stack() {
       // 卡片内容层
       Row({ space: 12 }) {
@@ -8720,7 +9290,7 @@ struct MainMenuPage {
         }
         .width(80)
         .height(120)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
@@ -8770,6 +9340,9 @@ struct MainMenuPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         .justifyContent(FlexAlign.SpaceBetween)
+        .onClick(() => {
+          this.handleLibraryMangaTitleClick(manga);
+        })
       }
       .onClick(() => {
         if (this.isMultiSelectMode) {
@@ -8788,14 +9361,16 @@ struct MainMenuPage {
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
             if (!this.isMultiSelectMode) {
-              this.showMangaActionMenu(manga);
+              this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
             }
           })
       )
     }
     .width('100%')
     .height(140)
-    .bindPopup(this.showMangaContextMenu && this.contextMenuManga?.id === manga.id, {
+      .bindPopup(this.showMangaContextMenu
+      && this.contextMenuManga?.id === manga.id
+      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -8813,11 +9388,20 @@ struct MainMenuPage {
    * 构建书架视图（类型书架：漫画书架、电子书书架、小说书架 + 自定义书架）
    * 根据内容自动显示对应书架，没有内容则不显示，至少保留一个默认书架
    */
+  @StorageProp('library_default_grid_columns')
+  private libraryDefaultGridColumnsSetting: number = 0;
   @StorageProp('library_shelf_grid_columns')
   private shelfGridColumnsSetting: number = 3;
   @StorageProp('library_hide_wood_shelf_texture')
   private hideWoodShelfTexture: boolean = false;
+  @StorageProp('library_shelf_toolbar_placement')
+  private shelfToolbarPlacementSetting: string = 'top';
+  @StorageProp('library_grid_author_display_mode')
+  private libraryGridAuthorDisplayModeSetting: string = 'smart';
+  @StorageProp('library_grid_progress_display_mode')
+  private libraryGridProgressDisplayModeSetting: string = 'smart';
   private lastShelfGridColumnsLogged: number = -1;
+  private lastLibraryDefaultGridColumnsLogged: number = -1;
 
   private parseShelfGridColumnsValue(value: number | string | null | undefined): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -8848,27 +9432,88 @@ struct MainMenuPage {
     return null;
   }
 
+  private parseShelfStringValue(value: string | number | boolean | null | undefined): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private normalizeShelfToolbarPlacement(value: string | null | undefined): ShelfToolbarPlacement {
+    return value === 'bottom' ? 'bottom' : 'top';
+  }
+
+  private normalizeLibraryGridDisplayMode(value: string | null | undefined): LibraryGridInfoDisplayMode {
+    switch (value) {
+      case 'hidden':
+      case 'always':
+        return value;
+      case 'smart':
+      default:
+        return 'smart';
+    }
+  }
+
   private persistShelfGridColumnsSetting(value: number): void {
     const normalized = this.normalizeShelfGridColumns(value);
     if (!this.settingsManager.isInitialized()) {
-      logger.warn(TAG, `[ShelfGrid] Skip saving columns because SettingsManager is not initialized: ${normalized}`);
+      logger.warn(TAG, `[书架网格] 设置管理器未初始化，跳过保存每行书籍数量: ${normalized}`);
       return;
     }
     void this.settingsManager.setNumber(SettingKeys.LIBRARY_SHELF_GRID_COLUMNS, normalized)
       .catch((error: Object) => {
-        logger.error(TAG, `[ShelfGrid] Save columns failed`, String(error));
+        logger.error(TAG, '[书架网格] 保存每行书籍数量失败', String(error));
+      });
+  }
+
+  private persistLibraryDefaultGridColumnsSetting(value: number): void {
+    const normalized = this.normalizeShelfGridColumns(value);
+    if (!this.settingsManager.isInitialized()) {
+      logger.warn(TAG, `[书库网格] 设置管理器未初始化，跳过保存每行内容数量: ${normalized}`);
+      return;
+    }
+    void this.settingsManager.setNumber(SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS, normalized)
+      .catch((error: Object) => {
+        logger.error(TAG, '[书库网格] 保存每行内容数量失败', String(error));
       });
   }
 
 
   private persistHideWoodShelfTextureSetting(hidden: boolean): void {
     if (!this.settingsManager.isInitialized()) {
-      logger.warn(TAG, `[ShelfGrid] Skip saving wood shelf toggle because SettingsManager is not initialized: ${hidden}`);
+      logger.warn(TAG, `[书架网格] 设置管理器未初始化，跳过保存木质书架纹理开关: ${hidden ? '关闭' : '开启'}`);
       return;
     }
     void this.settingsManager.setBoolean(SettingKeys.LIBRARY_HIDE_WOOD_SHELF_TEXTURE, hidden)
       .catch((error: Object) => {
-        logger.error(TAG, `[ShelfGrid] Save wood shelf toggle failed`, String(error));
+        logger.error(TAG, '[书架网格] 保存木质书架纹理开关失败', String(error));
+      });
+  }
+
+  private persistShelfToolbarPlacementSetting(placement: ShelfToolbarPlacement): void {
+    if (!this.settingsManager.isInitialized()) {
+      logger.warn(TAG, `[书架网格] 设置管理器未初始化，跳过保存筛选栏位置: ${this.getShelfToolbarPlacementLabel(placement)}`);
+      return;
+    }
+    void this.settingsManager.setString(SettingKeys.LIBRARY_SHELF_TOOLBAR_PLACEMENT, placement)
+      .catch((error: Object) => {
+        logger.error(TAG, '[书架网格] 保存筛选栏位置失败', String(error));
+      });
+  }
+
+  private persistLibraryGridDisplayModeSetting(
+    key: string,
+    mode: LibraryGridInfoDisplayMode,
+    label: string
+  ): void {
+    if (!this.settingsManager.isInitialized()) {
+      logger.warn(TAG, `[书架网格] 设置管理器未初始化，跳过保存${label}显示模式: ${this.getLibraryGridInfoDisplayModeLabel(mode)}`);
+      return;
+    }
+    void this.settingsManager.setString(key, mode)
+      .catch((error: Object) => {
+        logger.error(TAG, `[书架网格] 保存${label}显示模式失败`, String(error));
       });
   }
 
@@ -8879,6 +9524,12 @@ struct MainMenuPage {
   private getShelfGridColumnsForDisplay(): number {
     const responsiveDefault = this.responsive_gridColumns > 0 ? this.responsive_gridColumns : 3;
     const configured = this.shelfGridColumnsSetting > 0 ? this.shelfGridColumnsSetting : responsiveDefault;
+    return this.normalizeShelfGridColumns(configured);
+  }
+
+  private getLibraryDefaultGridColumnsForDisplay(): number {
+    const responsiveDefault = this.responsive_libraryGridColumns > 0 ? this.responsive_libraryGridColumns : 3;
+    const configured = this.libraryDefaultGridColumnsSetting > 0 ? this.libraryDefaultGridColumnsSetting : responsiveDefault;
     return this.normalizeShelfGridColumns(configured);
   }
 
@@ -8898,6 +9549,27 @@ struct MainMenuPage {
   }
 
   private initShelfGridColumnsSetting(): void {
+    const defaultLibraryColumns = this.normalizeShelfGridColumns(
+      this.responsive_libraryGridColumns > 0 ? this.responsive_libraryGridColumns : 3
+    );
+    const settingsLibraryColumnsRaw = this.settingsManager.getNumber(
+      SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS,
+      Number.NaN
+    );
+    const settingsLibraryColumns = Number.isNaN(settingsLibraryColumnsRaw)
+      ? null
+      : this.normalizeShelfGridColumns(settingsLibraryColumnsRaw);
+    const appStorageLibraryColumns = this.parseShelfGridColumnsValue(
+      AppStorage.get(SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS) as number | string | null | undefined
+    );
+    const finalLibraryColumns = settingsLibraryColumns ?? appStorageLibraryColumns ?? defaultLibraryColumns;
+    this.libraryDefaultGridColumnsSetting = finalLibraryColumns;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS, finalLibraryColumns);
+
+    if (settingsLibraryColumns === null || settingsLibraryColumns !== finalLibraryColumns) {
+      this.persistLibraryDefaultGridColumnsSetting(finalLibraryColumns);
+    }
+
     const defaultColumns = this.normalizeShelfGridColumns(
       this.responsive_gridColumns > 0 ? this.responsive_gridColumns : 3
     );
@@ -8937,7 +9609,66 @@ struct MainMenuPage {
       this.persistHideWoodShelfTextureSetting(finalHideWood);
     }
 
-    logger.info(TAG, `[ShelfGrid] Init columns=${this.shelfGridColumnsSetting}, hideWood=${this.hideWoodShelfTexture}`);
+    const settingsToolbarPlacementRaw = this.parseShelfStringValue(
+      this.settingsManager.getString(SettingKeys.LIBRARY_SHELF_TOOLBAR_PLACEMENT, '')
+    );
+    const appStorageToolbarPlacementRaw = this.parseShelfStringValue(
+      AppStorage.get(SettingKeys.LIBRARY_SHELF_TOOLBAR_PLACEMENT) as string | null | undefined
+    );
+    const finalToolbarPlacement = this.normalizeShelfToolbarPlacement(
+      settingsToolbarPlacementRaw ?? appStorageToolbarPlacementRaw
+    );
+    this.shelfToolbarPlacementSetting = finalToolbarPlacement;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_TOOLBAR_PLACEMENT, finalToolbarPlacement);
+
+    if (settingsToolbarPlacementRaw !== finalToolbarPlacement) {
+      this.persistShelfToolbarPlacementSetting(finalToolbarPlacement);
+    }
+
+    const settingsAuthorDisplayModeRaw = this.parseShelfStringValue(
+      this.settingsManager.getString(SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE, '')
+    );
+    const appStorageAuthorDisplayModeRaw = this.parseShelfStringValue(
+      AppStorage.get(SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE) as string | null | undefined
+    );
+    const finalAuthorDisplayMode = this.normalizeLibraryGridDisplayMode(
+      settingsAuthorDisplayModeRaw ?? appStorageAuthorDisplayModeRaw
+    );
+    this.libraryGridAuthorDisplayModeSetting = finalAuthorDisplayMode;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE, finalAuthorDisplayMode);
+
+    if (settingsAuthorDisplayModeRaw !== finalAuthorDisplayMode) {
+      this.persistLibraryGridDisplayModeSetting(
+        SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE,
+        finalAuthorDisplayMode,
+        '作者'
+      );
+    }
+
+    const settingsProgressDisplayModeRaw = this.parseShelfStringValue(
+      this.settingsManager.getString(SettingKeys.LIBRARY_GRID_PROGRESS_DISPLAY_MODE, '')
+    );
+    const appStorageProgressDisplayModeRaw = this.parseShelfStringValue(
+      AppStorage.get(SettingKeys.LIBRARY_GRID_PROGRESS_DISPLAY_MODE) as string | null | undefined
+    );
+    const finalProgressDisplayMode = this.normalizeLibraryGridDisplayMode(
+      settingsProgressDisplayModeRaw ?? appStorageProgressDisplayModeRaw
+    );
+    this.libraryGridProgressDisplayModeSetting = finalProgressDisplayMode;
+    AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_PROGRESS_DISPLAY_MODE, finalProgressDisplayMode);
+
+    if (settingsProgressDisplayModeRaw !== finalProgressDisplayMode) {
+      this.persistLibraryGridDisplayModeSetting(
+        SettingKeys.LIBRARY_GRID_PROGRESS_DISPLAY_MODE,
+        finalProgressDisplayMode,
+        '阅读进度'
+      );
+    }
+
+    logger.info(
+      TAG,
+      `[书架网格] 初始化完成: 默认视图每行内容数量=${this.libraryDefaultGridColumnsSetting}, 每行书籍数量=${this.shelfGridColumnsSetting}, 木质书架纹理=${this.hideWoodShelfTexture ? '关闭' : '开启'}, 筛选栏位置=${this.getShelfToolbarPlacementLabel(finalToolbarPlacement)}, 作者显示=${this.getLibraryGridInfoDisplayModeLabel(finalAuthorDisplayMode)}, 阅读进度显示=${this.getLibraryGridInfoDisplayModeLabel(finalProgressDisplayMode)}`
+    );
   }
 
 
@@ -8969,8 +9700,24 @@ struct MainMenuPage {
     });
 
     this.persistShelfGridColumnsSetting(nextValue);
-    logger.info(TAG, `[ShelfGrid] Columns changed ${fromValue} -> ${nextValue}`);
-    logger.debug(TAG, `[ShelfGrid] Preview count rule -> ${this.getShelfPreviewCountForDisplay()}`);
+    logger.info(TAG, `[书架网格] 每行书籍数量已调整: ${fromValue} -> ${nextValue}`);
+    logger.debug(TAG, `[书架网格] 预览层叠数量规则=${this.getShelfPreviewCountForDisplay()}`);
+  }
+
+  private updateLibraryDefaultGridColumns(value: number): void {
+    const nextValue = this.normalizeShelfGridColumns(value);
+    if (nextValue === this.libraryDefaultGridColumnsSetting) {
+      return;
+    }
+
+    const fromValue = this.libraryDefaultGridColumnsSetting;
+    animateTo({ duration: 280, curve: Curve.EaseInOut }, () => {
+      this.libraryDefaultGridColumnsSetting = nextValue;
+      AppStorage.setOrCreate(SettingKeys.LIBRARY_DEFAULT_GRID_COLUMNS, nextValue);
+    });
+
+    this.persistLibraryDefaultGridColumnsSetting(nextValue);
+    logger.info(TAG, `[书库网格] 默认视图每行内容数量已调整: ${fromValue} -> ${nextValue}`);
   }
 
 
@@ -8985,7 +9732,7 @@ struct MainMenuPage {
     });
 
     this.persistHideWoodShelfTextureSetting(hidden);
-    logger.info(TAG, `[ShelfGrid] Wood shelf texture: ${hidden ? 'off' : 'on'}`);
+    logger.info(TAG, `[书架网格] 木质书架纹理已${hidden ? '关闭' : '开启'}`);
   }
 
   private completeShelfPreviewAdjustments(): void {
@@ -8999,9 +9746,113 @@ struct MainMenuPage {
       this.isShelfEditMode = false;
     });
     this.showToast('已保存当前书架显示设置');
-    logger.info(TAG, `[ShelfGrid] 完成调整并退出管理模式: columns=${columns}, hideWood=${hideWood}`);
+    logger.info(TAG, `[书架网格] 完成调整并退出管理模式: 每行书籍数量=${columns}, 木质书架纹理=${hideWood ? '关闭' : '开启'}`);
   }
 
+
+  private updateShelfToolbarPlacement(placement: ShelfToolbarPlacement): void {
+    const normalized = this.normalizeShelfToolbarPlacement(placement);
+    if (this.normalizeShelfToolbarPlacement(this.shelfToolbarPlacementSetting) === normalized) {
+      return;
+    }
+
+    animateTo({ duration: 200, curve: Curve.Linear }, () => {
+      this.shelfToolbarPlacementSetting = normalized;
+      AppStorage.setOrCreate(SettingKeys.LIBRARY_SHELF_TOOLBAR_PLACEMENT, normalized);
+    });
+
+    this.persistShelfToolbarPlacementSetting(normalized);
+    logger.info(TAG, `[书架网格] 筛选栏位置已切换为${this.getShelfToolbarPlacementLabel(normalized)}`);
+  }
+
+  private updateLibraryGridDisplayMode(
+    target: 'author' | 'progress',
+    mode: LibraryGridInfoDisplayMode
+  ): void {
+    const normalized = this.normalizeLibraryGridDisplayMode(mode);
+    const currentMode = target === 'author'
+      ? this.normalizeLibraryGridDisplayMode(this.libraryGridAuthorDisplayModeSetting)
+      : this.normalizeLibraryGridDisplayMode(this.libraryGridProgressDisplayModeSetting);
+    if (currentMode === normalized) {
+      return;
+    }
+
+    animateTo({ duration: 180, curve: Curve.Linear }, () => {
+      if (target === 'author') {
+        this.libraryGridAuthorDisplayModeSetting = normalized;
+        AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE, normalized);
+      } else {
+        this.libraryGridProgressDisplayModeSetting = normalized;
+        AppStorage.setOrCreate(SettingKeys.LIBRARY_GRID_PROGRESS_DISPLAY_MODE, normalized);
+      }
+    });
+
+    this.persistLibraryGridDisplayModeSetting(
+      target === 'author'
+        ? SettingKeys.LIBRARY_GRID_AUTHOR_DISPLAY_MODE
+        : SettingKeys.LIBRARY_GRID_PROGRESS_DISPLAY_MODE,
+      normalized,
+      target === 'author' ? '作者' : '阅读进度'
+    );
+    logger.info(
+      TAG,
+      `[书架网格] ${target === 'author' ? '作者' : '阅读进度'}显示模式已切换为${this.getLibraryGridInfoDisplayModeLabel(normalized)}`
+    );
+  }
+
+  private getLibraryGridInfoDisplayModeShortLabel(value: string): string {
+    switch (this.normalizeLibraryGridDisplayMode(value)) {
+      case 'hidden':
+        return '不显示';
+      case 'always':
+        return '始终';
+      case 'smart':
+      default:
+        return '智能';
+    }
+  }
+
+  private getLibraryGridInfoDisplayModeLabel(mode: LibraryGridInfoDisplayMode): string {
+    switch (mode) {
+      case 'hidden':
+        return '不显示';
+      case 'always':
+        return '始终显示';
+      case 'smart':
+      default:
+        return '智能显示';
+    }
+  }
+
+  private getShelfToolbarPlacementLabel(value: ShelfToolbarPlacement | string): string {
+    return this.normalizeShelfToolbarPlacement(value) === 'bottom' ? '底部' : '顶部';
+  }
+
+  @Builder
+  buildLibraryGridDisplayModeMenu(target: 'author' | 'progress'): CustomBuilder {
+    Menu() {
+      MenuItem({ content: this.getLibraryGridInfoDisplayModeLabel('hidden') })
+        .onClick(() => {
+          this.updateLibraryGridDisplayMode(target, 'hidden');
+        })
+      MenuItem({ content: this.getLibraryGridInfoDisplayModeLabel('smart') })
+        .onClick(() => {
+          this.updateLibraryGridDisplayMode(target, 'smart');
+        })
+      MenuItem({ content: this.getLibraryGridInfoDisplayModeLabel('always') })
+        .onClick(() => {
+          this.updateLibraryGridDisplayMode(target, 'always');
+        })
+    }
+  }
+
+  private isShelfToolbarAtBottom(): boolean {
+    return this.normalizeShelfToolbarPlacement(this.shelfToolbarPlacementSetting) === 'bottom';
+  }
+
+  private getShelfDetailContentBottomSpacerHeight(): number {
+    return this.isShelfToolbarAtBottom() ? 0 : this.getMainTabBottomSpacerHeight();
+  }
 
   private shouldShowShelfPreviewSlider(): boolean {
     return this.currentTabIndex === TabIndex.LIBRARY
@@ -9037,15 +9888,11 @@ struct MainMenuPage {
   }
 
   private getShelfBaseLayerColor(): string {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(28, 36, 50, 0.46)'
-      : 'rgba(255, 255, 255, 0.12)';
+    return 'rgba(0, 0, 0, 0)';
   }
 
   private getShelfBaseLayerBorderColor(): string {
-    return this.themeState.currentTheme === ThemeType.DARK
-      ? 'rgba(128, 150, 180, 0.24)'
-      : 'rgba(255, 255, 255, 0.22)';
+    return 'rgba(0, 0, 0, 0)';
   }
 
   private getShelfPreviewPrimaryWidth(): number {
@@ -9090,13 +9937,7 @@ struct MainMenuPage {
   private getLibraryCoverBackgroundColor(
     colorRole: 'comp_background_tertiary' | 'background_secondary' = 'comp_background_tertiary'
   ): ResourceColor {
-    if (this.isShelfDetailViewActive()) {
-      if (this.themeState.currentTheme === ThemeType.DARK) {
-        return '#00000000';
-      }
-      return Color.Transparent;
-    }
-    return ThemeAwareHelper.getTestManagementThemedColor(colorRole, this.themeState.currentTheme);
+    return Color.Transparent;
   }
 
 
@@ -9362,7 +10203,7 @@ struct MainMenuPage {
             .backgroundColor(this.getShelfBaseLayerColor())
             .borderRadius(8)
             .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
-            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+            .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
         // 木质书架装饰（关闭木质书架时不显示）
@@ -9386,6 +10227,7 @@ struct MainMenuPage {
                     .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
                     .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                     .objectFit(ImageFit.Cover)
+                    .backgroundColor(Color.Transparent)
                     .borderRadius(4)
                     .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                     .zIndex(index === 0 ? 10 : 5)
@@ -9398,6 +10240,7 @@ struct MainMenuPage {
                     imageBorderRadius: 4,
                     placeholder: $r('app.media.mangabook'),
                   })
+                  .backgroundColor(Color.Transparent)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
                 }
@@ -9406,6 +10249,7 @@ struct MainMenuPage {
                   .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
                   .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                   .objectFit(ImageFit.Cover)
+                  .backgroundColor(Color.Transparent)
                   .borderRadius(4)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
@@ -9573,7 +10417,7 @@ struct MainMenuPage {
             .backgroundColor(this.getShelfBaseLayerColor())
             .borderRadius(8)
             .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
-            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+            .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
         if (this.shouldShowShelfBaseDecoration()) {
@@ -9633,7 +10477,7 @@ struct MainMenuPage {
             .backgroundColor(this.getShelfBaseLayerColor())
             .borderRadius(8)
             .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
-            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+            .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
         if (this.shouldShowShelfBaseDecoration()) {
@@ -9791,7 +10635,7 @@ struct MainMenuPage {
           if (path) covers.push(path);
         } else if (item.type === 'novel') {
           const novel = item.data as NovelBook;
-          const coverPath = novel.coverLocalPath || novel.coverUrl;
+          const coverPath = this.getNovelDisplayCoverPath(novel);
           if (coverPath) covers.push(this.normalizeCoverPath(coverPath));
         }
       }
@@ -9822,7 +10666,7 @@ struct MainMenuPage {
         case ContentType.NOVEL:
           const novel = this.novelList.find(n => n.id === item.itemId);
           if (novel) {
-            const coverPath = novel.coverLocalPath || novel.coverUrl;
+            const coverPath = this.getNovelDisplayCoverPath(novel);
             if (coverPath) covers.push(this.normalizeCoverPath(coverPath));
           }
           break;
@@ -9986,40 +10830,27 @@ struct MainMenuPage {
    * [新增] 专门处理电子书封面路径的多种情况
    */
   private getValidEBookCoverPath(ebook: EBook): string {
-    const raw = ebook?.metadata?.coverImagePath || '';
+    const raw = this.getEBookCoverPath(ebook);
     if (!raw || raw.length === 0) {
       return '';
     }
-    
-    // 1. 检查是否为网络URL
+
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
       return raw;
     }
-    
-    // 2. 检查是否已有file://前缀
+
     if (raw.startsWith('file://')) {
       return raw;
     }
-    
-    // 3. 检查是否为应用资源引用（app.media.xxx），跳过这些
+
     if (raw.startsWith('app.media.') || raw.startsWith('$r(')) {
-      logger.debug('MainMenuPage', `电子书封面为资源引用，跳过: ${raw}`);
+      logger.debug('MainMenuPage', `电子书封面为资源引用，跳过路径转换: ${raw}`);
       return '';
     }
-    
-    // 4. 本地文件路径：检查是否存在，然后添加file://前缀
-    // 支持：APP沙箱目录（/data/storage/...）、Download目录等
-    try {
-      // 使用 fs.accessSync 检查文件是否存在（不抛出异常则表示存在）
-      fs.accessSync(raw);
-      return `file://${raw}`;
-    } catch (e) {
-      // 文件不存在或访问失败，仍然尝试返回路径（让Image组件处理加载失败）
-      logger.debug('MainMenuPage', `检查电子书封面文件存在性失败: ${raw}`);
-      // 回退：直接添加file://前缀（可能是权限问题，让Image组件处理）
-      return `file://${raw}`;
-    }
+
+    return `file://${raw}`;
   }
+
 
   /**
    * 获取小说书架封面列表（按当前预览规则）
@@ -10028,7 +10859,7 @@ struct MainMenuPage {
     const covers: string[] = [];
     for (const novel of this.novelList) {
       if (covers.length >= this.getShelfPreviewCountForDisplay()) break;
-      const coverPath = novel.coverLocalPath || novel.coverUrl;
+      const coverPath = this.getNovelDisplayCoverPath(novel);
       if (coverPath) {
         covers.push(this.normalizeCoverPath(coverPath));
       }
@@ -10067,7 +10898,7 @@ struct MainMenuPage {
             .backgroundColor(this.getShelfBaseLayerColor())
             .borderRadius(8)
             .border({ width: 1, color: this.getShelfBaseLayerBorderColor() })
-            .shadow({ radius: 8, color: 'rgba(0, 0, 0, 0.2)', offsetY: 2 })
+            .shadow({ radius: 0, color: 'rgba(0, 0, 0, 0)', offsetY: 0 })
         }
 
         if (this.shouldShowShelfBaseDecoration()) {
@@ -10090,6 +10921,7 @@ struct MainMenuPage {
                     .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
                     .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                     .objectFit(ImageFit.Cover)
+                    .backgroundColor(Color.Transparent)
                     .borderRadius(4)
                     .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                     .zIndex(index === 0 ? 10 : 5)
@@ -10102,6 +10934,7 @@ struct MainMenuPage {
                     imageBorderRadius: 4,
                     placeholder: $r('app.media.mangabook'),
                   })
+                  .backgroundColor(Color.Transparent)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
                 }
@@ -10110,6 +10943,7 @@ struct MainMenuPage {
                   .width(index === 0 ? this.getShelfPreviewPrimaryWidth() : this.getShelfPreviewSecondaryWidth())
                   .height(index === 0 ? this.getShelfPreviewPrimaryHeight() : this.getShelfPreviewSecondaryHeight())
                   .objectFit(ImageFit.Cover)
+                  .backgroundColor(Color.Transparent)
                   .borderRadius(4)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
@@ -10226,6 +11060,7 @@ struct MainMenuPage {
                   objectFit: ImageFit.Cover,
                   imageBorderRadius: 2,
                 })
+                .backgroundColor(Color.Transparent)
                 .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                 .zIndex(index === 0 ? 10 : 5)
               } else {
@@ -10233,6 +11068,7 @@ struct MainMenuPage {
                   .width(index === 0 ? 40 : 30)
                   .height(index === 0 ? 56 : 42)
                   .objectFit(ImageFit.Cover)
+                  .backgroundColor(Color.Transparent)
                   .borderRadius(2)
                   .shadow({ radius: 3, color: 'rgba(0, 0, 0, 0.4)', offsetX: 1, offsetY: 2 })
                   .zIndex(index === 0 ? 10 : 5)
@@ -10357,19 +11193,19 @@ struct MainMenuPage {
    * 标准化封面路径（处理本地文件、网络URL、媒体资源等）
    */
   private normalizeCoverPath(coverPath: string): string {
-    if (!coverPath) {
+    const normalized = typeof coverPath === 'string' ? coverPath.trim() : '';
+    if (!normalized) {
       return '';
     }
-    // 网络URL直接返回
-    if (coverPath.startsWith('http://') || coverPath.startsWith('https://')) {
-      return coverPath;
+    // 已带协议前缀的路径直接返回（http/file/datashare/resource 等）
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalized)) {
+      return normalized;
     }
-    // 已经是file://格式
-    if (coverPath.startsWith('file://')) {
-      return coverPath;
+    // 本地绝对路径添加 file:// 前缀
+    if (normalized.startsWith('/')) {
+      return `file://${normalized}`;
     }
-    // 本地文件路径添加file://前缀
-    return `file://${coverPath}`;
+    return normalized;
   }
 
   /**
@@ -10380,6 +11216,120 @@ struct MainMenuPage {
       return '';
     }
     return this.normalizeCoverPath(coverPath);
+  }
+
+  private getNovelCoverPath(novel: NovelBook): string {
+    const localPath = typeof novel.coverLocalPath === 'string' ? novel.coverLocalPath.trim() : '';
+    const remotePath = typeof novel.coverUrl === 'string' ? novel.coverUrl.trim() : '';
+
+    if (localPath.length > 0
+      && (localPath.startsWith('app.media.') || localPath.startsWith('$r(') || this.isNetworkUrl(localPath))) {
+      return localPath;
+    }
+
+    if (remotePath.length > 0
+      && (remotePath.startsWith('app.media.') || remotePath.startsWith('$r(') || this.isNetworkUrl(remotePath))) {
+      return remotePath;
+    }
+
+    const storedCoverPath = localPath || remotePath;
+    const recoveredPath = this.findSiblingLocalLibraryCoverPath(novel.bookUrl || '', storedCoverPath);
+    const normalizedStoredPath = this.getNormalizedLocalLibraryCoverPath(storedCoverPath).replace(/\\/g, '/');
+    const normalizedLocalPath = this.getNormalizedLocalLibraryCoverPath(localPath).replace(/\\/g, '/');
+    const normalizedRemotePath = this.getNormalizedLocalLibraryCoverPath(remotePath).replace(/\\/g, '/');
+
+    const shouldPreferSiblingCover = recoveredPath.length > 0
+      && normalizedStoredPath.includes('/library_covers/');
+
+    if (shouldPreferSiblingCover) {
+      logger.info(
+        TAG,
+        `[封面修复] 小说封面优先使用书籍同目录封面: id=${novel.id}, stored='${storedCoverPath}', recovered='${recoveredPath}'`
+      );
+      return recoveredPath;
+    }
+
+    if (localPath.length > 0
+      && this.hasAccessibleLocalLibraryCover(localPath)
+      && !normalizedLocalPath.includes('/library_covers/')) {
+      return localPath;
+    }
+
+    if (remotePath.length > 0
+      && this.hasAccessibleLocalLibraryCover(remotePath)
+      && !normalizedRemotePath.includes('/library_covers/')) {
+      return remotePath;
+    }
+
+    if (localPath.length > 0 && this.hasAccessibleLocalLibraryCover(localPath)) {
+      return localPath;
+    }
+
+    if (remotePath.length > 0 && this.hasAccessibleLocalLibraryCover(remotePath)) {
+      return remotePath;
+    }
+
+    if (recoveredPath) {
+      return recoveredPath;
+    }
+
+    return localPath || remotePath;
+  }
+
+
+  private getNovelDisplayCoverPath(novel: NovelBook): string {
+    return this.normalizeNovelCoverPath(this.getNovelCoverPath(novel));
+  }
+
+  private getParsedMangaSourceId(manga: Manga): number | undefined {
+    const rawSourceId = typeof manga.sourceInfo?.sourceId === 'string' ? manga.sourceInfo.sourceId.trim() : '';
+    if (!rawSourceId || rawSourceId === '0' || rawSourceId === 'local_import' || rawSourceId === 'local_pdf' || rawSourceId === 'download_import') {
+      return undefined;
+    }
+    const parsedSourceId = Number(rawSourceId);
+    return isNaN(parsedSourceId) ? undefined : parsedSourceId;
+  }
+
+  private getMangaSourceDisplayName(manga: Manga): string {
+    const sourceName = typeof manga.sourceInfo?.sourceName === 'string' ? manga.sourceInfo.sourceName.trim() : '';
+    if (sourceName.length > 0) {
+      return sourceName;
+    }
+    return this.getParsedMangaSourceId(manga) !== undefined ? '网络漫画' : '本地内容';
+  }
+
+  private findLoadedMangaChapter(manga: Manga, chapterId: string): MangaChapter | undefined {
+    if (!chapterId || !manga.chapters || manga.chapters.length <= 0) {
+      return undefined;
+    }
+    return manga.chapters.find((chapter: MangaChapter) => chapter.id === chapterId);
+  }
+
+  private getFirstLoadedMangaChapter(manga: Manga): MangaChapter | undefined {
+    if (!manga.chapters || manga.chapters.length <= 0) {
+      return undefined;
+    }
+    let firstChapter = manga.chapters[0];
+    for (let i = 1; i < manga.chapters.length; i++) {
+      const currentChapter = manga.chapters[i];
+      if (currentChapter.chapterNumber < firstChapter.chapterNumber) {
+        firstChapter = currentChapter;
+      }
+    }
+    return firstChapter;
+  }
+
+  private clampMangaPageIndex(manga: Manga, chapterId: string, pageIndex: number): number {
+    const safePageIndex = pageIndex >= 0 ? pageIndex : 0;
+    const chapter = this.findLoadedMangaChapter(manga, chapterId);
+    if (!chapter) {
+      return safePageIndex;
+    }
+    const totalPages = chapter.pages.length > 0 ? chapter.pages.length : (chapter.totalPages ?? 0);
+    if (totalPages <= 0) {
+      return safePageIndex;
+    }
+    return Math.min(safePageIndex, totalPages - 1);
   }
 
   /**
@@ -10408,7 +11358,7 @@ struct MainMenuPage {
       // 从小说获取封面（优先使用本地缓存路径）
       for (const novel of this.novelList) {
         if (covers.length >= 3) break;
-        const coverPath = novel.coverLocalPath || novel.coverUrl;
+        const coverPath = this.getNovelDisplayCoverPath(novel);
         if (coverPath) {
           covers.push(coverPath);
         }
@@ -11962,7 +12912,9 @@ struct MainMenuPage {
   buildCategoryDetailContent() {
     Column() {
       // 显示排序和筛选工具栏（自定义书架和系统书架都使用）
-      this.buildShelfToolbar()
+      if (!this.isShelfToolbarAtBottom()) {
+        this.buildShelfToolbar()
+      }
 
       // 内容列表
       Scroll() {
@@ -11978,7 +12930,7 @@ struct MainMenuPage {
             this.buildShelfNovelList()
           }
           if (this.selectedShelf === null) {
-            Blank().height(this.getMainTabBottomSpacerHeight())
+            Blank().height(this.getShelfDetailContentBottomSpacerHeight())
           }
         }
         .width('100%')
@@ -11988,6 +12940,14 @@ struct MainMenuPage {
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
       .friction(0.6)
+
+      if (this.isShelfToolbarAtBottom()) {
+        Column() {
+          this.buildShelfToolbar()
+        }
+        .width('100%')
+        .padding({ bottom: this.getMainTabBottomSpacerHeight() })
+      }
     }
     .width('100%')
     .layoutWeight(1)
@@ -12032,7 +12992,7 @@ struct MainMenuPage {
         }, (ebook: EBook) => ebook.id)
         ForEach(this.getShelfFilteredPdfEBookList(), (pdfEbook: Manga) => {
           GridItem() {
-            this.buildMangaGridCard(pdfEbook)
+            this.buildPdfEBookGridCard(pdfEbook)
           }
         }, (pdfEbook: Manga) => pdfEbook.id)
       }
@@ -12380,7 +13340,7 @@ struct MainMenuPage {
             } else if (item.type === 'ebook') {
               this.buildEBookGridCard(item.data as EBook)
             } else if (item.type === 'pdfebook') {
-              this.buildMangaGridCard(item.data as Manga)
+              this.buildPdfEBookGridCard(item.data as Manga)
             } else {
               this.buildNovelGridCard(item.data as NovelBook)
             }
@@ -13316,28 +14276,34 @@ struct MainMenuPage {
     const coverPaths: string[] = [];
 
     for (const item of items) {
-      if (coverPaths.length >= 4) break;
+      if (coverPaths.length >= 4) {
+        break;
+      }
 
       if (item.contentType === ContentType.MANGA) {
         const manga = this.mangaList.find(m => m.id === item.itemId);
-        if (manga && manga.coverImagePath) {
-          coverPaths.push(manga.coverImagePath);
+        const coverPath = manga ? this.normalizeDisplayPathForManga(manga) : '';
+        if (coverPath) {
+          coverPaths.push(coverPath);
         }
       } else if (item.contentType === ContentType.EBOOK) {
         const ebook = this.ebookList.find(e => e.id === item.itemId);
-        if (ebook && ebook.metadata && ebook.metadata.coverImagePath) {
-          coverPaths.push(ebook.metadata.coverImagePath);
+        const coverPath = ebook ? this.getValidEBookCoverPath(ebook) : '';
+        if (coverPath) {
+          coverPaths.push(coverPath);
         }
       } else if (item.contentType === ContentType.NOVEL) {
         const novel = this.novelList.find(n => n.id === item.itemId);
-        if (novel && novel.coverUrl) {
-          coverPaths.push(novel.coverUrl);
+        const coverPath = novel ? this.getNovelDisplayCoverPath(novel) : '';
+        if (coverPath) {
+          coverPaths.push(coverPath);
         }
       }
     }
 
     await this.categoryManager.autoUpdateCategoryCovers(categoryId, coverPaths);
   }
+
 
   /**
    * 更新所有分类的封面
@@ -13427,7 +14393,7 @@ struct MainMenuPage {
    * 构建漫画网格卡片
    */
   @Builder
-  buildMangaGridCard(manga: Manga) {
+  buildMangaGridCard(manga: Manga, anchorScope: string = 'library_grid') {
     Column({ space: 8 }) {
       // 封面图片
       Stack() {
@@ -13515,27 +14481,44 @@ struct MainMenuPage {
         this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
       })
 
-      // 漫画标题
-      Text(manga.title)
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          this.handleLibraryMangaTitleClick(manga);
-        })
-
-      // 阅读进度（GRID模式）- 显示当前阅读页数
-      if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
-        Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
-          .fontSize(10)
+      Column({ space: 4 }) {
+        // 漫画标题
+        Text(manga.title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
           .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .textAlign(TextAlign.Center)
+
+        if (this.shouldShowShelfDetailAuthor(this.getMangaPrimaryAuthor(manga))) {
+          Text(this.getShelfDetailAuthorText(this.getMangaPrimaryAuthor(manga)))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        }
+
+        if (this.shouldShowShelfDetailProgress(this.hasMangaReadingProgress(manga))) {
+          Text(this.getMangaGridProgressText(manga))
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        }
       }
+      .width('100%')
+      .onClick(() => {
+        this.handleLibraryMangaTitleClick(manga);
+      })
     }
     .width('100%')
     .padding(8)
@@ -13552,11 +14535,13 @@ struct MainMenuPage {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
           if (!this.isMultiSelectMode) {
-            this.showMangaActionMenu(manga);
+            this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
     )
-    .bindPopup(this.showMangaContextMenu && this.contextMenuManga?.id === manga.id, {
+    .bindPopup(this.showMangaContextMenu
+      && this.contextMenuManga?.id === manga.id
+      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -14209,9 +15194,9 @@ struct MainMenuPage {
     Column({ space: 8 }) {
       // 封面图片
       Stack() {
-        if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+        if (this.isNetworkUrl(this.getNovelCoverPath(novel))) {
           AvifImage({
-            src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+            src: this.getNovelDisplayCoverPath(novel),
             imageWidth: '100%',
             imageHeight: '100%',
             objectFit: ImageFit.Cover,
@@ -14224,7 +15209,7 @@ struct MainMenuPage {
             offsetY: 4
           })
         } else {
-          Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || $r('app.media.mangabook'))
+          Image(this.getNovelCoverSource(novel))
             .width('100%')
             .height('100%')
             .objectFit(ImageFit.Cover)
@@ -14277,7 +15262,7 @@ struct MainMenuPage {
    * 构建电子书List卡片（支持长按左滑删除）
    */
   @Builder
-  buildEBookCard(ebook: EBook) {
+  buildEBookCard(ebook: EBook, anchorScope: string = 'library_list') {
     Stack() {
       // 卡片内容层
       Row({ space: 12 }) {
@@ -14291,16 +15276,16 @@ struct MainMenuPage {
               objectFit: ImageFit.Cover,
             })
           } else if (this.hasValidEBookCover(ebook)) {
-            Image(this.getEBookCoverSource(ebook))
+            Image(this.getDisplayEBookCoverSource(ebook))
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
               .onError((event) => {
                 const errMsg = event ? JSON.stringify(event) : 'unknown';
-                logger.warn(TAG, `[封面诊断] 列表卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getEBookCoverSource(ebook)}', error=${errMsg}`);
+                logger.warn(TAG, `[封面诊断] 列表卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getDisplayEBookCoverSource(ebook)}', error=${errMsg}`);
               })
           } else {
-            Image(this.getEBookCoverSource(ebook))
+            Image(this.getDisplayEBookCoverSource(ebook))
               .width(50)
               .height(50)
               .objectFit(ImageFit.Cover)
@@ -14309,7 +15294,7 @@ struct MainMenuPage {
         }
         .width(80)
         .height(120)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
@@ -14379,14 +15364,16 @@ struct MainMenuPage {
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
             if (!this.isEBookMultiSelectMode) {
-              this.showEBookActionMenu(ebook);
+              this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
             }
           })
       )
     }
     .width('100%')
     .height(140)
-    .bindPopup(this.showEBookContextMenu && this.contextMenuEBook?.id === ebook.id, {
+    .bindPopup(this.showEBookContextMenu
+      && this.contextMenuEBook?.id === ebook.id
+      && this.ebookContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
       builder: this.buildEBookCustomContextMenu(ebook),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -14437,28 +15424,11 @@ struct MainMenuPage {
    */
   private async openMangaReaderWithAnimation(manga: Manga, componentId: string): Promise<void> {
     logger.info(TAG, `打开漫画阅读器（带翻开动画）: ${manga.title}`);
-    
+
     try {
-      // 获取漫画的sourceId和相关信息
-      const comicInfo: ComicInfo | null = await this.dataManager.getComicById(manga.id);
-      let sourceIdNum: number = -1;
-      let hasWebSource: boolean = false;
-      if (comicInfo && typeof comicInfo.sourceId === 'string' && comicInfo.sourceId.length > 0) {
-        const parsed: number = Number(comicInfo.sourceId);
-        if (!isNaN(parsed)) {
-          sourceIdNum = parsed;
-          hasWebSource = true;
-        }
-      }
-      let sourceNameVal: string = 'LOCAL';
-      if (hasWebSource) {
-        const srcRecord: ComicSourceDatabaseRecord | null = await this.dataManager.getComicSourceById(sourceIdNum);
-        if (srcRecord && typeof srcRecord.name === 'string' && srcRecord.name.length > 0) {
-          sourceNameVal = srcRecord.name;
-        } else {
-          sourceNameVal = 'WEBVIEW';
-        }
-      }
+      const sourceIdNum = this.getParsedMangaSourceId(manga);
+      const hasWebSource = sourceIdNum !== undefined;
+      const sourceNameVal = this.getMangaSourceDisplayName(manga);
 
       // 确定恢复目标
       const target = await this.determineResumeTarget(manga);
@@ -14469,49 +15439,57 @@ struct MainMenuPage {
       if (!target) {
         // 无阅读记录，从第一章开始
         if (hasWebSource) {
-          const onlineChapterInfos = await this.dataManager.getOnlineComicChapters(manga.id);
-          if (onlineChapterInfos && onlineChapterInfos.length > 0) {
-            let firstChapterId: string = onlineChapterInfos[0].id;
-            let minChapterNumber: number = onlineChapterInfos[0].chapterNumber;
-            for (let i: number = 1; i < onlineChapterInfos.length; i++) {
-              const info = onlineChapterInfos[i];
-              if (info.chapterNumber < minChapterNumber) {
-                minChapterNumber = info.chapterNumber;
-                firstChapterId = info.id;
-              }
-            }
-            const ct: MangaReaderContentType = onlineChapterInfos[0].isDownloaded
-              ? MangaReaderContentType.OnlineDownloaded
-              : MangaReaderContentType.OnlineUndownloaded;
-
+          const firstLoadedChapter = this.getFirstLoadedMangaChapter(manga);
+          if (firstLoadedChapter) {
             readerParams = {
               mangaId: manga.id,
-              chapterId: firstChapterId,
+              chapterId: firstLoadedChapter.id,
               pageIndex: 0,
               fromPage: 'MainMenuPage',
-              contentType: ct,
+              contentType: firstLoadedChapter.isDownloaded
+                ? MangaReaderContentType.OnlineDownloaded
+                : MangaReaderContentType.OnlineUndownloaded,
               sourceId: sourceIdNum,
               sourceName: sourceNameVal
             } as MangaReaderPageParams;
           } else {
-            this.showToast('未找到章节，无法进入阅读器');
-            return;
+            const onlineChapterInfos = await this.dataManager.getOnlineComicChapters(manga.id);
+            if (onlineChapterInfos && onlineChapterInfos.length > 0) {
+              let firstChapterId: string = onlineChapterInfos[0].id;
+              let minChapterNumber: number = onlineChapterInfos[0].chapterNumber;
+              let firstChapterInfo = onlineChapterInfos[0];
+              for (let i: number = 1; i < onlineChapterInfos.length; i++) {
+                const info = onlineChapterInfos[i];
+                if (info.chapterNumber < minChapterNumber) {
+                  minChapterNumber = info.chapterNumber;
+                  firstChapterId = info.id;
+                  firstChapterInfo = info;
+                }
+              }
+              const ct: MangaReaderContentType = firstChapterInfo.isDownloaded
+                ? MangaReaderContentType.OnlineDownloaded
+                : MangaReaderContentType.OnlineUndownloaded;
+
+              readerParams = {
+                mangaId: manga.id,
+                chapterId: firstChapterId,
+                pageIndex: 0,
+                fromPage: 'MainMenuPage',
+                contentType: ct,
+                sourceId: sourceIdNum,
+                sourceName: sourceNameVal
+              } as MangaReaderPageParams;
+            } else {
+              this.showToast('未找到章节，无法进入阅读器');
+              return;
+            }
           }
         } else {
-          const chapterInfos = await this.dataManager.getComicChapters(manga.id);
-          if (chapterInfos && chapterInfos.length > 0) {
-            let firstChapterId: string = chapterInfos[0].id;
-            let minIndex: number = chapterInfos[0].index;
-            for (let i: number = 1; i < chapterInfos.length; i++) {
-              const info = chapterInfos[i];
-              if (info.index < minIndex) {
-                minIndex = info.index;
-                firstChapterId = info.id;
-              }
-            }
+          const firstLoadedChapter = this.getFirstLoadedMangaChapter(manga);
+          if (firstLoadedChapter) {
             readerParams = {
               mangaId: manga.id,
-              chapterId: firstChapterId,
+              chapterId: firstLoadedChapter.id,
               pageIndex: 0,
               fromPage: 'MainMenuPage',
               contentType: MangaReaderContentType.Local,
@@ -14519,19 +15497,48 @@ struct MainMenuPage {
               sourceName: sourceNameVal
             } as MangaReaderPageParams;
           } else {
-            this.showToast('未找到章节，无法进入阅读器');
-            return;
+            const chapterInfos = await this.dataManager.getComicChapters(manga.id);
+            if (chapterInfos && chapterInfos.length > 0) {
+              let firstChapterId: string = chapterInfos[0].id;
+              let minIndex: number = chapterInfos[0].index;
+              for (let i: number = 1; i < chapterInfos.length; i++) {
+                const info = chapterInfos[i];
+                if (info.index < minIndex) {
+                  minIndex = info.index;
+                  firstChapterId = info.id;
+                }
+              }
+              readerParams = {
+                mangaId: manga.id,
+                chapterId: firstChapterId,
+                pageIndex: 0,
+                fromPage: 'MainMenuPage',
+                contentType: MangaReaderContentType.Local,
+                sourceId: undefined,
+                sourceName: sourceNameVal
+              } as MangaReaderPageParams;
+            } else {
+              this.showToast('未找到章节，无法进入阅读器');
+              return;
+            }
           }
         }
       } else {
         // 有阅读记录，恢复到上次位置
         let ct2: MangaReaderContentType = MangaReaderContentType.Local;
         if (hasWebSource) {
-          const targetChapterInfo = await this.dataManager.getOnlineChapterById(target.chapterId);
-          if (targetChapterInfo && targetChapterInfo.isDownloaded) {
-            ct2 = MangaReaderContentType.OnlineDownloaded;
+          const loadedTargetChapter = this.findLoadedMangaChapter(manga, target.chapterId);
+          if (loadedTargetChapter) {
+            ct2 = loadedTargetChapter.isDownloaded
+              ? MangaReaderContentType.OnlineDownloaded
+              : MangaReaderContentType.OnlineUndownloaded;
           } else {
-            ct2 = MangaReaderContentType.OnlineUndownloaded;
+            const targetChapterInfo = await this.dataManager.getOnlineChapterById(target.chapterId);
+            if (targetChapterInfo && targetChapterInfo.isDownloaded) {
+              ct2 = MangaReaderContentType.OnlineDownloaded;
+            } else {
+              ct2 = MangaReaderContentType.OnlineUndownloaded;
+            }
           }
         }
         readerParams = {
@@ -14540,7 +15547,7 @@ struct MainMenuPage {
           pageIndex: target.pageIndex,
           fromPage: 'MainMenuPage',
           contentType: ct2,
-          sourceId: hasWebSource ? sourceIdNum : undefined,
+          sourceId: sourceIdNum,
           sourceName: sourceNameVal
         } as MangaReaderPageParams;
       }
@@ -14596,17 +15603,15 @@ struct MainMenuPage {
    */
   private openEBookReaderWithComponentId(ebook: EBook, componentId: string): void {
     logger.info(TAG, `打开电子书阅读器: ${ebook.metadata.title}`);
-    
-    // 触发翻开过渡动画（使用组件ID获取实际位置）
-    const coverPath: string = ebook.metadata.coverImagePath || '';
+
+    const coverPath: string = this.getValidEBookCoverPath(ebook);
     const readerParams: EBookReaderParams = {
       bookId: ebook.id,
       coverComponentId: componentId
     };
-    
-    // 获取电子书背景设置
+
     const ebookBackground = this.getEBookBackgroundSettings(ebook);
-    
+
     logger.info(TAG, `触发翻开过渡动画: coverPath=${coverPath}, componentId=${componentId}`);
     startBookOpenTransitionWithComponentId(
       coverPath,
@@ -14614,7 +15619,6 @@ struct MainMenuPage {
       ebook.id,
       'ebook',
       () => {
-        // 动画完成时触发导航
         logger.info(TAG, '翻开过渡动画触发导航');
         this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
       },
@@ -14627,26 +15631,33 @@ struct MainMenuPage {
     );
   }
 
+
   /**
    * 打开电子书详情页
    */
   private openEBookDetail(ebook: EBook): void {
-    // 根据页面设置决定使用哪个详情页
     const pageType = PageSettingsHelper.getEBookDetailPageType();
-    
+    const rawCoverPath = this.getEBookCoverPath(ebook);
+    const displayCoverPath = this.getValidEBookCoverPath(ebook);
+    const cachedCoverPath = rawCoverPath.length > 0
+      && !this.isNetworkUrl(rawCoverPath)
+      && !rawCoverPath.startsWith('app.media.')
+      && !rawCoverPath.startsWith('$r(')
+      ? rawCoverPath
+      : undefined;
+
     if (pageType === DetailPageType.UNIFIED) {
-      // 使用统一详情页
       const unifiedParams: UnifiedDetailPageParams = {
         contentType: UnifiedContentType.EBOOK,
         contentId: ebook.id,
         cachedTitle: ebook.metadata?.title,
-        cachedCover: ebook.metadata?.coverImagePath,
+        cachedCoverPath: cachedCoverPath,
+        cachedCover: displayCoverPath || rawCoverPath,
         cachedAuthor: ebook.metadata?.author
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
       logger.info(TAG, `打开统一详情页(电子书): ${ebook.metadata?.title}`);
     } else {
-      // 使用原有电子书详情页
       logger.info(TAG, `打开电子书详情页: ${ebook.metadata?.title}`);
       const detailParams: EBookDetailPageParams = {
         bookId: ebook.id
@@ -14654,6 +15665,7 @@ struct MainMenuPage {
       this.pathStack.pushPath({ name: 'EBookDetailPage', param: detailParams });
     }
   }
+
 
   /**
    * 检查电子书是否有阅读进度
@@ -14701,6 +15713,101 @@ struct MainMenuPage {
       return true;
     }
     return false;
+  }
+
+  private hasNovelReadingProgress(novel: NovelBook): boolean {
+    if (novel.readStatus === NovelReadStatus.READING || novel.readStatus === NovelReadStatus.FINISHED) {
+      return true;
+    }
+    if ((novel.lastReadChapterIndex ?? 0) > 0) {
+      return true;
+    }
+    if ((novel.lastReadPosition ?? 0) > 0) {
+      return true;
+    }
+    return (novel.lastReadTime ?? 0) > 0;
+  }
+
+  private hasLibraryInfoText(value: string | null | undefined): boolean {
+    return value !== undefined && value !== null && value.trim().length > 0;
+  }
+
+  private getMangaPrimaryAuthor(manga: Manga): string {
+    return manga.metadata?.authors?.[0] ?? '';
+  }
+
+  private shouldShowShelfDetailAuthor(author: string | null | undefined): boolean {
+    const mode = this.normalizeLibraryGridDisplayMode(this.libraryGridAuthorDisplayModeSetting);
+    if (mode === 'hidden') {
+      return false;
+    }
+    if (mode === 'always') {
+      return true;
+    }
+    return this.hasLibraryInfoText(author);
+  }
+
+  private getShelfDetailAuthorText(author: string | null | undefined): string {
+    return this.hasLibraryInfoText(author) ? author!.trim() : '未知作者';
+  }
+
+  private shouldShowShelfDetailProgress(hasProgress: boolean): boolean {
+    const mode = this.normalizeLibraryGridDisplayMode(this.libraryGridProgressDisplayModeSetting);
+    if (mode === 'hidden') {
+      return false;
+    }
+    if (mode === 'always') {
+      return true;
+    }
+    return hasProgress;
+  }
+
+  private getMangaGridProgressText(manga: Manga): string {
+    if (!this.hasMangaReadingProgress(manga)) {
+      return '未开始阅读';
+    }
+    const currentPage = Math.max(0, manga.readingProgress?.currentPageIndex ?? 0) + 1;
+    return `已读 ${currentPage} 页`;
+  }
+
+  private getEBookGridProgressPercent(ebook: EBook): number {
+    const progress = ebook.readingProgress?.progress ?? 0;
+    return Math.max(0, Math.min(100, Math.floor(progress)));
+  }
+
+  private getEBookGridProgressText(ebook: EBook): string {
+    if (!this.hasEBookReadingProgress(ebook)) {
+      return '未开始阅读';
+    }
+    const percent = this.getEBookGridProgressPercent(ebook);
+    if (percent > 0) {
+      return `${percent}%`;
+    }
+    const chapterIndex = ebook.readingProgress?.currentChapterIndex ?? 0;
+    if (chapterIndex > 0) {
+      return `已读至第 ${chapterIndex + 1} 章`;
+    }
+    if (this.hasLibraryInfoText(ebook.readingProgress?.domPos)) {
+      return '继续阅读';
+    }
+    return '阅读中';
+  }
+
+  private getNovelGridProgressText(novel: NovelBook): string {
+    if (!this.hasNovelReadingProgress(novel)) {
+      return '未开始阅读';
+    }
+    if (novel.readStatus === NovelReadStatus.FINISHED) {
+      return novel.chapterCount > 0 ? `已读完 ${novel.chapterCount} 章` : '已读完';
+    }
+    const currentChapter = Math.max(1, (novel.lastReadChapterIndex ?? 0) + 1);
+    if (novel.chapterCount > 0) {
+      return `已读 ${Math.min(currentChapter, novel.chapterCount)}/${novel.chapterCount} 章`;
+    }
+    if ((novel.lastReadChapterIndex ?? -1) >= 0) {
+      return `已读第 ${currentChapter} 章`;
+    }
+    return '阅读中';
   }
 
   private isLibraryCoverReadEnabled(): boolean {
@@ -14763,9 +15870,10 @@ struct MainMenuPage {
       }
 
       const sourceManager = getNovelSourceManager();
-      const parsedBook = await sourceManager.getBookInfo(novel.sourceId, novel.bookUrl);
-      const resolvedBook: LegadoBook = parsedBook ?? {
-        id: `${novel.sourceId}_${encodeURIComponent(novel.bookUrl)}`,
+      const rawCoverPath = this.getNovelCoverPath(novel);
+      const displayCoverPath = this.getNovelDisplayCoverPath(novel);
+      const resolvedBook: LegadoBook = {
+        id: this.getNovelTransitionBookId(novel),
         origin: novel.sourceId,
         originName: novel.sourceName || '',
         bookUrl: novel.bookUrl,
@@ -14773,7 +15881,8 @@ struct MainMenuPage {
         author: novel.author,
         kind: novel.kind,
         intro: novel.intro,
-        coverUrl: novel.coverUrl,
+        coverUrl: rawCoverPath,
+        coverLocalPath: novel.coverLocalPath,
         tocUrl: novel.tocUrl || novel.bookUrl,
         latestChapterTitle: novel.latestChapterTitle,
         wordCount: novel.wordCount,
@@ -14781,27 +15890,54 @@ struct MainMenuPage {
         type: LegadoBookSourceType.TEXT
       };
 
-      const chapters = await sourceManager.getChapterList(novel.sourceId, resolvedBook);
-      if (chapters.length <= 0) {
+      const preferredChapterIndex = Math.max(0, novel.lastReadChapterIndex ?? 0);
+      let safeChapterIndex = preferredChapterIndex;
+      let chapterUrl = '';
+      let chapterTitle = '';
+      let totalChapters = Math.max(0, novel.chapterCount ?? 0);
+
+      if (!this.novelDataManager) {
+        this.novelDataManager = getNovelDataManager();
+      }
+      const cachedChapter = this.novelDataManager
+        ? await this.novelDataManager.getChapterByIndex(novel.id, preferredChapterIndex)
+        : null;
+
+      if (cachedChapter && cachedChapter.url) {
+        chapterUrl = cachedChapter.url;
+        chapterTitle = cachedChapter.title || `第${preferredChapterIndex + 1}章`;
+        totalChapters = Math.max(totalChapters, preferredChapterIndex + 1);
+      } else {
+        const chapters = await sourceManager.getChapterList(novel.sourceId, resolvedBook);
+        if (chapters.length <= 0) {
+          this.showToast('未找到章节，已打开小说详情');
+          this.openNovelDetail(novel);
+          return;
+        }
+        totalChapters = chapters.length;
+        safeChapterIndex = Math.max(0, Math.min(preferredChapterIndex, chapters.length - 1));
+        const chapter = chapters[safeChapterIndex];
+        chapterUrl = chapter.url;
+        chapterTitle = chapter.title || `第${safeChapterIndex + 1}章`;
+      }
+
+      if (!chapterUrl) {
         this.showToast('未找到章节，已打开小说详情');
         this.openNovelDetail(novel);
         return;
       }
 
-      const lastReadChapterIndex = novel.lastReadChapterIndex ?? 0;
-      const safeChapterIndex = Math.max(0, Math.min(lastReadChapterIndex, chapters.length - 1));
-      const chapter = chapters[safeChapterIndex];
       const readerParams: NovelReaderPageParams = {
         sourceId: novel.sourceId,
         bookUrl: novel.bookUrl,
         bookName: resolvedBook.name || novel.name,
-        chapterUrl: chapter.url,
-        chapterTitle: chapter.title || `第${safeChapterIndex + 1}章`,
+        chapterUrl: chapterUrl,
+        chapterTitle: chapterTitle,
         chapterIndex: safeChapterIndex,
-        totalChapters: chapters.length,
+        totalChapters: Math.max(totalChapters, safeChapterIndex + 1),
         tocUrl: resolvedBook.tocUrl || novel.tocUrl || novel.bookUrl,
         author: resolvedBook.author || novel.author,
-        coverUrl: resolvedBook.coverUrl || novel.coverUrl,
+        coverUrl: displayCoverPath || resolvedBook.coverUrl || rawCoverPath,
         sourceName: novel.sourceName || resolvedBook.originName || '',
         coverComponentId: coverComponentId
       };
@@ -14811,7 +15947,7 @@ struct MainMenuPage {
         readerParams.chapterStartOffset = lastReadPosition;
       }
 
-      const coverPath = this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl);
+      const coverPath = displayCoverPath;
       const transitionBookId = this.getNovelTransitionBookId(novel);
       startBookOpenTransitionWithComponentId(
         coverPath,
@@ -15210,7 +16346,7 @@ struct MainMenuPage {
    * 构建电子书Grid卡片
    */
   @Builder
-  buildEBookGridCard(ebook: EBook) {
+  buildEBookGridCard(ebook: EBook, anchorScope: string = 'library_grid') {
     Stack() {
       Column({ space: 8 }) {
         // 封面区域
@@ -15224,16 +16360,16 @@ struct MainMenuPage {
                 objectFit: ImageFit.Cover,
               })
             } else if (this.hasValidEBookCover(ebook)) {
-              Image(this.getEBookCoverSource(ebook))
+              Image(this.getDisplayEBookCoverSource(ebook))
                 .width('100%')
                 .height('100%')
                 .objectFit(ImageFit.Cover)
                 .onError((event) => {
                   const errMsg = event ? JSON.stringify(event) : 'unknown';
-                  logger.warn(TAG, `[封面诊断] 网格卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getEBookCoverSource(ebook)}', error=${errMsg}`);
+                  logger.warn(TAG, `[封面诊断] 网格卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getDisplayEBookCoverSource(ebook)}', error=${errMsg}`);
                 })
             } else {
-              Image(this.getEBookCoverSource(ebook))
+              Image(this.getDisplayEBookCoverSource(ebook))
                 .width(60)
                 .height(60)
                 .objectFit(ImageFit.Cover)
@@ -15312,32 +16448,26 @@ struct MainMenuPage {
             .width('100%')
             .textAlign(TextAlign.Center)
 
-          Text(ebook.metadata.author)
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .textAlign(TextAlign.Center)
+          if (this.shouldShowShelfDetailAuthor(ebook.metadata.author)) {
+            Text(this.getShelfDetailAuthorText(ebook.metadata.author))
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          }
 
-          // 阅读进度
-          if (ebook.readingProgress && ebook.readingProgress.progress > 0) {
-            Row({ space: 4 }) {
-              Progress({
-                value: ebook.readingProgress.progress,
-                total: 100,
-                type: ProgressType.Linear
-              })
-                .width(60)
-                .height(4)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-
-              Text(`${Math.floor(ebook.readingProgress.progress)}%`)
-                .fontSize(10)
-                .fontFamily(this.appFontFamily)
-                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            }
+          if (this.shouldShowShelfDetailProgress(this.hasEBookReadingProgress(ebook))) {
+            Text(this.getEBookGridProgressText(ebook))
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .textAlign(TextAlign.Center)
           }
         }
         .width('100%')
@@ -15363,11 +16493,13 @@ struct MainMenuPage {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
           if (!this.isEBookMultiSelectMode) {
-            this.showEBookActionMenu(ebook);
+            this.showEBookActionMenu(ebook, this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id));
           }
         })
     )
-    .bindPopup(this.showEBookContextMenu && this.contextMenuEBook?.id === ebook.id, {
+    .bindPopup(this.showEBookContextMenu
+      && this.contextMenuEBook?.id === ebook.id
+      && this.ebookContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'ebook', ebook.id), {
       builder: this.buildEBookCustomContextMenu(ebook),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -15385,20 +16517,20 @@ struct MainMenuPage {
    * 构建小说List卡片
    */
   @Builder
-  buildNovelCard(novel: NovelBook) {
+  buildNovelCard(novel: NovelBook, anchorScope: string = 'library_list') {
     Stack({ alignContent: Alignment.End }) {
       Row({ space: 12 }) {
         // 封面图片
         Column() {
-          if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+          if (this.isNetworkUrl(this.getNovelCoverPath(novel))) {
             AvifImage({
-              src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+              src: this.getNovelDisplayCoverPath(novel),
               imageWidth: '100%',
               imageHeight: '100%',
               objectFit: ImageFit.Cover,
             })
-          } else if (novel.coverUrl || novel.coverLocalPath) {
-            Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || '')
+          } else if (this.getNovelDisplayCoverPath(novel)) {
+            Image(this.getNovelCoverSource(novel))
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
@@ -15411,7 +16543,7 @@ struct MainMenuPage {
         }
         .width(80)
         .height(120)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getGlassRadius())
         .clip(true)
         .justifyContent(FlexAlign.Center)
@@ -15468,6 +16600,9 @@ struct MainMenuPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         .height(120)
+        .onClick(() => {
+          this.handleLibraryNovelTitleClick(novel);
+        })
       }
       .onClick(() => {
         if (this.isNovelMultiSelectMode) {
@@ -15486,14 +16621,16 @@ struct MainMenuPage {
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
             if (!this.isNovelMultiSelectMode) {
-              this.showNovelActionMenu(novel);
+              this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
             }
           })
       )
     }
     .width('100%')
     .height(144)
-    .bindPopup(this.showNovelContextMenu && this.contextMenuNovel?.id === novel.id, {
+    .bindPopup(this.showNovelContextMenu
+      && this.contextMenuNovel?.id === novel.id
+      && this.novelContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
       builder: this.buildNovelCustomContextMenu(novel),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -15511,20 +16648,20 @@ struct MainMenuPage {
    * 构建小说Grid卡片
    */
   @Builder
-  buildNovelGridCard(novel: NovelBook) {
+  buildNovelGridCard(novel: NovelBook, anchorScope: string = 'library_grid') {
     Column({ space: 8 }) {
       // 封面区域
       Stack() {
         Column() {
-          if (this.isNetworkUrl(novel.coverLocalPath || novel.coverUrl)) {
+          if (this.isNetworkUrl(this.getNovelCoverPath(novel))) {
             AvifImage({
-              src: this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl),
+              src: this.getNovelDisplayCoverPath(novel),
               imageWidth: '100%',
               imageHeight: '100%',
               objectFit: ImageFit.Cover,
             })
-          } else if (novel.coverUrl || novel.coverLocalPath) {
-            Image(this.normalizeNovelCoverPath(novel.coverLocalPath || novel.coverUrl) || '')
+          } else if (this.getNovelDisplayCoverPath(novel)) {
+            Image(this.getNovelCoverSource(novel))
               .width('100%')
               .height('100%')
               .objectFit(ImageFit.Cover)
@@ -15609,27 +16746,41 @@ struct MainMenuPage {
         this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
       })
 
-      // 小说标题
-      Text(novel.name)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .onClick(() => {
-          this.handleLibraryNovelTitleClick(novel);
-        })
+      Column({ space: 4 }) {
+        // 小说标题
+        Text(novel.name)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
 
-      // 作者
-      Text(novel.author || '未知作者')
-        .fontSize(11)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
+        if (this.shouldShowShelfDetailAuthor(novel.author)) {
+          Text(this.getShelfDetailAuthorText(novel.author))
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+
+        if (this.shouldShowShelfDetailProgress(this.hasNovelReadingProgress(novel))) {
+          Text(this.getNovelGridProgressText(novel))
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .onClick(() => {
+        this.handleLibraryNovelTitleClick(novel);
+      })
     }
     .width('100%')
     .padding(8)
@@ -15646,11 +16797,13 @@ struct MainMenuPage {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
           if (!this.isNovelMultiSelectMode) {
-            this.showNovelActionMenu(novel);
+            this.showNovelActionMenu(novel, this.getPopupAnchorKey(anchorScope, 'novel', novel.id));
           }
         })
     )
-    .bindPopup(this.showNovelContextMenu && this.contextMenuNovel?.id === novel.id, {
+    .bindPopup(this.showNovelContextMenu
+      && this.contextMenuNovel?.id === novel.id
+      && this.novelContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'novel', novel.id), {
       builder: this.buildNovelCustomContextMenu(novel),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -15684,52 +16837,55 @@ struct MainMenuPage {
    * 打开小说详情页
    */
   private openNovelDetail(novel: NovelBook): void {
-    // 根据页面设置决定使用哪个详情页
     const pageType = PageSettingsHelper.getNovelDetailPageType();
-    
+    const rawCoverPath = this.getNovelCoverPath(novel);
+    const displayCoverPath = this.getNovelDisplayCoverPath(novel);
+    const cachedCoverPath = rawCoverPath.length > 0
+      && !this.isNetworkUrl(rawCoverPath)
+      && !rawCoverPath.startsWith('app.media.')
+      && !rawCoverPath.startsWith('$r(')
+      ? rawCoverPath
+      : undefined;
+
     if (pageType === DetailPageType.UNIFIED) {
-      // 使用统一详情页
       const unifiedParams: UnifiedDetailPageParams = {
         contentType: UnifiedContentType.NOVEL,
         contentId: novel.bookUrl,
         sourceId: novel.sourceId,
         cachedTitle: novel.name,
-        cachedCoverPath: novel.coverLocalPath || undefined,
-        cachedCover: novel.coverLocalPath || novel.coverUrl,
+        cachedCoverPath: cachedCoverPath,
+        cachedCover: displayCoverPath || rawCoverPath,
         cachedAuthor: novel.author
       };
       this.pathStack.pushPathByName('UnifiedDetailPage', unifiedParams);
       logger.info(TAG, `打开统一详情页(小说): ${novel.name}`);
     } else if (pageType === DetailPageType.MANGA) {
-      // 使用漫画详情页样式（小说内容无法在漫画详情页正常显示，回退到小说详情页）
       logger.warn(TAG, `小说内容不支持漫画详情页，使用小说详情页: ${novel.name}`);
       const params: NovelDetailPageParams = {
         sourceId: novel.sourceId,
         bookUrl: novel.bookUrl,
         bookName: novel.name,
         author: novel.author,
-        coverUrl: novel.coverUrl
+        coverUrl: displayCoverPath || rawCoverPath
       };
       this.pathStack.pushPathByName('NovelDetailPage', params);
     } else if (pageType === DetailPageType.EBOOK) {
-      // 使用电子书详情页样式（小说内容无法在电子书详情页正常显示，回退到小说详情页）
       logger.warn(TAG, `小说内容不支持电子书详情页，使用小说详情页: ${novel.name}`);
       const params: NovelDetailPageParams = {
         sourceId: novel.sourceId,
         bookUrl: novel.bookUrl,
         bookName: novel.name,
         author: novel.author,
-        coverUrl: novel.coverUrl
+        coverUrl: displayCoverPath || rawCoverPath
       };
       this.pathStack.pushPathByName('NovelDetailPage', params);
     } else {
-      // 使用原有小说详情页（DEFAULT或NOVEL）
       const params: NovelDetailPageParams = {
         sourceId: novel.sourceId,
         bookUrl: novel.bookUrl,
         bookName: novel.name,
         author: novel.author,
-        coverUrl: novel.coverUrl
+        coverUrl: displayCoverPath || rawCoverPath
       };
       this.pathStack.pushPathByName('NovelDetailPage', params);
     }
@@ -15739,7 +16895,7 @@ struct MainMenuPage {
    * 构建PDF电子书List卡片（显示在电子书列表中，但使用漫画阅读器）
    */
   @Builder
-  buildPdfEBookCard(manga: Manga) {
+  buildPdfEBookCard(manga: Manga, anchorScope: string = 'library_pdf_list') {
     Row({ space: 12 }) {
       // 封面图片
       Column() {
@@ -15759,7 +16915,7 @@ struct MainMenuPage {
       }
       .width(80)
       .height(120)
-      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .backgroundColor(this.getLibraryCoverBackgroundColor())
       .borderRadius(this.getGlassRadius())
       .clip(true)
       .justifyContent(FlexAlign.Center)
@@ -15834,11 +16990,13 @@ struct MainMenuPage {
       LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
           if (!this.isMultiSelectMode) {
-            this.showMangaActionMenu(manga);
+            this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
           }
         })
     )
-    .bindPopup(this.showMangaContextMenu && this.contextMenuManga?.id === manga.id, {
+    .bindPopup(this.showMangaContextMenu
+      && this.contextMenuManga?.id === manga.id
+      && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
       builder: this.buildMangaCustomContextMenu(manga),
       placement: Placement.Bottom,
       popupColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme),
@@ -15917,21 +17075,26 @@ struct MainMenuPage {
             .width('100%')
             .textAlign(TextAlign.Center)
 
-          Text(manga.metadata.authors.length > 0 ? manga.metadata.authors[0] : '未知作者')
-            .fontSize(12)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .textAlign(TextAlign.Center)
+          if (this.shouldShowShelfDetailAuthor(this.getMangaPrimaryAuthor(manga))) {
+            Text(this.getShelfDetailAuthorText(this.getMangaPrimaryAuthor(manga)))
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          }
 
-          // 阅读进度（PDF电子书GRID模式）- 显示当前阅读页数
-          if (manga.readingProgress && (manga.readingProgress.currentChapterId || manga.readingProgress.currentPageIndex > 0)) {
-            Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
+          if (this.shouldShowShelfDetailProgress(this.hasMangaReadingProgress(manga))) {
+            Text(this.getMangaGridProgressText(manga))
               .fontSize(10)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .textAlign(TextAlign.Center)
           }
         }
         .width('100%')
@@ -16087,31 +17250,7 @@ struct MainMenuPage {
    */
   private async openMangaDetail(manga: Manga) {
     try {
-      // [修复] 查询漫画的sourceId（同时查询本地和在线漫画）
-      let sourceId: number | undefined = undefined;
-      try {
-        // 优先从manga.sourceInfo获取
-        if (manga.sourceInfo?.sourceId) {
-          sourceId = Number(manga.sourceInfo.sourceId);
-          logger.info(TAG, `从manga.sourceInfo获取sourceId: ${sourceId}`);
-        } else {
-          // 回退：从数据库查询
-          const comicInfo = await this.dataManager.getComicById(manga.id);
-          if (comicInfo && comicInfo.sourceId) {
-            sourceId = Number(comicInfo.sourceId);
-            logger.info(TAG, `从comic_info表获取sourceId: ${sourceId}`);
-          } else {
-            // 尝试从online_comic_info表查询
-            const onlineComicInfo = await this.dataManager.getOnlineComicInfoById(manga.id);
-            if (onlineComicInfo && onlineComicInfo.sourceId) {
-              sourceId = Number(onlineComicInfo.sourceId);
-              logger.info(TAG, `从online_comic_info表获取sourceId: ${sourceId}`);
-            }
-          }
-        }
-      } catch (err) {
-        logger.warn(TAG, `获取漫画sourceId失败: ${String(err)}`);
-      }
+      const sourceId = this.getParsedMangaSourceId(manga);
 
       // 根据页面设置决定使用哪个详情页
       const pageType = PageSettingsHelper.getMangaDetailPageType();
@@ -16291,6 +17430,14 @@ struct MainMenuPage {
   }
 
   private async determineResumeTarget(manga: Manga): Promise<ResumeTarget | null> {
+    const rp: ReadingProgress = manga.readingProgress as ReadingProgress;
+    if (rp && rp.currentChapterId && rp.currentChapterId.length > 0) {
+      return {
+        chapterId: rp.currentChapterId,
+        pageIndex: this.clampMangaPageIndex(manga, rp.currentChapterId, rp.currentPageIndex)
+      } as ResumeTarget;
+    }
+
     try {
       // [性能优化] 使用 getLatestReadHistory 单条 SQL 获取最新记录，替代 getReadHistoryByComic(limit=1000)
       const latest: ReadHistory | null = await this.dataManager.getLatestReadHistory(manga.id, 'default_user');
@@ -16298,56 +17445,18 @@ struct MainMenuPage {
       if (latest) {
         const latestSafe: ReadHistory = latest as ReadHistory;
         const latestChapterId: string = latestSafe.chapterId;
-        let resumeIndex: number = latestSafe.pageIndex >= 0 ? latestSafe.pageIndex : 0;
-        if (manga.chapters && manga.chapters.length > 0) {
-          const ch: MangaChapter | undefined = manga.chapters.find((c: MangaChapter) => c.id === latestChapterId);
-          if (ch) {
-            const total: number = ch.pages.length;
-            if (total > 0 && resumeIndex >= total) {
-              resumeIndex = total - 1;
-            }
-          } else {
-            try {
-              const pages: PageInfo[] = await this.dataManager.getPageInfoList(latestChapterId);
-              const totalPages: number = pages.length;
-              if (totalPages > 0 && resumeIndex >= totalPages) {
-                resumeIndex = totalPages - 1;
-              }
-            } catch (pageErr) {
-              logger.warn(TAG, String(pageErr));
-            }
-          }
-        }
-        return { chapterId: latestChapterId, pageIndex: resumeIndex } as ResumeTarget;
+        return {
+          chapterId: latestChapterId,
+          pageIndex: this.clampMangaPageIndex(manga, latestChapterId, latestSafe.pageIndex)
+        } as ResumeTarget;
       }
     } catch (err) {
       logger.warn(TAG, String(err));
     }
 
-    const rp: ReadingProgress = manga.readingProgress as ReadingProgress;
-    if (rp && rp.currentChapterId && rp.currentChapterId.length > 0) {
-      let idx: number = rp.currentPageIndex >= 0 ? rp.currentPageIndex : 0;
-      if (manga.chapters && manga.chapters.length > 0) {
-        const ch2: MangaChapter | undefined = manga.chapters.find((c: MangaChapter) => c.id === rp.currentChapterId);
-        if (ch2) {
-          const tp: number = ch2.pages.length;
-          if (tp > 0 && idx >= tp) {
-            idx = tp - 1;
-          }
-        }
-      }
-      return { chapterId: rp.currentChapterId, pageIndex: idx } as ResumeTarget;
-    }
-
-    if (manga.chapters && manga.chapters.length > 0) {
-      let firstChapter: MangaChapter = manga.chapters[0];
-      for (let i: number = 1; i < manga.chapters.length; i++) {
-        const ch: MangaChapter = manga.chapters[i];
-        if (ch.chapterNumber < firstChapter.chapterNumber) {
-          firstChapter = ch;
-        }
-      }
-      return { chapterId: firstChapter.id, pageIndex: 0 } as ResumeTarget;
+    const firstLoadedChapter = this.getFirstLoadedMangaChapter(manga);
+    if (firstLoadedChapter) {
+      return { chapterId: firstLoadedChapter.id, pageIndex: 0 } as ResumeTarget;
     }
 
     try {
@@ -16770,7 +17879,7 @@ struct MainMenuPage {
                 Grid() {
                   ForEach(this.discoveredEBookList, (ebook: EBook) => {
                     GridItem() {
-                      this.buildEBookGridCard(ebook)
+                      this.buildEBookGridCard(ebook, 'discover_grid')
                     }
                   }, (ebook: EBook) => ebook.id)
                 }
@@ -22242,6 +23351,16 @@ struct MainMenuPage {
         }
 
         if (this.shouldShowShelfPreviewSlider()) {
+          Column() {
+            this.buildShelfDetailDisplayFloatingBar()
+          }
+          .position({
+            x: this.getShelfPreviewSliderX(),
+            y: Math.max(this.statusBarHeight, this.getShelfPreviewSliderY() - 132)
+          })
+          .zIndex(20)
+          .key(`shelfDetailDisplay_${this.barRenderKey}`)
+
           Column() {
             this.buildShelfPreviewSliderFloatingBar()
           }

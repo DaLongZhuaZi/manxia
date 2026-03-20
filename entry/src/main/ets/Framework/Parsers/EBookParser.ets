@@ -10,6 +10,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { pdfService } from '@kit.PDFKit';
+import { bookParser } from '@kit.ReaderKit';
 import { TxtMetadataExtractor } from './TxtMetadataExtractor';
 import { isReaderKitEnabled } from '../Initialization/ReaderKitFeatureGate';
 
@@ -21,45 +22,16 @@ interface ReaderKitBookParserHandler {
   getResourceContent(spineIndex: number, resourcePath: string): ArrayBuffer;
 }
 
-interface ReaderKitBookParserApi {
-  getDefaultHandler(path: string): Promise<ReaderKitBookParserHandler | null>;
-}
-
-interface ReaderKitDynamicModule {
-  bookParser?: ReaderKitBookParserApi;
-}
-
-let cachedBookParser: ReaderKitBookParserApi | null = null;
-let readerKitLoadAttempted: boolean = false;
-
-async function getReaderKitBookParser(): Promise<ReaderKitBookParserApi | null> {
-  if (!isReaderKitEnabled()) {
-    return null;
-  }
-
-  if (cachedBookParser) {
-    return cachedBookParser;
-  }
-
-  if (readerKitLoadAttempted) {
-    return null;
-  }
-
-  readerKitLoadAttempted = true;
-  try {
-    const readerKitModule = await import('@kit.ReaderKit');
-    const parser = (readerKitModule as Object as ReaderKitDynamicModule).bookParser;
-    if (!parser) {
-      logger.error(TAG, 'Reader Kit module loaded but bookParser is missing');
-      return null;
-    }
-    cachedBookParser = parser;
-    logger.info(TAG, 'Reader Kit bookParser loaded lazily');
-    return cachedBookParser;
-  } catch (error) {
-    logger.error(TAG, `Failed to lazy-load Reader Kit: ${String(error instanceof Error ? error.message : error)}`);
-    return null;
-  }
+function isReaderKitUnavailableError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes('reader kit is unavailable in current environment') ||
+    normalized.includes('reader kit unavailable') ||
+    (normalized.includes('reader kit') && normalized.includes('unavailable')) ||
+    normalized.includes('bookparser is missing') ||
+    normalized.includes('bookparser missing') ||
+    normalized.includes('bookparserhandler') ||
+    normalized.includes('failed to lazy-load reader kit') ||
+    (normalized.includes('cannot find module') && normalized.includes('@kit.readerkit'));
 }
 
 // 章节标题正则表达式（支持多种格式）
@@ -175,7 +147,12 @@ class ReaderKitEBookParser extends EBookParser {
       logger.info(TAG, `Reader Kit 解析完成: ${ebook.metadata.title}`);
       return ebook;
     } catch (error) {
-      logger.error(TAG, `Reader Kit 解析失败: ${String(error instanceof Error ? error.message : error)}`);
+      const errorMsg = String(error instanceof Error ? error.message : error);
+      if (isReaderKitUnavailableError(errorMsg)) {
+        logger.warn(TAG, `Reader Kit unavailable, fallback parser will be used: ${errorMsg}`);
+      } else {
+        logger.error(TAG, `Reader Kit 解析失败: ${errorMsg}`);
+      }
       return this.parseFallback();
     }
   }
@@ -219,17 +196,16 @@ class ReaderKitEBookParser extends EBookParser {
     }
   }
 
-  private async parseWithReaderKit(fileBuffer: ArrayBuffer): Promise<ReaderKitBookInfo> {
+  private async parseWithReaderKit(_fileBuffer: ArrayBuffer): Promise<ReaderKitBookInfo> {
     try {
       const fileName = this.getFileNameFromPath(this.filePath);
-      let candidatePath: string = this.filePath;
+      const candidatePath: string = this.filePath;
       logger.info(TAG, `[ReaderKit] 开始解析，路径: ${candidatePath}`);
       
-      const bookParser = await getReaderKitBookParser();
-      if (!bookParser) {
+      if (!isReaderKitEnabled()) {
         throw new Error('Reader Kit is unavailable in current environment');
       }
-      const parserHandler = await bookParser.getDefaultHandler(candidatePath);
+      const parserHandler: bookParser.BookParserHandler = await bookParser.getDefaultHandler(candidatePath);
       if (!parserHandler) {
         throw new Error('无法获取 BookParserHandler');
       }
@@ -237,24 +213,36 @@ class ReaderKitEBookParser extends EBookParser {
 
       // 获取书籍信息 - 使用 Object 类型转换以访问动态属性
       const rawInfo = await parserHandler.getBookInfo();
-      // 打印完整的 BookInfo 对象以查看实际属性名
-      logger.info(TAG, `[ReaderKit] BookInfo 原始数据: ${JSON.stringify(rawInfo)}`);
-      const infoObj = rawInfo as Object as Record<string, Object>;
+      logger.info(TAG, `[ReaderKit] BookInfo 原始数据: ${this.safeStringify(rawInfo)}`);
+      const infoObj = this.normalizeToRecord(rawInfo);
       
       // 打印所有可用的属性键，帮助调试
       const allKeys = Object.keys(infoObj);
-      logger.info(TAG, `[ReaderKit] BookInfo 所有属性键: ${allKeys.join(', ')}`);
+      logger.info(TAG, `[ReaderKit] BookInfo 所有属性键: ${allKeys.length > 0 ? allKeys.join(', ') : '(empty)'}`);
       
       // 获取目录
       const rawCatalog = await parserHandler.getCatalogList();
-      const catalogArray = rawCatalog as Object as Array<Record<string, Object>>;
+      const catalogArray = this.extractCatalogEntries(rawCatalog);
       logger.info(TAG, `[ReaderKit] 目录数量: ${catalogArray?.length || 0}`);
       if (catalogArray && catalogArray.length > 0) {
-        logger.info(TAG, `[ReaderKit] 第一个目录项: ${JSON.stringify(catalogArray[0])}`);
+        logger.info(TAG, `[ReaderKit] 第一个目录项: ${this.safeStringify(catalogArray[0])}`);
       }
 
       // 构建章节列表
-      const chapters: ReaderKitChapter[] = this.buildChaptersFromCatalog(catalogArray);
+      let chapters: ReaderKitChapter[] = this.buildChaptersFromCatalog(catalogArray);
+      if (chapters.length <= 0) {
+        let chapterCount = this.getNumberProperty(infoObj, ['chapterCount', 'catalogCount', 'resourceCount', 'spineCount']);
+        if (chapterCount <= 0) {
+          chapterCount = this.getNumberPropertyByPartialKey(infoObj, ['chapter', 'catalog', 'resource', 'spine', 'count']);
+        }
+        if (chapterCount <= 0 && catalogArray.length > 1) {
+          chapterCount = catalogArray.length;
+        }
+        if (chapterCount > 0) {
+          chapters = this.buildSyntheticChapters(chapterCount);
+          logger.info(TAG, `[ReaderKit] 目录缺失，使用章节数量字段创建占位目录: count=${chapterCount}`);
+        }
+      }
       
       // 详细打印每个元数据字段的值，帮助调试
       logger.info(TAG, `[ReaderKit] 元数据详情:`);
@@ -268,9 +256,24 @@ class ReaderKitEBookParser extends EBookParser {
       
       // 根据 Reader Kit 实际返回的属性名进行映射
       // BookInfo 实际属性: bookTitle, bookCreator, bookPublishDate, bookLanguage, bookCoverImage, bookCharset, bookType, isRtl
-      let author = this.getStringProperty(infoObj, ['bookCreator', 'author', 'creator', 'bookAuthor']);
-      let publisher = this.getStringProperty(infoObj, ['bookPublisher', 'publisher', 'press']);
-      let description = this.getStringProperty(infoObj, ['bookDescription', 'description', 'desc', 'summary', 'intro']);
+      const author = this.getStringProperty(infoObj, ['bookCreator', 'author', 'creator', 'bookAuthor']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['author', 'creator', 'writer']);
+      const publisher = this.getStringProperty(infoObj, ['bookPublisher', 'publisher', 'press']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['publisher', 'press']);
+      const description = this.getStringProperty(infoObj, ['bookDescription', 'description', 'desc', 'summary', 'intro']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['description', 'summary', 'intro', 'abstract']);
+      const title = this.getStringProperty(infoObj, ['bookTitle', 'title', 'name', 'bookName']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['title', 'bookname', 'name']) ||
+        this.extractTitleFromFileName(fileName);
+      const publishDate = this.getStringProperty(infoObj, ['bookPublishDate', 'publishDate', 'pubDate', 'date']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['publishdate', 'pubdate', 'issuedate', 'date']);
+      const isbn = this.getStringProperty(infoObj, ['bookIsbn', 'isbn', 'ISBN']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['isbn']);
+      const language = this.getStringProperty(infoObj, ['bookLanguage', 'language', 'lang']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['language', 'lang']) ||
+        'zh-CN';
+      const coverImagePath = this.getStringProperty(infoObj, ['bookCoverImage', 'coverUrl', 'cover', 'coverPath', 'coverImage']) ||
+        this.getStringPropertyByPartialKey(infoObj, ['cover', 'thumbnail', 'image']);
       
       // 如果作者为空，尝试从目录中的"版权信息"或"作者简介"章节名推断
       if (!author && catalogArray && catalogArray.length > 0) {
@@ -285,14 +288,14 @@ class ReaderKitEBookParser extends EBookParser {
       }
       
       const bookInfo: ReaderKitBookInfo = {
-        title: this.getStringProperty(infoObj, ['bookTitle', 'title', 'name', 'bookName']) || this.extractTitleFromFileName(fileName),
+        title: title,
         author: author || '未知作者',
         publisher: publisher,
-        publishDate: this.getStringProperty(infoObj, ['bookPublishDate', 'publishDate', 'pubDate', 'date']) || '',
-        isbn: this.getStringProperty(infoObj, ['bookIsbn', 'isbn', 'ISBN']) || '',
-        language: this.getStringProperty(infoObj, ['bookLanguage', 'language', 'lang']) || 'zh-CN',
+        publishDate: publishDate || '',
+        isbn: isbn || '',
+        language: language,
         description: description || `${this.format} 电子书`,
-        coverImagePath: this.getStringProperty(infoObj, ['bookCoverImage', 'coverUrl', 'cover', 'coverPath', 'coverImage']) || '',
+        coverImagePath: coverImagePath || '',
         chapters: chapters
       };
       
@@ -300,6 +303,10 @@ class ReaderKitEBookParser extends EBookParser {
       return bookInfo;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      if (isReaderKitUnavailableError(errorMsg)) {
+        if (error instanceof Error) throw error;
+        throw new Error(String(error));
+      }
       logger.error(TAG, `[ReaderKit] 解析失败: ${errorMsg}`);
       if (error instanceof Error) throw error;
       throw new Error(String(error));
@@ -324,6 +331,215 @@ class ReaderKitEBookParser extends EBookParser {
     return '';
   }
 
+  private normalizeToRecord(raw: Object): Record<string, Object> {
+    if (!raw || typeof raw !== 'object') {
+      const emptyRecord: Record<string, Object> = {};
+      return emptyRecord;
+    }
+    return raw as Record<string, Object>;
+  }
+
+  private safeStringify(raw: Object): string {
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return '[unserializable]';
+    }
+  }
+
+  private getStringPropertyByPartialKey(obj: Record<string, Object>, keyFragments: string[]): string {
+    const keys = Object.keys(obj);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
+      const value = obj[key];
+      const normalizedKey = key.toLowerCase();
+      const keyMatched = keyFragments.some((fragment: string) => normalizedKey.includes(fragment.toLowerCase()));
+      if (!keyMatched || value === undefined || value === null) {
+        continue;
+      }
+      const text = String(value).trim();
+      if (text.length > 0) {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  private getNumberProperty(obj: Record<string, Object>, keys: string[]): number {
+    for (const key of keys) {
+      const value = obj[key];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        return Math.floor(value);
+      }
+      if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          return Math.floor(parsed);
+        }
+      }
+    }
+    return -1;
+  }
+
+  private getNumberPropertyByPartialKey(obj: Record<string, Object>, keyFragments: string[]): number {
+    const keys = Object.keys(obj);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
+      const value = obj[key];
+      const normalizedKey = key.toLowerCase();
+      const keyMatched = keyFragments.some((fragment: string) => normalizedKey.includes(fragment.toLowerCase()));
+      if (!keyMatched) {
+        continue;
+      }
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        return Math.floor(value);
+      }
+      if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          return Math.floor(parsed);
+        }
+      }
+    }
+    return -1;
+  }
+
+  private isCatalogEntryCandidate(item: Record<string, Object>): boolean {
+    const possibleKeys = ['catalogId', 'id', 'chapterId', 'href', 'resourceFile', 'catalogName', 'title', 'name', 'chapterTitle'];
+    for (const key of possibleKeys) {
+      if (item[key] !== undefined && item[key] !== null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private extractCatalogEntries(rawCatalog: Object): Array<Record<string, Object>> {
+    const result: Array<Record<string, Object>> = [];
+    const seen: Set<string> = new Set();
+    const visitedNodes: Set<Object> = new Set();
+
+    if (!rawCatalog || typeof rawCatalog !== 'object') {
+      return result;
+    }
+
+    const flattenNodes = (nodes: Array<Record<string, Object>>): void => {
+      const stack: Array<Record<string, Object>> = [...nodes];
+      while (stack.length > 0) {
+        const item = stack.shift();
+        if (!item) {
+          continue;
+        }
+        if (visitedNodes.has(item as Object)) {
+          continue;
+        }
+        visitedNodes.add(item as Object);
+
+        const chapterId = this.getStringProperty(item, ['catalogId', 'id', 'chapterId', 'href', 'resourceFile', 'resourceId', 'spineIndex', 'index']) ||
+          this.getStringPropertyByPartialKey(item, ['catalogid', 'chapterid', 'resource', 'spine', 'index', 'href']);
+        const chapterTitle = this.getStringProperty(item, ['catalogName', 'title', 'name', 'chapterTitle', 'label', 'text']) ||
+          this.getStringPropertyByPartialKey(item, ['catalogname', 'chaptertitle', 'title', 'name', 'label', 'text']);
+
+        if (chapterTitle.length > 0 || chapterId.length > 0 || this.isCatalogEntryCandidate(item)) {
+          const dedupeKey = (chapterId.length > 0 || chapterTitle.length > 0)
+            ? `${chapterId}::${chapterTitle}`
+            : this.safeStringify(item);
+          if (!seen.has(dedupeKey)) {
+            seen.add(dedupeKey);
+            result.push(item);
+          }
+        }
+        const childKeys = [
+          'children',
+          'subCatalogs',
+          'subCatalogList',
+          'subCatalog',
+          'subItems',
+          'subChapter',
+          'catalogList',
+          'items',
+          'chapters',
+          'tocList',
+          'toc',
+          'contentList',
+          'childCatalog',
+          'childList'
+        ];
+        for (const childKey of childKeys) {
+          const child = item[childKey];
+          if (Array.isArray(child)) {
+            const childArray = child as Object[];
+            for (let childIndex = 0; childIndex < childArray.length; childIndex++) {
+              const childItem = childArray[childIndex];
+              if (childItem && typeof childItem === 'object') {
+                stack.push(childItem as Record<string, Object>);
+              }
+            }
+          }
+        }
+      }
+    };
+
+    if (Array.isArray(rawCatalog)) {
+      flattenNodes(rawCatalog as Array<Record<string, Object>>);
+      return result;
+    }
+
+    const rawCatalogObj = this.normalizeToRecord(rawCatalog);
+    if (this.isCatalogEntryCandidate(rawCatalogObj)) {
+      flattenNodes([rawCatalogObj]);
+    }
+    const topLevelKeys = [
+      'catalogList',
+      'catalogs',
+      'items',
+      'children',
+      'toc',
+      'tocList',
+      'chapterList',
+      'chapters',
+      'subCatalogs',
+      'subCatalogList'
+    ];
+    for (const key of topLevelKeys) {
+      const value = rawCatalogObj[key];
+      if (Array.isArray(value)) {
+        flattenNodes(value as Array<Record<string, Object>>);
+      }
+    }
+    if (result.length > 0) {
+      return result;
+    }
+
+    const rawCatalogKeys = Object.keys(rawCatalogObj);
+    for (let keyIndex = 0; keyIndex < rawCatalogKeys.length; keyIndex++) {
+      const rawCatalogKey = rawCatalogKeys[keyIndex];
+      const value = rawCatalogObj[rawCatalogKey];
+      if (Array.isArray(value)) {
+        flattenNodes(value as Array<Record<string, Object>>);
+      } else if (value && typeof value === 'object') {
+        const nestedObj = value as Record<string, Object>;
+        if (this.isCatalogEntryCandidate(nestedObj)) {
+          flattenNodes([nestedObj]);
+        }
+      }
+    }
+    return result;
+  }
+
+  private buildSyntheticChapters(chapterCount: number): ReaderKitChapter[] {
+    const safeCount = Math.max(0, chapterCount);
+    const chapters: ReaderKitChapter[] = [];
+    for (let i = 0; i < safeCount; i++) {
+      chapters.push({
+        id: `resource_${i}`,
+        title: `第${i + 1}章`,
+        content: ''
+      });
+    }
+    return chapters;
+  }
+
   private buildChaptersFromCatalog(catalog: Array<Record<string, Object>>): ReaderKitChapter[] {
     const chapters: ReaderKitChapter[] = [];
     if (!catalog || catalog.length === 0) {
@@ -333,8 +549,12 @@ class ReaderKitEBookParser extends EBookParser {
       const item = catalog[i];
       // 根据 Reader Kit 实际返回的属性名进行映射
       // CatalogItem 实际属性: catalogId, catalogName, catalogLevel, href, resourceFile
-      const chapterId = this.getStringProperty(item, ['catalogId', 'id', 'chapterId', 'index']) || `chapter_${i}`;
-      const chapterTitle = this.getStringProperty(item, ['catalogName', 'title', 'name', 'chapterTitle', 'label']) || `章节${i + 1}`;
+      const chapterId = this.getStringProperty(item, ['catalogId', 'id', 'chapterId', 'href', 'resourceFile', 'resourceId', 'index']) ||
+        this.getStringPropertyByPartialKey(item, ['catalogid', 'chapterid', 'resource', 'spine', 'index', 'href']) ||
+        `resource_${i}`;
+      const chapterTitle = this.getStringProperty(item, ['catalogName', 'title', 'name', 'chapterTitle', 'label']) ||
+        this.getStringPropertyByPartialKey(item, ['catalogname', 'chaptertitle', 'title', 'name', 'label']) ||
+        `第${i + 1}章`;
       const ch: ReaderKitChapter = {
         id: chapterId,
         title: chapterTitle,
@@ -501,13 +721,24 @@ export class EBookCoverExtractor {
       }
 
       // 获取 Reader Kit Handler（用于非 PDF 格式）
-      const bookParser = await getReaderKitBookParser();
-      if (!bookParser) {
-        throw new Error('Reader Kit is unavailable in current environment');
+      if (!isReaderKitEnabled()) {
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit parser unavailable, skip cover extraction: ${filePath}`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'Reader Kit parser unavailable'
+        };
       }
-      const parserHandler = await bookParser.getDefaultHandler(filePath);
+      const parserHandler: bookParser.BookParserHandler = await bookParser.getDefaultHandler(filePath);
       if (!parserHandler) {
-        throw new Error('无法获取 BookParserHandler');
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit handler unavailable, skip cover extraction: ${filePath}`);
+        return {
+          success: false,
+          coverPath: '',
+          candidateImages: [],
+          errorMessage: 'Reader Kit handler unavailable'
+        };
       }
 
       // 获取书籍信息
@@ -567,7 +798,11 @@ export class EBookCoverExtractor {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(EBookCoverExtractor.TAG, `提取封面失败: ${errorMsg}`);
+      if (isReaderKitUnavailableError(errorMsg)) {
+        logger.warn(EBookCoverExtractor.TAG, `Reader Kit unavailable, skip cover extraction: ${errorMsg}`);
+      } else {
+        logger.error(EBookCoverExtractor.TAG, `提取封面失败: ${errorMsg}`);
+      }
       return {
         success: false,
         coverPath: '',
@@ -584,7 +819,7 @@ export class EBookCoverExtractor {
     try {
       // 确定文件扩展名
       const ext = EBookCoverExtractor.getImageExtension(originalName, imageData);
-      const fileName = `cover_${Date.now()}${ext}`;
+      const fileName = `cover_${Date.now()}.webp`;
       const fullPath = `${basePath}/${fileName}`;
 
       // 确保目录存在
@@ -595,9 +830,23 @@ export class EBookCoverExtractor {
       }
 
       // 写入文件
+      const imageSource = image.createImageSource(imageData);
+      const pixelMap = await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      });
+      const imagePacker = image.createImagePacker();
+      const packedBuffer = await imagePacker.packing(pixelMap, {
+        format: 'image/webp',
+        quality: 90
+      });
+      imagePacker.release();
+      imageSource.release();
+      pixelMap.release();
+
       const file = fileIo.openSync(fullPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-      fileIo.writeSync(file.fd, imageData);
+      fileIo.writeSync(file.fd, packedBuffer);
       fileIo.closeSync(file);
+      logger.info(EBookCoverExtractor.TAG, `封面图片已标准化保存为 WebP: ${fullPath}, packed=${packedBuffer.byteLength}, original=${originalName}, sourceExt=${ext}`);
 
       logger.info(EBookCoverExtractor.TAG, `图片保存成功: ${fullPath}, 大小: ${imageData.byteLength} 字节`);
       return fullPath;
@@ -775,8 +1024,12 @@ export class EBookParserFactory {
     }
 
     // 优先使用 Reader Kit 解析支持的格式（除了 TXT，TXT 我们有自定义实现）
-    if (isReaderKitEnabled() && ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT) {
-      logger.info(TAG, `使用 Reader Kit 解析: ${format}`);
+    if (ReaderKitEBookParser.isSupportedFormat(format) && format !== EBookFormat.TXT) {
+      if (isReaderKitEnabled()) {
+        logger.info(TAG, `使用 Reader Kit 解析: ${format}`);
+      } else {
+        logger.warn(TAG, `Reader Kit disabled, use ReaderKit parser fallback: ${format}`);
+      }
       return new ReaderKitEBookParser(filePath, format);
     }
     
@@ -787,7 +1040,7 @@ export class EBookParserFactory {
       case EBookFormat.PDF:
         return new PdfParser(filePath);
       default:
-        logger.warn(TAG, `暂不支持的电子书格式: ${filePath} (Reader Kit 已禁用)`);
+        logger.warn(TAG, `暂不支持的电子书格式: ${filePath}`);
         return null;
     }
   }

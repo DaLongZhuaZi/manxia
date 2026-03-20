@@ -18,6 +18,7 @@ import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
+import { setReaderKitEnabled } from '../../Framework/Initialization/ReaderKitFeatureGate';
 
 const TAG = 'AdvancedSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -34,6 +35,10 @@ export struct AdvancedSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -57,6 +62,7 @@ export struct AdvancedSettingsSubPage {
   @State advancedModeEnabled: boolean = true;
   @State forceTabletMode: boolean = false;
   @State forceLandscapeMode: boolean = false;
+  @State readerKitEnabled: boolean = true;
   @State preloadDebugMode: string = 'off';
   @State showRestartDialog: boolean = false;
   
@@ -132,6 +138,7 @@ export struct AdvancedSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -147,6 +154,7 @@ export struct AdvancedSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -219,6 +227,10 @@ export struct AdvancedSettingsSubPage {
       this.forceLandscapeMode = this.settingsManager.getBoolean(
         SettingKeys.FORCE_LANDSCAPE_MODE,
         false
+      );
+      this.readerKitEnabled = this.settingsManager.getBoolean(
+        SettingKeys.READER_KIT_ENABLED,
+        true
       );
 
       this.preloadDebugMode = this.settingsManager.getString(
@@ -418,6 +430,31 @@ export struct AdvancedSettingsSubPage {
               const modes = ['off', 'on', 'always'];
               this.preloadDebugMode = modes[index];
               await this.settingsManager.setString(SettingKeys.PRELOAD_DEBUG_MODE, modes[index]);
+              this.settingsManager.syncToAppStorage();
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('ReaderKit 系统能力')
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Text('启用后 EPUB/MOBI/AZW 将优先使用系统 ReaderKit')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.readerKitEnabled })
+            .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
+            .onChange(async (isOn: boolean) => {
+              this.readerKitEnabled = isOn;
+              await setReaderKitEnabled(isOn);
               this.settingsManager.syncToAppStorage();
             })
         }
@@ -901,25 +938,192 @@ export struct AdvancedSettingsSubPage {
                   this.buildDebugSettings()
                 }
                 .width('48%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_debug'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'advanced_debug') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'advanced_debug'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_debug', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_debug', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_debug',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
                   this.buildDeveloperTools()
                 }
                 .width('48%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_tools'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'advanced_tools') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'advanced_tools'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_tools', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_tools', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_tools',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
                   this.buildOtherActions()
                 }
                 .width('100%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_actions'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'advanced_actions') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'advanced_actions'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_actions', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_actions', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_actions',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
               .width('100%')
             } else {
-              this.buildDebugSettings()
-              this.buildDeveloperTools()
-              this.buildOtherActions()
+              Column() {
+                this.buildDebugSettings()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'advanced_debug'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'advanced_debug') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_debug'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_debug', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_debug', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'advanced_debug',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
+
+              Column() {
+                this.buildDeveloperTools()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'advanced_tools'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'advanced_tools') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_tools'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_tools', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_tools', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'advanced_tools',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
+
+              Column() {
+                this.buildOtherActions()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'advanced_actions'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'advanced_actions') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'advanced_actions'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_actions', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'advanced_actions', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'advanced_actions',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
             }
 
             Blank().height(40)

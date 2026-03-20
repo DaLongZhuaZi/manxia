@@ -29,7 +29,8 @@ import {
   BackgroundType,
   PageMargins,
   TextAlignment,
-  SavedBackgroundImage
+  SavedBackgroundImage,
+  normalizeReadAloudSettings
 } from '../Models/TextReaderModels';
 import { NovelReadProgress } from '../Models/NovelModels';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
@@ -481,21 +482,12 @@ export struct NovelReaderPage {
       return;
     }
     if (!this.settings.readAloud) {
-      this.settings.readAloud = {
-        enabled: defaultReadAloud.enabled,
-        engineType: defaultReadAloud.engineType,
-        speed: defaultReadAloud.speed,
-        pitch: defaultReadAloud.pitch,
-        volume: defaultReadAloud.volume,
-        continueInBackground: defaultReadAloud.continueInBackground,
-        autoPlayNextChapter: defaultReadAloud.autoPlayNextChapter,
-        pauseOnManualPageTurn: defaultReadAloud.pauseOnManualPageTurn,
-        voiceLanguage: defaultReadAloud.voiceLanguage,
-        voicePerson: defaultReadAloud.voicePerson,
-        voiceOnline: defaultReadAloud.voiceOnline
-      };
+      this.settings.readAloud = normalizeReadAloudSettings(defaultReadAloud);
     }
-    const readAloudSettings = this.settings.readAloud;
+    const readAloudSettings = this.settings.readAloud
+      ? normalizeReadAloudSettings(this.settings.readAloud)
+      : normalizeReadAloudSettings(defaultReadAloud);
+    this.settings.readAloud = readAloudSettings;
     if (!readAloudSettings) {
       return;
     }
@@ -517,19 +509,7 @@ export struct NovelReaderPage {
   private openReadAloudSettingsPanelFromToolbar(): void {
     const defaultReadAloud = DEFAULT_TEXT_READER_SETTINGS.readAloud;
     if (defaultReadAloud && !this.settings.readAloud) {
-      this.settings.readAloud = {
-        enabled: defaultReadAloud.enabled,
-        engineType: defaultReadAloud.engineType,
-        speed: defaultReadAloud.speed,
-        pitch: defaultReadAloud.pitch,
-        volume: defaultReadAloud.volume,
-        continueInBackground: defaultReadAloud.continueInBackground,
-        autoPlayNextChapter: defaultReadAloud.autoPlayNextChapter,
-        pauseOnManualPageTurn: defaultReadAloud.pauseOnManualPageTurn,
-        voiceLanguage: defaultReadAloud.voiceLanguage,
-        voicePerson: defaultReadAloud.voicePerson,
-        voiceOnline: defaultReadAloud.voiceOnline
-      };
+      this.settings.readAloud = normalizeReadAloudSettings(defaultReadAloud);
     }
     this.hideToolbarWithAnimation();
     this.showFontSettings = false;
@@ -618,6 +598,10 @@ export struct NovelReaderPage {
       if (settings.pageMargins.left === undefined || settings.pageMargins.left < 0) settings.pageMargins.left = 24;
       if (settings.pageMargins.right === undefined || settings.pageMargins.right < 0) settings.pageMargins.right = 24;
     }
+
+    settings.readAloud = normalizeReadAloudSettings(
+      settings.readAloud ?? DEFAULT_TEXT_READER_SETTINGS.readAloud
+    );
   }
 
   private async ensurePreloadSettingsLoaded(): Promise<void> {
@@ -1157,21 +1141,7 @@ export struct NovelReaderPage {
       autoPageTurnEnabled: newSettings.autoPageTurnEnabled,
       autoPageTurnInterval: newSettings.autoPageTurnInterval,
       curlBackOpacity: newSettings.curlBackOpacity,
-      readAloud: newSettings.readAloud
-        ? {
-            enabled: newSettings.readAloud.enabled,
-            engineType: newSettings.readAloud.engineType,
-            speed: newSettings.readAloud.speed,
-            pitch: newSettings.readAloud.pitch,
-            volume: newSettings.readAloud.volume,
-            continueInBackground: newSettings.readAloud.continueInBackground,
-            autoPlayNextChapter: newSettings.readAloud.autoPlayNextChapter,
-            pauseOnManualPageTurn: newSettings.readAloud.pauseOnManualPageTurn,
-            voiceLanguage: newSettings.readAloud.voiceLanguage,
-            voicePerson: newSettings.readAloud.voicePerson,
-            voiceOnline: newSettings.readAloud.voiceOnline
-          }
-        : undefined
+      readAloud: normalizeReadAloudSettings(newSettings.readAloud ?? DEFAULT_TEXT_READER_SETTINGS.readAloud)
     };
     this.ensureSettingsComplete(nextSettings);
 

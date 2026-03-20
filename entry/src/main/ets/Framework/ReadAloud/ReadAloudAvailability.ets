@@ -2,6 +2,8 @@ import { textToSpeech } from '@kit.CoreSpeechKit';
 import { logger } from '../../Utils/Logger';
 import { ReadAloudEngineType } from '../../Models/TextReaderModels';
 import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
+import { SettingsManager } from '../Managers/SettingsManager';
+import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
 
 const TAG = 'ReadAloudAvailability';
 const SYSTEM_TTS_ONLINE_MODE: number = 0;
@@ -32,6 +34,7 @@ export class ReadAloudAvailability {
   private static cachedAt: number = 0;
   private static readonly CACHE_MS: number = 60 * 1000;
   private static lastSystemProbeErrorMessage: string = '';
+  private static lastRemoteProbeErrorMessage: string = '';
 
   static getCachedOrDefault(): ReadAloudEngineAvailabilityMap {
     if (ReadAloudAvailability.cached === null) {
@@ -51,10 +54,11 @@ export class ReadAloudAvailability {
     }
 
     const systemAvailable = await ReadAloudAvailability.checkSystemTtsAvailable();
+    const remoteAvailable = ReadAloudAvailability.checkRemoteTtsConfigured();
     ReadAloudAvailability.cached = {
       SYSTEM: systemAvailable,
       LEGADO_COMPAT: false,
-      REMOTE: false
+      REMOTE: remoteAvailable
     };
     ReadAloudAvailability.cachedAt = now;
     return ReadAloudAvailability.cloneAvailability(ReadAloudAvailability.cached);
@@ -76,6 +80,10 @@ export class ReadAloudAvailability {
 
   static getLastSystemProbeErrorMessage(): string {
     return ReadAloudAvailability.lastSystemProbeErrorMessage;
+  }
+
+  static getLastRemoteProbeErrorMessage(): string {
+    return ReadAloudAvailability.lastRemoteProbeErrorMessage;
   }
 
   private static cloneAvailability(source: ReadAloudEngineAvailabilityMap): ReadAloudEngineAvailabilityMap {
@@ -147,6 +155,38 @@ export class ReadAloudAvailability {
       logger.warn(TAG, `SYSTEM TTS 可用性探测失败: ${ReadAloudAvailability.lastSystemProbeErrorMessage}`);
     }
     return false;
+  }
+
+  private static checkRemoteTtsConfigured(): boolean {
+    try {
+      const settings = loadGlobalReadAloudSettings(SettingsManager.getInstance());
+      const remote = settings.remote;
+      if (!remote) {
+        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote settings is empty';
+        return false;
+      }
+      const endpoint = remote.endpoint.trim();
+      if (endpoint.length <= 0) {
+        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote endpoint is empty';
+        return false;
+      }
+      const model = remote.model.trim();
+      if (model.length <= 0) {
+        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote model is empty';
+        return false;
+      }
+      const voice = remote.voice.trim();
+      if (voice.length <= 0) {
+        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote voice is empty';
+        return false;
+      }
+      ReadAloudAvailability.lastRemoteProbeErrorMessage = '';
+      return true;
+    } catch (error) {
+      ReadAloudAvailability.lastRemoteProbeErrorMessage = ReadAloudAvailability.formatError(error);
+      logger.warn(TAG, `REMOTE TTS availability check failed: ${ReadAloudAvailability.lastRemoteProbeErrorMessage}`);
+      return false;
+    }
   }
 
   private static formatError(error: Object | string): string {

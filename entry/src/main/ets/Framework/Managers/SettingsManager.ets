@@ -84,6 +84,25 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE = 'global_text_read_aloud_voice_language';
   static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON = 'global_text_read_aloud_voice_person';
   static readonly GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE = 'global_text_read_aloud_voice_online';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_ENDPOINT = 'global_text_read_aloud_remote_endpoint';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_API_PATH = 'global_text_read_aloud_remote_api_path';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_API_KEY = 'global_text_read_aloud_remote_api_key';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_MODEL = 'global_text_read_aloud_remote_model';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_VOICE = 'global_text_read_aloud_remote_voice';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_AUDIO_FORMAT = 'global_text_read_aloud_remote_audio_format';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_STREAM_ENABLED = 'global_text_read_aloud_remote_stream_enabled';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_PREFETCH_SEGMENTS = 'global_text_read_aloud_remote_prefetch_segments';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_CONNECT_TIMEOUT_MS = 'global_text_read_aloud_remote_connect_timeout_ms';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_READ_TIMEOUT_MS = 'global_text_read_aloud_remote_read_timeout_ms';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_MAX_INPUT_CHARS = 'global_text_read_aloud_remote_max_input_chars';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_RESERVED_INPUT_CHARS = 'global_text_read_aloud_remote_reserved_input_chars';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_MIN_CHUNK_CHARS = 'global_text_read_aloud_remote_min_chunk_chars';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_TARGET_CHUNK_CHARS = 'global_text_read_aloud_remote_target_chunk_chars';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_MAX_CHUNK_CHARS = 'global_text_read_aloud_remote_max_chunk_chars';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_CACHE_AUDIO_FILES = 'global_text_read_aloud_remote_cache_audio_files';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_AUTO_CONCAT_AUDIO = 'global_text_read_aloud_remote_auto_concat_audio';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_CUSTOM_HEADERS_JSON = 'global_text_read_aloud_remote_custom_headers_json';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_EXTRA_BODY_JSON = 'global_text_read_aloud_remote_extra_body_json';
   static readonly GLOBAL_TEXT_READ_ALOUD_FAVORITE_VOICE_IDS = 'global_text_read_aloud_favorite_voice_ids';
   
   // 下载设置
@@ -114,8 +133,12 @@ export class SettingKeys {
   // 底部导航栏自定义设置
   static readonly VISIBLE_TABS = 'visible_tabs'; // JSON数组，存储可见的标签索引
   static readonly MAIN_MENU_TABLET_TOP_BAR_POSITION = 'main_menu_tablet_top_bar_position';
+  static readonly LIBRARY_DEFAULT_GRID_COLUMNS = 'library_default_grid_columns';
   static readonly LIBRARY_SHELF_GRID_COLUMNS = 'library_shelf_grid_columns';
   static readonly LIBRARY_HIDE_WOOD_SHELF_TEXTURE = 'library_hide_wood_shelf_texture';
+  static readonly LIBRARY_SHELF_TOOLBAR_PLACEMENT = 'library_shelf_toolbar_placement';
+  static readonly LIBRARY_GRID_AUTHOR_DISPLAY_MODE = 'library_grid_author_display_mode';
+  static readonly LIBRARY_GRID_PROGRESS_DISPLAY_MODE = 'library_grid_progress_display_mode';
   
   // 内容过滤设置
   static readonly SFW_MODE_ENABLED = 'sfw_mode_enabled'; // 启用SFW模式（隐藏NSFW内容）
@@ -146,6 +169,7 @@ export class SettingKeys {
   static readonly RECOMMENDATION_ENABLED = 'recommendation_enabled'; // 统一详情页相关推荐功能开关（默认开启）
   static readonly SHELF_CONTENT_ENABLED = 'shelf_content_enabled'; // 统一详情页同书架内容功能开关（默认开启）
   static readonly MAIN_MENU_LIBRARY_COVER_OPEN_READER_ENABLED = 'main_menu_library_cover_open_reader_enabled'; // 主页面书库封面点击直接阅读开关（默认开启）
+  static readonly READER_KIT_ENABLED = 'reader_kit_enabled'; // ReaderKit 能力开关（默认开启）
 }
 
 /**

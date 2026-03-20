@@ -88,6 +88,7 @@ export struct GlobalSearchPage {
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSearchPage';
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   
   // 搜索相关
   @State searchKeyword: string = '';
@@ -146,6 +147,7 @@ export struct GlobalSearchPage {
   @State pageParams: GlobalSearchPageParams | null = null;
 
   aboutToAppear(): void {
+    this.previousDisplayMode = WindowManager.getCurrentMode();
     WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.initThemeAware();
     this.initFontAware();
@@ -154,6 +156,10 @@ export struct GlobalSearchPage {
     this.loadSearchPreferences();
     this.loadAvailableSources();
     this.initWebView();
+  }
+
+  onPageShow(): void {
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
   }
   
   /**
@@ -313,7 +319,7 @@ export struct GlobalSearchPage {
   private lifecycle = new PageLifecycleManager('GlobalSearchPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题监听器
     ThemeAwareHelper.cleanupThemeAware(this.componentId);

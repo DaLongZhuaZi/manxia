@@ -31,6 +31,10 @@ export struct NotificationSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -108,6 +112,7 @@ export struct NotificationSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -123,6 +128,7 @@ export struct NotificationSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -279,7 +285,36 @@ export struct NotificationSettingsSubPage {
           Column({ space: 16 }) {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
 
-            this.buildNotificationSettings()
+            Column() {
+              this.buildNotificationSettings()
+            }
+            .width('100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'notification_core'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'notification_core') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'notification_core'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'notification_core', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'notification_core', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'notification_core',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
 
             Blank().height(40)
           }

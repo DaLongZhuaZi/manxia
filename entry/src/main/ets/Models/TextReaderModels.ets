@@ -157,6 +157,28 @@ export enum ReadAloudEngineType {
   REMOTE = 'REMOTE'
 }
 
+export interface RemoteReadAloudSettings {
+  endpoint: string;
+  apiPath: string;
+  apiKey: string;
+  model: string;
+  voice: string;
+  audioFormat: string;
+  streamEnabled: boolean;
+  prefetchSegments: number;
+  connectTimeoutMs: number;
+  readTimeoutMs: number;
+  maxInputChars: number;
+  reservedInputChars: number;
+  minChunkChars: number;
+  targetChunkChars: number;
+  maxChunkChars: number;
+  cacheAudioFiles: boolean;
+  autoConcatAudio: boolean;
+  customHeadersJson: string;
+  extraBodyJson: string;
+}
+
 /**
  * 听书设置
  */
@@ -183,7 +205,30 @@ export interface ReadAloudSettings {
   voicePerson?: number;
   /** 系统TTS音色在线类型（0在线/1离线，-1表示跟随系统默认） */
   voiceOnline?: number;
+  remote?: RemoteReadAloudSettings;
 }
+
+export const DEFAULT_REMOTE_READ_ALOUD_SETTINGS: RemoteReadAloudSettings = {
+  endpoint: '',
+  apiPath: '/v1/audio/speech',
+  apiKey: '',
+  model: 'gpt-4o-mini-tts',
+  voice: 'alloy',
+  audioFormat: 'mp3',
+  streamEnabled: true,
+  prefetchSegments: 2,
+  connectTimeoutMs: 15000,
+  readTimeoutMs: 120000,
+  maxInputChars: 3000,
+  reservedInputChars: 240,
+  minChunkChars: 120,
+  targetChunkChars: 540,
+  maxChunkChars: 1200,
+  cacheAudioFiles: true,
+  autoConcatAudio: true,
+  customHeadersJson: '',
+  extraBodyJson: ''
+};
 
 /**
  * 默认听书设置
@@ -199,8 +244,70 @@ export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
   pauseOnManualPageTurn: true,
   voiceLanguage: '',
   voicePerson: -1,
-  voiceOnline: -1
+  voiceOnline: -1,
+  remote: DEFAULT_REMOTE_READ_ALOUD_SETTINGS
 };
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+export function normalizeRemoteReadAloudSettings(remote?: Partial<RemoteReadAloudSettings> | null): RemoteReadAloudSettings {
+  const source = remote ?? {};
+  const endpoint = (source.endpoint ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.endpoint).trim();
+  const apiPathRaw = (source.apiPath ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.apiPath).trim();
+  const apiPath = apiPathRaw.length > 0 ? (apiPathRaw.startsWith('/') ? apiPathRaw : `/${apiPathRaw}`) : '/v1/audio/speech';
+  const audioFormatRaw = (source.audioFormat ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.audioFormat).trim().toLowerCase();
+  const audioFormat = audioFormatRaw.length > 0 ? audioFormatRaw : DEFAULT_REMOTE_READ_ALOUD_SETTINGS.audioFormat;
+
+  return {
+    endpoint,
+    apiPath,
+    apiKey: source.apiKey ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.apiKey,
+    model: (source.model ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.model).trim(),
+    voice: (source.voice ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.voice).trim(),
+    audioFormat,
+    streamEnabled: source.streamEnabled ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.streamEnabled,
+    prefetchSegments: Math.max(1, Math.min(8, Math.floor(source.prefetchSegments ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.prefetchSegments))),
+    connectTimeoutMs: Math.max(3000, Math.min(120000, Math.floor(source.connectTimeoutMs ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.connectTimeoutMs))),
+    readTimeoutMs: Math.max(5000, Math.min(300000, Math.floor(source.readTimeoutMs ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.readTimeoutMs))),
+    maxInputChars: Math.max(256, Math.min(12000, Math.floor(source.maxInputChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.maxInputChars))),
+    reservedInputChars: Math.max(0, Math.min(2000, Math.floor(source.reservedInputChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.reservedInputChars))),
+    minChunkChars: Math.max(32, Math.min(5000, Math.floor(source.minChunkChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.minChunkChars))),
+    targetChunkChars: Math.max(64, Math.min(7000, Math.floor(source.targetChunkChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.targetChunkChars))),
+    maxChunkChars: Math.max(80, Math.min(9000, Math.floor(source.maxChunkChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.maxChunkChars))),
+    cacheAudioFiles: source.cacheAudioFiles ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.cacheAudioFiles,
+    autoConcatAudio: source.autoConcatAudio ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.autoConcatAudio,
+    customHeadersJson: source.customHeadersJson ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.customHeadersJson,
+    extraBodyJson: source.extraBodyJson ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.extraBodyJson
+  };
+}
+
+export function normalizeReadAloudSettings(settings?: Partial<ReadAloudSettings> | null): ReadAloudSettings {
+  const source = settings ?? {};
+  const rawEngine = source.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType;
+  const engineType = (
+    rawEngine === ReadAloudEngineType.SYSTEM ||
+    rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
+    rawEngine === ReadAloudEngineType.REMOTE
+  ) ? rawEngine : ReadAloudEngineType.SYSTEM;
+  const voicePersonRaw = source.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
+  const voiceOnlineRaw = source.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
+  return {
+    enabled: source.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
+    engineType,
+    speed: clampNumber(source.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed, 0.5, 2.0),
+    pitch: clampNumber(source.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch, 0.5, 2.0),
+    volume: clampNumber(source.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume, 0, 1),
+    continueInBackground: source.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
+    autoPlayNextChapter: source.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
+    pauseOnManualPageTurn: source.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
+    voiceLanguage: source.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '',
+    voicePerson: voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1,
+    voiceOnline: (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1,
+    remote: normalizeRemoteReadAloudSettings(source.remote)
+  };
+}
 
 /**
  * 文本阅读器设置
@@ -313,7 +420,8 @@ export const DEFAULT_TEXT_READER_SETTINGS: TextReaderSettings = {
     pauseOnManualPageTurn: DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
     voiceLanguage: DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage,
     voicePerson: DEFAULT_READ_ALOUD_SETTINGS.voicePerson,
-    voiceOnline: DEFAULT_READ_ALOUD_SETTINGS.voiceOnline
+    voiceOnline: DEFAULT_READ_ALOUD_SETTINGS.voiceOnline,
+    remote: DEFAULT_READ_ALOUD_SETTINGS.remote
   }
 };
 

@@ -564,10 +564,15 @@ export class WindowManager {
   }
 
   private static setDefaultSystemBar(mainWindow: window.Window): void {
+    if (AppStorage.get<boolean>('window_manager_theme_bar_enabled') !== false) {
+      WindowManager.applyThemeAwareSystemBar(mainWindow, true, false);
+      return;
+    }
     try {
       const themeStyle = WindowManager.resolveThemeSystemBarStyle();
       const systemBarProperties: window.SystemBarProperties = {
-        statusBarColor: themeStyle.backgroundColor,
+        // 默认模式继续使用系统避让，但让顶部状态栏透出页面自己的背景层。
+        statusBarColor: '#00000000',
         navigationBarColor: themeStyle.backgroundColor,
         statusBarContentColor: themeStyle.contentColor,
         navigationBarContentColor: themeStyle.contentColor,
@@ -587,13 +592,13 @@ export class WindowManager {
     }
   }
 
-  private static applyThemeAwareSystemBar(mainWindow: window.Window, transparentBackground: boolean): void {
+  private static applyThemeAwareSystemBar(mainWindow: window.Window, statusBarTransparent: boolean,
+    navigationBarTransparent: boolean = statusBarTransparent): void {
     try {
       const themeStyle = WindowManager.resolveThemeSystemBarStyle();
-      const barColor = transparentBackground ? '#00000000' : themeStyle.backgroundColor;
       const systemBarProperties: window.SystemBarProperties = {
-        statusBarColor: barColor,
-        navigationBarColor: barColor,
+        statusBarColor: statusBarTransparent ? '#00000000' : themeStyle.backgroundColor,
+        navigationBarColor: navigationBarTransparent ? '#00000000' : themeStyle.backgroundColor,
         statusBarContentColor: themeStyle.contentColor,
         navigationBarContentColor: themeStyle.contentColor,
         isStatusBarLightIcon: themeStyle.isDarkTheme,

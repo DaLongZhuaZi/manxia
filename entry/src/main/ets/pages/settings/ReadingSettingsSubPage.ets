@@ -18,13 +18,29 @@ import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { ReadingMode, ReadingDirection, DEFAULT_READING_SETTINGS, PageTurnAnimationType, DoublePagePortraitLayout } from '../../Models/MangaModels';
 import { EBookPageMode, EBOOK_THEME_PRESETS, EBookThemePreset, DEFAULT_EBOOK_READING_SETTINGS } from '../../Models/EBookModels';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
-import { TextPageTurnAnimation, TextAlignment, PRESET_BACKGROUNDS, PresetBackground, DEFAULT_TEXT_READER_SETTINGS, DEFAULT_READ_ALOUD_SETTINGS, ReadAloudEngineType, ReadAloudSettings, TextReadingMode, BackgroundType, TextReaderSettings } from '../../Models/TextReaderModels';
+import {
+  TextPageTurnAnimation,
+  TextAlignment,
+  PRESET_BACKGROUNDS,
+  PresetBackground,
+  DEFAULT_TEXT_READER_SETTINGS,
+  DEFAULT_READ_ALOUD_SETTINGS,
+  DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
+  RemoteReadAloudSettings,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  TextReadingMode,
+  BackgroundType,
+  TextReaderSettings,
+  normalizeReadAloudSettings
+} from '../../Models/TextReaderModels';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { EBookDataManager, BackgroundImageInfo } from '../../Framework/Data/EBookDataManager';
 import { fileIo } from '@kit.CoreFileKit';
 import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudController } from '../../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudVoiceOption } from '../../Framework/ReadAloud/ReadAloudTypes';
+import { loadGlobalReadAloudSettings, persistGlobalReadAloudSettings } from '../../Framework/ReadAloud/ReadAloudSettingsStore';
 import { ReadAloudSettingsInfoPanel } from '../../components/ReadAloudSettingsInfoPanel';
 import { getFontManager, SystemFont, CustomFont } from '../../Framework/Managers/FontManager';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
@@ -58,9 +74,10 @@ interface TextReadingModeOption {
 export struct ReadingSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
-  @State private settingsTapEnabled: boolean = true;
-  private settingsTapUnlockTimer: number = -1;
-  private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 主题与字体状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -146,6 +163,7 @@ export struct ReadingSettingsSubPage {
   @State textReadAloudContinueBg: boolean = DEFAULT_READ_ALOUD_SETTINGS.continueInBackground;
   @State textReadAloudAutoNextChapter: boolean = DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter;
   @State textReadAloudPauseOnManualPageTurn: boolean = DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn;
+  @State textReadAloudRemote: RemoteReadAloudSettings = DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
   @State textReadAloudAvailability: ReadAloudEngineAvailabilityMap = ReadAloudAvailability.getCachedOrDefault();
   @State textReadAloudVoiceOptions: ReadAloudVoiceOption[] = [];
   @State showReadAloudPanel: boolean = false;
@@ -158,26 +176,6 @@ export struct ReadingSettingsSubPage {
   @State showBackgroundManager: boolean = false;
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
 
-  private markSettingsScrolling(): void {
-    if (this.settingsTapEnabled) {
-      this.settingsTapEnabled = false;
-    }
-    if (this.settingsTapUnlockTimer >= 0) {
-      clearTimeout(this.settingsTapUnlockTimer);
-    }
-    this.settingsTapUnlockTimer = setTimeout(() => {
-      this.settingsTapEnabled = true;
-      this.settingsTapUnlockTimer = -1;
-    }, this.scrollTapGuardDurationMs);
-  }
-
-  private cleanupSettingsTapGuard(): void {
-    if (this.settingsTapUnlockTimer >= 0) {
-      clearTimeout(this.settingsTapUnlockTimer);
-      this.settingsTapUnlockTimer = -1;
-    }
-    this.settingsTapEnabled = true;
-  }
   onPageShow(): void {
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
@@ -213,26 +211,10 @@ export struct ReadingSettingsSubPage {
     this.applyPendingSearchTarget();
   }
 
-  private applyPendingSearchTarget(): void {
-    const target = SettingsSearchSupport.consumePendingTarget('ReadingSettingsSubPage');
-    if (!target) {
-      return;
-    }
-    const offset = Math.max(0, target.scrollOffset);
-    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
-    setTimeout(() => {
-      try {
-        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
-      } catch (error) {
-        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
-      }
-    }, 140);
-  }
-
   private lifecycle = new PageLifecycleManager('ReadingSettingsSubPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -242,6 +224,23 @@ export struct ReadingSettingsSubPage {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
     }
+  }
+
+  private applyPendingSearchTarget(): void {
+    const target = SettingsSearchSupport.consumePendingTarget('ReadingSettingsSubPage');
+    if (!target) {
+      return;
+    }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
+    const offset = Math.max(0, target.scrollOffset);
+    logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
+    setTimeout(() => {
+      try {
+        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 420 } });
+      } catch (error) {
+        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
+      }
+    }, 160);
   }
 
   /**
@@ -518,50 +517,19 @@ export struct ReadingSettingsSubPage {
         SettingKeys.GLOBAL_TEXT_SHOW_PROGRESS,
         false
       );
-      this.textReadAloudEnabled = this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED,
-        DEFAULT_READ_ALOUD_SETTINGS.enabled
-      );
-      this.textReadAloudEngine = this.normalizeReadAloudEngine(this.settingsManager.getString(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE,
-        DEFAULT_READ_ALOUD_SETTINGS.engineType
-      ));
-      this.textReadAloudSpeed = Math.max(0.5, Math.min(2.0, this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED,
-        DEFAULT_READ_ALOUD_SETTINGS.speed
-      )));
-      this.textReadAloudPitch = Math.max(0.5, Math.min(2.0, this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH,
-        DEFAULT_READ_ALOUD_SETTINGS.pitch
-      )));
-      this.textReadAloudVolume = Math.max(0, Math.min(1, this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME,
-        DEFAULT_READ_ALOUD_SETTINGS.volume
-      )));
-      this.textReadAloudVoiceLanguage = this.settingsManager.getString(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE,
-        DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? ''
-      );
-      this.textReadAloudVoicePerson = this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON,
-        DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1
-      );
-      this.textReadAloudVoiceOnline = this.settingsManager.getNumber(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE,
-        DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1
-      );
-      this.textReadAloudContinueBg = this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG,
-        DEFAULT_READ_ALOUD_SETTINGS.continueInBackground
-      );
-      this.textReadAloudAutoNextChapter = this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
-        DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter
-      );
-      this.textReadAloudPauseOnManualPageTurn = this.settingsManager.getBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
-        DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn
-      );
+      const globalReadAloud = loadGlobalReadAloudSettings(this.settingsManager);
+      this.textReadAloudEnabled = globalReadAloud.enabled;
+      this.textReadAloudEngine = globalReadAloud.engineType;
+      this.textReadAloudSpeed = globalReadAloud.speed;
+      this.textReadAloudPitch = globalReadAloud.pitch;
+      this.textReadAloudVolume = globalReadAloud.volume;
+      this.textReadAloudVoiceLanguage = globalReadAloud.voiceLanguage ?? '';
+      this.textReadAloudVoicePerson = globalReadAloud.voicePerson ?? -1;
+      this.textReadAloudVoiceOnline = globalReadAloud.voiceOnline ?? -1;
+      this.textReadAloudContinueBg = globalReadAloud.continueInBackground;
+      this.textReadAloudAutoNextChapter = globalReadAloud.autoPlayNextChapter;
+      this.textReadAloudPauseOnManualPageTurn = globalReadAloud.pauseOnManualPageTurn;
+      this.textReadAloudRemote = globalReadAloud.remote ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
 
       this.persistGlobalNovelReaderSettings().catch((error: Object | string) => {
         logger.warn(TAG, `同步全局小说设置失败: ${String(error)}`);
@@ -572,17 +540,6 @@ export struct ReadingSettingsSubPage {
     }
   }
 
-  private normalizeReadAloudEngine(engine: string): ReadAloudEngineType {
-    if (
-      engine === ReadAloudEngineType.SYSTEM ||
-      engine === ReadAloudEngineType.LEGADO_COMPAT ||
-      engine === ReadAloudEngineType.REMOTE
-    ) {
-      return engine as ReadAloudEngineType;
-    }
-    return ReadAloudEngineType.SYSTEM;
-  }
-
   private refreshReadAloudAvailability(): void {
     ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
       this.textReadAloudAvailability = map;
@@ -590,6 +547,12 @@ export struct ReadingSettingsSubPage {
         const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
         if (probeError.length > 0) {
           this.textReadAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
+        }
+      }
+      if (!map.REMOTE && this.textReadAloudEngine === ReadAloudEngineType.REMOTE) {
+        const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.textReadAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
         }
       }
       if (!this.isReadAloudEngineAvailable(this.textReadAloudEngine)) {
@@ -629,6 +592,13 @@ export struct ReadingSettingsSubPage {
           this.textReadAloudStatusMessage = `系统 TTS 探测失败：${probeError}`;
         } else {
           this.textReadAloudStatusMessage = '系统 TTS 当前不可用，请点击刷新重试';
+        }
+      } else if (this.textReadAloudEngine === ReadAloudEngineType.REMOTE) {
+        const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+        if (probeError.length > 0) {
+          this.textReadAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
+        } else {
+          this.textReadAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice';
         }
       } else {
         this.textReadAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
@@ -671,21 +641,20 @@ export struct ReadingSettingsSubPage {
   }
 
   private buildGlobalReadAloudSettings(): ReadAloudSettings {
-    const voicePersonRaw = this.textReadAloudVoicePerson;
-    const voiceOnlineRaw = this.textReadAloudVoiceOnline;
-    return {
+    return normalizeReadAloudSettings({
       enabled: this.textReadAloudEnabled,
       engineType: this.textReadAloudEngine,
-      speed: Math.max(0.5, Math.min(2.0, this.textReadAloudSpeed)),
-      pitch: Math.max(0.5, Math.min(2.0, this.textReadAloudPitch)),
-      volume: Math.max(0, Math.min(1, this.textReadAloudVolume)),
+      speed: this.textReadAloudSpeed,
+      pitch: this.textReadAloudPitch,
+      volume: this.textReadAloudVolume,
       continueInBackground: this.textReadAloudContinueBg,
       autoPlayNextChapter: this.textReadAloudAutoNextChapter,
       pauseOnManualPageTurn: this.textReadAloudPauseOnManualPageTurn,
       voiceLanguage: this.textReadAloudVoiceLanguage,
-      voicePerson: voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1,
-      voiceOnline: (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1
-    };
+      voicePerson: this.textReadAloudVoicePerson,
+      voiceOnline: this.textReadAloudVoiceOnline,
+      remote: this.textReadAloudRemote
+    });
   }
 
   private getReadAloudSummary(): string {
@@ -700,32 +669,53 @@ export struct ReadingSettingsSubPage {
     return `${enabledText} · ${engineLabel} · 语速${readAloud.speed.toFixed(1)}x`;
   }
 
-  private applyGlobalReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
-    const current = this.buildGlobalReadAloudSettings();
-    const rawEngine = partial.engineType ?? current.engineType;
-    const safeEngine = (
-      rawEngine === ReadAloudEngineType.SYSTEM ||
-      rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
-      rawEngine === ReadAloudEngineType.REMOTE
-    ) ? rawEngine : ReadAloudEngineType.SYSTEM;
-
-    const next: ReadAloudSettings = {
+  private mergeReadAloudSettings(current: ReadAloudSettings, partial: Partial<ReadAloudSettings>): ReadAloudSettings {
+    const currentRemote = current.remote;
+    const partialRemote = partial.remote;
+    let mergedRemote = currentRemote;
+    if (partialRemote && currentRemote) {
+      const remoteValue: RemoteReadAloudSettings = {
+        endpoint: partialRemote.endpoint ?? currentRemote.endpoint,
+        apiPath: partialRemote.apiPath ?? currentRemote.apiPath,
+        apiKey: partialRemote.apiKey ?? currentRemote.apiKey,
+        model: partialRemote.model ?? currentRemote.model,
+        voice: partialRemote.voice ?? currentRemote.voice,
+        audioFormat: partialRemote.audioFormat ?? currentRemote.audioFormat,
+        streamEnabled: partialRemote.streamEnabled ?? currentRemote.streamEnabled,
+        prefetchSegments: partialRemote.prefetchSegments ?? currentRemote.prefetchSegments,
+        connectTimeoutMs: partialRemote.connectTimeoutMs ?? currentRemote.connectTimeoutMs,
+        readTimeoutMs: partialRemote.readTimeoutMs ?? currentRemote.readTimeoutMs,
+        maxInputChars: partialRemote.maxInputChars ?? currentRemote.maxInputChars,
+        reservedInputChars: partialRemote.reservedInputChars ?? currentRemote.reservedInputChars,
+        minChunkChars: partialRemote.minChunkChars ?? currentRemote.minChunkChars,
+        targetChunkChars: partialRemote.targetChunkChars ?? currentRemote.targetChunkChars,
+        maxChunkChars: partialRemote.maxChunkChars ?? currentRemote.maxChunkChars,
+        cacheAudioFiles: partialRemote.cacheAudioFiles ?? currentRemote.cacheAudioFiles,
+        autoConcatAudio: partialRemote.autoConcatAudio ?? currentRemote.autoConcatAudio,
+        customHeadersJson: partialRemote.customHeadersJson ?? currentRemote.customHeadersJson,
+        extraBodyJson: partialRemote.extraBodyJson ?? currentRemote.extraBodyJson
+      };
+      mergedRemote = remoteValue;
+    }
+    return normalizeReadAloudSettings({
       enabled: partial.enabled ?? current.enabled,
-      engineType: safeEngine,
-      speed: Math.max(0.5, Math.min(2.0, partial.speed ?? current.speed)),
-      pitch: Math.max(0.5, Math.min(2.0, partial.pitch ?? current.pitch)),
-      volume: Math.max(0, Math.min(1, partial.volume ?? current.volume)),
+      engineType: partial.engineType ?? current.engineType,
+      speed: partial.speed ?? current.speed,
+      pitch: partial.pitch ?? current.pitch,
+      volume: partial.volume ?? current.volume,
       continueInBackground: partial.continueInBackground ?? current.continueInBackground,
       autoPlayNextChapter: partial.autoPlayNextChapter ?? current.autoPlayNextChapter,
       pauseOnManualPageTurn: partial.pauseOnManualPageTurn ?? current.pauseOnManualPageTurn,
-      voiceLanguage: partial.voiceLanguage ?? current.voiceLanguage ?? '',
-      voicePerson: (partial.voicePerson ?? current.voicePerson ?? -1) >= 0
-        ? Math.floor(partial.voicePerson ?? current.voicePerson ?? -1)
-        : -1,
-      voiceOnline: ((partial.voiceOnline ?? current.voiceOnline ?? -1) === 0 || (partial.voiceOnline ?? current.voiceOnline ?? -1) === 1)
-        ? (partial.voiceOnline ?? current.voiceOnline ?? -1)
-        : -1
-    };
+      voiceLanguage: partial.voiceLanguage ?? current.voiceLanguage,
+      voicePerson: partial.voicePerson ?? current.voicePerson,
+      voiceOnline: partial.voiceOnline ?? current.voiceOnline,
+      remote: mergedRemote
+    });
+  }
+
+  private applyGlobalReadAloudSettings(partial: Partial<ReadAloudSettings>): void {
+    const current = this.buildGlobalReadAloudSettings();
+    const next = this.mergeReadAloudSettings(current, partial);
 
     this.textReadAloudEnabled = next.enabled;
     this.textReadAloudEngine = next.engineType;
@@ -738,43 +728,9 @@ export struct ReadingSettingsSubPage {
     this.textReadAloudContinueBg = next.continueInBackground;
     this.textReadAloudAutoNextChapter = next.autoPlayNextChapter;
     this.textReadAloudPauseOnManualPageTurn = next.pauseOnManualPageTurn;
+    this.textReadAloudRemote = next.remote ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
 
-    const persistPartial: Partial<ReadAloudSettings> = {};
-    if (partial.enabled !== undefined) {
-      persistPartial.enabled = next.enabled;
-    }
-    if (partial.engineType !== undefined) {
-      persistPartial.engineType = next.engineType;
-    }
-    if (partial.speed !== undefined) {
-      persistPartial.speed = next.speed;
-    }
-    if (partial.pitch !== undefined) {
-      persistPartial.pitch = next.pitch;
-    }
-    if (partial.volume !== undefined) {
-      persistPartial.volume = next.volume;
-    }
-    if (partial.voiceLanguage !== undefined) {
-      persistPartial.voiceLanguage = next.voiceLanguage;
-    }
-    if (partial.voicePerson !== undefined) {
-      persistPartial.voicePerson = next.voicePerson;
-    }
-    if (partial.voiceOnline !== undefined) {
-      persistPartial.voiceOnline = next.voiceOnline;
-    }
-    if (partial.continueInBackground !== undefined) {
-      persistPartial.continueInBackground = next.continueInBackground;
-    }
-    if (partial.autoPlayNextChapter !== undefined) {
-      persistPartial.autoPlayNextChapter = next.autoPlayNextChapter;
-    }
-    if (partial.pauseOnManualPageTurn !== undefined) {
-      persistPartial.pauseOnManualPageTurn = next.pauseOnManualPageTurn;
-    }
-
-    this.persistGlobalReadAloudPartial(persistPartial).catch((error: Object | string) => {
+    this.persistGlobalReadAloudPartial(partial).catch((error: Object | string) => {
       logger.warn(TAG, `持久化全局听书设置失败: ${String(error)}`);
     });
 
@@ -782,52 +738,17 @@ export struct ReadingSettingsSubPage {
       partial.engineType !== undefined ||
       partial.voiceLanguage !== undefined ||
       partial.voicePerson !== undefined ||
-      partial.voiceOnline !== undefined
+      partial.voiceOnline !== undefined ||
+      partial.remote !== undefined
     ) {
       this.refreshReadAloudVoices();
     }
   }
 
   private async persistGlobalReadAloudPartial(partial: Partial<ReadAloudSettings>): Promise<void> {
-    if (partial.enabled !== undefined) {
-      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED, partial.enabled);
-    }
-    if (partial.engineType !== undefined) {
-      await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE, partial.engineType);
-    }
-    if (partial.speed !== undefined) {
-      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED, partial.speed);
-    }
-    if (partial.pitch !== undefined) {
-      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH, partial.pitch);
-    }
-    if (partial.volume !== undefined) {
-      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME, partial.volume);
-    }
-    if (partial.voiceLanguage !== undefined) {
-      await this.settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE, partial.voiceLanguage);
-    }
-    if (partial.voicePerson !== undefined) {
-      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON, partial.voicePerson);
-    }
-    if (partial.voiceOnline !== undefined) {
-      await this.settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE, partial.voiceOnline);
-    }
-    if (partial.continueInBackground !== undefined) {
-      await this.settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG, partial.continueInBackground);
-    }
-    if (partial.autoPlayNextChapter !== undefined) {
-      await this.settingsManager.setBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER,
-        partial.autoPlayNextChapter
-      );
-    }
-    if (partial.pauseOnManualPageTurn !== undefined) {
-      await this.settingsManager.setBoolean(
-        SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
-        partial.pauseOnManualPageTurn
-      );
-    }
+    const current = this.buildGlobalReadAloudSettings();
+    const next = this.mergeReadAloudSettings(current, partial);
+    await persistGlobalReadAloudSettings(this.settingsManager, next);
     await this.persistGlobalNovelReaderSettings();
   }
 
@@ -2767,31 +2688,197 @@ export struct ReadingSettingsSubPage {
                   this.buildMangaReadingSettings()
                 }
                 .width('48%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_manga'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_manga') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'reading_manga'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_manga',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
                   this.buildEBookSettings()
                 }
                 .width('48%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_ebook'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_ebook') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'reading_ebook'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_ebook',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
                 
                 Column({ space: 16 }) {
                   this.buildTextReaderSettings()
                 }
                 .width('100%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_novel'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_novel') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'reading_novel'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_novel',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
               .width('100%')
             } else {
               // 竖屏单列布局
-              this.buildMangaReadingSettings()
-              this.buildEBookSettings()
-              this.buildTextReaderSettings()
+              Column() {
+                this.buildMangaReadingSettings()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'reading_manga'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_manga') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_manga'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_manga', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'reading_manga',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
+
+              Column() {
+                this.buildEBookSettings()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'reading_ebook'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_ebook') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_ebook'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_ebook', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'reading_ebook',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
+
+              Column() {
+                this.buildTextReaderSettings()
+              }
+              .width('100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'reading_novel'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'reading_novel') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'reading_novel'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'reading_novel', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'reading_novel',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
             }
 
             Blank().height(40)
           }
-          .enabled(this.settingsTapEnabled)
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_maxContentWidth })
           .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
@@ -2801,9 +2888,6 @@ export struct ReadingSettingsSubPage {
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
-        .onScroll((_xOffset: number, _yOffset: number) => {
-          this.markSettingsScrolling();
-        })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         if (this.showReadAloudPanel) {

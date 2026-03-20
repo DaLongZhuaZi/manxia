@@ -35,6 +35,10 @@ export struct InteractionSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -119,6 +123,7 @@ export struct InteractionSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -134,6 +139,7 @@ export struct InteractionSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -421,6 +427,32 @@ export struct InteractionSettingsSubPage {
                 .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
               }
               .width(this.responsive_isLandscape ? '48%' : '100%')
+              .padding(4)
+              .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'interaction_basic'
+              ))
+              .borderRadius(16)
+              .border({
+                width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_basic') ? 1 : 0,
+                color: SettingsSearchSupport.getHighlightOverlayBorder(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_basic'
+                )
+              })
+              .scale({
+                x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_basic', this.searchHighlightPulse),
+                y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_basic', this.searchHighlightPulse)
+              })
+              .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'interaction_basic',
+                this.searchHighlightPulse
+              ))
+              .animation({ duration: 260, curve: Curve.EaseOut })
               .margin({ bottom: 16 })
 
               if (this.vibrationEnabled) {
@@ -429,16 +461,74 @@ export struct InteractionSettingsSubPage {
                   this.buildIntensitySelector()
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_intensity'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_intensity') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_intensity'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_intensity', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_intensity', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_intensity',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
 
                 // 场景设置
-                ForEach(this.getSceneGroups(), (group: SceneGroup) => {
-                  Column() {
-                    this.buildSceneGroup(group)
-                  }
-                  .width(this.responsive_isLandscape ? '48%' : '100%')
-                  .margin({ bottom: 16 })
+                Flex({
+                  wrap: FlexWrap.Wrap,
+                  justifyContent: this.responsive_isLandscape ? FlexAlign.SpaceBetween : FlexAlign.Start
+                }) {
+                  ForEach(this.getSceneGroups(), (group: SceneGroup) => {
+                    Column() {
+                      this.buildSceneGroup(group)
+                    }
+                    .width(this.responsive_isLandscape ? '48%' : '100%')
+                    .margin({ bottom: 16 })
+                  })
+                }
+                .width('100%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_scene'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_scene') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_scene'
+                  )
                 })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_scene', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_scene', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_scene',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
 
                 // 重置按钮
                 Column() {
@@ -458,6 +548,32 @@ export struct InteractionSettingsSubPage {
                     })
                 }
                 .width(this.responsive_isLandscape ? '48%' : '100%')
+                .padding(4)
+                .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_reset'
+                ))
+                .borderRadius(16)
+                .border({
+                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'interaction_reset') ? 1 : 0,
+                  color: SettingsSearchSupport.getHighlightOverlayBorder(
+                    this.themeState.currentTheme,
+                    this.activeSearchAnchorId,
+                    'interaction_reset'
+                  )
+                })
+                .scale({
+                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_reset', this.searchHighlightPulse),
+                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'interaction_reset', this.searchHighlightPulse)
+                })
+                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+                  this.themeState.currentTheme,
+                  this.activeSearchAnchorId,
+                  'interaction_reset',
+                  this.searchHighlightPulse
+                ))
+                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
             }

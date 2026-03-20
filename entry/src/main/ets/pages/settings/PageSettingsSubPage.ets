@@ -97,6 +97,10 @@ export struct PageSettingsSubPage {
   @State private settingsTapEnabled: boolean = true;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -179,6 +183,7 @@ export struct PageSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -245,6 +250,7 @@ export struct PageSettingsSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -1110,6 +1116,32 @@ export struct PageSettingsSubPage {
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'page_detail'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_detail') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'page_detail'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'page_detail', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'page_detail', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'page_detail',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
             .margin({ bottom: 16 })
 
             // 恢复默认按钮
@@ -1117,6 +1149,32 @@ export struct PageSettingsSubPage {
               this.buildResetButton()
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'page_reset'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'page_reset') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'page_reset'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'page_reset', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'page_reset', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'page_reset',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
             .margin({ bottom: 16 })
 
             }

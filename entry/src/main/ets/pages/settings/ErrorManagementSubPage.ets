@@ -58,6 +58,10 @@ export struct ErrorManagementSubPage {
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
   private uiContext: UIContext | undefined = undefined;
+  @State private activeSearchAnchorId: string = '';
+  @State private searchHighlightPulse: boolean = false;
+  private searchHighlightPulseTimer: number = -1;
+  private searchHighlightClearTimer: number = -1;
 
   // 主题
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -151,6 +155,12 @@ export struct ErrorManagementSubPage {
     if (!target) {
       return;
     }
+    SettingsSearchSupport.activateHighlight(this, target.anchorId);
+    if (target.anchorId === 'error_clear') {
+      setTimeout(() => {
+        this.openClearRangePanel();
+      }, 220);
+    }
     const offset = Math.max(0, target.scrollOffset);
     logger.info(TAG, `应用设置搜索定位: id=${target.id}, offset=${offset}`);
     setTimeout(() => {
@@ -166,6 +176,7 @@ export struct ErrorManagementSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -1457,13 +1468,100 @@ export struct ErrorManagementSubPage {
             Blank().height(TITLE_BAR_HEIGHT_MINI)
 
             // 统计卡片
-            this.buildSummaryCard()
+            Column() {
+              this.buildSummaryCard()
+            }
+            .width('100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_summary'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'error_summary') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'error_summary'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'error_summary', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'error_summary', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_summary',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
 
             // 过滤栏
-            this.buildFilterBar()
+            Column() {
+              this.buildFilterBar()
+            }
+            .width('100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_filter'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'error_filter') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'error_filter'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'error_filter', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'error_filter', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_filter',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
 
             // 操作按钮
-            this.buildActionButtons()
+            Column() {
+              this.buildActionButtons()
+            }
+            .width('100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_actions'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'error_actions') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'error_actions'
+              )
+            })
+            .scale({
+              x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'error_actions', this.searchHighlightPulse),
+              y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'error_actions', this.searchHighlightPulse)
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_actions',
+              this.searchHighlightPulse
+            ))
+            .animation({ duration: 260, curve: Curve.EaseOut })
 
             // 错误列表（清空时淡出/淡入）
             Column() {
@@ -1485,6 +1583,27 @@ export struct ErrorManagementSubPage {
               }
             }
             .width('100%')
+            .padding(4)
+            .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_list'
+            ))
+            .borderRadius(16)
+            .border({
+              width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'error_list') ? 1 : 0,
+              color: SettingsSearchSupport.getHighlightOverlayBorder(
+                this.themeState.currentTheme,
+                this.activeSearchAnchorId,
+                'error_list'
+              )
+            })
+            .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
+              this.themeState.currentTheme,
+              this.activeSearchAnchorId,
+              'error_list',
+              this.searchHighlightPulse
+            ))
             .opacity(this.recordsListOpacity)
             .scale({ x: this.recordsListScale, y: this.recordsListScale })
             .animation({ duration: 220, curve: Curve.EaseOut })

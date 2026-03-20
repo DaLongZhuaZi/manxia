@@ -1,8 +1,21 @@
 import { logger } from '../../Utils/Logger';
-import { ReadAloudEngineType, ReadAloudSettings } from '../../Models/TextReaderModels';
+import {
+  DEFAULT_READ_ALOUD_SETTINGS,
+  DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  RemoteReadAloudSettings,
+  normalizeReadAloudSettings,
+  normalizeRemoteReadAloudSettings
+} from '../../Models/TextReaderModels';
 import { ReadAloudProgressSnapshot, ReadAloudSessionContext, ReadAloudVoiceOption } from './ReadAloudTypes';
 import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
 import { textToSpeech } from '@kit.CoreSpeechKit';
+import { http } from '@kit.NetworkKit';
+import fs from '@ohos.file.fs';
+import { util } from '@kit.ArkTS';
+import { media } from '@kit.MediaKit';
+import { uiContextManager } from '../Managers/UIContextManager';
 
 const TAG = 'ReadAloudBackends';
 const MAX_SPEAK_CHUNK_LENGTH = 240;
@@ -21,6 +34,13 @@ const SYSTEM_TTS_CREATE_ENGINE_FAILED_CODE: number = 1002300005;
 const SYSTEM_TTS_SERVICE_NOT_INITIALIZED_CODE: number = 1002300007;
 const SYSTEM_TTS_INVALID_CHUNK_EMPTY: string = 'SYSTEM_TTS_INVALID_CHUNK_EMPTY';
 const SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR: string = 'SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR';
+const REMOTE_TTS_MANIFEST_VERSION: number = 1;
+const REMOTE_TTS_DEFAULT_CHARS_PER_SECOND: number = 11;
+const REMOTE_TTS_PREFETCH_MIN: number = 1;
+const REMOTE_TTS_PREFETCH_MAX: number = 8;
+const REMOTE_TTS_FALLBACK_PLAYBACK_GUARD_MS: number = 1600;
+const REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS: number = 580;
+const REMOTE_TTS_PROGRESS_TIMER_MS: number = 120;
 
 interface ReadAloudErrorLike {
   code?: number | string;
@@ -66,6 +86,335 @@ function formatReadAloudError(error: Object | string): string {
     return `code=${rawCode}`;
   }
   return String(error);
+}
+
+interface RemoteTtsSegmentCacheRecord {
+  index: number;
+  start: number;
+  end: number;
+  textDigest: string;
+  filePath: string;
+  bytes: number;
+  durationMs: number;
+}
+
+interface RemoteTtsManifest {
+  version: number;
+  updatedAt: number;
+  bookId: string;
+  chapterIndex: number;
+  contentDigest: string;
+  remoteDigest: string;
+  audioFormat: string;
+  segments: RemoteTtsSegmentCacheRecord[];
+  mergedFilePath?: string;
+}
+
+interface RemoteTtsHttpResult {
+  statusCode: number;
+  headers: Record<string, string>;
+  result: string | ArrayBuffer;
+}
+
+interface RemoteTtsSynthesizedSegment {
+  bytes: Uint8Array;
+  durationMs: number;
+}
+
+interface RemoteTtsPlayableSegment extends RemoteTtsSegmentCacheRecord {
+  durationMs: number;
+}
+
+interface RemoteTtsBase64JsonPayload {
+  audio?: string;
+  audio_base64?: string;
+  base64?: string;
+  data?: string | RemoteTtsBase64JsonPayload;
+  url?: string;
+  audio_url?: string;
+  bytes?: string;
+  result?: RemoteTtsBase64JsonPayload;
+  output?: RemoteTtsBase64JsonPayload;
+}
+
+type RemoteJsonValue = string | number | boolean | Object | Array<Object> | null;
+type RemoteJsonRecord = Record<string, RemoteJsonValue>;
+
+interface RemoteRequestField {
+  key: string;
+  value: string | boolean;
+}
+
+function parseJsonObject(text: string): Record<string, Object> | null {
+  if (!text || text.trim().length <= 0) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(text) as Object;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      return data as Record<string, Object>;
+    }
+  } catch (_ignored) {
+  }
+  return null;
+}
+
+function sanitizeFileNamePart(raw: string): string {
+  if (!raw || raw.length <= 0) {
+    return 'unknown';
+  }
+  return raw.replace(/[^a-zA-Z0-9_.-]/g, '_');
+}
+
+function fnv1aHashHex(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index++) {
+    hash ^= input.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  const safe = hash >>> 0;
+  return safe.toString(16).padStart(8, '0');
+}
+
+function ensureDirExists(path: string): void {
+  try {
+    if (!fs.accessSync(path)) {
+      fs.mkdirSync(path);
+    }
+  } catch (_ignored) {
+  }
+}
+
+function normalizeAudioExtension(format: string): string {
+  const normalized = format.trim().toLowerCase();
+  if (normalized === 'mpeg') {
+    return 'mp3';
+  }
+  if (normalized === 'wave') {
+    return 'wav';
+  }
+  if (normalized.length <= 0) {
+    return 'mp3';
+  }
+  return normalized;
+}
+
+function isLikelyJsonContentType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase();
+  return normalized.includes('application/json') || normalized.includes('text/json');
+}
+
+function isLikelyTextContentType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase();
+  return normalized.includes('text/') || normalized.includes('application/json') || normalized.includes('application/x-ndjson');
+}
+
+function isLikelyTextBytes(bytes: Uint8Array): boolean {
+  if (bytes.length <= 0) {
+    return true;
+  }
+  const sampleSize = Math.min(256, bytes.length);
+  let printableCount = 0;
+  for (let index = 0; index < sampleSize; index++) {
+    const value = bytes[index];
+    if (value === 9 || value === 10 || value === 13 || (value >= 32 && value <= 126)) {
+      printableCount += 1;
+    }
+  }
+  return printableCount / sampleSize > 0.86;
+}
+
+function toUint8Array(data: ArrayBuffer): Uint8Array {
+  return new Uint8Array(data);
+}
+
+function concatUint8ArrayParts(parts: Uint8Array[]): Uint8Array {
+  let totalLength = 0;
+  for (const part of parts) {
+    totalLength += part.length;
+  }
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    merged.set(part, offset);
+    offset += part.length;
+  }
+  return merged;
+}
+
+function decodeBase64TextToBytes(base64Text: string): Uint8Array {
+  const text = base64Text.replace(/\s+/g, '');
+  if (text.length <= 0) {
+    return new Uint8Array(0);
+  }
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const table: Map<string, number> = new Map<string, number>();
+  for (let i = 0; i < alphabet.length; i++) {
+    table.set(alphabet.charAt(i), i);
+  }
+
+  const bytes: number[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const c1 = text.charAt(index++);
+    const c2 = text.charAt(index++);
+    const c3 = text.charAt(index++);
+    const c4 = text.charAt(index++);
+
+    if (!table.has(c1) || !table.has(c2)) {
+      break;
+    }
+    const b1 = table.get(c1) ?? 0;
+    const b2 = table.get(c2) ?? 0;
+    const b3 = c3 === '=' ? -1 : (table.get(c3) ?? -1);
+    const b4 = c4 === '=' ? -1 : (table.get(c4) ?? -1);
+
+    bytes.push((b1 << 2) | (b2 >> 4));
+    if (b3 >= 0) {
+      bytes.push(((b2 & 0x0f) << 4) | (b3 >> 2));
+      if (b4 >= 0) {
+        bytes.push(((b3 & 0x03) << 6) | b4);
+      }
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
+function estimateDurationMsByCharCount(charCount: number, speed: number): number {
+  const safeCharCount = Math.max(1, charCount);
+  const safeSpeed = Math.max(0.5, Math.min(2.0, speed));
+  const charsPerSecond = Math.max(1, REMOTE_TTS_DEFAULT_CHARS_PER_SECOND * safeSpeed);
+  return Math.max(REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS, Math.round((safeCharCount / charsPerSecond) * 1000));
+}
+
+function readFileBytes(path: string): Uint8Array {
+  const stat = fs.statSync(path);
+  const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+  try {
+    const buffer = new ArrayBuffer(stat.size);
+    fs.readSync(file.fd, buffer);
+    return new Uint8Array(buffer);
+  } finally {
+    fs.closeSync(file);
+  }
+}
+
+function writeFileBytes(path: string, bytes: Uint8Array): void {
+  const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+  try {
+    fs.writeSync(file.fd, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  } finally {
+    fs.closeSync(file);
+  }
+}
+
+function isWavBytes(bytes: Uint8Array): boolean {
+  return bytes.length > 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45;
+}
+
+function readLittleEndianInt32(bytes: Uint8Array, offset: number): number {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+function readLittleEndianInt16(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+interface WavPcmPayload {
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: number;
+  pcmBytes: Uint8Array;
+}
+
+function extractWavPcmPayload(bytes: Uint8Array): WavPcmPayload | null {
+  if (!isWavBytes(bytes)) {
+    return null;
+  }
+  let offset = 12;
+  let sampleRate = 24000;
+  let channels = 1;
+  let bitsPerSample = 16;
+  let pcm: Uint8Array | null = null;
+  while (offset + 8 <= bytes.length) {
+    const c1 = String.fromCharCode(bytes[offset]);
+    const c2 = String.fromCharCode(bytes[offset + 1]);
+    const c3 = String.fromCharCode(bytes[offset + 2]);
+    const c4 = String.fromCharCode(bytes[offset + 3]);
+    const chunkId = `${c1}${c2}${c3}${c4}`;
+    const chunkSize = readLittleEndianInt32(bytes, offset + 4);
+    const dataStart = offset + 8;
+    const dataEnd = Math.min(bytes.length, dataStart + chunkSize);
+    if (chunkId === 'fmt ' && dataEnd - dataStart >= 16) {
+      channels = Math.max(1, readLittleEndianInt16(bytes, dataStart + 2));
+      sampleRate = Math.max(8000, readLittleEndianInt32(bytes, dataStart + 4));
+      bitsPerSample = Math.max(8, readLittleEndianInt16(bytes, dataStart + 14));
+    } else if (chunkId === 'data') {
+      pcm = bytes.slice(dataStart, dataEnd);
+      break;
+    }
+    offset = dataEnd + (chunkSize % 2);
+  }
+  if (!pcm) {
+    return null;
+  }
+  return {
+    sampleRate,
+    channels,
+    bitsPerSample,
+    pcmBytes: pcm
+  };
+}
+
+function createWavFromPcm(parts: Uint8Array[], sampleRate: number, channels: number, bitsPerSample: number): Uint8Array {
+  const pcm = concatUint8ArrayParts(parts);
+  const byteRate = Math.max(1, sampleRate * channels * (bitsPerSample / 8));
+  const blockAlign = Math.max(1, channels * (bitsPerSample / 8));
+  const header = new Uint8Array(44);
+
+  // RIFF
+  header.set([0x52, 0x49, 0x46, 0x46], 0);
+  const fileSize = 36 + pcm.length;
+  header[4] = fileSize & 0xff;
+  header[5] = (fileSize >> 8) & 0xff;
+  header[6] = (fileSize >> 16) & 0xff;
+  header[7] = (fileSize >> 24) & 0xff;
+  header.set([0x57, 0x41, 0x56, 0x45], 8);
+
+  // fmt
+  header.set([0x66, 0x6d, 0x74, 0x20], 12);
+  header.set([16, 0, 0, 0], 16); // fmt chunk size
+  header.set([1, 0], 20); // PCM
+  header[22] = channels & 0xff;
+  header[23] = (channels >> 8) & 0xff;
+  header[24] = sampleRate & 0xff;
+  header[25] = (sampleRate >> 8) & 0xff;
+  header[26] = (sampleRate >> 16) & 0xff;
+  header[27] = (sampleRate >> 24) & 0xff;
+  header[28] = byteRate & 0xff;
+  header[29] = (byteRate >> 8) & 0xff;
+  header[30] = (byteRate >> 16) & 0xff;
+  header[31] = (byteRate >> 24) & 0xff;
+  header[32] = blockAlign & 0xff;
+  header[33] = (blockAlign >> 8) & 0xff;
+  header[34] = bitsPerSample & 0xff;
+  header[35] = (bitsPerSample >> 8) & 0xff;
+
+  // data
+  header.set([0x64, 0x61, 0x74, 0x61], 36);
+  header[40] = pcm.length & 0xff;
+  header[41] = (pcm.length >> 8) & 0xff;
+  header[42] = (pcm.length >> 16) & 0xff;
+  header[43] = (pcm.length >> 24) & 0xff;
+
+  return concatUint8ArrayParts([header, pcm]);
 }
 
 class QueueCharRange {
@@ -1709,7 +2058,7 @@ class PlaceholderReadAloudBackend extends BaseReadAloudBackend {
   }
 }
 
-class RemoteReadAloudBackend extends BaseReadAloudBackend {
+class RemoteReadAloudBackendLegacy extends BaseReadAloudBackend {
   async start(): Promise<void> {
     // TODO(听书): 对接远程TTS服务（鉴权、断点续播、缓存与失败重试）。
     logger.info(TAG, '远程听书后端暂未实现');
@@ -1721,6 +2070,1311 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
 
   async stop(): Promise<void> {
     logger.debug(TAG, '远程听书后端停止（占位实现）');
+  }
+}
+
+class RemoteReadAloudBackend extends BaseReadAloudBackend {
+  private queue: string[] = [];
+  private queueStart: number[] = [];
+  private queueEnd: number[] = [];
+  private queueToken: string = '';
+  private queueIndex: number = 0;
+  private currentCharIndex: number = 0;
+  private stopRequested: boolean = false;
+  private pauseRequested: boolean = false;
+  private playbackSessionToken: string = '';
+  private requestSerial: number = 0;
+  private progressTimer: number = -1;
+  private progressStartMs: number = 0;
+  private progressDurationMs: number = 0;
+  private progressRangeStart: number = -1;
+  private progressRangeEnd: number = -1;
+
+  private remoteSettings: RemoteReadAloudSettings =
+    normalizeRemoteReadAloudSettings(DEFAULT_REMOTE_READ_ALOUD_SETTINGS);
+  private pendingSynthesis: Map<number, Promise<RemoteTtsPlayableSegment>> =
+    new Map<number, Promise<RemoteTtsPlayableSegment>>();
+  private playableSegments: Map<number, RemoteTtsPlayableSegment> =
+    new Map<number, RemoteTtsPlayableSegment>();
+
+  private cacheRootDir: string = '';
+  private chapterCacheDir: string = '';
+  private manifestPath: string = '';
+  private activeManifest: RemoteTtsManifest | null = null;
+  private contentDigest: string = '';
+  private remoteDigest: string = '';
+  private sessionTempDir: string = '';
+
+  applySettings(settings: ReadAloudSettings): void {
+    const normalized = normalizeReadAloudSettings(settings);
+    super.applySettings(normalized);
+    this.remoteSettings = normalizeRemoteReadAloudSettings(normalized.remote);
+  }
+
+  updateContext(context: ReadAloudSessionContext | null): void {
+    super.updateContext(context);
+    if (!context) {
+      this.queue = [];
+      this.queueStart = [];
+      this.queueEnd = [];
+      this.queueToken = '';
+      this.queueIndex = 0;
+      this.currentCharIndex = 0;
+      this.pendingSynthesis.clear();
+      this.playableSegments.clear();
+      this.activeManifest = null;
+      this.stopProgressTimer();
+      this.updateProgressSnapshot(-1, -1, -1);
+      return;
+    }
+    const resumeChar = this.normalizeResumeCharIndex(context.resumeCharIndex ?? 0, context.content);
+    const contentDigest = fnv1aHashHex(context.content);
+    const remoteDigest = this.buildRemoteDigest(this.remoteSettings);
+    const nextQueueToken = `${context.bookId}#${context.chapterIndex}#${contentDigest}#${remoteDigest}`;
+    const inPlaybackFlow = this.queueToken === nextQueueToken &&
+      this.queue.length > 0 &&
+      this.playbackSessionToken.length > 0 &&
+      !this.pauseRequested &&
+      !this.stopRequested;
+    if (!inPlaybackFlow && this.queueToken !== nextQueueToken) {
+      this.rebuildQueue(context.content);
+      this.queueToken = nextQueueToken;
+      this.contentDigest = contentDigest;
+      this.remoteDigest = remoteDigest;
+      this.pendingSynthesis.clear();
+      this.playableSegments.clear();
+      this.activeManifest = null;
+    }
+    this.currentCharIndex = resumeChar;
+    this.queueIndex = this.findQueueIndexByChar(resumeChar);
+    const range = this.getQueueRange(this.queueIndex);
+    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+  }
+
+  async start(): Promise<void> {
+    const content = this.context?.content ?? '';
+    if (content.trim().length <= 0) {
+      throw new Error('REMOTE_TTS_NO_CONTENT');
+    }
+
+    this.remoteSettings = this.resolveRemoteSettings();
+    this.validateRemoteSettings(this.remoteSettings);
+    this.stopRequested = false;
+    this.pauseRequested = false;
+    this.stopProgressTimer();
+
+    const contentDigest = fnv1aHashHex(content);
+    const remoteDigest = this.buildRemoteDigest(this.remoteSettings);
+    const queueToken = `${this.context?.bookId ?? ''}#${this.context?.chapterIndex ?? -1}#${contentDigest}#${remoteDigest}`;
+    if (this.queueToken !== queueToken || this.queue.length <= 0) {
+      this.rebuildQueue(content);
+      this.queueToken = queueToken;
+      this.contentDigest = contentDigest;
+      this.remoteDigest = remoteDigest;
+      this.pendingSynthesis.clear();
+      this.playableSegments.clear();
+      this.activeManifest = null;
+    }
+    if (this.queue.length <= 0) {
+      throw new Error('REMOTE_TTS_EMPTY_QUEUE');
+    }
+
+    await this.prepareCacheAndManifest();
+    this.currentCharIndex = this.normalizeResumeCharIndex(this.context?.resumeCharIndex ?? this.currentCharIndex, content);
+    this.queueIndex = this.findQueueIndexByChar(this.currentCharIndex);
+    this.playbackSessionToken = this.createRequestId('remote_session');
+
+    const range = this.getQueueRange(this.queueIndex);
+    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+    this.prefetchSegments(this.queueIndex, this.playbackSessionToken);
+    this.playLoopSafely(this.playbackSessionToken);
+  }
+
+  async pause(): Promise<void> {
+    this.pauseRequested = true;
+    this.stopRequested = false;
+    this.playbackSessionToken = '';
+    this.stopProgressTimer();
+    const range = this.getQueueRange(this.queueIndex);
+    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+  }
+
+  async stop(): Promise<void> {
+    this.stopRequested = true;
+    this.pauseRequested = false;
+    this.playbackSessionToken = '';
+    this.stopProgressTimer();
+    this.pendingSynthesis.clear();
+    this.queueIndex = this.findQueueIndexByChar(this.currentCharIndex);
+    const range = this.getQueueRange(this.queueIndex);
+    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+  }
+
+  async release(): Promise<void> {
+    await this.stop();
+    this.queue = [];
+    this.queueStart = [];
+    this.queueEnd = [];
+    this.queueToken = '';
+    this.queueIndex = 0;
+    this.currentCharIndex = 0;
+    this.playableSegments.clear();
+    this.pendingSynthesis.clear();
+    this.activeManifest = null;
+    this.chapterCacheDir = '';
+    this.manifestPath = '';
+    this.updateProgressSnapshot(-1, -1, -1);
+    await super.release();
+  }
+
+  async listVoices(): Promise<ReadAloudVoiceOption[]> {
+    const remote = this.resolveRemoteSettings();
+    const voice = remote.voice.trim();
+    if (voice.length <= 0) {
+      return [];
+    }
+    return [new ReadAloudVoiceOption(`remote#${voice}`, 'REMOTE', 0, 0, remote.model || 'REMOTE')];
+  }
+
+  private resolveRemoteSettings(): RemoteReadAloudSettings {
+    const merged = normalizeReadAloudSettings(this.settings ?? DEFAULT_READ_ALOUD_SETTINGS);
+    return normalizeRemoteReadAloudSettings(merged.remote);
+  }
+
+  private validateRemoteSettings(settings: RemoteReadAloudSettings): void {
+    if (settings.endpoint.trim().length <= 0) {
+      throw new Error('REMOTE_TTS_ENDPOINT_EMPTY');
+    }
+    if (settings.model.trim().length <= 0) {
+      throw new Error('REMOTE_TTS_MODEL_EMPTY');
+    }
+    if (settings.voice.trim().length <= 0) {
+      throw new Error('REMOTE_TTS_VOICE_EMPTY');
+    }
+  }
+
+  private buildRemoteDigest(settings: RemoteReadAloudSettings): string {
+    const digest = [
+      settings.endpoint.trim(),
+      settings.apiPath.trim(),
+      settings.model.trim(),
+      settings.voice.trim(),
+      settings.audioFormat.trim(),
+      String(settings.streamEnabled),
+      String(settings.maxInputChars),
+      String(settings.reservedInputChars),
+      String(settings.minChunkChars),
+      String(settings.targetChunkChars),
+      String(settings.maxChunkChars),
+      settings.extraBodyJson ?? ''
+    ].join('|');
+    return fnv1aHashHex(digest);
+  }
+
+  private normalizeResumeCharIndex(index: number, content: string): number {
+    if (content.length <= 0) {
+      return 0;
+    }
+    if (index < 0) {
+      return 0;
+    }
+    if (index >= content.length) {
+      return content.length - 1;
+    }
+    return index;
+  }
+
+  private rebuildQueue(content: string): void {
+    this.queue = [];
+    this.queueStart = [];
+    this.queueEnd = [];
+    if (!content || content.trim().length <= 0) {
+      return;
+    }
+
+    const hardLimit = Math.max(64, this.remoteSettings.maxInputChars - this.remoteSettings.reservedInputChars);
+    const maxChunk = Math.max(64, Math.min(this.remoteSettings.maxChunkChars, hardLimit));
+    const targetChunk = Math.max(64, Math.min(this.remoteSettings.targetChunkChars, maxChunk));
+    const minChunk = Math.max(32, Math.min(this.remoteSettings.minChunkChars, targetChunk));
+
+    let start = 0;
+    while (start < content.length) {
+      const range = this.pickChunkRange(content, start, minChunk, targetChunk, maxChunk);
+      if (range.end <= range.start) {
+        break;
+      }
+      const chunk = content.slice(range.start, range.end);
+      if (chunk.trim().length > 0) {
+        this.queue.push(chunk);
+        this.queueStart.push(range.start);
+        this.queueEnd.push(range.end);
+      }
+      start = range.end;
+    }
+  }
+
+  private pickChunkRange(content: string, start: number, minChunk: number, targetChunk: number, maxChunk: number): QueueCharRange {
+    const maxEnd = Math.min(content.length, start + maxChunk);
+    const targetEnd = Math.min(content.length, start + targetChunk);
+    const minEnd = Math.min(content.length, start + minChunk);
+    if (maxEnd <= minEnd) {
+      return new QueueCharRange(start, maxEnd);
+    }
+    const backward = this.findBreakBackward(content, targetEnd, minEnd);
+    if (backward > start) {
+      return new QueueCharRange(start, backward);
+    }
+    const forward = this.findBreakForward(content, targetEnd, maxEnd);
+    if (forward > start) {
+      return new QueueCharRange(start, forward);
+    }
+    return new QueueCharRange(start, maxEnd);
+  }
+
+  private findBreakBackward(content: string, from: number, minEnd: number): number {
+    for (let index = from; index > minEnd; index--) {
+      const char = content.charAt(index - 1);
+      if (this.isBreakChar(char)) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private findBreakForward(content: string, from: number, maxEnd: number): number {
+    for (let index = from; index < maxEnd; index++) {
+      if (this.isBreakChar(content.charAt(index))) {
+        return index + 1;
+      }
+    }
+    return -1;
+  }
+
+  private isBreakChar(char: string): boolean {
+    return char === '\n' ||
+      char === '\r' ||
+      char === '.' ||
+      char === '!' ||
+      char === '?' ||
+      char === ',' ||
+      char === ';' ||
+      char === ':' ||
+      char === '\u3002' ||
+      char === '\uff01' ||
+      char === '\uff1f' ||
+      char === '\uff0c' ||
+      char === '\u3001' ||
+      char === '\uff1b' ||
+      char === '\uff1a' ||
+      char === '\u2026';
+  }
+
+  private findQueueIndexByChar(index: number): number {
+    if (this.queue.length <= 0) {
+      return 0;
+    }
+    if (index <= 0) {
+      return 0;
+    }
+    let matched = 0;
+    for (let i = 0; i < this.queue.length; i++) {
+      const start = this.queueStart[i] ?? 0;
+      const end = this.queueEnd[i] ?? start;
+      if (index < start) {
+        return matched;
+      }
+      if (index >= start && index < end) {
+        return i;
+      }
+      matched = i;
+    }
+    return matched;
+  }
+
+  private getQueueRange(index: number): QueueCharRange {
+    if (this.queue.length <= 0) {
+      return new QueueCharRange(0, 0);
+    }
+    const safe = Math.max(0, Math.min(index, this.queue.length - 1));
+    const start = this.queueStart[safe] ?? 0;
+    const end = this.queueEnd[safe] ?? start;
+    return new QueueCharRange(start, end);
+  }
+
+  private async prepareCacheAndManifest(): Promise<void> {
+    const abilityContext = uiContextManager.getAbilityContext();
+    const filesDir = abilityContext?.filesDir ?? abilityContext?.cacheDir ?? '';
+    if (filesDir.length <= 0) {
+      throw new Error('REMOTE_TTS_CONTEXT_FILES_DIR_EMPTY');
+    }
+
+    this.cacheRootDir = `${filesDir}/read_aloud_remote`;
+    ensureDirExists(this.cacheRootDir);
+    const safeBookId = sanitizeFileNamePart(this.context?.bookId ?? 'unknown_book');
+    const chapterIndex = this.context?.chapterIndex ?? -1;
+    const chapterKey = `${safeBookId}_${chapterIndex}_${this.contentDigest}_${this.remoteDigest}`;
+    this.chapterCacheDir = `${this.cacheRootDir}/${chapterKey}`;
+    ensureDirExists(this.chapterCacheDir);
+    this.manifestPath = `${this.chapterCacheDir}/manifest.json`;
+    this.sessionTempDir = `${this.chapterCacheDir}/session_${Date.now()}`;
+    ensureDirExists(this.sessionTempDir);
+
+    if (!this.remoteSettings.cacheAudioFiles) {
+      this.cleanupChapterCacheWithoutManifest();
+    }
+    this.activeManifest = this.loadManifestFromDisk();
+    if (!this.activeManifest) {
+      this.activeManifest = {
+        version: REMOTE_TTS_MANIFEST_VERSION,
+        updatedAt: Date.now(),
+        bookId: this.context?.bookId ?? '',
+        chapterIndex: this.context?.chapterIndex ?? -1,
+        contentDigest: this.contentDigest,
+        remoteDigest: this.remoteDigest,
+        audioFormat: normalizeAudioExtension(this.remoteSettings.audioFormat),
+        segments: []
+      };
+      this.persistManifest();
+    }
+    this.restoreSegmentsFromManifest();
+  }
+
+  private cleanupChapterCacheWithoutManifest(): void {
+    try {
+      if (!this.chapterCacheDir || !fs.accessSync(this.chapterCacheDir)) {
+        return;
+      }
+      const files = fs.listFileSync(this.chapterCacheDir);
+      for (const name of files) {
+        if (name === 'manifest.json') {
+          continue;
+        }
+        const fullPath = `${this.chapterCacheDir}/${name}`;
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            this.deleteDir(fullPath);
+          } else {
+            fs.unlinkSync(fullPath);
+          }
+        } catch (_ignored) {
+        }
+      }
+    } catch (_ignored) {
+    }
+  }
+
+  private deleteDir(path: string): void {
+    try {
+      if (!fs.accessSync(path)) {
+        return;
+      }
+      const items = fs.listFileSync(path);
+      for (const item of items) {
+        const child = `${path}/${item}`;
+        const stat = fs.statSync(child);
+        if (stat.isDirectory()) {
+          this.deleteDir(child);
+        } else {
+          fs.unlinkSync(child);
+        }
+      }
+      fs.rmdirSync(path);
+    } catch (_ignored) {
+    }
+  }
+
+  private loadManifestFromDisk(): RemoteTtsManifest | null {
+    if (!this.manifestPath || !fs.accessSync(this.manifestPath)) {
+      return null;
+    }
+    try {
+      const text = new util.TextDecoder('utf-8').decodeToString(readFileBytes(this.manifestPath));
+      const manifest = JSON.parse(text) as RemoteTtsManifest;
+      if (!manifest || manifest.version !== REMOTE_TTS_MANIFEST_VERSION) {
+        return null;
+      }
+      if (manifest.bookId !== (this.context?.bookId ?? '')) {
+        return null;
+      }
+      if (manifest.chapterIndex !== (this.context?.chapterIndex ?? -1)) {
+        return null;
+      }
+      if (manifest.contentDigest !== this.contentDigest || manifest.remoteDigest !== this.remoteDigest) {
+        return null;
+      }
+      if (!Array.isArray(manifest.segments)) {
+        manifest.segments = [];
+      }
+      return manifest;
+    } catch (_ignored) {
+      return null;
+    }
+  }
+
+  private persistManifest(): void {
+    if (!this.activeManifest || !this.manifestPath) {
+      return;
+    }
+    try {
+      this.activeManifest.updatedAt = Date.now();
+      const bytes = new util.TextEncoder().encodeInto(JSON.stringify(this.activeManifest));
+      writeFileBytes(this.manifestPath, new Uint8Array(bytes));
+    } catch (_ignored) {
+    }
+  }
+
+  private restoreSegmentsFromManifest(): void {
+    this.playableSegments.clear();
+    if (!this.activeManifest) {
+      return;
+    }
+    const sorted = this.activeManifest.segments.slice().sort((a, b) => a.index - b.index);
+    for (const item of sorted) {
+      if (item.index < 0 || item.index >= this.queue.length) {
+        continue;
+      }
+      if (!item.filePath || !fs.accessSync(item.filePath)) {
+        continue;
+      }
+      if (this.segmentDigest(item.index) !== item.textDigest) {
+        continue;
+      }
+      const durationMs = item.durationMs > 0
+        ? item.durationMs
+        : estimateDurationMsByCharCount(this.queue[item.index].length, this.settings?.speed ?? 1);
+      this.playableSegments.set(item.index, {
+        index: item.index,
+        start: item.start,
+        end: item.end,
+        textDigest: item.textDigest,
+        filePath: item.filePath,
+        bytes: item.bytes,
+        durationMs
+      });
+    }
+  }
+
+  private updateManifestSegment(segment: RemoteTtsPlayableSegment): void {
+    if (!this.activeManifest) {
+      return;
+    }
+    const next: RemoteTtsSegmentCacheRecord[] = [];
+    for (const item of this.activeManifest.segments) {
+      if (item.index !== segment.index) {
+        next.push(item);
+      }
+    }
+    next.push({
+      index: segment.index,
+      start: segment.start,
+      end: segment.end,
+      textDigest: segment.textDigest,
+      filePath: segment.filePath,
+      bytes: segment.bytes,
+      durationMs: segment.durationMs
+    });
+    next.sort((a, b) => a.index - b.index);
+    this.activeManifest.segments = next;
+    this.persistManifest();
+  }
+
+  private segmentDigest(index: number): string {
+    return fnv1aHashHex(this.queue[index] ?? '');
+  }
+
+  private prefetchSegments(startIndex: number, sessionToken: string): void {
+    if (!this.isSessionActive(sessionToken)) {
+      return;
+    }
+    const count = Math.max(REMOTE_TTS_PREFETCH_MIN, Math.min(REMOTE_TTS_PREFETCH_MAX, this.remoteSettings.prefetchSegments));
+    const end = Math.min(this.queue.length - 1, startIndex + count - 1);
+    for (let index = startIndex; index <= end; index++) {
+      this.ensureSegment(index, sessionToken).catch((_error: Object | string) => {});
+    }
+  }
+
+  private playLoopSafely(sessionToken: string): void {
+    this.playLoop(sessionToken).catch((error: Object | string) => {
+      if (!this.isSessionActive(sessionToken)) {
+        return;
+      }
+      this.pauseRequested = true;
+      this.stopRequested = false;
+      this.stopProgressTimer();
+      this.notifyPlaybackEvent('paused_for_error', formatReadAloudError(error), this.currentCharIndex);
+    });
+  }
+
+  private async playLoop(sessionToken: string): Promise<void> {
+    while (this.isSessionActive(sessionToken) && !this.pauseRequested && !this.stopRequested) {
+      if (this.queueIndex >= this.queue.length) {
+        this.pauseRequested = true;
+        this.stopRequested = false;
+        this.stopProgressTimer();
+        this.tryConcatChapterAudio();
+        this.notifyPlaybackEvent('completed', 'queue_finished', this.currentCharIndex);
+        return;
+      }
+
+      const range = this.getQueueRange(this.queueIndex);
+      const segment = await this.ensureSegment(this.queueIndex, sessionToken);
+      if (!this.isSessionActive(sessionToken)) {
+        return;
+      }
+      this.currentCharIndex = Math.max(range.start, Math.min(this.currentCharIndex, Math.max(range.start, range.end - 1)));
+      this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+      this.startProgressTimer(range.start, range.end, segment.durationMs, sessionToken);
+      await this.waitDuration(segment.durationMs, sessionToken);
+      if (!this.isSessionActive(sessionToken)) {
+        return;
+      }
+      this.stopProgressTimer();
+      this.currentCharIndex = range.end;
+      this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+      this.queueIndex += 1;
+      this.prefetchSegments(this.queueIndex, sessionToken);
+    }
+  }
+
+  private isSessionActive(sessionToken: string): boolean {
+    return this.playbackSessionToken.length > 0 &&
+      this.playbackSessionToken === sessionToken &&
+      !this.pauseRequested &&
+      !this.stopRequested;
+  }
+
+  private async waitDuration(durationMs: number, sessionToken: string): Promise<void> {
+    if (!this.isSessionActive(sessionToken)) {
+      return;
+    }
+    const safe = Math.max(REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS, durationMs);
+    await new Promise<void>((resolve) => setTimeout(resolve, safe));
+  }
+
+  private startProgressTimer(start: number, end: number, durationMs: number, sessionToken: string): void {
+    this.stopProgressTimer();
+    if (end <= start) {
+      return;
+    }
+    this.progressStartMs = Date.now();
+    this.progressDurationMs = Math.max(REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS, durationMs);
+    this.progressRangeStart = start;
+    this.progressRangeEnd = end;
+    this.progressTimer = setInterval(() => {
+      if (!this.isSessionActive(sessionToken)) {
+        this.stopProgressTimer();
+        return;
+      }
+      const elapsed = Date.now() - this.progressStartMs;
+      const ratio = Math.max(0, Math.min(1, elapsed / Math.max(1, this.progressDurationMs)));
+      const span = this.progressRangeEnd - this.progressRangeStart;
+      const next = this.progressRangeStart + Math.floor(span * ratio);
+      const safeNext = Math.max(this.currentCharIndex, Math.min(next, Math.max(this.progressRangeStart, this.progressRangeEnd - 1)));
+      if (safeNext === this.currentCharIndex) {
+        return;
+      }
+      this.currentCharIndex = safeNext;
+      this.updateProgressSnapshot(this.currentCharIndex, this.progressRangeStart, this.progressRangeEnd);
+    }, REMOTE_TTS_PROGRESS_TIMER_MS);
+  }
+
+  private stopProgressTimer(): void {
+    if (this.progressTimer >= 0) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = -1;
+    }
+    this.progressStartMs = 0;
+    this.progressDurationMs = 0;
+    this.progressRangeStart = -1;
+    this.progressRangeEnd = -1;
+  }
+
+  private async ensureSegment(index: number, sessionToken: string): Promise<RemoteTtsPlayableSegment> {
+    const existing = this.playableSegments.get(index);
+    if (existing && existing.filePath.length > 0 && fs.accessSync(existing.filePath)) {
+      return existing;
+    }
+    const pending = this.pendingSynthesis.get(index);
+    if (pending) {
+      return await pending;
+    }
+    const task = this.synthesizeSegment(index, sessionToken);
+    this.pendingSynthesis.set(index, task);
+    try {
+      const result = await task;
+      this.playableSegments.set(index, result);
+      return result;
+    } finally {
+      this.pendingSynthesis.delete(index);
+    }
+  }
+
+  private async synthesizeSegment(index: number, sessionToken: string): Promise<RemoteTtsPlayableSegment> {
+    if (!this.isSessionActive(sessionToken) && this.playbackSessionToken.length > 0) {
+      throw new Error('REMOTE_TTS_SESSION_INTERRUPTED');
+    }
+    const text = this.queue[index] ?? '';
+    if (text.trim().length <= 0) {
+      throw new Error(`REMOTE_TTS_EMPTY_SEGMENT: index=${index}`);
+    }
+    const range = this.getQueueRange(index);
+    const synthesized = await this.requestRemoteAudio(text);
+    const digest = this.segmentDigest(index);
+    const ext = normalizeAudioExtension(this.remoteSettings.audioFormat);
+    const dir = this.remoteSettings.cacheAudioFiles ? this.chapterCacheDir : this.sessionTempDir;
+    ensureDirExists(dir);
+    const filePath = `${dir}/seg_${index}_${digest}.${ext}`;
+    writeFileBytes(filePath, synthesized.bytes);
+    const durationMs = Math.max(
+      REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS,
+      synthesized.durationMs > 0 ? synthesized.durationMs : estimateDurationMsByCharCount(text.length, this.settings?.speed ?? 1)
+    );
+    const segment: RemoteTtsPlayableSegment = {
+      index,
+      start: range.start,
+      end: range.end,
+      textDigest: digest,
+      filePath,
+      bytes: synthesized.bytes.byteLength,
+      durationMs
+    };
+    this.updateManifestSegment(segment);
+    return segment;
+  }
+
+  private async requestRemoteAudio(text: string): Promise<RemoteTtsSynthesizedSegment> {
+    const requestUrl = this.buildRemoteRequestUrl();
+    const requestHeaders = this.buildRemoteRequestHeaders();
+    const payload = this.buildRemoteRequestBody(text);
+    const response = await this.requestRemoteHttp(
+      requestUrl,
+      http.RequestMethod.POST,
+      payload,
+      requestHeaders,
+      true
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      const detail = typeof response.result === 'string'
+        ? response.result.slice(0, 240)
+        : '';
+      throw new Error(`REMOTE_TTS_HTTP_${response.statusCode}${detail.length > 0 ? `: ${detail}` : ''}`);
+    }
+
+    const parsed = await this.parseRemoteAudioResult(response, requestUrl, requestHeaders);
+    if (!parsed || parsed.bytes.length <= 0) {
+      throw new Error('REMOTE_TTS_EMPTY_AUDIO_BYTES');
+    }
+
+    return {
+      bytes: parsed.bytes,
+      durationMs: Math.max(0, parsed.durationMs)
+    };
+  }
+
+  private buildRemoteRequestUrl(): string {
+    const endpoint = this.remoteSettings.endpoint.trim().replace(/\/+$/, '');
+    const apiPathRaw = this.remoteSettings.apiPath.trim();
+    if (apiPathRaw.startsWith('http://') || apiPathRaw.startsWith('https://')) {
+      return apiPathRaw;
+    }
+    const apiPath = apiPathRaw.length > 0
+      ? (apiPathRaw.startsWith('/') ? apiPathRaw : `/${apiPathRaw}`)
+      : '/v1/audio/speech';
+    return `${endpoint}${apiPath}`;
+  }
+
+  private buildRemoteRequestBody(text: string): string {
+    const fields: RemoteRequestField[] = [];
+    this.putRemoteRequestField(fields, 'model', this.remoteSettings.model.trim());
+    this.putRemoteRequestField(fields, 'voice', this.remoteSettings.voice.trim());
+    this.putRemoteRequestField(fields, 'input', text);
+    this.putRemoteRequestField(fields, 'response_format', normalizeAudioExtension(this.remoteSettings.audioFormat));
+    this.putRemoteRequestField(fields, 'stream', this.remoteSettings.streamEnabled);
+
+    const extra = this.parseJsonRecord(this.remoteSettings.extraBodyJson);
+    if (extra) {
+      const keys = Object.keys(extra);
+      for (const key of keys) {
+        const value = extra[key];
+        if (value === undefined || value === null) {
+          continue;
+        }
+        if (typeof value === 'boolean') {
+          this.putRemoteRequestField(fields, key, value);
+        } else {
+          this.putRemoteRequestField(fields, key, String(value));
+        }
+      }
+    }
+    return this.serializeRemoteRequestFields(fields);
+  }
+
+  private putRemoteRequestField(fields: RemoteRequestField[], key: string, value: string | boolean): void {
+    for (let i = 0; i < fields.length; i++) {
+      if (fields[i].key === key) {
+        fields[i].value = value;
+        return;
+      }
+    }
+    const field: RemoteRequestField = {
+      key,
+      value
+    };
+    fields.push(field);
+  }
+
+  private serializeRemoteRequestFields(fields: RemoteRequestField[]): string {
+    const parts: string[] = [];
+    for (const field of fields) {
+      const keyPart = JSON.stringify(field.key);
+      const valuePart = typeof field.value === 'boolean'
+        ? (field.value ? 'true' : 'false')
+        : JSON.stringify(field.value);
+      parts.push(`${keyPart}:${valuePart}`);
+    }
+    return `{${parts.join(',')}}`;
+  }
+
+  private buildRemoteRequestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const customHeaders = this.parseJsonRecord(this.remoteSettings.customHeadersJson);
+    if (customHeaders) {
+      const keys = Object.keys(customHeaders);
+      for (const key of keys) {
+        const value = customHeaders[key];
+        if (value === undefined || value === null) {
+          continue;
+        }
+        headers[key] = String(value);
+      }
+    }
+
+    this.setHeaderIfAbsent(headers, 'Content-Type', 'application/json');
+    this.setHeaderIfAbsent(headers, 'Accept', 'audio/*,application/octet-stream,application/json,text/event-stream');
+    this.setHeaderIfAbsent(headers, 'User-Agent', 'ManXia-ReadAloud/1.0');
+    const apiKey = this.remoteSettings.apiKey.trim();
+    if (apiKey.length > 0 && !this.hasHeaderIgnoreCase(headers, 'Authorization')) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    return headers;
+  }
+
+  private parseJsonRecord(text: string): RemoteJsonRecord | null {
+    if (!text || text.trim().length <= 0) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(text) as Object;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return null;
+      }
+      return payload as RemoteJsonRecord;
+    } catch (_ignored) {
+      return null;
+    }
+  }
+
+  private hasHeaderIgnoreCase(headers: Record<string, string>, key: string): boolean {
+    const target = key.toLowerCase();
+    const keys = Object.keys(headers);
+    for (const item of keys) {
+      if (item.toLowerCase() === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private setHeaderIfAbsent(headers: Record<string, string>, key: string, value: string): void {
+    if (!this.hasHeaderIgnoreCase(headers, key)) {
+      headers[key] = value;
+    }
+  }
+
+  private getHeaderValue(headers: Record<string, string>, key: string): string {
+    const target = key.toLowerCase();
+    const keys = Object.keys(headers);
+    for (const item of keys) {
+      if (item.toLowerCase() === target) {
+        return headers[item];
+      }
+    }
+    return '';
+  }
+
+  private normalizeHeaders(rawHeaders: Object | undefined | null): Record<string, string> {
+    const normalized: Record<string, string> = {};
+    if (!rawHeaders || typeof rawHeaders !== 'object') {
+      return normalized;
+    }
+    const source = rawHeaders as RemoteJsonRecord;
+    const keys = Object.keys(source);
+    for (const key of keys) {
+      const value = source[key];
+      if (value === undefined || value === null) {
+        continue;
+      }
+      normalized[key] = String(value);
+    }
+    return normalized;
+  }
+
+  private async requestRemoteHttp(
+    url: string,
+    method: http.RequestMethod,
+    body: string,
+    headers: Record<string, string>,
+    expectArrayBuffer: boolean
+  ): Promise<RemoteTtsHttpResult> {
+    const request = http.createHttp();
+    try {
+      const response = await request.request(url, {
+        method,
+        header: headers,
+        extraData: body,
+        expectDataType: expectArrayBuffer ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING,
+        connectTimeout: this.remoteSettings.connectTimeoutMs,
+        readTimeout: this.remoteSettings.readTimeoutMs
+      });
+      return {
+        statusCode: response.responseCode,
+        headers: this.normalizeHeaders(response.header),
+        result: response.result as string | ArrayBuffer
+      };
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private async parseRemoteAudioResult(
+    response: RemoteTtsHttpResult,
+    requestUrl: string,
+    requestHeaders: Record<string, string>
+  ): Promise<RemoteTtsSynthesizedSegment> {
+    const contentType = this.getHeaderValue(response.headers, 'content-type');
+    const result = response.result;
+    const rawBytes = typeof result === 'string'
+      ? new Uint8Array(new util.TextEncoder().encodeInto(result))
+      : toUint8Array(result);
+    if (rawBytes.length <= 0) {
+      return {
+        bytes: new Uint8Array(0),
+        durationMs: 0
+      };
+    }
+
+    const shouldTreatAsBinary = !isLikelyTextContentType(contentType) && !isLikelyTextBytes(rawBytes);
+    if (shouldTreatAsBinary) {
+      return {
+        bytes: rawBytes,
+        durationMs: 0
+      };
+    }
+
+    const textPayload = typeof result === 'string'
+      ? result
+      : new util.TextDecoder('utf-8').decodeToString(rawBytes);
+
+    const fromSse = await this.extractAudioFromSsePayload(textPayload, contentType, requestUrl, requestHeaders);
+    if (fromSse.bytes.length > 0) {
+      return fromSse;
+    }
+
+    const fromJson = await this.extractAudioFromJsonPayload(textPayload, requestUrl, requestHeaders);
+    if (fromJson.bytes.length > 0) {
+      return fromJson;
+    }
+
+    const decoded = this.decodePossibleBase64Payload(textPayload);
+    if (decoded.length > 0) {
+      return {
+        bytes: decoded,
+        durationMs: 0
+      };
+    }
+
+    if (typeof result !== 'string') {
+      return {
+        bytes: rawBytes,
+        durationMs: 0
+      };
+    }
+
+    throw new Error('REMOTE_TTS_PARSE_FAILED');
+  }
+
+  private async extractAudioFromSsePayload(
+    textPayload: string,
+    contentType: string,
+    requestUrl: string,
+    requestHeaders: Record<string, string>
+  ): Promise<RemoteTtsSynthesizedSegment> {
+    const normalizedContentType = contentType.toLowerCase();
+    const maybeSse = normalizedContentType.includes('text/event-stream') ||
+      textPayload.includes('\ndata:') ||
+      textPayload.startsWith('data:');
+    if (!maybeSse) {
+      return {
+        bytes: new Uint8Array(0),
+        durationMs: 0
+      };
+    }
+
+    const events: string[] = [];
+    const lines = textPayload.split(/\r?\n/);
+    let dataParts: string[] = [];
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (line.length <= 0) {
+        if (dataParts.length > 0) {
+          events.push(dataParts.join('\n'));
+          dataParts = [];
+        }
+        continue;
+      }
+      if (line.startsWith(':')) {
+        continue;
+      }
+      if (line.startsWith('data:')) {
+        dataParts.push(line.slice(5).trim());
+      }
+    }
+    if (dataParts.length > 0) {
+      events.push(dataParts.join('\n'));
+    }
+
+    const mergedParts: Uint8Array[] = [];
+    let durationMs = 0;
+    for (const eventItem of events) {
+      const chunk = eventItem.trim();
+      if (chunk.length <= 0 || chunk === '[DONE]') {
+        continue;
+      }
+      const parsed = await this.extractAudioFromJsonPayload(chunk, requestUrl, requestHeaders);
+      if (parsed.bytes.length > 0) {
+        mergedParts.push(parsed.bytes);
+        if (parsed.durationMs > durationMs) {
+          durationMs = parsed.durationMs;
+        }
+        continue;
+      }
+      const decoded = this.decodePossibleBase64Payload(chunk);
+      if (decoded.length > 0) {
+        mergedParts.push(decoded);
+      }
+    }
+    if (mergedParts.length <= 0) {
+      return {
+        bytes: new Uint8Array(0),
+        durationMs: 0
+      };
+    }
+    return {
+      bytes: concatUint8ArrayParts(mergedParts),
+      durationMs
+    };
+  }
+
+  private async extractAudioFromJsonPayload(
+    payloadText: string,
+    requestUrl: string,
+    requestHeaders: Record<string, string>
+  ): Promise<RemoteTtsSynthesizedSegment> {
+    const mergedParts: Uint8Array[] = [];
+    let durationMs = 0;
+
+    const tryConsumeRecord = async (record: RemoteJsonRecord): Promise<void> => {
+      const base64Hints: string[] = [];
+      const urlHints: string[] = [];
+      const durationHints: number[] = [];
+      this.collectJsonAudioHints(record, base64Hints, urlHints, durationHints);
+      for (const value of base64Hints) {
+        const decoded = this.decodePossibleBase64Payload(value);
+        if (decoded.length > 0) {
+          mergedParts.push(decoded);
+        }
+      }
+      if (mergedParts.length <= 0) {
+        for (const value of urlHints) {
+          const downloaded = await this.downloadAudioByUrl(value, requestUrl, requestHeaders);
+          if (downloaded.length > 0) {
+            mergedParts.push(downloaded);
+            break;
+          }
+        }
+      }
+      for (const value of durationHints) {
+        if (value > durationMs) {
+          durationMs = value;
+        }
+      }
+    };
+
+    const directJson = this.parseJsonRecord(payloadText);
+    if (directJson) {
+      await tryConsumeRecord(directJson);
+    } else {
+      const lines = payloadText.split(/\r?\n/);
+      for (const lineText of lines) {
+        const line = lineText.trim();
+        if (line.length <= 0) {
+          continue;
+        }
+        const lineJson = this.parseJsonRecord(line);
+        if (!lineJson) {
+          continue;
+        }
+        await tryConsumeRecord(lineJson);
+      }
+    }
+
+    if (mergedParts.length <= 0) {
+      return {
+        bytes: new Uint8Array(0),
+        durationMs: 0
+      };
+    }
+    return {
+      bytes: concatUint8ArrayParts(mergedParts),
+      durationMs
+    };
+  }
+
+  private collectJsonAudioHints(
+    payload: RemoteJsonValue,
+    base64Hints: string[],
+    urlHints: string[],
+    durationHints: number[]
+  ): void {
+    if (payload === null || payload === undefined) {
+      return;
+    }
+    if (Array.isArray(payload)) {
+      const payloadArray = payload as Array<Object>;
+      for (let index = 0; index < payloadArray.length; index++) {
+        const item: Object = payloadArray[index];
+        this.collectJsonAudioHints(item as RemoteJsonValue, base64Hints, urlHints, durationHints);
+      }
+      return;
+    }
+    if (typeof payload !== 'object') {
+      return;
+    }
+
+    const record = payload as RemoteJsonRecord;
+    const keys = Object.keys(record);
+    for (const key of keys) {
+      const value = record[key];
+      const lowerKey = key.toLowerCase();
+      if (typeof value === 'string') {
+        const normalized = value.trim();
+        if (normalized.length <= 0) {
+          continue;
+        }
+        if (lowerKey.includes('duration')) {
+          const parsedNumber = Number(normalized);
+          if (Number.isFinite(parsedNumber)) {
+            durationHints.push(Math.max(0, Math.floor(parsedNumber)));
+          }
+        }
+        if (
+          lowerKey === 'audio' ||
+          lowerKey === 'audio_base64' ||
+          lowerKey === 'base64' ||
+          lowerKey === 'bytes' ||
+          lowerKey === 'data' ||
+          lowerKey.includes('audio') ||
+          lowerKey.includes('base64')
+        ) {
+          base64Hints.push(normalized);
+        }
+        if (
+          lowerKey === 'url' ||
+          lowerKey === 'audio_url' ||
+          lowerKey.endsWith('_url')
+        ) {
+          urlHints.push(normalized);
+        }
+      } else if (typeof value === 'number') {
+        if (lowerKey.includes('duration') && Number.isFinite(value)) {
+          durationHints.push(Math.max(0, Math.floor(value)));
+        }
+      }
+      this.collectJsonAudioHints(value, base64Hints, urlHints, durationHints);
+    }
+  }
+
+  private decodePossibleBase64Payload(rawValue: string): Uint8Array {
+    const text = rawValue.trim();
+    if (text.length <= 0) {
+      return new Uint8Array(0);
+    }
+
+    let base64Text = text;
+    const dataPrefixMatch = /^data:audio\/[a-zA-Z0-9.+-]+;base64,/i.exec(base64Text);
+    if (dataPrefixMatch) {
+      base64Text = base64Text.slice(dataPrefixMatch[0].length);
+    }
+
+    if (!this.isLikelyBase64String(base64Text)) {
+      return new Uint8Array(0);
+    }
+    return decodeBase64TextToBytes(base64Text);
+  }
+
+  private isLikelyBase64String(rawValue: string): boolean {
+    const normalized = rawValue.replace(/\s+/g, '');
+    if (normalized.length < 16 || normalized.length % 4 !== 0) {
+      return false;
+    }
+    return /^[A-Za-z0-9+/=]+$/.test(normalized);
+  }
+
+  private async downloadAudioByUrl(
+    audioUrl: string,
+    requestUrl: string,
+    requestHeaders: Record<string, string>
+  ): Promise<Uint8Array> {
+    const resolvedUrl = this.resolveAudioUrl(audioUrl, requestUrl);
+    if (!resolvedUrl || resolvedUrl.length <= 0) {
+      return new Uint8Array(0);
+    }
+    const headers: Record<string, string> = {};
+    const requestHeaderKeys = Object.keys(requestHeaders);
+    for (const key of requestHeaderKeys) {
+      if (key.toLowerCase() === 'content-type') {
+        continue;
+      }
+      headers[key] = requestHeaders[key];
+    }
+
+    const response = await this.requestRemoteHttp(
+      resolvedUrl,
+      http.RequestMethod.GET,
+      '',
+      headers,
+      true
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return new Uint8Array(0);
+    }
+    if (typeof response.result === 'string') {
+      const decoded = this.decodePossibleBase64Payload(response.result);
+      return decoded.length > 0
+        ? decoded
+        : new Uint8Array(new util.TextEncoder().encodeInto(response.result));
+    }
+    return toUint8Array(response.result);
+  }
+
+  private resolveAudioUrl(rawUrl: string, requestUrl: string): string {
+    const trimmed = rawUrl.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    const requestMatch = /^(https?:\/\/[^/]+)(\/.*)?$/i.exec(requestUrl);
+    if (!requestMatch) {
+      return trimmed;
+    }
+    const host = requestMatch[1];
+    const basePath = requestMatch[2] ?? '/';
+    if (trimmed.startsWith('/')) {
+      return `${host}${trimmed}`;
+    }
+    const slashIndex = basePath.lastIndexOf('/');
+    const parent = slashIndex >= 0 ? basePath.slice(0, slashIndex + 1) : '/';
+    return `${host}${parent}${trimmed}`;
+  }
+
+  private tryConcatChapterAudio(): void {
+    if (!this.remoteSettings.autoConcatAudio || !this.remoteSettings.cacheAudioFiles) {
+      return;
+    }
+    if (!this.activeManifest || !this.chapterCacheDir) {
+      return;
+    }
+    if (this.activeManifest.segments.length <= 1) {
+      return;
+    }
+    if (this.activeManifest.mergedFilePath && fs.accessSync(this.activeManifest.mergedFilePath)) {
+      return;
+    }
+
+    const segments = this.activeManifest.segments
+      .slice()
+      .sort((left, right) => left.index - right.index);
+    if (segments.length !== this.queue.length) {
+      return;
+    }
+
+    const byteParts: Uint8Array[] = [];
+    for (const segment of segments) {
+      if (segment.index < 0 || segment.index >= this.queue.length) {
+        return;
+      }
+      if (!segment.filePath || !fs.accessSync(segment.filePath)) {
+        return;
+      }
+      if (segment.textDigest !== this.segmentDigest(segment.index)) {
+        return;
+      }
+      byteParts.push(readFileBytes(segment.filePath));
+    }
+    if (byteParts.length <= 1) {
+      return;
+    }
+
+    const ext = normalizeAudioExtension(this.activeManifest.audioFormat || this.remoteSettings.audioFormat);
+    let mergedBytes: Uint8Array = concatUint8ArrayParts(byteParts);
+    if (ext === 'wav') {
+      const wavBytes = this.tryConcatWavSegments(byteParts);
+      if (wavBytes) {
+        mergedBytes = wavBytes;
+      }
+    }
+
+    const mergedPath = `${this.chapterCacheDir}/chapter_${this.contentDigest}_${this.remoteDigest}.${ext}`;
+    writeFileBytes(mergedPath, mergedBytes);
+    this.activeManifest.mergedFilePath = mergedPath;
+    this.persistManifest();
+  }
+
+  private tryConcatWavSegments(parts: Uint8Array[]): Uint8Array | null {
+    if (parts.length <= 0) {
+      return null;
+    }
+    const pcmParts: Uint8Array[] = [];
+    let sampleRate = 0;
+    let channels = 0;
+    let bitsPerSample = 0;
+    for (const part of parts) {
+      const payload = extractWavPcmPayload(part);
+      if (!payload) {
+        return null;
+      }
+      if (sampleRate <= 0) {
+        sampleRate = payload.sampleRate;
+        channels = payload.channels;
+        bitsPerSample = payload.bitsPerSample;
+      } else if (
+        payload.sampleRate !== sampleRate ||
+        payload.channels !== channels ||
+        payload.bitsPerSample !== bitsPerSample
+      ) {
+        return null;
+      }
+      pcmParts.push(payload.pcmBytes);
+    }
+    if (sampleRate <= 0 || channels <= 0 || bitsPerSample <= 0 || pcmParts.length <= 0) {
+      return null;
+    }
+    return createWavFromPcm(pcmParts, sampleRate, channels, bitsPerSample);
+  }
+
+  private createRequestId(prefix: string): string {
+    this.requestSerial += 1;
+    return ReadAloudRequestIdGenerator.next(`${prefix}_${this.requestSerial}`);
   }
 }
 
