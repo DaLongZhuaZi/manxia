@@ -888,6 +888,9 @@ export default class EntryAbility extends UIAbility {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('EntryAbility', `前台检测系统主题失败: ${errorMessage}`);
     }
+
+    WindowManager.reapplyCurrentDisplayMode();
+    WindowManager.reapplyCurrentDisplayMode(220);
   }
 
   /**

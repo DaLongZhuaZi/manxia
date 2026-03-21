@@ -581,7 +581,6 @@ export struct MangaReaderPage {
   }
 
   onPageHide() {
-    this.restoreNormalMode();
     logger.lifecycle(TAG, '漫画阅读器页面隐藏（进入后台）');
     // 初始化主题感知
     this.saveReadingProgressInternal('onPageHide').catch((error: Error) => {

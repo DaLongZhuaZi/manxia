@@ -1834,7 +1834,7 @@ export class DataManager {
           return true;
         case 'ebook':
           await this.databaseManager.executeSql(
-            'UPDATE ebook_info SET isPrivate = ?, updateTime = ? WHERE id = ?',
+            'UPDATE ebook_info SET isPrivate = ?, lastUpdateTime = ? WHERE id = ?',
             [privacyValue, now, contentId]
           );
           logger.info(TAG, `已更新电子书隐私状态: ${contentId}`);
@@ -1889,7 +1889,7 @@ export class DataManager {
           return true;
         case 'ebook':
           await this.databaseManager.executeSql(
-            'UPDATE ebook_info SET isNSFW = ?, updateTime = ? WHERE id = ?',
+            'UPDATE ebook_info SET isNSFW = ?, lastUpdateTime = ? WHERE id = ?',
             [nsfwValue, now, contentId]
           );
           logger.info(TAG, `已更新电子书NSFW状态: ${contentId}`);

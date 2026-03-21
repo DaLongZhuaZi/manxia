@@ -83,7 +83,6 @@ export struct ReadAloudPlayerPage {
 
   onPageHide(): void {
     this.clearDisplayRestoreTimer();
-    this.restorePreviousDisplayMode('onPageHide');
   }
 
   private ensureUiContext(): UIContext | null {

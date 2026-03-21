@@ -104,8 +104,8 @@ export class EBookDataManager {
       INSERT OR REPLACE INTO ebook_info (
         id, format, filePath, fileSize, title, author, publisher, publishDate,
         isbn, language, description, coverImagePath, tags, rating, status,
-        isFavorite, totalWordCount, addTime, lastUpdateTime, isPrivate
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        isFavorite, totalWordCount, addTime, lastUpdateTime, isPrivate, isNSFW
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     // 安全访问metadata，防止undefined
@@ -146,6 +146,7 @@ export class EBookDataManager {
       ebook.lastUpdateTime,
       ebook.isPrivate ? 1 : 0  // isPrivate默认为0（普通内容）
     ];
+    params.push(ebook.isNSFW ? 1 : 0);
 
     await this.dbManager.executeSql(sql, params);
   }
@@ -902,6 +903,7 @@ export class EBookDataManager {
     const totalWordCount = Number(getRecordValue(record, 'totalWordCount', 0));
     const addTime = Number(getRecordValue(record, 'addTime', 0));
     const lastUpdateTime = Number(getRecordValue(record, 'lastUpdateTime', 0));
+    const isNSFW = Number(getRecordValue(record, 'isNSFW', 0)) === 1;
     const isPrivate = Number(getRecordValue(record, 'isPrivate', 0)) === 1;  // 读取隐私状态
 
     const tags = JSON.parse(tagsJson) as string[];
@@ -954,11 +956,12 @@ export class EBookDataManager {
       addTime,
       lastUpdateTime,
       isFavorite,
-      totalWordCount
+      totalWordCount,
+      isPrivate,
+      isNSFW
     );
     
     // 设置隐私状态
-    ebook.isPrivate = isPrivate;
     
     return ebook;
   }

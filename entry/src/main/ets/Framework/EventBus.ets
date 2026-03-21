@@ -166,6 +166,20 @@ export class ReadAloudStatePayload implements IEventPayload {
 /**
  * 漫画导入完成事件的载荷
  */
+export class ReadAloudCacheUpdatedPayload implements IEventPayload {
+  public bookId: string;
+  public chapterIndex: number;
+  public reason: string;
+  public remoteDigest: string;
+
+  constructor(bookId: string, chapterIndex: number, reason: string, remoteDigest: string = '') {
+    this.bookId = bookId;
+    this.chapterIndex = chapterIndex;
+    this.reason = reason;
+    this.remoteDigest = remoteDigest;
+  }
+}
+
 export class MangaImportCompletedPayload implements IEventPayload {
   public importedCount: number;
   public totalCount: number;
@@ -261,6 +275,7 @@ interface GameEventConstants {
   READ_ALOUD_PAUSED: string;
   READ_ALOUD_STOPPED: string;
   READ_ALOUD_STATE_CHANGED: string;
+  READ_ALOUD_CACHE_UPDATED: string;
   // 文件导入
   FILE_IMPORT_REQUESTED: string;
   // 封面选择
@@ -319,6 +334,7 @@ export const GameEvent: GameEventConstants = {
   READ_ALOUD_PAUSED: 'readAloudPaused',
   READ_ALOUD_STOPPED: 'readAloudStopped',
   READ_ALOUD_STATE_CHANGED: 'readAloudStateChanged',
+  READ_ALOUD_CACHE_UPDATED: 'readAloudCacheUpdated',
 
   // --- 文件导入事件 ---
   FILE_IMPORT_REQUESTED: 'fileImportRequested',

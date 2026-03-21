@@ -7,7 +7,6 @@ import { logger } from '../Utils/Logger';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 import { getNovelSourceManager } from '../Framework/Novel/NovelSourceManager';
 import { getNovelChapterCacheManager } from '../Framework/Novel/NovelChapterCacheManager';
-import { getNovelContentProcessor, ContentProcessConfig } from '../Framework/Novel/NovelContentProcessor';
 import { LegadoBook, LegadoBookSourceType, LegadoChapter } from '../Framework/Novel/LegadoSourceTypes';
 import {
   DEFAULT_READ_ALOUD_SETTINGS,
@@ -18,6 +17,7 @@ import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController'
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
 import { eventBus, GameEvent, IEventPayload, ReadAloudStatePayload } from '../Framework/EventBus';
 import { loadGlobalReadAloudSettings as loadStoredGlobalReadAloudSettings } from '../Framework/ReadAloud/ReadAloudSettingsStore';
+import { processReadAloudNovelContentByBook } from '../Framework/ReadAloud/ReadAloudTextProcessing';
 
 const TAG = 'NovelReadAloudPage';
 
@@ -238,16 +238,13 @@ export struct NovelReadAloudPage {
       return false;
     }
 
-    const processor = getNovelContentProcessor();
-    const processConfig: ContentProcessConfig = {
-      useReplace: true,
-      chineseConvert: 0,
-      reSegment: false,
-      includeTitle: true,
-      paragraphIndent: '',
-      sourceId: this.sourceId
-    };
-    this.chapterContent = processor.processContent(rawContent, this.chapterTitle, this.bookName, processConfig).content;
+    this.chapterContent = await processReadAloudNovelContentByBook(
+      rawContent,
+      this.chapterTitle,
+      this.bookName,
+      this.sourceId,
+      this.bookId
+    );
     this.loadErrorMessage = '';
     this.restoreReadAloudResumeCharIndex();
     this.updateReadAloudContext();

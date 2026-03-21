@@ -7335,7 +7335,8 @@ struct MainMenuPage {
     }
 
     this.ensureLocalLibraryCoverPrepared(raw);
-    return fallbackCover;
+    const displayCoverPath = this.normalizeDisplayPathForEBook(ebook);
+    return displayCoverPath || fallbackCover;
   }
 
   private getNovelCoverSource(novel: NovelBook): ResourceStr | image.PixelMap | string {
@@ -7362,7 +7363,8 @@ struct MainMenuPage {
     }
 
     this.ensureLocalLibraryCoverPrepared(raw);
-    return $r('app.media.ic_source_novel');
+    const displayCoverPath = this.getNovelDisplayCoverPath(novel);
+    return displayCoverPath || $r('app.media.ic_source_novel');
   }
 
 
@@ -10718,7 +10720,7 @@ struct MainMenuPage {
         authors: ebook.metadata.author ? [ebook.metadata.author] : [],
         tags: ebook.metadata.tags || [],
         sourceName: '',
-        isNSFW: false
+        isNSFW: ebook.isNSFW === true
       };
       if (matchesDynamicFilter(matchItem, filter)) {
         items.push({
@@ -10728,7 +10730,7 @@ struct MainMenuPage {
           lastReadTime: ebook.readingProgress?.lastReadTime || 0,
           addTime: ebook.addTime || 0,
           data: ebook,
-          isNSFW: false
+          isNSFW: ebook.isNSFW === true
         });
       }
     }
@@ -10765,7 +10767,7 @@ struct MainMenuPage {
         authors: novel.author ? [novel.author] : [],
         tags: novelTags,
         sourceName: novel.sourceName || '',
-        isNSFW: false
+        isNSFW: novel.isNSFW === true
       };
       if (matchesDynamicFilter(matchItem, filter)) {
         items.push({
@@ -13565,7 +13567,7 @@ struct MainMenuPage {
           lastReadTime: ebook.readingProgress?.lastReadTime || 0,
           addTime: ebook.addTime || 0,
           data: ebook,
-          isNSFW: false
+          isNSFW: ebook.isNSFW === true
         });
       }
     }

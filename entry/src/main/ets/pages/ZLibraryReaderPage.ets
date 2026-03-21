@@ -10,7 +10,6 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeType } from '../Framework/Managers/ThemeManager';
 import { webview } from '@kit.ArkWeb';
 import { promptAction } from '@kit.ArkUI';
-import { window } from '@kit.ArkUI';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
 
 const TAG = 'ZLibraryReaderPage';
@@ -35,6 +34,7 @@ export struct ZLibraryReaderPage {
 
   private webViewController: webview.WebviewController = new webview.WebviewController();
   private componentId: string = `zlibrary_reader_${Date.now()}`;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -55,10 +55,12 @@ export struct ZLibraryReaderPage {
 
   private enterFullScreen(): void {
     try {
-      const mainWindow = WindowManager.getMainWindowFromUIContext(this.getUIContext());
-      if (mainWindow) {
-        mainWindow.setWindowLayoutFullScreen(true);
+      const uiContext = this.getUIContext();
+      const currentMode = WindowManager.getCurrentMode();
+      if (currentMode !== DisplayMode.IMMERSIVE_WITH_BARS) {
+        this.previousDisplayMode = currentMode;
       }
+      WindowManager.setDisplayMode(DisplayMode.IMMERSIVE_WITH_BARS, uiContext);
     } catch (e) {
       logger.warn(TAG, `进入全屏失败: ${e}`);
     }
@@ -66,10 +68,7 @@ export struct ZLibraryReaderPage {
 
   private exitFullScreen(): void {
     try {
-      const mainWindow = WindowManager.getMainWindowFromUIContext(this.getUIContext());
-      if (mainWindow) {
-        mainWindow.setWindowLayoutFullScreen(false);
-      }
+      WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     } catch (e) {
       logger.warn(TAG, `退出全屏失败: ${e}`);
     }
