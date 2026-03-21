@@ -10,7 +10,10 @@ import { ThemeManager } from '../Framework/Managers/ThemeManager';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
-const TITLE_BAR_HEIGHT_MINI: number = 56;
+const PLAYER_TOP_CONTENT_PADDING: number = 8;
+const PLAYER_DISPLAY_RESTORE_DELAY_MS: number = 140;
+const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
+const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
 
 @Component
 export struct ReadAloudPlayerPage {
@@ -40,13 +43,19 @@ export struct ReadAloudPlayerPage {
   private componentId: string = `PrivacyPolicyPage_${Date.now()}`;
 
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
+  private returnHostPage: string = '';
+  private hasCapturedRouteState: boolean = false;
+  private displayRestoreTimer: number = -1;
+  private uiContext: UIContext | null = null;
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (_payload: IEventPayload): void => {
     this.refreshPlayerState();
   };
 
   aboutToAppear(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.captureRouteState('aboutToAppear');
+    this.applyPreferredDisplayMode('aboutToAppear');
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
     this.refreshPlayerState();
@@ -54,8 +63,135 @@ export struct ReadAloudPlayerPage {
   }
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.clearDisplayRestoreTimer();
+    this.restorePreviousDisplayMode('aboutToDisappear');
+    const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
+    if (this.returnHostPage.length > 0) {
+      AppStorage.setOrCreate('ReadAloudCurrentHostPage', this.returnHostPage);
+    } else if (currentHostPage === 'ReadAloudPlayerPage') {
+      AppStorage.setOrCreate('ReadAloudCurrentHostPage', '');
+    }
+    this.clearPlayerReturnMarkers();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+  }
+
+  onPageShow(): void {
+    this.applyPreferredDisplayMode('onPageShow');
+    this.scheduleDisplayRestore('onPageShow');
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
+  }
+
+  onPageHide(): void {
+    this.clearDisplayRestoreTimer();
+    this.restorePreviousDisplayMode('onPageHide');
+  }
+
+  private ensureUiContext(): UIContext | null {
+    if (!this.uiContext) {
+      this.uiContext = this.getUIContext();
+    }
+    return this.uiContext;
+  }
+
+  private resolveStoredDisplayMode(): DisplayMode {
+    const storedMode = (AppStorage.get<string>('ReadAloudPlayerReturnDisplayMode') ?? '').trim();
+    if (storedMode === DisplayMode.FULL_IMMERSIVE) {
+      return DisplayMode.FULL_IMMERSIVE;
+    }
+    if (storedMode === DisplayMode.DEFAULT) {
+      return DisplayMode.DEFAULT;
+    }
+    return WindowManager.getCurrentMode();
+  }
+
+  private captureRouteState(trigger: string): void {
+    if (this.hasCapturedRouteState) {
+      return;
+    }
+    this.ensureUiContext();
+    this.previousDisplayMode = this.resolveStoredDisplayMode();
+    this.returnHostPage = (AppStorage.get<string>('ReadAloudPlayerReturnHostPage') ?? '').trim();
+    this.hasCapturedRouteState = true;
+    logger.info(
+      TAG,
+      `捕获听书独立页返回上下文: trigger=${trigger}, previousDisplayMode=${this.previousDisplayMode}, returnHostPage=${this.returnHostPage || 'none'}`
+    );
+  }
+
+  private shouldUseImmersiveMode(): boolean {
+    return this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE;
+  }
+
+  private applyPreferredDisplayMode(trigger: string): void {
+    const context = this.ensureUiContext();
+    if (!context) {
+      logger.warn(TAG, `应用听书页显示模式失败: trigger=${trigger}, UIContext is null`);
+      return;
+    }
+    const targetMode = this.shouldUseImmersiveMode() ? DisplayMode.FULL_IMMERSIVE : DisplayMode.DEFAULT;
+    const currentMode = WindowManager.getCurrentMode();
+    if (currentMode === targetMode) {
+      logger.debug(TAG, `听书独立页显示模式无需切换: trigger=${trigger}, mode=${targetMode}`);
+      return;
+    }
+    WindowManager.setDisplayMode(targetMode, context);
+    logger.info(TAG, `应用听书独立页显示模式: trigger=${trigger}, mode=${targetMode}`);
+  }
+
+  private restorePreviousDisplayMode(trigger: string): void {
+    const context = this.ensureUiContext();
+    if (!context) {
+      logger.warn(TAG, `恢复听书页来源显示模式失败: trigger=${trigger}, UIContext is null`);
+      return;
+    }
+    const currentMode = WindowManager.getCurrentMode();
+    if (currentMode === this.previousDisplayMode) {
+      logger.debug(TAG, `听书页来源显示模式无需恢复: trigger=${trigger}, mode=${this.previousDisplayMode}`);
+      return;
+    }
+    WindowManager.setDisplayMode(this.previousDisplayMode, context);
+    logger.info(TAG, `恢复听书页来源显示模式: trigger=${trigger}, mode=${this.previousDisplayMode}`);
+  }
+
+  private clearDisplayRestoreTimer(): void {
+    if (this.displayRestoreTimer >= 0) {
+      clearTimeout(this.displayRestoreTimer);
+      this.displayRestoreTimer = -1;
+    }
+  }
+
+  private scheduleDisplayRestore(trigger: string, delayMs: number = PLAYER_DISPLAY_RESTORE_DELAY_MS): void {
+    if (!this.shouldUseImmersiveMode()) {
+      return;
+    }
+    this.clearDisplayRestoreTimer();
+    this.displayRestoreTimer = setTimeout(() => {
+      this.displayRestoreTimer = -1;
+      this.applyPreferredDisplayMode(`delayed_${trigger}`);
+    }, delayMs);
+  }
+
+  private forceReaderImmersiveBeforeExit(trigger: string): void {
+    const context = this.ensureUiContext();
+    if (!context) {
+      logger.warn(TAG, `返回阅读器前恢复沉浸失败: trigger=${trigger}, UIContext is null`);
+      return;
+    }
+    this.previousDisplayMode = DisplayMode.FULL_IMMERSIVE;
+    WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, context);
+    setTimeout(() => {
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, context);
+    }, 80);
+    setTimeout(() => {
+      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, context);
+    }, 180);
+    logger.info(TAG, `返回阅读器前强制恢复沉浸: trigger=${trigger}`);
+  }
+
+  private clearPlayerReturnMarkers(): void {
+    AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', 0);
+    AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', '');
+    AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', '');
   }
 
   private refreshPlayerState(): void {
@@ -64,7 +200,7 @@ export struct ReadAloudPlayerPage {
     const hasValidContext = context !== null && snapshot.hasContext;
     this.hasSession = hasValidContext;
     this.isPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
-    this.statusText = this.getStatusText(snapshot.playbackState);
+    this.statusText = this.getDetailedStatusText(snapshot.playbackState);
 
     if (!context || !hasValidContext) {
       this.bookTitle = '听书播放器';
@@ -109,6 +245,10 @@ export struct ReadAloudPlayerPage {
     payload: ReadAloudStateSnapshot,
     context: ReadAloudSessionContext
   ): number {
+    if (payload.totalDurationMs > 0 && payload.currentPositionMs >= 0) {
+      const safePositionMs = Math.max(0, Math.min(payload.currentPositionMs, payload.totalDurationMs));
+      return (safePositionMs / Math.max(1, payload.totalDurationMs)) * 100;
+    }
     if (!context.content || context.content.length <= 0) {
       return 0;
     }
@@ -131,6 +271,21 @@ export struct ReadAloudPlayerPage {
       return '已停止';
     }
     return '未播放';
+  }
+
+  private getDetailedStatusText(playbackState: ReadAloudPlaybackState): string {
+    const statusText = (AppStorage.get<string>(READ_ALOUD_UI_STATUS_TEXT_KEY) ?? '').trim();
+    const detailText = (AppStorage.get<string>(READ_ALOUD_UI_STATUS_DETAIL_KEY) ?? '').trim();
+    if (statusText.length > 0 && detailText.length > 0) {
+      return `${statusText} · ${detailText}`;
+    }
+    if (statusText.length > 0) {
+      return statusText;
+    }
+    if (detailText.length > 0) {
+      return detailText;
+    }
+    return this.getStatusText(playbackState);
   }
 
   private getEngineText(engineType: string): string {
@@ -208,7 +363,16 @@ export struct ReadAloudPlayerPage {
 
   private closePage(): void {
     try {
-      AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
+      if (this.returnHostPage.length > 0) {
+        AppStorage.setOrCreate('ReadAloudCurrentHostPage', this.returnHostPage);
+      } else {
+        AppStorage.setOrCreate('ReadAloudCurrentHostPage', '');
+      }
+      if (this.shouldUseImmersiveMode()) {
+        this.forceReaderImmersiveBeforeExit('closePage');
+      } else {
+        this.restorePreviousDisplayMode('closePage');
+      }
       this.pathStack.pop();
     } catch (error) {
       logger.warn(TAG, `返回失败: ${String(error)}`);
@@ -256,6 +420,8 @@ export struct ReadAloudPlayerPage {
         .fontSize(13)
         .fontFamily(this.appFontFamily)
         .fontColor(this.isPlaying ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
@@ -486,7 +652,7 @@ export struct ReadAloudPlayerPage {
 
         Scroll() {
           Column({ space: 14 }) {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
+            Blank().height(PLAYER_TOP_CONTENT_PADDING)
             this.buildCoverCard()
             this.buildProgressCard()
             this.buildSessionInfoCard()
@@ -535,11 +701,11 @@ export struct ReadAloudPlayerPage {
         }
       }
     })
+    .hideTitleBar(true)
     .backgroundColor(Color.Transparent)
     .mode(NavDestinationMode.STANDARD)
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
-      AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', 0);
       this.refreshPlayerState();
       this.entered = false;
       setTimeout(() => {
@@ -547,6 +713,9 @@ export struct ReadAloudPlayerPage {
       }, 20);
     })
     .onShown(() => {
+      this.captureRouteState('onShown');
+      this.applyPreferredDisplayMode('onShown');
+      this.scheduleDisplayRestore('onShown');
       AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
       this.refreshPlayerState();
       this.readAloudController.refreshMediaSession();

@@ -89,6 +89,7 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_API_KEY = 'global_text_read_aloud_remote_api_key';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_MODEL = 'global_text_read_aloud_remote_model';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_VOICE = 'global_text_read_aloud_remote_voice';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_STYLE_PROMPT = 'global_text_read_aloud_remote_style_prompt';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_AUDIO_FORMAT = 'global_text_read_aloud_remote_audio_format';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_STREAM_ENABLED = 'global_text_read_aloud_remote_stream_enabled';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_PREFETCH_SEGMENTS = 'global_text_read_aloud_remote_prefetch_segments';
@@ -103,6 +104,8 @@ export class SettingKeys {
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_AUTO_CONCAT_AUDIO = 'global_text_read_aloud_remote_auto_concat_audio';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_CUSTOM_HEADERS_JSON = 'global_text_read_aloud_remote_custom_headers_json';
   static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_EXTRA_BODY_JSON = 'global_text_read_aloud_remote_extra_body_json';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_ACTIVE_PRESET_ID = 'global_text_read_aloud_remote_active_preset_id';
+  static readonly GLOBAL_TEXT_READ_ALOUD_REMOTE_PRESETS_JSON = 'global_text_read_aloud_remote_presets_json';
   static readonly GLOBAL_TEXT_READ_ALOUD_FAVORITE_VOICE_IDS = 'global_text_read_aloud_favorite_voice_ids';
   
   // 下载设置

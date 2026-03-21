@@ -68,6 +68,7 @@ import { SourceDetailPage } from './SourceDetailPage';
 import { WebViewContainer, GlobalWebViewContainer } from '../Framework/WebView/WebViewContainerPage';
 import { BookTransitionOverlay, startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { EBookReaderPage, EBookReaderParams } from './EBookReaderPage';
+import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { CoverSelectionPage } from './CoverSelectionPage';
 import { LogFloatingWindow } from '../Utils/LogFloatingWindow';
@@ -15609,6 +15610,9 @@ struct MainMenuPage {
       bookId: ebook.id,
       coverComponentId: componentId
     };
+    const txtNovelReaderParams = ebook.format === EBookFormat.TXT
+      ? buildNovelReaderParamsFromTxtEBook(ebook, componentId)
+      : null;
 
     const ebookBackground = this.getEBookBackgroundSettings(ebook);
 
@@ -15620,7 +15624,11 @@ struct MainMenuPage {
       'ebook',
       () => {
         logger.info(TAG, '翻开过渡动画触发导航');
-        this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+        if (txtNovelReaderParams) {
+          this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+        } else {
+          this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+        }
       },
       ebookBackground,
       {

@@ -1,6 +1,11 @@
 import { textToSpeech } from '@kit.CoreSpeechKit';
 import { logger } from '../../Utils/Logger';
-import { ReadAloudEngineType } from '../../Models/TextReaderModels';
+import {
+  ReadAloudEngineType,
+  ReadAloudSettings,
+  RemoteReadAloudSettings,
+  normalizeReadAloudSettings
+} from '../../Models/TextReaderModels';
 import { ReadAloudRequestIdGenerator } from './ReadAloudRequestIdGenerator';
 import { SettingsManager } from '../Managers/SettingsManager';
 import { loadGlobalReadAloudSettings } from './ReadAloudSettingsStore';
@@ -35,6 +40,7 @@ export class ReadAloudAvailability {
   private static readonly CACHE_MS: number = 60 * 1000;
   private static lastSystemProbeErrorMessage: string = '';
   private static lastRemoteProbeErrorMessage: string = '';
+  private static lastRemoteValidationLogSignature: string = '';
 
   static getCachedOrDefault(): ReadAloudEngineAvailabilityMap {
     if (ReadAloudAvailability.cached === null) {
@@ -43,10 +49,11 @@ export class ReadAloudAvailability {
     return ReadAloudAvailability.cloneAvailability(ReadAloudAvailability.cached);
   }
 
-  static async refresh(force: boolean = false): Promise<ReadAloudEngineAvailabilityMap> {
+  static async refresh(force: boolean = false, settingsOverride?: ReadAloudSettings): Promise<ReadAloudEngineAvailabilityMap> {
     const now = Date.now();
     if (
       !force &&
+      settingsOverride === undefined &&
       ReadAloudAvailability.cached !== null &&
       (now - ReadAloudAvailability.cachedAt) < ReadAloudAvailability.CACHE_MS
     ) {
@@ -54,17 +61,23 @@ export class ReadAloudAvailability {
     }
 
     const systemAvailable = await ReadAloudAvailability.checkSystemTtsAvailable();
-    const remoteAvailable = ReadAloudAvailability.checkRemoteTtsConfigured();
-    ReadAloudAvailability.cached = {
+    const remoteAvailable = ReadAloudAvailability.checkRemoteTtsConfigured(settingsOverride);
+    const result: ReadAloudEngineAvailabilityMap = {
       SYSTEM: systemAvailable,
       LEGADO_COMPAT: false,
       REMOTE: remoteAvailable
     };
-    ReadAloudAvailability.cachedAt = now;
-    return ReadAloudAvailability.cloneAvailability(ReadAloudAvailability.cached);
+    if (settingsOverride === undefined) {
+      ReadAloudAvailability.cached = result;
+      ReadAloudAvailability.cachedAt = now;
+    }
+    return ReadAloudAvailability.cloneAvailability(result);
   }
 
-  static isAvailableSync(engineType: ReadAloudEngineType): boolean {
+  static isAvailableSync(engineType: ReadAloudEngineType, settingsOverride?: ReadAloudSettings): boolean {
+    if (engineType === ReadAloudEngineType.REMOTE && settingsOverride !== undefined) {
+      return ReadAloudAvailability.checkRemoteTtsConfigured(settingsOverride);
+    }
     const map = ReadAloudAvailability.getCachedOrDefault();
     if (engineType === ReadAloudEngineType.SYSTEM) {
       return map.SYSTEM;
@@ -92,6 +105,48 @@ export class ReadAloudAvailability {
       LEGADO_COMPAT: source.LEGADO_COMPAT === true,
       REMOTE: source.REMOTE === true
     };
+  }
+
+  private static reportRemoteValidationFailure(
+    reason: string,
+    remote?: RemoteReadAloudSettings | null
+  ): boolean {
+    ReadAloudAvailability.lastRemoteProbeErrorMessage = reason;
+
+    const endpoint = remote?.endpoint.trim() ?? '';
+    const model = remote?.model.trim() ?? '';
+    const voice = remote?.voice.trim() ?? '';
+    const apiKey = remote?.apiKey ?? '';
+    const customHeadersLower = (remote?.customHeadersJson ?? '').toLowerCase();
+    const hasAuthorizationHeader = customHeadersLower.includes('"authorization"');
+    const hasApiKeyHeader = customHeadersLower.includes('"api-key"');
+    const activePresetId = remote?.activePresetId?.trim() ?? '';
+    const signature = [
+      reason,
+      endpoint,
+      model,
+      voice,
+      String(apiKey.length),
+      String(hasAuthorizationHeader),
+      String(hasApiKeyHeader),
+      activePresetId
+    ].join('|');
+
+    if (signature !== ReadAloudAvailability.lastRemoteValidationLogSignature) {
+      logger.warn(
+        TAG,
+        `REMOTE TTS 配置校验失败: reason=${reason}, endpoint=${endpoint.length > 0 ? endpoint : 'empty'}, model=${model.length > 0 ? model : 'empty'}, voice=${voice.length > 0 ? voice : 'empty'}, hasApiKey=${apiKey.trim().length > 0}, apiKeyLength=${apiKey.length}, hasAuthorizationHeader=${hasAuthorizationHeader}, hasApiKeyHeader=${hasApiKeyHeader}, activePresetId=${activePresetId.length > 0 ? activePresetId : 'none'}`
+      );
+      ReadAloudAvailability.lastRemoteValidationLogSignature = signature;
+    }
+
+    return false;
+  }
+
+  private static reportRemoteValidationSuccess(): boolean {
+    ReadAloudAvailability.lastRemoteProbeErrorMessage = '';
+    ReadAloudAvailability.lastRemoteValidationLogSignature = '';
+    return true;
   }
 
   private static async checkSystemTtsAvailable(): Promise<boolean> {
@@ -157,33 +212,40 @@ export class ReadAloudAvailability {
     return false;
   }
 
-  private static checkRemoteTtsConfigured(): boolean {
+  private static checkRemoteTtsConfigured(settingsOverride?: ReadAloudSettings): boolean {
     try {
-      const settings = loadGlobalReadAloudSettings(SettingsManager.getInstance());
+      const settings = settingsOverride !== undefined
+        ? normalizeReadAloudSettings(settingsOverride)
+        : loadGlobalReadAloudSettings(SettingsManager.getInstance());
       const remote = settings.remote;
       if (!remote) {
-        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote settings is empty';
-        return false;
+        return ReadAloudAvailability.reportRemoteValidationFailure('remote settings is empty', null);
       }
       const endpoint = remote.endpoint.trim();
       if (endpoint.length <= 0) {
-        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote endpoint is empty';
-        return false;
+        return ReadAloudAvailability.reportRemoteValidationFailure('remote endpoint is empty', remote);
       }
       const model = remote.model.trim();
       if (model.length <= 0) {
-        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote model is empty';
-        return false;
+        return ReadAloudAvailability.reportRemoteValidationFailure('remote model is empty', remote);
       }
       const voice = remote.voice.trim();
       if (voice.length <= 0) {
-        ReadAloudAvailability.lastRemoteProbeErrorMessage = 'remote voice is empty';
-        return false;
+        return ReadAloudAvailability.reportRemoteValidationFailure('remote voice is empty', remote);
       }
-      ReadAloudAvailability.lastRemoteProbeErrorMessage = '';
-      return true;
+      const apiKey = remote.apiKey.trim();
+      const customHeadersLower = (remote.customHeadersJson ?? '').toLowerCase();
+      if (
+        apiKey.length <= 0 &&
+        !customHeadersLower.includes('"authorization"') &&
+        !customHeadersLower.includes('"api-key"')
+      ) {
+        return ReadAloudAvailability.reportRemoteValidationFailure('remote api key is empty', remote);
+      }
+      return ReadAloudAvailability.reportRemoteValidationSuccess();
     } catch (error) {
       ReadAloudAvailability.lastRemoteProbeErrorMessage = ReadAloudAvailability.formatError(error);
+      ReadAloudAvailability.lastRemoteValidationLogSignature = '';
       logger.warn(TAG, `REMOTE TTS availability check failed: ${ReadAloudAvailability.lastRemoteProbeErrorMessage}`);
       return false;
     }

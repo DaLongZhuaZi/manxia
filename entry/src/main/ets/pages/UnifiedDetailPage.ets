@@ -45,6 +45,7 @@ import {
   NovelAdapter,
   AdapterOptions
 } from '../Framework/Adapters/UnifiedContentAdapter';
+import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 
 // 数据管理器导入
 import { DataManager, ChapterInfo, OnlineChapterInfo } from '../Framework/Data/DataManager';
@@ -77,6 +78,26 @@ import { getTypeShelfManager, TypeShelfManager, TypeShelf, ShelfType, ShelfConte
 import { BookshelfCategoryManager, ContentType, CategoryItem } from '../Framework/Data/BookshelfCategoryManager';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { GlobalSearchService, UnifiedSearchItem } from '../Framework/Services/GlobalSearchService';
+import {
+  RemoteReadAloudCacheChapterSummary,
+  getRemoteReadAloudCacheService,
+  RemoteReadAloudCacheBookSummary,
+  RemoteReadAloudCacheTaskProgress
+} from '../Framework/ReadAloud/RemoteReadAloudCacheService';
+import {
+  DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
+  getXiaomiMimoRemoteReadAloudVoiceLabel,
+  hasRemoteReadAloudStylePrompt,
+  isXiaomiMimoRemoteReadAloud,
+  mergeRemoteReadAloudSettings,
+  normalizeRemoteReadAloudStylePrompt,
+  RemoteReadAloudChoiceOption,
+  RemoteReadAloudSettings,
+  RemoteReadAloudStyleCategory,
+  toggleRemoteReadAloudStylePrompt,
+  XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES,
+  XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS
+} from '../Models/TextReaderModels';
 
 // 模型导入
 import { Manga, MangaChapter, ReadingProgress, ReadingSettings, MangaBookmark, MangaMetadata, ImageSourceType, DEFAULT_READING_SETTINGS } from '../Models/MangaModels';
@@ -222,10 +243,36 @@ export struct UnifiedDetailPage {
   // 缓存状态服务和数据
   private cacheStatusService: CacheStatusService = getCacheStatusService();
   private unifiedDownloadManager: UnifiedDownloadManager = getUnifiedDownloadManager();
+  private remoteReadAloudCacheService = getRemoteReadAloudCacheService();
   @State cacheStats: ContentCacheStats | null = null;
   @State isCacheStatsLoading: boolean = false;
   @State showCacheStatusCard: boolean = false;  // 控制是否显示缓存卡片
   @State isDownloading: boolean = false;        // 是否正在下载
+
+  // 听书缓存状态
+  @State readAloudCacheSummary: RemoteReadAloudCacheBookSummary | null = null;
+  @State isReadAloudCacheLoading: boolean = false;
+  @State isReadAloudCacheExpanded: boolean = true;
+  @State showReadAloudCacheDialog: boolean = false;
+  @State readAloudCacheDialogOpacity: number = 0;
+  @State readAloudCacheDialogScale: number = 0.8;
+  @State readAloudCacheDialogTranslateY: number = 50;
+  @State readAloudCacheDialogActiveTab: number = 0;
+  @State readAloudCacheSelectionMode: 'range' | 'individual' = 'range';
+  @State readAloudCacheRangeStart: number = 0;
+  @State readAloudCacheRangeEnd: number = 0;
+  @State readAloudCacheSelectedChapters: Set<number> = new Set();
+  @State readAloudCacheChapterListExpanded: boolean = true;
+  @State readAloudCacheTaskSettings: RemoteReadAloudSettings = DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
+  @State isReadAloudCurrentSettingsSaving: boolean = false;
+  @State isReadAloudPrecaching: boolean = false;
+  @State readAloudPrecachingStatusText: string = '';
+  @State readAloudPrecachingDetailText: string = '';
+  @State readAloudPrecachingChapterOrder: number = 0;
+  @State readAloudPrecachingChapterTotal: number = 0;
+  @State readAloudPrecachingSegmentDone: number = 0;
+  @State readAloudPrecachingSegmentTotal: number = 0;
+  @State readAloudPrecachingBytes: number = 0;
   
   // 下载对话框状态
   @State showDownloadDialog: boolean = false;           // 显示下载对话框
@@ -545,6 +592,7 @@ export struct UnifiedDetailPage {
       
       // 加载缓存状态（在线漫画和小说）
       await this.loadCacheStatus();
+      await this.loadReadAloudCacheSummary();
       
       // 检查是否已在书架中
       await this.checkIfInShelf();
@@ -1711,6 +1759,7 @@ export struct UnifiedDetailPage {
    */
   private openEBookReader(chapterIndex: number): void {
     if (!this.content) return;
+    const originalEBook = EBookAdapter.getOriginalEBook(this.content);
 
     // EBookReaderParams只需要bookId，章节索引通过阅读进度恢复
     const params: EBookReaderParams = {
@@ -1722,6 +1771,9 @@ export struct UnifiedDetailPage {
     const coverPath: string = this.localCoverPath || this.content.coverUrl || '';
     const coverComponentId: string = `cover_${this.componentId}`;
     params.coverComponentId = coverComponentId;
+    const txtNovelReaderParams = originalEBook
+      ? buildNovelReaderParamsFromTxtEBook(originalEBook, coverComponentId)
+      : null;
     const ebookBackground = this.getUnifiedEBookTransitionBackground();
     
     logger.info(TAG, `触发电子书翻开过渡动画: coverPath=${coverPath}, componentId=${coverComponentId}, 有背景设置=${ebookBackground ? '是' : '否'}`);
@@ -1733,7 +1785,11 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '电子书翻开过渡动画触发导航');
-        this.pathStack.pushPathByName('EBookReaderPage', params);
+        if (txtNovelReaderParams && originalEBook?.format === EBookFormat.TXT) {
+          this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+        } else {
+          this.pathStack.pushPathByName('EBookReaderPage', params);
+        }
       },
       ebookBackground,
       {
@@ -2130,6 +2186,393 @@ export struct UnifiedDetailPage {
     } finally {
       this.isCacheStatsLoading = false;
     }
+  }
+
+  private supportsReadAloudCacheSection(): boolean {
+    return this.remoteReadAloudCacheService.supportsContent(this.content);
+  }
+
+  private isLocalTxtNovelEBookContent(): boolean {
+    if (!this.content || this.content.contentType !== UnifiedContentType.EBOOK) {
+      return false;
+    }
+    const ebook = EBookAdapter.getOriginalEBook(this.content);
+    return !!ebook && ebook.format === EBookFormat.TXT;
+  }
+
+  private async loadReadAloudCacheSummary(showToastOnError: boolean = false): Promise<void> {
+    if (!this.supportsReadAloudCacheSection()) {
+      this.readAloudCacheSummary = null;
+      this.isReadAloudCacheLoading = false;
+      return;
+    }
+    this.isReadAloudCacheLoading = true;
+    try {
+      this.readAloudCacheSummary = await this.remoteReadAloudCacheService.inspectBookCache(this.content);
+    } catch (error) {
+      logger.error(TAG, `加载听书缓存失败: ${String(error)}`);
+      this.readAloudCacheSummary = null;
+      if (showToastOnError) {
+        promptAction.showToast({ message: '加载听书缓存失败', duration: 1400 });
+      }
+    } finally {
+      this.isReadAloudCacheLoading = false;
+    }
+  }
+
+  private formatReadAloudCacheSize(bytes: number): string {
+    const safeBytes = Math.max(0, Math.floor(bytes));
+    if (safeBytes >= 1024 * 1024 * 1024) {
+      return `${(safeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+    if (safeBytes >= 1024 * 1024) {
+      return `${(safeBytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    if (safeBytes >= 1024) {
+      return `${(safeBytes / 1024).toFixed(1)} KB`;
+    }
+    return `${safeBytes} B`;
+  }
+
+  private getReadAloudCacheUpdatedLabel(timestamp: number): string {
+    if (!timestamp || timestamp <= 0) {
+      return '未缓存';
+    }
+    return this.formatRelativeTime(timestamp);
+  }
+
+  private getReadAloudCacheQuickSelectionStart(): number {
+    const chapters = this.readAloudCacheSummary?.chapters ?? [];
+    for (let index = 0; index < chapters.length; index++) {
+      if (!chapters[index].cached) {
+        return index;
+      }
+    }
+    if (this.content && this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < chapters.length) {
+      return this.content.lastReadChapterIndex;
+    }
+    return 0;
+  }
+
+  private openReadAloudCacheDialog(): void {
+    if (!this.supportsReadAloudCacheSection()) {
+      return;
+    }
+    const totalChapters = Math.max(1, this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 1);
+    const quickStart = this.getReadAloudCacheQuickSelectionStart();
+    this.readAloudCacheDialogActiveTab = 0;
+    this.readAloudCacheSelectionMode = 'range';
+    this.readAloudCacheRangeStart = Math.max(0, Math.min(quickStart, totalChapters - 1));
+    this.readAloudCacheRangeEnd = Math.max(this.readAloudCacheRangeStart, totalChapters - 1);
+    this.readAloudCacheSelectedChapters = new Set<number>();
+    this.readAloudCacheChapterListExpanded = true;
+    this.readAloudCacheTaskSettings = this.remoteReadAloudCacheService.buildEditableRemoteSettings(this.content, {
+      cacheAudioFiles: true
+    });
+    this.showReadAloudCacheDialog = true;
+    animateTo({
+      duration: 300,
+      curve: curves.springMotion(0.6, 0.9)
+    }, () => {
+      this.readAloudCacheDialogOpacity = 1;
+      this.readAloudCacheDialogScale = 1;
+      this.readAloudCacheDialogTranslateY = 0;
+    });
+  }
+
+  private closeReadAloudCacheDialog(): void {
+    animateTo({
+      duration: 250,
+      curve: Curve.EaseOut
+    }, () => {
+      this.readAloudCacheDialogOpacity = 0;
+      this.readAloudCacheDialogScale = 0.8;
+      this.readAloudCacheDialogTranslateY = 50;
+    });
+    setTimeout(() => {
+      this.showReadAloudCacheDialog = false;
+    }, 260);
+  }
+
+  private toggleReadAloudCacheChapterSelection(index: number): void {
+    const next = new Set(this.readAloudCacheSelectedChapters);
+    if (next.has(index)) {
+      next.delete(index);
+    } else {
+      next.add(index);
+    }
+    this.readAloudCacheSelectedChapters = next;
+  }
+
+  private getSelectedReadAloudChapterIndexes(): number[] {
+    const totalChapters = this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0;
+    if (totalChapters <= 0) {
+      return [];
+    }
+    if (this.readAloudCacheSelectionMode === 'range') {
+      const start = Math.max(0, Math.min(this.readAloudCacheRangeStart, totalChapters - 1));
+      const end = Math.max(start, Math.min(this.readAloudCacheRangeEnd, totalChapters - 1));
+      const indexes: number[] = [];
+      for (let index = start; index <= end; index++) {
+        indexes.push(index);
+      }
+      return indexes;
+    }
+    return Array.from(this.readAloudCacheSelectedChapters.values())
+      .filter((index: number) => index >= 0 && index < totalChapters)
+      .sort((left: number, right: number) => left - right);
+  }
+
+  private getSelectedReadAloudChapterCount(): number {
+    return this.getSelectedReadAloudChapterIndexes().length;
+  }
+
+  private updateReadAloudCacheTaskSettings(partial: Partial<RemoteReadAloudSettings>): void {
+    const mergedSettings = mergeRemoteReadAloudSettings(this.readAloudCacheTaskSettings, partial);
+    mergedSettings.cacheAudioFiles = true;
+    this.readAloudCacheTaskSettings = mergedSettings;
+  }
+
+  private isMiMoReadAloudCacheSettings(): boolean {
+    return isXiaomiMimoRemoteReadAloud(this.readAloudCacheTaskSettings);
+  }
+
+  private getReadAloudCacheStylePrompt(): string {
+    return normalizeRemoteReadAloudStylePrompt(this.readAloudCacheTaskSettings.stylePrompt);
+  }
+
+  private isReadAloudCacheStyleSelected(style: string): boolean {
+    return hasRemoteReadAloudStylePrompt(this.getReadAloudCacheStylePrompt(), style);
+  }
+
+  private toggleReadAloudCacheStyle(style: string): void {
+    this.updateReadAloudCacheTaskSettings({
+      stylePrompt: toggleRemoteReadAloudStylePrompt(this.getReadAloudCacheStylePrompt(), style)
+    });
+  }
+
+  private getReadAloudCacheVoiceLabel(voice: string): string {
+    if (this.isMiMoReadAloudCacheSettings()) {
+      return getXiaomiMimoRemoteReadAloudVoiceLabel(voice);
+    }
+    const normalizedVoice = voice.trim();
+    return normalizedVoice.length > 0 ? normalizedVoice : '默认音色';
+  }
+
+  private async applyReadAloudCacheTaskSettingsToCurrent(): Promise<void> {
+    if (this.isReadAloudCurrentSettingsSaving) {
+      return;
+    }
+    this.isReadAloudCurrentSettingsSaving = true;
+    try {
+      await this.remoteReadAloudCacheService.saveCurrentRemoteSettings(this.content, this.readAloudCacheTaskSettings);
+      await this.loadReadAloudCacheSummary();
+      this.readAloudCacheTaskSettings = this.remoteReadAloudCacheService.buildEditableRemoteSettings(this.content, {
+        cacheAudioFiles: true
+      });
+      promptAction.showToast({ message: '已保存当前书籍远程 TTS 设置', duration: 1500 });
+    } catch (error) {
+      logger.error(TAG, `保存当前远程TTS设置失败: ${String(error)}`);
+      promptAction.showToast({ message: '保存当前远程 TTS 设置失败', duration: 1500 });
+    } finally {
+      this.isReadAloudCurrentSettingsSaving = false;
+    }
+  }
+
+  private buildReadAloudCacheChapterLabel(index: number): string {
+    const summaryChapter = this.readAloudCacheSummary?.chapters[index];
+    if (summaryChapter) {
+      return summaryChapter.chapterTitle || `第 ${index + 1} 章`;
+    }
+    const contentChapter = this.content?.chapters[index];
+    if (contentChapter) {
+      return contentChapter.title || `第 ${index + 1} 章`;
+    }
+    return `第 ${index + 1} 章`;
+  }
+
+  private async quickPrecacheReadAloudChapter(chapterIndex: number): Promise<void> {
+    if (this.isReadAloudPrecaching) {
+      return;
+    }
+    const chapterTitle = this.buildReadAloudCacheChapterLabel(chapterIndex);
+    try {
+      await this.runReadAloudPrecacheTask([chapterIndex], false);
+      promptAction.showToast({ message: `已缓存 ${chapterTitle}`, duration: 1400 });
+    } catch (error) {
+      logger.error(TAG, `单章听书缓存失败: chapter=${chapterIndex}, error=${String(error)}`);
+      promptAction.showToast({ message: '当前章节缓存失败', duration: 1400 });
+    }
+  }
+
+  private async clearReadAloudCacheChapter(chapterIndex: number): Promise<void> {
+    if (this.isReadAloudPrecaching) {
+      return;
+    }
+    try {
+      await this.remoteReadAloudCacheService.clearChapterCache(this.content, chapterIndex);
+      await this.loadReadAloudCacheSummary();
+      promptAction.showToast({ message: `已清理第 ${chapterIndex + 1} 章听书缓存`, duration: 1400 });
+    } catch (error) {
+      logger.error(TAG, `清理章节听书缓存失败: chapter=${chapterIndex}, error=${String(error)}`);
+      promptAction.showToast({ message: '清理章节缓存失败', duration: 1400 });
+    }
+  }
+
+  private async clearReadAloudCacheBook(): Promise<void> {
+    if (this.isReadAloudPrecaching) {
+      return;
+    }
+    try {
+      await this.remoteReadAloudCacheService.clearBookCache(this.content);
+      await this.loadReadAloudCacheSummary();
+      promptAction.showToast({ message: '已清理当前小说听书缓存', duration: 1400 });
+    } catch (error) {
+      logger.error(TAG, `清理当前小说听书缓存失败: ${String(error)}`);
+      promptAction.showToast({ message: '清理听书缓存失败', duration: 1400 });
+    }
+  }
+
+  private async startReadAloudCacheTaskFromDialog(): Promise<void> {
+    const targetIndexes = this.getSelectedReadAloudChapterIndexes();
+    if (targetIndexes.length <= 0) {
+      promptAction.showToast({ message: '请先选择要缓存的章节', duration: 1400 });
+      return;
+    }
+    try {
+      await this.runReadAloudPrecacheTask(targetIndexes, true);
+      await this.loadReadAloudCacheSummary();
+      promptAction.showToast({ message: `已完成 ${targetIndexes.length} 章听书缓存`, duration: 1500 });
+    } catch (error) {
+      logger.error(TAG, `批量听书缓存失败: ${String(error)}`);
+      promptAction.showToast({ message: '听书缓存任务失败', duration: 1500 });
+    }
+  }
+
+  private async runReadAloudPrecacheTask(chapterIndexes: number[], closeDialogOnSuccess: boolean): Promise<void> {
+    if (this.isReadAloudPrecaching) {
+      return;
+    }
+    this.isReadAloudPrecaching = true;
+    this.readAloudPrecachingStatusText = '正在准备听书缓存';
+    this.readAloudPrecachingDetailText = '';
+    this.readAloudPrecachingChapterOrder = 0;
+    this.readAloudPrecachingChapterTotal = chapterIndexes.length;
+    this.readAloudPrecachingSegmentDone = 0;
+    this.readAloudPrecachingSegmentTotal = 0;
+    this.readAloudPrecachingBytes = 0;
+    try {
+      const effectiveRemoteSettings = mergeRemoteReadAloudSettings(this.readAloudCacheTaskSettings, {
+        cacheAudioFiles: true
+      });
+      await this.remoteReadAloudCacheService.precacheChapters(this.content, chapterIndexes, {
+        remoteOverrides: effectiveRemoteSettings,
+        onProgress: (progress: RemoteReadAloudCacheTaskProgress) => {
+          this.readAloudPrecachingChapterOrder = progress.chapterOrder;
+          this.readAloudPrecachingChapterTotal = progress.chapterTotal;
+          this.readAloudPrecachingSegmentDone = progress.segmentProgress.completedSegments;
+          this.readAloudPrecachingSegmentTotal = progress.segmentProgress.totalSegments;
+          this.readAloudPrecachingBytes = progress.totalCachedBytes;
+          this.readAloudPrecachingStatusText = `正在缓存 ${progress.chapterTitle}`;
+          this.readAloudPrecachingDetailText = `章节 ${progress.chapterOrder}/${progress.chapterTotal} · 分片 ${progress.segmentProgress.completedSegments}/${progress.segmentProgress.totalSegments}`;
+        }
+      });
+      await this.loadReadAloudCacheSummary();
+      if (closeDialogOnSuccess) {
+        this.closeReadAloudCacheDialog();
+      }
+    } finally {
+      this.isReadAloudPrecaching = false;
+    }
+  }
+
+  private getReadAloudCacheProgressPercent(): number {
+    const total = Math.max(0, this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0);
+    if (total <= 0) {
+      return 0;
+    }
+    const cached = Math.max(0, Math.min(this.readAloudCacheSummary?.cachedChapterCount ?? 0, total));
+    return Math.round((cached / total) * 100);
+  }
+
+  private getReadAloudCacheSectionDescription(): string {
+    return this.isLocalTxtNovelEBookContent()
+      ? '当前 TXT 电子书的远程 TTS 音频缓存，可按章节批量生成整章听书音频。'
+      : '当前小说的远程 TTS 音频缓存，可按章节批量生成整章听书音频。';
+  }
+
+  private getReadAloudCacheSelectionSummary(): string {
+    const count = this.getSelectedReadAloudChapterCount();
+    return count > 0 ? `已选择 ${count} 章` : '未选择章节';
+  }
+
+  private getReadAloudCachePreviewIndexes(): number[] {
+    const chapters = this.readAloudCacheSummary?.chapters ?? [];
+    if (chapters.length <= 0) {
+      return [];
+    }
+    const start = Math.max(0, Math.min(this.getReadAloudCacheQuickSelectionStart(), chapters.length - 1));
+    const result: number[] = [];
+    for (let index = start; index < chapters.length && result.length < 3; index++) {
+      result.push(index);
+    }
+    for (let index = 0; index < start && result.length < 3; index++) {
+      result.push(index);
+    }
+    return result;
+  }
+
+  private getReadAloudCacheEffectiveChapterStatusText(chapter: RemoteReadAloudCacheChapterSummary): string {
+    if (chapter.cached) {
+      const sizeText = chapter.currentTotalBytes > 0 ? this.formatReadAloudCacheSize(chapter.currentTotalBytes) : '0 B';
+      const updatedText = this.getReadAloudCacheUpdatedLabel(chapter.currentLastUpdatedAt);
+      return `当前配置已缓存 · ${chapter.currentSegmentCount} 段 · ${sizeText} · ${updatedText}`;
+    }
+    if (chapter.variantCount > 0) {
+      const historySize = chapter.totalBytes > 0 ? this.formatReadAloudCacheSize(chapter.totalBytes) : '0 B';
+      return `当前配置未命中 · 历史有 ${chapter.variantCount} 个版本 · ${historySize}`;
+    }
+    return '当前配置未缓存';
+  }
+
+  private isReadAloudCacheChapterSelected(index: number): boolean {
+    const total = this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0;
+    if (index < 0 || index >= total) {
+      return false;
+    }
+    if (this.readAloudCacheSelectionMode === 'range') {
+      const start = Math.max(0, Math.min(this.readAloudCacheRangeStart, total - 1));
+      const end = Math.max(start, Math.min(this.readAloudCacheRangeEnd, total - 1));
+      return index >= start && index <= end;
+    }
+    return this.readAloudCacheSelectedChapters.has(index);
+  }
+
+  private getReadAloudCacheChapterStatusText(chapter: RemoteReadAloudCacheChapterSummary): string {
+    const statusText = chapter.cached ? '已缓存' : '未缓存';
+    const sizeText = chapter.totalBytes > 0 ? this.formatReadAloudCacheSize(chapter.totalBytes) : '0 B';
+    const updatedText = chapter.cached ? this.getReadAloudCacheUpdatedLabel(chapter.lastUpdatedAt) : '等待生成';
+    return `${statusText} · ${chapter.segmentCount} 段 · ${sizeText} · ${updatedText}`;
+  }
+
+  private applyReadAloudCacheQuickRange(mode: 'uncached' | 'current' | 'full'): void {
+    const total = this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0;
+    if (total <= 0) {
+      return;
+    }
+    if (mode === 'full') {
+      this.readAloudCacheRangeStart = 0;
+      this.readAloudCacheRangeEnd = total - 1;
+      return;
+    }
+    if (mode === 'current' && this.content && this.content.lastReadChapterIndex >= 0 && this.content.lastReadChapterIndex < total) {
+      this.readAloudCacheRangeStart = this.content.lastReadChapterIndex;
+      this.readAloudCacheRangeEnd = total - 1;
+      return;
+    }
+    const quickStart = Math.max(0, Math.min(this.getReadAloudCacheQuickSelectionStart(), total - 1));
+    this.readAloudCacheRangeStart = quickStart;
+    this.readAloudCacheRangeEnd = total - 1;
   }
 
   /**
@@ -3582,6 +4025,367 @@ export struct UnifiedDetailPage {
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(12)
     }
+  }
+
+  @Builder
+  buildReadAloudCacheSection() {
+    if (this.supportsReadAloudCacheSection()) {
+      if (!this.readAloudCacheSummary && this.isReadAloudCacheLoading) {
+        Row({ space: 8 }) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          Text('正在加载听书缓存...')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        }
+        .width('100%')
+        .height(60)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+      } else if (!this.readAloudCacheSummary) {
+        Column({ space: 10 }) {
+          Row({ space: 8 }) {
+            SymbolGlyph($r('sys.symbol.book'))
+              .fontSize(16)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+            Text('听书缓存暂不可用')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          }
+          .width('100%')
+
+          Text('稍后可重试加载当前书籍的远程 TTS 缓存摘要。')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                .fontSize(13)
+                .fontColor([Color.White])
+              Text('重新加载')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(Color.White)
+            }
+          }
+          .height(32)
+          .padding({ left: 14, right: 14 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .borderRadius(16)
+          .onClick(() => {
+            void this.loadReadAloudCacheSummary(true);
+          })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+        .alignItems(HorizontalAlign.Start)
+      } else {
+        Column({ space: 12 }) {
+          Row({ space: 10 }) {
+            Row({ space: 10 }) {
+              SymbolGlyph($r('sys.symbol.book'))
+                .fontSize(16)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+              Column({ space: 2 }) {
+                Text('听书缓存')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                Text(this.isLocalTxtNovelEBookContent() ? '本地 TXT 电子书' : '远程 TTS 章节缓存')
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+              .alignItems(HorizontalAlign.Start)
+            }
+
+            Blank()
+
+            Row() {
+              Text(`当前 ${this.readAloudCacheSummary.cachedChapterCount}/${Math.max(1, this.readAloudCacheSummary.chapterCount)}`)
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(12)
+
+            Button() {
+              SymbolGlyph($r(this.isReadAloudCacheExpanded ? 'sys.symbol.chevron_down' : 'sys.symbol.chevron_right'))
+                .fontSize(14)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            }
+            .width(28)
+            .height(28)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              this.isReadAloudCacheExpanded = !this.isReadAloudCacheExpanded;
+            })
+          }
+          .width('100%')
+
+          if (this.isReadAloudCacheExpanded) {
+            Text(this.getReadAloudCacheSectionDescription())
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              .width('100%')
+
+            if (this.isReadAloudPrecaching) {
+              Column({ space: 8 }) {
+                Row({ space: 8 }) {
+                  LoadingProgress()
+                    .width(14)
+                    .height(14)
+                    .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                  Text(this.readAloudPrecachingStatusText || '正在缓存听书音频')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                  Blank()
+                  Text(`${this.readAloudPrecachingChapterOrder}/${Math.max(1, this.readAloudPrecachingChapterTotal)}`)
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                }
+                .width('100%')
+
+                if (this.readAloudPrecachingDetailText) {
+                  Text(this.readAloudPrecachingDetailText)
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .width('100%')
+                }
+
+                Progress({
+                  value: this.readAloudPrecachingSegmentTotal > 0
+                    ? Math.round((this.readAloudPrecachingSegmentDone / this.readAloudPrecachingSegmentTotal) * 100)
+                    : 0,
+                  total: 100,
+                  type: ProgressType.Linear
+                })
+                  .width('100%')
+                  .height(6)
+                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                  .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+                  .borderRadius(3)
+              }
+              .width('100%')
+              .padding(12)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+              .borderRadius(12)
+            }
+
+            Row({ space: 8 }) {
+              this.buildReadAloudCacheMetric(
+                `${this.readAloudCacheSummary.cachedChapterCount}/${this.readAloudCacheSummary.chapterCount}`,
+                '当前命中章节',
+                ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+              )
+              this.buildReadAloudCacheMetric(
+                `${this.readAloudCacheSummary.currentSettings.totalSegments}`,
+                '当前分片',
+                ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
+              )
+              this.buildReadAloudCacheMetric(
+                this.formatReadAloudCacheSize(this.readAloudCacheSummary.currentSettings.totalBytes),
+                '当前占用',
+                ThemeAwareHelper.getTestManagementThemedColor('accent_orange', this.themeState.currentTheme)
+              )
+              this.buildReadAloudCacheMetric(
+                this.getReadAloudCacheUpdatedLabel(this.readAloudCacheSummary.currentSettings.latestUpdatedAt),
+                '最近更新',
+                ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+              )
+            }
+            .width('100%')
+
+            Progress({ value: this.getReadAloudCacheProgressPercent(), total: 100, type: ProgressType.Linear })
+              .width('100%')
+              .height(4)
+              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+
+            Text(`历史缓存版本 ${this.readAloudCacheSummary.variantCount} 个，历史整章音频 ${this.readAloudCacheSummary.mergedAudioCount} 个`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .width('100%')
+
+            Text(`当前配置来源 ${this.readAloudCacheSummary.settingsSourceLabel} · 当前命中 ${this.readAloudCacheSummary.currentSettings.cachedChapterCount} 章 · 当前占用 ${this.formatReadAloudCacheSize(this.readAloudCacheSummary.currentSettings.totalBytes)}`)
+              .fontSize(11)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              .width('100%')
+
+            if ((this.readAloudCacheSummary.chapters.length ?? 0) > 0) {
+              Column({ space: 8 }) {
+                Row() {
+                  Text('章节预览')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Blank()
+                  Text('可进入管理面板查看全部章节')
+                    .fontSize(11)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                }
+                .width('100%')
+
+                ForEach(this.getReadAloudCachePreviewIndexes(), (chapterIndex: number) => {
+                  if (this.readAloudCacheSummary) {
+                    this.buildReadAloudCachePreviewRow(this.readAloudCacheSummary.chapters[chapterIndex])
+                  }
+                }, (chapterIndex: number) => `read_aloud_cache_preview_${chapterIndex}`)
+              }
+              .width('100%')
+            }
+
+            Row({ space: 10 }) {
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                    .fontSize(13)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+                  Text('刷新')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                }
+              }
+              .layoutWeight(1)
+              .height(34)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .borderRadius(17)
+              .enabled(!this.isReadAloudCacheLoading)
+              .onClick(() => {
+                void this.loadReadAloudCacheSummary(true);
+              })
+
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.gearshape'))
+                    .fontSize(13)
+                    .fontColor([Color.White])
+                  Text('管理听书缓存')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(Color.White)
+                }
+              }
+              .layoutWeight(1)
+              .height(34)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .borderRadius(17)
+              .onClick(() => {
+                this.openReadAloudCacheDialog();
+              })
+            }
+            .width('100%')
+          }
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(12)
+      }
+    }
+  }
+
+  @Builder
+  private buildReadAloudCacheMetric(value: string, label: string, accentColor: ResourceColor) {
+    Column({ space: 4 }) {
+      Text(value)
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(accentColor)
+        .maxLines(2)
+        .textAlign(TextAlign.Center)
+      Text(label)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        .textAlign(TextAlign.Center)
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  private buildReadAloudCachePreviewRow(chapter: RemoteReadAloudCacheChapterSummary) {
+    Row({ space: 10 }) {
+      Column({ space: 4 }) {
+        Text(this.buildReadAloudCacheChapterLabel(chapter.chapterIndex))
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(this.getReadAloudCacheEffectiveChapterStatusText(chapter))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      if (!chapter.cached) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+            .fontSize(15)
+            .fontColor([Color.White])
+        }
+        .width(30)
+        .height(30)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(15)
+        .enabled(!this.isReadAloudPrecaching)
+        .onClick(() => {
+          void this.quickPrecacheReadAloudChapter(chapter.chapterIndex);
+        })
+      } else {
+        Button() {
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(14)
+            .fontColor([Color.White])
+        }
+        .width(30)
+        .height(30)
+        .backgroundColor('#FF5252')
+        .borderRadius(15)
+        .enabled(!this.isReadAloudPrecaching)
+        .onClick(() => {
+          void this.clearReadAloudCacheChapter(chapter.chapterIndex);
+        })
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .borderRadius(12)
   }
   
   /**
@@ -6794,6 +7598,9 @@ export struct UnifiedDetailPage {
         // 工具栏
         this.buildActionBar()
 
+        // 听书缓存
+        this.buildReadAloudCacheSection()
+
         // 缓存状态卡片
         this.buildCacheStatusCard()
 
@@ -6990,6 +7797,7 @@ export struct UnifiedDetailPage {
                   this.buildHeader()
                   this.buildDescription()
                   this.buildActionBar()
+                  this.buildReadAloudCacheSection()
                   this.buildCacheStatusCard()
                   this.buildShelfContentSection()
                   this.buildRecommendationSection()
@@ -7029,6 +7837,9 @@ export struct UnifiedDetailPage {
         // 下载章节选择对话框
         this.buildDownloadDialog()
 
+        // 听书缓存管理对话框
+        this.buildReadAloudCacheDialog()
+
         // 小说设置对话框
         this.buildNovelSettingsDialog()
         
@@ -7058,6 +7869,7 @@ export struct UnifiedDetailPage {
       WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
+      void this.loadReadAloudCacheSummary();
     })
     .backgroundColor(Color.Transparent)
   }
@@ -7473,6 +8285,1000 @@ export struct UnifiedDetailPage {
           .width('100%')
           .textAlign(TextAlign.Center)
       }
+    }
+    .width('100%')
+  }
+
+  /**
+   * 听书缓存管理对话框
+   */
+  @Builder
+  buildReadAloudCacheDialog() {
+    if (this.showReadAloudCacheDialog && this.content && this.supportsReadAloudCacheSection()) {
+      Column() {
+        Column({ space: 16 }) {
+          Row() {
+            Text('听书缓存')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+            Blank()
+
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(18)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+            }
+            .width(32)
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              this.closeReadAloudCacheDialog();
+            })
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            this.buildReadAloudCacheDialogTabButton('章节', $r('sys.symbol.doc_text'), 0)
+            this.buildReadAloudCacheDialogTabButton('参数', $r('sys.symbol.gearshape'), 1)
+          }
+          .width('100%')
+          .padding(4)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+          .borderRadius(18)
+
+          if (this.isReadAloudPrecaching) {
+            Column({ space: 8 }) {
+              Row({ space: 8 }) {
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                Text(this.readAloudPrecachingStatusText || '正在缓存听书音频')
+                  .fontSize(12)
+                  .fontWeight(FontWeight.Medium)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                Blank()
+                Text(this.formatReadAloudCacheSize(this.readAloudPrecachingBytes))
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .width('100%')
+
+              if (this.readAloudPrecachingDetailText) {
+                Text(this.readAloudPrecachingDetailText)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                  .width('100%')
+              }
+
+              Progress({
+                value: this.readAloudPrecachingSegmentTotal > 0
+                  ? Math.round((this.readAloudPrecachingSegmentDone / this.readAloudPrecachingSegmentTotal) * 100)
+                  : 0,
+                total: 100,
+                type: ProgressType.Linear
+              })
+                .width('100%')
+                .height(6)
+                .color(ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme))
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                .borderRadius(3)
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(12)
+          }
+
+          Scroll() {
+            Column({ space: 12 }) {
+              if (this.readAloudCacheDialogActiveTab === 0) {
+                this.buildReadAloudCacheChapterSelectionTab()
+              } else {
+                this.buildReadAloudCacheSettingsTab()
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 420 })
+          .scrollBar(BarState.Auto)
+
+          Column({ space: 10 }) {
+            Row() {
+              Text(this.getReadAloudCacheSelectionSummary())
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              Blank()
+              if (this.readAloudCacheSummary) {
+                Text(`总占用 ${this.formatReadAloudCacheSize(this.readAloudCacheSummary.totalBytes)}`)
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              }
+            }
+            .width('100%')
+
+            Row({ space: 10 }) {
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.trash'))
+                    .fontSize(13)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme)])
+                  Text('清理本书缓存')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('color_error', this.themeState.currentTheme))
+                }
+              }
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .borderRadius(18)
+              .enabled((this.readAloudCacheSummary?.totalBytes ?? 0) > 0 && !this.isReadAloudPrecaching)
+              .onClick(() => {
+                void this.clearReadAloudCacheBook();
+              })
+
+              Button() {
+                Row({ space: 6 }) {
+                  SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+                    .fontSize(13)
+                    .fontColor([Color.White])
+                  Text(this.isReadAloudPrecaching ? '缓存中...' : `开始缓存 ${this.getSelectedReadAloudChapterCount()} 章`)
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(Color.White)
+                }
+              }
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              .borderRadius(18)
+              .enabled(!this.isReadAloudPrecaching)
+              .onClick(() => {
+                void this.startReadAloudCacheTaskFromDialog();
+              })
+            }
+            .width('100%')
+          }
+          .width('100%')
+        }
+        .width('90%')
+        .constraintSize({ maxWidth: 430 })
+        .padding(20)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+        .borderRadius(16)
+        .scale({ x: this.readAloudCacheDialogScale, y: this.readAloudCacheDialogScale })
+        .translate({ y: this.readAloudCacheDialogTranslateY })
+        .opacity(this.readAloudCacheDialogOpacity)
+        .shadow({
+          radius: 20,
+          color: 'rgba(0,0,0,0.2)',
+          offsetX: 0,
+          offsetY: 10
+        })
+        .onClick(() => {
+          // Prevent click-through.
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(`rgba(0,0,0,${0.5 * this.readAloudCacheDialogOpacity})`)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => {
+        this.closeReadAloudCacheDialog();
+      })
+    }
+  }
+
+  @Builder
+  private buildReadAloudCacheDialogTabButton(label: string, icon: Resource, index: number) {
+    Row({ space: 6 }) {
+      SymbolGlyph(icon)
+        .fontSize(13)
+        .fontColor([this.readAloudCacheDialogActiveTab === index
+          ? Color.White
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+      Text(label)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.readAloudCacheDialogActiveTab === index
+          ? Color.White
+          : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+    }
+    .layoutWeight(1)
+    .height(34)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.readAloudCacheDialogActiveTab === index
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+      : Color.Transparent)
+    .borderRadius(14)
+    .animation({ duration: 160, curve: Curve.EaseOut })
+    .onClick(() => {
+      this.readAloudCacheDialogActiveTab = index;
+    })
+  }
+
+  @Builder
+  private buildReadAloudCacheChapterSelectionTab() {
+    Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        Row() {
+          Text('章节范围')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          if (this.readAloudCacheSummary) {
+            Text(`当前已缓存 ${this.readAloudCacheSummary.cachedChapterCount}/${this.readAloudCacheSummary.chapterCount} 章`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+        }
+        .width('100%')
+
+        Row({ space: 8 }) {
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.slider_horizontal_2_1'))
+                .fontSize(14)
+                .fontColor([this.readAloudCacheSelectionMode === 'range'
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text('区间选择')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.readAloudCacheSelectionMode === 'range'
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
+          }
+          .height(36)
+          .padding({ left: 14, right: 14 })
+          .backgroundColor(this.readAloudCacheSelectionMode === 'range'
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(18)
+          .animation({ duration: 200, curve: Curve.EaseOut })
+          .onClick(() => {
+            this.readAloudCacheSelectionMode = 'range';
+          })
+
+          Button() {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.checkmark_circle'))
+                .fontSize(14)
+                .fontColor([this.readAloudCacheSelectionMode === 'individual'
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              Text('单独选择')
+                .fontSize(13)
+                .fontFamily(this.appFontFamily)
+                .fontColor(this.readAloudCacheSelectionMode === 'individual'
+                  ? Color.White
+                  : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            }
+          }
+          .height(36)
+          .padding({ left: 14, right: 14 })
+          .backgroundColor(this.readAloudCacheSelectionMode === 'individual'
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(18)
+          .animation({ duration: 200, curve: Curve.EaseOut })
+          .onClick(() => {
+            this.readAloudCacheSelectionMode = 'individual';
+            this.readAloudCacheChapterListExpanded = true;
+          })
+        }
+        .width('100%')
+
+        if ((this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 0) <= 1) {
+          Text('当前书籍只有一个章节，可直接生成整章听书缓存。')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+        } else if (this.readAloudCacheSelectionMode === 'range') {
+          Column({ space: 12 }) {
+            Row() {
+              Text(`第 ${this.readAloudCacheRangeStart + 1} 章`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              Text(' 至 ')
+                .fontSize(14)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+              Text(`第 ${this.readAloudCacheRangeEnd + 1} 章`)
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              Blank()
+              Text(this.getReadAloudCacheSelectionSummary())
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            }
+            .width('100%')
+
+            Row({ space: 8 }) {
+              Button('未缓存起点')
+                .layoutWeight(1)
+                .height(28)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .borderRadius(14)
+                .onClick(() => {
+                  this.applyReadAloudCacheQuickRange('uncached');
+                })
+              Button('当前阅读章')
+                .layoutWeight(1)
+                .height(28)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .borderRadius(14)
+                .onClick(() => {
+                  this.applyReadAloudCacheQuickRange('current');
+                })
+              Button('整本')
+                .layoutWeight(1)
+                .height(28)
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                .borderRadius(14)
+                .onClick(() => {
+                  this.applyReadAloudCacheQuickRange('full');
+                })
+            }
+            .width('100%')
+
+            Column({ space: 4 }) {
+              Text('开始章节')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+              Slider({
+                value: this.readAloudCacheRangeStart,
+                min: 0,
+                max: Math.max(0, (this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 1) - 1),
+                step: 1,
+                style: SliderStyle.OutSet
+              })
+                .showTips(true)
+                .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .onChange((value: number) => {
+                  const safeValue = Math.round(value);
+                  this.readAloudCacheRangeStart = safeValue;
+                  if (this.readAloudCacheRangeEnd < safeValue) {
+                    this.readAloudCacheRangeEnd = safeValue;
+                  }
+                })
+            }
+            .width('100%')
+
+            Column({ space: 4 }) {
+              Text('结束章节')
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+
+              Slider({
+                value: this.readAloudCacheRangeEnd,
+                min: this.readAloudCacheRangeStart,
+                max: Math.max(this.readAloudCacheRangeStart, (this.readAloudCacheSummary?.chapterCount ?? this.content?.chapters.length ?? 1) - 1),
+                step: 1,
+                style: SliderStyle.OutSet
+              })
+                .showTips(true)
+                .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+                .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                .onChange((value: number) => {
+                  this.readAloudCacheRangeEnd = Math.max(this.readAloudCacheRangeStart, Math.round(value));
+                })
+            }
+            .width('100%')
+          }
+          .width('100%')
+        } else {
+          Text('点击下方章节即可加入或移出批量缓存队列。')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 10 }) {
+        Row() {
+          Text('章节缓存状态')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button() {
+            SymbolGlyph($r(this.readAloudCacheChapterListExpanded ? 'sys.symbol.chevron_down' : 'sys.symbol.chevron_right'))
+              .fontSize(14)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+          }
+          .width(28)
+          .height(28)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.readAloudCacheChapterListExpanded = !this.readAloudCacheChapterListExpanded;
+          })
+        }
+        .width('100%')
+
+        if (this.readAloudCacheChapterListExpanded) {
+          Scroll() {
+            Column({ space: 8 }) {
+              ForEach(this.readAloudCacheSummary?.chapters ?? [], (chapter: RemoteReadAloudCacheChapterSummary) => {
+                this.buildReadAloudCacheDialogChapterRow(chapter)
+              }, (chapter: RemoteReadAloudCacheChapterSummary) => `read_aloud_cache_dialog_${chapter.chapterIndex}`)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 280 })
+          .scrollBar(BarState.Auto)
+        }
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildReadAloudCacheDialogChapterRow(chapter: RemoteReadAloudCacheChapterSummary) {
+    Row({ space: 10 }) {
+      if (this.readAloudCacheSelectionMode === 'individual') {
+        SymbolGlyph($r(this.readAloudCacheSelectedChapters.has(chapter.chapterIndex)
+          ? 'sys.symbol.checkmark_circle_fill'
+          : 'sys.symbol.circle'))
+          .fontSize(16)
+          .fontColor([this.readAloudCacheSelectedChapters.has(chapter.chapterIndex)
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+      } else {
+        SymbolGlyph($r(chapter.cached ? 'sys.symbol.checkmark_circle_fill' : 'sys.symbol.circle'))
+          .fontSize(16)
+          .fontColor([chapter.cached
+            ? ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)
+            : ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+      }
+
+      Column({ space: 4 }) {
+        Text(this.buildReadAloudCacheChapterLabel(chapter.chapterIndex))
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(this.getReadAloudCacheEffectiveChapterStatusText(chapter))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Row({ space: 6 }) {
+        Button() {
+          SymbolGlyph($r('sys.symbol.arrow_down_circle'))
+            .fontSize(14)
+            .fontColor([Color.White])
+        }
+        .width(28)
+        .height(28)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(14)
+        .enabled(!this.isReadAloudPrecaching)
+        .onClick(() => {
+          void this.quickPrecacheReadAloudChapter(chapter.chapterIndex);
+        })
+
+        if (chapter.cached) {
+          Button() {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(13)
+              .fontColor([Color.White])
+          }
+          .width(28)
+          .height(28)
+          .backgroundColor('#FF5252')
+          .borderRadius(14)
+          .enabled(!this.isReadAloudPrecaching)
+          .onClick(() => {
+            void this.clearReadAloudCacheChapter(chapter.chapterIndex);
+          })
+        }
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(this.isReadAloudCacheChapterSelected(chapter.chapterIndex)
+      ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme) + '18'
+      : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .borderRadius(12)
+    .onClick(() => {
+      if (this.readAloudCacheSelectionMode === 'individual') {
+        this.toggleReadAloudCacheChapterSelection(chapter.chapterIndex);
+      }
+    })
+  }
+
+  @Builder
+  private buildReadAloudCacheChoiceChip(label: string, selected: boolean, onClick: () => void) {
+    Button(label)
+      .height(32)
+      .padding({ left: 12, right: 12 })
+      .fontSize(12)
+      .fontFamily(this.appFontFamily)
+      .backgroundColor(selected
+        ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+        : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+      .fontColor(selected
+        ? Color.White
+        : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      .borderRadius(16)
+      .onClick(() => {
+        onClick();
+      })
+  }
+
+  @Builder
+  private buildReadAloudCacheMiMoVoiceSelector() {
+    Column({ space: 8 }) {
+      Text('MiMo 预设音色')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
+        ForEach(XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS, (option: RemoteReadAloudChoiceOption) => {
+          this.buildReadAloudCacheChoiceChip(
+            option.label,
+            this.readAloudCacheTaskSettings.voice.trim() === option.value,
+            () => this.updateReadAloudCacheTaskSettings({ voice: option.value })
+          )
+        }, (option: RemoteReadAloudChoiceOption) => `read_aloud_cache_voice_${option.value}`)
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildReadAloudCacheMiMoStyleSelector() {
+    Column({ space: 8 }) {
+      Text('MiMo 风格控制')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+      Text('支持多选风格，也可手动输入；生成时会自动写成 <style>风格...</style> 正文。')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+      ForEach(XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES, (category: RemoteReadAloudStyleCategory) => {
+        Column({ space: 6 }) {
+          Text(category.label)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
+            ForEach(category.styles, (style: string) => {
+              this.buildReadAloudCacheChoiceChip(style, this.isReadAloudCacheStyleSelected(style), () => {
+                this.toggleReadAloudCacheStyle(style);
+              })
+            }, (style: string) => `read_aloud_cache_style_${category.label}_${style}`)
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }, (category: RemoteReadAloudStyleCategory) => `read_aloud_cache_style_category_${category.label}`)
+
+      Column({ space: 6 }) {
+        Text('自定义风格')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+        TextInput({ text: this.getReadAloudCacheStylePrompt(), placeholder: '如 开心 东北话' })
+          .height(38)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+          .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+          .borderRadius(12)
+          .onChange((value: string) => {
+            this.updateReadAloudCacheTaskSettings({ stylePrompt: value });
+          })
+      }
+      .width('100%')
+
+      if (this.getReadAloudCacheStylePrompt().length > 0) {
+        Text(`实际发送：<style>${this.getReadAloudCacheStylePrompt()}</style>待合成内容`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildReadAloudCacheSettingsTab() {
+    Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        Row() {
+          Text('当前远程 TTS')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Button(this.isReadAloudCurrentSettingsSaving ? '保存中...' : '保存到当前书籍')
+            .height(30)
+            .padding({ left: 12, right: 12 })
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(Color.White)
+            .borderRadius(15)
+            .enabled(!this.isReadAloudCurrentSettingsSaving)
+            .onClick(() => {
+              void this.applyReadAloudCacheTaskSettingsToCurrent();
+            })
+        }
+        .width('100%')
+
+        Text(`当前来源：${this.readAloudCacheSummary?.settingsSourceLabel ?? '全局默认设置'}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Text('这里调整的参数既可用于本次缓存任务，也可以一键保存成当前书籍的远程 TTS 设置。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Column({ space: 6 }) {
+          Text('模型')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          TextInput({ text: this.readAloudCacheTaskSettings.model, placeholder: '输入模型名' })
+            .height(38)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .padding({ left: 10, right: 10 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .borderRadius(12)
+            .onChange((value: string) => {
+              this.updateReadAloudCacheTaskSettings({ model: value });
+            })
+        }
+        .width('100%')
+
+        if (this.isMiMoReadAloudCacheSettings()) {
+          this.buildReadAloudCacheMiMoVoiceSelector()
+          this.buildReadAloudCacheMiMoStyleSelector()
+        }
+
+        Column({ space: 6 }) {
+          Text('音色')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+          TextInput({
+            text: this.readAloudCacheTaskSettings.voice,
+            placeholder: this.isMiMoReadAloudCacheSettings() ? 'mimo_default / default_zh / default_en' : '输入 voice 参数'
+          })
+            .height(38)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_tertiary', this.themeState.currentTheme))
+            .caretColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .padding({ left: 10, right: 10 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+            .borderRadius(12)
+            .onChange((value: string) => {
+              this.updateReadAloudCacheTaskSettings({ voice: value });
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 10 }) {
+        Text('音频格式')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text('用于整章缓存任务的输出格式，默认会复用全局远程听书配置。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        Row({ space: 8 }) {
+          ForEach(['wav', 'mp3'], (format: string) => {
+            Button(format.toUpperCase())
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(this.readAloudCacheTaskSettings.audioFormat === format
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .fontColor(this.readAloudCacheTaskSettings.audioFormat === format
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .borderRadius(16)
+              .onClick(() => {
+                this.updateReadAloudCacheTaskSettings({ audioFormat: format });
+              })
+          }, (format: string) => `read_aloud_cache_format_${format}`)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 10 }) {
+        Text('预取分片')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text('值越大越积极，缓存速度更快，但并发占用也会更高。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        Row({ space: 8 }) {
+          ForEach([1, 2, 3, 4], (segmentCount: number) => {
+            Button(`${segmentCount} 段`)
+              .layoutWeight(1)
+              .height(32)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(this.readAloudCacheTaskSettings.prefetchSegments === segmentCount
+                ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+                : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+              .fontColor(this.readAloudCacheTaskSettings.prefetchSegments === segmentCount
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .borderRadius(16)
+              .onClick(() => {
+                this.updateReadAloudCacheTaskSettings({ prefetchSegments: segmentCount });
+              })
+          }, (segmentCount: number) => `read_aloud_cache_prefetch_${segmentCount}`)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 10 }) {
+        Text('分片长度')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        Text(`当前 target=${this.readAloudCacheTaskSettings.targetChunkChars}，max=${this.readAloudCacheTaskSettings.maxChunkChars}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+
+        Button() {
+          Row() {
+            Text('稳妥')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor((this.readAloudCacheTaskSettings.targetChunkChars === 360 && this.readAloudCacheTaskSettings.maxChunkChars === 720)
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Blank()
+            Text('360 / 720')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor((this.readAloudCacheTaskSettings.targetChunkChars === 360 && this.readAloudCacheTaskSettings.maxChunkChars === 720)
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height(34)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor((this.readAloudCacheTaskSettings.targetChunkChars === 360 && this.readAloudCacheTaskSettings.maxChunkChars === 720)
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(17)
+        .onClick(() => {
+          this.updateReadAloudCacheTaskSettings({ targetChunkChars: 360, maxChunkChars: 720 });
+        })
+
+        Button() {
+          Row() {
+            Text('平衡')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor((this.readAloudCacheTaskSettings.targetChunkChars === 540 && this.readAloudCacheTaskSettings.maxChunkChars === 1200)
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Blank()
+            Text('540 / 1200')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor((this.readAloudCacheTaskSettings.targetChunkChars === 540 && this.readAloudCacheTaskSettings.maxChunkChars === 1200)
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height(34)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor((this.readAloudCacheTaskSettings.targetChunkChars === 540 && this.readAloudCacheTaskSettings.maxChunkChars === 1200)
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(17)
+        .onClick(() => {
+          this.updateReadAloudCacheTaskSettings({ targetChunkChars: 540, maxChunkChars: 1200 });
+        })
+
+        Button() {
+          Row() {
+            Text('长段')
+              .fontSize(13)
+              .fontFamily(this.appFontFamily)
+              .fontColor((this.readAloudCacheTaskSettings.targetChunkChars === 800 && this.readAloudCacheTaskSettings.maxChunkChars === 1800)
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+            Blank()
+            Text('800 / 1800')
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor((this.readAloudCacheTaskSettings.targetChunkChars === 800 && this.readAloudCacheTaskSettings.maxChunkChars === 1800)
+                ? Color.White
+                : ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height(34)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor((this.readAloudCacheTaskSettings.targetChunkChars === 800 && this.readAloudCacheTaskSettings.maxChunkChars === 1800)
+          ? ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)
+          : ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+        .borderRadius(17)
+        .onClick(() => {
+          this.updateReadAloudCacheTaskSettings({ targetChunkChars: 800, maxChunkChars: 1800 });
+        })
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 10 }) {
+        Row() {
+          Text('整章合成')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.readAloudCacheTaskSettings.autoConcatAudio })
+            .onChange((isOn: boolean) => {
+              this.updateReadAloudCacheTaskSettings({ autoConcatAudio: isOn });
+            })
+        }
+        .width('100%')
+
+        Text('开启后会在章节缓存完成后尝试生成整章合并音频。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
+
+      Column({ space: 8 }) {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.info_circle'))
+            .fontSize(13)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          Text('任务说明')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        }
+        .width('100%')
+
+        Text(`当前模型：${this.readAloudCacheTaskSettings.model} / ${this.getReadAloudCacheVoiceLabel(this.readAloudCacheTaskSettings.voice)}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+        if (this.getReadAloudCacheStylePrompt().length > 0) {
+          Text(`当前风格：${this.getReadAloudCacheStylePrompt()}`)
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .width('100%')
+        }
+        Text('音频文件缓存会强制保持启用，以便后续播放和缓存管理正确复用。')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+      .borderRadius(12)
     }
     .width('100%')
   }

@@ -115,8 +115,8 @@ export struct TextReaderComponent {
   /** 当前页面索引 */
   @Link @Watch('onPageIndexChange') currentPageIndex: number;
   @Prop @Watch('onReadAloudCharIndexChange') readAloudCurrentCharIndex: number = -1;
-  @Prop readAloudFollowEnabled: boolean = false;
-  @Prop readAloudHighlightEnabled: boolean = false;
+  @Prop @Watch('onReadAloudUiFlagsChange') readAloudFollowEnabled: boolean = false;
+  @Prop @Watch('onReadAloudUiFlagsChange') readAloudHighlightEnabled: boolean = false;
   /** 底部状态栏高度（用于避让底部信息显示区域） */
   @Prop bottomStatusBarHeight: number = 28;
   /** 分页模式：LOCAL（本地文件）或 ONLINE（在线小说） */
@@ -204,6 +204,7 @@ export struct TextReaderComponent {
   @State private prevPageContent: string = '';
   private scrollHighlightSegmentsCacheSignature: string = '';
   private scrollHighlightSegmentsCache: TextRenderSegment[] = [];
+  private scrollContentHeight: number = 0;
   
   // ========== 翻页动画状态 ==========
   @State private componentWidth: number = 0;
@@ -287,8 +288,14 @@ export struct TextReaderComponent {
   private static readonly AUTO_SCROLL_MIN_STEP_VP: number = 120;
   private static readonly AUTO_SCROLL_MAX_STEP_VP: number = 720;
   private static readonly AUTO_SCROLL_END_THRESHOLD_VP: number = 36;
+  private static readonly SCROLL_CHAPTER_SWITCH_EDGE_TOLERANCE_VP: number = 18;
+  private static readonly SCROLL_CHAPTER_SWITCH_TRIGGER_VP: number = 52;
+  private static readonly SCROLL_CHAPTER_SWITCH_COOLDOWN_MS: number = 420;
   private static readonly READ_ALOUD_SCROLL_FOLLOW_INTERVAL_MS: number = 380;
   private static readonly READ_ALOUD_SCROLL_FOLLOW_MIN_DELTA_VP: number = 36;
+  private scrollBoundarySwitchAccumulator: number = 0;
+  private scrollBoundarySwitchDirection: 'top' | 'bottom' | '' = '';
+  private scrollBoundarySwitchLastTime: number = 0;
   
   // ========== 音量键翻页状态 ==========
   private renderingSettings: RenderingContextSettings = new RenderingContextSettings(true);
@@ -386,6 +393,9 @@ export struct TextReaderComponent {
       this.currentPageContent = '';
       this.prevPageContent = '';
       this.nextPageContent = '';
+      this.scrollOffset = 0;
+      this.scrollContentHeight = 0;
+      this.resetScrollBoundarySwitchState();
       
       // 清空 PixelMap 缓存
       this.releaseAllPixelMapCache();
@@ -491,6 +501,9 @@ export struct TextReaderComponent {
       
       // 每次分页完成都更新签名，确保与当前设置同步
       this.updatePageContents();
+      if (this.isScrollMode()) {
+        this.syncScrollModePositionForCurrentPage(false);
+      }
       
       // 通知页面变化（确保进度正确保存）
       this.lastRenderSignature = this.getRenderSignature();
@@ -498,6 +511,7 @@ export struct TextReaderComponent {
       
       // 通知分页完成
       this.notifyPageChange();
+      this.finishScrollModeChapterTransition();
       
       // 通知分页完成
       this.onReady();
@@ -546,6 +560,7 @@ export struct TextReaderComponent {
       this.startRelayoutAnimation();
       this.recalculateContentArea();
       this.releaseAllPixelMapCache();
+      this.scrollContentHeight = 0;
       this.paginateContentAsync();
     }, TextReaderComponent.SETTINGS_REPAGINATE_DEBOUNCE_MS);
   }
@@ -813,9 +828,207 @@ export struct TextReaderComponent {
     return Math.max(0, this.scrollOffset);
   }
 
+  private isScrollMode(): boolean {
+    return this.settings.readingMode === TextReadingMode.SCROLL;
+  }
+
+  private syncScrollModePositionForCurrentPage(animate: boolean = false): void {
+    if (!this.isScrollMode() || this.totalPages <= 0 || this.contentAreaHeight <= 0) {
+      return;
+    }
+
+    const safePageIndex = Math.max(0, Math.min(this.currentPageIndex, this.totalPages - 1));
+    const targetOffsetY = this.getScrollOffsetYForPageIndex(safePageIndex);
+    this.scrollOffset = targetOffsetY;
+    this.resetScrollBoundarySwitchState();
+
+    setTimeout(() => {
+      try {
+        if (animate) {
+          this.scrollController.scrollTo({
+            xOffset: 0,
+            yOffset: targetOffsetY,
+            animation: { duration: 180 }
+          });
+        } else {
+          this.scrollController.scrollTo({
+            xOffset: 0,
+            yOffset: targetOffsetY,
+            animation: false
+          });
+        }
+      } catch (error) {
+        logger.debug(TAG, `scroll mode position sync failed: ${String(error)}`);
+      }
+    }, 0);
+  }
+
+  private resetScrollBoundarySwitchState(): void {
+    this.scrollBoundarySwitchAccumulator = 0;
+    this.scrollBoundarySwitchDirection = '';
+  }
+
+  private triggerScrollBoundaryChapterSwitch(direction: 'top' | 'bottom'): boolean {
+    const now = Date.now();
+    if ((now - this.scrollBoundarySwitchLastTime) < TextReaderComponent.SCROLL_CHAPTER_SWITCH_COOLDOWN_MS) {
+      return false;
+    }
+
+    this.scrollBoundarySwitchLastTime = now;
+    this.resetScrollBoundarySwitchState();
+
+    if (direction === 'bottom') {
+      if (this.currentChapterIndex < this.chapters.length - 1) {
+        this.notifyUserPageTurnStartIfNeeded('manual');
+        this.switchToNextChapter();
+        return true;
+      }
+      this.provideBoundaryFeedback();
+      return false;
+    }
+
+    if (this.currentChapterIndex > 0) {
+      this.notifyUserPageTurnStartIfNeeded('manual');
+      this.switchToPrevChapter();
+      return true;
+    }
+    this.provideBoundaryFeedback();
+    return false;
+  }
+
+  private handleScrollModeBoundarySwitch(rawDeltaY: number, previousOffsetY: number, absoluteOffsetY: number): boolean {
+    if (!this.isScrollMode()) {
+      return false;
+    }
+    if (this.isAutoScrollStepInProgress || this.isAnimating || this.isChapterTransition || this.isPaginating || this.isLoading) {
+      this.resetScrollBoundarySwitchState();
+      return false;
+    }
+    if (this.isHighlightThoughtPopupActive() || this.hasActiveSelectionRange()) {
+      this.resetScrollBoundarySwitchState();
+      return false;
+    }
+    if (!Number.isFinite(rawDeltaY) || Math.abs(rawDeltaY) < 0.1) {
+      return false;
+    }
+
+    const edgeTolerance = TextReaderComponent.SCROLL_CHAPTER_SWITCH_EDGE_TOLERANCE_VP;
+    const estimatedEndY = this.getEstimatedScrollEndOffsetY();
+    const wasAtBottom = previousOffsetY >= Math.max(0, estimatedEndY - edgeTolerance);
+    const isAtBottom = absoluteOffsetY >= Math.max(0, estimatedEndY - edgeTolerance);
+    const wasAtTop = previousOffsetY <= edgeTolerance;
+    const isAtTop = absoluteOffsetY <= edgeTolerance;
+
+    let boundaryDirection: 'top' | 'bottom' | '' = '';
+    if (rawDeltaY > 0 && wasAtBottom && isAtBottom) {
+      boundaryDirection = 'bottom';
+    } else if (rawDeltaY < 0 && wasAtTop && isAtTop) {
+      boundaryDirection = 'top';
+    }
+
+    if (boundaryDirection === '') {
+      this.resetScrollBoundarySwitchState();
+      return false;
+    }
+
+    if (this.scrollBoundarySwitchDirection !== boundaryDirection) {
+      this.scrollBoundarySwitchDirection = boundaryDirection;
+      this.scrollBoundarySwitchAccumulator = 0;
+    }
+
+    this.scrollBoundarySwitchAccumulator += Math.abs(rawDeltaY);
+    if (this.scrollBoundarySwitchAccumulator < TextReaderComponent.SCROLL_CHAPTER_SWITCH_TRIGGER_VP) {
+      return false;
+    }
+
+    return this.triggerScrollBoundaryChapterSwitch(boundaryDirection);
+  }
+
+  private syncScrollModePageIndexFromOffset(offsetY: number, source: string): void {
+    if (!this.isScrollMode() || this.totalPages <= 0 || this.contentAreaHeight <= 0) {
+      return;
+    }
+
+    const safeOffsetY = Math.max(0, offsetY);
+    this.scrollOffset = safeOffsetY;
+    const targetPageIndex = this.totalPages <= 1
+      ? 0
+      : Math.max(
+          0,
+          Math.min(this.totalPages - 1, Math.round(this.getScrollProgressByOffset(safeOffsetY) * (this.totalPages - 1)))
+        );
+    if (targetPageIndex === this.currentPageIndex) {
+      return;
+    }
+
+    this.lastExternalPageIndex = targetPageIndex;
+    this.currentPageIndex = targetPageIndex;
+    this.updatePageContents();
+    this.notifyPageChange();
+    logger.debug(TAG, `scroll mode page sync: source=${source}, offset=${safeOffsetY.toFixed(1)}, page=${targetPageIndex + 1}/${this.totalPages}`);
+  }
+
+  private goToScrollPage(pageIndex: number, source: string = 'programmatic'): void {
+    if (!this.isScrollMode() || this.totalPages <= 0) {
+      return;
+    }
+
+    const safePageIndex = Math.max(0, Math.min(pageIndex, this.totalPages - 1));
+    if (safePageIndex === this.currentPageIndex) {
+      this.syncScrollModePositionForCurrentPage(false);
+      return;
+    }
+
+    this.notifyUserPageTurnStartIfNeeded(source);
+    this.lastExternalPageIndex = safePageIndex;
+    this.currentPageIndex = safePageIndex;
+    this.updatePageContents();
+    this.notifyPageChange();
+    this.syncScrollModePositionForCurrentPage(false);
+  }
+
+  private finishScrollModeChapterTransition(): void {
+    if (!this.isScrollMode() || !this.isChapterTransition) {
+      return;
+    }
+
+    this.isChapterTransition = false;
+    this.isAnimating = false;
+    this.slideOffset = 0;
+    this.resetScrollBoundarySwitchState();
+    this.clearAnimationTimeout();
+  }
+
   private getEstimatedScrollEndOffsetY(): number {
     const pageHeight = Math.max(1, this.contentAreaHeight);
-    return Math.max(0, (this.totalPages - 1) * pageHeight);
+    const effectiveContentHeight = this.getEffectiveScrollContentHeight();
+    return Math.max(0, effectiveContentHeight - pageHeight);
+  }
+
+  private getEffectiveScrollContentHeight(): number {
+    if (this.scrollContentHeight > 0) {
+      return this.scrollContentHeight;
+    }
+    const pageHeight = Math.max(1, this.contentAreaHeight);
+    return Math.max(pageHeight, this.totalPages * pageHeight);
+  }
+
+  private getScrollProgressByOffset(offsetY: number): number {
+    const estimatedEndY = this.getEstimatedScrollEndOffsetY();
+    if (estimatedEndY <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, offsetY / estimatedEndY));
+  }
+
+  private getScrollOffsetYForPageIndex(pageIndex: number): number {
+    const safePageIndex = Math.max(0, Math.min(pageIndex, Math.max(0, this.totalPages - 1)));
+    const estimatedEndY = this.getEstimatedScrollEndOffsetY();
+    if (estimatedEndY <= 0 || this.totalPages <= 1) {
+      return 0;
+    }
+    const progress = safePageIndex / Math.max(1, this.totalPages - 1);
+    return Math.max(0, Math.min(estimatedEndY, estimatedEndY * progress));
   }
 
   private getAutoScrollStepDistance(): number {
@@ -955,6 +1168,21 @@ export struct TextReaderComponent {
       return;
     }
 
+    if (this.isScrollMode()) {
+      const safeIndex = Math.max(0, Math.min(this.currentPageIndex, this.totalPages - 1));
+      if (safeIndex !== this.currentPageIndex) {
+        this.currentPageIndex = safeIndex;
+        return;
+      }
+
+      logger.info(TAG, `scroll mode external page index change: ${this.lastExternalPageIndex} -> ${this.currentPageIndex}, totalPages=${this.totalPages}`);
+      this.lastExternalPageIndex = this.currentPageIndex;
+      this.updatePageContents();
+      this.notifyPageChange();
+      this.syncScrollModePositionForCurrentPage(false);
+      return;
+    }
+
     const safeIndex = Math.max(0, Math.min(this.currentPageIndex, this.totalPages - 1));
     if (safeIndex !== this.currentPageIndex) {
       this.currentPageIndex = safeIndex;
@@ -968,6 +1196,18 @@ export struct TextReaderComponent {
 
   private onReadAloudCharIndexChange(): void {
     this.tryFollowPageForReadAloud();
+    this.logReadAloudHighlightPosition();
+  }
+
+  private onReadAloudUiFlagsChange(): void {
+    if (this.readAloudCurrentCharIndex < 0) {
+      return;
+    }
+    this.tryFollowPageForReadAloud();
+    this.logReadAloudHighlightPosition();
+  }
+
+  private logReadAloudHighlightPosition(): void {
     if (!this.readAloudHighlightEnabled || this.readAloudCurrentCharIndex < 0) {
       return;
     }
@@ -1086,6 +1326,7 @@ export struct TextReaderComponent {
     }
     this.clearAutoPageTurnTimer();
     this.clearAutoScrollStepGuard();
+    this.resetScrollBoundarySwitchState();
     if (this.highlightThoughtPopupTimer !== -1) {
       clearTimeout(this.highlightThoughtPopupTimer);
       this.highlightThoughtPopupTimer = -1;
@@ -1142,6 +1383,7 @@ export struct TextReaderComponent {
     this.curlAnimateTarget = -1;
     this.isDragging = false;
     this.dualSlideOffset = 0;
+    this.resetScrollBoundarySwitchState();
     this.clearAnimationTimeout();
     logger.info(TAG, '动画状态已强制重置');
   }
@@ -3208,6 +3450,18 @@ export struct TextReaderComponent {
       logger.debug(TAG, `goToNextPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
       return;
     }
+    if (this.isScrollMode()) {
+      if (this.currentPageIndex >= this.totalPages - 1) {
+        if (this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1) {
+          this.switchToNextChapter();
+        } else {
+          this.provideBoundaryFeedback();
+        }
+        return;
+      }
+      this.goToScrollPage(this.currentPageIndex + 1, source);
+      return;
+    }
     if (this.currentPageIndex >= this.totalPages - 1) {
       // 已是最后一页，提供边界反馈
       this.provideBoundaryFeedback();
@@ -3230,6 +3484,18 @@ export struct TextReaderComponent {
     // 安全检查：分页中、加载中、动画中、或页面数据无效时不允许翻页
     if (this.isAnimating || this.isPaginating || this.isLoading || this.pages.length === 0) {
       logger.debug(TAG, `goToPrevPage 被阻止: isAnimating=${this.isAnimating}, isPaginating=${this.isPaginating}, isLoading=${this.isLoading}, pages=${this.pages.length}`);
+      return;
+    }
+    if (this.isScrollMode()) {
+      if (this.currentPageIndex <= 0) {
+        if (this.currentChapterIndex > 0) {
+          this.switchToPrevChapter();
+        } else {
+          this.provideBoundaryFeedback();
+        }
+        return;
+      }
+      this.goToScrollPage(this.currentPageIndex - 1, source);
       return;
     }
     if (this.currentPageIndex <= 0) {
@@ -3257,6 +3523,10 @@ export struct TextReaderComponent {
       return;
     }
     if (pageIndex < 0 || pageIndex >= this.totalPages) {
+      return;
+    }
+    if (this.isScrollMode()) {
+      this.goToScrollPage(pageIndex, source);
       return;
     }
 
@@ -3485,12 +3755,30 @@ export struct TextReaderComponent {
   */
   private switchToNextChapter(): void {
     if (this.chapters.length === 0 || this.currentChapterIndex >= this.chapters.length - 1) {
-      this.animateSlideBack();
+      if (this.isScrollMode()) {
+        this.provideBoundaryFeedback();
+      } else {
+        this.animateSlideBack();
+      }
       return;
     }
     
     const nextChapterIndex = this.currentChapterIndex + 1;
     const nextChapter = this.chapters[nextChapterIndex];
+    if (this.isScrollMode()) {
+      this.isAnimating = true;
+      this.startAnimationTimeout();
+      this.isForward = true;
+      this.transitionDirection = true;
+      this.transitionChapterName = nextChapter?.title || `Chapter ${nextChapterIndex + 1}`;
+      this.isChapterTransition = true;
+      this.shouldJumpToLastPage = false;
+      this.slideOffset = 0;
+      this.scrollOffset = 0;
+      this.resetScrollBoundarySwitchState();
+      this.onChapterChange(nextChapterIndex);
+      return;
+    }
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
     
     this.isAnimating = true;
@@ -3568,12 +3856,30 @@ export struct TextReaderComponent {
   */
   private switchToPrevChapter(): void {
     if (this.chapters.length === 0 || this.currentChapterIndex <= 0) {
-      this.animateSlideBack();
+      if (this.isScrollMode()) {
+        this.provideBoundaryFeedback();
+      } else {
+        this.animateSlideBack();
+      }
       return;
     }
     
     const prevChapterIndex = this.currentChapterIndex - 1;
     const prevChapter = this.chapters[prevChapterIndex];
+    if (this.isScrollMode()) {
+      this.isAnimating = true;
+      this.startAnimationTimeout();
+      this.isForward = false;
+      this.transitionDirection = false;
+      this.transitionChapterName = prevChapter?.title || `Chapter ${prevChapterIndex + 1}`;
+      this.isChapterTransition = true;
+      this.shouldJumpToLastPage = true;
+      this.slideOffset = 0;
+      this.scrollOffset = 0;
+      this.resetScrollBoundarySwitchState();
+      this.onChapterChange(prevChapterIndex);
+      return;
+    }
     const capturedVersion = this.paginationVersion;  // 捕获当前版本号，防止章节切换期间数据变化
     
     this.isAnimating = true;
@@ -4196,6 +4502,9 @@ export struct TextReaderComponent {
     if (this.hasActiveSelectionRange()) {
       return;
     }
+    if (this.isScrollMode()) {
+      return;
+    }
     if (!this.settings.tapToTurn) {
       // 创建简单的点击事件对象传递给回调
       this.onTapSimple();
@@ -4245,6 +4554,16 @@ export struct TextReaderComponent {
     this.onTapCenter();
   }
 
+  private handleTwoFingerTap(): void {
+    if (!this.isScrollMode()) {
+      return;
+    }
+    if (this.isHighlightThoughtPopupActive() || this.hasActiveSelectionRange()) {
+      return;
+    }
+    this.onTapSimple();
+  }
+
   /**
    * Whether a text selection range is active.
    * Used to block page-turn gestures while dragging selection handles.
@@ -4264,6 +4583,10 @@ export struct TextReaderComponent {
     if (this.hasActiveSelectionRange()) {
       this.isDragging = false;
       logger.debug(TAG, 'handlePanStart: skip page turn while text selection is active');
+      return;
+    }
+    if (this.isScrollMode()) {
+      this.isDragging = false;
       return;
     }
     logger.info(TAG, `handlePanStart: offsetX=${event.offsetX}, offsetY=${event.offsetY}`);
@@ -4287,6 +4610,10 @@ export struct TextReaderComponent {
       return;
     }
     if (this.hasActiveSelectionRange()) {
+      this.isDragging = false;
+      return;
+    }
+    if (this.isScrollMode()) {
       this.isDragging = false;
       return;
     }
@@ -4343,6 +4670,10 @@ export struct TextReaderComponent {
     if (this.hasActiveSelectionRange()) {
       this.isDragging = false;
       logger.debug(TAG, 'handlePanEnd: skip page turn while text selection is active');
+      return;
+    }
+    if (this.isScrollMode()) {
+      this.isDragging = false;
       return;
     }
     logger.info(TAG, `handlePanEnd called: isDragging=${this.isDragging}, offsetX=${event.offsetX}, initialTouchX=${this.initialTouchX}`);
@@ -4998,7 +5329,9 @@ export struct TextReaderComponent {
     const dragDistance = Math.abs(deltaX);
     
     const nextBase = dragForward ? this.dualPageBaseIndex + 2 : this.dualPageBaseIndex - 2;
-    const canFlip = dragForward ? nextBase < this.totalPages : nextBase >= 0;
+    const canFlip = dragForward
+      ? (nextBase < this.totalPages)
+      : (nextBase >= 0);
     
     if (!canFlip) return;
     
@@ -5240,11 +5573,16 @@ export struct TextReaderComponent {
         this.pendingRelayoutAnimation = true;
         this.startRelayoutAnimation();
         this.releaseAllPixelMapCache();
+        this.scrollContentHeight = 0;
         this.paginateContentAsync();
       }, TextReaderComponent.AREA_CHANGE_DEBOUNCE_MS);
     })
     .parallelGesture(
       GestureGroup(GestureMode.Exclusive,
+        TapGesture({ count: 1, fingers: 2 })
+          .onAction((_event: GestureEvent) => {
+            this.handleTwoFingerTap();
+          }),
         TapGesture({ count: 1 })
           .onAction((event: GestureEvent) => {
             if (this.suppressNextTapEvent) {
@@ -5262,6 +5600,9 @@ export struct TextReaderComponent {
                 return;
               }
               if (this.isHighlightThoughtPopupActive()) {
+                return;
+              }
+              if (this.isScrollMode()) {
                 return;
               }
               if (this.isDualPageMode()) {
@@ -5433,6 +5774,13 @@ export struct TextReaderComponent {
       .padding(this.getEffectiveContentPadding())
       .width('100%')
       .backgroundColor(this.getContentBackgroundColor())
+      .onAreaChange((_oldArea, newArea) => {
+        const nextHeight = Number(newArea.height);
+        if (!Number.isFinite(nextHeight) || nextHeight <= 0) {
+          return;
+        }
+        this.scrollContentHeight = nextHeight;
+      })
     }
     .width('100%')
     .height('100%')
@@ -5440,7 +5788,21 @@ export struct TextReaderComponent {
     .scrollBar(BarState.Auto)
     .edgeEffect(EdgeEffect.Spring)
     .onScroll((xOffset: number, yOffset: number) => {
-      this.scrollOffset += yOffset;
+      const previousOffsetY = Math.max(0, this.scrollOffset);
+      let nextOffsetY = Math.max(0, this.scrollOffset + yOffset);
+      try {
+        const offset = this.scrollController.currentOffset();
+        if (offset && typeof offset.yOffset === 'number' && Number.isFinite(offset.yOffset)) {
+          nextOffsetY = Math.max(0, offset.yOffset);
+        }
+      } catch (_error) {
+        // Fallback to incremental offset when currentOffset is temporarily unavailable.
+      }
+      this.scrollOffset = nextOffsetY;
+      this.syncScrollModePageIndexFromOffset(nextOffsetY, 'manual-scroll');
+      if (this.handleScrollModeBoundarySwitch(yOffset, previousOffsetY, nextOffsetY)) {
+        return;
+      }
       if (!this.isAutoScrollStepInProgress) {
         this.resetAutoPageTurnTimerForInteraction('manual-scroll');
       }

@@ -19,8 +19,8 @@ import {
   SavedBackgroundImage,
   ReadAloudEngineType,
   ReadAloudSettings,
-  RemoteReadAloudSettings,
   DEFAULT_READ_ALOUD_SETTINGS,
+  mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings,
   DEFAULT_TEXT_STYLE,
   DEFAULT_PAGE_MARGINS
@@ -225,28 +225,7 @@ export struct TextReaderSettingsPanel {
     const partialRemote = partial.remote;
     let mergedRemote = currentRemote;
     if (partialRemote && currentRemote) {
-      const remoteValue: RemoteReadAloudSettings = {
-        endpoint: partialRemote.endpoint ?? currentRemote.endpoint,
-        apiPath: partialRemote.apiPath ?? currentRemote.apiPath,
-        apiKey: partialRemote.apiKey ?? currentRemote.apiKey,
-        model: partialRemote.model ?? currentRemote.model,
-        voice: partialRemote.voice ?? currentRemote.voice,
-        audioFormat: partialRemote.audioFormat ?? currentRemote.audioFormat,
-        streamEnabled: partialRemote.streamEnabled ?? currentRemote.streamEnabled,
-        prefetchSegments: partialRemote.prefetchSegments ?? currentRemote.prefetchSegments,
-        connectTimeoutMs: partialRemote.connectTimeoutMs ?? currentRemote.connectTimeoutMs,
-        readTimeoutMs: partialRemote.readTimeoutMs ?? currentRemote.readTimeoutMs,
-        maxInputChars: partialRemote.maxInputChars ?? currentRemote.maxInputChars,
-        reservedInputChars: partialRemote.reservedInputChars ?? currentRemote.reservedInputChars,
-        minChunkChars: partialRemote.minChunkChars ?? currentRemote.minChunkChars,
-        targetChunkChars: partialRemote.targetChunkChars ?? currentRemote.targetChunkChars,
-        maxChunkChars: partialRemote.maxChunkChars ?? currentRemote.maxChunkChars,
-        cacheAudioFiles: partialRemote.cacheAudioFiles ?? currentRemote.cacheAudioFiles,
-        autoConcatAudio: partialRemote.autoConcatAudio ?? currentRemote.autoConcatAudio,
-        customHeadersJson: partialRemote.customHeadersJson ?? currentRemote.customHeadersJson,
-        extraBodyJson: partialRemote.extraBodyJson ?? currentRemote.extraBodyJson
-      };
-      mergedRemote = remoteValue;
+      mergedRemote = mergeRemoteReadAloudSettings(currentRemote, partialRemote);
     }
     this.settings.readAloud = normalizeReadAloudSettings({
       enabled: partial.enabled ?? current.enabled,
@@ -263,19 +242,22 @@ export struct TextReaderSettingsPanel {
       remote: mergedRemote
     });
     this.updateAndNotify();
+    const shouldRefreshAvailability = partial.engineType !== undefined || partial.remote !== undefined;
+    if (shouldRefreshAvailability) {
+      this.refreshReadAloudAvailability();
+      return;
+    }
     if (
-      partial.engineType !== undefined ||
       partial.voiceLanguage !== undefined ||
       partial.voicePerson !== undefined ||
-      partial.voiceOnline !== undefined ||
-      partial.remote !== undefined
+      partial.voiceOnline !== undefined
     ) {
       this.refreshReadAloudVoices();
     }
   }
   
   private refreshReadAloudAvailability(): void {
-    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+    ReadAloudAvailability.refresh(false, this.getSafeReadAloudSettings()).then((map: ReadAloudEngineAvailabilityMap) => {
       this.readAloudAvailability = map;
       if (!map.SYSTEM) {
         const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
@@ -326,7 +308,7 @@ export struct TextReaderSettingsPanel {
         if (probeError.length > 0) {
           this.readAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
         } else {
-          this.readAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice';
+          this.readAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice/apiKey';
         }
       } else {
         this.readAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
@@ -382,62 +364,6 @@ export struct TextReaderSettingsPanel {
 
   build() {
     Stack() {
-      Column() {
-        // 标题栏
-        Row() {
-          Text('阅读设置')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .layoutWeight(1)
-          
-          Button() {
-            Image($r('app.media.ic_close'))
-              .width(20)
-              .height(20)
-              .fillColor($r('app.color.text_secondary'))
-          }
-          .width(36)
-          .height(36)
-          .backgroundColor(Color.Transparent)
-          .onClick(() => this.onClose())
-        }
-        .width('100%')
-        .padding({ left: 20, right: 12, top: 16, bottom: 12 })
-        
-        // 页签栏
-        Row({ space: 0 }) {
-          this.buildTabButton('字体', SettingsTab.FONT)
-          this.buildTabButton('背景', SettingsTab.BACKGROUND)
-          this.buildTabButton('阅读', SettingsTab.READING)
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16 })
-        
-        Divider().color($r('app.color.divider'))
-        
-        // 设置内容
-        Scroll() {
-          Column({ space: 16 }) {
-            if (this.currentTab === SettingsTab.FONT) {
-              this.buildFontSettings()
-            } else if (this.currentTab === SettingsTab.BACKGROUND) {
-              this.buildBackgroundSettings()
-            } else {
-              this.buildReadingSettings()
-            }
-          }
-          .width('100%')
-          .padding({ left: 20, right: 20, top: 16, bottom: 20 })
-        }
-        .layoutWeight(1)
-        .scrollBar(BarState.Auto)
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(Color.Transparent)
-      .borderRadius({ topLeft: 16, topRight: 16 })
-
       if (this.showReadAloudPanel) {
         ReadAloudSettingsInfoPanel({
           isLandscape: this.isLandscape,
@@ -457,6 +383,62 @@ export struct TextReaderSettingsPanel {
             }
           }
         })
+      } else {
+        Column() {
+          // 标题栏
+          Row() {
+            Text('阅读设置')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            
+            Button() {
+              Image($r('app.media.ic_close'))
+                .width(20)
+                .height(20)
+                .fillColor($r('app.color.text_secondary'))
+            }
+            .width(36)
+            .height(36)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => this.onClose())
+          }
+          .width('100%')
+          .padding({ left: 20, right: 12, top: 16, bottom: 12 })
+          
+          // 页签栏
+          Row({ space: 0 }) {
+            this.buildTabButton('字体', SettingsTab.FONT)
+            this.buildTabButton('背景', SettingsTab.BACKGROUND)
+            this.buildTabButton('阅读', SettingsTab.READING)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16 })
+          
+          Divider().color($r('app.color.divider'))
+          
+          // 设置内容
+          Scroll() {
+            Column({ space: 16 }) {
+              if (this.currentTab === SettingsTab.FONT) {
+                this.buildFontSettings()
+              } else if (this.currentTab === SettingsTab.BACKGROUND) {
+                this.buildBackgroundSettings()
+              } else {
+                this.buildReadingSettings()
+              }
+            }
+            .width('100%')
+            .padding({ left: 20, right: 20, top: 16, bottom: 20 })
+          }
+          .layoutWeight(1)
+          .scrollBar(BarState.Auto)
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .borderRadius({ topLeft: 16, topRight: 16 })
       }
     }
     .width('100%')

@@ -157,12 +157,13 @@ export enum ReadAloudEngineType {
   REMOTE = 'REMOTE'
 }
 
-export interface RemoteReadAloudSettings {
+export interface RemoteReadAloudPresetConfig {
   endpoint: string;
   apiPath: string;
   apiKey: string;
   model: string;
   voice: string;
+  stylePrompt: string;
   audioFormat: string;
   streamEnabled: boolean;
   prefetchSegments: number;
@@ -177,6 +178,39 @@ export interface RemoteReadAloudSettings {
   autoConcatAudio: boolean;
   customHeadersJson: string;
   extraBodyJson: string;
+}
+
+export interface RemoteReadAloudPreset {
+  id: string;
+  name: string;
+  description: string;
+  builtIn?: boolean;
+  settings: RemoteReadAloudPresetConfig;
+}
+
+export interface RemoteReadAloudSettings extends RemoteReadAloudPresetConfig {
+  activePresetId: string;
+  presets: RemoteReadAloudPreset[];
+}
+
+export interface RemoteReadAloudChoiceOption {
+  label: string;
+  value: string;
+}
+
+export interface RemoteReadAloudStyleCategory {
+  label: string;
+  styles: string[];
+}
+
+interface RemoteReadAloudPresetSource {
+  id?: string;
+  name?: string;
+  description?: string;
+  builtIn?: boolean;
+  settings?: Partial<RemoteReadAloudPresetConfig> | null;
+  config?: Partial<RemoteReadAloudPresetConfig> | null;
+  remote?: Partial<RemoteReadAloudPresetConfig> | null;
 }
 
 /**
@@ -208,12 +242,15 @@ export interface ReadAloudSettings {
   remote?: RemoteReadAloudSettings;
 }
 
-export const DEFAULT_REMOTE_READ_ALOUD_SETTINGS: RemoteReadAloudSettings = {
+export const DEFAULT_REMOTE_READ_ALOUD_PRESET_ID: string = 'xiaomi_mimo_v2_tts';
+
+const LEGACY_DEFAULT_REMOTE_READ_ALOUD_SETTINGS: RemoteReadAloudPresetConfig = {
   endpoint: '',
   apiPath: '/v1/audio/speech',
   apiKey: '',
   model: 'gpt-4o-mini-tts',
   voice: 'alloy',
+  stylePrompt: '',
   audioFormat: 'mp3',
   streamEnabled: true,
   prefetchSegments: 2,
@@ -229,6 +266,88 @@ export const DEFAULT_REMOTE_READ_ALOUD_SETTINGS: RemoteReadAloudSettings = {
   customHeadersJson: '',
   extraBodyJson: ''
 };
+
+export const DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG: RemoteReadAloudPresetConfig = {
+  endpoint: 'https://api.xiaomimimo.com',
+  apiPath: '/v1/chat/completions',
+  apiKey: '',
+  model: 'mimo-v2-tts',
+  voice: 'mimo_default',
+  stylePrompt: '',
+  audioFormat: 'wav',
+  streamEnabled: false,
+  prefetchSegments: 2,
+  connectTimeoutMs: 15000,
+  readTimeoutMs: 120000,
+  maxInputChars: 3000,
+  reservedInputChars: 240,
+  minChunkChars: 120,
+  targetChunkChars: 540,
+  maxChunkChars: 1200,
+  cacheAudioFiles: true,
+  autoConcatAudio: true,
+  customHeadersJson: '',
+  extraBodyJson: ''
+};
+
+export const DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_PRESET: RemoteReadAloudPreset = {
+  id: DEFAULT_REMOTE_READ_ALOUD_PRESET_ID,
+  name: 'Xiaomi MiMo-V2-TTS',
+  description: '小米 MiMo 默认预设，支持快捷音色与风格控制，填写 API Key 即可接入',
+  builtIn: true,
+  settings: DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG
+};
+
+export const XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS: RemoteReadAloudChoiceOption[] = [
+  { label: 'MiMo-默认', value: 'mimo_default' },
+  { label: 'MiMo-中文女声', value: 'default_zh' },
+  { label: 'MiMo-英文女声', value: 'default_en' }
+];
+
+export const XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES: RemoteReadAloudStyleCategory[] = [
+  { label: '语速控制', styles: ['变快', '变慢'] },
+  { label: '情绪变化', styles: ['开心', '悲伤', '生气'] },
+  { label: '角色扮演', styles: ['孙悟空', '林黛玉'] },
+  { label: '风格变化', styles: ['悄悄话', '夹子音', '台湾腔'] },
+  { label: '方言', styles: ['东北话', '四川话', '河南话', '粤语'] }
+];
+
+function createRemoteReadAloudSettings(
+  config: RemoteReadAloudPresetConfig,
+  activePresetId: string,
+  presets: RemoteReadAloudPreset[]
+): RemoteReadAloudSettings {
+  return {
+    endpoint: config.endpoint,
+    apiPath: config.apiPath,
+    apiKey: config.apiKey,
+    model: config.model,
+    voice: config.voice,
+    stylePrompt: config.stylePrompt,
+    audioFormat: config.audioFormat,
+    streamEnabled: config.streamEnabled,
+    prefetchSegments: config.prefetchSegments,
+    connectTimeoutMs: config.connectTimeoutMs,
+    readTimeoutMs: config.readTimeoutMs,
+    maxInputChars: config.maxInputChars,
+    reservedInputChars: config.reservedInputChars,
+    minChunkChars: config.minChunkChars,
+    targetChunkChars: config.targetChunkChars,
+    maxChunkChars: config.maxChunkChars,
+    cacheAudioFiles: config.cacheAudioFiles,
+    autoConcatAudio: config.autoConcatAudio,
+    customHeadersJson: config.customHeadersJson,
+    extraBodyJson: config.extraBodyJson,
+    activePresetId,
+    presets
+  };
+}
+
+export const DEFAULT_REMOTE_READ_ALOUD_SETTINGS: RemoteReadAloudSettings = createRemoteReadAloudSettings(
+  DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG,
+  DEFAULT_REMOTE_READ_ALOUD_PRESET_ID,
+  [DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_PRESET]
+);
 
 /**
  * 默认听书设置
@@ -252,60 +371,327 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-export function normalizeRemoteReadAloudSettings(remote?: Partial<RemoteReadAloudSettings> | null): RemoteReadAloudSettings {
-  const source = remote ?? {};
-  const endpoint = (source.endpoint ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.endpoint).trim();
-  const apiPathRaw = (source.apiPath ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.apiPath).trim();
-  const apiPath = apiPathRaw.length > 0 ? (apiPathRaw.startsWith('/') ? apiPathRaw : `/${apiPathRaw}`) : '/v1/audio/speech';
-  const audioFormatRaw = (source.audioFormat ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.audioFormat).trim().toLowerCase();
-  const audioFormat = audioFormatRaw.length > 0 ? audioFormatRaw : DEFAULT_REMOTE_READ_ALOUD_SETTINGS.audioFormat;
+export function normalizeRemoteReadAloudStylePrompt(stylePrompt?: string | null): string {
+  const raw = typeof stylePrompt === 'string' ? stylePrompt.trim() : '';
+  if (raw.length <= 0) {
+    return '';
+  }
+  const matched = raw.match(/^<style>([\s\S]*?)<\/style>$/i);
+  const content = matched && typeof matched[1] === 'string' ? matched[1] : raw;
+  return content
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[，,、|/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function splitRemoteReadAloudStylePrompt(stylePrompt?: string | null): string[] {
+  const normalized = normalizeRemoteReadAloudStylePrompt(stylePrompt);
+  if (normalized.length <= 0) {
+    return [];
+  }
+  const styles: string[] = [];
+  const parts = normalized.split(' ');
+  for (let index = 0; index < parts.length; index++) {
+    const style = parts[index].trim();
+    if (style.length <= 0 || styles.indexOf(style) >= 0) {
+      continue;
+    }
+    styles.push(style);
+  }
+  return styles;
+}
+
+export function hasRemoteReadAloudStylePrompt(stylePrompt: string, style: string): boolean {
+  const normalizedStyle = normalizeRemoteReadAloudStylePrompt(style);
+  if (normalizedStyle.length <= 0) {
+    return false;
+  }
+  return splitRemoteReadAloudStylePrompt(stylePrompt).indexOf(normalizedStyle) >= 0;
+}
+
+export function toggleRemoteReadAloudStylePrompt(stylePrompt: string, style: string): string {
+  const normalizedStyle = normalizeRemoteReadAloudStylePrompt(style);
+  if (normalizedStyle.length <= 0) {
+    return normalizeRemoteReadAloudStylePrompt(stylePrompt);
+  }
+  const styles = splitRemoteReadAloudStylePrompt(stylePrompt);
+  const existingIndex = styles.indexOf(normalizedStyle);
+  if (existingIndex >= 0) {
+    styles.splice(existingIndex, 1);
+  } else {
+    styles.push(normalizedStyle);
+  }
+  return styles.join(' ');
+}
+
+export function buildXiaomiMimoStyledText(stylePrompt: string, text: string): string {
+  const normalizedStyle = normalizeRemoteReadAloudStylePrompt(stylePrompt);
+  if (normalizedStyle.length <= 0) {
+    return text;
+  }
+  return `<style>${normalizedStyle}</style>${text}`;
+}
+
+export function isXiaomiMimoRemoteReadAloud(
+  remote?: RemoteReadAloudSettings | null
+): boolean {
+  const endpointValue = remote?.endpoint;
+  const modelValue = remote?.model;
+  const activePresetIdValue = remote?.activePresetId;
+  const endpoint = typeof endpointValue === 'string' ? endpointValue.trim().toLowerCase() : '';
+  const model = typeof modelValue === 'string' ? modelValue.trim().toLowerCase() : '';
+  const activePresetId = typeof activePresetIdValue === 'string' ? activePresetIdValue.trim() : '';
+  return activePresetId === DEFAULT_REMOTE_READ_ALOUD_PRESET_ID ||
+    endpoint.includes('xiaomimimo.com') ||
+    model === 'mimo-v2-tts';
+}
+
+export function getXiaomiMimoRemoteReadAloudVoiceLabel(voice: string): string {
+  const normalizedVoice = voice.trim();
+  for (let index = 0; index < XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS.length; index++) {
+    const option = XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS[index];
+    if (option.value === normalizedVoice) {
+      return option.label;
+    }
+  }
+  return normalizedVoice.length > 0 ? normalizedVoice : '默认音色';
+}
+
+function normalizeRemoteReadAloudPresetConfig(
+  remote?: Partial<RemoteReadAloudPresetConfig> | null,
+  fallback: RemoteReadAloudPresetConfig = DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG
+): RemoteReadAloudPresetConfig {
+  const endpoint = (remote?.endpoint ?? fallback.endpoint).trim();
+  const apiPathRaw = (remote?.apiPath ?? fallback.apiPath).trim();
+  const apiPath = apiPathRaw.length > 0
+    ? (
+      apiPathRaw.startsWith('/') ||
+      apiPathRaw.startsWith('http://') ||
+      apiPathRaw.startsWith('https://')
+    ) ? apiPathRaw : `/${apiPathRaw}`
+    : fallback.apiPath;
+  const audioFormatRaw = (remote?.audioFormat ?? fallback.audioFormat).trim().toLowerCase();
+  const audioFormat = audioFormatRaw.length > 0 ? audioFormatRaw : fallback.audioFormat;
 
   return {
     endpoint,
     apiPath,
-    apiKey: source.apiKey ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.apiKey,
-    model: (source.model ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.model).trim(),
-    voice: (source.voice ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.voice).trim(),
+    apiKey: remote?.apiKey ?? fallback.apiKey,
+    model: (remote?.model ?? fallback.model).trim(),
+    voice: (remote?.voice ?? fallback.voice).trim(),
+    stylePrompt: normalizeRemoteReadAloudStylePrompt(remote?.stylePrompt ?? fallback.stylePrompt),
     audioFormat,
-    streamEnabled: source.streamEnabled ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.streamEnabled,
-    prefetchSegments: Math.max(1, Math.min(8, Math.floor(source.prefetchSegments ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.prefetchSegments))),
-    connectTimeoutMs: Math.max(3000, Math.min(120000, Math.floor(source.connectTimeoutMs ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.connectTimeoutMs))),
-    readTimeoutMs: Math.max(5000, Math.min(300000, Math.floor(source.readTimeoutMs ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.readTimeoutMs))),
-    maxInputChars: Math.max(256, Math.min(12000, Math.floor(source.maxInputChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.maxInputChars))),
-    reservedInputChars: Math.max(0, Math.min(2000, Math.floor(source.reservedInputChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.reservedInputChars))),
-    minChunkChars: Math.max(32, Math.min(5000, Math.floor(source.minChunkChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.minChunkChars))),
-    targetChunkChars: Math.max(64, Math.min(7000, Math.floor(source.targetChunkChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.targetChunkChars))),
-    maxChunkChars: Math.max(80, Math.min(9000, Math.floor(source.maxChunkChars ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.maxChunkChars))),
-    cacheAudioFiles: source.cacheAudioFiles ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.cacheAudioFiles,
-    autoConcatAudio: source.autoConcatAudio ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.autoConcatAudio,
-    customHeadersJson: source.customHeadersJson ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.customHeadersJson,
-    extraBodyJson: source.extraBodyJson ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS.extraBodyJson
+    streamEnabled: remote?.streamEnabled ?? fallback.streamEnabled,
+    prefetchSegments: Math.max(1, Math.min(8, Math.floor(remote?.prefetchSegments ?? fallback.prefetchSegments))),
+    connectTimeoutMs: Math.max(3000, Math.min(120000, Math.floor(remote?.connectTimeoutMs ?? fallback.connectTimeoutMs))),
+    readTimeoutMs: Math.max(5000, Math.min(300000, Math.floor(remote?.readTimeoutMs ?? fallback.readTimeoutMs))),
+    maxInputChars: Math.max(256, Math.min(12000, Math.floor(remote?.maxInputChars ?? fallback.maxInputChars))),
+    reservedInputChars: Math.max(0, Math.min(2000, Math.floor(remote?.reservedInputChars ?? fallback.reservedInputChars))),
+    minChunkChars: Math.max(32, Math.min(5000, Math.floor(remote?.minChunkChars ?? fallback.minChunkChars))),
+    targetChunkChars: Math.max(64, Math.min(7000, Math.floor(remote?.targetChunkChars ?? fallback.targetChunkChars))),
+    maxChunkChars: Math.max(80, Math.min(9000, Math.floor(remote?.maxChunkChars ?? fallback.maxChunkChars))),
+    cacheAudioFiles: remote?.cacheAudioFiles ?? fallback.cacheAudioFiles,
+    autoConcatAudio: remote?.autoConcatAudio ?? fallback.autoConcatAudio,
+    customHeadersJson: remote?.customHeadersJson ?? fallback.customHeadersJson,
+    extraBodyJson: remote?.extraBodyJson ?? fallback.extraBodyJson
   };
 }
 
+function getRemoteReadAloudPresetSignature(config: RemoteReadAloudPresetConfig): string {
+  const normalized = normalizeRemoteReadAloudPresetConfig(config);
+  return [
+    normalized.endpoint.trim(),
+    normalized.apiPath.trim(),
+    normalized.apiKey,
+    normalized.model.trim(),
+    normalized.voice.trim(),
+    normalized.stylePrompt.trim(),
+    normalized.audioFormat.trim(),
+    String(normalized.streamEnabled),
+    String(normalized.prefetchSegments),
+    String(normalized.connectTimeoutMs),
+    String(normalized.readTimeoutMs),
+    String(normalized.maxInputChars),
+    String(normalized.reservedInputChars),
+    String(normalized.minChunkChars),
+    String(normalized.targetChunkChars),
+    String(normalized.maxChunkChars),
+    String(normalized.cacheAudioFiles),
+    String(normalized.autoConcatAudio),
+    normalized.customHeadersJson ?? '',
+    normalized.extraBodyJson ?? ''
+  ].join('|');
+}
+
+function isLegacyDefaultRemoteReadAloudSettings(remote?: Partial<RemoteReadAloudSettings> | null): boolean {
+  const activePresetIdValue = remote?.activePresetId;
+  const presetList = remote?.presets;
+  const activePresetId = typeof activePresetIdValue === 'string' ? activePresetIdValue.trim() : '';
+  if (activePresetId.length > 0) {
+    return false;
+  }
+  if (Array.isArray(presetList) && presetList.length > 0) {
+    return false;
+  }
+  return getRemoteReadAloudPresetSignature(
+    normalizeRemoteReadAloudPresetConfig(remote, LEGACY_DEFAULT_REMOTE_READ_ALOUD_SETTINGS)
+  ) === getRemoteReadAloudPresetSignature(LEGACY_DEFAULT_REMOTE_READ_ALOUD_SETTINGS);
+}
+
+function normalizeRemoteReadAloudPresets(source?: RemoteReadAloudPresetSource[] | null): RemoteReadAloudPreset[] {
+  const presets: RemoteReadAloudPreset[] = [
+    {
+      id: DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_PRESET.id,
+      name: DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_PRESET.name,
+      description: DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_PRESET.description,
+      builtIn: true,
+      settings: normalizeRemoteReadAloudPresetConfig(DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_PRESET.settings)
+    }
+  ];
+  if (!Array.isArray(source)) {
+    return presets;
+  }
+  const seenIds: Set<string> = new Set<string>([DEFAULT_REMOTE_READ_ALOUD_PRESET_ID]);
+  source.forEach((preset: RemoteReadAloudPresetSource, index: number) => {
+    if (!preset || typeof preset !== 'object') {
+      return;
+    }
+    const presetId = typeof preset.id === 'string' && preset.id.trim().length > 0
+      ? preset.id.trim()
+      : `remote_preset_${index + 1}`;
+    if (seenIds.has(presetId)) {
+      return;
+    }
+    const presetName = typeof preset.name === 'string' && preset.name.trim().length > 0
+      ? preset.name.trim()
+      : `远程预设 ${index + 1}`;
+    const presetDescription = typeof preset.description === 'string' ? preset.description.trim() : '';
+    const rawSettings = preset.settings ?? preset.config ?? preset.remote;
+    seenIds.add(presetId);
+    presets.push({
+      id: presetId,
+      name: presetName,
+      description: presetDescription,
+      builtIn: false,
+      settings: normalizeRemoteReadAloudPresetConfig(rawSettings)
+    });
+  });
+  return presets;
+}
+
+export function extractRemoteReadAloudPresetConfig(remote?: Partial<RemoteReadAloudSettings> | null): RemoteReadAloudPresetConfig {
+  const normalized = normalizeRemoteReadAloudSettings(remote);
+  return {
+    endpoint: normalized.endpoint,
+    apiPath: normalized.apiPath,
+    apiKey: normalized.apiKey,
+    model: normalized.model,
+    voice: normalized.voice,
+    stylePrompt: normalized.stylePrompt,
+    audioFormat: normalized.audioFormat,
+    streamEnabled: normalized.streamEnabled,
+    prefetchSegments: normalized.prefetchSegments,
+    connectTimeoutMs: normalized.connectTimeoutMs,
+    readTimeoutMs: normalized.readTimeoutMs,
+    maxInputChars: normalized.maxInputChars,
+    reservedInputChars: normalized.reservedInputChars,
+    minChunkChars: normalized.minChunkChars,
+    targetChunkChars: normalized.targetChunkChars,
+    maxChunkChars: normalized.maxChunkChars,
+    cacheAudioFiles: normalized.cacheAudioFiles,
+    autoConcatAudio: normalized.autoConcatAudio,
+    customHeadersJson: normalized.customHeadersJson,
+    extraBodyJson: normalized.extraBodyJson
+  };
+}
+
+export function isRemoteReadAloudPresetConfigEqual(
+  left?: Partial<RemoteReadAloudPresetConfig> | null,
+  right?: Partial<RemoteReadAloudPresetConfig> | null
+): boolean {
+  return getRemoteReadAloudPresetSignature(normalizeRemoteReadAloudPresetConfig(left)) ===
+    getRemoteReadAloudPresetSignature(normalizeRemoteReadAloudPresetConfig(right));
+}
+
+export function normalizeRemoteReadAloudSettings(remote?: Partial<RemoteReadAloudSettings> | null): RemoteReadAloudSettings {
+  const currentConfig = isLegacyDefaultRemoteReadAloudSettings(remote)
+    ? normalizeRemoteReadAloudPresetConfig(DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG, DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG)
+    : normalizeRemoteReadAloudPresetConfig(remote, DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG);
+  const presets = normalizeRemoteReadAloudPresets(remote?.presets);
+  const activePresetIdValue = remote?.activePresetId;
+  const activePresetIdRaw = typeof activePresetIdValue === 'string' ? activePresetIdValue.trim() : '';
+  const activePreset = presets.find((preset: RemoteReadAloudPreset) => preset.id === activePresetIdRaw);
+  const matchedPreset = presets.find((preset: RemoteReadAloudPreset) =>
+    isRemoteReadAloudPresetConfigEqual(currentConfig, preset.settings)
+  );
+
+  return createRemoteReadAloudSettings(
+    currentConfig,
+    activePreset ? activePreset.id : (matchedPreset ? matchedPreset.id : ''),
+    presets
+  );
+}
+
+export function mergeRemoteReadAloudSettings(
+  current?: Partial<RemoteReadAloudSettings> | null,
+  partial?: Partial<RemoteReadAloudSettings> | null
+): RemoteReadAloudSettings {
+  const currentValue = normalizeRemoteReadAloudSettings(current);
+  if (!partial) {
+    return currentValue;
+  }
+  const mergedConfig: RemoteReadAloudPresetConfig = normalizeRemoteReadAloudPresetConfig({
+    endpoint: partial.endpoint ?? currentValue.endpoint,
+    apiPath: partial.apiPath ?? currentValue.apiPath,
+    apiKey: partial.apiKey ?? currentValue.apiKey,
+    model: partial.model ?? currentValue.model,
+    voice: partial.voice ?? currentValue.voice,
+    stylePrompt: partial.stylePrompt ?? currentValue.stylePrompt,
+    audioFormat: partial.audioFormat ?? currentValue.audioFormat,
+    streamEnabled: partial.streamEnabled ?? currentValue.streamEnabled,
+    prefetchSegments: partial.prefetchSegments ?? currentValue.prefetchSegments,
+    connectTimeoutMs: partial.connectTimeoutMs ?? currentValue.connectTimeoutMs,
+    readTimeoutMs: partial.readTimeoutMs ?? currentValue.readTimeoutMs,
+    maxInputChars: partial.maxInputChars ?? currentValue.maxInputChars,
+    reservedInputChars: partial.reservedInputChars ?? currentValue.reservedInputChars,
+    minChunkChars: partial.minChunkChars ?? currentValue.minChunkChars,
+    targetChunkChars: partial.targetChunkChars ?? currentValue.targetChunkChars,
+    maxChunkChars: partial.maxChunkChars ?? currentValue.maxChunkChars,
+    cacheAudioFiles: partial.cacheAudioFiles ?? currentValue.cacheAudioFiles,
+    autoConcatAudio: partial.autoConcatAudio ?? currentValue.autoConcatAudio,
+    customHeadersJson: partial.customHeadersJson ?? currentValue.customHeadersJson,
+    extraBodyJson: partial.extraBodyJson ?? currentValue.extraBodyJson
+  }, DEFAULT_XIAOMI_MIMO_REMOTE_READ_ALOUD_CONFIG);
+  return normalizeRemoteReadAloudSettings(createRemoteReadAloudSettings(
+    mergedConfig,
+    partial.activePresetId ?? currentValue.activePresetId,
+    partial.presets ?? currentValue.presets
+  ));
+}
+
 export function normalizeReadAloudSettings(settings?: Partial<ReadAloudSettings> | null): ReadAloudSettings {
-  const source = settings ?? {};
-  const rawEngine = source.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType;
+  const rawEngine = settings?.engineType ?? DEFAULT_READ_ALOUD_SETTINGS.engineType;
   const engineType = (
     rawEngine === ReadAloudEngineType.SYSTEM ||
     rawEngine === ReadAloudEngineType.LEGADO_COMPAT ||
     rawEngine === ReadAloudEngineType.REMOTE
   ) ? rawEngine : ReadAloudEngineType.SYSTEM;
-  const voicePersonRaw = source.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
-  const voiceOnlineRaw = source.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
+  const voicePersonRaw = settings?.voicePerson ?? DEFAULT_READ_ALOUD_SETTINGS.voicePerson ?? -1;
+  const voiceOnlineRaw = settings?.voiceOnline ?? DEFAULT_READ_ALOUD_SETTINGS.voiceOnline ?? -1;
   return {
-    enabled: source.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
+    enabled: settings?.enabled ?? DEFAULT_READ_ALOUD_SETTINGS.enabled,
     engineType,
-    speed: clampNumber(source.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed, 0.5, 2.0),
-    pitch: clampNumber(source.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch, 0.5, 2.0),
-    volume: clampNumber(source.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume, 0, 1),
-    continueInBackground: source.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
-    autoPlayNextChapter: source.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
-    pauseOnManualPageTurn: source.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
-    voiceLanguage: source.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '',
+    speed: clampNumber(settings?.speed ?? DEFAULT_READ_ALOUD_SETTINGS.speed, 0.5, 2.0),
+    pitch: clampNumber(settings?.pitch ?? DEFAULT_READ_ALOUD_SETTINGS.pitch, 0.5, 2.0),
+    volume: clampNumber(settings?.volume ?? DEFAULT_READ_ALOUD_SETTINGS.volume, 0, 1),
+    continueInBackground: settings?.continueInBackground ?? DEFAULT_READ_ALOUD_SETTINGS.continueInBackground,
+    autoPlayNextChapter: settings?.autoPlayNextChapter ?? DEFAULT_READ_ALOUD_SETTINGS.autoPlayNextChapter,
+    pauseOnManualPageTurn: settings?.pauseOnManualPageTurn ?? DEFAULT_READ_ALOUD_SETTINGS.pauseOnManualPageTurn,
+    voiceLanguage: settings?.voiceLanguage ?? DEFAULT_READ_ALOUD_SETTINGS.voiceLanguage ?? '',
     voicePerson: voicePersonRaw >= 0 ? Math.floor(voicePersonRaw) : -1,
     voiceOnline: (voiceOnlineRaw === 0 || voiceOnlineRaw === 1) ? voiceOnlineRaw : -1,
-    remote: normalizeRemoteReadAloudSettings(source.remote)
+    remote: normalizeRemoteReadAloudSettings(settings?.remote)
   };
 }
 

@@ -21,6 +21,7 @@ import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { GlobalSearchPageParams } from './GlobalSearchPage';
 import { startBookOpenTransition, startBookOpenTransitionWithComponentId, CoverPosition, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { ContentFilterManager } from '../Framework/Managers/ContentFilterManager';
+import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 
 const TAG = 'EBookDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -270,6 +271,9 @@ export struct EBookDetailPage {
       bookId: this.ebook.id,
       coverComponentId: coverComponentId
     };
+    const txtNovelReaderParams = this.ebook.format === EBookFormat.TXT
+      ? buildNovelReaderParamsFromTxtEBook(this.ebook, coverComponentId)
+      : null;
     const hasProgress = this.hasReadingProgress();
     const bookTitle = this.ebook?.metadata.title;
     
@@ -285,7 +289,11 @@ export struct EBookDetailPage {
       () => {
         // 动画到达95%进度时触发导航，确保翻开动画完整播放
         logger.info(TAG, `翻开过渡动画触发导航: ${hasProgress ? '继续' : '开始'}阅读电子书: ${bookTitle}`);
-        this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+        if (txtNovelReaderParams) {
+          this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
+        } else {
+          this.pathStack.pushPath({ name: 'EBookReaderPage', param: readerParams });
+        }
       },
       ebookBackground,
       {

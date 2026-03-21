@@ -26,6 +26,11 @@ export interface BackgroundImageInfo {
   imagePath: string;
 }
 
+interface PendingReadingSettingsSaveState {
+  latestSettings: EBookReadingSettings | null;
+  runningPromise: Promise<void> | null;
+}
+
 /**
  * 从DatabaseRecord安全地获取字段值
  * 使用Reflect.get避免索引访问限制
@@ -49,6 +54,7 @@ export class EBookDataManager {
   private static instance: EBookDataManager;
   private dbManager: DatabaseManager;
   private columnsChecked: boolean = false;
+  private readingSettingsSaveStates: Map<string, PendingReadingSettingsSaveState> = new Map<string, PendingReadingSettingsSaveState>();
 
   private constructor() {
     this.dbManager = DatabaseManager.getInstance();
@@ -368,10 +374,81 @@ export class EBookDataManager {
 
   /**
    * 保存阅读设置（包含纯文本阅读器专用设置）
-   * 使用 DELETE + 单次完整 INSERT 策略，避免 UPDATE 静默失败问题
-   * 新电子书会自动应用全局设置
+   * 串行合并同一本书的连续保存，避免并发写入触发唯一约束冲突。
    */
   public async saveReadingSettings(bookId: string, settings: EBookReadingSettings): Promise<void> {
+    const saveKey = `${bookId}|default_user`;
+    let state = this.readingSettingsSaveStates.get(saveKey);
+    if (!state) {
+      state = {
+        latestSettings: null,
+        runningPromise: null
+      };
+      this.readingSettingsSaveStates.set(saveKey, state);
+    }
+
+    state.latestSettings = this.cloneReadingSettings(settings);
+    if (state.runningPromise === null) {
+      state.runningPromise = this.flushReadingSettingsSaveQueue(saveKey, bookId, state);
+    }
+    return await state.runningPromise;
+  }
+
+  private cloneReadingSettings(settings: EBookReadingSettings): EBookReadingSettings {
+    return {
+      fontSize: settings.fontSize,
+      fontFamily: settings.fontFamily,
+      fontPath: settings.fontPath,
+      fontWeight: settings.fontWeight,
+      lineHeight: settings.lineHeight,
+      backgroundColor: settings.backgroundColor,
+      textColor: settings.textColor,
+      themeBgImage: settings.themeBgImage,
+      nightMode: settings.nightMode,
+      followSystemTheme: settings.followSystemTheme,
+      pageMargin: settings.pageMargin,
+      pageMode: settings.pageMode,
+      brightness: settings.brightness,
+      autoSave: settings.autoSave,
+      saveInterval: settings.saveInterval,
+      letterSpacing: settings.letterSpacing,
+      paragraphSpacing: settings.paragraphSpacing,
+      firstLineIndent: settings.firstLineIndent,
+      textAlignment: settings.textAlignment,
+      pageTurnAnimation: settings.pageTurnAnimation,
+      tapToTurn: settings.tapToTurn,
+      volumeKeyNavigation: settings.volumeKeyNavigation,
+      keepScreenOn: settings.keepScreenOn,
+      showPageNumber: settings.showPageNumber,
+      showProgress: settings.showProgress,
+      showTime: settings.showTime,
+      showBattery: settings.showBattery,
+      backgroundType: settings.backgroundType,
+      backgroundImagePath: settings.backgroundImagePath,
+      backgroundImageOpacity: settings.backgroundImageOpacity
+    };
+  }
+
+  private async flushReadingSettingsSaveQueue(
+    saveKey: string,
+    bookId: string,
+    state: PendingReadingSettingsSaveState
+  ): Promise<void> {
+    try {
+      while (state.latestSettings !== null) {
+        const snapshot = state.latestSettings;
+        state.latestSettings = null;
+        await this.saveReadingSettingsInternal(bookId, snapshot);
+      }
+    } finally {
+      state.runningPromise = null;
+      if (state.latestSettings === null) {
+        this.readingSettingsSaveStates.delete(saveKey);
+      }
+    }
+  }
+
+  private async saveReadingSettingsInternal(bookId: string, settings: EBookReadingSettings): Promise<void> {
     // 首次保存时检查并添加缺失的列
     await this.ensureSettingsColumns();
     
@@ -381,18 +458,13 @@ export class EBookDataManager {
     const finalSettings = await this.applyGlobalSettingsIfNew(bookId, settings);
     
     try {
-      // 1. 先删除旧记录
-      const deleteSql = `DELETE FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
-      await this.dbManager.executeSql(deleteSql, [bookId, 'default_user']);
-      logger.debug(TAG, `阅读设置旧记录已删除: bookId=${bookId}`);
-      
       const bgType = finalSettings.backgroundType ?? 'COLOR';
       const bgImagePath = finalSettings.backgroundImagePath ?? '';
       const bgImageOpacity = finalSettings.backgroundImageOpacity ?? 0.3;
       
-      // 2. 单次完整 INSERT 所有字段（UPDATE 在 HarmonyOS RdbStore 中会静默失败）
+      // 使用 INSERT OR REPLACE 避免并发 DELETE/INSERT 之间的唯一约束冲突。
       const insertSql = `
-        INSERT INTO ebook_reading_settings (
+        INSERT OR REPLACE INTO ebook_reading_settings (
           bookId, userId, fontSize, fontFamily, fontPath, fontWeight, lineHeight,
           backgroundColor, textColor, themeBgImage, nightMode, followSystemTheme,
           pageMargin, pageMode, brightness, autoSave, saveInterval,
@@ -444,9 +516,9 @@ export class EBookDataManager {
       
       logger.info(TAG, `INSERT 参数数量: ${insertParams.length}, bgType=${bgType}, bgImagePath=${bgImagePath}`);
       await this.dbManager.executeSql(insertSql, insertParams);
-      logger.info(TAG, `阅读设置完整插入成功: bookId=${bookId}`);
+      logger.info(TAG, `阅读设置写入成功: bookId=${bookId}`);
       
-      // 3. 验证保存结果 - 使用显式字段名查询（SELECT * 可能不返回通过 UPDATE 添加的字段）
+      // 验证保存结果 - 使用显式字段名查询（SELECT * 可能不返回通过 UPDATE 添加的字段）
       const verifySql = `SELECT backgroundType, backgroundImagePath, backgroundImageOpacity, volumeKeyNavigation FROM ebook_reading_settings WHERE bookId = ? AND userId = ?`;
       const verifyResult = await this.dbManager.querySql(verifySql, [bookId, 'default_user']);
       

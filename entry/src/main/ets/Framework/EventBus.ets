@@ -133,6 +133,8 @@ export class ReadAloudStatePayload implements IEventPayload {
   public currentCharIndex: number;
   public chunkStartCharIndex: number;
   public chunkEndCharIndex: number;
+  public currentPositionMs: number;
+  public totalDurationMs: number;
 
   constructor(
     playbackState: string,
@@ -143,7 +145,9 @@ export class ReadAloudStatePayload implements IEventPayload {
     pageIndex: number,
     currentCharIndex: number,
     chunkStartCharIndex: number,
-    chunkEndCharIndex: number
+    chunkEndCharIndex: number,
+    currentPositionMs: number,
+    totalDurationMs: number
   ) {
     this.playbackState = playbackState;
     this.reason = reason;
@@ -154,6 +158,8 @@ export class ReadAloudStatePayload implements IEventPayload {
     this.currentCharIndex = currentCharIndex;
     this.chunkStartCharIndex = chunkStartCharIndex;
     this.chunkEndCharIndex = chunkEndCharIndex;
+    this.currentPositionMs = currentPositionMs;
+    this.totalDurationMs = totalDurationMs;
   }
 }
 

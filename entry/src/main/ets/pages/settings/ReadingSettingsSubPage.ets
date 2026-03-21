@@ -26,9 +26,10 @@ import {
   DEFAULT_TEXT_READER_SETTINGS,
   DEFAULT_READ_ALOUD_SETTINGS,
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
-  RemoteReadAloudSettings,
+  mergeRemoteReadAloudSettings,
   ReadAloudEngineType,
   ReadAloudSettings,
+  RemoteReadAloudSettings,
   TextReadingMode,
   BackgroundType,
   TextReaderSettings,
@@ -541,7 +542,7 @@ export struct ReadingSettingsSubPage {
   }
 
   private refreshReadAloudAvailability(): void {
-    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+    ReadAloudAvailability.refresh(false, this.buildGlobalReadAloudSettings()).then((map: ReadAloudEngineAvailabilityMap) => {
       this.textReadAloudAvailability = map;
       if (!map.SYSTEM) {
         const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
@@ -598,7 +599,7 @@ export struct ReadingSettingsSubPage {
         if (probeError.length > 0) {
           this.textReadAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
         } else {
-          this.textReadAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice';
+          this.textReadAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice/apiKey';
         }
       } else {
         this.textReadAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
@@ -674,28 +675,7 @@ export struct ReadingSettingsSubPage {
     const partialRemote = partial.remote;
     let mergedRemote = currentRemote;
     if (partialRemote && currentRemote) {
-      const remoteValue: RemoteReadAloudSettings = {
-        endpoint: partialRemote.endpoint ?? currentRemote.endpoint,
-        apiPath: partialRemote.apiPath ?? currentRemote.apiPath,
-        apiKey: partialRemote.apiKey ?? currentRemote.apiKey,
-        model: partialRemote.model ?? currentRemote.model,
-        voice: partialRemote.voice ?? currentRemote.voice,
-        audioFormat: partialRemote.audioFormat ?? currentRemote.audioFormat,
-        streamEnabled: partialRemote.streamEnabled ?? currentRemote.streamEnabled,
-        prefetchSegments: partialRemote.prefetchSegments ?? currentRemote.prefetchSegments,
-        connectTimeoutMs: partialRemote.connectTimeoutMs ?? currentRemote.connectTimeoutMs,
-        readTimeoutMs: partialRemote.readTimeoutMs ?? currentRemote.readTimeoutMs,
-        maxInputChars: partialRemote.maxInputChars ?? currentRemote.maxInputChars,
-        reservedInputChars: partialRemote.reservedInputChars ?? currentRemote.reservedInputChars,
-        minChunkChars: partialRemote.minChunkChars ?? currentRemote.minChunkChars,
-        targetChunkChars: partialRemote.targetChunkChars ?? currentRemote.targetChunkChars,
-        maxChunkChars: partialRemote.maxChunkChars ?? currentRemote.maxChunkChars,
-        cacheAudioFiles: partialRemote.cacheAudioFiles ?? currentRemote.cacheAudioFiles,
-        autoConcatAudio: partialRemote.autoConcatAudio ?? currentRemote.autoConcatAudio,
-        customHeadersJson: partialRemote.customHeadersJson ?? currentRemote.customHeadersJson,
-        extraBodyJson: partialRemote.extraBodyJson ?? currentRemote.extraBodyJson
-      };
-      mergedRemote = remoteValue;
+      mergedRemote = mergeRemoteReadAloudSettings(currentRemote, partialRemote);
     }
     return normalizeReadAloudSettings({
       enabled: partial.enabled ?? current.enabled,
@@ -734,12 +714,15 @@ export struct ReadingSettingsSubPage {
       logger.warn(TAG, `持久化全局听书设置失败: ${String(error)}`);
     });
 
+    const shouldRefreshAvailability = partial.engineType !== undefined || partial.remote !== undefined;
+    if (shouldRefreshAvailability) {
+      this.refreshReadAloudAvailability();
+      return;
+    }
     if (
-      partial.engineType !== undefined ||
       partial.voiceLanguage !== undefined ||
       partial.voicePerson !== undefined ||
-      partial.voiceOnline !== undefined ||
-      partial.remote !== undefined
+      partial.voiceOnline !== undefined
     ) {
       this.refreshReadAloudVoices();
     }

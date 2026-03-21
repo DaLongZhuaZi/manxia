@@ -10,8 +10,8 @@ import {
   TextPageTurnAnimation,
   ReadAloudEngineType,
   ReadAloudSettings,
-  RemoteReadAloudSettings,
   DEFAULT_READ_ALOUD_SETTINGS,
+  mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings
 } from '../Models/TextReaderModels';
 import { logger } from '../Utils/Logger';
@@ -61,6 +61,7 @@ export struct TextReadingSettingsPanel2 {
   @State private readAloudVoiceOptions: ReadAloudVoiceOption[] = [];
   @State private showReadAloudPanel: boolean = false;
   @State private readAloudStatusMessage: string = '';
+  @State private isClosing: boolean = false;
 
   private uiContext: UIContext | undefined = undefined;
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
@@ -133,36 +134,50 @@ export struct TextReadingSettingsPanel2 {
   }
 
   private hidePanel(): void {
-    if (this.callbacks.onClose) {
+    if (this.isClosing) {
+      return;
+    }
+    this.isClosing = true;
+
+    if (!this.uiContext) {
+      this.panelOpacity = 0;
+      this.panelTranslateY = 300;
+      this.panelTranslateX = 320;
+      this.backdropOpacity = 0;
       this.callbacks.onClose();
+      this.isClosing = false;
+      return;
     }
 
-    if (this.uiContext) {
-      if (this.isLandscape) {
-        this.uiContext.animateTo({
-          duration: 200,
-          curve: curves.initCurve(Curve.EaseIn)
-        }, () => {
-          this.panelOpacity = 0;
-          this.panelTranslateX = 320;
-        });
-      } else {
-        this.uiContext.animateTo({
-          duration: 200,
-          curve: curves.initCurve(Curve.EaseIn)
-        }, () => {
-          this.panelOpacity = 0;
-          this.panelTranslateY = 300;
-        });
-      }
-
+    if (this.isLandscape) {
       this.uiContext.animateTo({
         duration: 200,
         curve: curves.initCurve(Curve.EaseIn)
       }, () => {
-        this.backdropOpacity = 0;
+        this.panelOpacity = 0;
+        this.panelTranslateX = 320;
+      });
+    } else {
+      this.uiContext.animateTo({
+        duration: 200,
+        curve: curves.initCurve(Curve.EaseIn)
+      }, () => {
+        this.panelOpacity = 0;
+        this.panelTranslateY = 300;
       });
     }
+
+    this.uiContext.animateTo({
+      duration: 200,
+      curve: curves.initCurve(Curve.EaseIn)
+    }, () => {
+      this.backdropOpacity = 0;
+    });
+
+    setTimeout(() => {
+      this.callbacks.onClose();
+      this.isClosing = false;
+    }, 220);
   }
 
   private notifyChange(): void {
@@ -207,28 +222,7 @@ export struct TextReadingSettingsPanel2 {
     const partialRemote = partial.remote;
     let mergedRemote = currentRemote;
     if (partialRemote && currentRemote) {
-      const remoteValue: RemoteReadAloudSettings = {
-        endpoint: partialRemote.endpoint ?? currentRemote.endpoint,
-        apiPath: partialRemote.apiPath ?? currentRemote.apiPath,
-        apiKey: partialRemote.apiKey ?? currentRemote.apiKey,
-        model: partialRemote.model ?? currentRemote.model,
-        voice: partialRemote.voice ?? currentRemote.voice,
-        audioFormat: partialRemote.audioFormat ?? currentRemote.audioFormat,
-        streamEnabled: partialRemote.streamEnabled ?? currentRemote.streamEnabled,
-        prefetchSegments: partialRemote.prefetchSegments ?? currentRemote.prefetchSegments,
-        connectTimeoutMs: partialRemote.connectTimeoutMs ?? currentRemote.connectTimeoutMs,
-        readTimeoutMs: partialRemote.readTimeoutMs ?? currentRemote.readTimeoutMs,
-        maxInputChars: partialRemote.maxInputChars ?? currentRemote.maxInputChars,
-        reservedInputChars: partialRemote.reservedInputChars ?? currentRemote.reservedInputChars,
-        minChunkChars: partialRemote.minChunkChars ?? currentRemote.minChunkChars,
-        targetChunkChars: partialRemote.targetChunkChars ?? currentRemote.targetChunkChars,
-        maxChunkChars: partialRemote.maxChunkChars ?? currentRemote.maxChunkChars,
-        cacheAudioFiles: partialRemote.cacheAudioFiles ?? currentRemote.cacheAudioFiles,
-        autoConcatAudio: partialRemote.autoConcatAudio ?? currentRemote.autoConcatAudio,
-        customHeadersJson: partialRemote.customHeadersJson ?? currentRemote.customHeadersJson,
-        extraBodyJson: partialRemote.extraBodyJson ?? currentRemote.extraBodyJson
-      };
-      mergedRemote = remoteValue;
+      mergedRemote = mergeRemoteReadAloudSettings(currentRemote, partialRemote);
     }
     this.settings.readAloud = normalizeReadAloudSettings({
       enabled: partial.enabled ?? current.enabled,
@@ -245,12 +239,15 @@ export struct TextReadingSettingsPanel2 {
       remote: mergedRemote
     });
     this.notifyChange();
+    const shouldRefreshAvailability = partial.engineType !== undefined || partial.remote !== undefined;
+    if (shouldRefreshAvailability) {
+      this.refreshReadAloudAvailability();
+      return;
+    }
     if (
-      partial.engineType !== undefined ||
       partial.voiceLanguage !== undefined ||
       partial.voicePerson !== undefined ||
-      partial.voiceOnline !== undefined ||
-      partial.remote !== undefined
+      partial.voiceOnline !== undefined
     ) {
       this.refreshReadAloudVoices();
     }
@@ -258,7 +255,7 @@ export struct TextReadingSettingsPanel2 {
 
   // ==================== 听书引擎可用性 ====================
   private refreshReadAloudAvailability(): void {
-    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+    ReadAloudAvailability.refresh(false, this.getSafeReadAloudSettings()).then((map: ReadAloudEngineAvailabilityMap) => {
       this.readAloudAvailability = map;
       if (!map.SYSTEM) {
         const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
@@ -309,7 +306,7 @@ export struct TextReadingSettingsPanel2 {
         if (probeError.length > 0) {
           this.readAloudStatusMessage = `远程 TTS 不可用：${probeError}`;
         } else {
-          this.readAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice';
+          this.readAloudStatusMessage = '远程 TTS 当前不可用，请检查 endpoint/model/voice/apiKey';
         }
       } else {
         this.readAloudStatusMessage = '当前引擎不可用，请切换到“系统”或点击刷新重试';
@@ -1101,22 +1098,6 @@ export struct TextReadingSettingsPanel2 {
   build() {
     if (this.isVisible) {
       Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.background_overlay'))
-          .opacity(this.backdropOpacity)
-          .hitTestBehavior(HitTestMode.Block)
-          .onClick(() => {
-            this.hidePanel();
-          })
-
-        if (this.isLandscape) {
-          this.buildLandscapePanel()
-        } else {
-          this.buildPortraitPanel()
-        }
-
         if (this.showReadAloudPanel) {
           ReadAloudSettingsInfoPanel({
             isLandscape: this.isLandscape,
@@ -1137,6 +1118,22 @@ export struct TextReadingSettingsPanel2 {
               }
             }
           })
+        } else {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor($r('app.color.background_overlay'))
+            .opacity(this.backdropOpacity)
+            .hitTestBehavior(HitTestMode.Block)
+            .onClick(() => {
+              this.hidePanel();
+            })
+
+          if (this.isLandscape) {
+            this.buildLandscapePanel()
+          } else {
+            this.buildPortraitPanel()
+          }
         }
       }
       .width('100%')

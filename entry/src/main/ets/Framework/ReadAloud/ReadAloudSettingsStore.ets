@@ -2,10 +2,13 @@ import {
   DEFAULT_READ_ALOUD_SETTINGS,
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
   ReadAloudEngineType,
+  RemoteReadAloudPreset,
   ReadAloudSettings,
   normalizeReadAloudSettings
 } from '../../Models/TextReaderModels';
 import { SettingKeys, SettingsManager } from '../Managers/SettingsManager';
+
+let globalReadAloudPersistQueue: Promise<void> = Promise.resolve();
 
 export function loadGlobalReadAloudSettings(settingsManager: SettingsManager): ReadAloudSettings {
   const engineRaw = settingsManager.getString(
@@ -64,6 +67,10 @@ export function loadGlobalReadAloudSettings(settingsManager: SettingsManager): R
         SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_VOICE,
         DEFAULT_REMOTE_READ_ALOUD_SETTINGS.voice
       ),
+      stylePrompt: settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_STYLE_PROMPT,
+        DEFAULT_REMOTE_READ_ALOUD_SETTINGS.stylePrompt
+      ),
       audioFormat: settingsManager.getString(
         SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_AUDIO_FORMAT,
         DEFAULT_REMOTE_READ_ALOUD_SETTINGS.audioFormat
@@ -119,6 +126,14 @@ export function loadGlobalReadAloudSettings(settingsManager: SettingsManager): R
       extraBodyJson: settingsManager.getString(
         SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_EXTRA_BODY_JSON,
         DEFAULT_REMOTE_READ_ALOUD_SETTINGS.extraBodyJson
+      ),
+      activePresetId: settingsManager.getString(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_ACTIVE_PRESET_ID,
+        DEFAULT_REMOTE_READ_ALOUD_SETTINGS.activePresetId
+      ),
+      presets: settingsManager.getJSON<RemoteReadAloudPreset[]>(
+        SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_PRESETS_JSON,
+        DEFAULT_REMOTE_READ_ALOUD_SETTINGS.presets
       )
     }
   });
@@ -128,38 +143,48 @@ export async function persistGlobalReadAloudSettings(settingsManager: SettingsMa
   const normalized = normalizeReadAloudSettings(settings);
   const remote = normalized.remote ?? DEFAULT_REMOTE_READ_ALOUD_SETTINGS;
 
-  await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED, normalized.enabled);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE, normalized.engineType);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED, normalized.speed);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH, normalized.pitch);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME, normalized.volume);
-  await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG, normalized.continueInBackground);
-  await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER, normalized.autoPlayNextChapter);
-  await settingsManager.setBoolean(
-    SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
-    normalized.pauseOnManualPageTurn
-  );
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE, normalized.voiceLanguage ?? '');
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON, normalized.voicePerson ?? -1);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE, normalized.voiceOnline ?? -1);
+  const persistTask = globalReadAloudPersistQueue.catch(() => {}).then(async () => {
+    // Remote read-aloud settings are split across many keys. Serialize writes so
+    // stale snapshots cannot interleave with newer ones and clear apiKey by mistake.
+    await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENABLED, normalized.enabled);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_ENGINE, normalized.engineType);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_SPEED, normalized.speed);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_PITCH, normalized.pitch);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOLUME, normalized.volume);
+    await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_CONTINUE_BG, normalized.continueInBackground);
+    await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_AUTO_PLAY_NEXT_CHAPTER, normalized.autoPlayNextChapter);
+    await settingsManager.setBoolean(
+      SettingKeys.GLOBAL_TEXT_READ_ALOUD_PAUSE_ON_MANUAL_PAGE_TURN,
+      normalized.pauseOnManualPageTurn
+    );
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_LANGUAGE, normalized.voiceLanguage ?? '');
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_PERSON, normalized.voicePerson ?? -1);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_VOICE_ONLINE, normalized.voiceOnline ?? -1);
 
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_ENDPOINT, remote.endpoint);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_API_PATH, remote.apiPath);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_API_KEY, remote.apiKey);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MODEL, remote.model);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_VOICE, remote.voice);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_AUDIO_FORMAT, remote.audioFormat);
-  await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_STREAM_ENABLED, remote.streamEnabled);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_PREFETCH_SEGMENTS, remote.prefetchSegments);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_CONNECT_TIMEOUT_MS, remote.connectTimeoutMs);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_READ_TIMEOUT_MS, remote.readTimeoutMs);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MAX_INPUT_CHARS, remote.maxInputChars);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_RESERVED_INPUT_CHARS, remote.reservedInputChars);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MIN_CHUNK_CHARS, remote.minChunkChars);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_TARGET_CHUNK_CHARS, remote.targetChunkChars);
-  await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MAX_CHUNK_CHARS, remote.maxChunkChars);
-  await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_CACHE_AUDIO_FILES, remote.cacheAudioFiles);
-  await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_AUTO_CONCAT_AUDIO, remote.autoConcatAudio);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_CUSTOM_HEADERS_JSON, remote.customHeadersJson);
-  await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_EXTRA_BODY_JSON, remote.extraBodyJson);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_ENDPOINT, remote.endpoint);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_API_PATH, remote.apiPath);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_API_KEY, remote.apiKey);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MODEL, remote.model);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_VOICE, remote.voice);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_STYLE_PROMPT, remote.stylePrompt);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_AUDIO_FORMAT, remote.audioFormat);
+    await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_STREAM_ENABLED, remote.streamEnabled);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_PREFETCH_SEGMENTS, remote.prefetchSegments);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_CONNECT_TIMEOUT_MS, remote.connectTimeoutMs);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_READ_TIMEOUT_MS, remote.readTimeoutMs);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MAX_INPUT_CHARS, remote.maxInputChars);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_RESERVED_INPUT_CHARS, remote.reservedInputChars);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MIN_CHUNK_CHARS, remote.minChunkChars);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_TARGET_CHUNK_CHARS, remote.targetChunkChars);
+    await settingsManager.setNumber(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_MAX_CHUNK_CHARS, remote.maxChunkChars);
+    await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_CACHE_AUDIO_FILES, remote.cacheAudioFiles);
+    await settingsManager.setBoolean(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_AUTO_CONCAT_AUDIO, remote.autoConcatAudio);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_CUSTOM_HEADERS_JSON, remote.customHeadersJson);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_EXTRA_BODY_JSON, remote.extraBodyJson);
+    await settingsManager.setString(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_ACTIVE_PRESET_ID, remote.activePresetId);
+    await settingsManager.setJSON<RemoteReadAloudPreset[]>(SettingKeys.GLOBAL_TEXT_READ_ALOUD_REMOTE_PRESETS_JSON, remote.presets);
+  });
+
+  globalReadAloudPersistQueue = persistTask;
+  return await persistTask;
 }
