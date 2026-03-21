@@ -701,7 +701,8 @@ export const CREATE_TABLE_SQL: CreateTableSQLCollection = {
       totalWordCount INTEGER DEFAULT 0,
       addTime INTEGER NOT NULL,
       lastUpdateTime INTEGER NOT NULL,
-      isPrivate INTEGER DEFAULT 0
+      isPrivate INTEGER DEFAULT 0,
+      isNSFW INTEGER DEFAULT 0
     )
   `,
 

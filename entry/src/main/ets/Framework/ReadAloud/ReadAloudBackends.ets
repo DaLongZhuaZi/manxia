@@ -18,6 +18,7 @@ import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { media } from '@kit.MediaKit';
 import { uiContextManager } from '../Managers/UIContextManager';
+import { eventBus, GameEvent, ReadAloudCacheUpdatedPayload } from '../EventBus';
 
 const TAG = 'ReadAloudBackends';
 const MAX_SPEAK_CHUNK_LENGTH = 240;
@@ -46,6 +47,9 @@ const REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS: number = 580;
 const REMOTE_TTS_PROGRESS_TIMER_MS: number = 120;
 const REMOTE_TTS_TEXT_PREVIEW_LIMIT: number = 48;
 const REMOTE_TTS_HTTP_MAX_LIMIT_BYTES: number = 32 * 1024 * 1024;
+const REMOTE_TTS_PHRASE_PAUSE_UNITS: number = 1.4;
+const REMOTE_TTS_SENTENCE_PAUSE_UNITS: number = 3.6;
+const REMOTE_TTS_PARAGRAPH_PAUSE_UNITS: number = 6.5;
 const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
 const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
 const READ_ALOUD_UI_STATUS_PHASE_KEY = 'ReadAloudUiStatusPhase';
@@ -134,6 +138,19 @@ interface RemoteTtsSegmentCacheRecord {
   filePath: string;
   bytes: number;
   durationMs: number;
+  seekTotalUnits?: number;
+  seekAnchors?: RemoteTtsSeekAnchorRecord[];
+}
+
+interface RemoteTtsSeekAnchorRecord {
+  charIndex: number;
+  unitOffset: number;
+  kind: string;
+}
+
+interface RemoteTtsSeekModel {
+  totalUnits: number;
+  anchors: RemoteTtsSeekAnchorRecord[];
 }
 
 interface RemoteTtsManifest {
@@ -180,6 +197,8 @@ interface RemoteTtsSegmentIndexRecord {
   chapterIndex: number;
   start: number;
   end: number;
+  seekTotalUnits?: number;
+  seekAnchors?: RemoteTtsSeekAnchorRecord[];
 }
 
 interface RemoteTtsSegmentStoragePaths {
@@ -274,6 +293,248 @@ function buildRemoteTtsTextPreview(text: string): string {
     return normalized;
   }
   return `${normalized.slice(0, REMOTE_TTS_TEXT_PREVIEW_LIMIT)}...`;
+}
+
+function isRemoteTtsParagraphBoundaryChar(char: string): boolean {
+  return char === '\n' || char === '\r';
+}
+
+function isRemoteTtsSentenceBoundaryChar(char: string): boolean {
+  return char === '.' ||
+    char === '!' ||
+    char === '?' ||
+    char === '\u2026' ||
+    char === '\u3002' ||
+    char === '\uff01' ||
+    char === '\uff1f';
+}
+
+function isRemoteTtsPhraseBoundaryChar(char: string): boolean {
+  return char === ',' ||
+    char === ';' ||
+    char === ':' ||
+    char === '\u3001' ||
+    char === '\uff0c' ||
+    char === '\uff1b' ||
+    char === '\uff1a';
+}
+
+function isRemoteTtsWhitespaceChar(char: string): boolean {
+  return char === ' ' || char === '\n' || char === '\r' || char === '\t';
+}
+
+function computeRemoteTtsCharUnits(char: string): number {
+  if (isRemoteTtsWhitespaceChar(char)) {
+    return 0.35;
+  }
+  if (isRemoteTtsParagraphBoundaryChar(char)) {
+    return 0.2;
+  }
+  if (isRemoteTtsSentenceBoundaryChar(char)) {
+    return 0.45;
+  }
+  if (isRemoteTtsPhraseBoundaryChar(char)) {
+    return 0.55;
+  }
+  return 1;
+}
+
+function buildRemoteTtsSeekModel(start: number, end: number, text: string): RemoteTtsSeekModel {
+  const safeStart = Math.max(0, Math.floor(start));
+  const safeEnd = Math.max(safeStart, Math.floor(end));
+  const anchors: RemoteTtsSeekAnchorRecord[] = [{
+    charIndex: safeStart,
+    unitOffset: 0,
+    kind: 'start'
+  }];
+
+  let totalUnits = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text.charAt(index);
+    totalUnits += computeRemoteTtsCharUnits(char);
+    let pauseUnits = 0;
+    let kind = '';
+    if (isRemoteTtsParagraphBoundaryChar(char)) {
+      pauseUnits = REMOTE_TTS_PARAGRAPH_PAUSE_UNITS;
+      kind = 'paragraph';
+    } else if (isRemoteTtsSentenceBoundaryChar(char)) {
+      pauseUnits = REMOTE_TTS_SENTENCE_PAUSE_UNITS;
+      kind = 'sentence';
+    } else if (isRemoteTtsPhraseBoundaryChar(char)) {
+      pauseUnits = REMOTE_TTS_PHRASE_PAUSE_UNITS;
+      kind = 'phrase';
+    }
+    if (pauseUnits <= 0) {
+      continue;
+    }
+    totalUnits += pauseUnits;
+    const nextCharIndex = Math.min(safeEnd, safeStart + index + 1);
+    const lastAnchor = anchors[anchors.length - 1];
+    if (lastAnchor && lastAnchor.charIndex === nextCharIndex) {
+      lastAnchor.unitOffset = totalUnits;
+      lastAnchor.kind = kind;
+      continue;
+    }
+    anchors.push({
+      charIndex: nextCharIndex,
+      unitOffset: totalUnits,
+      kind
+    });
+  }
+
+  const safeTotalUnits = Math.max(1, totalUnits);
+  const lastAnchor = anchors[anchors.length - 1];
+  if (lastAnchor && lastAnchor.charIndex === safeEnd) {
+    lastAnchor.unitOffset = safeTotalUnits;
+    lastAnchor.kind = 'end';
+  } else {
+    anchors.push({
+      charIndex: safeEnd,
+      unitOffset: safeTotalUnits,
+      kind: 'end'
+    });
+  }
+  return {
+    totalUnits: safeTotalUnits,
+    anchors
+  };
+}
+
+function buildRemoteTtsSeekModelFromRecord(
+  start: number,
+  end: number,
+  text: string,
+  totalUnits?: number,
+  anchors?: RemoteTtsSeekAnchorRecord[]
+): RemoteTtsSeekModel {
+  const fallback = buildRemoteTtsSeekModel(start, end, text);
+  if (!anchors || anchors.length <= 0 || !Number.isFinite(totalUnits) || (totalUnits ?? 0) <= 0) {
+    return fallback;
+  }
+
+  const safeStart = Math.max(0, Math.floor(start));
+  const safeEnd = Math.max(safeStart, Math.floor(end));
+  const sanitized: RemoteTtsSeekAnchorRecord[] = [];
+  for (let index = 0; index < anchors.length; index++) {
+    const item = anchors[index];
+    if (!item || !Number.isFinite(item.charIndex) || !Number.isFinite(item.unitOffset)) {
+      continue;
+    }
+    const safeCharIndex = Math.max(safeStart, Math.min(Math.floor(item.charIndex), safeEnd));
+    const safeUnitOffset = Math.max(0, item.unitOffset);
+    const kind = item.kind && item.kind.length > 0 ? item.kind : 'anchor';
+    const existing = sanitized[sanitized.length - 1];
+    if (existing && existing.charIndex === safeCharIndex) {
+      existing.unitOffset = Math.max(existing.unitOffset, safeUnitOffset);
+      existing.kind = kind;
+      continue;
+    }
+    sanitized.push({
+      charIndex: safeCharIndex,
+      unitOffset: safeUnitOffset,
+      kind
+    });
+  }
+
+  if (sanitized.length <= 0) {
+    return fallback;
+  }
+  sanitized.sort((left: RemoteTtsSeekAnchorRecord, right: RemoteTtsSeekAnchorRecord) => {
+    if (left.charIndex !== right.charIndex) {
+      return left.charIndex - right.charIndex;
+    }
+    return left.unitOffset - right.unitOffset;
+  });
+  if (sanitized[0].charIndex !== safeStart) {
+    sanitized.unshift({
+      charIndex: safeStart,
+      unitOffset: 0,
+      kind: 'start'
+    });
+  } else {
+    sanitized[0].unitOffset = 0;
+    sanitized[0].kind = 'start';
+  }
+
+  const safeTotalUnits = Math.max(1, totalUnits ?? fallback.totalUnits);
+  const lastSanitized = sanitized[sanitized.length - 1];
+  if (lastSanitized.charIndex !== safeEnd) {
+    sanitized.push({
+      charIndex: safeEnd,
+      unitOffset: safeTotalUnits,
+      kind: 'end'
+    });
+  } else {
+    lastSanitized.unitOffset = safeTotalUnits;
+    lastSanitized.kind = 'end';
+  }
+  return {
+    totalUnits: safeTotalUnits,
+    anchors: sanitized
+  };
+}
+
+function computeRemoteTtsSeekRatio(
+  seekModel: RemoteTtsSeekModel,
+  start: number,
+  end: number,
+  targetCharIndex: number
+): number {
+  if (end <= start) {
+    return 0;
+  }
+  const safeTarget = Math.max(start, Math.min(Math.floor(targetCharIndex), end));
+  if (safeTarget <= start) {
+    return 0;
+  }
+  if (safeTarget >= end) {
+    return 1;
+  }
+  const anchors = seekModel.anchors;
+  let left = anchors[0];
+  let right = anchors[anchors.length - 1];
+  for (let index = 1; index < anchors.length; index++) {
+    const current = anchors[index];
+    if (safeTarget <= current.charIndex) {
+      right = current;
+      break;
+    }
+    left = current;
+  }
+  const spanChars = Math.max(1, right.charIndex - left.charIndex);
+  const spanUnits = Math.max(0, right.unitOffset - left.unitOffset);
+  const localRatio = Math.max(0, Math.min(1, (safeTarget - left.charIndex) / spanChars));
+  const unitOffset = left.unitOffset + (spanUnits * localRatio);
+  return Math.max(0, Math.min(1, unitOffset / Math.max(1, seekModel.totalUnits)));
+}
+
+function resolveRemoteTtsCharIndexByRatio(
+  seekModel: RemoteTtsSeekModel,
+  start: number,
+  end: number,
+  ratio: number
+): number {
+  if (end <= start) {
+    return Math.max(0, start);
+  }
+  const safeRatio = Math.max(0, Math.min(1, ratio));
+  const targetUnits = safeRatio * Math.max(1, seekModel.totalUnits);
+  const anchors = seekModel.anchors;
+  let left = anchors[0];
+  let right = anchors[anchors.length - 1];
+  for (let index = 1; index < anchors.length; index++) {
+    const current = anchors[index];
+    if (targetUnits <= current.unitOffset) {
+      right = current;
+      break;
+    }
+    left = current;
+  }
+  const spanUnits = Math.max(1, right.unitOffset - left.unitOffset);
+  const spanChars = Math.max(1, right.charIndex - left.charIndex);
+  const localRatio = Math.max(0, Math.min(1, (targetUnits - left.unitOffset) / spanUnits));
+  const mapped = left.charIndex + Math.floor(spanChars * localRatio);
+  return Math.max(start, Math.min(mapped, Math.max(start, end - 1)));
 }
 
 function fnv1aHashHex(input: string): string {
@@ -2497,6 +2758,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       const nextAccumulatedMs = accumulatedMs + durationMs;
       if (safePositionMs < nextAccumulatedMs || index === this.queue.length - 1) {
         return this.resolveCharIndexWithinSegment(
+          index,
           range.start,
           range.end,
           durationMs,
@@ -2774,6 +3036,34 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     return this.findQueueIndexByChar(start);
   }
 
+  private getSegmentCacheRecordByIndex(index: number): RemoteTtsSegmentCacheRecord | null {
+    const playable = this.playableSegments.get(index);
+    if (playable) {
+      return playable;
+    }
+    if (!this.activeManifest) {
+      return null;
+    }
+    for (let manifestIndex = 0; manifestIndex < this.activeManifest.segments.length; manifestIndex++) {
+      const item = this.activeManifest.segments[manifestIndex];
+      if (item.index === index) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  private getSegmentSeekModelByIndex(index: number, start: number, end: number): RemoteTtsSeekModel {
+    const record = this.getSegmentCacheRecordByIndex(index);
+    return buildRemoteTtsSeekModelFromRecord(
+      start,
+      end,
+      this.queue[index] ?? '',
+      record?.seekTotalUnits,
+      record?.seekAnchors
+    );
+  }
+
   private getSegmentDurationMsByIndex(index: number): number {
     if (index < 0 || index >= this.queue.length) {
       return 0;
@@ -2814,17 +3104,25 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     return total > 0 ? total : -1;
   }
 
-  private resolveCharIndexWithinSegment(start: number, end: number, durationMs: number, currentTimeMs: number): number {
+  private resolveCharIndexWithinSegment(
+    segmentIndex: number,
+    start: number,
+    end: number,
+    durationMs: number,
+    currentTimeMs: number
+  ): number {
     if (end <= start) {
       return Math.max(0, start);
     }
     const safeDurationMs = Math.max(1, durationMs);
-    const maxPlayableChar = Math.max(start, end - 1);
     const clampedTimeMs = Math.max(0, Math.min(currentTimeMs, safeDurationMs));
     const ratio = Math.max(0, Math.min(1, clampedTimeMs / safeDurationMs));
-    const span = end - start;
-    const mapped = start + Math.floor(span * ratio);
-    return Math.max(start, Math.min(mapped, maxPlayableChar));
+    return resolveRemoteTtsCharIndexByRatio(
+      this.getSegmentSeekModelByIndex(segmentIndex, start, end),
+      start,
+      end,
+      ratio
+    );
   }
 
   private computeChapterPositionMs(
@@ -2847,6 +3145,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     let localTimeMs = currentTimeMsInChunk >= 0
       ? Math.max(0, Math.min(Math.floor(currentTimeMsInChunk), durationMs))
       : this.computeSegmentSeekTimeMs(
+        queueIndex,
         chunkStartCharIndex,
         chunkEndCharIndex,
         durationMs,
@@ -3040,9 +3339,26 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     try {
       this.activeManifest.updatedAt = Date.now();
       writeJsonFile(this.manifestPath, this.activeManifest as Object);
+      this.publishReadAloudCacheUpdated('manifest_persisted');
     } catch (error) {
       logger.warn(TAG, `远程TTS章节清单写入失败: path=${this.manifestPath}, error=${formatReadAloudError(error)}`);
     }
+  }
+
+  private publishReadAloudCacheUpdated(reason: string): void {
+    const bookId = this.context?.bookId ?? '';
+    if (bookId.length <= 0) {
+      return;
+    }
+    eventBus.publish(
+      GameEvent.READ_ALOUD_CACHE_UPDATED,
+      new ReadAloudCacheUpdatedPayload(
+        bookId,
+        this.context?.chapterIndex ?? -1,
+        reason,
+        this.remoteDigest
+      )
+    );
   }
 
   private loadSegmentIndexRecord(metaPath: string): RemoteTtsSegmentIndexRecord | null {
@@ -3085,7 +3401,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       bookId: this.context?.bookId ?? '',
       chapterIndex: this.context?.chapterIndex ?? -1,
       start: segment.start,
-      end: segment.end
+      end: segment.end,
+      seekTotalUnits: segment.seekTotalUnits,
+      seekAnchors: segment.seekAnchors
     };
     try {
       writeJsonFile(paths.metaPath, record as Object);
@@ -3127,6 +3445,13 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         logger.warn(TAG, `远程TTS缓存音频文件为空，已忽略: index=${index}, path=${paths.audioPath}`);
         return null;
       }
+      const seekModel = buildRemoteTtsSeekModelFromRecord(
+        range.start,
+        range.end,
+        this.queue[index] ?? '',
+        record?.seekTotalUnits,
+        record?.seekAnchors
+      );
       const segment: RemoteTtsPlayableSegment = {
         index,
         start: range.start,
@@ -3139,7 +3464,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         bytes: record && record.bytes > 0 ? record.bytes : stat.size,
         durationMs: record && record.durationMs > 0
           ? record.durationMs
-          : estimateDurationMsByCharCount((this.queue[index] ?? '').length, this.settings?.speed ?? 1)
+          : estimateDurationMsByCharCount((this.queue[index] ?? '').length, this.settings?.speed ?? 1),
+        seekTotalUnits: seekModel.totalUnits,
+        seekAnchors: seekModel.anchors
       };
       if (!record) {
         this.persistSegmentIndexRecord(segment);
@@ -3173,6 +3500,13 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       const durationMs = item.durationMs > 0
         ? item.durationMs
         : estimateDurationMsByCharCount(this.queue[item.index].length, this.settings?.speed ?? 1);
+      const seekModel = buildRemoteTtsSeekModelFromRecord(
+        item.start,
+        item.end,
+        this.queue[item.index] ?? '',
+        item.seekTotalUnits,
+        item.seekAnchors
+      );
       this.playableSegments.set(item.index, {
         index: item.index,
         start: item.start,
@@ -3183,7 +3517,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         textPreview: item.textPreview,
         filePath: item.filePath,
         bytes: item.bytes,
-        durationMs
+        durationMs,
+        seekTotalUnits: seekModel.totalUnits,
+        seekAnchors: seekModel.anchors
       });
     }
   }
@@ -3208,7 +3544,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       textPreview: segment.textPreview,
       filePath: segment.filePath,
       bytes: segment.bytes,
-      durationMs: segment.durationMs
+      durationMs: segment.durationMs,
+      seekTotalUnits: segment.seekTotalUnits,
+      seekAnchors: segment.seekAnchors
     });
     next.sort((a, b) => a.index - b.index);
     this.activeManifest.segments = next;
@@ -3313,7 +3651,13 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     }
     const safeDurationMs = Math.max(1, durationMs);
     const clampedTimeMs = Math.max(0, Math.min(currentTimeMs, safeDurationMs));
-    const safeNext = this.resolveCharIndexWithinSegment(start, end, safeDurationMs, clampedTimeMs);
+    const safeNext = this.resolveCharIndexWithinSegment(
+      this.findQueueIndexByRange(start, end),
+      start,
+      end,
+      safeDurationMs,
+      clampedTimeMs
+    );
     if (safeNext !== this.currentCharIndex) {
       this.currentCharIndex = safeNext;
     }
@@ -3327,6 +3671,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   }
 
   private computeSegmentSeekTimeMs(
+    segmentIndex: number,
     start: number,
     end: number,
     durationMs: number,
@@ -3343,7 +3688,12 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     if (safeCurrent <= start) {
       return 0;
     }
-    const ratio = (safeCurrent - start) / Math.max(1, end - start);
+    const ratio = computeRemoteTtsSeekRatio(
+      this.getSegmentSeekModelByIndex(segmentIndex, start, end),
+      start,
+      end,
+      safeCurrent
+    );
     return Math.max(0, Math.min(durationMs - 1, Math.floor(durationMs * ratio)));
   }
 
@@ -3623,7 +3973,13 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       this.applyActualSegmentDuration(segment, actualDurationMs);
       this.applyRemotePlayerVolume(player);
 
-      const seekMs = this.computeSegmentSeekTimeMs(range.start, range.end, segment.durationMs, resumeCharIndex);
+      const seekMs = this.computeSegmentSeekTimeMs(
+        segment.index,
+        range.start,
+        range.end,
+        segment.durationMs,
+        resumeCharIndex
+      );
       if (seekMs > 0) {
         await this.seekSegmentPlayer(player, seekMs);
         this.updateSegmentProgressByPlayerTime(range.start, range.end, segment.durationMs, seekMs);
@@ -3724,6 +4080,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   ): RemoteTtsPlayableSegment {
     const text = this.queue[index] ?? '';
     const paths = this.buildSegmentStoragePaths(index, true);
+    const seekModel = buildRemoteTtsSeekModel(range.start, range.end, text);
     ensureDirExists(this.sessionTempDir);
     writeFileBytes(paths.audioPath, synthesized.bytes);
     const stat = fs.statSync(paths.audioPath);
@@ -3737,7 +4094,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       textPreview: paths.textPreview,
       filePath: paths.audioPath,
       bytes: stat.size,
-      durationMs: this.buildSegmentDurationMs(text, synthesized)
+      durationMs: this.buildSegmentDurationMs(text, synthesized),
+      seekTotalUnits: seekModel.totalUnits,
+      seekAnchors: seekModel.anchors
     };
     logger.warn(TAG, `远程TTS已降级保存到会话临时目录: index=${index}, cacheKey=${paths.cacheKey}, path=${paths.audioPath}, bytes=${segment.bytes}`);
     return segment;
@@ -3771,6 +4130,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   ): RemoteTtsPlayableSegment {
     const text = this.queue[index] ?? '';
     const cachePaths = this.buildSegmentStoragePaths(index);
+    const seekModel = buildRemoteTtsSeekModel(range.start, range.end, text);
     if (this.remoteSettings.cacheAudioFiles) {
       try {
         ensureDirExists(this.segmentCacheDir);
@@ -3786,7 +4146,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
           textPreview: cachePaths.textPreview,
           filePath: cachePaths.audioPath,
           bytes: stat.size,
-          durationMs: this.buildSegmentDurationMs(text, synthesized)
+          durationMs: this.buildSegmentDurationMs(text, synthesized),
+          seekTotalUnits: seekModel.totalUnits,
+          seekAnchors: seekModel.anchors
         };
         this.persistSegmentIndexRecord(segment);
         logger.info(TAG, `远程TTS分片已规范化缓存: index=${index}, cacheKey=${cachePaths.cacheKey}, path=${cachePaths.audioPath}, bytes=${segment.bytes}`);
@@ -3818,6 +4180,8 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         filePath: '',
         bytes: synthesized.bytes.byteLength,
         durationMs: this.buildSegmentDurationMs(text, synthesized),
+        seekTotalUnits: seekModel.totalUnits,
+        seekAnchors: seekModel.anchors,
         inlineBytes: synthesized.bytes
       };
     }

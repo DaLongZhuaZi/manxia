@@ -316,8 +316,6 @@ export struct NovelReaderPage {
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     if (isOpeningReadAloudPlayer) {
       logger.info(TAG, '小说阅读器进入听书独立页，保留当前沉浸模式');
-    } else {
-      this.restoreNormalMode();
     }
     this.readAloudController.handlePageHide();
     this.readAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
@@ -575,6 +573,11 @@ export struct NovelReaderPage {
     this.showBackgroundSettings = false;
     this.openReadAloudInfoWhenOpenReadingSettings = true;
     this.showReadingSettings = true;
+  }
+
+  private async initializeReaderAfterReady(): Promise<void> {
+    await this.loadSettings();
+    await this.loadContent();
   }
 
   async loadSettings(): Promise<void> {
@@ -3307,8 +3310,7 @@ export struct NovelReaderPage {
         this.shouldAutoOpenReadAloudPlayer = param.autoOpenReadAloudPlayer === true;
         this.syncOverallReadProgress('on_ready_params');
         AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'NovelReaderPage');
-        this.loadSettings();
-        this.loadContent();
+        void this.initializeReaderAfterReady();
         
         // [修复] 记录浏览历史，确保阅读过的小说出现在历史浏览中
         this.recordBrowseHistory(param);

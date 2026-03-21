@@ -3,6 +3,7 @@ import {
   DEFAULT_READ_ALOUD_SETTINGS,
   ReadAloudEngineType,
   ReadAloudSettings,
+  isRemoteReadAloudPresetConfigEqual,
   normalizeReadAloudSettings
 } from '../../Models/TextReaderModels';
 import { eventBus, GameEvent, ReadAloudStatePayload } from '../EventBus';
@@ -139,6 +140,7 @@ export class ReadAloudController {
     this.settings.engineType = nextEngine;
     const engineChanged = previousEngine !== nextEngine;
     const voiceChanged = this.isVoiceSelectionChanged(previousSettings, this.settings);
+    const remoteSettingsChanged = this.isRemoteSettingsChanged(previousSettings, this.settings);
 
     if (engineChanged) {
       this.switchBackend(nextEngine);
@@ -149,11 +151,11 @@ export class ReadAloudController {
       this.stop('settings_disabled');
     }
     if (
-      (engineChanged || voiceChanged) &&
+      (engineChanged || voiceChanged || remoteSettingsChanged) &&
       this.settings.enabled &&
       this.playbackState === ReadAloudPlaybackState.PLAYING
     ) {
-      this.restartPlaybackForVoiceSwitch();
+      this.restartPlaybackForConfigurationChange('settings_changed');
     }
     this.updateBackgroundKeepAliveTimer();
     this.syncMediaSession();
@@ -669,7 +671,16 @@ export class ReadAloudController {
     return prevLanguage !== nextLanguage || prevPerson !== nextPerson || prevOnline !== nextOnline;
   }
 
-  private restartPlaybackForVoiceSwitch(): void {
+  private isRemoteSettingsChanged(previous: ReadAloudSettings, next: ReadAloudSettings): boolean {
+    const previousEngine = this.normalizeEngineType(previous.engineType);
+    const nextEngine = this.normalizeEngineType(next.engineType);
+    if (previousEngine !== ReadAloudEngineType.REMOTE && nextEngine !== ReadAloudEngineType.REMOTE) {
+      return false;
+    }
+    return !isRemoteReadAloudPresetConfigEqual(previous.remote, next.remote);
+  }
+
+  private restartPlaybackForConfigurationChange(reason: string): void {
     if (!this.context) {
       return;
     }
@@ -679,10 +690,10 @@ export class ReadAloudController {
     }
     this.runBackendTask(
       this.backend.start(),
-      `voice_switch_restart:${this.settings.engineType}`,
+      `configuration_restart:${this.settings.engineType}`,
       () => {
         this.syncProgressSnapshotFromBackend();
-        eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload('voice_changed'));
+        eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload(reason));
         this.syncMediaSession();
       }
     );

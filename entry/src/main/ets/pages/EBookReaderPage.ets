@@ -328,8 +328,6 @@ struct EBookReaderPage {
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
     if (isOpeningReadAloudPlayer) {
       logger.info(TAG, '电子书阅读器即将进入听书独立页，aboutToDisappear 保留沉浸模式');
-    } else {
-      this.restoreNormalMode();
     }
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
@@ -359,8 +357,6 @@ struct EBookReaderPage {
     const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     if (isOpeningReadAloudPlayer) {
       logger.info(TAG, '电子书阅读器进入听书独立页，保留当前沉浸模式');
-    } else {
-      this.restoreNormalMode();
     }
     logger.lifecycle(TAG, '电子书阅读器页面隐藏（进入后台）');
     this.readAloudController.handlePageHide();

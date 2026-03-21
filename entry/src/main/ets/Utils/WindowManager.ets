@@ -832,6 +832,75 @@ export class WindowManager {
     }
   }
 
+  private static getMainWindowFromWindowStageRef(): window.Window | null {
+    try {
+      if (!WindowManager.windowStageRef) {
+        logger.warn(WindowManager.TAG, 'windowStageRef unavailable when reapplying display mode');
+        return null;
+      }
+      return WindowManager.windowStageRef.getMainWindowSync();
+    } catch (error) {
+      logger.error(WindowManager.TAG, `Failed to get main window from WindowStage: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  private static applyDisplayModeWithMainWindow(mainWindow: window.Window, mode: DisplayMode): void {
+    switch (mode) {
+      case DisplayMode.FULL_IMMERSIVE:
+        void mainWindow.setWindowLayoutFullScreen(true);
+        void mainWindow.setWindowSystemBarEnable([]);
+        break;
+      case DisplayMode.HIDE_STATUS_BAR:
+        void mainWindow.setWindowLayoutFullScreen(false);
+        void mainWindow.setWindowSystemBarEnable(['navigation']);
+        break;
+      case DisplayMode.HIDE_NAVIGATION_BAR:
+        void mainWindow.setWindowLayoutFullScreen(false);
+        void mainWindow.setWindowSystemBarEnable(['status']);
+        break;
+      case DisplayMode.IMMERSIVE_WITH_BARS:
+        void mainWindow.setWindowLayoutFullScreen(true);
+        void mainWindow.setWindowSystemBarEnable(['status', 'navigation']);
+        WindowManager.setTransparentSystemBar(mainWindow);
+        break;
+      case DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE:
+        void mainWindow.setWindowLayoutFullScreen(true);
+        void mainWindow.setWindowSystemBarEnable(['status', 'navigation']);
+        WindowManager.setNormalSystemBar(mainWindow);
+        break;
+      case DisplayMode.DEFAULT:
+      default:
+        void mainWindow.setWindowLayoutFullScreen(false);
+        void mainWindow.setWindowSystemBarEnable(['status', 'navigation']);
+        WindowManager.setDefaultSystemBar(mainWindow);
+        break;
+    }
+  }
+
+  static reapplyCurrentDisplayMode(delayMs: number = 0): void {
+    const apply = (): void => {
+      const mainWindow = WindowManager.getMainWindowFromWindowStageRef();
+      if (!mainWindow) {
+        return;
+      }
+
+      WindowManager.registerThemeChangeMonitor(mainWindow);
+      WindowManager.storeSystemBarHeights(mainWindow);
+      logger.info(WindowManager.TAG, `Reapplying display mode after foreground: ${WindowManager.currentMode}`);
+      WindowManager.applyDisplayModeWithMainWindow(mainWindow, WindowManager.currentMode);
+    };
+
+    if (delayMs > 0) {
+      setTimeout(() => {
+        apply();
+      }, delayMs);
+      return;
+    }
+
+    apply();
+  }
+
   static dispose(): void {
     WindowManager.unregisterThemeChangeMonitor();
     WindowManager.unregisterWindowStageStateMonitor();
