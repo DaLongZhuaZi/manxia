@@ -22,6 +22,10 @@ const MEDIA_SKIP_CHARS: number = 420;
 const BASE_CHARS_PER_SECOND: number = 11;
 const BACKGROUND_KEEP_ALIVE_INTERVAL_MS: number = 15000;
 const PAUSE_RESUME_REWIND_CHARS: number = 2;
+const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
+const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
+const READ_ALOUD_UI_STATUS_PHASE_KEY = 'ReadAloudUiStatusPhase';
+const READ_ALOUD_UI_STATUS_UPDATED_AT_KEY = 'ReadAloudUiStatusUpdatedAt';
 
 interface ReadAloudControllerErrorLike {
   code?: number | string;
@@ -88,6 +92,8 @@ export class ReadAloudController {
   private currentCharIndex: number = -1;
   private chunkStartCharIndex: number = -1;
   private chunkEndCharIndex: number = -1;
+  private currentPositionMs: number = -1;
+  private totalDurationMs: number = -1;
   private mediaSession: ReadAloudMediaSession = new ReadAloudMediaSession();
   private backgroundKeepAliveTimer: number = -1;
 
@@ -296,7 +302,14 @@ export class ReadAloudController {
     if (!this.context || !this.context.content || this.context.content.length <= 0) {
       return;
     }
-    const durationMs = this.estimateDurationMs(this.context.content.length);
+    const resolvedCharIndex = this.backend.resolveCharIndexByPositionMs(positionMs);
+    if (resolvedCharIndex >= 0) {
+      this.seekToCharIndex(resolvedCharIndex, reason);
+      return;
+    }
+    const durationMs = this.totalDurationMs > 0
+      ? this.totalDurationMs
+      : this.estimateDurationMs(this.context.content.length);
     if (durationMs <= 0) {
       return;
     }
@@ -326,7 +339,9 @@ export class ReadAloudController {
       pageIndex: this.context?.pageIndex ?? -1,
       currentCharIndex: this.currentCharIndex,
       chunkStartCharIndex: this.chunkStartCharIndex,
-      chunkEndCharIndex: this.chunkEndCharIndex
+      chunkEndCharIndex: this.chunkEndCharIndex,
+      currentPositionMs: this.currentPositionMs,
+      totalDurationMs: this.totalDurationMs
     };
   }
 
@@ -349,6 +364,7 @@ export class ReadAloudController {
 
     const prevState = this.playbackState;
     this.playbackState = nextState;
+    this.syncUiStatusForState(reason);
     logger.info(TAG, `听书状态切换: ${prevState} -> ${nextState}, reason=${reason}`);
     eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload(reason));
     this.updateBackgroundKeepAliveTimer();
@@ -357,16 +373,31 @@ export class ReadAloudController {
 
   private ensureEngineAvailableForStart(): boolean {
     const currentEngine = this.settings.engineType;
-    if (ReadAloudAvailability.isAvailableSync(currentEngine)) {
+    if (ReadAloudAvailability.isAvailableSync(currentEngine, this.settings)) {
       return true;
     }
 
-    logger.warn(TAG, `听书引擎不可用: ${currentEngine}`);
+    const unavailableReason = currentEngine === ReadAloudEngineType.REMOTE
+      ? ReadAloudAvailability.getLastRemoteProbeErrorMessage()
+      : currentEngine === ReadAloudEngineType.SYSTEM
+        ? ReadAloudAvailability.getLastSystemProbeErrorMessage()
+        : '';
+    logger.warn(
+      TAG,
+      unavailableReason.length > 0
+        ? `听书引擎不可用: ${currentEngine}, reason=${unavailableReason}`
+        : `听书引擎不可用: ${currentEngine}`
+    );
     if (currentEngine !== ReadAloudEngineType.SYSTEM) {
       this.settings.engineType = ReadAloudEngineType.SYSTEM;
       this.switchBackend(ReadAloudEngineType.SYSTEM);
       this.backend.applySettings(this.settings);
-      logger.info(TAG, '听书引擎已自动回退到 SYSTEM');
+      logger.info(
+        TAG,
+        unavailableReason.length > 0
+          ? `听书引擎已自动回退到 SYSTEM: source=${currentEngine}, reason=${unavailableReason}`
+          : `听书引擎已自动回退到 SYSTEM: source=${currentEngine}`
+      );
       return true;
     }
 
@@ -418,6 +449,8 @@ export class ReadAloudController {
     this.currentCharIndex = progress.currentCharIndex;
     this.chunkStartCharIndex = progress.chunkStartCharIndex;
     this.chunkEndCharIndex = progress.chunkEndCharIndex;
+    this.currentPositionMs = progress.currentPositionMs;
+    this.totalDurationMs = progress.totalDurationMs;
     if (
       this.playbackState === ReadAloudPlaybackState.PLAYING ||
       this.playbackState === ReadAloudPlaybackState.PAUSED
@@ -450,6 +483,7 @@ export class ReadAloudController {
       } else {
         this.syncMediaSession();
       }
+      this.updateUiStatus('error', '听书已因错误暂停', this.formatReadAloudError(event.reason));
       logger.warn(TAG, `听书后端因错误暂停: reason=${event.reason}, char=${event.currentCharIndex}`);
     }
   }
@@ -459,6 +493,8 @@ export class ReadAloudController {
     this.currentCharIndex = snapshot.currentCharIndex;
     this.chunkStartCharIndex = snapshot.chunkStartCharIndex;
     this.chunkEndCharIndex = snapshot.chunkEndCharIndex;
+    this.currentPositionMs = snapshot.currentPositionMs;
+    this.totalDurationMs = snapshot.totalDurationMs;
   }
 
   private applyPauseResumeCompensation(reason: string): void {
@@ -678,6 +714,51 @@ export class ReadAloudController {
     return String(error);
   }
 
+  private updateUiStatus(phase: string, text: string, detail: string = ''): void {
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_PHASE_KEY, phase);
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_TEXT_KEY, text);
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_DETAIL_KEY, detail);
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_UPDATED_AT_KEY, Date.now());
+  }
+
+  private clearUiStatus(): void {
+    this.updateUiStatus('', '', '');
+  }
+
+  private buildUiProgressDetail(): string {
+    if (this.context && this.context.content && this.context.content.length > 0 && this.currentCharIndex >= 0) {
+      const safeIndex = Math.max(0, Math.min(this.currentCharIndex, this.context.content.length - 1));
+      return `第 ${safeIndex + 1}/${this.context.content.length} 字`;
+    }
+    if (this.context && this.context.chapterIndex >= 0) {
+      return `第 ${this.context.chapterIndex + 1} 章`;
+    }
+    return '';
+  }
+
+  private syncUiStatusForState(reason: string): void {
+    switch (this.playbackState) {
+      case ReadAloudPlaybackState.PLAYING:
+        if (this.settings.engineType !== ReadAloudEngineType.REMOTE) {
+          this.updateUiStatus('playing', '正在播放', this.buildUiProgressDetail());
+        }
+        return;
+      case ReadAloudPlaybackState.PAUSED:
+        if (!reason.startsWith('backend_')) {
+          this.updateUiStatus('paused', '已暂停', this.buildUiProgressDetail());
+        }
+        return;
+      case ReadAloudPlaybackState.STOPPED:
+        this.updateUiStatus('stopped', '已停止');
+        return;
+      case ReadAloudPlaybackState.IDLE:
+        this.clearUiStatus();
+        return;
+      default:
+        return;
+    }
+  }
+
   private createStatePayload(reason: string): ReadAloudStatePayload {
     const payloadBookId = (
       this.context?.bookId && this.context.bookId.trim().length > 0
@@ -692,7 +773,9 @@ export class ReadAloudController {
       this.context?.pageIndex ?? -1,
       this.currentCharIndex,
       this.chunkStartCharIndex,
-      this.chunkEndCharIndex
+      this.chunkEndCharIndex,
+      this.currentPositionMs,
+      this.totalDurationMs
     );
   }
 }

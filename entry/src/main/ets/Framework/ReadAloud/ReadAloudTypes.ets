@@ -22,11 +22,21 @@ export class ReadAloudProgressSnapshot {
   public currentCharIndex: number;
   public chunkStartCharIndex: number;
   public chunkEndCharIndex: number;
+  public currentPositionMs: number;
+  public totalDurationMs: number;
 
-  constructor(currentCharIndex: number, chunkStartCharIndex: number, chunkEndCharIndex: number) {
+  constructor(
+    currentCharIndex: number,
+    chunkStartCharIndex: number,
+    chunkEndCharIndex: number,
+    currentPositionMs: number = -1,
+    totalDurationMs: number = -1
+  ) {
     this.currentCharIndex = currentCharIndex;
     this.chunkStartCharIndex = chunkStartCharIndex;
     this.chunkEndCharIndex = chunkEndCharIndex;
+    this.currentPositionMs = currentPositionMs;
+    this.totalDurationMs = totalDurationMs;
   }
 }
 
@@ -59,4 +69,6 @@ export interface ReadAloudStateSnapshot {
   currentCharIndex: number;
   chunkStartCharIndex: number;
   chunkEndCharIndex: number;
+  currentPositionMs: number;
+  totalDurationMs: number;
 }

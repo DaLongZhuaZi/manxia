@@ -33,7 +33,7 @@ import {
   DEFAULT_READ_ALOUD_SETTINGS,
   ReadAloudEngineType,
   ReadAloudSettings,
-  RemoteReadAloudSettings,
+  mergeRemoteReadAloudSettings,
   normalizeReadAloudSettings,
   isTextFile,
   TextAlignment,
@@ -91,6 +91,7 @@ interface ReaderKitPositionSnapshot {
 
 @Component
 struct EBookReaderPage {
+  private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -142,6 +143,8 @@ struct EBookReaderPage {
   // 字体设置面板状态
   @State showBookInfoDialog: boolean = false;
   @State bookInfoDialogOpacity: number = 0;
+  private toolbarAutoHideTimer: number = -1;
+  private fullscreenRestoreTimer: number = -1;
 
   // 阅读设置面板状态（主题、翻页等）
   @State showFontSettingsPanel: boolean = false;
@@ -180,6 +183,7 @@ struct EBookReaderPage {
   private lastReadAloudPanelCloseTime: number = 0;
   private static readonly READ_ALOUD_PANEL_REOPEN_GUARD_MS: number = 320;
   private static readonly READ_ALOUD_PROGRESS_SAVE_INTERVAL_MS: number = 3000;
+  private isPageVisible: boolean = false;
   @State showTextReaderSettings: boolean = false;
   @State textReaderSettingsOpacity: number = 0;
   @State textReaderSettingsScale: number = 0.95;
@@ -224,6 +228,9 @@ struct EBookReaderPage {
     if (!payloadBookId || payloadBookId !== this.ebook.id) {
       return;
     }
+    if (!this.shouldHandleReadAloudUiEvents()) {
+      return;
+    }
 
     this.textReadAloudPlaying = statePayload.playbackState === ReadAloudPlaybackState.PLAYING;
     this.applyTextReadAloudProgress(statePayload);
@@ -236,7 +243,9 @@ struct EBookReaderPage {
   };
 
   aboutToAppear(): void {
+    this.isPageVisible = true;
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换到: ${theme}`);
       // 检查当前电子书是否设置了 followSystemTheme
@@ -283,17 +292,27 @@ struct EBookReaderPage {
   }
 
   aboutToDisappear(): void {
+    this.isPageVisible = false;
+    const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    this.clearToolbarAutoHideTimer();
+    this.clearFullscreenRestoreTimer();
     const readAloudSettings = this.getSafeReadAloudSettings(this.textReaderSettings.readAloud);
     const readAloudSnapshot = this.readAloudController.getSnapshot();
-    const keepReadAloudAliveOnExit = readAloudSettings.continueInBackground &&
+    const keepReadAloudAliveOnExit = isOpeningReadAloudPlayer || (
+      readAloudSettings.continueInBackground &&
       (
         readAloudSnapshot.playbackState === ReadAloudPlaybackState.PLAYING ||
         readAloudSnapshot.playbackState === ReadAloudPlaybackState.PAUSED
-      );
+      )
+    );
     if (keepReadAloudAliveOnExit) {
       this.textReadAloudPlaying = readAloudSnapshot.playbackState === ReadAloudPlaybackState.PLAYING;
-      logger.info(TAG, '离开电子书阅读器：已保持听书后台继续播放');
+      if (isOpeningReadAloudPlayer) {
+        logger.info(TAG, '离开电子书阅读器并进入听书独立页：已保持听书会话继续播放');
+      } else {
+        logger.info(TAG, '离开电子书阅读器：已保持听书后台继续播放');
+      }
     } else {
       this.readAloudController.release();
       this.textReadAloudPlaying = false;
@@ -307,7 +326,11 @@ struct EBookReaderPage {
     // [修复] 发布阅读进度更新事件，通知书库页面刷新
     this.saveReadingProgress();
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
-    this.restoreNormalMode();
+    if (isOpeningReadAloudPlayer) {
+      logger.info(TAG, '电子书阅读器即将进入听书独立页，aboutToDisappear 保留沉浸模式');
+    } else {
+      this.restoreNormalMode();
+    }
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
     eventBus.publish(GameEvent.EBOOK_UPDATED, new BasePayload());
     // [修复] 安全清理过渡动画状态，防止页面销毁后覆盖层仍然阻止交互
@@ -319,12 +342,26 @@ struct EBookReaderPage {
   }
 
   onPageShow(): void {
+    this.isPageVisible = true;
     this.setupFullscreenMode();
+    this.scheduleFullscreenRestore('page_show');
+    AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'EBookReaderPage');
+    this.syncTextReadAloudUiFromController();
+    this.readAloudController.refreshMediaSession();
     this.refreshCurrentEBookBookmarkState('on_page_show');
+    this.scheduleToolbarAutoHide('page_show');
   }
 
   onPageHide(): void {
-    this.restoreNormalMode();
+    this.isPageVisible = false;
+    this.clearToolbarAutoHideTimer();
+    this.clearFullscreenRestoreTimer();
+    const isOpeningReadAloudPlayer = this.isReadAloudPlayerOpeningSoon();
+    if (isOpeningReadAloudPlayer) {
+      logger.info(TAG, '电子书阅读器进入听书独立页，保留当前沉浸模式');
+    } else {
+      this.restoreNormalMode();
+    }
     logger.lifecycle(TAG, '电子书阅读器页面隐藏（进入后台）');
     this.readAloudController.handlePageHide();
     this.textReadAloudPlaying = this.readAloudController.getSnapshot().playbackState === ReadAloudPlaybackState.PLAYING;
@@ -534,6 +571,22 @@ struct EBookReaderPage {
     }
   }
 
+  private isReadAloudPlayerOpeningSoon(): boolean {
+    const openingAt = AppStorage.get<number>('ReadAloudPlayerOpeningAt') ?? 0;
+    if (openingAt <= 0) {
+      return false;
+    }
+    return Math.abs(Date.now() - openingAt) <= 2000;
+  }
+
+  private shouldHandleReadAloudUiEvents(): boolean {
+    if (!this.isPageVisible) {
+      return false;
+    }
+    const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
+    return currentHostPage === 'EBookReaderPage';
+  }
+
   private reportTransitionLoadingProgress(progress: number, reason: string): void {
     const normalized = Math.max(0, Math.min(1, progress > 1 ? progress / 100 : progress));
     if (normalized <= this.transitionLoadingProgress + 0.001) {
@@ -675,6 +728,68 @@ struct EBookReaderPage {
     } catch (error) {
       logger.warn(TAG, `修复电子书解析数据失败: ${String(error)}`);
     }
+  }
+
+  private clearToolbarAutoHideTimer(): void {
+    if (this.toolbarAutoHideTimer >= 0) {
+      clearTimeout(this.toolbarAutoHideTimer);
+      this.toolbarAutoHideTimer = -1;
+    }
+  }
+
+  private hasReaderOverlayVisible(): boolean {
+    return this.showSettingsPanel ||
+      this.showChapterList ||
+      this.showMoreMenu ||
+      this.showBookInfoDialog ||
+      this.showFontSettingsPanel ||
+      this.showReadingOptionsPanel ||
+      this.showTextReaderSettings ||
+      this.showReadAloudPanel;
+  }
+
+  private scheduleToolbarAutoHide(reason: string): void {
+    this.clearToolbarAutoHideTimer();
+    if (!this.showTopToolbar && !this.showBottomToolbar) {
+      return;
+    }
+    if (this.hasReaderOverlayVisible()) {
+      return;
+    }
+    this.toolbarAutoHideTimer = setTimeout(() => {
+      this.toolbarAutoHideTimer = -1;
+      if (this.hasReaderOverlayVisible()) {
+        return;
+      }
+      if (this.showTopToolbar || this.showBottomToolbar) {
+        logger.debug(TAG, `工具栏自动隐藏: reason=${reason}`);
+        this.hideToolbarWithAnimation();
+      }
+    }, EBookReaderPage.TOOLBAR_AUTO_HIDE_DELAY_MS);
+  }
+
+  private clearFullscreenRestoreTimer(): void {
+    if (this.fullscreenRestoreTimer >= 0) {
+      clearTimeout(this.fullscreenRestoreTimer);
+      this.fullscreenRestoreTimer = -1;
+    }
+  }
+
+  private scheduleFullscreenRestore(reason: string, delayMs: number = 120): void {
+    this.clearFullscreenRestoreTimer();
+    this.fullscreenRestoreTimer = setTimeout(() => {
+      this.fullscreenRestoreTimer = -1;
+      logger.debug(TAG, `重新应用沉浸模式: reason=${reason}`);
+      this.setupFullscreenMode();
+      if (this.showTopToolbar || this.showBottomToolbar) {
+        this.scheduleToolbarAutoHide(`fullscreen_restore_${reason}`);
+      }
+    }, delayMs);
+  }
+
+  private handleReaderOverlayClosed(reason: string): void {
+    this.scheduleFullscreenRestore(reason);
+    this.scheduleToolbarAutoHide(reason);
   }
 
   private async loadEBook(bookId: string): Promise<void> {
@@ -1075,28 +1190,7 @@ struct EBookReaderPage {
     const partialRemote = partial.remote;
     let mergedRemote = currentRemote;
     if (partialRemote && currentRemote) {
-      const remoteValue: RemoteReadAloudSettings = {
-        endpoint: partialRemote.endpoint ?? currentRemote.endpoint,
-        apiPath: partialRemote.apiPath ?? currentRemote.apiPath,
-        apiKey: partialRemote.apiKey ?? currentRemote.apiKey,
-        model: partialRemote.model ?? currentRemote.model,
-        voice: partialRemote.voice ?? currentRemote.voice,
-        audioFormat: partialRemote.audioFormat ?? currentRemote.audioFormat,
-        streamEnabled: partialRemote.streamEnabled ?? currentRemote.streamEnabled,
-        prefetchSegments: partialRemote.prefetchSegments ?? currentRemote.prefetchSegments,
-        connectTimeoutMs: partialRemote.connectTimeoutMs ?? currentRemote.connectTimeoutMs,
-        readTimeoutMs: partialRemote.readTimeoutMs ?? currentRemote.readTimeoutMs,
-        maxInputChars: partialRemote.maxInputChars ?? currentRemote.maxInputChars,
-        reservedInputChars: partialRemote.reservedInputChars ?? currentRemote.reservedInputChars,
-        minChunkChars: partialRemote.minChunkChars ?? currentRemote.minChunkChars,
-        targetChunkChars: partialRemote.targetChunkChars ?? currentRemote.targetChunkChars,
-        maxChunkChars: partialRemote.maxChunkChars ?? currentRemote.maxChunkChars,
-        cacheAudioFiles: partialRemote.cacheAudioFiles ?? currentRemote.cacheAudioFiles,
-        autoConcatAudio: partialRemote.autoConcatAudio ?? currentRemote.autoConcatAudio,
-        customHeadersJson: partialRemote.customHeadersJson ?? currentRemote.customHeadersJson,
-        extraBodyJson: partialRemote.extraBodyJson ?? currentRemote.extraBodyJson
-      };
-      mergedRemote = remoteValue;
+      mergedRemote = mergeRemoteReadAloudSettings(currentRemote, partialRemote);
     }
     return normalizeReadAloudSettings({
       enabled: partial.enabled ?? current.enabled,
@@ -1147,20 +1241,28 @@ struct EBookReaderPage {
     return 0;
   }
 
-  private calculateTextOverallProgressByChar(charIndex: number): number {
+  private calculateTextOverallProgressByChar(
+    charIndex: number,
+    currentPositionMs: number = -1,
+    totalDurationMs: number = -1
+  ): number {
     if (!this.ebook || this.ebook.chapters.length === 0) {
       return 0;
     }
 
     const totalChapters = this.ebook.chapters.length;
     const chapterLength = this.textContent.length;
-    if (chapterLength <= 0) {
+    let chapterProgress = 0;
+    if (totalDurationMs > 0 && currentPositionMs >= 0) {
+      const safeCurrentPositionMs = Math.max(0, Math.min(currentPositionMs, totalDurationMs));
+      chapterProgress = safeCurrentPositionMs / Math.max(1, totalDurationMs);
+    } else if (chapterLength > 0) {
+      const safeCharIndex = Math.max(0, Math.min(charIndex, chapterLength));
+      chapterProgress = safeCharIndex / chapterLength;
+    } else {
       const baseProgress = (this.currentChapterIndex / totalChapters) * 100;
       return Math.max(0, Math.min(100, baseProgress));
     }
-
-    const safeCharIndex = Math.max(0, Math.min(charIndex, chapterLength));
-    const chapterProgress = safeCharIndex / chapterLength;
     const overallProgress = ((this.currentChapterIndex + chapterProgress) / totalChapters) * 100;
     return Math.max(0, Math.min(100, overallProgress));
   }
@@ -1179,7 +1281,12 @@ struct EBookReaderPage {
     }
     this.lastReadAloudProgressSaveTime = now;
 
-    const overallProgress = this.calculateTextOverallProgressByChar(this.textReadAloudCurrentCharIndex);
+    const snapshot = this.readAloudController.getSnapshot();
+    const overallProgress = this.calculateTextOverallProgressByChar(
+      this.textReadAloudCurrentCharIndex,
+      snapshot.currentPositionMs,
+      snapshot.totalDurationMs
+    );
     this.latestTextProgress = overallProgress;
     this.saveTextReadingProgressWithPage(overallProgress, this.textCurrentPageIndex);
   }
@@ -1212,7 +1319,11 @@ struct EBookReaderPage {
         `Read-aloud chunk update: char=${this.textReadAloudCurrentCharIndex}, chunk=[${payload.chunkStartCharIndex}, ${payload.chunkEndCharIndex}]`
       );
     }
-    this.latestTextProgress = this.calculateTextOverallProgressByChar(this.textReadAloudCurrentCharIndex);
+    this.latestTextProgress = this.calculateTextOverallProgressByChar(
+      this.textReadAloudCurrentCharIndex,
+      payload.currentPositionMs,
+      payload.totalDurationMs
+    );
     this.updateTextReadAloudContextByPosition();
     if (
       payload.reason === 'progress_updated' ||
@@ -1317,19 +1428,45 @@ struct EBookReaderPage {
     this.persistGlobalReadAloudSettings(nextReadAloud);
     this.syncTextReadAloudContext();
 
+    const shouldRefreshAvailability = partial.engineType !== undefined || partial.remote !== undefined;
+    if (shouldRefreshAvailability) {
+      this.refreshReadAloudAvailability();
+      return;
+    }
     if (
-      partial.engineType !== undefined ||
       partial.voiceLanguage !== undefined ||
       partial.voicePerson !== undefined ||
-      partial.voiceOnline !== undefined ||
-      partial.remote !== undefined
+      partial.voiceOnline !== undefined
     ) {
       this.refreshReadAloudVoices();
     }
   }
 
+  private syncTextReadAloudUiFromController(): void {
+    if (!this.ebook || this.ebook.format !== EBookFormat.TXT) {
+      return;
+    }
+    const context = this.readAloudController.getContextSnapshot();
+    const snapshot = this.readAloudController.getSnapshot();
+    if (!context || !snapshot.hasContext || context.bookId !== this.ebook.id) {
+      return;
+    }
+    this.textReadAloudPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
+    const payloadCharIndex = snapshot.currentCharIndex >= 0 ? snapshot.currentCharIndex : snapshot.chunkStartCharIndex;
+    if (payloadCharIndex < 0) {
+      return;
+    }
+    const maxCharIndex = Math.max(0, this.textContent.length);
+    this.textReadAloudCurrentCharIndex = Math.max(0, Math.min(payloadCharIndex, maxCharIndex));
+    this.latestTextProgress = this.calculateTextOverallProgressByChar(
+      this.textReadAloudCurrentCharIndex,
+      snapshot.currentPositionMs,
+      snapshot.totalDurationMs
+    );
+  }
+
   private refreshReadAloudAvailability(): void {
-    ReadAloudAvailability.refresh().then((map: ReadAloudEngineAvailabilityMap) => {
+    ReadAloudAvailability.refresh(false, this.getSafeReadAloudSettings(this.textReaderSettings.readAloud)).then((map: ReadAloudEngineAvailabilityMap) => {
       this.readAloudAvailability = map;
       if (!map.SYSTEM) {
         const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
@@ -1380,7 +1517,7 @@ struct EBookReaderPage {
         if (probeError.length > 0) {
           this.readAloudStatusMessage = `Remote TTS unavailable: ${probeError}`;
         } else {
-          this.readAloudStatusMessage = 'Remote TTS unavailable, please check endpoint/model/voice settings';
+        this.readAloudStatusMessage = 'Remote TTS unavailable, please check endpoint/model/voice/apiKey settings';
         }
       } else {
         this.readAloudStatusMessage = 'Current read-aloud engine is unavailable';
@@ -1708,7 +1845,9 @@ struct EBookReaderPage {
         domPos = this.buildTextDomPos(this.textCurrentPageIndex);
         currentPosition = this.textCurrentPageIndex;
         chapterId = this.currentChapter?.id || '';
-        progressPercent = this.latestTextProgress > 0 ? this.latestTextProgress : (this.ebook.readingProgress?.progress || 0);
+        progressPercent = this.textReadAloudCurrentCharIndex >= 0
+          ? this.latestTextProgress
+          : (this.ebook.readingProgress?.progress || 0);
       } else {
         const snapshot = this.parseReaderKitPositionSnapshot();
         if (snapshot && snapshot.resourceIndex >= 0) {
@@ -1956,6 +2095,7 @@ struct EBookReaderPage {
   * 显示工具栏（带动画）
   */
   private showToolbarWithAnimation(): void {
+    this.clearToolbarAutoHideTimer();
     this.showTopToolbar = true;
     this.showBottomToolbar = true;
     
@@ -1965,12 +2105,14 @@ struct EBookReaderPage {
     }, () => {
       this.toolbarOpacity = 1.0;
     });
+    this.scheduleToolbarAutoHide('show_toolbar');
   }
 
   /**
   * 隐藏工具栏（带动画）
   */
   private hideToolbarWithAnimation(): void {
+    this.clearToolbarAutoHideTimer();
     animateTo({
       duration: 200,
       curve: Curve.EaseOut
@@ -1982,6 +2124,7 @@ struct EBookReaderPage {
       this.showTopToolbar = false;
       this.showBottomToolbar = false;
     }, 200);
+    this.scheduleFullscreenRestore('hide_toolbar', 240);
   }
 
   /**
@@ -2013,6 +2156,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showMoreMenu = false;
+      this.handleReaderOverlayClosed('more_menu_close');
     }, 150);
   }
 
@@ -2055,6 +2199,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showChapterList = false;
+      this.handleReaderOverlayClosed('chapter_list_close');
     }, 200);
   }
 
@@ -2087,6 +2232,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showSettingsPanel = false;
+      this.handleReaderOverlayClosed('settings_panel_close');
     }, 200);
   }
 
@@ -2115,6 +2261,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showBookInfoDialog = false;
+      this.handleReaderOverlayClosed('book_info_close');
     }, 200);
   }
 
@@ -2145,6 +2292,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showFontSettingsPanel = false;
+      this.handleReaderOverlayClosed('font_settings_close');
     }, 200);
   }
 
@@ -2175,6 +2323,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showReadingOptionsPanel = false;
+      this.handleReaderOverlayClosed('reading_options_close');
     }, 200);
   }
 
@@ -2307,6 +2456,7 @@ struct EBookReaderPage {
                 const closeTime = Date.now();
                 this.lastReadAloudPanelCloseTime = closeTime;
                 this.showReadAloudPanel = false;
+                this.handleReaderOverlayClosed('read_aloud_panel_close');
                 logger.info(TAG, `关闭听书设置与信息面板: closeAt=${closeTime}`);
               },
               onRefresh: () => {
@@ -2862,6 +3012,7 @@ struct EBookReaderPage {
     });
     setTimeout(() => {
       this.showTextReaderSettings = false;
+      this.handleReaderOverlayClosed('text_reader_settings_close');
     }, 200);
   }
   
@@ -3054,6 +3205,9 @@ struct EBookReaderPage {
   }
 
   private getCurrentEBookProgressPercent(): number {
+    if (this.isUsingTextReader() && (this.latestTextProgress > 0 || this.textReadAloudCurrentCharIndex >= 0)) {
+      return Math.max(0, Math.min(100, this.latestTextProgress));
+    }
     const snapshot = this.parseReaderKitPositionSnapshot();
     if (snapshot && snapshot.resourceIndex >= 0 && snapshot.resourceCount > 0) {
       const percent = ((snapshot.resourceIndex + 1) / snapshot.resourceCount) * 100;

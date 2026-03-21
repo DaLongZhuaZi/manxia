@@ -13,9 +13,10 @@ import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';
 import { NovelDataManager } from '../Framework/Novel/NovelDataManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
+import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalTextNovelAdapter';
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from '../Models/AnnotationModels';
-import { EBookReadingProgress } from '../Models/EBookModels';
+import { EBookFormat, EBookReadingProgress } from '../Models/EBookModels';
 
 const TAG = 'AnnotationCenterPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -77,6 +78,7 @@ interface NovelReaderRouteParams {
   tocUrl?: string;
   coverUrl?: string;
   sourceName?: string;
+  localEbookId?: string;
 }
 
 interface MangaReaderRouteParams {
@@ -1484,10 +1486,20 @@ export struct AnnotationCenterPage {
       : (ebookContext?.chapterIndex ?? fallbackChapterIndex);
     const targetChapterIndex = this.clampChapterIndex(rawChapterIndex, chapterCount);
     const targetChapter = chapterCount > 0 ? ebook.chapters[targetChapterIndex] : null;
-    const rawPosition = record.startOffset >= 0
+    const rawStartOffset = record.startOffset >= 0
       ? record.startOffset
-      : (ebookContext?.startOffset ?? (record.pageIndex >= 0 ? record.pageIndex : (ebookContext?.pageIndex ?? 0)));
-    const currentPosition = Number.isFinite(rawPosition) && rawPosition >= 0 ? Math.floor(rawPosition) : 0;
+      : (ebookContext?.startOffset ?? -1);
+    const rawPageIndex = record.pageIndex >= 0
+      ? record.pageIndex
+      : (ebookContext?.pageIndex ?? 0);
+    const rawPosition = rawStartOffset >= 0 ? rawStartOffset : rawPageIndex;
+    const currentPosition = ebook.format === EBookFormat.TXT
+      ? (Number.isFinite(rawPageIndex) && rawPageIndex >= 0 ? Math.floor(rawPageIndex) : 0)
+      : (Number.isFinite(rawPosition) && rawPosition >= 0 ? Math.floor(rawPosition) : 0);
+    const safeStartOffset = Number.isFinite(rawStartOffset) && rawStartOffset >= 0
+      ? Math.floor(rawStartOffset)
+      : 0;
+    const safeTxtDomPos = `page:${currentPosition};char:${safeStartOffset};chapter:${targetChapterIndex}`;
     const computedProgress = chapterCount > 0
       ? Math.max(0, Math.min(100, ((targetChapterIndex + 1) / chapterCount) * 100))
       : 0;
@@ -1497,12 +1509,38 @@ export struct AnnotationCenterPage {
       currentChapterId: targetChapter?.id || previousProgress?.currentChapterId || '',
       currentChapterIndex: targetChapterIndex,
       currentPosition,
-      domPos: '',
+      domPos: ebook.format === EBookFormat.TXT ? safeTxtDomPos : '',
       progress: computedProgress,
       lastReadTime: Date.now(),
       totalReadingTime: previousProgress?.totalReadingTime || 0
     };
     await this.ebookDataManager.saveReadingProgress(nextProgress);
+    ebook.readingProgress = nextProgress;
+
+    if (ebook.format === EBookFormat.TXT) {
+      const baseParams = buildNovelReaderParamsFromTxtEBook(ebook);
+      const params: NovelReaderRouteParams = {
+        sourceId: baseParams.sourceId,
+        bookUrl: baseParams.bookUrl,
+        bookName: baseParams.bookName,
+        tocUrl: baseParams.tocUrl,
+        coverUrl: baseParams.coverUrl,
+        sourceName: baseParams.sourceName,
+        chapterIndex: targetChapterIndex,
+        chapterUrl: targetChapter?.id || `ebook://${ebook.id}/chapter/${targetChapterIndex}`,
+        chapterTitle: targetChapter?.title || `Chapter ${targetChapterIndex + 1}`,
+        totalChapters: Math.max(chapterCount, 1),
+        chapterPageIndex: currentPosition,
+        chapterStartOffset: safeStartOffset,
+        localEbookId: ebook.id
+      };
+      this.pathStack.pushPathByName('NovelReaderPage', params);
+      logger.info(
+        TAG,
+        `定位TXT电子书原页成功: bookId=${ebook.id}, chapterIndex=${targetChapterIndex}, pageIndex=${currentPosition}, startOffset=${safeStartOffset}`
+      );
+      return;
+    }
 
     const params: EBookReaderRouteParams = { bookId: ebook.id };
     this.pathStack.pushPathByName('EBookReaderPage', params);

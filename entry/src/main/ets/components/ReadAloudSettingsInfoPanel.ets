@@ -4,12 +4,28 @@ import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { SettingKeys, SettingsManager } from '../Framework/Managers/SettingsManager';
 import {
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
+  DEFAULT_REMOTE_READ_ALOUD_PRESET_ID,
+  getXiaomiMimoRemoteReadAloudVoiceLabel,
+  hasRemoteReadAloudStylePrompt,
+  isXiaomiMimoRemoteReadAloud,
   ReadAloudEngineType,
   ReadAloudSettings,
+  RemoteReadAloudChoiceOption,
+  RemoteReadAloudPreset,
+  RemoteReadAloudPresetConfig,
   RemoteReadAloudSettings,
-  normalizeRemoteReadAloudSettings
+  RemoteReadAloudStyleCategory,
+  toggleRemoteReadAloudStylePrompt,
+  XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES,
+  XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS,
+  extractRemoteReadAloudPresetConfig,
+  isRemoteReadAloudPresetConfigEqual,
+  mergeRemoteReadAloudSettings,
+  normalizeRemoteReadAloudSettings,
+  splitRemoteReadAloudStylePrompt,
+  normalizeRemoteReadAloudStylePrompt
 } from '../Models/TextReaderModels';
-import { ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
+import { ReadAloudAvailability, ReadAloudEngineAvailabilityMap } from '../Framework/ReadAloud/ReadAloudAvailability';
 import { ReadAloudVoiceOption } from '../Framework/ReadAloud/ReadAloudTypes';
 import { logger } from '../Utils/Logger';
 
@@ -60,6 +76,8 @@ export struct ReadAloudSettingsInfoPanel {
   @State private previewVoiceId: string = '';
   @State private previewStatusMessage: string = '';
   @State private blockedVoiceIds: string[] = [];
+  @State private remotePresetDraftName: string = '';
+  @State private remotePresetStatusMessage: string = '';
 
   private uiContext: UIContext | undefined = undefined;
   private previewEngine: textToSpeech.TextToSpeechEngine | null = null;
@@ -72,6 +90,7 @@ export struct ReadAloudSettingsInfoPanel {
     this.blockedVoiceIds = [];
     this.callbacks.onRefresh();
     this.loadFavoriteVoices();
+    this.syncRemotePresetDraftName();
     this.showPanel();
   }
 
@@ -185,7 +204,19 @@ export struct ReadAloudSettingsInfoPanel {
     if (engineType === ReadAloudEngineType.LEGADO_COMPAT) {
       return '兼容后端开发中，当前请使用系统引擎';
     }
-    return '远程 TTS 当前不可用，请检查 endpoint/model/voice 后点击“刷新”';
+    return '远程 TTS 当前不可用，请检查 endpoint/model/voice/apiKey 后点击“刷新”';
+  }
+
+  private getReadAloudUnavailableDetail(engineType: ReadAloudEngineType): string {
+    if (engineType === ReadAloudEngineType.SYSTEM) {
+      const probeError = ReadAloudAvailability.getLastSystemProbeErrorMessage();
+      return probeError.length > 0 ? `系统 TTS 不可用：${probeError}` : this.getReadAloudUnavailableHint(engineType);
+    }
+    if (engineType === ReadAloudEngineType.REMOTE) {
+      const probeError = ReadAloudAvailability.getLastRemoteProbeErrorMessage();
+      return probeError.length > 0 ? `远程 TTS 不可用：${probeError}` : this.getReadAloudUnavailableHint(engineType);
+    }
+    return this.getReadAloudUnavailableHint(engineType);
   }
 
   private getReadAloudVoiceLabel(voice: ReadAloudVoiceOption): string {
@@ -635,31 +666,336 @@ export struct ReadAloudSettingsInfoPanel {
   }
 
   private updateRemoteSettings(partial: Partial<RemoteReadAloudSettings>): void {
-    const current = this.getRemoteSettings();
-    const merged: RemoteReadAloudSettings = {
-      endpoint: partial.endpoint ?? current.endpoint,
-      apiPath: partial.apiPath ?? current.apiPath,
-      apiKey: partial.apiKey ?? current.apiKey,
-      model: partial.model ?? current.model,
-      voice: partial.voice ?? current.voice,
-      audioFormat: partial.audioFormat ?? current.audioFormat,
-      streamEnabled: partial.streamEnabled ?? current.streamEnabled,
-      prefetchSegments: partial.prefetchSegments ?? current.prefetchSegments,
-      connectTimeoutMs: partial.connectTimeoutMs ?? current.connectTimeoutMs,
-      readTimeoutMs: partial.readTimeoutMs ?? current.readTimeoutMs,
-      maxInputChars: partial.maxInputChars ?? current.maxInputChars,
-      reservedInputChars: partial.reservedInputChars ?? current.reservedInputChars,
-      minChunkChars: partial.minChunkChars ?? current.minChunkChars,
-      targetChunkChars: partial.targetChunkChars ?? current.targetChunkChars,
-      maxChunkChars: partial.maxChunkChars ?? current.maxChunkChars,
-      cacheAudioFiles: partial.cacheAudioFiles ?? current.cacheAudioFiles,
-      autoConcatAudio: partial.autoConcatAudio ?? current.autoConcatAudio,
-      customHeadersJson: partial.customHeadersJson ?? current.customHeadersJson,
-      extraBodyJson: partial.extraBodyJson ?? current.extraBodyJson
-    };
+    const merged = mergeRemoteReadAloudSettings(this.getRemoteSettings(), partial);
     this.callbacks.onChange({
       remote: merged
     });
+  }
+
+  private isMiMoRemoteSettings(): boolean {
+    return isXiaomiMimoRemoteReadAloud(this.getRemoteSettings());
+  }
+
+  private getRemoteStylePrompt(): string {
+    return normalizeRemoteReadAloudStylePrompt(this.getRemoteSettings().stylePrompt);
+  }
+
+  private isRemoteStyleSelected(style: string): boolean {
+    return hasRemoteReadAloudStylePrompt(this.getRemoteStylePrompt(), style);
+  }
+
+  private toggleRemoteStyle(style: string): void {
+    this.updateRemoteSettings({
+      stylePrompt: toggleRemoteReadAloudStylePrompt(this.getRemoteStylePrompt(), style)
+    });
+  }
+
+  private getRemoteVoiceLabel(voice: string): string {
+    if (this.isMiMoRemoteSettings()) {
+      return getXiaomiMimoRemoteReadAloudVoiceLabel(voice);
+    }
+    const normalizedVoice = voice.trim();
+    return normalizedVoice.length > 0 ? normalizedVoice : '默认音色';
+  }
+
+  private syncRemotePresetDraftName(): void {
+    const activePreset = this.getActiveRemotePreset();
+    this.remotePresetDraftName = activePreset ? activePreset.name : '';
+  }
+
+  private getRemoteCurrentConfig(): RemoteReadAloudPresetConfig {
+    return extractRemoteReadAloudPresetConfig(this.getRemoteSettings());
+  }
+
+  private getRemoteConfigWithoutApiKey(config: RemoteReadAloudPresetConfig): RemoteReadAloudPresetConfig {
+    return {
+      endpoint: config.endpoint,
+      apiPath: config.apiPath,
+      apiKey: '',
+      model: config.model,
+      voice: config.voice,
+      stylePrompt: config.stylePrompt,
+      audioFormat: config.audioFormat,
+      streamEnabled: config.streamEnabled,
+      prefetchSegments: config.prefetchSegments,
+      connectTimeoutMs: config.connectTimeoutMs,
+      readTimeoutMs: config.readTimeoutMs,
+      maxInputChars: config.maxInputChars,
+      reservedInputChars: config.reservedInputChars,
+      minChunkChars: config.minChunkChars,
+      targetChunkChars: config.targetChunkChars,
+      maxChunkChars: config.maxChunkChars,
+      cacheAudioFiles: config.cacheAudioFiles,
+      autoConcatAudio: config.autoConcatAudio,
+      customHeadersJson: config.customHeadersJson,
+      extraBodyJson: config.extraBodyJson
+    };
+  }
+
+  private getActiveRemotePreset(): RemoteReadAloudPreset | null {
+    const remote = this.getRemoteSettings();
+    const activePresetId = remote.activePresetId ?? '';
+    if (activePresetId.length <= 0) {
+      return null;
+    }
+    const matched = remote.presets.find((preset: RemoteReadAloudPreset) => preset.id === activePresetId);
+    return matched ?? null;
+  }
+
+  private isCurrentConfigMatchingPreset(preset: RemoteReadAloudPreset): boolean {
+    const current = this.getRemoteCurrentConfig();
+    if (isRemoteReadAloudPresetConfigEqual(current, preset.settings)) {
+      return true;
+    }
+    if (!preset.builtIn) {
+      return false;
+    }
+    return isRemoteReadAloudPresetConfigEqual(
+      this.getRemoteConfigWithoutApiKey(current),
+      this.getRemoteConfigWithoutApiKey(preset.settings)
+    );
+  }
+
+  /*
+  /*
+  /*
+  private getRemotePresetSummary(): string {
+    const activePreset = this.getActiveRemotePreset();
+    if (!activePreset) {
+      return '当前配置尚未保存为预设';
+    }
+    if (this.isCurrentConfigMatchingPreset(activePreset)) {
+      return `当前预设：${activePreset.name}`;
+    }
+    return `当前基于“${activePreset.name}”修改`;
+  }
+
+  private buildRemotePresetDescriptionFromCurrentConfig(): string {
+    const remote = this.getRemoteSettings();
+    if (remote.endpoint.toLowerCase().includes('xiaomimimo.com') || remote.model.toLowerCase() === 'mimo-v2-tts') {
+      return '基于 Xiaomi MiMo-V2-TTS 接口';
+    }
+    return `${remote.model.trim().length > 0 ? remote.model.trim() : '自定义模型'} / ${remote.voice.trim().length > 0 ? remote.voice.trim() : '默认音色'}`;
+  }
+
+  private getRemotePresetSummary(): string {
+    const activePreset = this.getActiveRemotePreset();
+    if (!activePreset) {
+      return '当前配置尚未保存为预设';
+    }
+    if (this.isCurrentConfigMatchingPreset(activePreset)) {
+      return `当前预设：${activePreset.name}`;
+    }
+    return `当前基于“${activePreset.name}”修改`;
+  }
+
+  private buildRemotePresetDescriptionFromCurrentConfig(): string {
+    const remote = this.getRemoteSettings();
+    if (remote.endpoint.toLowerCase().includes('xiaomimimo.com') || remote.model.toLowerCase() === 'mimo-v2-tts') {
+      return '基于 Xiaomi MiMo-V2-TTS 接口';
+    }
+    return `${remote.model.trim().length > 0 ? remote.model.trim() : '自定义模型'} / ${remote.voice.trim().length > 0 ? remote.voice.trim() : '默认音色'}`;
+  }
+
+  private getRemotePresetSummary(): string {
+    const activePreset = this.getActiveRemotePreset();
+    if (!activePreset) {
+      return '当前配置尚未保存为预设';
+    }
+    if (this.isCurrentConfigMatchingPreset(activePreset)) {
+      return `当前预设：${activePreset.name}`;
+    }
+    return `当前基于“${activePreset.name}”修改`;
+  }
+
+  private buildRemotePresetDescriptionFromCurrentConfig(): string {
+    const remote = this.getRemoteSettings();
+    if (remote.endpoint.toLowerCase().includes('xiaomimimo.com') || remote.model.toLowerCase() === 'mimo-v2-tts') {
+      const stylePrompt = this.getRemoteStylePrompt();
+      const voiceLabel = this.getRemoteVoiceLabel(remote.voice);
+      return stylePrompt.length > 0
+        ? `基于 Xiaomi MiMo-V2-TTS 接口 / ${voiceLabel} / ${stylePrompt}`
+        : `基于 Xiaomi MiMo-V2-TTS 接口 / ${voiceLabel}`;
+    }
+    const model = remote.model.trim().length > 0 ? remote.model.trim() : '自定义模型';
+    const voice = this.getRemoteVoiceLabel(remote.voice);
+    return `${model} / ${voice}`;
+  }
+
+  */
+  private getRemotePresetSummary(): string {
+    const activePreset = this.getActiveRemotePreset();
+    if (!activePreset) {
+      return '当前配置尚未保存为预设';
+    }
+    if (this.isCurrentConfigMatchingPreset(activePreset)) {
+      return `当前预设：${activePreset.name}`;
+    }
+    return `当前基于“${activePreset.name}”修改`;
+  }
+
+  private buildRemotePresetDescriptionFromCurrentConfig(): string {
+    const remote = this.getRemoteSettings();
+    if (remote.endpoint.toLowerCase().includes('xiaomimimo.com') || remote.model.toLowerCase() === 'mimo-v2-tts') {
+      const stylePrompt = this.getRemoteStylePrompt();
+      const voiceLabel = this.getRemoteVoiceLabel(remote.voice);
+      return stylePrompt.length > 0
+        ? `基于 Xiaomi MiMo-V2-TTS 接口 / ${voiceLabel} / ${stylePrompt}`
+        : `基于 Xiaomi MiMo-V2-TTS 接口 / ${voiceLabel}`;
+    }
+    const model = remote.model.trim().length > 0 ? remote.model.trim() : '自定义模型';
+    const voice = this.getRemoteVoiceLabel(remote.voice);
+    return `${model} / ${voice}`;
+  }
+
+  private generateRemotePresetId(): string {
+    return `remote_preset_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+  }
+
+  private canEditActiveRemotePreset(): boolean {
+    const activePreset = this.getActiveRemotePreset();
+    return activePreset !== null && activePreset.builtIn !== true;
+  }
+
+  private buildRemoteSettingsUpdate(
+    config: RemoteReadAloudPresetConfig,
+    activePresetId: string,
+    presets?: RemoteReadAloudPreset[]
+  ): Partial<RemoteReadAloudSettings> {
+    const update: Partial<RemoteReadAloudSettings> = {
+      endpoint: config.endpoint,
+      apiPath: config.apiPath,
+      apiKey: config.apiKey,
+      model: config.model,
+      voice: config.voice,
+      stylePrompt: config.stylePrompt,
+      audioFormat: config.audioFormat,
+      streamEnabled: config.streamEnabled,
+      prefetchSegments: config.prefetchSegments,
+      connectTimeoutMs: config.connectTimeoutMs,
+      readTimeoutMs: config.readTimeoutMs,
+      maxInputChars: config.maxInputChars,
+      reservedInputChars: config.reservedInputChars,
+      minChunkChars: config.minChunkChars,
+      targetChunkChars: config.targetChunkChars,
+      maxChunkChars: config.maxChunkChars,
+      cacheAudioFiles: config.cacheAudioFiles,
+      autoConcatAudio: config.autoConcatAudio,
+      customHeadersJson: config.customHeadersJson,
+      extraBodyJson: config.extraBodyJson,
+      activePresetId
+    };
+    if (presets !== undefined) {
+      update.presets = presets;
+    }
+    return update;
+  }
+
+  private saveRemotePresetAsNew(): void {
+    const name = this.remotePresetDraftName.trim().length > 0 ? this.remotePresetDraftName.trim() : '新的远程预设';
+    const current = this.getRemoteSettings();
+    const nextPreset: RemoteReadAloudPreset = {
+      id: this.generateRemotePresetId(),
+      name,
+      description: this.buildRemotePresetDescriptionFromCurrentConfig(),
+      builtIn: false,
+      settings: this.getRemoteCurrentConfig()
+    };
+    const nextPresets = current.presets.slice();
+    nextPresets.push(nextPreset);
+    this.updateRemoteSettings(this.buildRemoteSettingsUpdate(nextPreset.settings, nextPreset.id, nextPresets));
+    this.remotePresetDraftName = name;
+    this.remotePresetStatusMessage = `已保存预设：${name}`;
+  }
+
+  private updateCurrentRemotePreset(): void {
+    const activePreset = this.getActiveRemotePreset();
+    if (!activePreset || activePreset.builtIn) {
+      this.saveRemotePresetAsNew();
+      return;
+    }
+    const name = this.remotePresetDraftName.trim().length > 0 ? this.remotePresetDraftName.trim() : activePreset.name;
+    const nextPresets = this.getRemoteSettings().presets.map((preset: RemoteReadAloudPreset) => {
+      if (preset.id !== activePreset.id) {
+        return preset;
+      }
+      return {
+        id: preset.id,
+        name,
+        description: this.buildRemotePresetDescriptionFromCurrentConfig(),
+        builtIn: false,
+        settings: this.getRemoteCurrentConfig()
+      };
+    });
+    this.updateRemoteSettings({
+      activePresetId: activePreset.id,
+      presets: nextPresets
+    });
+    this.remotePresetDraftName = name;
+    this.remotePresetStatusMessage = `已更新预设：${name}`;
+  }
+
+  private applyRemotePreset(preset: RemoteReadAloudPreset): void {
+    const currentRemote = this.getRemoteSettings();
+    const presetApiKey = preset.settings.apiKey ?? '';
+    const shouldPreserveApiKey = preset.builtIn === true &&
+      presetApiKey.trim().length <= 0 &&
+      currentRemote.apiKey.trim().length > 0;
+    const appliedConfig: RemoteReadAloudPresetConfig = {
+      endpoint: preset.settings.endpoint,
+      apiPath: preset.settings.apiPath,
+      apiKey: shouldPreserveApiKey ? currentRemote.apiKey : presetApiKey,
+      model: preset.settings.model,
+      voice: preset.settings.voice,
+      stylePrompt: preset.settings.stylePrompt,
+      audioFormat: preset.settings.audioFormat,
+      streamEnabled: preset.settings.streamEnabled,
+      prefetchSegments: preset.settings.prefetchSegments,
+      connectTimeoutMs: preset.settings.connectTimeoutMs,
+      readTimeoutMs: preset.settings.readTimeoutMs,
+      maxInputChars: preset.settings.maxInputChars,
+      reservedInputChars: preset.settings.reservedInputChars,
+      minChunkChars: preset.settings.minChunkChars,
+      targetChunkChars: preset.settings.targetChunkChars,
+      maxChunkChars: preset.settings.maxChunkChars,
+      cacheAudioFiles: preset.settings.cacheAudioFiles,
+      autoConcatAudio: preset.settings.autoConcatAudio,
+      customHeadersJson: preset.settings.customHeadersJson,
+      extraBodyJson: preset.settings.extraBodyJson
+    };
+    if (shouldPreserveApiKey) {
+      logger.info(TAG, `应用内置远程预设时保留现有 API Key: presetId=${preset.id}, keyLength=${currentRemote.apiKey.length}`);
+    }
+    this.updateRemoteSettings(this.buildRemoteSettingsUpdate(appliedConfig, preset.id));
+    this.remotePresetDraftName = preset.name;
+    this.remotePresetStatusMessage = `已应用预设：${preset.name}`;
+  }
+
+  private deleteCurrentRemotePreset(): void {
+    const activePreset = this.getActiveRemotePreset();
+    if (!activePreset) {
+      this.remotePresetStatusMessage = '当前没有可删除的预设';
+      return;
+    }
+    if (activePreset.builtIn) {
+      this.remotePresetStatusMessage = '内置预设不可删除';
+      return;
+    }
+    const current = this.getRemoteSettings();
+    const nextPresets = current.presets.filter((preset: RemoteReadAloudPreset) => preset.id !== activePreset.id);
+    const fallbackPreset = nextPresets.find((preset: RemoteReadAloudPreset) => preset.id === DEFAULT_REMOTE_READ_ALOUD_PRESET_ID) ??
+      (nextPresets.length > 0 ? nextPresets[0] : null);
+    if (fallbackPreset) {
+      this.updateRemoteSettings(this.buildRemoteSettingsUpdate(fallbackPreset.settings, fallbackPreset.id, nextPresets));
+      this.remotePresetDraftName = fallbackPreset.name;
+    } else {
+      this.updateRemoteSettings({
+        activePresetId: '',
+        presets: nextPresets
+      });
+      this.remotePresetDraftName = '';
+    }
+    this.remotePresetStatusMessage = `已删除预设：${activePreset.name}`;
   }
 
   private parseIntegerInput(text: string, fallback: number, min: number, max: number): number {
@@ -760,6 +1096,641 @@ export struct ReadAloudSettingsInfoPanel {
   }
 
   @Builder
+  private buildRemoteChoiceChip(label: string, selected: boolean, onClick: () => void) {
+    Button() {
+      Row({ space: 6 }) {
+        if (selected) {
+          Text('✓')
+            .fontSize(10)
+            .fontFamily(this.appFontFamily)
+            .fontColor(Color.White)
+            .width(16)
+            .height(16)
+            .textAlign(TextAlign.Center)
+            .backgroundColor($r('app.color.accent_primary'))
+            .borderRadius(8)
+        }
+        Text(label)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(selected ? $r('app.color.accent_primary') : $r('app.color.text_primary'))
+      }
+    }
+      .height(34)
+      .padding({ left: selected ? 10 : 12, right: 12 })
+      .backgroundColor(selected ? $r('app.color.accent_background') : $r('app.color.background_secondary'))
+      .border({
+        width: 1,
+        color: selected ? $r('app.color.accent_primary') : $r('app.color.divider')
+      })
+      .borderRadius(17)
+      .margin({ right: 8, bottom: 8 })
+      .onClick(() => {
+        onClick();
+      })
+  }
+
+  @Builder
+  private buildMiMoRemoteVoiceSelector() {
+    Column({ space: 8 }) {
+      Text('MiMo 预设音色')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      Text(`当前选择：${getXiaomiMimoRemoteReadAloudVoiceLabel(this.getRemoteSettings().voice)}`)
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.accent_primary'))
+        .width('100%')
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
+        ForEach(XIAOMI_MIMO_REMOTE_READ_ALOUD_VOICE_OPTIONS, (option: RemoteReadAloudChoiceOption) => {
+          this.buildRemoteChoiceChip(
+            option.label,
+            this.getRemoteSettings().voice.trim() === option.value,
+            () => this.updateRemoteSettings({ voice: option.value })
+          )
+        }, (option: RemoteReadAloudChoiceOption) => `mimo_voice_${option.value}`)
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildMiMoRemoteStyleSelector() {
+    Column({ space: 8 }) {
+      Text(`MiMo 风格控制${this.getRemoteStyleSelectionCount() > 0 ? ` · 已选 ${this.getRemoteStyleSelectionCount()}` : ''}`)
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      Text('可直接多选多个风格，也可手动输入；发送时会自动转成 <style>风格...</style> 正文。')
+        .fontSize(11)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      if (this.getRemoteStylePrompt().length > 0) {
+        Text(`已选风格：${this.getRemoteStylePrompt()}`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.accent_primary'))
+          .width('100%')
+      }
+      ForEach(XIAOMI_MIMO_REMOTE_READ_ALOUD_STYLE_CATEGORIES, (category: RemoteReadAloudStyleCategory) => {
+        Column({ space: 6 }) {
+          Text(category.label)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
+            ForEach(category.styles, (style: string) => {
+              this.buildRemoteChoiceChip(style, this.isRemoteStyleSelected(style), () => {
+                this.toggleRemoteStyle(style);
+              })
+            }, (style: string) => `mimo_style_${category.label}_${style}`)
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }, (category: RemoteReadAloudStyleCategory) => `mimo_style_category_${category.label}`)
+      this.buildRemoteTextInput(
+        '自定义风格',
+        this.getRemoteStylePrompt(),
+        '如 开心 东北话',
+        (value: string) => this.updateRemoteSettings({ stylePrompt: value })
+      )
+      if (this.getRemoteStylePrompt().length > 0) {
+        Text(`实际发送：<style>${this.getRemoteStylePrompt()}</style>待合成内容`)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.accent_primary'))
+          .width('100%')
+      }
+    }
+    .width('100%')
+  }
+
+  private getCurrentEngineLabel(): string {
+    if (this.settings.engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+      return '兼容渠道';
+    }
+    if (this.settings.engineType === ReadAloudEngineType.REMOTE) {
+      return '远程 TTS';
+    }
+    return '系统 TTS';
+  }
+
+  private getCurrentEngineAvailabilityText(): string {
+    return this.isReadAloudEngineAvailable(this.settings.engineType) ? '可用' : '需配置';
+  }
+
+  private getCurrentEngineAvailabilityColor() {
+    return this.isReadAloudEngineAvailable(this.settings.engineType)
+      ? '#16A34A'
+      : '#F59E0B';
+  }
+
+  private getRemoteStyleSelectionCount(): number {
+    return splitRemoteReadAloudStylePrompt(this.getRemoteStylePrompt()).length;
+  }
+
+  @Builder
+  private buildEngineTabBar() {
+    Row({ space: 0 }) {
+      ForEach(READ_ALOUD_ENGINE_OPTIONS, (item: ReadAloudEngineOption) => {
+        Row({ space: 6 }) {
+          Text(item.label)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(
+              this.settings.engineType === item.engine
+                ? $r('app.color.text_primary')
+                : $r('app.color.text_secondary')
+            )
+          Circle()
+            .width(6)
+            .height(6)
+            .fill(this.isReadAloudEngineAvailable(item.engine) ? '#16A34A' : '#94A3B8')
+        }
+        .padding({ left: 12, right: 12, top: 0, bottom: 0 })
+        .height(35)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(
+          this.settings.engineType === item.engine
+            ? $r('app.color.background_primary')
+            : $r('app.color.background_secondary')
+        )
+        .border({
+          width: {
+            top: this.settings.engineType === item.engine ? 2 : 0,
+            bottom: 0,
+            left: 0,
+            right: 0
+          },
+          color: $r('app.color.accent_primary')
+        })
+        .onClick(() => {
+          if (this.settings.engineType === item.engine) {
+            return;
+          }
+          logger.info(TAG, `切换听书渠道页签: ${this.settings.engineType} -> ${item.engine}`);
+          this.finishPreviewSession(this.previewSessionToken, '', false);
+          this.previewStatusMessage = '';
+          this.callbacks.onChange({ engineType: item.engine });
+        })
+        .animation({ duration: 150 })
+      }, (item: ReadAloudEngineOption) => `engine_tab_${item.engine}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildCurrentEngineStatusCard() {
+    Column({ space: 6 }) {
+      Row({ space: 8 }) {
+        Text(`当前渠道：${this.getCurrentEngineLabel()}`)
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+        Text(this.getCurrentEngineAvailabilityText())
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.getCurrentEngineAvailabilityColor())
+      }
+      .width('100%')
+
+      if (!this.isReadAloudEngineAvailable(this.settings.engineType)) {
+        Text(this.getReadAloudUnavailableDetail(this.settings.engineType))
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      } else if (this.statusMessage.length > 0) {
+        Text(this.statusMessage)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      }
+
+      if (this.previewStatusMessage.length > 0) {
+        Text(this.previewStatusMessage)
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.accent_primary'))
+          .width('100%')
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor($r('app.color.background_secondary'))
+    .borderRadius(12)
+  }
+
+  @Builder
+  private buildCompatEngineSection() {
+    Column({ space: 8 }) {
+      Text('兼容渠道')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      Text('该渠道当前主要用于兼容后续适配，暂不提供系统音色预览与远程参数编辑。若只是想配置 Xiaomi MiMo，请切换到“远程”标签。')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildSystemEngineSection() {
+    Column({ space: 6 }) {
+      Text('可用音色（预览）')
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      if (this.voiceOptions.length > 0) {
+        Row({ space: 8 }) {
+          Text('当前音色')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_secondary'))
+
+          Text(this.hasSelectedVoice() ? '自定义' : '系统默认')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.accent_primary'))
+        }
+        .width('100%')
+
+        Button('跟随系统默认')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .height(32)
+          .width('100%')
+          .backgroundColor(this.hasSelectedVoice() ? $r('app.color.background_secondary') : $r('app.color.accent_primary'))
+          .fontColor(this.hasSelectedVoice() ? $r('app.color.text_primary') : Color.White)
+          .onClick(() => {
+            this.resetVoiceSelectionToSystemDefault();
+            this.previewStatusMessage = '';
+          })
+
+        Row({ space: 8 }) {
+          Button(this.onlyShowFavorites ? '显示全部音色' : '仅看收藏')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .height(30)
+            .backgroundColor(this.onlyShowFavorites ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+            .fontColor(this.onlyShowFavorites ? Color.White : $r('app.color.text_primary'))
+            .onClick(() => {
+              logger.info(TAG, `切换收藏筛选模式: onlyFavorites=${!this.onlyShowFavorites}`);
+              this.onlyShowFavorites = !this.onlyShowFavorites;
+            })
+
+          Text(`收藏 ${this.favoriteVoiceIds.length}`)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_secondary'))
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+
+        this.buildVoiceFilterRow('语种筛选', this.getVoiceLanguageOptions(), this.voiceFilterLanguage, (value: string) => {
+          this.voiceFilterLanguage = value;
+          logger.info(TAG, `语种筛选已更新: ${value}`);
+        })
+        this.buildVoiceFilterRow('性别筛选', this.getVoiceGenderOptions(), this.voiceFilterGender, (value: string) => {
+          this.voiceFilterGender = value;
+          logger.info(TAG, `性别筛选已更新: ${value}`);
+        })
+        this.buildVoiceFilterRow('风格筛选', this.getVoiceStyleOptions(), this.voiceFilterStyle, (value: string) => {
+          this.voiceFilterStyle = value;
+          logger.info(TAG, `风格筛选已更新: ${value}`);
+        })
+
+        ForEach(
+          this.getFilteredVoiceOptions(),
+          (voice: ReadAloudVoiceOption) => {
+            Row({ space: 8 }) {
+              Button(this.getReadAloudVoiceLabel(voice))
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .height(36)
+                .layoutWeight(1)
+                .backgroundColor(this.isVoiceSelected(voice) ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                .fontColor(this.isVoiceSelected(voice) ? Color.White : $r('app.color.text_primary'))
+                .onClick(() => {
+                  this.selectVoiceOption(voice);
+                  this.previewStatusMessage = '';
+                })
+
+              Button(this.previewVoiceId === voice.id ? '试听中' : '试听')
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .height(36)
+                .width(62)
+                .backgroundColor(this.previewVoiceId === voice.id ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                .fontColor(this.previewVoiceId === voice.id ? Color.White : $r('app.color.text_primary'))
+                .enabled(this.previewVoiceId.length <= 0 || this.previewVoiceId === voice.id)
+                .onClick(() => {
+                  void this.previewVoiceOption(voice);
+                })
+
+              Button(this.isVoiceFavorited(voice.id) ? '已藏' : '收藏')
+                .fontSize(11)
+                .fontFamily(this.appFontFamily)
+                .height(36)
+                .width(62)
+                .backgroundColor(this.isVoiceFavorited(voice.id) ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
+                .fontColor(this.isVoiceFavorited(voice.id) ? Color.White : $r('app.color.text_primary'))
+                .onClick(() => {
+                  this.toggleFavoriteVoice(voice);
+                })
+            }
+            .width('100%')
+          },
+          (voice: ReadAloudVoiceOption) => voice.id
+        )
+
+        if (this.getFilteredVoiceOptions().length <= 0) {
+          Text('当前筛选条件下没有可用音色，请调整筛选条件')
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+        }
+      } else {
+        Text('系统 TTS 可直接朗读；当前未返回音色列表，可在系统语音服务中下载音色后重试')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      }
+    }
+    .width('100%')
+    .padding({ top: 4, bottom: 4 })
+  }
+
+  @Builder
+  private buildRemoteEngineSection() {
+    Column({ space: 12 }) {
+      Column({ space: 10 }) {
+        Text('远程 TTS 预设')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+        Text(this.getRemotePresetSummary())
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+
+        ForEach(
+          this.getRemoteSettings().presets,
+          (preset: RemoteReadAloudPreset) => {
+            Column({ space: 6 }) {
+              Button(
+                `${preset.name}${this.getRemoteSettings().activePresetId === preset.id ? ' · 当前' : ''}`
+              )
+                .fontSize(12)
+                .fontFamily(this.appFontFamily)
+                .height(36)
+                .width('100%')
+                .backgroundColor(
+                  this.getRemoteSettings().activePresetId === preset.id
+                    ? $r('app.color.accent_primary')
+                    : $r('app.color.background_secondary')
+                )
+                .fontColor(
+                  this.getRemoteSettings().activePresetId === preset.id
+                    ? Color.White
+                    : $r('app.color.text_primary')
+                )
+                .onClick(() => {
+                  this.applyRemotePreset(preset);
+                })
+
+              if (preset.description.length > 0) {
+                Text(preset.description)
+                  .fontSize(11)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor($r('app.color.text_secondary'))
+                  .width('100%')
+              }
+            }
+            .width('100%')
+          },
+          (preset: RemoteReadAloudPreset) => preset.id
+        )
+
+        this.buildRemoteTextInput(
+          '预设名称',
+          this.remotePresetDraftName,
+          '输入预设名称后保存',
+          (value: string) => {
+            this.remotePresetDraftName = value;
+          }
+        )
+
+        Row({ space: 8 }) {
+          Button('保存为新预设')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .height(34)
+            .layoutWeight(1)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
+            .onClick(() => {
+              this.saveRemotePresetAsNew();
+            })
+
+          Button('更新当前预设')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .height(34)
+            .layoutWeight(1)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
+            .enabled(this.canEditActiveRemotePreset())
+            .onClick(() => {
+              this.updateCurrentRemotePreset();
+            })
+
+          Button('删除当前预设')
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .height(34)
+            .layoutWeight(1)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
+            .enabled(this.canEditActiveRemotePreset())
+            .onClick(() => {
+              this.deleteCurrentRemotePreset();
+            })
+        }
+        .width('100%')
+
+        if (this.remotePresetStatusMessage.length > 0) {
+          Text(this.remotePresetStatusMessage)
+            .fontSize(11)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.accent_primary'))
+            .width('100%')
+        }
+      }
+      .width('100%')
+      .padding({ top: 4, bottom: 4 })
+
+      Divider().color($r('app.color.divider'))
+
+      Column({ space: 10 }) {
+        Text('远程 TTS 参数')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+        Text('以下配置会持久化保存，切换到“远程”标签时立即生效')
+          .fontSize(11)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+
+        this.buildRemoteTextInput(
+          'Endpoint',
+          this.getRemoteSettings().endpoint,
+          'https://api.xiaomimimo.com',
+          (value: string) => this.updateRemoteSettings({ endpoint: value.trim() })
+        )
+        this.buildRemoteTextInput(
+          'API Path',
+          this.getRemoteSettings().apiPath,
+          '/v1/chat/completions',
+          (value: string) => this.updateRemoteSettings({ apiPath: value.trim() })
+        )
+        this.buildRemoteTextInput(
+          'API Key',
+          this.getRemoteSettings().apiKey,
+          '请输入 Xiaomi MiMo API Key',
+          (value: string) => this.updateRemoteSettings({ apiKey: value })
+        )
+        this.buildRemoteTextInput(
+          'Model',
+          this.getRemoteSettings().model,
+          'mimo-v2-tts',
+          (value: string) => this.updateRemoteSettings({ model: value.trim() })
+        )
+        if (this.isMiMoRemoteSettings()) {
+          this.buildMiMoRemoteVoiceSelector()
+          this.buildMiMoRemoteStyleSelector()
+        }
+        this.buildRemoteTextInput(
+          'Voice',
+          this.getRemoteSettings().voice,
+          this.isMiMoRemoteSettings() ? 'mimo_default / default_zh / default_en' : '输入 voice 参数',
+          (value: string) => this.updateRemoteSettings({ voice: value.trim() })
+        )
+        this.buildRemoteTextInput(
+          'Audio Format',
+          this.getRemoteSettings().audioFormat,
+          'wav',
+          (value: string) => this.updateRemoteSettings({ audioFormat: value.trim() })
+        )
+
+        this.buildToggleRow('启用流式响应', this.getRemoteSettings().streamEnabled, (value: boolean) => {
+          this.updateRemoteSettings({ streamEnabled: value });
+        })
+        this.buildToggleRow('缓存音频文件', this.getRemoteSettings().cacheAudioFiles, (value: boolean) => {
+          this.updateRemoteSettings({ cacheAudioFiles: value });
+        })
+        this.buildToggleRow('章节自动拼接', this.getRemoteSettings().autoConcatAudio, (value: boolean) => {
+          this.updateRemoteSettings({ autoConcatAudio: value });
+        })
+
+        this.buildRemoteNumberInput(
+          '预取分片数量',
+          this.getRemoteSettings().prefetchSegments,
+          1,
+          8,
+          (value: number) => this.updateRemoteSettings({ prefetchSegments: value })
+        )
+        this.buildRemoteNumberInput(
+          '连接超时(ms)',
+          this.getRemoteSettings().connectTimeoutMs,
+          3000,
+          120000,
+          (value: number) => this.updateRemoteSettings({ connectTimeoutMs: value })
+        )
+        this.buildRemoteNumberInput(
+          '读取超时(ms)',
+          this.getRemoteSettings().readTimeoutMs,
+          5000,
+          300000,
+          (value: number) => this.updateRemoteSettings({ readTimeoutMs: value })
+        )
+        this.buildRemoteNumberInput(
+          '最大输入字符',
+          this.getRemoteSettings().maxInputChars,
+          256,
+          12000,
+          (value: number) => this.updateRemoteSettings({ maxInputChars: value })
+        )
+        this.buildRemoteNumberInput(
+          '保留字符预算',
+          this.getRemoteSettings().reservedInputChars,
+          0,
+          2000,
+          (value: number) => this.updateRemoteSettings({ reservedInputChars: value })
+        )
+        this.buildRemoteNumberInput(
+          '最小分片字符',
+          this.getRemoteSettings().minChunkChars,
+          32,
+          5000,
+          (value: number) => this.updateRemoteSettings({ minChunkChars: value })
+        )
+        this.buildRemoteNumberInput(
+          '目标分片字符',
+          this.getRemoteSettings().targetChunkChars,
+          64,
+          7000,
+          (value: number) => this.updateRemoteSettings({ targetChunkChars: value })
+        )
+        this.buildRemoteNumberInput(
+          '最大分片字符',
+          this.getRemoteSettings().maxChunkChars,
+          80,
+          9000,
+          (value: number) => this.updateRemoteSettings({ maxChunkChars: value })
+        )
+
+        this.buildRemoteJsonInput(
+          '自定义请求头(JSON)',
+          this.getRemoteSettings().customHeadersJson,
+          '{"X-Client":"ManXia"}',
+          (value: string) => this.updateRemoteSettings({ customHeadersJson: value })
+        )
+        this.buildRemoteJsonInput(
+          '额外请求体(JSON)',
+          this.getRemoteSettings().extraBodyJson,
+          '{"temperature":0.6}',
+          (value: string) => this.updateRemoteSettings({ extraBodyJson: value })
+        )
+      }
+      .width('100%')
+      .padding({ top: 4, bottom: 4 })
+    }
+    .width('100%')
+  }
+
+  @Builder
   private buildPanelContent() {
     Column() {
       Row() {
@@ -803,337 +1774,16 @@ export struct ReadAloudSettingsInfoPanel {
 
       Scroll() {
         Column({ space: 12 }) {
-          Column({ space: 8 }) {
-            Text('朗读引擎')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor($r('app.color.text_secondary'))
-              .width('100%')
+          this.buildEngineTabBar()
+          this.buildCurrentEngineStatusCard()
 
-            Row({ space: 8 }) {
-              ForEach(READ_ALOUD_ENGINE_OPTIONS, (item: ReadAloudEngineOption) => {
-                Button(item.label)
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .height(32)
-                  .layoutWeight(1)
-                  .backgroundColor(
-                    this.settings.engineType === item.engine
-                      ? $r('app.color.accent_primary')
-                      : $r('app.color.background_secondary')
-                  )
-                  .fontColor(
-                    this.settings.engineType === item.engine
-                      ? Color.White
-                      : $r('app.color.text_primary')
-                  )
-                  .opacity(this.isReadAloudEngineAvailable(item.engine) ? 1 : 0.45)
-                  .onClick(() => {
-                    if (!this.isReadAloudEngineAvailable(item.engine)) {
-                      logger.warn(TAG, `引擎切换被忽略：目标引擎不可用, engine=${item.engine}`);
-                      return;
-                    }
-                    logger.info(TAG, `切换朗读引擎: ${this.settings.engineType} -> ${item.engine}`);
-                    this.finishPreviewSession(this.previewSessionToken, '', false);
-                    this.callbacks.onChange({ engineType: item.engine });
-                  })
-              })
-            }
-            .width('100%')
-
-            if (!this.isReadAloudEngineAvailable(this.settings.engineType)) {
-              Text(this.getReadAloudUnavailableHint(this.settings.engineType))
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor($r('app.color.text_secondary'))
-                .width('100%')
-            }
+          if (this.settings.engineType === ReadAloudEngineType.SYSTEM) {
+            this.buildSystemEngineSection()
+          } else if (this.settings.engineType === ReadAloudEngineType.LEGADO_COMPAT) {
+            this.buildCompatEngineSection()
+          } else {
+            this.buildRemoteEngineSection()
           }
-          .width('100%')
-
-          Column({ space: 6 }) {
-            Text('可用音色（预览）')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor($r('app.color.text_secondary'))
-              .width('100%')
-
-            if (this.statusMessage.length > 0) {
-              Text(this.statusMessage)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor($r('app.color.text_secondary'))
-                .width('100%')
-            }
-            if (this.previewStatusMessage.length > 0) {
-              Text(this.previewStatusMessage)
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor($r('app.color.accent_primary'))
-                .width('100%')
-            }
-
-            if (this.settings.engineType !== ReadAloudEngineType.SYSTEM) {
-              Text('当前为非系统引擎，音色切换仅支持系统 TTS')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor($r('app.color.text_secondary'))
-                .width('100%')
-            } else if (this.voiceOptions.length > 0) {
-              Row({ space: 8 }) {
-                Text('当前音色')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor($r('app.color.text_secondary'))
-
-                Text(this.hasSelectedVoice() ? '自定义' : '系统默认')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor($r('app.color.accent_primary'))
-              }
-              .width('100%')
-
-              Button('跟随系统默认')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .height(32)
-                .width('100%')
-                .backgroundColor(this.hasSelectedVoice() ? $r('app.color.background_secondary') : $r('app.color.accent_primary'))
-                .fontColor(this.hasSelectedVoice() ? $r('app.color.text_primary') : Color.White)
-                .onClick(() => {
-                  this.resetVoiceSelectionToSystemDefault();
-                  this.previewStatusMessage = '';
-                })
-
-              Row({ space: 8 }) {
-                Button(this.onlyShowFavorites ? '显示全部音色' : '仅看收藏')
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .height(30)
-                  .backgroundColor(this.onlyShowFavorites ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
-                  .fontColor(this.onlyShowFavorites ? Color.White : $r('app.color.text_primary'))
-                  .onClick(() => {
-                    logger.info(TAG, `切换收藏筛选模式: onlyFavorites=${!this.onlyShowFavorites}`);
-                    this.onlyShowFavorites = !this.onlyShowFavorites;
-                  })
-
-                Text(`收藏 ${this.favoriteVoiceIds.length}`)
-                  .fontSize(11)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor($r('app.color.text_secondary'))
-                  .layoutWeight(1)
-                  .textAlign(TextAlign.End)
-              }
-              .width('100%')
-
-              this.buildVoiceFilterRow('语种筛选', this.getVoiceLanguageOptions(), this.voiceFilterLanguage, (value: string) => {
-                this.voiceFilterLanguage = value;
-                logger.info(TAG, `语种筛选已更新: ${value}`);
-              })
-              this.buildVoiceFilterRow('性别筛选', this.getVoiceGenderOptions(), this.voiceFilterGender, (value: string) => {
-                this.voiceFilterGender = value;
-                logger.info(TAG, `性别筛选已更新: ${value}`);
-              })
-              this.buildVoiceFilterRow('风格筛选', this.getVoiceStyleOptions(), this.voiceFilterStyle, (value: string) => {
-                this.voiceFilterStyle = value;
-                logger.info(TAG, `风格筛选已更新: ${value}`);
-              })
-
-              ForEach(
-                this.getFilteredVoiceOptions(),
-                (voice: ReadAloudVoiceOption) => {
-                  Row({ space: 8 }) {
-                    Button(this.getReadAloudVoiceLabel(voice))
-                      .fontSize(12)
-                      .fontFamily(this.appFontFamily)
-                      .height(36)
-                      .layoutWeight(1)
-                      .backgroundColor(this.isVoiceSelected(voice) ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
-                      .fontColor(this.isVoiceSelected(voice) ? Color.White : $r('app.color.text_primary'))
-                      .onClick(() => {
-                        this.selectVoiceOption(voice);
-                        this.previewStatusMessage = '';
-                      })
-
-                    Button(this.previewVoiceId === voice.id ? '试听中' : '试听')
-                      .fontSize(11)
-                      .fontFamily(this.appFontFamily)
-                      .height(36)
-                      .width(62)
-                      .backgroundColor(this.previewVoiceId === voice.id ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
-                      .fontColor(this.previewVoiceId === voice.id ? Color.White : $r('app.color.text_primary'))
-                      .enabled(this.previewVoiceId.length <= 0 || this.previewVoiceId === voice.id)
-                      .onClick(() => {
-                        void this.previewVoiceOption(voice);
-                      })
-
-                    Button(this.isVoiceFavorited(voice.id) ? '已藏' : '收藏')
-                      .fontSize(11)
-                      .fontFamily(this.appFontFamily)
-                      .height(36)
-                      .width(62)
-                      .backgroundColor(this.isVoiceFavorited(voice.id) ? $r('app.color.accent_primary') : $r('app.color.background_secondary'))
-                      .fontColor(this.isVoiceFavorited(voice.id) ? Color.White : $r('app.color.text_primary'))
-                      .onClick(() => {
-                        this.toggleFavoriteVoice(voice);
-                      })
-                  }
-                    .width('100%')
-                },
-                (voice: ReadAloudVoiceOption) => voice.id
-              )
-
-              if (this.getFilteredVoiceOptions().length <= 0) {
-                Text('当前筛选条件下没有可用音色，请调整筛选条件')
-                  .fontSize(12)
-                  .fontFamily(this.appFontFamily)
-                  .fontColor($r('app.color.text_secondary'))
-                  .width('100%')
-              }
-            } else {
-              Text('系统 TTS 可直接朗读；当前未返回音色列表，可在系统语音服务中下载音色后重试')
-                .fontSize(12)
-                .fontFamily(this.appFontFamily)
-                .fontColor($r('app.color.text_secondary'))
-                .width('100%')
-            }
-          }
-          .width('100%')
-          .padding({ top: 4, bottom: 4 })
-
-          Divider().color($r('app.color.divider'))
-
-          Column({ space: 10 }) {
-            Text('远程 TTS 参数')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor($r('app.color.text_secondary'))
-              .width('100%')
-            Text('以下配置会持久化保存，切换到“远程”引擎时生效')
-              .fontSize(11)
-              .fontFamily(this.appFontFamily)
-              .fontColor($r('app.color.text_secondary'))
-              .width('100%')
-
-            this.buildRemoteTextInput(
-              'Endpoint',
-              this.getRemoteSettings().endpoint,
-              'https://api.example.com',
-              (value: string) => this.updateRemoteSettings({ endpoint: value.trim() })
-            )
-            this.buildRemoteTextInput(
-              'API Path',
-              this.getRemoteSettings().apiPath,
-              '/v1/audio/speech',
-              (value: string) => this.updateRemoteSettings({ apiPath: value.trim() })
-            )
-            this.buildRemoteTextInput(
-              'API Key',
-              this.getRemoteSettings().apiKey,
-              'Bearer Token',
-              (value: string) => this.updateRemoteSettings({ apiKey: value })
-            )
-            this.buildRemoteTextInput(
-              'Model',
-              this.getRemoteSettings().model,
-              'gpt-4o-mini-tts',
-              (value: string) => this.updateRemoteSettings({ model: value.trim() })
-            )
-            this.buildRemoteTextInput(
-              'Voice',
-              this.getRemoteSettings().voice,
-              'alloy',
-              (value: string) => this.updateRemoteSettings({ voice: value.trim() })
-            )
-            this.buildRemoteTextInput(
-              'Audio Format',
-              this.getRemoteSettings().audioFormat,
-              'mp3/wav',
-              (value: string) => this.updateRemoteSettings({ audioFormat: value.trim() })
-            )
-
-            this.buildToggleRow('启用流式响应', this.getRemoteSettings().streamEnabled, (value: boolean) => {
-              this.updateRemoteSettings({ streamEnabled: value });
-            })
-            this.buildToggleRow('缓存音频文件', this.getRemoteSettings().cacheAudioFiles, (value: boolean) => {
-              this.updateRemoteSettings({ cacheAudioFiles: value });
-            })
-            this.buildToggleRow('章节自动拼接', this.getRemoteSettings().autoConcatAudio, (value: boolean) => {
-              this.updateRemoteSettings({ autoConcatAudio: value });
-            })
-
-            this.buildRemoteNumberInput(
-              '预取分片数量',
-              this.getRemoteSettings().prefetchSegments,
-              1,
-              8,
-              (value: number) => this.updateRemoteSettings({ prefetchSegments: value })
-            )
-            this.buildRemoteNumberInput(
-              '连接超时(ms)',
-              this.getRemoteSettings().connectTimeoutMs,
-              3000,
-              120000,
-              (value: number) => this.updateRemoteSettings({ connectTimeoutMs: value })
-            )
-            this.buildRemoteNumberInput(
-              '读取超时(ms)',
-              this.getRemoteSettings().readTimeoutMs,
-              5000,
-              300000,
-              (value: number) => this.updateRemoteSettings({ readTimeoutMs: value })
-            )
-            this.buildRemoteNumberInput(
-              '最大输入字符',
-              this.getRemoteSettings().maxInputChars,
-              256,
-              12000,
-              (value: number) => this.updateRemoteSettings({ maxInputChars: value })
-            )
-            this.buildRemoteNumberInput(
-              '保留字符预算',
-              this.getRemoteSettings().reservedInputChars,
-              0,
-              2000,
-              (value: number) => this.updateRemoteSettings({ reservedInputChars: value })
-            )
-            this.buildRemoteNumberInput(
-              '最小分片字符',
-              this.getRemoteSettings().minChunkChars,
-              32,
-              5000,
-              (value: number) => this.updateRemoteSettings({ minChunkChars: value })
-            )
-            this.buildRemoteNumberInput(
-              '目标分片字符',
-              this.getRemoteSettings().targetChunkChars,
-              64,
-              7000,
-              (value: number) => this.updateRemoteSettings({ targetChunkChars: value })
-            )
-            this.buildRemoteNumberInput(
-              '最大分片字符',
-              this.getRemoteSettings().maxChunkChars,
-              80,
-              9000,
-              (value: number) => this.updateRemoteSettings({ maxChunkChars: value })
-            )
-
-            this.buildRemoteJsonInput(
-              '自定义请求头(JSON)',
-              this.getRemoteSettings().customHeadersJson,
-              '{"X-Client":"ManXia"}',
-              (value: string) => this.updateRemoteSettings({ customHeadersJson: value })
-            )
-            this.buildRemoteJsonInput(
-              '额外请求体(JSON)',
-              this.getRemoteSettings().extraBodyJson,
-              '{"temperature":0.6}',
-              (value: string) => this.updateRemoteSettings({ extraBodyJson: value })
-            )
-          }
-          .width('100%')
-          .padding({ top: 4, bottom: 4 })
 
           Divider().color($r('app.color.divider'))
 

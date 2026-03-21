@@ -1,7 +1,9 @@
 import { logger } from '../../Utils/Logger';
 import {
+  buildXiaomiMimoStyledText,
   DEFAULT_READ_ALOUD_SETTINGS,
   DEFAULT_REMOTE_READ_ALOUD_SETTINGS,
+  isXiaomiMimoRemoteReadAloud,
   ReadAloudEngineType,
   ReadAloudSettings,
   RemoteReadAloudSettings,
@@ -34,13 +36,21 @@ const SYSTEM_TTS_CREATE_ENGINE_FAILED_CODE: number = 1002300005;
 const SYSTEM_TTS_SERVICE_NOT_INITIALIZED_CODE: number = 1002300007;
 const SYSTEM_TTS_INVALID_CHUNK_EMPTY: string = 'SYSTEM_TTS_INVALID_CHUNK_EMPTY';
 const SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR: string = 'SYSTEM_TTS_INVALID_CHUNK_NO_SPEAKABLE_CHAR';
-const REMOTE_TTS_MANIFEST_VERSION: number = 1;
+const REMOTE_TTS_MANIFEST_VERSION: number = 2;
+const REMOTE_TTS_SEGMENT_INDEX_VERSION: number = 1;
 const REMOTE_TTS_DEFAULT_CHARS_PER_SECOND: number = 11;
 const REMOTE_TTS_PREFETCH_MIN: number = 1;
 const REMOTE_TTS_PREFETCH_MAX: number = 8;
 const REMOTE_TTS_FALLBACK_PLAYBACK_GUARD_MS: number = 1600;
 const REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS: number = 580;
 const REMOTE_TTS_PROGRESS_TIMER_MS: number = 120;
+const REMOTE_TTS_TEXT_PREVIEW_LIMIT: number = 48;
+const REMOTE_TTS_HTTP_MAX_LIMIT_BYTES: number = 32 * 1024 * 1024;
+const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
+const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
+const READ_ALOUD_UI_STATUS_PHASE_KEY = 'ReadAloudUiStatusPhase';
+const READ_ALOUD_UI_STATUS_UPDATED_AT_KEY = 'ReadAloudUiStatusUpdatedAt';
+const REMOTE_TTS_ARRAY_BUFFER_RETRY_ERROR_CODE = '2300023';
 
 interface ReadAloudErrorLike {
   code?: number | string;
@@ -88,11 +98,39 @@ function formatReadAloudError(error: Object | string): string {
   return String(error);
 }
 
+function getReadAloudErrorCode(error: Object | string): string {
+  if (typeof error === 'string') {
+    const match = /code=([^,\s]+)/i.exec(error);
+    return match ? match[1] : '';
+  }
+  const errorLike = error as ReadAloudErrorLike;
+  if (typeof errorLike.code === 'number' || typeof errorLike.code === 'string') {
+    return String(errorLike.code);
+  }
+  if (typeof errorLike.errorCode === 'number' || typeof errorLike.errorCode === 'string') {
+    return String(errorLike.errorCode);
+  }
+  return '';
+}
+
+function isRemoteArrayBufferRetryableError(error: Object | string): boolean {
+  const code = getReadAloudErrorCode(error);
+  if (code === REMOTE_TTS_ARRAY_BUFFER_RETRY_ERROR_CODE) {
+    return true;
+  }
+  return formatReadAloudError(error)
+    .toLowerCase()
+    .includes('failed to write the received data to the disk or application');
+}
+
 interface RemoteTtsSegmentCacheRecord {
   index: number;
   start: number;
   end: number;
+  cacheKey: string;
   textDigest: string;
+  textLength: number;
+  textPreview: string;
   filePath: string;
   bytes: number;
   durationMs: number;
@@ -123,6 +161,34 @@ interface RemoteTtsSynthesizedSegment {
 
 interface RemoteTtsPlayableSegment extends RemoteTtsSegmentCacheRecord {
   durationMs: number;
+  inlineBytes?: Uint8Array;
+}
+
+interface RemoteTtsSegmentIndexRecord {
+  version: number;
+  updatedAt: number;
+  cacheKey: string;
+  textDigest: string;
+  textLength: number;
+  textPreview: string;
+  remoteDigest: string;
+  audioFormat: string;
+  filePath: string;
+  bytes: number;
+  durationMs: number;
+  bookId: string;
+  chapterIndex: number;
+  start: number;
+  end: number;
+}
+
+interface RemoteTtsSegmentStoragePaths {
+  cacheKey: string;
+  textDigest: string;
+  textLength: number;
+  textPreview: string;
+  audioPath: string;
+  metaPath: string;
 }
 
 interface RemoteTtsBase64JsonPayload {
@@ -137,13 +203,26 @@ interface RemoteTtsBase64JsonPayload {
   output?: RemoteTtsBase64JsonPayload;
 }
 
-type RemoteJsonValue = string | number | boolean | Object | Array<Object> | null;
-type RemoteJsonRecord = Record<string, RemoteJsonValue>;
-
-interface RemoteRequestField {
-  key: string;
-  value: string | boolean;
+interface RemoteChatCompletionMessagePayload {
+  role: string;
+  content: string;
 }
+
+interface RemoteChatCompletionAudioPayload {
+  format: string;
+  voice: string;
+}
+
+type RemoteJsonValue =
+  string |
+  number |
+  boolean |
+  Object |
+  Array<Object> |
+  RemoteChatCompletionMessagePayload[] |
+  RemoteChatCompletionAudioPayload |
+  null;
+type RemoteJsonRecord = Record<string, RemoteJsonValue>;
 
 function parseJsonObject(text: string): Record<string, Object> | null {
   if (!text || text.trim().length <= 0) {
@@ -166,6 +245,37 @@ function sanitizeFileNamePart(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_.-]/g, '_');
 }
 
+function normalizeRemoteTtsCacheText(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .trim();
+}
+
+function buildRemoteTtsTextDigest(text: string): string {
+  return fnv1aHashHex(normalizeRemoteTtsCacheText(text));
+}
+
+function buildRemoteTtsTextCacheKey(text: string): string {
+  const normalized = normalizeRemoteTtsCacheText(text);
+  const preview = normalized.length > REMOTE_TTS_TEXT_PREVIEW_LIMIT
+    ? normalized.slice(0, REMOTE_TTS_TEXT_PREVIEW_LIMIT)
+    : normalized;
+  const tail = normalized.length > REMOTE_TTS_TEXT_PREVIEW_LIMIT
+    ? normalized.slice(normalized.length - REMOTE_TTS_TEXT_PREVIEW_LIMIT)
+    : normalized;
+  return `${normalized.length}_${fnv1aHashHex(normalized)}_${fnv1aHashHex(`${preview}|${tail}`)}`;
+}
+
+function buildRemoteTtsTextPreview(text: string): string {
+  const normalized = normalizeRemoteTtsCacheText(text).replace(/\s+/g, ' ');
+  if (normalized.length <= REMOTE_TTS_TEXT_PREVIEW_LIMIT) {
+    return normalized;
+  }
+  return `${normalized.slice(0, REMOTE_TTS_TEXT_PREVIEW_LIMIT)}...`;
+}
+
 function fnv1aHashHex(input: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < input.length; index++) {
@@ -176,13 +286,29 @@ function fnv1aHashHex(input: string): string {
   return safe.toString(16).padStart(8, '0');
 }
 
-function ensureDirExists(path: string): void {
-  try {
-    if (!fs.accessSync(path)) {
-      fs.mkdirSync(path);
-    }
-  } catch (_ignored) {
+function dirname(path: string): string {
+  if (!path || path.length <= 0) {
+    return '';
   }
+  const lastSlash = path.lastIndexOf('/');
+  if (lastSlash <= 0) {
+    return '';
+  }
+  return path.slice(0, lastSlash);
+}
+
+function ensureDirExists(path: string): void {
+  if (!path || path.length <= 0) {
+    return;
+  }
+  if (fs.accessSync(path)) {
+    const stat = fs.statSync(path);
+    if (!stat.isDirectory()) {
+      throw new Error(`REMOTE_TTS_PATH_IS_NOT_DIRECTORY: ${path}`);
+    }
+    return;
+  }
+  fs.mkdirSync(path, true);
 }
 
 function normalizeAudioExtension(format: string): string {
@@ -299,13 +425,50 @@ function readFileBytes(path: string): Uint8Array {
   }
 }
 
-function writeFileBytes(path: string, bytes: Uint8Array): void {
-  const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+function deleteFileIfExists(path: string): void {
   try {
-    fs.writeSync(file.fd, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-  } finally {
-    fs.closeSync(file);
+    if (path && path.length > 0 && fs.accessSync(path)) {
+      fs.unlinkSync(path);
+    }
+  } catch (_ignored) {
   }
+}
+
+function writeFileBytes(path: string, bytes: Uint8Array): void {
+  const parentDir = dirname(path);
+  if (parentDir.length > 0) {
+    ensureDirExists(parentDir);
+  }
+  const tempPath = `${path}.tmp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  try {
+    const file = fs.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+    try {
+      const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer
+        : bytes.slice().buffer;
+      if (bytes.byteLength > 0) {
+        fs.writeSync(file.fd, buffer);
+      }
+    } finally {
+      fs.closeSync(file);
+    }
+
+    deleteFileIfExists(path);
+    fs.renameSync(tempPath, path);
+
+    const stat = fs.statSync(path);
+    if (stat.size !== bytes.byteLength) {
+      throw new Error(`REMOTE_TTS_WRITE_SIZE_MISMATCH: expected=${bytes.byteLength}, actual=${stat.size}`);
+    }
+  } catch (error) {
+    deleteFileIfExists(tempPath);
+    throw error as Error;
+  }
+}
+
+function writeJsonFile(path: string, value: Object): void {
+  const bytes = new util.TextEncoder().encodeInto(JSON.stringify(value));
+  writeFileBytes(path, new Uint8Array(bytes));
 }
 
 function isWavBytes(bytes: Uint8Array): boolean {
@@ -443,6 +606,16 @@ export class ReadAloudPlaybackEvent {
 }
 
 export type ReadAloudPlaybackListener = (event: ReadAloudPlaybackEvent) => void;
+export interface ReadAloudPrecacheProgressSnapshot {
+  totalSegments: number;
+  completedSegments: number;
+  currentSegmentIndex: number;
+  currentSegmentChars: number;
+  totalBytes: number;
+  statusText: string;
+  detailText: string;
+}
+export type ReadAloudPrecacheListener = (snapshot: ReadAloudPrecacheProgressSnapshot) => void;
 
 export interface IReadAloudBackend {
   readonly engineType: ReadAloudEngineType;
@@ -452,6 +625,8 @@ export interface IReadAloudBackend {
   setPlaybackListener(listener: ReadAloudPlaybackListener | null): void;
   listVoices(): Promise<ReadAloudVoiceOption[]>;
   getProgressSnapshot(): ReadAloudProgressSnapshot;
+  resolveCharIndexByPositionMs(positionMs: number): number;
+  precacheCurrentContext(listener?: ReadAloudPrecacheListener | null): Promise<void>;
   start(): Promise<void>;
   pause(): Promise<void>;
   stop(): Promise<void>;
@@ -490,24 +665,46 @@ class BaseReadAloudBackend implements IReadAloudBackend {
     return new ReadAloudProgressSnapshot(
       this.progressSnapshot.currentCharIndex,
       this.progressSnapshot.chunkStartCharIndex,
-      this.progressSnapshot.chunkEndCharIndex
+      this.progressSnapshot.chunkEndCharIndex,
+      this.progressSnapshot.currentPositionMs,
+      this.progressSnapshot.totalDurationMs
     );
   }
+
+  resolveCharIndexByPositionMs(_positionMs: number): number {
+    return -1;
+  }
+
+  async precacheCurrentContext(_listener: ReadAloudPrecacheListener | null = null): Promise<void> {}
 
   async listVoices(): Promise<ReadAloudVoiceOption[]> {
     return [];
   }
 
-  protected updateProgressSnapshot(currentCharIndex: number, chunkStartCharIndex: number, chunkEndCharIndex: number): void {
+  protected updateProgressSnapshot(
+    currentCharIndex: number,
+    chunkStartCharIndex: number,
+    chunkEndCharIndex: number,
+    currentPositionMs: number = this.progressSnapshot.currentPositionMs,
+    totalDurationMs: number = this.progressSnapshot.totalDurationMs
+  ): void {
     const unchanged = (
       this.progressSnapshot.currentCharIndex === currentCharIndex &&
       this.progressSnapshot.chunkStartCharIndex === chunkStartCharIndex &&
-      this.progressSnapshot.chunkEndCharIndex === chunkEndCharIndex
+      this.progressSnapshot.chunkEndCharIndex === chunkEndCharIndex &&
+      this.progressSnapshot.currentPositionMs === currentPositionMs &&
+      this.progressSnapshot.totalDurationMs === totalDurationMs
     );
     if (unchanged) {
       return;
     }
-    this.progressSnapshot = new ReadAloudProgressSnapshot(currentCharIndex, chunkStartCharIndex, chunkEndCharIndex);
+    this.progressSnapshot = new ReadAloudProgressSnapshot(
+      currentCharIndex,
+      chunkStartCharIndex,
+      chunkEndCharIndex,
+      currentPositionMs,
+      totalDurationMs
+    );
     if (this.progressListener) {
       this.progressListener(this.getProgressSnapshot());
     }
@@ -2089,6 +2286,10 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   private progressDurationMs: number = 0;
   private progressRangeStart: number = -1;
   private progressRangeEnd: number = -1;
+  private activeSegmentPlayer: media.AVPlayer | null = null;
+  private activeSegmentFile: fs.File | null = null;
+  private activeSegmentPath: string = '';
+  private activeSegmentIndex: number = -1;
 
   private remoteSettings: RemoteReadAloudSettings =
     normalizeRemoteReadAloudSettings(DEFAULT_REMOTE_READ_ALOUD_SETTINGS);
@@ -2098,12 +2299,36 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     new Map<number, RemoteTtsPlayableSegment>();
 
   private cacheRootDir: string = '';
+  private segmentCacheDir: string = '';
   private chapterCacheDir: string = '';
   private manifestPath: string = '';
   private activeManifest: RemoteTtsManifest | null = null;
   private contentDigest: string = '';
   private remoteDigest: string = '';
   private sessionTempDir: string = '';
+
+  private updateRemoteUiStatus(phase: string, text: string, detail: string = ''): void {
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_PHASE_KEY, phase);
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_TEXT_KEY, text);
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_DETAIL_KEY, detail);
+    AppStorage.setOrCreate(READ_ALOUD_UI_STATUS_UPDATED_AT_KEY, Date.now());
+  }
+
+  private buildSegmentUiDetail(index: number, extra: string = ''): string {
+    const total = Math.max(1, this.queue.length);
+    const current = Math.max(1, Math.min(index + 1, total));
+    return extra.length > 0
+      ? `第${current}/${total}段 · ${extra}`
+      : `第${current}/${total}段`;
+  }
+
+  private buildReadableRemoteErrorText(error: Object | string): string {
+    const detail = formatReadAloudError(error).trim();
+    if (detail.length <= 0) {
+      return '未知错误';
+    }
+    return detail.length > 72 ? `${detail.slice(0, 72)}...` : detail;
+  }
 
   applySettings(settings: ReadAloudSettings): void {
     const normalized = normalizeReadAloudSettings(settings);
@@ -2123,8 +2348,12 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       this.pendingSynthesis.clear();
       this.playableSegments.clear();
       this.activeManifest = null;
+      this.segmentCacheDir = '';
+      this.chapterCacheDir = '';
+      this.manifestPath = '';
+      this.sessionTempDir = '';
       this.stopProgressTimer();
-      this.updateProgressSnapshot(-1, -1, -1);
+      this.updateProgressSnapshot(-1, -1, -1, -1, -1);
       return;
     }
     const resumeChar = this.normalizeResumeCharIndex(context.resumeCharIndex ?? 0, context.content);
@@ -2136,6 +2365,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       this.playbackSessionToken.length > 0 &&
       !this.pauseRequested &&
       !this.stopRequested;
+    if (inPlaybackFlow) {
+      return;
+    }
     if (!inPlaybackFlow && this.queueToken !== nextQueueToken) {
       this.rebuildQueue(context.content);
       this.queueToken = nextQueueToken;
@@ -2148,7 +2380,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     this.currentCharIndex = resumeChar;
     this.queueIndex = this.findQueueIndexByChar(resumeChar);
     const range = this.getQueueRange(this.queueIndex);
-    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+    this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, -1, this.queueIndex);
   }
 
   async start(): Promise<void> {
@@ -2157,6 +2389,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       throw new Error('REMOTE_TTS_NO_CONTENT');
     }
 
+    await this.stopActiveSegmentPlayer('start_before_new_session');
     this.remoteSettings = this.resolveRemoteSettings();
     this.validateRemoteSettings(this.remoteSettings);
     this.stopRequested = false;
@@ -2179,35 +2412,42 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       throw new Error('REMOTE_TTS_EMPTY_QUEUE');
     }
 
+    this.updateRemoteUiStatus('preparing', '正在准备远程听书', `共 ${this.queue.length} 段`);
     await this.prepareCacheAndManifest();
     this.currentCharIndex = this.normalizeResumeCharIndex(this.context?.resumeCharIndex ?? this.currentCharIndex, content);
     this.queueIndex = this.findQueueIndexByChar(this.currentCharIndex);
     this.playbackSessionToken = this.createRequestId('remote_session');
 
     const range = this.getQueueRange(this.queueIndex);
-    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
-    this.prefetchSegments(this.queueIndex, this.playbackSessionToken);
+    this.updateRemoteUiStatus('preparing', '已定位到播放片段', this.buildSegmentUiDetail(this.queueIndex));
+    this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, -1, this.queueIndex);
     this.playLoopSafely(this.playbackSessionToken);
   }
 
   async pause(): Promise<void> {
+    this.syncActiveSegmentProgressFromPlayer();
     this.pauseRequested = true;
     this.stopRequested = false;
     this.playbackSessionToken = '';
     this.stopProgressTimer();
+    await this.stopActiveSegmentPlayer('pause');
     const range = this.getQueueRange(this.queueIndex);
-    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+    this.updateRemoteUiStatus('paused', '已暂停听书', this.buildSegmentUiDetail(this.queueIndex));
+    this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, -1, this.queueIndex);
   }
 
   async stop(): Promise<void> {
+    this.syncActiveSegmentProgressFromPlayer();
     this.stopRequested = true;
     this.pauseRequested = false;
     this.playbackSessionToken = '';
     this.stopProgressTimer();
     this.pendingSynthesis.clear();
+    await this.stopActiveSegmentPlayer('stop');
     this.queueIndex = this.findQueueIndexByChar(this.currentCharIndex);
     const range = this.getQueueRange(this.queueIndex);
-    this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+    this.updateRemoteUiStatus('stopped', '已停止听书');
+    this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, -1, this.queueIndex);
   }
 
   async release(): Promise<void> {
@@ -2221,9 +2461,11 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     this.playableSegments.clear();
     this.pendingSynthesis.clear();
     this.activeManifest = null;
+    this.segmentCacheDir = '';
     this.chapterCacheDir = '';
     this.manifestPath = '';
-    this.updateProgressSnapshot(-1, -1, -1);
+    this.sessionTempDir = '';
+    this.updateProgressSnapshot(-1, -1, -1, -1, -1);
     await super.release();
   }
 
@@ -2234,6 +2476,116 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       return [];
     }
     return [new ReadAloudVoiceOption(`remote#${voice}`, 'REMOTE', 0, 0, remote.model || 'REMOTE')];
+  }
+
+  resolveCharIndexByPositionMs(positionMs: number): number {
+    if (!this.context || !this.context.content || this.context.content.length <= 0 || this.queue.length <= 0) {
+      return -1;
+    }
+    const totalDurationMs = this.getChapterDurationMs();
+    if (totalDurationMs <= 0) {
+      return -1;
+    }
+    const safePositionMs = Math.max(0, Math.min(Math.floor(positionMs), totalDurationMs));
+    let accumulatedMs = 0;
+    for (let index = 0; index < this.queue.length; index++) {
+      const durationMs = this.getSegmentDurationMsByIndex(index);
+      if (durationMs <= 0) {
+        continue;
+      }
+      const range = this.getQueueRange(index);
+      const nextAccumulatedMs = accumulatedMs + durationMs;
+      if (safePositionMs < nextAccumulatedMs || index === this.queue.length - 1) {
+        return this.resolveCharIndexWithinSegment(
+          range.start,
+          range.end,
+          durationMs,
+          safePositionMs - accumulatedMs
+        );
+      }
+      accumulatedMs = nextAccumulatedMs;
+    }
+    return Math.max(0, this.context.content.length - 1);
+  }
+
+  async precacheCurrentContext(listener: ReadAloudPrecacheListener | null = null): Promise<void> {
+    const content = this.context?.content ?? '';
+    if (!content || content.trim().length <= 0) {
+      throw new Error('REMOTE_TTS_NO_CONTENT');
+    }
+
+    await this.stopActiveSegmentPlayer('precache_before_new_session');
+    this.remoteSettings = this.resolveRemoteSettings();
+    this.validateRemoteSettings(this.remoteSettings);
+    this.stopRequested = false;
+    this.pauseRequested = false;
+    this.pendingSynthesis.clear();
+    this.playableSegments.clear();
+    this.stopProgressTimer();
+
+    const contentDigest = fnv1aHashHex(content);
+    const remoteDigest = this.buildRemoteDigest(this.remoteSettings);
+    const queueToken = `${this.context?.bookId ?? ''}#${this.context?.chapterIndex ?? -1}#${contentDigest}#${remoteDigest}`;
+    if (this.queueToken !== queueToken) {
+      this.rebuildQueue(content);
+      this.queueToken = queueToken;
+    }
+    this.contentDigest = contentDigest;
+    this.remoteDigest = remoteDigest;
+    if (this.queue.length <= 0) {
+      throw new Error('REMOTE_TTS_EMPTY_QUEUE');
+    }
+
+    this.queueIndex = 0;
+    this.currentCharIndex = 0;
+    this.playbackSessionToken = this.createRequestId('remote_precache_session');
+    const sessionToken = this.playbackSessionToken;
+
+    this.updateRemoteUiStatus('precache', '正在准备整章听书缓存', `共 ${this.queue.length} 段`);
+    await this.prepareCacheAndManifest();
+
+    let totalBytes = 0;
+    listener?.({
+      totalSegments: this.queue.length,
+      completedSegments: 0,
+      currentSegmentIndex: 0,
+      currentSegmentChars: this.queue[0]?.length ?? 0,
+      totalBytes: 0,
+      statusText: '正在准备整章听书缓存',
+      detailText: `第1/${this.queue.length}段`
+    });
+
+    for (let index = 0; index < this.queue.length; index++) {
+      if (!this.isSessionActive(sessionToken)) {
+        throw new Error('REMOTE_TTS_PRECACHE_ABORTED');
+      }
+      const range = this.getQueueRange(index);
+      this.queueIndex = index;
+      this.currentCharIndex = range.start;
+      this.updateRemoteUiStatus('precache', '正在缓存听书音频', this.buildSegmentUiDetail(index, `${this.queue[index]?.length ?? 0} 字`));
+      this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, -1, index);
+      const segment = await this.ensureSegment(index, sessionToken);
+      totalBytes += Math.max(0, segment.bytes);
+      listener?.({
+        totalSegments: this.queue.length,
+        completedSegments: index + 1,
+        currentSegmentIndex: index,
+        currentSegmentChars: this.queue[index]?.length ?? 0,
+        totalBytes,
+        statusText: '正在缓存听书音频',
+        detailText: this.buildSegmentUiDetail(index, `${index + 1}/${this.queue.length}`)
+      });
+    }
+
+    this.tryConcatChapterAudio();
+    this.playbackSessionToken = '';
+    this.queueIndex = 0;
+    this.currentCharIndex = 0;
+    this.updateRemoteUiStatus('cached', '当前章节听书缓存已完成', `共 ${this.queue.length} 段，${totalBytes} bytes`);
+    logger.info(
+      TAG,
+      `远程TTS整章预缓存完成: bookId=${this.context?.bookId ?? ''}, chapterIndex=${this.context?.chapterIndex ?? -1}, segments=${this.queue.length}, bytes=${totalBytes}`
+    );
   }
 
   private resolveRemoteSettings(): RemoteReadAloudSettings {
@@ -2259,6 +2611,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       settings.apiPath.trim(),
       settings.model.trim(),
       settings.voice.trim(),
+      settings.stylePrompt.trim(),
       settings.audioFormat.trim(),
       String(settings.streamEnabled),
       String(settings.maxInputChars),
@@ -2266,9 +2619,17 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       String(settings.minChunkChars),
       String(settings.targetChunkChars),
       String(settings.maxChunkChars),
+      settings.customHeadersJson ?? '',
       settings.extraBodyJson ?? ''
     ].join('|');
     return fnv1aHashHex(digest);
+  }
+
+  private buildRemoteInputText(text: string): string {
+    if (!isXiaomiMimoRemoteReadAloud(this.remoteSettings)) {
+      return text;
+    }
+    return buildXiaomiMimoStyledText(this.remoteSettings.stylePrompt, text);
   }
 
   private normalizeResumeCharIndex(index: number, content: string): number {
@@ -2359,14 +2720,14 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       char === ',' ||
       char === ';' ||
       char === ':' ||
-      char === '\u3002' ||
-      char === '\uff01' ||
-      char === '\uff1f' ||
-      char === '\uff0c' ||
-      char === '\u3001' ||
-      char === '\uff1b' ||
-      char === '\uff1a' ||
-      char === '\u2026';
+      char === '。' ||
+      char === '！' ||
+      char === '？' ||
+      char === '，' ||
+      char === '、' ||
+      char === '；' ||
+      char === '：' ||
+      char === '…';
   }
 
   private findQueueIndexByChar(index: number): number {
@@ -2401,6 +2762,157 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     return new QueueCharRange(start, end);
   }
 
+  private findQueueIndexByRange(start: number, end: number): number {
+    if (this.queue.length <= 0) {
+      return 0;
+    }
+    for (let index = 0; index < this.queue.length; index++) {
+      if ((this.queueStart[index] ?? -1) === start && (this.queueEnd[index] ?? -1) === end) {
+        return index;
+      }
+    }
+    return this.findQueueIndexByChar(start);
+  }
+
+  private getSegmentDurationMsByIndex(index: number): number {
+    if (index < 0 || index >= this.queue.length) {
+      return 0;
+    }
+    const playable = this.playableSegments.get(index);
+    if (playable && playable.durationMs > 0) {
+      return playable.durationMs;
+    }
+    if (this.activeManifest) {
+      for (const item of this.activeManifest.segments) {
+        if (item.index === index && item.durationMs > 0) {
+          return item.durationMs;
+        }
+      }
+    }
+    return estimateDurationMsByCharCount((this.queue[index] ?? '').length, this.settings?.speed ?? 1);
+  }
+
+  private getAccumulatedDurationMsBeforeIndex(index: number): number {
+    if (index <= 0 || this.queue.length <= 0) {
+      return 0;
+    }
+    let total = 0;
+    for (let current = 0; current < index; current++) {
+      total += this.getSegmentDurationMsByIndex(current);
+    }
+    return total;
+  }
+
+  private getChapterDurationMs(): number {
+    if (this.queue.length <= 0) {
+      return -1;
+    }
+    let total = 0;
+    for (let index = 0; index < this.queue.length; index++) {
+      total += this.getSegmentDurationMsByIndex(index);
+    }
+    return total > 0 ? total : -1;
+  }
+
+  private resolveCharIndexWithinSegment(start: number, end: number, durationMs: number, currentTimeMs: number): number {
+    if (end <= start) {
+      return Math.max(0, start);
+    }
+    const safeDurationMs = Math.max(1, durationMs);
+    const maxPlayableChar = Math.max(start, end - 1);
+    const clampedTimeMs = Math.max(0, Math.min(currentTimeMs, safeDurationMs));
+    const ratio = Math.max(0, Math.min(1, clampedTimeMs / safeDurationMs));
+    const span = end - start;
+    const mapped = start + Math.floor(span * ratio);
+    return Math.max(start, Math.min(mapped, maxPlayableChar));
+  }
+
+  private computeChapterPositionMs(
+    currentCharIndex: number,
+    chunkStartCharIndex: number,
+    chunkEndCharIndex: number,
+    currentTimeMsInChunk: number = -1,
+    queueIndexOverride: number = -1
+  ): number {
+    if (this.queue.length <= 0) {
+      return -1;
+    }
+    const queueIndex = queueIndexOverride >= 0
+      ? Math.max(0, Math.min(queueIndexOverride, this.queue.length - 1))
+      : this.findQueueIndexByRange(chunkStartCharIndex, chunkEndCharIndex);
+    const durationMs = this.getSegmentDurationMsByIndex(queueIndex);
+    if (durationMs <= 0) {
+      return -1;
+    }
+    let localTimeMs = currentTimeMsInChunk >= 0
+      ? Math.max(0, Math.min(Math.floor(currentTimeMsInChunk), durationMs))
+      : this.computeSegmentSeekTimeMs(
+        chunkStartCharIndex,
+        chunkEndCharIndex,
+        durationMs,
+        currentCharIndex
+      );
+    if (chunkEndCharIndex > chunkStartCharIndex && currentCharIndex >= chunkEndCharIndex) {
+      localTimeMs = durationMs;
+    }
+    return this.getAccumulatedDurationMsBeforeIndex(queueIndex) + localTimeMs;
+  }
+
+  private syncRemoteProgressSnapshot(
+    currentCharIndex: number,
+    chunkStartCharIndex: number,
+    chunkEndCharIndex: number,
+    currentTimeMsInChunk: number = -1,
+    queueIndexOverride: number = -1
+  ): void {
+    const totalDurationMs = this.getChapterDurationMs();
+    const currentPositionMs = currentCharIndex >= 0
+      ? this.computeChapterPositionMs(
+        currentCharIndex,
+        chunkStartCharIndex,
+        chunkEndCharIndex,
+        currentTimeMsInChunk,
+        queueIndexOverride
+      )
+      : -1;
+    this.updateProgressSnapshot(
+      currentCharIndex,
+      chunkStartCharIndex,
+      chunkEndCharIndex,
+      currentPositionMs,
+      totalDurationMs
+    );
+  }
+
+  private syncActiveSegmentProgressFromPlayer(): void {
+    const player = this.activeSegmentPlayer;
+    const segmentIndex = this.activeSegmentIndex;
+    if (!player || segmentIndex < 0 || segmentIndex >= this.queue.length) {
+      return;
+    }
+    const range = this.getQueueRange(segmentIndex);
+    const durationMs = this.getSegmentDurationMsByIndex(segmentIndex);
+    this.updateSegmentProgressByPlayerTime(range.start, range.end, durationMs, player.currentTime);
+  }
+
+  private buildSegmentStoragePaths(index: number, useSessionTemp: boolean = false): RemoteTtsSegmentStoragePaths {
+    const text = this.queue[index] ?? '';
+    const cacheKey = buildRemoteTtsTextCacheKey(text);
+    const textDigest = buildRemoteTtsTextDigest(text);
+    const textLength = normalizeRemoteTtsCacheText(text).length;
+    const textPreview = buildRemoteTtsTextPreview(text);
+    const ext = normalizeAudioExtension(this.remoteSettings.audioFormat);
+    const baseDir = useSessionTemp ? this.sessionTempDir : this.segmentCacheDir;
+    return {
+      cacheKey,
+      textDigest,
+      textLength,
+      textPreview,
+      audioPath: `${baseDir}/${cacheKey}.${ext}`,
+      metaPath: `${baseDir}/${cacheKey}.json`
+    };
+  }
+
   private async prepareCacheAndManifest(): Promise<void> {
     const abilityContext = uiContextManager.getAbilityContext();
     const filesDir = abilityContext?.filesDir ?? abilityContext?.cacheDir ?? '';
@@ -2410,14 +2922,19 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
 
     this.cacheRootDir = `${filesDir}/read_aloud_remote`;
     ensureDirExists(this.cacheRootDir);
+    this.segmentCacheDir = `${this.cacheRootDir}/segments/${this.remoteDigest}`;
+    ensureDirExists(this.segmentCacheDir);
     const safeBookId = sanitizeFileNamePart(this.context?.bookId ?? 'unknown_book');
     const chapterIndex = this.context?.chapterIndex ?? -1;
-    const chapterKey = `${safeBookId}_${chapterIndex}_${this.contentDigest}_${this.remoteDigest}`;
-    this.chapterCacheDir = `${this.cacheRootDir}/${chapterKey}`;
+    this.chapterCacheDir = `${this.cacheRootDir}/books/${safeBookId}/chapter_${chapterIndex}/${this.contentDigest}/${this.remoteDigest}`;
     ensureDirExists(this.chapterCacheDir);
     this.manifestPath = `${this.chapterCacheDir}/manifest.json`;
-    this.sessionTempDir = `${this.chapterCacheDir}/session_${Date.now()}`;
+    this.sessionTempDir = `${this.chapterCacheDir}/session/${Date.now()}`;
     ensureDirExists(this.sessionTempDir);
+    logger.debug(
+      TAG,
+      `远程TTS缓存目录已准备: cacheAudioFiles=${this.remoteSettings.cacheAudioFiles}, segmentCacheDir=${this.segmentCacheDir}, chapterCacheDir=${this.chapterCacheDir}, sessionTempDir=${this.sessionTempDir}`
+    );
 
     if (!this.remoteSettings.cacheAudioFiles) {
       this.cleanupChapterCacheWithoutManifest();
@@ -2435,6 +2952,9 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         segments: []
       };
       this.persistManifest();
+      logger.info(TAG, `远程TTS章节清单已创建: bookId=${this.context?.bookId ?? ''}, chapterIndex=${chapterIndex}, queueSize=${this.queue.length}`);
+    } else {
+      logger.debug(TAG, `远程TTS章节清单已加载: bookId=${this.activeManifest.bookId}, chapterIndex=${this.activeManifest.chapterIndex}, segments=${this.activeManifest.segments.length}`);
     }
     this.restoreSegmentsFromManifest();
   }
@@ -2507,7 +3027,8 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         manifest.segments = [];
       }
       return manifest;
-    } catch (_ignored) {
+    } catch (error) {
+      logger.warn(TAG, `远程TTS章节清单读取失败: path=${this.manifestPath}, error=${formatReadAloudError(error)}`);
       return null;
     }
   }
@@ -2518,9 +3039,117 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     }
     try {
       this.activeManifest.updatedAt = Date.now();
-      const bytes = new util.TextEncoder().encodeInto(JSON.stringify(this.activeManifest));
-      writeFileBytes(this.manifestPath, new Uint8Array(bytes));
-    } catch (_ignored) {
+      writeJsonFile(this.manifestPath, this.activeManifest as Object);
+    } catch (error) {
+      logger.warn(TAG, `远程TTS章节清单写入失败: path=${this.manifestPath}, error=${formatReadAloudError(error)}`);
+    }
+  }
+
+  private loadSegmentIndexRecord(metaPath: string): RemoteTtsSegmentIndexRecord | null {
+    if (!metaPath || !fs.accessSync(metaPath)) {
+      return null;
+    }
+    try {
+      const text = new util.TextDecoder('utf-8').decodeToString(readFileBytes(metaPath));
+      const record = JSON.parse(text) as RemoteTtsSegmentIndexRecord;
+      if (!record || record.version !== REMOTE_TTS_SEGMENT_INDEX_VERSION) {
+        return null;
+      }
+      return record;
+    } catch (error) {
+      logger.warn(TAG, `远程TTS分片索引读取失败: path=${metaPath}, error=${formatReadAloudError(error)}`);
+      return null;
+    }
+  }
+
+  private persistSegmentIndexRecord(segment: RemoteTtsPlayableSegment): void {
+    if (!this.remoteSettings.cacheAudioFiles || segment.filePath.length <= 0) {
+      return;
+    }
+    const paths = this.buildSegmentStoragePaths(segment.index);
+    if (segment.filePath !== paths.audioPath) {
+      return;
+    }
+    const record: RemoteTtsSegmentIndexRecord = {
+      version: REMOTE_TTS_SEGMENT_INDEX_VERSION,
+      updatedAt: Date.now(),
+      cacheKey: segment.cacheKey,
+      textDigest: segment.textDigest,
+      textLength: segment.textLength,
+      textPreview: segment.textPreview,
+      remoteDigest: this.remoteDigest,
+      audioFormat: normalizeAudioExtension(this.remoteSettings.audioFormat),
+      filePath: segment.filePath,
+      bytes: segment.bytes,
+      durationMs: segment.durationMs,
+      bookId: this.context?.bookId ?? '',
+      chapterIndex: this.context?.chapterIndex ?? -1,
+      start: segment.start,
+      end: segment.end
+    };
+    try {
+      writeJsonFile(paths.metaPath, record as Object);
+    } catch (error) {
+      logger.warn(TAG, `远程TTS分片索引写入失败: path=${paths.metaPath}, cacheKey=${segment.cacheKey}, error=${formatReadAloudError(error)}`);
+    }
+  }
+
+  private buildSegmentDurationMs(text: string, synthesized: RemoteTtsSynthesizedSegment): number {
+    return Math.max(
+      REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS,
+      synthesized.durationMs > 0 ? synthesized.durationMs : estimateDurationMsByCharCount(text.length, this.settings?.speed ?? 1)
+    );
+  }
+
+  private tryLoadNormalizedCachedSegment(index: number, range: QueueCharRange): RemoteTtsPlayableSegment | null {
+    if (!this.remoteSettings.cacheAudioFiles || !this.segmentCacheDir) {
+      return null;
+    }
+    const paths = this.buildSegmentStoragePaths(index);
+    if (!fs.accessSync(paths.audioPath)) {
+      return null;
+    }
+    const record = this.loadSegmentIndexRecord(paths.metaPath);
+    if (record) {
+      if (
+        record.cacheKey !== paths.cacheKey ||
+        record.textDigest !== paths.textDigest ||
+        record.remoteDigest !== this.remoteDigest ||
+        record.filePath !== paths.audioPath
+      ) {
+        logger.warn(TAG, `远程TTS分片索引不匹配，已忽略: index=${index}, cacheKey=${paths.cacheKey}, metaPath=${paths.metaPath}`);
+        return null;
+      }
+    }
+    try {
+      const stat = fs.statSync(paths.audioPath);
+      if (stat.size <= 0) {
+        logger.warn(TAG, `远程TTS缓存音频文件为空，已忽略: index=${index}, path=${paths.audioPath}`);
+        return null;
+      }
+      const segment: RemoteTtsPlayableSegment = {
+        index,
+        start: range.start,
+        end: range.end,
+        cacheKey: paths.cacheKey,
+        textDigest: paths.textDigest,
+        textLength: paths.textLength,
+        textPreview: paths.textPreview,
+        filePath: paths.audioPath,
+        bytes: record && record.bytes > 0 ? record.bytes : stat.size,
+        durationMs: record && record.durationMs > 0
+          ? record.durationMs
+          : estimateDurationMsByCharCount((this.queue[index] ?? '').length, this.settings?.speed ?? 1)
+      };
+      if (!record) {
+        this.persistSegmentIndexRecord(segment);
+      }
+      this.updateManifestSegment(segment);
+      logger.debug(TAG, `远程TTS命中规范化缓存: index=${index}, cacheKey=${paths.cacheKey}, bytes=${segment.bytes}, path=${paths.audioPath}`);
+      return segment;
+    } catch (error) {
+      logger.warn(TAG, `远程TTS缓存分片恢复失败: index=${index}, cacheKey=${paths.cacheKey}, error=${formatReadAloudError(error)}`);
+      return null;
     }
   }
 
@@ -2537,7 +3166,8 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       if (!item.filePath || !fs.accessSync(item.filePath)) {
         continue;
       }
-      if (this.segmentDigest(item.index) !== item.textDigest) {
+      const expectedPaths = this.buildSegmentStoragePaths(item.index);
+      if (item.textDigest !== expectedPaths.textDigest || item.cacheKey !== expectedPaths.cacheKey) {
         continue;
       }
       const durationMs = item.durationMs > 0
@@ -2547,7 +3177,10 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         index: item.index,
         start: item.start,
         end: item.end,
+        cacheKey: item.cacheKey,
         textDigest: item.textDigest,
+        textLength: item.textLength,
+        textPreview: item.textPreview,
         filePath: item.filePath,
         bytes: item.bytes,
         durationMs
@@ -2556,7 +3189,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   }
 
   private updateManifestSegment(segment: RemoteTtsPlayableSegment): void {
-    if (!this.activeManifest) {
+    if (!this.activeManifest || segment.filePath.length <= 0) {
       return;
     }
     const next: RemoteTtsSegmentCacheRecord[] = [];
@@ -2569,7 +3202,10 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       index: segment.index,
       start: segment.start,
       end: segment.end,
+      cacheKey: segment.cacheKey,
       textDigest: segment.textDigest,
+      textLength: segment.textLength,
+      textPreview: segment.textPreview,
       filePath: segment.filePath,
       bytes: segment.bytes,
       durationMs: segment.durationMs
@@ -2580,7 +3216,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
   }
 
   private segmentDigest(index: number): string {
-    return fnv1aHashHex(this.queue[index] ?? '');
+    return buildRemoteTtsTextDigest(this.queue[index] ?? '');
   }
 
   private prefetchSegments(startIndex: number, sessionToken: string): void {
@@ -2590,8 +3226,34 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     const count = Math.max(REMOTE_TTS_PREFETCH_MIN, Math.min(REMOTE_TTS_PREFETCH_MAX, this.remoteSettings.prefetchSegments));
     const end = Math.min(this.queue.length - 1, startIndex + count - 1);
     for (let index = startIndex; index <= end; index++) {
-      this.ensureSegment(index, sessionToken).catch((_error: Object | string) => {});
+      this.ensureSegment(index, sessionToken).catch((error: Object | string) => {
+        logger.warn(TAG, `远程TTS预取分片失败: index=${index}, error=${formatReadAloudError(error)}`);
+      });
     }
+  }
+
+  private prefetchSegmentsSequentially(startIndex: number, sessionToken: string): void {
+    if (!this.isSessionActive(sessionToken)) {
+      return;
+    }
+    const count = Math.max(REMOTE_TTS_PREFETCH_MIN, Math.min(REMOTE_TTS_PREFETCH_MAX, this.remoteSettings.prefetchSegments));
+    const end = Math.min(this.queue.length - 1, startIndex + count - 1);
+    (async (): Promise<void> => {
+      for (let index = startIndex; index <= end; index++) {
+        if (!this.isSessionActive(sessionToken)) {
+          return;
+        }
+        try {
+          await this.ensureSegment(index, sessionToken);
+        } catch (error) {
+          if (!this.isSessionActive(sessionToken)) {
+            return;
+          }
+          logger.warn(TAG, `远程TTS预取分片失败: index=${index}, error=${formatReadAloudError(error)}`);
+          return;
+        }
+      }
+    })();
   }
 
   private playLoopSafely(sessionToken: string): void {
@@ -2602,6 +3264,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       this.pauseRequested = true;
       this.stopRequested = false;
       this.stopProgressTimer();
+      logger.error(TAG, `远程TTS播放循环失败: queueIndex=${this.queueIndex}, currentChar=${this.currentCharIndex}, error=${formatReadAloudError(error)}`);
       this.notifyPlaybackEvent('paused_for_error', formatReadAloudError(error), this.currentCharIndex);
     });
   }
@@ -2623,17 +3286,17 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         return;
       }
       this.currentCharIndex = Math.max(range.start, Math.min(this.currentCharIndex, Math.max(range.start, range.end - 1)));
-      this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
-      this.startProgressTimer(range.start, range.end, segment.durationMs, sessionToken);
-      await this.waitDuration(segment.durationMs, sessionToken);
+      this.updateRemoteUiStatus('playing', '正在播放远程语音', this.buildSegmentUiDetail(this.queueIndex));
+      this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, -1, this.queueIndex);
+      await this.playSegmentWithPlayer(segment, range, sessionToken);
       if (!this.isSessionActive(sessionToken)) {
         return;
       }
       this.stopProgressTimer();
       this.currentCharIndex = range.end;
-      this.updateProgressSnapshot(this.currentCharIndex, range.start, range.end);
+      this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, segment.durationMs, this.queueIndex);
       this.queueIndex += 1;
-      this.prefetchSegments(this.queueIndex, sessionToken);
+      this.prefetchSegmentsSequentially(this.queueIndex, sessionToken);
     }
   }
 
@@ -2644,39 +3307,403 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       !this.stopRequested;
   }
 
-  private async waitDuration(durationMs: number, sessionToken: string): Promise<void> {
-    if (!this.isSessionActive(sessionToken)) {
-      return;
-    }
-    const safe = Math.max(REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS, durationMs);
-    await new Promise<void>((resolve) => setTimeout(resolve, safe));
-  }
-
-  private startProgressTimer(start: number, end: number, durationMs: number, sessionToken: string): void {
-    this.stopProgressTimer();
+  private updateSegmentProgressByPlayerTime(start: number, end: number, durationMs: number, currentTimeMs: number): void {
     if (end <= start) {
       return;
     }
-    this.progressStartMs = Date.now();
-    this.progressDurationMs = Math.max(REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS, durationMs);
-    this.progressRangeStart = start;
-    this.progressRangeEnd = end;
-    this.progressTimer = setInterval(() => {
-      if (!this.isSessionActive(sessionToken)) {
-        this.stopProgressTimer();
-        return;
-      }
-      const elapsed = Date.now() - this.progressStartMs;
-      const ratio = Math.max(0, Math.min(1, elapsed / Math.max(1, this.progressDurationMs)));
-      const span = this.progressRangeEnd - this.progressRangeStart;
-      const next = this.progressRangeStart + Math.floor(span * ratio);
-      const safeNext = Math.max(this.currentCharIndex, Math.min(next, Math.max(this.progressRangeStart, this.progressRangeEnd - 1)));
-      if (safeNext === this.currentCharIndex) {
-        return;
-      }
+    const safeDurationMs = Math.max(1, durationMs);
+    const clampedTimeMs = Math.max(0, Math.min(currentTimeMs, safeDurationMs));
+    const safeNext = this.resolveCharIndexWithinSegment(start, end, safeDurationMs, clampedTimeMs);
+    if (safeNext !== this.currentCharIndex) {
       this.currentCharIndex = safeNext;
-      this.updateProgressSnapshot(this.currentCharIndex, this.progressRangeStart, this.progressRangeEnd);
-    }, REMOTE_TTS_PROGRESS_TIMER_MS);
+    }
+    this.syncRemoteProgressSnapshot(
+      this.currentCharIndex,
+      start,
+      end,
+      clampedTimeMs,
+      this.findQueueIndexByRange(start, end)
+    );
+  }
+
+  private computeSegmentSeekTimeMs(
+    start: number,
+    end: number,
+    durationMs: number,
+    currentCharIndexOverride?: number
+  ): number {
+    if (end <= start || durationMs <= 0) {
+      return 0;
+    }
+    const maxPlayableChar = Math.max(start, end - 1);
+    const baseCharIndex = typeof currentCharIndexOverride === 'number'
+      ? currentCharIndexOverride
+      : this.currentCharIndex;
+    const safeCurrent = Math.max(start, Math.min(baseCharIndex, maxPlayableChar));
+    if (safeCurrent <= start) {
+      return 0;
+    }
+    const ratio = (safeCurrent - start) / Math.max(1, end - start);
+    return Math.max(0, Math.min(durationMs - 1, Math.floor(durationMs * ratio)));
+  }
+
+  private applyActualSegmentDuration(segment: RemoteTtsPlayableSegment, durationMs: number): void {
+    const safeDurationMs = Math.max(REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS, Math.floor(durationMs));
+    if (segment.durationMs === safeDurationMs) {
+      return;
+    }
+    segment.durationMs = safeDurationMs;
+    this.updateManifestSegment(segment);
+    this.persistSegmentIndexRecord(segment);
+  }
+
+  private applyRemotePlayerVolume(player: media.AVPlayer): void {
+    const volume = Math.max(0, Math.min(1, this.settings?.volume ?? 1));
+    try {
+      player.setVolume(volume);
+    } catch (error) {
+      logger.warn(TAG, `远程TTS播放器设置音量失败: volume=${volume}, error=${formatReadAloudError(error)}`);
+    }
+  }
+
+  private async seekSegmentPlayer(player: media.AVPlayer, seekMs: number): Promise<void> {
+    const safeSeekMs = Math.max(0, Math.floor(seekMs));
+    if (safeSeekMs <= 0) {
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timeoutId: number = -1;
+      const finish = (error?: Object | string): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeoutId >= 0) {
+          clearTimeout(timeoutId);
+          timeoutId = -1;
+        }
+        player.off('seekDone', onSeekDone);
+        if (error) {
+          reject(error as Error);
+          return;
+        }
+        resolve();
+      };
+      const onSeekDone = (_timeMs: number): void => {
+        finish();
+      };
+      player.on('seekDone', onSeekDone);
+      timeoutId = setTimeout(() => {
+        logger.warn(TAG, `远程TTS播放器等待 seekDone 超时，继续播放: seekMs=${safeSeekMs}`);
+        finish();
+      }, 1200);
+      try {
+        player.seek(safeSeekMs);
+      } catch (error) {
+        finish(error);
+      }
+    });
+  }
+
+  private isExpectedPlayerState(
+    state: media.AVPlayerState,
+    expectedStates: media.AVPlayerState[]
+  ): boolean {
+    for (const expectedState of expectedStates) {
+      if (state === expectedState) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async waitForPlayerState(
+    player: media.AVPlayer,
+    expectedState: media.AVPlayerState | media.AVPlayerState[],
+    timeoutMs: number,
+    label: string
+  ): Promise<media.AVPlayerState> {
+    const expectedStates = expectedState instanceof Array ? expectedState : [expectedState];
+    if (this.isExpectedPlayerState(player.state, expectedStates)) {
+      return player.state;
+    }
+    return await new Promise<media.AVPlayerState>((resolve, reject) => {
+      let settled = false;
+      let timeoutId: number = -1;
+      const expectedLabel = expectedStates.join('|');
+      const finish = (state: media.AVPlayerState, error?: Object | string): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeoutId >= 0) {
+          clearTimeout(timeoutId);
+          timeoutId = -1;
+        }
+        player.off('stateChange', onStateChange);
+        if (error) {
+          reject(error as Error);
+          return;
+        }
+        resolve(state);
+      };
+      const onStateChange = (state: media.AVPlayerState, reason: media.StateChangeReason): void => {
+        if (this.isExpectedPlayerState(state, expectedStates)) {
+          finish(state);
+          return;
+        }
+        if (state === 'error' || state === 'released') {
+          finish(
+            state,
+            `REMOTE_TTS_PLAYER_WAIT_STATE_FAILED: label=${label}, expected=${expectedLabel}, state=${state}, reason=${reason}`
+          );
+        }
+      };
+      player.on('stateChange', onStateChange);
+      if (this.isExpectedPlayerState(player.state, expectedStates)) {
+        finish(player.state);
+        return;
+      }
+      timeoutId = setTimeout(() => {
+        if (this.isExpectedPlayerState(player.state, expectedStates)) {
+          finish(player.state);
+          return;
+        }
+        finish(
+          player.state,
+          `REMOTE_TTS_PLAYER_WAIT_STATE_TIMEOUT: label=${label}, expected=${expectedLabel}, current=${player.state}`
+        );
+      }, timeoutMs);
+    });
+  }
+
+  private async prepareSegmentPlayer(player: media.AVPlayer, segmentIndex: number): Promise<void> {
+    const readyState = await this.waitForPlayerState(
+      player,
+      ['initialized', 'prepared'],
+      1800,
+      `index=${segmentIndex}_after_fdSrc`
+    );
+    logger.debug(TAG, `远程TTS播放器数据源就绪: index=${segmentIndex}, state=${readyState}`);
+    if (readyState === 'prepared' || player.state === 'prepared') {
+      return;
+    }
+    const stateBeforePrepare = player.state;
+    if (stateBeforePrepare !== 'initialized' && stateBeforePrepare !== 'stopped') {
+      throw new Error(`REMOTE_TTS_PLAYER_PREPARE_INVALID_STATE: index=${segmentIndex}, state=${stateBeforePrepare}`);
+    }
+    try {
+      await player.prepare();
+    } catch (error) {
+      const stateAfterPrepareError = String(player.state);
+      if (stateAfterPrepareError !== 'prepared') {
+        throw error as Error;
+      }
+      logger.warn(
+        TAG,
+        `远程TTS播放器prepare返回异常但已进入prepared，按成功处理: index=${segmentIndex}, error=${formatReadAloudError(error)}`
+      );
+    }
+    const preparedState = await this.waitForPlayerState(
+      player,
+      ['prepared', 'playing', 'paused', 'completed'],
+      1800,
+      `index=${segmentIndex}_after_prepare`
+    );
+    logger.debug(TAG, `远程TTS播放器prepare完成: index=${segmentIndex}, state=${preparedState}`);
+  }
+
+  private async playSegmentWithPlayer(
+    segment: RemoteTtsPlayableSegment,
+    range: QueueCharRange,
+    sessionToken: string
+  ): Promise<void> {
+    this.ensureSegmentPlayableFile(segment);
+    if (!segment.filePath || segment.filePath.length <= 0 || !fs.accessSync(segment.filePath)) {
+      throw new Error(`REMOTE_TTS_SEGMENT_FILE_MISSING: index=${segment.index}, path=${segment.filePath}`);
+    }
+    const stat = fs.statSync(segment.filePath);
+    if (stat.size <= 0) {
+      throw new Error(`REMOTE_TTS_SEGMENT_FILE_EMPTY: index=${segment.index}, path=${segment.filePath}`);
+    }
+
+    const player = await media.createAVPlayer();
+    const file = fs.openSync(segment.filePath, fs.OpenMode.READ_ONLY);
+    const resumeCharIndex = this.currentCharIndex;
+    let stateChangeHandler: (state: media.AVPlayerState, reason: media.StateChangeReason) => void = () => {};
+    let timeUpdateHandler: (timeMs: number) => void = () => {};
+    let errorHandler: (error: Object) => void = () => {};
+    let playbackSettled = false;
+    let allowProgressSync = false;
+
+    const playbackPromise = new Promise<void>((resolve, reject) => {
+      const finishResolve = (): void => {
+        if (playbackSettled) {
+          return;
+        }
+        playbackSettled = true;
+        resolve();
+      };
+      const finishReject = (error: Object | string): void => {
+        if (playbackSettled) {
+          return;
+        }
+        playbackSettled = true;
+        reject(error as Error);
+      };
+
+      stateChangeHandler = (state: media.AVPlayerState, reason: media.StateChangeReason): void => {
+        logger.debug(
+          TAG,
+          `远程TTS播放器状态变化: index=${segment.index}, state=${state}, reason=${reason}, currentTime=${player.currentTime}, duration=${player.duration}`
+        );
+        if (!this.isSessionActive(sessionToken)) {
+          if (state === 'paused' || state === 'stopped' || state === 'released' || state === 'completed') {
+            finishResolve();
+          }
+          return;
+        }
+        if (state === 'completed') {
+          this.currentCharIndex = range.end;
+          this.syncRemoteProgressSnapshot(
+            this.currentCharIndex,
+            range.start,
+            range.end,
+            segment.durationMs,
+            segment.index
+          );
+          finishResolve();
+          return;
+        }
+        if (state === 'stopped' || state === 'released') {
+          this.updateSegmentProgressByPlayerTime(range.start, range.end, segment.durationMs, player.currentTime);
+          finishReject(`REMOTE_TTS_SEGMENT_TERMINATED_UNEXPECTEDLY: index=${segment.index}, state=${state}`);
+        }
+      };
+      timeUpdateHandler = (timeMs: number): void => {
+        if (!this.isSessionActive(sessionToken)) {
+          return;
+        }
+        if (!allowProgressSync) {
+          return;
+        }
+        this.updateSegmentProgressByPlayerTime(range.start, range.end, segment.durationMs, timeMs);
+      };
+      errorHandler = (error: Object): void => {
+        logger.error(
+          TAG,
+          `远程TTS播放器错误: index=${segment.index}, path=${segment.filePath}, error=${formatReadAloudError(error)}`
+        );
+        finishReject(error);
+      };
+    });
+
+    player.on('stateChange', stateChangeHandler);
+    player.on('timeUpdate', timeUpdateHandler);
+    player.on('error', errorHandler);
+
+    this.activeSegmentPlayer = player;
+    this.activeSegmentFile = file;
+    this.activeSegmentPath = segment.filePath;
+    this.activeSegmentIndex = segment.index;
+
+    try {
+      player.fdSrc = {
+        fd: file.fd,
+        offset: 0,
+        length: stat.size
+      };
+      logger.info(
+        TAG,
+        `远程TTS播放器绑定本地分片: index=${segment.index}, path=${segment.filePath}, bytes=${stat.size}, resumeChar=${this.currentCharIndex}`
+      );
+      await this.prepareSegmentPlayer(player, segment.index);
+      const actualDurationMs = player.duration > 0 ? player.duration : segment.durationMs;
+      this.applyActualSegmentDuration(segment, actualDurationMs);
+      this.applyRemotePlayerVolume(player);
+
+      const seekMs = this.computeSegmentSeekTimeMs(range.start, range.end, segment.durationMs, resumeCharIndex);
+      if (seekMs > 0) {
+        await this.seekSegmentPlayer(player, seekMs);
+        this.updateSegmentProgressByPlayerTime(range.start, range.end, segment.durationMs, seekMs);
+      } else {
+        this.syncRemoteProgressSnapshot(this.currentCharIndex, range.start, range.end, 0, segment.index);
+      }
+      allowProgressSync = true;
+
+      if (!this.isSessionActive(sessionToken)) {
+        return;
+      }
+
+      logger.info(
+        TAG,
+        `远程TTS播放器开始播放分片: index=${segment.index}, path=${segment.filePath}, durationMs=${segment.durationMs}, seekMs=${seekMs}`
+      );
+      await player.play();
+      const playbackState = await this.waitForPlayerState(
+        player,
+        ['playing', 'completed'],
+        1800,
+        `index=${segment.index}_after_play`
+      );
+      logger.debug(TAG, `远程TTS播放器play完成首帧确认: index=${segment.index}, state=${playbackState}`);
+      if (playbackState === 'playing' && this.isSessionActive(sessionToken)) {
+        this.prefetchSegmentsSequentially(segment.index + 1, sessionToken);
+      }
+      await playbackPromise;
+    } finally {
+      player.off('stateChange', stateChangeHandler);
+      player.off('timeUpdate', timeUpdateHandler);
+      player.off('error', errorHandler);
+      if (this.activeSegmentPlayer === player) {
+        this.activeSegmentPlayer = null;
+        this.activeSegmentFile = null;
+        this.activeSegmentPath = '';
+        this.activeSegmentIndex = -1;
+      }
+      try {
+        if (player.state !== 'released') {
+          await player.release();
+        }
+      } catch (_ignored) {
+      }
+      try {
+        fs.closeSync(file);
+      } catch (_ignored) {
+      }
+    }
+  }
+
+  private async stopActiveSegmentPlayer(reason: string): Promise<void> {
+    const player = this.activeSegmentPlayer;
+    const file = this.activeSegmentFile;
+    const path = this.activeSegmentPath;
+    const index = this.activeSegmentIndex;
+    this.activeSegmentPlayer = null;
+    this.activeSegmentFile = null;
+    this.activeSegmentPath = '';
+    this.activeSegmentIndex = -1;
+
+    if (!player && !file) {
+      return;
+    }
+    logger.debug(TAG, `远程TTS播放器停止: reason=${reason}, index=${index}, path=${path}`);
+    if (player) {
+      try {
+        if (player.state !== 'released') {
+          await player.release();
+        }
+      } catch (error) {
+        logger.warn(TAG, `远程TTS播放器释放失败: reason=${reason}, index=${index}, error=${formatReadAloudError(error)}`);
+      }
+    }
+    if (file) {
+      try {
+        fs.closeSync(file);
+      } catch (_ignored) {
+      }
+    }
   }
 
   private stopProgressTimer(): void {
@@ -2690,9 +3717,121 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     this.progressRangeEnd = -1;
   }
 
+  private persistSessionTempSegment(
+    index: number,
+    range: QueueCharRange,
+    synthesized: RemoteTtsSynthesizedSegment
+  ): RemoteTtsPlayableSegment {
+    const text = this.queue[index] ?? '';
+    const paths = this.buildSegmentStoragePaths(index, true);
+    ensureDirExists(this.sessionTempDir);
+    writeFileBytes(paths.audioPath, synthesized.bytes);
+    const stat = fs.statSync(paths.audioPath);
+    const segment: RemoteTtsPlayableSegment = {
+      index,
+      start: range.start,
+      end: range.end,
+      cacheKey: paths.cacheKey,
+      textDigest: paths.textDigest,
+      textLength: paths.textLength,
+      textPreview: paths.textPreview,
+      filePath: paths.audioPath,
+      bytes: stat.size,
+      durationMs: this.buildSegmentDurationMs(text, synthesized)
+    };
+    logger.warn(TAG, `远程TTS已降级保存到会话临时目录: index=${index}, cacheKey=${paths.cacheKey}, path=${paths.audioPath}, bytes=${segment.bytes}`);
+    return segment;
+  }
+
+  private ensureSegmentPlayableFile(segment: RemoteTtsPlayableSegment): void {
+    if (segment.filePath.length > 0 && fs.accessSync(segment.filePath)) {
+      return;
+    }
+    const inlineBytes = segment.inlineBytes;
+    if (!inlineBytes || inlineBytes.length <= 0) {
+      return;
+    }
+    const fallbackPaths = this.buildSegmentStoragePaths(segment.index, true);
+    ensureDirExists(this.sessionTempDir);
+    writeFileBytes(fallbackPaths.audioPath, inlineBytes);
+    const stat = fs.statSync(fallbackPaths.audioPath);
+    segment.filePath = fallbackPaths.audioPath;
+    segment.bytes = stat.size;
+    segment.inlineBytes = undefined;
+    logger.warn(
+      TAG,
+      `远程TTS分片已从内存补落盘用于播放: index=${segment.index}, cacheKey=${fallbackPaths.cacheKey}, path=${segment.filePath}, bytes=${segment.bytes}`
+    );
+  }
+
+  private persistSegmentWithFallback(
+    index: number,
+    range: QueueCharRange,
+    synthesized: RemoteTtsSynthesizedSegment
+  ): RemoteTtsPlayableSegment {
+    const text = this.queue[index] ?? '';
+    const cachePaths = this.buildSegmentStoragePaths(index);
+    if (this.remoteSettings.cacheAudioFiles) {
+      try {
+        ensureDirExists(this.segmentCacheDir);
+        writeFileBytes(cachePaths.audioPath, synthesized.bytes);
+        const stat = fs.statSync(cachePaths.audioPath);
+        const segment: RemoteTtsPlayableSegment = {
+          index,
+          start: range.start,
+          end: range.end,
+          cacheKey: cachePaths.cacheKey,
+          textDigest: cachePaths.textDigest,
+          textLength: cachePaths.textLength,
+          textPreview: cachePaths.textPreview,
+          filePath: cachePaths.audioPath,
+          bytes: stat.size,
+          durationMs: this.buildSegmentDurationMs(text, synthesized)
+        };
+        this.persistSegmentIndexRecord(segment);
+        logger.info(TAG, `远程TTS分片已规范化缓存: index=${index}, cacheKey=${cachePaths.cacheKey}, path=${cachePaths.audioPath}, bytes=${segment.bytes}`);
+        return segment;
+      } catch (error) {
+        logger.error(
+          TAG,
+          `远程TTS规范化缓存写入失败: index=${index}, cacheKey=${cachePaths.cacheKey}, target=${cachePaths.audioPath}, bytes=${synthesized.bytes.byteLength}, error=${formatReadAloudError(error)}`
+        );
+      }
+    }
+
+    try {
+      return this.persistSessionTempSegment(index, range, synthesized);
+    } catch (error) {
+      const fallbackPaths = this.buildSegmentStoragePaths(index, true);
+      logger.error(
+        TAG,
+        `远程TTS会话临时落盘失败，改用内存分片继续播放: index=${index}, cacheKey=${fallbackPaths.cacheKey}, target=${fallbackPaths.audioPath}, bytes=${synthesized.bytes.byteLength}, error=${formatReadAloudError(error)}`
+      );
+      return {
+        index,
+        start: range.start,
+        end: range.end,
+        cacheKey: fallbackPaths.cacheKey,
+        textDigest: fallbackPaths.textDigest,
+        textLength: fallbackPaths.textLength,
+        textPreview: fallbackPaths.textPreview,
+        filePath: '',
+        bytes: synthesized.bytes.byteLength,
+        durationMs: this.buildSegmentDurationMs(text, synthesized),
+        inlineBytes: synthesized.bytes
+      };
+    }
+  }
+
   private async ensureSegment(index: number, sessionToken: string): Promise<RemoteTtsPlayableSegment> {
     const existing = this.playableSegments.get(index);
-    if (existing && existing.filePath.length > 0 && fs.accessSync(existing.filePath)) {
+    if (
+      existing &&
+      (
+        (existing.filePath.length > 0 && fs.accessSync(existing.filePath)) ||
+        (!!existing.inlineBytes && existing.inlineBytes.length > 0)
+      )
+    ) {
       return existing;
     }
     const pending = this.pendingSynthesis.get(index);
@@ -2719,26 +3858,20 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       throw new Error(`REMOTE_TTS_EMPTY_SEGMENT: index=${index}`);
     }
     const range = this.getQueueRange(index);
-    const synthesized = await this.requestRemoteAudio(text);
-    const digest = this.segmentDigest(index);
-    const ext = normalizeAudioExtension(this.remoteSettings.audioFormat);
-    const dir = this.remoteSettings.cacheAudioFiles ? this.chapterCacheDir : this.sessionTempDir;
-    ensureDirExists(dir);
-    const filePath = `${dir}/seg_${index}_${digest}.${ext}`;
-    writeFileBytes(filePath, synthesized.bytes);
-    const durationMs = Math.max(
-      REMOTE_TTS_FALLBACK_SEGMENT_MIN_MS,
-      synthesized.durationMs > 0 ? synthesized.durationMs : estimateDurationMsByCharCount(text.length, this.settings?.speed ?? 1)
+    const cachedSegment = this.tryLoadNormalizedCachedSegment(index, range);
+    if (cachedSegment) {
+      this.updateRemoteUiStatus('buffering', '已命中缓存音频', this.buildSegmentUiDetail(index));
+      return cachedSegment;
+    }
+    const paths = this.buildSegmentStoragePaths(index);
+    logger.debug(
+      TAG,
+      `远程TTS准备合成分片: index=${index}, chars=${text.length}, cacheKey=${paths.cacheKey}, cacheAudioFiles=${this.remoteSettings.cacheAudioFiles}`
     );
-    const segment: RemoteTtsPlayableSegment = {
-      index,
-      start: range.start,
-      end: range.end,
-      textDigest: digest,
-      filePath,
-      bytes: synthesized.bytes.byteLength,
-      durationMs
-    };
+    this.updateRemoteUiStatus('requesting', '正在请求远程语音', this.buildSegmentUiDetail(index, `${text.length} 字`));
+    const synthesized = await this.requestRemoteAudio(text);
+    const segment = this.persistSegmentWithFallback(index, range, synthesized);
+    this.updateRemoteUiStatus('buffering', '音频分片已就绪', this.buildSegmentUiDetail(index, `${segment.bytes} bytes`));
     this.updateManifestSegment(segment);
     return segment;
   }
@@ -2747,29 +3880,41 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     const requestUrl = this.buildRemoteRequestUrl();
     const requestHeaders = this.buildRemoteRequestHeaders();
     const payload = this.buildRemoteRequestBody(text);
-    const response = await this.requestRemoteHttp(
-      requestUrl,
-      http.RequestMethod.POST,
-      payload,
-      requestHeaders,
-      true
+    const stylePrompt = this.remoteSettings.stylePrompt.trim();
+    logger.debug(
+      TAG,
+      `远程TTS发起请求: url=${requestUrl}, chars=${text.length}, style=${stylePrompt.length > 0 ? stylePrompt : 'none'}, stream=${this.remoteSettings.streamEnabled}, audioFormat=${this.remoteSettings.audioFormat}, cacheAudioFiles=${this.remoteSettings.cacheAudioFiles}`
     );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      const detail = typeof response.result === 'string'
-        ? response.result.slice(0, 240)
-        : '';
-      throw new Error(`REMOTE_TTS_HTTP_${response.statusCode}${detail.length > 0 ? `: ${detail}` : ''}`);
-    }
+    try {
+      const response = await this.requestRemoteHttp(
+        requestUrl,
+        http.RequestMethod.POST,
+        payload,
+        requestHeaders,
+        true,
+        this.shouldUseChatCompletionsPayload()
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        const detail = typeof response.result === 'string'
+          ? response.result.slice(0, 240)
+          : '';
+        throw new Error(`REMOTE_TTS_HTTP_${response.statusCode}${detail.length > 0 ? `: ${detail}` : ''}`);
+      }
 
-    const parsed = await this.parseRemoteAudioResult(response, requestUrl, requestHeaders);
-    if (!parsed || parsed.bytes.length <= 0) {
-      throw new Error('REMOTE_TTS_EMPTY_AUDIO_BYTES');
-    }
+      const parsed = await this.parseRemoteAudioResult(response, requestUrl, requestHeaders);
+      if (!parsed || parsed.bytes.length <= 0) {
+        throw new Error('REMOTE_TTS_EMPTY_AUDIO_BYTES');
+      }
 
-    return {
-      bytes: parsed.bytes,
-      durationMs: Math.max(0, parsed.durationMs)
-    };
+      return {
+        bytes: parsed.bytes,
+        durationMs: Math.max(0, parsed.durationMs)
+      };
+    } catch (error) {
+      this.updateRemoteUiStatus('error', '远程语音请求失败', this.buildReadableRemoteErrorText(error));
+      logger.error(TAG, `远程TTS请求失败: url=${requestUrl}, chars=${text.length}, error=${formatReadAloudError(error)}`);
+      throw error as Error;
+    }
   }
 
   private buildRemoteRequestUrl(): string {
@@ -2778,19 +3923,37 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     if (apiPathRaw.startsWith('http://') || apiPathRaw.startsWith('https://')) {
       return apiPathRaw;
     }
+    const defaultApiPath = this.shouldUseChatCompletionsPayload() ? '/v1/chat/completions' : '/v1/audio/speech';
     const apiPath = apiPathRaw.length > 0
       ? (apiPathRaw.startsWith('/') ? apiPathRaw : `/${apiPathRaw}`)
-      : '/v1/audio/speech';
+      : defaultApiPath;
     return `${endpoint}${apiPath}`;
   }
 
   private buildRemoteRequestBody(text: string): string {
-    const fields: RemoteRequestField[] = [];
-    this.putRemoteRequestField(fields, 'model', this.remoteSettings.model.trim());
-    this.putRemoteRequestField(fields, 'voice', this.remoteSettings.voice.trim());
-    this.putRemoteRequestField(fields, 'input', text);
-    this.putRemoteRequestField(fields, 'response_format', normalizeAudioExtension(this.remoteSettings.audioFormat));
-    this.putRemoteRequestField(fields, 'stream', this.remoteSettings.streamEnabled);
+    const requestText = this.buildRemoteInputText(text);
+    const normalizedFormat = normalizeAudioExtension(this.remoteSettings.audioFormat);
+    const payload: RemoteJsonRecord = {};
+    if (this.shouldUseChatCompletionsPayload()) {
+      const messages: RemoteChatCompletionMessagePayload[] = [{
+        role: 'assistant',
+        content: requestText
+      }];
+      const audio: RemoteChatCompletionAudioPayload = {
+        format: this.remoteSettings.streamEnabled ? 'pcm16' : normalizedFormat,
+        voice: this.remoteSettings.voice.trim()
+      };
+      payload['model'] = this.remoteSettings.model.trim();
+      payload['messages'] = messages;
+      payload['audio'] = audio;
+      payload['stream'] = this.remoteSettings.streamEnabled;
+    } else {
+      payload['model'] = this.remoteSettings.model.trim();
+      payload['voice'] = this.remoteSettings.voice.trim();
+      payload['input'] = requestText;
+      payload['response_format'] = normalizedFormat;
+      payload['stream'] = this.remoteSettings.streamEnabled;
+    }
 
     const extra = this.parseJsonRecord(this.remoteSettings.extraBodyJson);
     if (extra) {
@@ -2800,40 +3963,10 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         if (value === undefined || value === null) {
           continue;
         }
-        if (typeof value === 'boolean') {
-          this.putRemoteRequestField(fields, key, value);
-        } else {
-          this.putRemoteRequestField(fields, key, String(value));
-        }
+        payload[key] = value;
       }
     }
-    return this.serializeRemoteRequestFields(fields);
-  }
-
-  private putRemoteRequestField(fields: RemoteRequestField[], key: string, value: string | boolean): void {
-    for (let i = 0; i < fields.length; i++) {
-      if (fields[i].key === key) {
-        fields[i].value = value;
-        return;
-      }
-    }
-    const field: RemoteRequestField = {
-      key,
-      value
-    };
-    fields.push(field);
-  }
-
-  private serializeRemoteRequestFields(fields: RemoteRequestField[]): string {
-    const parts: string[] = [];
-    for (const field of fields) {
-      const keyPart = JSON.stringify(field.key);
-      const valuePart = typeof field.value === 'boolean'
-        ? (field.value ? 'true' : 'false')
-        : JSON.stringify(field.value);
-      parts.push(`${keyPart}:${valuePart}`);
-    }
-    return `{${parts.join(',')}}`;
+    return JSON.stringify(payload);
   }
 
   private buildRemoteRequestHeaders(): Record<string, string> {
@@ -2854,10 +3987,31 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     this.setHeaderIfAbsent(headers, 'Accept', 'audio/*,application/octet-stream,application/json,text/event-stream');
     this.setHeaderIfAbsent(headers, 'User-Agent', 'ManXia-ReadAloud/1.0');
     const apiKey = this.remoteSettings.apiKey.trim();
-    if (apiKey.length > 0 && !this.hasHeaderIgnoreCase(headers, 'Authorization')) {
-      headers.Authorization = `Bearer ${apiKey}`;
+    if (apiKey.length > 0 && !this.hasAnyHeaderIgnoreCase(headers, ['Authorization', 'api-key'])) {
+      const authHeaderName = this.resolveRemoteApiKeyHeaderName();
+      headers[authHeaderName] = authHeaderName.toLowerCase() === 'authorization'
+        ? `Bearer ${apiKey}`
+        : apiKey;
     }
     return headers;
+  }
+
+  private shouldUseChatCompletionsPayload(): boolean {
+    const apiPath = this.remoteSettings.apiPath.trim().toLowerCase();
+    const endpoint = this.remoteSettings.endpoint.trim().toLowerCase();
+    const model = this.remoteSettings.model.trim().toLowerCase();
+    return apiPath.includes('/chat/completions') ||
+      endpoint.includes('xiaomimimo.com') ||
+      model === 'mimo-v2-tts';
+  }
+
+  private resolveRemoteApiKeyHeaderName(): string {
+    const endpoint = this.remoteSettings.endpoint.trim().toLowerCase();
+    const model = this.remoteSettings.model.trim().toLowerCase();
+    if (endpoint.includes('xiaomimimo.com') || model === 'mimo-v2-tts') {
+      return 'api-key';
+    }
+    return 'Authorization';
   }
 
   private parseJsonRecord(text: string): RemoteJsonRecord | null {
@@ -2880,6 +4034,15 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     const keys = Object.keys(headers);
     for (const item of keys) {
       if (item.toLowerCase() === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasAnyHeaderIgnoreCase(headers: Record<string, string>, keys: string[]): boolean {
+    for (const key of keys) {
+      if (this.hasHeaderIgnoreCase(headers, key)) {
         return true;
       }
     }
@@ -2925,6 +4088,34 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     method: http.RequestMethod,
     body: string,
     headers: Record<string, string>,
+    expectArrayBuffer: boolean,
+    allowStringRetryOnReceiveError: boolean = false
+  ): Promise<RemoteTtsHttpResult> {
+    try {
+      return await this.performRemoteHttpRequest(url, method, body, headers, expectArrayBuffer);
+    } catch (error) {
+      const retryableReceiveError = isRemoteArrayBufferRetryableError(error);
+      if (
+        retryableReceiveError &&
+        expectArrayBuffer &&
+        allowStringRetryOnReceiveError
+      ) {
+        this.updateRemoteUiStatus('retrying', '二进制接收失败，正在切换文本响应重试', '兼容 chat/completions JSON 响应');
+        logger.warn(
+          TAG,
+          `远程TTS二进制接收失败，改用文本响应重试: url=${url}, method=${method}, error=${formatReadAloudError(error)}`
+        );
+        return await this.performRemoteHttpRequest(url, method, body, headers, false);
+      }
+      throw error as Error;
+    }
+  }
+
+  private async performRemoteHttpRequest(
+    url: string,
+    method: http.RequestMethod,
+    body: string,
+    headers: Record<string, string>,
     expectArrayBuffer: boolean
   ): Promise<RemoteTtsHttpResult> {
     const request = http.createHttp();
@@ -2934,12 +4125,21 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
         header: headers,
         extraData: body,
         expectDataType: expectArrayBuffer ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING,
+        maxLimit: REMOTE_TTS_HTTP_MAX_LIMIT_BYTES,
         connectTimeout: this.remoteSettings.connectTimeoutMs,
         readTimeout: this.remoteSettings.readTimeoutMs
       });
+      const normalizedHeaders = this.normalizeHeaders(response.header);
+      const receivedBytes = typeof response.result === 'string'
+        ? response.result.length
+        : (response.result as ArrayBuffer).byteLength;
+      logger.debug(
+        TAG,
+        `远程TTS响应接收完成: url=${url}, statusCode=${response.responseCode}, receiveType=${expectArrayBuffer ? 'ARRAY_BUFFER' : 'STRING'}, maxLimit=${REMOTE_TTS_HTTP_MAX_LIMIT_BYTES}, contentLength=${this.getHeaderValue(normalizedHeaders, 'content-length') || 'unknown'}, receivedBytes=${receivedBytes}`
+      );
       return {
         statusCode: response.responseCode,
-        headers: this.normalizeHeaders(response.header),
+        headers: normalizedHeaders,
         result: response.result as string | ArrayBuffer
       };
     } finally {

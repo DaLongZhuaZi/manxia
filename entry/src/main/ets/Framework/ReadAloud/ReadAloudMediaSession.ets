@@ -30,6 +30,7 @@ export class ReadAloudMediaSession {
   private lastMetadataTitle: string = '';
   private lastMetadataSubtitle: string = '';
   private lastMetadataCoverUrl: string = '';
+  private lastMetadataDurationMs: number = -1;
   private lastPlaybackState: avSession.PlaybackState = avSession.PlaybackState.PLAYBACK_STATE_IDLE;
   private lastPlaybackPositionMs: number = -1;
   private lastPlaybackSyncTimeMs: number = 0;
@@ -43,7 +44,7 @@ export class ReadAloudMediaSession {
       if (!this.session) {
         return;
       }
-      this.syncMetadata(context, settings).catch((error: Object | string): void => {
+      this.syncMetadata(snapshot, context, settings).catch((error: Object | string): void => {
         logger.warn(TAG, `更新媒体元数据失败: ${this.formatError(error)}`);
       }).then((): Promise<void> => {
         return this.syncPlaybackState(snapshot, context, settings);
@@ -148,7 +149,11 @@ export class ReadAloudMediaSession {
     this.callbacksRegistered = true;
   }
 
-  private async syncMetadata(context: ReadAloudSessionContext | null, settings: ReadAloudSettings): Promise<void> {
+  private async syncMetadata(
+    snapshot: ReadAloudStateSnapshot,
+    context: ReadAloudSessionContext | null,
+    settings: ReadAloudSettings
+  ): Promise<void> {
     if (!this.session || !context) {
       return;
     }
@@ -156,11 +161,13 @@ export class ReadAloudMediaSession {
     const title = this.buildTitle(context);
     const subtitle = this.buildSubtitle(context);
     const mediaImage = this.buildMediaImage(context);
+    const durationMs = this.estimateDurationMs(snapshot, context, settings);
     if (
       assetId === this.lastMetadataAssetId &&
       title === this.lastMetadataTitle &&
       subtitle === this.lastMetadataSubtitle &&
-      mediaImage === this.lastMetadataCoverUrl
+      mediaImage === this.lastMetadataCoverUrl &&
+      durationMs === this.lastMetadataDurationMs
     ) {
       return;
     }
@@ -169,7 +176,7 @@ export class ReadAloudMediaSession {
       title,
       subtitle,
       description: `听书 · 第${context.chapterIndex + 1}章`,
-      duration: this.estimateDurationMs(context, settings)
+      duration: durationMs
     };
     if (mediaImage.length > 0) {
       metadata.mediaImage = mediaImage;
@@ -179,6 +186,7 @@ export class ReadAloudMediaSession {
     this.lastMetadataTitle = title;
     this.lastMetadataSubtitle = subtitle;
     this.lastMetadataCoverUrl = mediaImage;
+    this.lastMetadataDurationMs = durationMs;
     logger.info(
       TAG,
       `媒体元数据已更新: title=${title}, subtitle=${metadata.subtitle}, hasCover=${mediaImage.length > 0}`
@@ -219,7 +227,7 @@ export class ReadAloudMediaSession {
       context &&
       mappedState === avSession.PlaybackState.PLAYBACK_STATE_PLAY
     ) {
-      const durationMs = this.estimateDurationMs(context, settings);
+      const durationMs = this.estimateDurationMs(snapshot, context, settings);
       if (durationMs > 0) {
         const playbackPosition: avSession.PlaybackPosition = {
           elapsedTime: Math.max(0, Math.min(positionMs, durationMs)),
@@ -294,6 +302,7 @@ export class ReadAloudMediaSession {
     this.lastMetadataTitle = '';
     this.lastMetadataSubtitle = '';
     this.lastMetadataCoverUrl = '';
+    this.lastMetadataDurationMs = -1;
     this.lastPlaybackState = avSession.PlaybackState.PLAYBACK_STATE_IDLE;
     this.lastPlaybackPositionMs = -1;
     this.lastPlaybackSyncTimeMs = 0;
@@ -328,7 +337,14 @@ export class ReadAloudMediaSession {
     return coverUrl;
   }
 
-  private estimateDurationMs(context: ReadAloudSessionContext | null, settings: ReadAloudSettings): number {
+  private estimateDurationMs(
+    snapshot: ReadAloudStateSnapshot,
+    context: ReadAloudSessionContext | null,
+    settings: ReadAloudSettings
+  ): number {
+    if (snapshot.totalDurationMs > 0) {
+      return Math.floor(snapshot.totalDurationMs);
+    }
     if (!context || !context.content || context.content.length <= 0) {
       return 0;
     }
@@ -342,10 +358,17 @@ export class ReadAloudMediaSession {
     context: ReadAloudSessionContext | null,
     settings: ReadAloudSettings
   ): number {
+    if (snapshot.currentPositionMs >= 0) {
+      const durationMs = this.estimateDurationMs(snapshot, context, settings);
+      if (durationMs > 0) {
+        return Math.max(0, Math.min(Math.floor(snapshot.currentPositionMs), durationMs));
+      }
+      return Math.max(0, Math.floor(snapshot.currentPositionMs));
+    }
     if (!context || !context.content || context.content.length <= 0) {
       return 0;
     }
-    const durationMs = this.estimateDurationMs(context, settings);
+    const durationMs = this.estimateDurationMs(snapshot, context, settings);
     if (durationMs <= 0) {
       return 0;
     }
