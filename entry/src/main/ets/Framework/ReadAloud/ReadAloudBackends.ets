@@ -54,6 +54,10 @@ const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
 const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
 const READ_ALOUD_UI_STATUS_PHASE_KEY = 'ReadAloudUiStatusPhase';
 const READ_ALOUD_UI_STATUS_UPDATED_AT_KEY = 'ReadAloudUiStatusUpdatedAt';
+const READ_ALOUD_REMOTE_CURRENT_SEGMENT_INDEX_KEY = 'ReadAloudRemoteCurrentSegmentIndex';
+const READ_ALOUD_REMOTE_TOTAL_SEGMENTS_KEY = 'ReadAloudRemoteTotalSegments';
+const READ_ALOUD_REMOTE_CACHED_SEGMENTS_KEY = 'ReadAloudRemoteCachedSegments';
+const READ_ALOUD_REMOTE_CACHED_BYTES_KEY = 'ReadAloudRemoteCachedBytes';
 const REMOTE_TTS_ARRAY_BUFFER_RETRY_ERROR_CODE = '2300023';
 
 interface ReadAloudErrorLike {
@@ -2583,6 +2587,32 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       : `第${current}/${total}段`;
   }
 
+  private resetRemoteProgressStorage(): void {
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_CURRENT_SEGMENT_INDEX_KEY, 0);
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_TOTAL_SEGMENTS_KEY, 0);
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_CACHED_SEGMENTS_KEY, 0);
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_CACHED_BYTES_KEY, 0);
+  }
+
+  private syncRemoteProgressStorage(queueIndex: number = this.queueIndex): void {
+    const effectiveQueueIndex = queueIndex >= 0 ? queueIndex : this.queueIndex;
+    const safeCurrentSegment = this.queue.length > 0
+      ? Math.max(1, Math.min(effectiveQueueIndex + 1, this.queue.length))
+      : 0;
+    let cachedBytes = 0;
+    let cachedSegments = 0;
+    if (this.activeManifest) {
+      cachedSegments = this.activeManifest.segments.length;
+      for (let index = 0; index < this.activeManifest.segments.length; index++) {
+        cachedBytes += Math.max(0, this.activeManifest.segments[index].bytes);
+      }
+    }
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_CURRENT_SEGMENT_INDEX_KEY, safeCurrentSegment);
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_TOTAL_SEGMENTS_KEY, this.queue.length);
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_CACHED_SEGMENTS_KEY, cachedSegments);
+    AppStorage.setOrCreate(READ_ALOUD_REMOTE_CACHED_BYTES_KEY, cachedBytes);
+  }
+
   private buildReadableRemoteErrorText(error: Object | string): string {
     const detail = formatReadAloudError(error).trim();
     if (detail.length <= 0) {
@@ -2614,6 +2644,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       this.manifestPath = '';
       this.sessionTempDir = '';
       this.stopProgressTimer();
+      this.resetRemoteProgressStorage();
       this.updateProgressSnapshot(-1, -1, -1, -1, -1);
       return;
     }
@@ -3181,6 +3212,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
       currentPositionMs,
       totalDurationMs
     );
+    this.syncRemoteProgressStorage(queueIndexOverride);
   }
 
   private syncActiveSegmentProgressFromPlayer(): void {
@@ -3255,6 +3287,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     } else {
       logger.debug(TAG, `远程TTS章节清单已加载: bookId=${this.activeManifest.bookId}, chapterIndex=${this.activeManifest.chapterIndex}, segments=${this.activeManifest.segments.length}`);
     }
+    this.syncRemoteProgressStorage();
     this.restoreSegmentsFromManifest();
   }
 
@@ -3339,6 +3372,7 @@ class RemoteReadAloudBackend extends BaseReadAloudBackend {
     try {
       this.activeManifest.updatedAt = Date.now();
       writeJsonFile(this.manifestPath, this.activeManifest as Object);
+      this.syncRemoteProgressStorage();
       this.publishReadAloudCacheUpdated('manifest_persisted');
     } catch (error) {
       logger.warn(TAG, `远程TTS章节清单写入失败: path=${this.manifestPath}, error=${formatReadAloudError(error)}`);

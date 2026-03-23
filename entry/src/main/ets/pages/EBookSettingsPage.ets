@@ -33,7 +33,8 @@ import {
 import { eventBus, GameEvent, BasePayload } from '../Framework/EventBus';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getFontManager, SystemFont, CustomFont } from '../Framework/Managers/FontManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 
 const TAG = 'EBookSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -148,8 +149,8 @@ export struct EBookSettingsPage {
   @State coverImagePath: string = '';
 
   aboutToAppear(): void {
-    this.previousDisplayMode = WindowManager.getCurrentMode();
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('EBookSettingsPage', this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -181,7 +182,7 @@ export struct EBookSettingsPage {
   }
 
   onPageShow(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.reapplyPagePolicy('EBookSettingsPage', this.getUIContext());
   }
   
   /**
@@ -254,7 +255,7 @@ export struct EBookSettingsPage {
   private lifecycle = new PageLifecycleManager('EBookSettingsPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);

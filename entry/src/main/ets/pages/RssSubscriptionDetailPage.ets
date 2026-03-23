@@ -14,6 +14,8 @@ import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAwa
 import { RssFeedItem, RssSubscriptionSource } from '../Models/RssSubscriptionModels';
 import { getRssSubscriptionInitializer } from '../Framework/Rss/RssSubscriptionInitializer';
 import { getRssSubscriptionManager, RssSubscriptionManager } from '../Framework/Rss/RssSubscriptionManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 
 const TAG = 'RssSubscriptionDetailPage';
 const TITLE_BAR_HEIGHT_MINI = 56;
@@ -48,8 +50,11 @@ export struct RssSubscriptionDetailPage {
   private itemId: string = '';
   private readonly manager: RssSubscriptionManager = getRssSubscriptionManager();
   private lifecycle = new PageLifecycleManager('RssSubscriptionDetailPage', { enableDebug: true });
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   aboutToAppear(): void {
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('RssSubscriptionDetailPage', this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (_theme: ThemeType) => {
     });
     FontAwareHelper.initializeFontAware(
@@ -62,6 +67,7 @@ export struct RssSubscriptionDetailPage {
   }
 
   aboutToDisappear(): void {
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);

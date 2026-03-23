@@ -36,6 +36,9 @@ import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'BackupPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -78,6 +81,8 @@ struct BackupPage {
   // Tab状态
   @Local currentTab: 'local' | 'cloud' | 'native_test' | 'ftp' = 'local';
   @Local searchHighlightTab: 'local' | 'cloud' | 'native_test' | 'ftp' | '' = '';
+  @Local appGuideStep: AppGuideStep | null = null;
+  @Local appGuideHighlightRect: GuideHighlightRect | null = null;
   
   // 横向滑动切换标签页相关状态
   private readonly tabOrder: ('local' | 'cloud' | 'native_test' | 'ftp')[] = ['local', 'cloud', 'native_test', 'ftp'];
@@ -162,6 +167,7 @@ struct BackupPage {
   private webdavInitPromise: Promise<boolean> | null = null;
   private webdavConfigKey: string = '';
   private cloudSyncTimer: number | undefined = undefined;
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   
   /**
    * 切换到下一个标签页（支持循环）
@@ -315,6 +321,54 @@ struct BackupPage {
     // 检查是否有外部导入的备份文件
     this.checkPendingBackupImport();
     this.applyPendingSearchTarget();
+    setTimeout(() => {
+      void this.refreshPageGuide('aboutToAppear');
+    }, 120);
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_backup_root');
+    } catch (error) {
+      logger.warn(TAG, `获取备份恢复引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.BACKUP_RESTORE);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.BACKUP_RESTORE) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `备份恢复引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
   
   /**
@@ -1795,6 +1849,7 @@ struct BackupPage {
         }
         .width('100%')
         .height('100%')
+        .id('guide_backup_root')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         
         // 对话框层
@@ -1803,6 +1858,25 @@ struct BackupPage {
         this.buildRestoreResultDialog()
         this.buildWebDAVConfigDialog()
         this.buildInitCloudDialog()
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
       .width('100%')
       .height('100%')
@@ -1838,6 +1912,9 @@ struct BackupPage {
           }]
         }
       }
+    })
+    .onShown(() => {
+      void this.refreshPageGuide('onShown');
     })
     .backgroundColor(Color.Transparent)
   }
@@ -1982,6 +2059,7 @@ struct BackupPage {
     .height(35)
     .width('100%')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_secondary', this.themeState.currentTheme))
+    .id('guide_backup_tabs')
   }
 
   @Builder

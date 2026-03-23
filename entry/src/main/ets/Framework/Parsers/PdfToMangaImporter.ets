@@ -42,6 +42,10 @@ const PAGE_DELAY_MS = 100;
  * 更长的延时确保系统有足够时间响应
  */
 const BATCH_DELAY_MS = 300;
+const MANGA_RENDER_BASE_SCALE = 2.2;
+const EBOOK_RENDER_BASE_SCALE = 2.0;
+const MANGA_MAX_RENDER_LONG_EDGE = 2400;
+const EBOOK_MAX_RENDER_LONG_EDGE = 2200;
 
 /**
  * PDF内容类型枚举
@@ -152,6 +156,12 @@ export interface PdfPageImage {
 /**
  * PDF导入进度回调
  */
+export interface PdfRenderSize {
+  bitmapWidth: number;
+  bitmapHeight: number;
+  rotation: number;
+}
+
 export type PdfImportProgressCallback = (current: number, total: number, message: string) => void;
 
 /**
@@ -278,6 +288,11 @@ export class PdfToMangaImporter {
       };
     } finally {
       // 清理资源
+      try {
+        this.pdfDocument?.releaseDocument();
+      } catch (error) {
+        logger.warn(TAG, `释放PDF文档失败: ${String(error)}`);
+      }
       this.pdfDocument = null;
     }
   }
@@ -425,81 +440,135 @@ export class PdfToMangaImporter {
         return null;
       }
 
-      // 使用getPagePixelMap获取页面的PixelMap
-      // 这个方法比convertToImage更轻量，返回内存中的像素数据
-      const pixelMap: image.PixelMap | null = pdfPage.getPagePixelMap();
-      if (!pixelMap) {
-        logger.warn(TAG, `页面 ${pageIndex} 获取PixelMap失败`);
-        return null;
-      }
+      const pageWidth = Math.max(1, Math.floor(pdfPage.getWidth()));
+      const pageHeight = Math.max(1, Math.floor(pdfPage.getHeight()));
+      const renderSize = this.resolveRenderSize(pdfPage, pageWidth, pageHeight);
+      const matrix = new pdfService.PdfMatrix();
+      matrix.x = 0;
+      matrix.y = 0;
+      matrix.width = pageWidth;
+      matrix.height = pageHeight;
+      matrix.rotate = renderSize.rotation;
 
-      // 使用ImagePacker异步将PixelMap打包为WebP格式
-      // WebP格式比JPEG更节省空间，质量70可以在文件大小和画质之间取得良好平衡
-      const imgBuffer = await this.pixelMapToBuffer(pixelMap, 'image/webp', 70);
-      
-      // 释放PixelMap资源
-      pixelMap.release();
+      logger.info(
+        TAG,
+        `页面 ${pageIndex} 使用受控渲染尺寸: ${renderSize.bitmapWidth}x${renderSize.bitmapHeight}, 原始=${pageWidth}x${pageHeight}, rotation=${renderSize.rotation}`
+      );
 
-      // 生成输出文件路径
-      const outputFileName = `page_${pageIndex}.webp`;
-      const outputPath = `${outputDir}/${outputFileName}`;
+      let pixelMap: image.PixelMap | null = null;
+      try {
+        pixelMap = pdfPage.getAreaPixelMap(
+          matrix,
+          renderSize.bitmapWidth,
+          renderSize.bitmapHeight,
+          false,
+          true
+        );
+        if (!pixelMap) {
+          logger.warn(TAG, `页面 ${pageIndex} 获取PixelMap失败`);
+          return null;
+        }
 
-      // 异步写入文件
-      const file = fileIo.openSync(outputPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
-      await fileIo.write(file.fd, imgBuffer);
-      fileIo.closeSync(file.fd);
-      
-      logger.info(TAG, `页面 ${pageIndex} 转换成功: ${outputPath}`);
-      
-      // 转换后添加短暂延时
-      await delay(PAGE_DELAY_MS);
+        // 使用受控渲染尺寸降低超大扫描PDF的内存峰值
+        const imgBuffer = await this.pixelMapToBuffer(pixelMap, 'image/webp', 70);
 
-      // 重命名为标准格式: page_0001.webp
-      const standardName = `page_${String(pageIndex).padStart(4, '0')}.webp`;
-      const standardPath = `${outputDir}/${standardName}`;
-      
-      if (outputPath !== standardPath) {
+        // 生成输出文件路径
+        const outputFileName = `page_${pageIndex}.webp`;
+        const outputPath = `${outputDir}/${outputFileName}`;
+
+        // 异步写入文件
+        const file = fileIo.openSync(outputPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
         try {
-          fileIo.renameSync(outputPath, standardPath);
+          await fileIo.write(file.fd, imgBuffer);
+        } finally {
+          fileIo.closeSync(file.fd);
+        }
+
+        logger.info(TAG, `页面 ${pageIndex} 转换成功: ${outputPath}`);
+
+        // 转换后添加短暂延时
+        await delay(PAGE_DELAY_MS);
+
+        // 重命名为标准格式: page_0001.webp
+        const standardName = `page_${String(pageIndex).padStart(4, '0')}.webp`;
+        const standardPath = `${outputDir}/${standardName}`;
+
+        let finalPath = outputPath;
+        if (outputPath !== standardPath) {
+          try {
+            fileIo.renameSync(outputPath, standardPath);
+            finalPath = standardPath;
+          } catch (e) {
+            logger.warn(TAG, `重命名文件失败: ${e}`);
+          }
+        }
+
+        // 获取文件信息
+        let fileSize = 0;
+        try {
+          const stat = fileIo.statSync(finalPath);
+          fileSize = stat.size;
         } catch (e) {
-          logger.warn(TAG, `重命名文件失败: ${e}`);
-          // 使用原始路径
+          // 忽略
+        }
+
+        return {
+          pageIndex,
+          imagePath: finalPath,
+          width: renderSize.bitmapWidth,
+          height: renderSize.bitmapHeight,
+          fileSize
+        };
+      } finally {
+        if (pixelMap) {
+          try {
+            pixelMap.release();
+          } catch (error) {
+            logger.warn(TAG, `释放PixelMap失败: ${String(error)}`);
+          }
         }
       }
-
-      const finalPath = standardPath;
-
-      // 获取文件信息
-      let fileSize = 0;
-      try {
-        const stat = fileIo.statSync(finalPath);
-        fileSize = stat.size;
-      } catch (e) {
-        // 忽略
-      }
-
-      // 获取页面尺寸
-      let width = 0;
-      let height = 0;
-      try {
-        width = pdfPage.getWidth();
-        height = pdfPage.getHeight();
-      } catch (e) {
-        // 忽略
-      }
-
-      return {
-        pageIndex,
-        imagePath: finalPath,
-        width,
-        height,
-        fileSize
-      };
 
     } catch (error) {
       logger.error(TAG, `转换页面 ${pageIndex} 异常: ${error}`);
       return null;
     }
+  }
+
+  private resolveRenderSize(
+    pdfPage: pdfService.PdfPage,
+    pageWidth: number,
+    pageHeight: number
+  ): PdfRenderSize {
+    const baseScale = this.config.contentType === PdfContentType.MANGA
+      ? MANGA_RENDER_BASE_SCALE
+      : EBOOK_RENDER_BASE_SCALE;
+    const maxLongEdge = this.config.contentType === PdfContentType.MANGA
+      ? MANGA_MAX_RENDER_LONG_EDGE
+      : EBOOK_MAX_RENDER_LONG_EDGE;
+    const rotation = Number(pdfPage.getRotation());
+
+    let bitmapWidth = Math.max(1, Math.floor(pageWidth * baseScale));
+    let bitmapHeight = Math.max(1, Math.floor(pageHeight * baseScale));
+    const currentLongEdge = Math.max(bitmapWidth, bitmapHeight);
+    if (currentLongEdge > maxLongEdge) {
+      const downscale = maxLongEdge / currentLongEdge;
+      bitmapWidth = Math.max(1, Math.floor(bitmapWidth * downscale));
+      bitmapHeight = Math.max(1, Math.floor(bitmapHeight * downscale));
+    }
+
+    if (rotation === 90 || rotation === 270) {
+      const swappedWidth = bitmapHeight;
+      bitmapHeight = bitmapWidth;
+      bitmapWidth = swappedWidth;
+    }
+
+    const renderSize: PdfRenderSize = {
+      bitmapWidth,
+      bitmapHeight,
+      rotation
+    };
+    return renderSize;
   }
 
   /**

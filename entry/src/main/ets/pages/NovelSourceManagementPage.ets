@@ -41,6 +41,9 @@ import { GroupManagementDialog, GroupInfo, GroupOperationCallback, SplitConditio
 import { LegadoWebViewComponent } from '../Framework/Novel/LegadoWebViewComponent';
 import { FileEditorParams } from './FileEditorPage';
 import { BackgroundTaskHelper } from '../Framework/Task/BackgroundTaskHelper';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'NovelSourceManagementPage';
 
@@ -125,6 +128,10 @@ export struct NovelSourceManagementPage {
   // 排序模式状态
   @State isSortMode: boolean = false;
   @State isSavingOrder: boolean = false;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
+  private lastGuideAnchorId: string = '';
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
@@ -137,6 +144,111 @@ export struct NovelSourceManagementPage {
         this.fontState = newState;
       }
     );
+    void this.refreshPageGuide('aboutToAppear');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_novel_source_root');
+    } catch (error) {
+      logger.warn(TAG, `获取书源管理引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.NOVEL_SOURCE_MANAGEMENT);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.NOVEL_SOURCE_MANAGEMENT) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      this.lastGuideAnchorId = '';
+      return;
+    }
+    if (this.normalizeGuidePresentation() && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 120);
+      return;
+    }
+    if (this.alignGuideViewport(step) && !trigger.endsWith('_after_scroll')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_scroll`);
+      }, 220);
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_retry_layout`);
+      }, 120);
+    }
+    logger.debug(TAG, `书源管理引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private normalizeGuidePresentation(): boolean {
+    let changed: boolean = false;
+    if (this.showImportDialog) {
+      this.showImportDialog = false;
+      changed = true;
+    }
+    if (this.showImportUrlDialog) {
+      this.showImportUrlDialog = false;
+      changed = true;
+    }
+    if (this.showSearchBar || this.searchKeyword.length > 0) {
+      this.showSearchBar = false;
+      this.searchKeyword = '';
+      this.applyFilter();
+      changed = true;
+    }
+    if (this.isMultiSelectMode || this.selectedSourceIds.size > 0) {
+      this.isMultiSelectMode = false;
+      this.selectedSourceIds = new Set();
+      changed = true;
+    }
+    return changed;
+  }
+
+  private alignGuideViewport(step: AppGuideStep): boolean {
+    const anchorId = step.anchorId ?? '';
+    if (anchorId.length <= 0) {
+      return false;
+    }
+    const scrollResult = ensureGuideAnchorVisibleInScroller(
+      this.getUIContext(),
+      this.listScroller,
+      anchorId,
+      'guide_novel_source_list'
+    );
+    if (!scrollResult.available) {
+      return false;
+    }
+    this.lastGuideAnchorId = anchorId;
+    return scrollResult.scrolled; /*
+        logger.debug(TAG, `滚动到书源引导锚点时列表暂不可用: ${String(error)}`);
+      }
+    }, 0);
+    */
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   private lifecycle = new PageLifecycleManager('NovelSourceManagementPage', { enableDebug: true });
@@ -387,6 +499,27 @@ export struct NovelSourceManagementPage {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .width('100%')
       .height('100%')
+      .id('guide_novel_source_root')
+
+      if (this.appGuideStep) {
+        AppGuideOverlay({
+          visible: this.appGuideStep !== null,
+          title: this.appGuideStep.title,
+          message: this.appGuideStep.message,
+          progressText: this.appGuideManager.getCurrentProgressText(),
+          nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+          cardPosition: this.appGuideStep.cardPosition,
+          highlightRect: this.appGuideHighlightRect,
+          showSkip: this.appGuideStep.showSkip !== false,
+          themeState: this.themeState,
+          onNext: () => {
+            this.handlePageGuideNext();
+          },
+          onSkip: () => {
+            this.handlePageGuideSkip();
+          }
+        })
+      }
     }
     .titleBar({
       padding: {
@@ -455,7 +588,11 @@ export struct NovelSourceManagementPage {
     .backgroundColor(Color.Transparent)
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
+      this.pathStack = context.pathStack;
       this.loadSources();
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
     })
   }
 
@@ -1054,6 +1191,7 @@ export struct NovelSourceManagementPage {
       }
     }
     .width('100%')
+    .id('guide_novel_source_stats')
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
     .margin({ top: 8 })
   }
@@ -1067,6 +1205,7 @@ export struct NovelSourceManagementPage {
         .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
     }
     .width('100%')
+    .id('guide_novel_source_list')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
@@ -1127,6 +1266,7 @@ export struct NovelSourceManagementPage {
         .onClick(() => this.importFromClipboard())
     }
     .width('100%')
+    .id('guide_novel_source_list')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
@@ -1166,6 +1306,7 @@ export struct NovelSourceManagementPage {
       }
     }
     .width('100%')
+    .id('guide_novel_source_list')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .layoutWeight(1)
     .padding({ left: 12, right: 12, top: 8 })

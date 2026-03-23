@@ -132,6 +132,9 @@ import { EBookReaderParams } from './EBookReaderPage';
 import { NovelReaderPageParams } from './NovelBookshelfPage';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'UnifiedDetailPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -213,6 +216,10 @@ export struct UnifiedDetailPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
+  @State private fullscreenChildShieldVisible: boolean = false;
+  @State private fullscreenChildShieldOpacity: number = 0;
+  private preserveDisplayModeOnNextDisappear: boolean = false;
+  private fullscreenChildShieldCleanupTimer: number = -1;
 
   // 响应式布局
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -262,6 +269,7 @@ export struct UnifiedDetailPage {
   private cacheStatusService: CacheStatusService = getCacheStatusService();
   private unifiedDownloadManager: UnifiedDownloadManager = getUnifiedDownloadManager();
   private remoteReadAloudCacheService = getRemoteReadAloudCacheService();
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   @State cacheStats: ContentCacheStats | null = null;
   @State isCacheStatsLoading: boolean = false;
   @State showCacheStatusCard: boolean = false;  // 控制是否显示缓存卡片
@@ -269,6 +277,8 @@ export struct UnifiedDetailPage {
 
   // 听书缓存状态
   @State readAloudCacheSummary: RemoteReadAloudCacheBookSummary | null = null;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @State isReadAloudCacheLoading: boolean = false;
   @State isReadAloudCacheExpanded: boolean = true;
   @State showReadAloudCacheDialog: boolean = false;
@@ -502,6 +512,52 @@ export struct UnifiedDetailPage {
     this.webViewControllerAttached = false;
     eventBus.subscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
     logger.info(TAG, 'Waiting hidden WebView controller attach');
+    void this.refreshPageGuide('aboutToAppear');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_unified_detail_root');
+    } catch (error) {
+      logger.warn(TAG, `获取统一详情页引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.UNIFIED_DETAIL);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.UNIFIED_DETAIL) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `统一详情页引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   private triggerInitialContentLoadIfReady(): void {
@@ -523,7 +579,17 @@ export struct UnifiedDetailPage {
   private lifecycle = new PageLifecycleManager('UnifiedDetailPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    if (this.fullscreenChildShieldCleanupTimer >= 0) {
+      clearTimeout(this.fullscreenChildShieldCleanupTimer);
+      this.fullscreenChildShieldCleanupTimer = -1;
+    }
+    if (!this.preserveDisplayModeOnNextDisappear) {
+      WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+      this.fullscreenChildShieldVisible = false;
+      this.fullscreenChildShieldOpacity = 0;
+    } else {
+      logger.info(TAG, '进入全屏子页面，保留统一详情页窗口模式');
+    }
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -1727,7 +1793,39 @@ export struct UnifiedDetailPage {
       sourceId: this.content.sourceId || ''
     };
 
+    this.prepareForFullscreenChildPage();
     this.pathStack.pushPathByName('ZLibraryReaderPage', params);
+  }
+
+  private prepareForFullscreenChildPage(): void {
+    if (this.fullscreenChildShieldCleanupTimer >= 0) {
+      clearTimeout(this.fullscreenChildShieldCleanupTimer);
+      this.fullscreenChildShieldCleanupTimer = -1;
+    }
+    this.preserveDisplayModeOnNextDisappear = true;
+    this.fullscreenChildShieldVisible = true;
+    this.fullscreenChildShieldOpacity = 1;
+  }
+
+  private revealFromFullscreenChildPage(): void {
+    this.preserveDisplayModeOnNextDisappear = false;
+    if (!this.fullscreenChildShieldVisible) {
+      return;
+    }
+    if (this.fullscreenChildShieldCleanupTimer >= 0) {
+      clearTimeout(this.fullscreenChildShieldCleanupTimer);
+      this.fullscreenChildShieldCleanupTimer = -1;
+    }
+    animateTo({
+      duration: 180,
+      curve: Curve.EaseOut
+    }, () => {
+      this.fullscreenChildShieldOpacity = 0;
+    });
+    this.fullscreenChildShieldCleanupTimer = setTimeout(() => {
+      this.fullscreenChildShieldCleanupTimer = -1;
+      this.fullscreenChildShieldVisible = false;
+    }, 220);
   }
 
   /**
@@ -1801,6 +1899,7 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '漫画翻开过渡动画触发导航');
+        this.prepareForFullscreenChildPage();
         this.pathStack.pushPathByName('MangaReaderPage', readerParams);
       },
       undefined,
@@ -1843,6 +1942,7 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '电子书翻开过渡动画触发导航');
+        this.prepareForFullscreenChildPage();
         if (txtNovelReaderParams && originalEBook?.format === EBookFormat.TXT) {
           this.pathStack.pushPathByName('NovelReaderPage', txtNovelReaderParams);
         } else {
@@ -1900,6 +2000,7 @@ export struct UnifiedDetailPage {
       () => {
         // 动画完成时触发导航
         logger.info(TAG, '小说翻开过渡动画触发导航');
+        this.prepareForFullscreenChildPage();
         this.pathStack.pushPathByName('NovelReaderPage', params);
       },
       undefined,
@@ -8624,6 +8725,7 @@ export struct UnifiedDetailPage {
         }
         .width('100%')
         .height('100%')
+        .id('guide_unified_detail_root')
         .padding({ top: this.statusBarHeight })
         
         // 封面预览弹窗
@@ -8651,6 +8753,43 @@ export struct UnifiedDetailPage {
         
         // 替换小说对话框
         this.buildReplaceBookDialog()
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
+
+        if (this.fullscreenChildShieldVisible) {
+          Stack() {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.themeState.currentTheme === ThemeType.DARK ? '#1A1A1A' : '#F5F5F5')
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          }
+          .width('100%')
+          .height('100%')
+          .opacity(this.fullscreenChildShieldOpacity)
+          .animation({ duration: 180, curve: Curve.EaseOut })
+          .zIndex(9999)
+          .hitTestBehavior(HitTestMode.None)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        }
       }
     }
     .hideTitleBar(true)
@@ -8664,12 +8803,17 @@ export struct UnifiedDetailPage {
         this.initialContentLoadTriggered = false;
         this.triggerInitialContentLoadIfReady();
       }
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
     })
     .onShown(() => {
       WindowManager.setDisplayMode(DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE, this.getUIContext());
+      this.revealFromFullscreenChildPage();
       // 页面显示时刷新阅读记录（从阅读器返回时）
       this.refreshReadingProgress();
       void this.loadReadAloudCacheSummary();
+      void this.refreshPageGuide('onShown');
     })
     .backgroundColor(Color.Transparent)
   }

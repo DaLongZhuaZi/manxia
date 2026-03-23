@@ -30,7 +30,7 @@ export const DEFAULT_ANIMATION_SETTINGS: AnimationSettings = {
   bookCloseEnabled: true,
   bookOpenDuration: 400,
   bookCloseDuration: 350,
-  mainPageBottomBarAnimationEnabled: true // 默认开启底栏动画
+  mainPageBottomBarAnimationEnabled: false // 默认关闭底栏动画
 };
 
 /**

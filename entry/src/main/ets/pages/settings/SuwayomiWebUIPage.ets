@@ -12,6 +12,9 @@ import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/Th
 import { FontAwareState } from '../../Framework/Components/FontAware';
 import { ThemeType } from '../../Framework/Managers/ThemeManager';
 import { getSuwayomiTracker, SuwayomiTracker } from '../../Framework/Tracking/trackers/SuwayomiTracker';
+import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'SuwayomiWebUIPage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -146,10 +149,12 @@ export struct SuwayomiWebUIPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor('#000000ff')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Column() {
@@ -244,11 +249,24 @@ export struct SuwayomiWebUIPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(56)
+        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

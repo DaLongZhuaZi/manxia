@@ -12,6 +12,7 @@ import { FontAwareHelper, FontAwareState } from '../../Framework/Components/Font
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { ContentFilterManager } from '../../Framework/Managers/ContentFilterManager';
 import { WelcomeGuideManager } from '../../Framework/Managers/WelcomeGuideManager';
+import { AppGuideManager } from '../../Framework/Managers/AppGuideManager';
 import { common, Want } from '@kit.AbilityKit';
 import { logger, LOG_LEVEL_NAMES, LOG_LEVEL_VALUES, LogLevel } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
@@ -19,6 +20,9 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint }
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
 import { setReaderKitEnabled } from '../../Framework/Initialization/ReaderKitFeatureGate';
+import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'AdvancedSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -48,6 +52,7 @@ export struct AdvancedSettingsSubPage {
   private componentId: string = 'AdvancedSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
   private welcomeGuideManager: WelcomeGuideManager = WelcomeGuideManager.getInstance();
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 
   // 响应式布局相关状态
   private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
@@ -890,6 +895,7 @@ export struct AdvancedSettingsSubPage {
   private async resetGuideAndRestart(): Promise<void> {
     try {
       await this.welcomeGuideManager.resetGuide();
+      await this.appGuideManager.resetAllGuideStates();
       const uiCtx = this.getUIContext();
       if (!uiCtx) {
         logger.error(TAG, '获取UIContext失败，无法重启应用');
@@ -922,10 +928,12 @@ export struct AdvancedSettingsSubPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           
         Scroll(this.scroller) {
@@ -1155,11 +1163,24 @@ export struct AdvancedSettingsSubPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(56)
+        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

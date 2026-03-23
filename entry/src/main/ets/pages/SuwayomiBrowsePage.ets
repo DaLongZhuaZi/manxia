@@ -17,6 +17,9 @@ import { SuwayomiSourceBrowseParams } from './SuwayomiSourceBrowsePage';
 import SuwayomiCacheManager from '../Framework/Source/SuwayomiCacheManager';
 import DownloadDirManager from '../Framework/Storage/DownloadDirManager';
 import { SuwayomiImage } from '../components/SuwayomiImage';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'SuwayomiBrowsePage';
 const TITLE_BAR_HEIGHT: number = 56;
@@ -82,12 +85,61 @@ export struct SuwayomiBrowsePage {
   // 横向滑动切换分类相关状态
   @State private swipeStartX: number = 0;
   @State private swipeOffsetX: number = 0;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
 
   private executor: SuwayomiSourceExecutor = getSuwayomiSourceExecutor();
   private readonly PREFS_NAME = 'suwayomi_browse_prefs';
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 
   aboutToAppear(): void {
     this.initialize();
+    void this.refreshPageGuide('aboutToAppear');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_suwayomi_root');
+    } catch (error) {
+      logger.warn(TAG, `获取 Suwayomi 引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.SUWAYOMI);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.SUWAYOMI) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `Suwayomi 引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   private async initialize(): Promise<void> {
@@ -1327,10 +1379,31 @@ export struct SuwayomiBrowsePage {
         }
         .width('100%')
         .height('100%')
+        .id('guide_suwayomi_root')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 底部导航栏
         this.buildBottomTabBar()
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
     }
     .titleBar({
@@ -1353,6 +1426,9 @@ export struct SuwayomiBrowsePage {
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
     })
   }
 }

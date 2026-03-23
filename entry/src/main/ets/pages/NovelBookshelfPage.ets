@@ -1009,7 +1009,7 @@ export struct NovelBookshelfPage {
         Image(item.coverUrl)
           .width(50)
           .height(70)
-          .borderRadius(6)
+          .borderRadius(AppColors.coverCornerRadius)
           .objectFit(ImageFit.Cover)
       } else {
         Column() {
@@ -1021,7 +1021,7 @@ export struct NovelBookshelfPage {
         }
         .width(50)
         .height(70)
-        .borderRadius(6)
+        .borderRadius(AppColors.coverCornerRadius)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .justifyContent(FlexAlign.Center)
       }
@@ -1225,7 +1225,7 @@ export struct NovelBookshelfPage {
           Image(this.normalizeCoverPath(book.coverLocalPath || book.coverUrl || ''))
             .width('100%')
             .height(140)
-            .borderRadius(8)
+            .borderRadius(AppColors.coverCornerRadius)
             .objectFit(ImageFit.Cover)
         } else {
           Column() {
@@ -1237,7 +1237,7 @@ export struct NovelBookshelfPage {
           }
           .width('100%')
           .height(140)
-          .borderRadius(8)
+          .borderRadius(AppColors.coverCornerRadius)
           .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
           .justifyContent(FlexAlign.Center)
         }
@@ -1348,7 +1348,7 @@ export struct NovelBookshelfPage {
         Image(this.normalizeCoverPath(book.coverLocalPath || book.coverUrl || ''))
           .width(80)
           .height(110)
-          .borderRadius(4)
+          .borderRadius(AppColors.coverCornerRadius)
           .objectFit(ImageFit.Cover)
       } else {
         Column() {
@@ -1359,7 +1359,7 @@ export struct NovelBookshelfPage {
         }
         .width(80)
         .height(110)
-        .borderRadius(4)
+        .borderRadius(AppColors.coverCornerRadius)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
         .justifyContent(FlexAlign.Center)
       }

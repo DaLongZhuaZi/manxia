@@ -45,6 +45,9 @@ import { loadGlobalReadAloudSettings, persistGlobalReadAloudSettings } from '../
 import { ReadAloudSettingsInfoPanel } from '../../components/ReadAloudSettingsInfoPanel';
 import { getFontManager, SystemFont, CustomFont } from '../../Framework/Managers/FontManager';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
+import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'ReadingSettingsSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -75,6 +78,9 @@ interface TextReadingModeOption {
 export struct ReadingSettingsSubPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
+  @State private settingsTapEnabled: boolean = true;
+  private settingsTapUnlockTimer: number = -1;
+  private readonly scrollTapGuardDurationMs: number = 140;
   @State private activeSearchAnchorId: string = '';
   @State private searchHighlightPulse: boolean = false;
   private searchHighlightPulseTimer: number = -1;
@@ -214,7 +220,29 @@ export struct ReadingSettingsSubPage {
 
   private lifecycle = new PageLifecycleManager('ReadingSettingsSubPage', { enableDebug: true });
 
+  private markSettingsScrolling(): void {
+    if (this.settingsTapEnabled) {
+      this.settingsTapEnabled = false;
+    }
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+    }
+    this.settingsTapUnlockTimer = setTimeout(() => {
+      this.settingsTapEnabled = true;
+      this.settingsTapUnlockTimer = -1;
+    }, this.scrollTapGuardDurationMs);
+  }
+
+  private cleanupSettingsTapGuard(): void {
+    if (this.settingsTapUnlockTimer >= 0) {
+      clearTimeout(this.settingsTapUnlockTimer);
+      this.settingsTapUnlockTimer = -1;
+    }
+    this.settingsTapEnabled = true;
+  }
+
   aboutToDisappear(): void {
+    this.cleanupSettingsTapGuard();
     SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -2654,10 +2682,12 @@ export struct ReadingSettingsSubPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           
         Scroll(this.scroller) {
@@ -2862,6 +2892,7 @@ export struct ReadingSettingsSubPage {
 
             Blank().height(40)
           }
+          .enabled(this.settingsTapEnabled)
           .width('100%')
           .constraintSize({ maxWidth: this.responsive_maxContentWidth })
           .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 40 })
@@ -2869,6 +2900,9 @@ export struct ReadingSettingsSubPage {
         .width('100%')
         .height('100%')
         .align(Alignment.TopStart)
+        .onScroll((_xOffset: number, _yOffset: number) => {
+          this.markSettingsScrolling();
+        })
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -2902,11 +2936,24 @@ export struct ReadingSettingsSubPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(56)
+        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

@@ -7,11 +7,11 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
 
 const TAG = 'OpenSourceLicensePage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
-
 /**
  * 开源许可页面
  * 展示本项目使用的开源组件及其许可证信息
@@ -26,13 +26,15 @@ export struct OpenSourceLicensePage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `OpenSourceLicensePage_${Date.now()}`;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 滚动控制器
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('OpenSourceLicensePage', this.getUIContext());
 
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(
@@ -51,7 +53,7 @@ export struct OpenSourceLicensePage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
@@ -241,7 +243,6 @@ export struct OpenSourceLicensePage {
           // 滚动内容
           Scroll(this.scroller) {
             Column() {
-              // Blank().height(TITLE_BAR_HEIGHT_MINI)
               // 项目信息
               this.buildSectionTitle('项目信息', $r('sys.symbol.computer_host_fill'))
               this.buildParagraph('漫匣（ManXia）是一款基于HarmonyOS Next的现代化漫画阅读应用，采用纯ArkTS架构开发。')
@@ -402,11 +403,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .padding({ top: this.statusBarHeight })
       }
     }
     .backgroundColor(Color.Transparent)
-    .titleBar({
+    .titleBar(withSafeAreaTitleBar({
       style: {
         originalStyle: {
           backgroundStyle: {
@@ -426,6 +426,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
       content: {
         title: { mainTitle: '开源许可' }
       }
+    }))
+    .onWillAppear(() => {
+      PageWindowCoordinator.applyPagePolicy('OpenSourceLicensePage', this.getUIContext());
+    })
+    .onWillShow(() => {
+      PageWindowCoordinator.reapplyPagePolicy('OpenSourceLicensePage', this.getUIContext());
     })
   }
 }

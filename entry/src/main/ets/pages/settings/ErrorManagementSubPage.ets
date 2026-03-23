@@ -22,6 +22,9 @@ import { getErrorMonitorService } from '../../Framework/Debug/ErrorMonitorServic
 import { getCrashRecorderService } from '../../Framework/Debug/CrashRecorderService';
 import { DownloadDirManager } from '../../Framework/Storage/DownloadDirManager';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
+import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'ErrorManagementSubPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -1457,10 +1460,12 @@ export struct ErrorManagementSubPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(this.themeColor('background_dark'))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll(this.scroller) {
@@ -1636,11 +1641,24 @@ export struct ErrorManagementSubPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(56)
+        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: this.themeColor('panel_background') },
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
           contentStyle: {
             titleStyle: { mainTitleColor: this.themeColor('text_primary') },
-            backIconStyle: { backgroundColor: this.themeColor('comp_background_tertiary'), iconColor: this.themeColor('icon_primary') }
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: this.themeColor('icon_primary') }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
+          contentStyle: {
+            titleStyle: { mainTitleColor: this.themeColor('text_primary') },
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: this.themeColor('icon_primary') }
           }
         }
       },

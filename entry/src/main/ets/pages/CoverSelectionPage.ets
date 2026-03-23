@@ -5,7 +5,8 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { UIContext, LengthMetrics } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { logger } from '../Utils/Logger';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
@@ -57,10 +58,12 @@ export struct CoverSelectionPage {
   @State selectedIndex: number = -1;
   @State isLoading: boolean = true;
   @State loadError: string = '';
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('CoverSelectionPage', this.getUIContext());
 
     this.uiContext = this.getUIContext();
     if (!this.uiContext) {
@@ -95,7 +98,7 @@ export struct CoverSelectionPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);

@@ -30,7 +30,8 @@ import { ScraperContentType } from '../Framework/Scraper/ScraperTypes';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { getCoverImageManager } from '../Framework/Image/CoverImageManager';
 import { image } from '@kit.ImageKit';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 
 const TAG: string = 'MangaSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -160,12 +161,12 @@ struct MangaSettingsPage {
    */
   aboutToAppear(): void {
     // Capture mode before forcing settings page to normal layout.
-    this.previousDisplayMode = WindowManager.getCurrentMode();
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('MangaSettingsPage', this.getUIContext());
   }
 
   onPageShow() {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.reapplyPagePolicy('MangaSettingsPage', this.getUIContext());
     logger.lifecycle(TAG, '漫画设置页面开始显示');
     try {
       const stack = AppStorage.get<NavPathStack>('GlobalNavStack');
@@ -246,7 +247,7 @@ struct MangaSettingsPage {
 
   aboutToDisappear() {
     // Restore the mode of the source page to avoid polluting return layout.
-    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题感知
     ThemeAwareHelper.cleanupThemeAware(this.componentId);

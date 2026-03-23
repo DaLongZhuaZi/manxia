@@ -10,7 +10,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 
 const TAG = 'SupportersPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -44,6 +45,7 @@ export struct SupportersPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'SupportersPage';
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 字体相关状态
   @State fontState: FontAwareState = new FontAwareState();
@@ -77,7 +79,8 @@ export struct SupportersPage {
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('SupportersPage', this.getUIContext());
 
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(
@@ -105,7 +108,7 @@ export struct SupportersPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     this.stopAnimation();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);

@@ -14,14 +14,16 @@ import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { logger } from '../Utils/Logger';
 import { getNovelReplaceRuleManager, ReplaceRule, ReplaceScope, AddRuleParams } from '../Framework/Novel/NovelReplaceRuleManager';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
 
 const TAG = 'NovelReplaceRulePage';
-
-const TITLE_BAR_HEIGHT_MINI = 56;
 
 @Component
 export struct NovelReplaceRulePage {
@@ -51,10 +53,10 @@ export struct NovelReplaceRulePage {
 
   aboutToAppear(): void {
     // Re-capture mode on each enter to avoid stale restore target.
-    this.previousDisplayMode = WindowManager.getCurrentMode();
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
     logger.info(TAG, `记录进入净化规则页前显示模式: mode=${this.previousDisplayMode}`);
     // Use default mode so system status bar avoidance works reliably.
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.applyPagePolicy('NovelReplaceRulePage', this.getUIContext());
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.info(TAG, `主题切换: ${theme}`);
     });
@@ -64,7 +66,7 @@ export struct NovelReplaceRulePage {
   }
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     logger.info(TAG, `离开净化规则页，恢复显示模式: mode=${this.previousDisplayMode}`);
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);
@@ -281,16 +283,17 @@ export struct NovelReplaceRulePage {
     HdsNavDestination() {
       Stack() {
         // 背景层
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .animation(ThemeAwareHelper.getThemeTransitionAnimation())
         
         if (this.isLoading) {
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
             this.buildLoading()
           }
           .width('100%')
@@ -298,7 +301,6 @@ export struct NovelReplaceRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else if (this.rules.length === 0) {
           Column() {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
             this.buildEmpty()
           }
           .width('100%')
@@ -306,9 +308,6 @@ export struct NovelReplaceRulePage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         } else {
           List() {
-            ListItem() {
-              Column().height(TITLE_BAR_HEIGHT_MINI)
-            }
             ForEach(this.rules, (rule: ReplaceRule) => {
               ListItem() {
                 this.buildRuleItem(rule)
@@ -333,7 +332,7 @@ export struct NovelReplaceRulePage {
       .width('100%')
       .height('100%')
     }
-    .titleBar({
+    .titleBar(withSafeAreaTitleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -379,15 +378,21 @@ export struct NovelReplaceRulePage {
           }]
         }
       }
-    })
+    }))
     .backgroundColor(Color.Transparent)
+    .onWillAppear(() => {
+      PageWindowCoordinator.applyPagePolicy('NovelReplaceRulePage', this.getUIContext());
+    })
+    .onWillShow(() => {
+      PageWindowCoordinator.reapplyPagePolicy('NovelReplaceRulePage', this.getUIContext());
+    })
     .onReady((context: NavDestinationContext) => {
       this.ruleManager.initialize().then(() => {
         this.loadRules();
       });
     })
     .onShown(() => {
-      WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+      PageWindowCoordinator.reapplyPagePolicy('NovelReplaceRulePage', this.getUIContext());
       logger.info(TAG, '净化规则页 onShown 重新应用默认显示模式');
     })
   }

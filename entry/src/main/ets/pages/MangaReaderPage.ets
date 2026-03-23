@@ -7,6 +7,7 @@
 import { logger } from '../Utils/Logger';
 import { common } from '@kit.AbilityKit';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { globalAnimationManager, AnimationType, AnimationState,
   AnimationEasing } from '../Framework/Animation/GlobalAnimationSystem';
 import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Managers/ThemeManager';
@@ -70,6 +71,9 @@ import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'MangaReaderPage';
 
@@ -266,9 +270,12 @@ export struct MangaReaderPage {
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'MangaReaderPage';
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   
   // 动画相关
   private lifecycle = new PageLifecycleManager('MangaReaderPage', {
@@ -578,6 +585,7 @@ export struct MangaReaderPage {
     
     
     logger.lifecycle(TAG, '漫画阅读器页面显示完成');
+    void this.refreshPageGuide('onPageShow');
   }
 
   onPageHide() {
@@ -595,6 +603,51 @@ export struct MangaReaderPage {
     });
 
     
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_manga_reader_root');
+    } catch (error) {
+      logger.warn(TAG, `获取漫画阅读器引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.MANGA_READER);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.MANGA_READER) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `漫画阅读器引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   aboutToAppear() {
@@ -616,7 +669,7 @@ export struct MangaReaderPage {
     this.initWebViewController();
 
     // 应用屏幕常亮设置
-    this.setupFullscreenMode();
+    void this.refreshPageGuide('aboutToAppear');
     
     // 亮度设置已移除，不再应用
     this.applyKeepScreenOnSetting();
@@ -2963,7 +3016,7 @@ export struct MangaReaderPage {
       if (currentMode !== DisplayMode.FULL_IMMERSIVE) {
         this.previousDisplayMode = currentMode;
       }
-      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, uiContext);
+      WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, uiContext);
       logger.info(TAG, '✅ 使用WindowManager设置完全沉浸式阅读模式');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -2994,6 +3047,9 @@ export struct MangaReaderPage {
       const targetMode = this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE
         ? DisplayMode.DEFAULT
         : this.previousDisplayMode;
+      if (WindowManager.getCurrentMode() === targetMode) {
+        return;
+      }
       WindowManager.setDisplayMode(targetMode, uiContext);
       logger.info(TAG, `✅ 使用WindowManager恢复显示模式: ${targetMode}`);
     } catch (error) {
@@ -5961,8 +6017,19 @@ export struct MangaReaderPage {
       }
     };
     try {
-      this.restoreNormalMode();
-      this.pathStack.pushPathByName('AnnotationCenterPage', params);
+      PageWindowCoordinator.navigateWithManagedTransition(
+        'MangaReaderPage',
+        'AnnotationCenterPage',
+        () => {
+          try {
+            this.pathStack.pushPathByName('AnnotationCenterPage', params);
+          } catch (error) {
+            logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+            promptAction.showToast({ message: '打开灵感页面失败' });
+          }
+        },
+        this.getUIContext()
+      );
     } catch (error) {
       logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
       promptAction.showToast({ message: '打开灵感页面失败' });
@@ -6518,6 +6585,7 @@ export struct MangaReaderPage {
           .width('100%')
           .height('100%')
           .backgroundColor(Color.Transparent)
+          .id('guide_manga_reader_root')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 快速设置面板（带动画）
@@ -7570,6 +7638,27 @@ export struct MangaReaderPage {
         // }
 
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
+
+        // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
         Web({ src: 'about:blank', controller: this.webviewController })
           .width(0)
           .height(0)
@@ -7601,6 +7690,9 @@ export struct MangaReaderPage {
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
       
         // [修复] 始终调用初始化，即使参数已存在（可能是章节切换）
       const params = context.pathInfo.param as MangaReaderPageParams;

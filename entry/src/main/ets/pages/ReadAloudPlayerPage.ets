@@ -5,8 +5,8 @@ import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController'
 import { eventBus, GameEvent, IEventPayload } from '../Framework/EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../Framework/ReadAloud/ReadAloudTypes';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { ThemeAwareHelper, ThemeAwareState } from '../Framework/Components/ThemeAware';
-import { ThemeManager } from '../Framework/Managers/ThemeManager';
 
 const TAG = 'ReadAloudPlayerPage';
 const PLAYER_SKIP_CHARS: number = 420;
@@ -14,6 +14,11 @@ const PLAYER_TOP_CONTENT_PADDING: number = 8;
 const PLAYER_DISPLAY_RESTORE_DELAY_MS: number = 140;
 const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
 const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
+const READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY = 'ReadAloudFloatingBallSuppressed';
+const READ_ALOUD_REMOTE_CURRENT_SEGMENT_INDEX_KEY = 'ReadAloudRemoteCurrentSegmentIndex';
+const READ_ALOUD_REMOTE_TOTAL_SEGMENTS_KEY = 'ReadAloudRemoteTotalSegments';
+const READ_ALOUD_REMOTE_CACHED_SEGMENTS_KEY = 'ReadAloudRemoteCachedSegments';
+const READ_ALOUD_REMOTE_CACHED_BYTES_KEY = 'ReadAloudRemoteCachedBytes';
 
 @Component
 export struct ReadAloudPlayerPage {
@@ -35,35 +40,53 @@ export struct ReadAloudPlayerPage {
   @State engineInfoText: string = '--';
   @State speedInfoText: string = '--';
   @State excerptText: string = '';
+  @State remoteSegmentText: string = '--';
+  @State remoteCacheSegmentText: string = '--';
+  @State remoteCacheBytesText: string = '--';
+  @State sleepTimerText: string = '未设置';
+  @State sleepTimerActive: boolean = false;
+  @State showSleepTimerDialog: boolean = false;
+  @State sleepTimerDialogOpacity: number = 0;
+  @State sleepTimerDialogScale: number = 0.96;
+  @State customSleepTimerValue: string = '45';
+  @State customSleepTimerUnit: 'minute' | 'hour' = 'minute';
   @State entered: boolean = false;
 
   // 主题状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
-  private themeManager: ThemeManager = ThemeManager.getInstance();
-  private componentId: string = `PrivacyPolicyPage_${Date.now()}`;
+  private componentId: string = `ReadAloudPlayerPage_${Date.now()}`;
 
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
   private returnHostPage: string = '';
   private hasCapturedRouteState: boolean = false;
   private displayRestoreTimer: number = -1;
+  private sleepTimerRefreshTimer: number = -1;
   private uiContext: UIContext | null = null;
 
   private onReadAloudStateChanged: (payload: IEventPayload) => void = (_payload: IEventPayload): void => {
     this.refreshPlayerState();
   };
+  private onReadAloudCacheUpdated: (_payload: IEventPayload) => void = (_payload: IEventPayload): void => {
+    this.refreshPlayerState();
+  };
 
   aboutToAppear(): void {
+    ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, () => {});
     this.captureRouteState('aboutToAppear');
     this.applyPreferredDisplayMode('aboutToAppear');
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
+    AppStorage.setOrCreate(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY, true);
     eventBus.subscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    eventBus.subscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
+    this.startSleepTimerRefreshTimer();
     this.refreshPlayerState();
     this.readAloudController.refreshMediaSession();
   }
 
   aboutToDisappear(): void {
     this.clearDisplayRestoreTimer();
+    this.stopSleepTimerRefreshTimer();
     this.restorePreviousDisplayMode('aboutToDisappear');
     const currentHostPage = (AppStorage.get<string>('ReadAloudCurrentHostPage') ?? '').trim();
     if (this.returnHostPage.length > 0) {
@@ -71,14 +94,19 @@ export struct ReadAloudPlayerPage {
     } else if (currentHostPage === 'ReadAloudPlayerPage') {
       AppStorage.setOrCreate('ReadAloudCurrentHostPage', '');
     }
+    AppStorage.setOrCreate(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY, false);
     this.clearPlayerReturnMarkers();
     eventBus.unsubscribe(GameEvent.READ_ALOUD_STATE_CHANGED, this.onReadAloudStateChanged);
+    eventBus.unsubscribe(GameEvent.READ_ALOUD_CACHE_UPDATED, this.onReadAloudCacheUpdated);
+    ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
   onPageShow(): void {
     this.applyPreferredDisplayMode('onPageShow');
     this.scheduleDisplayRestore('onPageShow');
     AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
+    AppStorage.setOrCreate(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY, true);
+    this.refreshPlayerState();
   }
 
   onPageHide(): void {
@@ -94,13 +122,17 @@ export struct ReadAloudPlayerPage {
 
   private resolveStoredDisplayMode(): DisplayMode {
     const storedMode = (AppStorage.get<string>('ReadAloudPlayerReturnDisplayMode') ?? '').trim();
-    if (storedMode === DisplayMode.FULL_IMMERSIVE) {
-      return DisplayMode.FULL_IMMERSIVE;
+    switch (storedMode) {
+      case DisplayMode.DEFAULT:
+      case DisplayMode.FULL_IMMERSIVE:
+      case DisplayMode.HIDE_STATUS_BAR:
+      case DisplayMode.HIDE_NAVIGATION_BAR:
+      case DisplayMode.IMMERSIVE_WITH_BARS:
+      case DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE:
+        return storedMode as DisplayMode;
+      default:
+        return WindowManager.getCurrentMode();
     }
-    if (storedMode === DisplayMode.DEFAULT) {
-      return DisplayMode.DEFAULT;
-    }
-    return WindowManager.getCurrentMode();
   }
 
   private captureRouteState(trigger: string): void {
@@ -113,49 +145,63 @@ export struct ReadAloudPlayerPage {
     this.hasCapturedRouteState = true;
     logger.info(
       TAG,
-      `捕获听书独立页返回上下文: trigger=${trigger}, previousDisplayMode=${this.previousDisplayMode}, returnHostPage=${this.returnHostPage || 'none'}`
+      `捕获听书独立页返回上下文: 触发源=${trigger}, 上一显示模式=${this.previousDisplayMode}, 返回页面=${this.returnHostPage || '无'}`
     );
   }
 
   private shouldUseImmersiveMode(): boolean {
-    return this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE;
+    return this.previousDisplayMode !== DisplayMode.DEFAULT;
   }
 
   private applyPreferredDisplayMode(trigger: string): void {
     const context = this.ensureUiContext();
     if (!context) {
-      logger.warn(TAG, `应用听书页显示模式失败: trigger=${trigger}, UIContext is null`);
+      logger.warn(TAG, `应用听书页显示模式失败: 触发源=${trigger}, 界面上下文为空`);
       return;
     }
-    const targetMode = this.shouldUseImmersiveMode() ? DisplayMode.FULL_IMMERSIVE : DisplayMode.DEFAULT;
+    const targetMode = this.previousDisplayMode;
     const currentMode = WindowManager.getCurrentMode();
     if (currentMode === targetMode) {
-      logger.debug(TAG, `听书独立页显示模式无需切换: trigger=${trigger}, mode=${targetMode}`);
+      logger.debug(TAG, `听书独立页显示模式无需切换: 触发源=${trigger}, 模式=${targetMode}`);
       return;
     }
-    WindowManager.setDisplayMode(targetMode, context);
-    logger.info(TAG, `应用听书独立页显示模式: trigger=${trigger}, mode=${targetMode}`);
+    PageWindowCoordinator.applyPagePolicy('ReadAloudPlayerPage', context, this.previousDisplayMode);
+    logger.info(TAG, `应用听书独立页显示模式: 触发源=${trigger}, 模式=${targetMode}`);
   }
 
   private restorePreviousDisplayMode(trigger: string): void {
     const context = this.ensureUiContext();
     if (!context) {
-      logger.warn(TAG, `恢复听书页来源显示模式失败: trigger=${trigger}, UIContext is null`);
+      logger.warn(TAG, `恢复听书页来源显示模式失败: 触发源=${trigger}, 界面上下文为空`);
       return;
     }
     const currentMode = WindowManager.getCurrentMode();
     if (currentMode === this.previousDisplayMode) {
-      logger.debug(TAG, `听书页来源显示模式无需恢复: trigger=${trigger}, mode=${this.previousDisplayMode}`);
+      logger.debug(TAG, `听书页来源显示模式无需恢复: 触发源=${trigger}, 模式=${this.previousDisplayMode}`);
       return;
     }
-    WindowManager.setDisplayMode(this.previousDisplayMode, context);
-    logger.info(TAG, `恢复听书页来源显示模式: trigger=${trigger}, mode=${this.previousDisplayMode}`);
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, context);
+    logger.info(TAG, `恢复听书页来源显示模式: 触发源=${trigger}, 模式=${this.previousDisplayMode}`);
   }
 
   private clearDisplayRestoreTimer(): void {
     if (this.displayRestoreTimer >= 0) {
       clearTimeout(this.displayRestoreTimer);
       this.displayRestoreTimer = -1;
+    }
+  }
+
+  private startSleepTimerRefreshTimer(): void {
+    this.stopSleepTimerRefreshTimer();
+    this.sleepTimerRefreshTimer = setInterval(() => {
+      this.refreshSleepTimerState();
+    }, 1000) as number;
+  }
+
+  private stopSleepTimerRefreshTimer(): void {
+    if (this.sleepTimerRefreshTimer >= 0) {
+      clearInterval(this.sleepTimerRefreshTimer);
+      this.sleepTimerRefreshTimer = -1;
     }
   }
 
@@ -173,7 +219,7 @@ export struct ReadAloudPlayerPage {
   private forceReaderImmersiveBeforeExit(trigger: string): void {
     const context = this.ensureUiContext();
     if (!context) {
-      logger.warn(TAG, `返回阅读器前恢复沉浸失败: trigger=${trigger}, UIContext is null`);
+      logger.warn(TAG, `返回阅读器前恢复沉浸失败: 触发源=${trigger}, 界面上下文为空`);
       return;
     }
     this.previousDisplayMode = DisplayMode.FULL_IMMERSIVE;
@@ -184,13 +230,153 @@ export struct ReadAloudPlayerPage {
     setTimeout(() => {
       WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, context);
     }, 180);
-    logger.info(TAG, `返回阅读器前强制恢复沉浸: trigger=${trigger}`);
+    logger.info(TAG, `返回阅读器前强制恢复沉浸: 触发源=${trigger}`);
   }
 
   private clearPlayerReturnMarkers(): void {
     AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', 0);
     AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', '');
     AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', '');
+  }
+
+  private refreshSleepTimerState(): void {
+    const snapshot = this.readAloudController.getSleepTimerSnapshot();
+    this.sleepTimerActive = snapshot.active;
+    this.sleepTimerText = snapshot.active
+      ? `剩余 ${this.formatDuration(snapshot.remainingMs)}`
+      : '未设置';
+  }
+
+  private refreshRemoteStatus(snapshot: ReadAloudStateSnapshot): void {
+    if (String(snapshot.settings.engineType ?? 'SYSTEM') !== 'REMOTE') {
+      this.remoteSegmentText = '--';
+      this.remoteCacheSegmentText = '--';
+      this.remoteCacheBytesText = '--';
+      return;
+    }
+    const currentSegment = AppStorage.get<number>(READ_ALOUD_REMOTE_CURRENT_SEGMENT_INDEX_KEY) ?? 0;
+    const totalSegments = AppStorage.get<number>(READ_ALOUD_REMOTE_TOTAL_SEGMENTS_KEY) ?? 0;
+    const cachedSegments = AppStorage.get<number>(READ_ALOUD_REMOTE_CACHED_SEGMENTS_KEY) ?? 0;
+    const cachedBytes = AppStorage.get<number>(READ_ALOUD_REMOTE_CACHED_BYTES_KEY) ?? 0;
+    this.remoteSegmentText = totalSegments > 0 ? `${currentSegment}/${totalSegments}` : '--';
+    this.remoteCacheSegmentText = totalSegments > 0
+      ? `${Math.min(cachedSegments, totalSegments)}/${totalSegments}`
+      : `${cachedSegments}`;
+    this.remoteCacheBytesText = this.formatBytes(cachedBytes);
+  }
+
+  private formatBytes(bytes: number): string {
+    const safeBytes = Math.max(0, Math.floor(bytes));
+    if (safeBytes >= 1024 * 1024) {
+      return `${(safeBytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    if (safeBytes >= 1024) {
+      return `${(safeBytes / 1024).toFixed(1)} KB`;
+    }
+    return `${safeBytes} B`;
+  }
+
+  private formatDuration(durationMs: number): string {
+    const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return `${hours}小时${minutes}分钟`;
+    }
+    if (minutes > 0) {
+      return `${minutes}分钟${seconds}秒`;
+    }
+    return `${seconds}秒`;
+  }
+
+  private resolveCoverSource(raw: string): ResourceStr {
+    if (!raw || raw.length <= 0) {
+      return '';
+    }
+    if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('file://')) {
+      return raw;
+    }
+    if (raw.startsWith('app.media.')) {
+      const resourceName = raw.substring('app.media.'.length);
+      if (resourceName === 'mangabook') {
+        return $r('app.media.mangabook');
+      }
+      if (resourceName === 'ic_ebook') {
+        return $r('app.media.ic_ebook');
+      }
+      if (resourceName === 'icon') {
+        return $r('app.media.icon');
+      }
+      return $r('app.media.ic_ebook');
+    }
+    if (raw.startsWith('/')) {
+      return `file://${raw}`;
+    }
+    return raw;
+  }
+
+  private isRemoteEngineActive(): boolean {
+    return this.engineInfoText === '远程 TTS';
+  }
+
+  private showSleepTimerDialogWithAnimation(): void {
+    this.showSleepTimerDialog = true;
+    this.sleepTimerDialogOpacity = 0;
+    this.sleepTimerDialogScale = 0.96;
+    setTimeout(() => {
+      animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.sleepTimerDialogOpacity = 1;
+        this.sleepTimerDialogScale = 1;
+      });
+    }, 0);
+  }
+
+  private hideSleepTimerDialogWithAnimation(): void {
+    if (!this.showSleepTimerDialog) {
+      return;
+    }
+    animateTo({ duration: 180, curve: Curve.EaseIn }, () => {
+      this.sleepTimerDialogOpacity = 0;
+      this.sleepTimerDialogScale = 0.96;
+    });
+    setTimeout(() => {
+      this.showSleepTimerDialog = false;
+    }, 180);
+  }
+
+  private applySleepTimer(durationMs: number): void {
+    this.readAloudController.scheduleSleepTimer(durationMs);
+    this.refreshSleepTimerState();
+    promptAction.showToast({
+      message: `已设置定时关闭：${this.formatDuration(durationMs)}`,
+      duration: 1500
+    });
+    this.hideSleepTimerDialogWithAnimation();
+  }
+
+  private cancelSleepTimer(): void {
+    this.readAloudController.cancelSleepTimer();
+    this.refreshSleepTimerState();
+    promptAction.showToast({
+      message: '已取消定时关闭',
+      duration: 1500
+    });
+  }
+
+  private applyCustomSleepTimer(): void {
+    const parsedValue = Number.parseInt(this.customSleepTimerValue.trim(), 10);
+    if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+      promptAction.showToast({
+        message: '请输入大于 0 的定时时长',
+        duration: 1600
+      });
+      return;
+    }
+    const durationMs = this.customSleepTimerUnit === 'hour'
+      ? parsedValue * 60 * 60 * 1000
+      : parsedValue * 60 * 1000;
+    this.applySleepTimer(durationMs);
   }
 
   private refreshPlayerState(): void {
@@ -214,6 +400,8 @@ export struct ReadAloudPlayerPage {
       this.engineInfoText = '--';
       this.speedInfoText = '--';
       this.excerptText = '';
+      this.refreshRemoteStatus(snapshot);
+      this.refreshSleepTimerState();
       return;
     }
 
@@ -238,6 +426,8 @@ export struct ReadAloudPlayerPage {
     this.engineInfoText = this.getEngineText(String(snapshot.settings.engineType ?? 'SYSTEM'));
     this.speedInfoText = `${(snapshot.settings.speed ?? 1).toFixed(2)}x`;
     this.excerptText = this.buildExcerptText(context.content, safeCharIndex);
+    this.refreshRemoteStatus(snapshot);
+    this.refreshSleepTimerState();
   }
 
   private calculateProgressPercent(
@@ -382,7 +572,7 @@ export struct ReadAloudPlayerPage {
   private buildCoverCard(): void {
     Column({ space: 12 }) {
       if (this.coverUrl.length > 0) {
-        Image(this.coverUrl)
+        Image(this.resolveCoverSource(this.coverUrl))
           .width(188)
           .height(252)
           .objectFit(ImageFit.Cover)
@@ -428,6 +618,319 @@ export struct ReadAloudPlayerPage {
     .backgroundColor('rgba(255,255,255,0.02)')
     .borderRadius(20)
     .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
+  }
+
+  @Builder
+  private buildRemoteStatusCard(): void {
+    Column({ space: 10 }) {
+      Row() {
+        Text('远程音频状态')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.isRemoteEngineActive() ? '实时更新' : '仅远程 TTS 可用')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.isRemoteEngineActive() ? $r('app.color.accent_primary') : $r('app.color.text_secondary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('当前分片')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.remoteSegmentText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('已缓存分片')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.remoteCacheSegmentText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Row() {
+        Text('已缓存体积')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.remoteCacheBytesText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Text(
+        this.isRemoteEngineActive()
+          ? '播放器会随着章节播放自动刷新分片与缓存进度，方便你判断当前章节的离线可用程度。'
+          : '当前没有启用远程 TTS，引擎切换到远程后，这里会显示章节分片与自动缓存进度。'
+      )
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .lineHeight(20)
+        .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor('rgba(255,255,255,0.02)')
+    .borderRadius(16)
+    .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
+  }
+
+  @Builder
+  private buildSleepTimerCard(): void {
+    Column({ space: 12 }) {
+      Row() {
+        Text('定时关闭')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+        Blank()
+        Text(this.sleepTimerText)
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor(this.sleepTimerActive ? $r('app.color.accent_primary') : $r('app.color.text_primary'))
+      }
+      .width('100%')
+
+      Text('支持快速设置 5、15、30 分钟，以及 1 到 2 小时的预设，也可以输入自定义时长。')
+        .fontSize(12)
+        .fontFamily(this.appFontFamily)
+        .fontColor($r('app.color.text_secondary'))
+        .lineHeight(20)
+        .width('100%')
+
+      Row({ space: 12 }) {
+        Button('设置定时')
+          .height(40)
+          .layoutWeight(1)
+          .fontSize(14)
+          .fontFamily(this.appFontFamily)
+          .backgroundColor($r('app.color.accent_primary'))
+          .fontColor(Color.White)
+          .borderRadius(12)
+          .onClick(() => this.showSleepTimerDialogWithAnimation())
+
+        if (this.sleepTimerActive) {
+          Button('取消定时')
+            .height(40)
+            .layoutWeight(1)
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
+            .borderRadius(12)
+            .onClick(() => this.cancelSleepTimer())
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.background_secondary'))
+    .borderRadius(16)
+  }
+
+  @Builder
+  private buildSleepTimerDialog(): void {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0,0,0,0.42)')
+        .opacity(this.sleepTimerDialogOpacity)
+        .onClick(() => this.hideSleepTimerDialogWithAnimation())
+
+      Column({ space: 16 }) {
+        Row() {
+          Text('定时关闭')
+            .fontSize(20)
+            .fontFamily(this.appFontFamily)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          Button('关闭')
+            .height(34)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
+            .borderRadius(17)
+            .onClick(() => this.hideSleepTimerDialogWithAnimation())
+        }
+        .width('100%')
+
+        Text('选择一个预设时长，或输入自定义分钟/小时。时间到后会自动停止当前听书播放。')
+          .fontSize(13)
+          .fontFamily(this.appFontFamily)
+          .fontColor($r('app.color.text_secondary'))
+          .lineHeight(21)
+          .width('100%')
+
+        Column({ space: 10 }) {
+          Row({ space: 10 }) {
+            Button('5 分钟')
+              .height(42)
+              .layoutWeight(1)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor($r('app.color.background_secondary'))
+              .fontColor($r('app.color.text_primary'))
+              .borderRadius(12)
+              .onClick(() => this.applySleepTimer(5 * 60 * 1000))
+
+            Button('15 分钟')
+              .height(42)
+              .layoutWeight(1)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor($r('app.color.background_secondary'))
+              .fontColor($r('app.color.text_primary'))
+              .borderRadius(12)
+              .onClick(() => this.applySleepTimer(15 * 60 * 1000))
+          }
+          .width('100%')
+
+          Row({ space: 10 }) {
+            Button('30 分钟')
+              .height(42)
+              .layoutWeight(1)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor($r('app.color.background_secondary'))
+              .fontColor($r('app.color.text_primary'))
+              .borderRadius(12)
+              .onClick(() => this.applySleepTimer(30 * 60 * 1000))
+
+            Button('1 小时')
+              .height(42)
+              .layoutWeight(1)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor($r('app.color.background_secondary'))
+              .fontColor($r('app.color.text_primary'))
+              .borderRadius(12)
+              .onClick(() => this.applySleepTimer(60 * 60 * 1000))
+          }
+          .width('100%')
+
+          Button('2 小时')
+            .height(42)
+            .width('100%')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor($r('app.color.background_secondary'))
+            .fontColor($r('app.color.text_primary'))
+            .borderRadius(12)
+            .onClick(() => this.applySleepTimer(2 * 60 * 60 * 1000))
+        }
+        .width('100%')
+
+        Column({ space: 12 }) {
+          Text('自定义时长')
+            .fontSize(14)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_primary'))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+
+          TextInput({ text: this.customSleepTimerValue, placeholder: '请输入数字' })
+            .height(46)
+            .width('100%')
+            .type(InputType.Number)
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .fontColor($r('app.color.text_primary'))
+            .placeholderColor($r('app.color.text_secondary'))
+            .backgroundColor($r('app.color.background_secondary'))
+            .borderRadius(12)
+            .onChange((value: string) => {
+              this.customSleepTimerValue = value.replace(/[^0-9]/g, '');
+            })
+
+          Row({ space: 10 }) {
+            Button('分钟')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(
+                this.customSleepTimerUnit === 'minute'
+                  ? $r('app.color.accent_primary')
+                  : $r('app.color.background_secondary')
+              )
+              .fontColor(
+                this.customSleepTimerUnit === 'minute'
+                  ? Color.White
+                  : $r('app.color.text_primary')
+              )
+              .borderRadius(12)
+              .onClick(() => {
+                this.customSleepTimerUnit = 'minute';
+              })
+
+            Button('小时')
+              .height(40)
+              .layoutWeight(1)
+              .fontSize(14)
+              .fontFamily(this.appFontFamily)
+              .backgroundColor(
+                this.customSleepTimerUnit === 'hour'
+                  ? $r('app.color.accent_primary')
+                  : $r('app.color.background_secondary')
+              )
+              .fontColor(
+                this.customSleepTimerUnit === 'hour'
+                  ? Color.White
+                  : $r('app.color.text_primary')
+              )
+              .borderRadius(12)
+              .onClick(() => {
+                this.customSleepTimerUnit = 'hour';
+              })
+          }
+          .width('100%')
+
+          Button('确认设置')
+            .height(44)
+            .width('100%')
+            .fontSize(15)
+            .fontFamily(this.appFontFamily)
+            .backgroundColor($r('app.color.accent_primary'))
+            .fontColor(Color.White)
+            .borderRadius(14)
+            .onClick(() => this.applyCustomSleepTimer())
+        }
+        .width('100%')
+      }
+      .width('88%')
+      .padding(20)
+      .constraintSize({ maxWidth: 520, maxHeight: '82%' })
+      .backgroundColor($r('app.color.background_primary'))
+      .borderRadius(24)
+      .border({ width: 1, color: 'rgba(255,255,255,0.08)' })
+      .opacity(this.sleepTimerDialogOpacity)
+      .scale({ x: this.sleepTimerDialogScale, y: this.sleepTimerDialogScale })
+      .onClick(() => {})
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -655,6 +1158,8 @@ export struct ReadAloudPlayerPage {
             this.buildCoverCard()
             this.buildProgressCard()
             this.buildSessionInfoCard()
+            this.buildRemoteStatusCard()
+            this.buildSleepTimerCard()
             this.buildExcerptCard()
             this.buildControlCard()
             Blank()
@@ -670,6 +1175,10 @@ export struct ReadAloudPlayerPage {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
+
+        if (this.showSleepTimerDialog) {
+          this.buildSleepTimerDialog()
+        }
       }
       .width('100%')
       .height('100%')
@@ -716,10 +1225,15 @@ export struct ReadAloudPlayerPage {
       this.applyPreferredDisplayMode('onShown');
       this.scheduleDisplayRestore('onShown');
       AppStorage.setOrCreate('ReadAloudCurrentHostPage', 'ReadAloudPlayerPage');
+      AppStorage.setOrCreate(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY, true);
       this.refreshPlayerState();
       this.readAloudController.refreshMediaSession();
     })
     .onBackPressed(() => {
+      if (this.showSleepTimerDialog) {
+        this.hideSleepTimerDialogWithAnimation();
+        return true;
+      }
       this.closePage();
       return true;
     })

@@ -546,11 +546,11 @@
     },
     {
       "name": "test_management_panel_background_light",
-      "value": "#FFFFFF"
+      "value": "#8AFFFFFF"
     },
     {
       "name": "test_management_panel_border_light",
-      "value": "#E0E0E0"
+      "value": "#94FFFFFF"
     },
     {
       "name": "test_management_accent_primary_light",
@@ -802,11 +802,11 @@
     },
     {
       "name": "test_management_comp_background_tertiary_dark",
-      "value": "#2a2a2a"
+      "value": "#D6141C28"
     },
     {
       "name": "test_management_icon_primary_dark",
-      "value": "#FFFFFF"
+      "value": "#F5F7FA"
     },
     {
       "name": "test_management_font_secondary_dark",
@@ -894,7 +894,7 @@
     },
     {
       "name": "test_management_border_light_dark",
-      "value": "#3a3a3a"
+      "value": "#17FFFFFF"
     },
     {
       "name": "test_management_border_active_dark",

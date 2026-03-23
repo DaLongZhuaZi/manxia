@@ -11,6 +11,7 @@ import { ThemeManager, ThemeType, GlassEffectContext } from '../Framework/Manage
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { EBook, EBookChapter, EBookReadingProgress, EBookReadingSettings, EBookPageMode, EBookFormat, DEFAULT_EBOOK_READING_SETTINGS, EBOOK_THEME_PRESETS, EBookThemePreset } from '../Models/EBookModels';
 import { SettingsManager, SettingKeys } from '../Framework/Managers/SettingsManager';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
@@ -58,6 +59,9 @@ import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { getUnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { AnnotationAnchor, UnifiedAnnotationType } from '../Models/AnnotationModels';
 import { AnnotationCenterPageParams } from './AnnotationCenterPage';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'EBookReaderPage';
 
@@ -95,6 +99,8 @@ struct EBookReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private componentId: string = 'EBookReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
@@ -193,6 +199,7 @@ struct EBookReaderPage {
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
   private annotationManager = getUnifiedAnnotationManager();
   private readAloudController: ReadAloudController = ReadAloudController.getInstance();
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   
   // Reader Kit 阅读器控制器（用于实时应用设置和跳转章节）
   private uiContext: UIContext | undefined = undefined;
@@ -274,6 +281,7 @@ struct EBookReaderPage {
     
     // 注册音量键翻页监听
     this.registerVolumeKeyListener();
+    void this.refreshPageGuide('aboutToAppear');
   }
   
   /**
@@ -348,6 +356,52 @@ struct EBookReaderPage {
     this.readAloudController.refreshMediaSession();
     this.refreshCurrentEBookBookmarkState('on_page_show');
     this.scheduleToolbarAutoHide('page_show');
+    void this.refreshPageGuide('onPageShow');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_ebook_reader_root');
+    } catch (error) {
+      logger.warn(TAG, `获取电子书阅读器引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.EBOOK_READER);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.EBOOK_READER) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `电子书阅读器引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   onPageHide(): void {
@@ -537,7 +591,7 @@ struct EBookReaderPage {
       if (currentMode !== DisplayMode.FULL_IMMERSIVE) {
         this.previousDisplayMode = currentMode;
       }
-      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
+      WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       logger.info(TAG, 'Entered full immersive mode');
     } catch (error) {
       logger.error(TAG, `设置全屏模式失败: ${String(error)}`);
@@ -560,6 +614,9 @@ struct EBookReaderPage {
       const targetMode = this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE
         ? DisplayMode.DEFAULT
         : this.previousDisplayMode;
+      if (WindowManager.getCurrentMode() === targetMode) {
+        return;
+      }
       WindowManager.setDisplayMode(targetMode, this.uiContext);
       logger.info(TAG, `恢复显示模式: ${targetMode}`);
     } catch (error) {
@@ -1293,8 +1350,10 @@ struct EBookReaderPage {
     }
     this.readAloudController.updateContext({
       bookId: this.ebook.id,
+      bookTitle: this.ebook.metadata.title || '电子书',
       chapterIndex: this.currentChapterIndex,
       chapterTitle: this.currentChapter?.title || '',
+      coverUrl: this.ebook.metadata.coverImagePath || '',
       content: this.textContent,
       pageIndex: this.textCurrentPageIndex,
       resumeCharIndex: this.getCurrentTextResumeCharIndex()
@@ -2364,6 +2423,7 @@ struct EBookReaderPage {
           .width('100%')
           .height('100%')
           .backgroundColor(Color.Transparent)
+          .id('guide_ebook_reader_root')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层 - 占满全屏
@@ -2465,6 +2525,26 @@ struct EBookReaderPage {
           })
             .zIndex(20000)
         }
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
       .width('100%')
       .height('100%')
@@ -2493,6 +2573,9 @@ struct EBookReaderPage {
         this.errorMessage = 'Invalid ebook ID parameter';
         logger.error(TAG, '缺少电子书ID参数');
       }
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
     })
     .hideTitleBar(true)
     .backgroundColor(Color.Transparent)
@@ -3483,10 +3566,21 @@ struct EBookReaderPage {
       }
     };
     try {
-      this.restoreNormalMode();
-      this.pathStack.pushPathByName('AnnotationCenterPage', params);
+      PageWindowCoordinator.navigateWithManagedTransition(
+        'EBookReaderPage',
+        'AnnotationCenterPage',
+        () => {
+          try {
+            this.pathStack.pushPathByName('AnnotationCenterPage', params);
+          } catch (error) {
+            logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+            promptAction.showToast({ message: '打开灵感页面失败' });
+          }
+        },
+        this.getUIContext()
+      );
     } catch (error) {
-      logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+      logger.error(TAG, `启动灵感页面过渡失败: ${String(error)}`);
       promptAction.showToast({ message: '打开灵感页面失败' });
     }
   }
