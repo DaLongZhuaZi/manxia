@@ -24,6 +24,8 @@ export class USER_THEME_KEYS {
   static readonly FLOATING_BALL_OPACITY: string = 'userTheme_floatingBallOpacity';
   static readonly MENU_OPACITY: string = 'userTheme_menuOpacity';
   static readonly SIDEBAR_OPACITY: string = 'userTheme_sidebarOpacity';
+  static readonly COMPONENT_CORNER_RADIUS: string = 'userTheme_componentCornerRadius';
+  static readonly COVER_CORNER_RADIUS: string = 'userTheme_coverCornerRadius';
   static readonly CORNER_RADIUS: string = 'userTheme_cornerRadius';
   static readonly BLUR_ENABLED: string = 'userTheme_blurEnabled';
   static readonly SHADOW_ENABLED: string = 'userTheme_shadowEnabled';
@@ -74,10 +76,24 @@ export interface EffectsConfig {
   animationSpeed: number;
   /** 启用圆角效果 */
   enableRoundedCorners: boolean;
-  /** 圆角大小 (0-32) */
-  cornerRadius: number;
+  /** 组件圆角大小 (0-32) */
+  componentCornerRadius: number;
+  /** 封面图片圆角大小 (0-32) */
+  coverCornerRadius: number;
   /** 启用玻璃拟态效果 */
   enableGlassmorphism: boolean;
+}
+
+interface StoredEffectsConfig extends Partial<EffectsConfig> {
+  cornerRadius?: number;
+}
+
+interface StoredUserThemeProfile {
+  id?: string;
+  name?: string;
+  lastModified?: number;
+  transparency?: Partial<TransparencyConfig>;
+  effects?: StoredEffectsConfig;
 }
 
 /**
@@ -122,7 +138,8 @@ const DEFAULT_EFFECTS: EffectsConfig = {
   enableAnimation: true,
   animationSpeed: 1.0,
   enableRoundedCorners: true,
-  cornerRadius: 12,
+  componentCornerRadius: 12,
+  coverCornerRadius: 12,
   enableGlassmorphism: true
 };
 
@@ -153,7 +170,8 @@ function copyEffects(source: EffectsConfig): EffectsConfig {
     enableAnimation: source.enableAnimation,
     animationSpeed: source.animationSpeed,
     enableRoundedCorners: source.enableRoundedCorners,
-    cornerRadius: source.cornerRadius,
+    componentCornerRadius: source.componentCornerRadius,
+    coverCornerRadius: source.coverCornerRadius,
     enableGlassmorphism: source.enableGlassmorphism
   };
 }
@@ -185,7 +203,8 @@ function mergeEffects(base: EffectsConfig, partial: Partial<EffectsConfig>): Eff
     enableAnimation: partial.enableAnimation !== undefined ? partial.enableAnimation : base.enableAnimation,
     animationSpeed: partial.animationSpeed !== undefined ? partial.animationSpeed : base.animationSpeed,
     enableRoundedCorners: partial.enableRoundedCorners !== undefined ? partial.enableRoundedCorners : base.enableRoundedCorners,
-    cornerRadius: partial.cornerRadius !== undefined ? partial.cornerRadius : base.cornerRadius,
+    componentCornerRadius: partial.componentCornerRadius !== undefined ? partial.componentCornerRadius : base.componentCornerRadius,
+    coverCornerRadius: partial.coverCornerRadius !== undefined ? partial.coverCornerRadius : base.coverCornerRadius,
     enableGlassmorphism: partial.enableGlassmorphism !== undefined ? partial.enableGlassmorphism : base.enableGlassmorphism
   };
 }
@@ -274,7 +293,25 @@ export class UserThemeConfigManager {
       
       const profileJson = await this.preferencesStore.get(this.CURRENT_PROFILE_KEY, '') as string;
       if (profileJson && profileJson.length > 0) {
-        const loaded = JSON.parse(profileJson) as UserThemeProfile;
+        const loaded = JSON.parse(profileJson) as StoredUserThemeProfile;
+        const loadedEffects: StoredEffectsConfig = loaded.effects ? loaded.effects : {};
+        const legacyCornerRadius = loadedEffects.cornerRadius;
+        const normalizedEffects: Partial<EffectsConfig> = {
+          enableBlur: loadedEffects.enableBlur,
+          blurIntensity: loadedEffects.blurIntensity,
+          enableShadow: loadedEffects.enableShadow,
+          shadowIntensity: loadedEffects.shadowIntensity,
+          enableAnimation: loadedEffects.enableAnimation,
+          animationSpeed: loadedEffects.animationSpeed,
+          enableRoundedCorners: loadedEffects.enableRoundedCorners,
+          componentCornerRadius: loadedEffects.componentCornerRadius !== undefined
+            ? loadedEffects.componentCornerRadius
+            : legacyCornerRadius,
+          coverCornerRadius: loadedEffects.coverCornerRadius !== undefined
+            ? loadedEffects.coverCornerRadius
+            : legacyCornerRadius,
+          enableGlassmorphism: loadedEffects.enableGlassmorphism
+        };
         // 合并默认值，确保新增字段有默认值
         const defaultProfile = createDefaultProfile();
         this.currentProfile = {
@@ -282,7 +319,7 @@ export class UserThemeConfigManager {
           name: loaded.name ? loaded.name : defaultProfile.name,
           lastModified: loaded.lastModified ? loaded.lastModified : defaultProfile.lastModified,
           transparency: mergeTransparency(DEFAULT_TRANSPARENCY, loaded.transparency ? loaded.transparency : {}),
-          effects: mergeEffects(DEFAULT_EFFECTS, loaded.effects ? loaded.effects : {})
+          effects: mergeEffects(DEFAULT_EFFECTS, normalizedEffects)
         };
         logger.info(TAG, `加载当前配置: ${this.currentProfile.name}`);
       }
@@ -398,7 +435,9 @@ export class UserThemeConfigManager {
       AppStorage.setOrCreate<number>(USER_THEME_KEYS.MENU_OPACITY, profile.transparency.menu);
       AppStorage.setOrCreate<number>(USER_THEME_KEYS.SIDEBAR_OPACITY, profile.transparency.sidebar);
       // 特效配置
-      AppStorage.setOrCreate<number>(USER_THEME_KEYS.CORNER_RADIUS, profile.effects.cornerRadius);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.COMPONENT_CORNER_RADIUS, profile.effects.componentCornerRadius);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.COVER_CORNER_RADIUS, profile.effects.coverCornerRadius);
+      AppStorage.setOrCreate<number>(USER_THEME_KEYS.CORNER_RADIUS, profile.effects.componentCornerRadius);
       AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.BLUR_ENABLED, profile.effects.enableBlur);
       AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.SHADOW_ENABLED, profile.effects.enableShadow);
       AppStorage.setOrCreate<boolean>(USER_THEME_KEYS.ANIMATION_ENABLED, profile.effects.enableAnimation);
@@ -436,9 +475,19 @@ export class UserThemeConfigManager {
     return this.currentProfile.effects.animationSpeed;
   }
   
-  /** 获取圆角大小 */
+  /** 获取组件圆角大小 */
+  public get componentCornerRadius(): number {
+    return this.currentProfile.effects.enableRoundedCorners ? this.currentProfile.effects.componentCornerRadius : 0;
+  }
+
+  /** 获取封面图片圆角大小 */
+  public get coverCornerRadius(): number {
+    return this.currentProfile.effects.enableRoundedCorners ? this.currentProfile.effects.coverCornerRadius : 0;
+  }
+
+  /** 兼容旧调用，等价于组件圆角 */
   public get cornerRadius(): number {
-    return this.currentProfile.effects.enableRoundedCorners ? this.currentProfile.effects.cornerRadius : 0;
+    return this.componentCornerRadius;
   }
   
   /** 是否启用玻璃拟态 */

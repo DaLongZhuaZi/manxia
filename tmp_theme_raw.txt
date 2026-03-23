@@ -7,7 +7,7 @@ import { ThemeManager, ThemeType, CustomThemeData, CUSTOM_THEME_KEYS, THEME_CONF
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
-import { UserThemeConfigManager, TransparencyConfig, EffectsConfig } from '../Framework/Theme/UserThemeConfig';
+import { UserThemeConfigManager, TransparencyConfig, EffectsConfig, USER_THEME_KEYS } from '../Framework/Theme/UserThemeConfig';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
@@ -22,12 +22,7 @@ import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
-import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
-import { SettingsGlassStyleHelper } from './settings/SettingsGlassStyleHelper';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'ThemeSettingsPage';
 
@@ -41,8 +36,7 @@ interface CustomTheme {
   backgroundImagePathDark?: string; // 深色模式图片路径（可选，用于兼容旧版本）
   splashBackgroundImagePath?: string; // 开屏图片路径（可选）
   blurLevel: number;
-  brightness: number; // 亮度调整（0-100），50为原始亮度
-  primaryColor: string;
+  brightness: number; // 亮度调整�?-100），50为原始亮�?  primaryColor: string;
   isDark: boolean;
   createTime: number;
   lastModified: number;
@@ -81,13 +75,6 @@ interface RGBColor {
 export struct ThemeSettingsPage {
   @State pathStack: NavPathStack = new NavPathStack();
   private scroller: Scroller = new Scroller();
-  @State private settingsTapEnabled: boolean = true;
-  private settingsTapUnlockTimer: number = -1;
-  private readonly scrollTapGuardDurationMs: number = 140;
-  @State private activeSearchAnchorId: string = '';
-  @State private searchHighlightPulse: boolean = false;
-  private searchHighlightPulseTimer: number = -1;
-  private searchHighlightClearTimer: number = -1;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @State private appGuideStep: AppGuideStep | null = null;
@@ -96,21 +83,18 @@ export struct ThemeSettingsPage {
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private uiContext: UIContext | undefined = undefined;
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
-  private lastGuideAnchorId: string = '';
 
   // 状态栏和导航栏高度
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
-  // 响应式布局相关状态
-  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
+  // 响应式布局相关状�?  private deviceManager: DeviceAdaptationManager = DeviceAdaptationManager.getInstance();
   private deviceChangeListener: DeviceChangeListener | null = null;
   @State responsive_contentPadding: number = 16;
   @State responsive_maxContentWidth: number = 1200;
   @State responsive_isLandscape: boolean = false;
 
-  // 当前选择的图片
-  @State selectedImagePath: string = '';
+  // 当前选择的图�?  @State selectedImagePath: string = '';
   @State selectedImagePixelMap: image.PixelMap | null = null;
   // 开屏图片选择
   @State selectedSplashImagePath: string = '';
@@ -118,8 +102,7 @@ export struct ThemeSettingsPage {
   @State processedSplashImagePixelMap: image.PixelMap | null = null;
   @State processedSplashImagePath: string = '';
   
-  // 主题商店展示与创建模式
-  @State isCreatingCustomTheme: boolean = false;
+  // 主题商店展示与创建模�?  @State isCreatingCustomTheme: boolean = false;
   @State isCropping: boolean = false;
   @State cropAlignment: CropAlignment = CropAlignment.CENTER;
   @State cropZoom: number = 1.0;
@@ -139,28 +122,24 @@ export struct ThemeSettingsPage {
   
   // 调节参数
   @State blurLevel: number = 0; // 模糊程度 0-100，默认无模糊
-  @State brightnessLevel: number = 50; // 亮度 0-100，50为原始亮度，小于50变暗，大于50变亮
+  @State brightnessLevel: number = 50; // 亮度 0-100�?0为原始亮度，小于50变暗，大�?0变亮
   
   // 提取的主色调
   @State extractedColor: string = '#6200EE';
   @State extractedColorRGB: string = 'RGB(98, 0, 238)';
   
-  // 加载状态
-  @State isProcessing: boolean = false;
+  // 加载状�?  @State isProcessing: boolean = false;
   @State processingMessage: string = '';
   @State processingProgress: number = 0;
   
   // 预设主题列表
   @State customThemes: CustomTheme[] = [];
   
-  // 滑块调节防抖定时器
-  private effectDebounceTimer: number = -1;
+  // 滑块调节防抖定时�?  private effectDebounceTimer: number = -1;
   
-  // 用户主题配置管理器
-  private userThemeConfigManager: UserThemeConfigManager = UserThemeConfigManager.getInstance();
+  // 用户主题配置管理�?  private userThemeConfigManager: UserThemeConfigManager = UserThemeConfigManager.getInstance();
   
-  // 透明度设置状态（使用StorageLink实现声明式绑定和实时预览）
-  @StorageLink('userTheme_navBarOpacity') navBarOpacity: number = 1.0;
+  // 透明度设置状态（使用StorageLink实现声明式绑定和实时预览�?  @StorageLink('userTheme_navBarOpacity') navBarOpacity: number = 1.0;
   @StorageLink('userTheme_cardOpacity') cardOpacity: number = 1.0;
   @StorageLink('userTheme_dialogOpacity') dialogOpacity: number = 0.95;
   @StorageLink('userTheme_floatingBallOpacity') floatingBallOpacity: number = 0.9;
@@ -170,25 +149,21 @@ export struct ThemeSettingsPage {
   @StorageLink('userTheme_shadowEnabled') shadowEnabled: boolean = true;
   @StorageLink('userTheme_animationEnabled') animationEnabled: boolean = true;
   @StorageLink('userTheme_glassmorphismEnabled') glassmorphismEnabled: boolean = true;
-  @StorageLink('userTheme_componentCornerRadius') componentCornerRadius: number = 12;
-  @StorageLink('userTheme_coverCornerRadius') coverCornerRadius: number = 12;
+  @StorageLink('userTheme_cornerRadius') cornerRadius: number = 12;
   
-  // 本地状态（用于滑块显示，百分比形式）
-  @State navBarTransparency: number = 100;
+  // 本地状态（用于滑块显示，百分比形式�?  @State navBarTransparency: number = 100;
   @State cardTransparency: number = 100;
   @State dialogTransparency: number = 95;
   @State floatingBallTransparency: number = 90;
   @State effectBlurIntensity: number = 50;
   @State effectAnimationSpeed: number = 100;
-  @State effectComponentCornerRadius: number = 12;
-  @State effectCoverCornerRadius: number = 12;
+  @State effectCornerRadius: number = 12;
 
-  // 默认自定义主题常量
-  private DEFAULT_THEME_ID: string = 'default_custom_theme';
-  private DEFAULT_THEME_NAME: string = '第一自定义主题';
+  // 默认自定义主题常�?  private DEFAULT_THEME_ID: string = 'default_custom_theme';
+  private DEFAULT_THEME_NAME: string = '第一自定义主�?;
   private SECONDARY_THEME_ID: string = 'secondary_custom_theme';
-  private SECONDARY_THEME_NAME: string = '第二自定义主题';
-  // 原始背景图片所在 rawfile 目录（如需调整实际目录，请修改此常量）
+  private SECONDARY_THEME_NAME: string = '第二自定义主�?;
+  // 原始背景图片所�?rawfile 目录（如需调整实际目录，请修改此常量）
   private RAW_BACKGROUND_DIR: string = 'backgrounds';
   
   aboutToAppear(): void {
@@ -196,7 +171,7 @@ export struct ThemeSettingsPage {
     this.uiContext = this.getUIContext();
     
     ThemeAwareHelper.initializeThemeAware(TAG, this.themeState, (theme: ThemeType) => {
-      logger.info(TAG, `主题已切换: ${theme}`);
+      logger.info(TAG, `主题已切�? ${theme}`);
     });
     FontAwareHelper.initializeFontAware(TAG, this.fontState, (newState: FontAwareState) => {
       this.fontState = newState;
@@ -228,7 +203,18 @@ export struct ThemeSettingsPage {
       return null;
     }
     try {
-      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_theme_settings_root');
+      const componentUtils = this.getUIContext().getComponentUtils();
+      const rectInfo = componentUtils.getRectangleById(anchorId);
+      if (!rectInfo || Number(rectInfo.size.width) <= 0 || Number(rectInfo.size.height) <= 0) {
+        return null;
+      }
+      return {
+        x: px2vp(Number(rectInfo.windowOffset.x)),
+        y: px2vp(Number(rectInfo.windowOffset.y)),
+        width: px2vp(Number(rectInfo.size.width)),
+        height: px2vp(Number(rectInfo.size.height)),
+        borderRadius: borderRadius
+      };
     } catch (error) {
       logger.warn(TAG, `获取主题设置引导锚点失败: ${String(error)}`);
       return null;
@@ -244,60 +230,16 @@ export struct ThemeSettingsPage {
     if (!step || step.pageId !== AppGuidePageId.THEME_SETTINGS) {
       this.appGuideStep = null;
       this.appGuideHighlightRect = null;
-      this.lastGuideAnchorId = '';
-      return;
-    }
-    if (this.normalizeGuidePresentation(step) && !trigger.endsWith('_after_prepare')) {
-      setTimeout(() => {
-        void this.refreshPageGuide(`${trigger}_after_prepare`);
-      }, 120);
-      return;
-    }
-    if (this.alignGuideViewport(step) && !trigger.endsWith('_after_scroll')) {
-      setTimeout(() => {
-        void this.refreshPageGuide(`${trigger}_after_scroll`);
-      }, 320);
       return;
     }
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
-    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
       setTimeout(() => {
-        void this.refreshPageGuide(`${trigger}_retry_layout`);
+        void this.refreshPageGuide('retry_layout');
       }, 120);
     }
-    logger.debug(TAG, `主题设置引导已刷新: trigger=${trigger}, step=${step.id}`);
-  }
-
-  private normalizeGuidePresentation(step: AppGuideStep): boolean {
-    let changed: boolean = false;
-    if (this.selectionModeEnabled) {
-      this.exitSelectionMode();
-      changed = true;
-    }
-    if ((step.anchorId === 'theme_custom' || step.anchorId === 'theme_effects') && this.isCreatingCustomTheme) {
-      this.isCreatingCustomTheme = false;
-      changed = true;
-    }
-    return changed;
-  }
-
-  private alignGuideViewport(step: AppGuideStep): boolean {
-    const anchorId = step.anchorId ?? '';
-    if (anchorId.length <= 0) {
-      return false;
-    }
-    const scrollResult = ensureGuideAnchorVisibleInScroller(
-      this.getUIContext(),
-      this.scroller,
-      anchorId,
-      'guide_theme_settings_scroll'
-    );
-    if (!scrollResult.available) {
-      return false;
-    }
-    this.lastGuideAnchorId = anchorId;
-    return scrollResult.scrolled;
+    logger.debug(TAG, `主题设置引导已刷�? trigger=${trigger}, step=${step.id}`);
   }
 
   private handlePageGuideNext(): void {
@@ -311,59 +253,9 @@ export struct ThemeSettingsPage {
       void this.refreshPageGuide('skip');
     });
   }
-
-  private markSettingsScrolling(): void {
-    if (this.settingsTapEnabled) {
-      this.settingsTapEnabled = false;
-    }
-    if (this.settingsTapUnlockTimer >= 0) {
-      clearTimeout(this.settingsTapUnlockTimer);
-    }
-    this.settingsTapUnlockTimer = setTimeout(() => {
-      this.settingsTapEnabled = true;
-      this.settingsTapUnlockTimer = -1;
-    }, this.scrollTapGuardDurationMs);
-  }
-
-  private cleanupSettingsTapGuard(): void {
-    if (this.settingsTapUnlockTimer >= 0) {
-      clearTimeout(this.settingsTapUnlockTimer);
-      this.settingsTapUnlockTimer = -1;
-    }
-    this.settingsTapEnabled = true;
-  }
-
-  private applyPendingSearchTarget(): void {
-    const target = SettingsSearchSupport.consumePendingTarget('ThemeSettingsPage');
-    if (!target) {
-      return;
-    }
-    switch (target.anchorId) {
-      case 'theme_create_background':
-      case 'theme_create_colors':
-      case 'theme_create_save':
-        this.isCreatingCustomTheme = true;
-        break;
-      default:
-        this.isCreatingCustomTheme = false;
-        break;
-    }
-    this.exitSelectionMode();
-    SettingsSearchSupport.activateHighlight(this, target.anchorId);
-    const offset = Math.max(0, target.scrollOffset);
-    logger.info(TAG, `应用设置搜索定位: id=${target.id}, anchor=${target.anchorId}, offset=${offset}`);
-    setTimeout(() => {
-      try {
-        this.scroller.scrollTo({ xOffset: 0, yOffset: offset, animation: { duration: 360 } });
-      } catch (error) {
-        logger.warn(TAG, `滚动到设置搜索目标失败: ${String(error)}`);
-      }
-    }, 180);
-  }
   
   /**
-   * 初始化用户主题配置
-   */
+   * 初始化用户主题配�?   */
   private async initializeUserThemeConfig(): Promise<void> {
     try {
       await this.userThemeConfigManager.initialize();
@@ -376,13 +268,12 @@ export struct ThemeSettingsPage {
       this.floatingBallTransparency = Math.round(profile.transparency.floatingBall * 100);
       this.effectBlurIntensity = profile.effects.blurIntensity;
       this.effectAnimationSpeed = Math.round(profile.effects.animationSpeed * 100);
-      this.effectComponentCornerRadius = profile.effects.componentCornerRadius;
-      this.effectCoverCornerRadius = profile.effects.coverCornerRadius;
+      this.effectCornerRadius = profile.effects.cornerRadius;
       
       // StorageLink绑定的值会自动从AppStorage同步，无需手动设置
       logger.info(TAG, '用户主题配置加载完成');
     } catch (error) {
-      logger.error(TAG, '初始化用户主题配置失败', error);
+      logger.error(TAG, '初始化用户主题配置失�?, error);
     }
   }
 
@@ -390,20 +281,16 @@ export struct ThemeSettingsPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
-    this.cleanupSettingsTapGuard();
-    SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(TAG);
     FontAwareHelper.cleanupFontAware(TAG);
     
-    // 移除设备变化监听器
-    if (this.deviceChangeListener) {
+    // 移除设备变化监听�?    if (this.deviceChangeListener) {
       this.deviceManager.removeListener(this.deviceChangeListener);
       this.deviceChangeListener = null;
     }
     
-    // 清理防抖定时器
-    if (this.effectDebounceTimer !== -1) {
+    // 清理防抖定时�?    if (this.effectDebounceTimer !== -1) {
       clearTimeout(this.effectDebounceTimer);
       this.effectDebounceTimer = -1;
     }
@@ -428,31 +315,27 @@ export struct ThemeSettingsPage {
    */
   private initializeResponsiveLayout(): void {
     try {
-      // 更新响应式参数
-      this.updateResponsiveParams();
+      // 更新响应式参�?      this.updateResponsiveParams();
 
       // 创建并注册设备变化监听器
       this.deviceChangeListener = (deviceInfo: DeviceInfo) => {
-        logger.info(TAG, `设备状态变化: 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
+        logger.info(TAG, `设备状态变�? 断点=${deviceInfo.breakpoint}, 方向=${deviceInfo.orientation}`);
         this.updateResponsiveParams();
       };
       
       this.deviceManager.addListener(this.deviceChangeListener);
       
-      logger.info(TAG, '✅ 响应式布局初始化完成');
+      logger.info(TAG, '�?响应式布局初始化完�?);
     } catch (error) {
-      logger.error(TAG, '响应式布局初始化失败', String(error));
+      logger.error(TAG, '响应式布局初始化失�?, String(error));
     }
   }
 
   /**
-   * 设备类型到背景名选择（a_* / b_*）
-   */
+   * 设备类型到背景名选择（a_* / b_*�?   */
   private getDeviceTypeString(): string {
-    // 直接使用官方 deviceInfo.deviceType，返回字符串：'foldable' | 'phone' | 'tablet' | '2in1' 或其他
-    const sysType: string = String(deviceInfo.deviceType);
-    // 同步折叠屏检测，若为折叠屏则优先使用折叠屏规则
-    const isFoldable: boolean = this.deviceManager.getDeviceInfo().isFoldable;
+    // 直接使用官方 deviceInfo.deviceType，返回字符串�?foldable' | 'phone' | 'tablet' | '2in1' 或其�?    const sysType: string = String(deviceInfo.deviceType);
+    // 同步折叠屏检测，若为折叠屏则优先使用折叠屏规�?    const isFoldable: boolean = this.deviceManager.getDeviceInfo().isFoldable;
     if (isFoldable) {
       return 'foldable';
     }
@@ -483,18 +366,17 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 根据设备类型返回 a_* 或 b_* 的具体名称
-   */
+   * 根据设备类型返回 a_* �?b_* 的具体名�?   */
   private selectBackgroundName(setId: string): string {
     const dev: string = this.getDeviceTypeString();
-    // a_* 集合：折叠屏 a_1，手机 a_2，平板/2in1 a_3
+    // a_* 集合：折叠屏 a_1，手�?a_2，平�?2in1 a_3
     if (setId === 'a') {
       if (dev === 'foldable') { return 'a_1'; }
       if (dev === 'phone') { return 'a_2'; }
-      // tablet 或 2in1
+      // tablet �?2in1
       return 'a_3';
     }
-    // b_* 集合：折叠屏 b_1，手机 b_2，平板/2in1 b_3
+    // b_* 集合：折叠屏 b_1，手�?b_2，平�?2in1 b_3
     if (setId === 'b') {
       if (dev === 'foldable') { return 'b_1'; }
       if (dev === 'phone') { return 'b_2'; }
@@ -503,28 +385,24 @@ export struct ThemeSettingsPage {
     return 'a_2';
   }
 
-  // 媒体资源模式下不再需要rawfile拷贝，相关逻辑已移除
-
+  // 媒体资源模式下不再需要rawfile拷贝，相关逻辑已移�?
   /**
    * 更新响应式布局参数
    */
   private updateResponsiveParams(): void {
-    // 避免结构类型对象在页面中传播：改为使用名义方法返回基础值
-    const deviceInfo: DeviceInfo = this.deviceManager.getDeviceInfo() as DeviceInfo;
+    // 避免结构类型对象在页面中传播：改为使用名义方法返回基础�?    const deviceInfo: DeviceInfo = this.deviceManager.getDeviceInfo() as DeviceInfo;
 
-    // 使用工具类的显式方法，避免依赖 ResponsiveLayoutParams 结构类型
+    // 使用工具类的显式方法，避免依�?ResponsiveLayoutParams 结构类型
     this.responsive_contentPadding = ResponsiveLayoutHelper.getContentPadding();
     this.responsive_isLandscape = deviceInfo.isLandscape;
 
-    // 最大内容宽度改为直接使用工具类计算结果，保持与断点逻辑一致
-    this.responsive_maxContentWidth = ResponsiveLayoutHelper.getMaxContentWidth();
+    // 最大内容宽度改为直接使用工具类计算结果，保持与断点逻辑一�?    this.responsive_maxContentWidth = ResponsiveLayoutHelper.getMaxContentWidth();
     
-    logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
+    logger.debug(TAG, `响应式参数更�? 内边�?${this.responsive_contentPadding}, 最大宽�?${this.responsive_maxContentWidth}`);
   }
 
   /**
-   * 加载已保存的自定义主题
-   */
+   * 加载已保存的自定义主�?   */
   private async loadCustomThemes(): Promise<void> {
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
@@ -539,7 +417,7 @@ export struct ThemeSettingsPage {
       if (fs.accessSync(themesFile)) {
         const content = fs.readTextSync(themesFile);
         this.customThemes = JSON.parse(content) as CustomTheme[];
-        // 媒体资源模式清理：默认/第二自定义主题不保留本地图片路径
+        // 媒体资源模式清理：默�?第二自定义主题不保留本地图片路径
         const sanitized: CustomTheme[] = [];
         let j: number = 0;
         while (j < this.customThemes.length) {
@@ -565,13 +443,12 @@ export struct ThemeSettingsPage {
         logger.info(TAG, `已加载并清理 ${this.customThemes.length} 个自定义主题（媒体资源模式）`);
       }
     } catch (error) {
-      logger.error(TAG, `加载自定义主题失败: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(TAG, `加载自定义主题失�? ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
-   * 保存自定义主题
-   */
+   * 保存自定义主�?   */
   private async saveCustomTheme(theme: CustomTheme): Promise<void> {
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
@@ -587,57 +464,26 @@ export struct ThemeSettingsPage {
         fs.mkdirSync(themesDir);
       }
       
-      // 添加或更新主题
-      const existingIndex = this.customThemes.findIndex(t => t.id === theme.id);
+      // 添加或更新主�?      const existingIndex = this.customThemes.findIndex(t => t.id === theme.id);
       if (existingIndex >= 0) {
         this.customThemes[existingIndex] = theme;
       } else {
         this.customThemes.push(theme);
       }
       
-      // 保存到文件
-      const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      // 保存到文�?      const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, JSON.stringify(this.customThemes));
       fs.closeSync(file);
       logger.info(TAG, `已保存自定义主题: ${theme.name}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `保存自定义主题失败: ${errorMsg}`);
-      throw new Error(`保存自定义主题失败: ${errorMsg}`);
+      logger.error(TAG, `保存自定义主题失�? ${errorMsg}`);
+      throw new Error(`保存自定义主题失�? ${errorMsg}`);
     }
-  }
-
-  private normalizeThemePreviewPath(rawPath: string): string {
-    if (rawPath.startsWith('file://')) {
-      return rawPath;
-    }
-    if (rawPath.startsWith('/')) {
-      return `file://${rawPath}`;
-    }
-    return rawPath;
-  }
-
-  private resolveThemePreviewSource(theme: CustomTheme): string | ResourceStr {
-    const preferredPath: string = this.themeState.currentTheme === ThemeType.DARK
-      && theme.backgroundImagePathDark
-      && theme.backgroundImagePathDark.length > 0
-      ? theme.backgroundImagePathDark
-      : theme.backgroundImagePath;
-    if (preferredPath && preferredPath.length > 0) {
-      return this.normalizeThemePreviewPath(preferredPath);
-    }
-    if (theme.id === this.DEFAULT_THEME_ID) {
-      return $r('app.media.a_3');
-    }
-    if (theme.id === this.SECONDARY_THEME_ID) {
-      return $r('app.media.b_3');
-    }
-    return '';
   }
 
   /**
-   * 持久化当前自定义主题列表到文件
-   */
+   * 持久化当前自定义主题列表到文�?   */
   private async persistCustomThemesList(): Promise<void> {
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
@@ -652,11 +498,11 @@ export struct ThemeSettingsPage {
       const file = fs.openSync(themesFile, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, JSON.stringify(this.customThemes));
       fs.closeSync(file);
-      logger.info(TAG, '✅ 自定义主题列表已持久化');
+      logger.info(TAG, '�?自定义主题列表已持久�?);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `持久化主题列表失败: ${errorMsg}`);
-      throw new Error(`持久化主题列表失败: ${errorMsg}`);
+      logger.error(TAG, `持久化主题列表失�? ${errorMsg}`);
+      throw new Error(`持久化主题列表失�? ${errorMsg}`);
     }
   }
 
@@ -669,8 +515,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 切换主题选择状态（长按/点击）
-   */
+   * 切换主题选择状态（长按/点击�?   */
   private toggleThemeSelection(themeId: string): void {
     if (!this.selectionModeEnabled) {
       this.selectionModeEnabled = true;
@@ -711,8 +556,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 删除已选中的自定义主题（含图片文件与列表项）
-   */
+   * 删除已选中的自定义主题（含图片文件与列表项�?   */
   private async deleteSelectedThemes(): Promise<void> {
     try {
       if (this.selectedThemeIds.length === 0) {
@@ -735,26 +579,25 @@ export struct ThemeSettingsPage {
           // 删除关联文件
           if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0 && fs.accessSync(theme.backgroundImagePath)) {
             fs.unlinkSync(theme.backgroundImagePath);
-            logger.info(TAG, `已删除浅色背景: ${theme.backgroundImagePath}`);
+            logger.info(TAG, `已删除浅色背�? ${theme.backgroundImagePath}`);
           }
           if (theme.backgroundImagePathDark && theme.backgroundImagePathDark.length > 0 && fs.accessSync(theme.backgroundImagePathDark)) {
             fs.unlinkSync(theme.backgroundImagePathDark);
-            logger.info(TAG, `已删除深色背景: ${theme.backgroundImagePathDark}`);
+            logger.info(TAG, `已删除深色背�? ${theme.backgroundImagePathDark}`);
           } else {
             // 兼容旧版本可能使用文件名约定
             const darkCandidate: string = `${themesDir}/${theme.id}_dark.webp`;
             if (fs.accessSync(darkCandidate)) {
               fs.unlinkSync(darkCandidate);
-              logger.info(TAG, `已删除深色背景(兼容路径): ${darkCandidate}`);
+              logger.info(TAG, `已删除深色背�?兼容路径): ${darkCandidate}`);
             }
           }
           if (theme.splashBackgroundImagePath && theme.splashBackgroundImagePath.length > 0 && fs.accessSync(theme.splashBackgroundImagePath)) {
             fs.unlinkSync(theme.splashBackgroundImagePath);
-            logger.info(TAG, `已删除开屏背景: ${theme.splashBackgroundImagePath}`);
+            logger.info(TAG, `已删除开屏背�? ${theme.splashBackgroundImagePath}`);
           }
 
-          // 若当前激活主题被删除，则清除自定义主题状态
-          if (this.currentCustomThemeId === theme.id) {
+          // 若当前激活主题被删除，则清除自定义主题状�?          if (this.currentCustomThemeId === theme.id) {
             await this.themeManager.clearCustomTheme();
             this.currentCustomThemeId = '';
             logger.info(TAG, `当前激活主题已删除，已清除自定义主题状态`);
@@ -770,16 +613,15 @@ export struct ThemeSettingsPage {
       await this.persistCustomThemesList();
       // 退出选择模式
       this.exitSelectionMode();
-      logger.info(TAG, '✅ 已删除选中的自定义主题');
+      logger.info(TAG, '�?已删除选中的自定义主题');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `删除自定义主题失败: ${errorMsg}`);
+      logger.error(TAG, `删除自定义主题失�? ${errorMsg}`);
     }
   }
 
   /**
-   * 确保默认自定义主题已初始化（首次缺失则创建并写入列表）
-   */
+   * 确保默认自定义主题已初始化（首次缺失则创建并写入列表�?   */
   private async ensureDefaultCustomThemeInitialized(): Promise<void> {
     try {
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
@@ -811,24 +653,21 @@ export struct ThemeSettingsPage {
         return;
       }
 
-      // 创建默认自定义主题（按设备类型选择 a_* 背景，失败则回退透明）
-      const created: CustomTheme = await this.createDefaultCustomTheme();
+      // 创建默认自定义主题（按设备类型选择 a_* 背景，失败则回退透明�?      const created: CustomTheme = await this.createDefaultCustomTheme();
       await this.saveCustomTheme(created);
-      logger.info(TAG, '✅ 默认自定义主题已初始化并写入列表');
+      logger.info(TAG, '�?默认自定义主题已初始化并写入列表');
 
       // [修复] 移除自动应用逻辑，避免强制用户使用自定义主题
-      // 用户应该主动选择是否使用自定义主题，而不是被动强制应用
-
-      // （移除分支内的第二主题初始化，改为在方法末统一执行）
-    } catch (error) {
-      logger.error(TAG, `默认主题初始化失败: ${error instanceof Error ? error.message : String(error)}`);
+      // 用户应该主动选择是否使用自定义主题，而不是被动强制应�?
+      // （移除分支内的第二主题初始化，改为在方法末统一执行�?    } catch (error) {
+      logger.error(TAG, `默认主题初始化失�? ${error instanceof Error ? error.message : String(error)}`);
     }
     // 在默认主题流程结束后，确保第二自定义主题也初始化
     await this.ensureSecondaryCustomThemeInitialized();
   }
 
   /**
-   * 生成透明的 WebP 图片，确保图片加载不出错
+   * 生成透明�?WebP 图片，确保图片加载不出错
    */
   private async generateTransparentWebP(imagePath: string, width: number, height: number): Promise<void> {
     const w: number = width > 0 ? width : 16;
@@ -868,15 +707,13 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 创建默认自定义主题（透明背景），并返回主题对象
-   */
+   * 创建默认自定义主题（透明背景），并返回主题对�?   */
   private async createDefaultCustomTheme(): Promise<CustomTheme> {
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
       throw new Error('无法获取UIAbilityContext');
     }
-    // 改为使用媒体资源（app.media.a_*）进行显示，不再复制rawfile到文件目录
-    // 为保持现有存储结构与类型安全，路径字段置为空字符串，显示层通过资源回退逻辑加载媒体资源
+    // 改为使用媒体资源（app.media.a_*）进行显示，不再复制rawfile到文件目�?    // 为保持现有存储结构与类型安全，路径字段置为空字符串，显示层通过资源回退逻辑加载媒体资源
     const now: number = Date.now();
     const primaryColor: string = THEME_CONFIGS[ThemeType.LIGHT].primaryColor;
     const created: CustomTheme = {
@@ -896,8 +733,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 确保第二自定义主题已存在；不存在则按设备类型创建（b_* 背景）
-   */
+   * 确保第二自定义主题已存在；不存在则按设备类型创建（b_* 背景�?   */
   private async ensureSecondaryCustomThemeInitialized(): Promise<void> {
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
@@ -921,12 +757,11 @@ export struct ThemeSettingsPage {
       i = i + 1;
     }
     if (exists) {
-      logger.debug(TAG, '第二自定义主题已存在，跳过创建');
+      logger.debug(TAG, '第二自定义主题已存在，跳过创�?);
       return;
     }
 
-    // 改为使用媒体资源（app.media.b_*）进行显示，不再复制rawfile到文件目录
-    const now: number = Date.now();
+    // 改为使用媒体资源（app.media.b_*）进行显示，不再复制rawfile到文件目�?    const now: number = Date.now();
     const primaryColor: string = THEME_CONFIGS[ThemeType.LIGHT].primaryColor;
     const created: CustomTheme = {
       id: this.SECONDARY_THEME_ID,
@@ -942,7 +777,7 @@ export struct ThemeSettingsPage {
       lastModified: now
     };
     await this.saveCustomTheme(created);
-    logger.info(TAG, '✅ 已创建第二自定义主题（媒体资源 b_*）并写入列表');
+    logger.info(TAG, '�?已创建第二自定义主题（媒体资�?b_*）并写入列表');
   }
 
   /**
@@ -973,8 +808,7 @@ export struct ThemeSettingsPage {
 
       let targetTheme: CustomTheme | null = null;
       if (index >= 0) {
-        // 已存在，直接应用（背景路径可能为空，由显示层采用媒体资源回退）
-        targetTheme = this.customThemes[index];
+        // 已存在，直接应用（背景路径可能为空，由显示层采用媒体资源回退�?        targetTheme = this.customThemes[index];
       } else {
         // 不存在则创建（媒体资源模式）
         const created: CustomTheme = await this.createDefaultCustomTheme();
@@ -984,7 +818,7 @@ export struct ThemeSettingsPage {
 
       if (targetTheme) {
         await this.applyCustomThemeToManager(targetTheme, '');
-        logger.info(TAG, '✅ 已恢复并应用默认自定义主题（媒体资源模式）');
+        logger.info(TAG, '�?已恢复并应用默认自定义主题（媒体资源模式�?);
       }
     } catch (error) {
       const errorMsg: string = error instanceof Error ? error.message : String(error);
@@ -1024,8 +858,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 加载并处理图片
-   */
+   * 加载并处理图�?   */
   private async loadAndProcessImage(imageUri: string): Promise<void> {
     this.isProcessing = true;
     this.processingMessage = '正在加载图片...';
@@ -1043,8 +876,7 @@ export struct ThemeSettingsPage {
       this.processingProgress = 30;
       this.processingMessage = '正在准备裁剪...';
       
-      // 计算目标尺寸（使用720p分辨率，足够用于背景且文件小）
-      // 使用较小的分辨率可以显著减小文件大小，提升性能
+      // 计算目标尺寸（使�?20p分辨率，足够用于背景且文件小�?      // 使用较小的分辨率可以显著减小文件大小，提升性能
       const maxWidth = 720;
       const maxHeight = 1280;
       const targetSize = this.calculateTargetSize(
@@ -1058,8 +890,7 @@ export struct ThemeSettingsPage {
       
       logger.info(TAG, `目标尺寸: ${targetWidth}x${targetHeight}`);
       
-      // 解码并缩放图片（不立即裁剪，进入裁剪阶段）
-      const decodingOptions: image.DecodingOptions = {
+      // 解码并缩放图片（不立即裁剪，进入裁剪阶段�?      const decodingOptions: image.DecodingOptions = {
         desiredSize: { width: targetWidth, height: targetHeight },
         desiredPixelFormat: 3 // RGBA_8888
       };
@@ -1071,19 +902,17 @@ export struct ThemeSettingsPage {
       fs.closeSync(file);
       imageSource.release();
       
-      // 直接进行主色调提取（不进入自定义裁剪阶段）
-      this.processingProgress = 60;
-      this.processingMessage = '正在提取主色调...';
+      // 直接进行主色调提取（不进入自定义裁剪阶段�?      this.processingProgress = 60;
+      this.processingMessage = '正在提取主色�?..';
       await this.extractDominantColor(this.selectedImagePixelMap);
       
-      // 复制原图作为处理结果（默认无效果）
-      this.processingProgress = 80;
+      // 复制原图作为处理结果（默认无效果�?      this.processingProgress = 80;
       this.processingMessage = '正在准备预览...';
       await this.copyOriginalToProcessed();
       
       this.isCropping = false;
       this.processingProgress = 100;
-      this.processingMessage = '图片已准备就绪';
+      this.processingMessage = '图片已准备就�?;
       
       setTimeout(() => {
         this.isProcessing = false;
@@ -1115,7 +944,7 @@ export struct ThemeSettingsPage {
       this.selectedImagePixelMap = cropped;
 
       this.processingProgress = 70;
-      this.processingMessage = '正在提取主色调...';
+      this.processingMessage = '正在提取主色�?..';
       await this.extractDominantColor(this.selectedImagePixelMap);
 
       this.processingProgress = 90;
@@ -1135,8 +964,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 预览裁剪效果（不修改原图，仅生成预览处理结果）
-   */
+   * 预览裁剪效果（不修改原图，仅生成预览处理结果�?   */
   private async previewCrop(): Promise<void> {
     if (!this.selectedImagePixelMap) {
       logger.error(TAG, 'previewCrop: selectedImagePixelMap为空');
@@ -1165,11 +993,10 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 选择开屏图片
-   */
+   * 选择开屏图�?   */
   private async selectSplashImage(): Promise<void> {
     try {
-      logger.info(TAG, '开始选择开屏图片');
+      logger.info(TAG, '开始选择开屏图�?);
       const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
       if (!context) {
         throw new Error('无法获取UIAbilityContext');
@@ -1185,33 +1012,31 @@ export struct ThemeSettingsPage {
 
       if (result && result.photoUris && result.photoUris.length > 0) {
         const imageUri = result.photoUris[0];
-        logger.info(TAG, `已选择开屏图片: ${imageUri}`);
+        logger.info(TAG, `已选择开屏图�? ${imageUri}`);
         await this.loadAndProcessSplashImage(imageUri);
       }
     } catch (error) {
-      logger.error(TAG, `选择开屏图片失败: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(TAG, `选择开屏图片失�? ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
-   * 加载并处理开屏图片（仅裁剪到设备比例）
-   */
+   * 加载并处理开屏图片（仅裁剪到设备比例�?   */
   private async loadAndProcessSplashImage(imageUri: string): Promise<void> {
     this.isProcessing = true;
-    this.processingMessage = '正在加载开屏图片...';
+    this.processingMessage = '正在加载开屏图�?..';
     this.processingProgress = 10;
 
     try {
       const file = fs.openSync(imageUri, fs.OpenMode.READ_ONLY);
       const imageSource = image.createImageSource(file.fd);
       const imageInfo = await imageSource.getImageInfo();
-      logger.info(TAG, `开屏图片尺寸: ${imageInfo.size.width}x${imageInfo.size.height}`);
+      logger.info(TAG, `开屏图片尺�? ${imageInfo.size.width}x${imageInfo.size.height}`);
 
       this.processingProgress = 40;
-      this.processingMessage = '正在裁剪开屏图片...';
+      this.processingMessage = '正在裁剪开屏图�?..';
 
-      const maxWidth = 1080; // 开屏图片保存更高分辨率以保证品质
-      const maxHeight = 1920;
+      const maxWidth = 1080; // 开屏图片保存更高分辨率以保证品�?      const maxHeight = 1920;
       const targetSize = this.calculateTargetSize(imageInfo.size.width, imageInfo.size.height, maxWidth, maxHeight);
       const decodingOptions: image.DecodingOptions = {
         desiredSize: { width: targetSize.targetWidth, height: targetSize.targetHeight },
@@ -1222,30 +1047,27 @@ export struct ThemeSettingsPage {
       const cropped = await cropToDisplayAspect(decodedPixelMap);
       decodedPixelMap.release();
 
-      // 保存状态
-      this.selectedSplashImagePixelMap = cropped;
+      // 保存状�?      this.selectedSplashImagePixelMap = cropped;
       this.selectedSplashImagePath = imageUri;
 
-      // 预览使用处理后的（裁剪）像素图
-      this.processedSplashImagePixelMap = cropped;
+      // 预览使用处理后的（裁剪）像素�?      this.processedSplashImagePixelMap = cropped;
       this.processedSplashImagePath = imageUri;
 
       this.processingProgress = 100;
-      this.processingMessage = '开屏图片处理完成';
+      this.processingMessage = '开屏图片处理完�?;
 
       fs.closeSync(file);
       imageSource.release();
       setTimeout(() => { this.isProcessing = false; }, 300);
     } catch (error) {
-      logger.error(TAG, `处理开屏图片失败: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(TAG, `处理开屏图片失�? ${error instanceof Error ? error.message : String(error)}`);
       this.isProcessing = false;
-      this.processingMessage = '开屏图片处理失败';
+      this.processingMessage = '开屏图片处理失�?;
     }
   }
 
   /**
-   * 计算目标尺寸（保持宽高比，适配到最大尺寸内）
-   */
+   * 计算目标尺寸（保持宽高比，适配到最大尺寸内�?   */
   private calculateTargetSize(
     srcWidth: number,
     srcHeight: number,
@@ -1257,8 +1079,7 @@ export struct ThemeSettingsPage {
     const heightScale = maxHeight / srcHeight;
     
     // 取较小的缩放比例，确保图片不超出边界
-    const scale = Math.min(widthScale, heightScale, 1.0); // 最大1.0，避免放大
-    
+    const scale = Math.min(widthScale, heightScale, 1.0); // 最�?.0，避免放�?    
     const resultWidth = Math.round(srcWidth * scale);
     const resultHeight = Math.round(srcHeight * scale);
     
@@ -1270,29 +1091,25 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 提取主色调
-   * 使用effectKit的ColorPicker硬件加速，避免手动像素处理导致ANR
+   * 提取主色�?   * 使用effectKit的ColorPicker硬件加速，避免手动像素处理导致ANR
    */
   private async extractDominantColor(pixelMap: image.PixelMap): Promise<void> {
     try {
-      logger.info(TAG, '开始提取主色调（使用effectKit）');
+      logger.info(TAG, '开始提取主色调（使用effectKit�?);
       
-      // 使用effectKit的ColorPicker提取主色调
-      // createColorPicker返回Promise<ColorPicker>
+      // 使用effectKit的ColorPicker提取主色�?      // createColorPicker返回Promise<ColorPicker>
       const colorPicker = await effectKit.createColorPicker(pixelMap);
       
       // getMainColorSync 返回一个Promise<Color>
       const mainColor = await colorPicker.getMainColorSync();
       
-      // Color对象包含red, green, blue, alpha属性（0-255）
-      const r = mainColor.red;
+      // Color对象包含red, green, blue, alpha属性（0-255�?      const r = mainColor.red;
       const g = mainColor.green;
       const b = mainColor.blue;
       
-      logger.info(TAG, `提取的原始颜色: RGB(${r}, ${g}, ${b})`);
+      logger.info(TAG, `提取的原始颜�? RGB(${r}, ${g}, ${b})`);
       
-      // 增强饱和度
-      const enhancedColor = this.enhanceSaturation(r, g, b, 1.3);
+      // 增强饱和�?      const enhancedColor = this.enhanceSaturation(r, g, b, 1.3);
       const enhancedR = enhancedColor.r;
       const enhancedG = enhancedColor.g;
       const enhancedB = enhancedColor.b;
@@ -1300,7 +1117,7 @@ export struct ThemeSettingsPage {
       this.extractedColor = `#${this.toHex(enhancedR)}${this.toHex(enhancedG)}${this.toHex(enhancedB)}`;
       this.extractedColorRGB = `RGB(${enhancedR}, ${enhancedG}, ${enhancedB})`;
       
-      logger.info(TAG, `提取的主色调（增强后）: ${this.extractedColor}`);
+      logger.info(TAG, `提取的主色调（增强后�? ${this.extractedColor}`);
 
       // 将提取色加入可选主题色并默认选中（避免重复添加）
       const hasColor: boolean = this.availablePrimaryColors.includes(this.extractedColor);
@@ -1317,20 +1134,17 @@ export struct ThemeSettingsPage {
       this.selectedPrimaryColor = this.extractedColor;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `提取主色调失败: ${errorMsg}`);
+      logger.error(TAG, `提取主色调失�? ${errorMsg}`);
       
-      // 失败时使用默认颜色
-      this.extractedColor = '#6200EE';
+      // 失败时使用默认颜�?      this.extractedColor = '#6200EE';
       this.extractedColorRGB = 'RGB(98, 0, 238)';
       
-      // 不再抛出错误，避免中断流程
-      logger.warn(TAG, '已使用默认主色调继续处理');
+      // 不再抛出错误，避免中断流�?      logger.warn(TAG, '已使用默认主色调继续处理');
     }
   }
 
   /**
-   * 增强饱和度
-   */
+   * 增强饱和�?   */
   private enhanceSaturation(r: number, g: number, b: number, factor: number): RGBColor {
     // 转换到HSV
     const max = Math.max(r, g, b);
@@ -1357,8 +1171,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 转换为十六进制
-   */
+   * 转换为十六进�?   */
   private toHex(value: number): string {
     const hex = value.toString(16);
     return hex.length === 1 ? '0' + hex : hex;
@@ -1373,8 +1186,7 @@ export struct ThemeSettingsPage {
       clean = hexColor.substring(1);
     }
     if (clean.length !== 6) {
-      // 默认返回系统强调色近似值
-      return { r: 98, g: 0, b: 238 } as RGBColor;
+      // 默认返回系统强调色近似�?      return { r: 98, g: 0, b: 238 } as RGBColor;
     }
     const rHex: string = clean.substring(0, 2);
     const gHex: string = clean.substring(2, 4);
@@ -1387,8 +1199,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 获取裁剪对齐方式的显示标签
-   */
+   * 获取裁剪对齐方式的显示标�?   */
   private getCropAlignmentLabel(): string {
     switch (this.cropAlignment) {
       case CropAlignment.TOP_LEFT:
@@ -1439,17 +1250,16 @@ export struct ThemeSettingsPage {
       const buffer = new ArrayBuffer(width * height * 4);
       await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
       
-      // BGRA -> RGBA：交换 R 和 B 通道
+      // BGRA -> RGBA：交�?R �?B 通道
       const pixels = new Uint8Array(buffer);
       for (let i = 0; i < pixels.length; i += 4) {
         const b = pixels[i];     // BGRA 中第一个是 B
-        const r = pixels[i + 2]; // BGRA 中第三个是 R
+        const r = pixels[i + 2]; // BGRA 中第三个�?R
         pixels[i] = r;           // 设为 R
         pixels[i + 2] = b;       // 设为 B
       }
       
-      // 创建新的 PixelMap（RGBA 格式）
-      const createOptions: image.InitializationOptions = {
+      // 创建新的 PixelMap（RGBA 格式�?      const createOptions: image.InitializationOptions = {
         size: { width: width, height: height },
         pixelFormat: 3, // RGBA_8888
         alphaType: 0,
@@ -1457,7 +1267,7 @@ export struct ThemeSettingsPage {
       };
       
       this.processedImagePixelMap = await image.createPixelMap(buffer, createOptions);
-      logger.info(TAG, `✅ 原图已复制到预览 (size=${width}x${height})`);
+      logger.info(TAG, `�?原图已复制到预览 (size=${width}x${height})`);
     } catch (error) {
       logger.error(TAG, `复制原图失败: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1465,24 +1275,21 @@ export struct ThemeSettingsPage {
 
   /**
    * 防抖应用图片效果
-   * 用于滑块调节时避免频繁触发
-   */
+   * 用于滑块调节时避免频繁触�?   */
   private applyImageEffectsDebounced(): void {
     // 清除之前的定时器
     if (this.effectDebounceTimer !== -1) {
       clearTimeout(this.effectDebounceTimer);
     }
     
-    // 设置新的定时器，300ms后执行
-    this.effectDebounceTimer = setTimeout(() => {
+    // 设置新的定时器，300ms后执�?    this.effectDebounceTimer = setTimeout(() => {
       this.applyImageEffects();
       this.effectDebounceTimer = -1;
     }, 300);
   }
 
   /**
-   * 应用图片效果（模糊和压暗）
-   * 使用effectKit硬件加速的模糊效果，避免CPU密集型处理导致ANR
+   * 应用图片效果（模糊和压暗�?   * 使用effectKit硬件加速的模糊效果，避免CPU密集型处理导致ANR
    */
   private async applyImageEffects(): Promise<void> {
     if (!this.selectedImagePixelMap) {
@@ -1490,12 +1297,12 @@ export struct ThemeSettingsPage {
     }
     
     try {
-      logger.info(TAG, `开始应用图片效果: 模糊=${this.blurLevel}, 亮度=${this.brightnessLevel}`);
+      logger.info(TAG, `开始应用图片效�? 模糊=${this.blurLevel}, 亮度=${this.brightnessLevel}`);
       
       // 如果没有需要应用的效果（模糊为0且亮度为50），直接复制原图
       if (this.blurLevel === 0 && this.brightnessLevel === 50) {
         await this.copyOriginalToProcessed();
-        logger.info(TAG, '✅ 无需应用效果，使用原图');
+        logger.info(TAG, '�?无需应用效果，使用原�?);
         return;
       }
       
@@ -1508,8 +1315,7 @@ export struct ThemeSettingsPage {
       const buffer = new ArrayBuffer(width * height * 4);
       await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
       
-      // BGRA -> RGBA：交换 R 和 B 通道（readPixelsToBuffer 返回 BGRA 格式）
-      const pixelsBgra = new Uint8Array(buffer);
+      // BGRA -> RGBA：交�?R �?B 通道（readPixelsToBuffer 返回 BGRA 格式�?      const pixelsBgra = new Uint8Array(buffer);
       for (let swapIdx = 0; swapIdx < pixelsBgra.length; swapIdx += 4) {
         const bChannel = pixelsBgra[swapIdx];
         const rChannel = pixelsBgra[swapIdx + 2];
@@ -1517,8 +1323,7 @@ export struct ThemeSettingsPage {
         pixelsBgra[swapIdx + 2] = bChannel;
       }
       
-      // 2. 创建可编辑的PixelMap用于应用效果（RGBA 格式）
-      const createOptions: image.InitializationOptions = {
+      // 2. 创建可编辑的PixelMap用于应用效果（RGBA 格式�?      const createOptions: image.InitializationOptions = {
         size: { width: width, height: height },
         pixelFormat: 3, // RGBA_8888
         alphaType: 0,
@@ -1528,15 +1333,13 @@ export struct ThemeSettingsPage {
       let workingPixelMap = await image.createPixelMap(buffer, createOptions);
       
       // 3. 应用亮度变暗（在 effectKit 处理之前，避免格式问题）
-      // 此时 workingPixelMap 是我们自己创建的 RGBA 格式，可以安全操作
-      if (this.brightnessLevel < 50) {
+      // 此时 workingPixelMap 是我们自己创建的 RGBA 格式，可以安全操�?      if (this.brightnessLevel < 50) {
         // 0-49%: 手动像素处理变暗（在原始 buffer 上操作）
-        // 映射: 0% → 0.0, 49% → 0.98, 50% → 1.0
+        // 映射: 0% �?0.0, 49% �?0.98, 50% �?1.0
         const darknessFactor = this.brightnessLevel / 50;
-        logger.info(TAG, `应用亮度降低，因子=${darknessFactor}`);
+        logger.info(TAG, `应用亮度降低，因�?${darknessFactor}`);
         
-        // 直接在已转换为 RGBA 的 buffer 上操作
-        const pixels = new Uint8Array(buffer);
+        // 直接在已转换�?RGBA �?buffer 上操�?        const pixels = new Uint8Array(buffer);
         for (let i = 0; i < pixels.length; i += 4) {
           pixels[i] = Math.round(pixels[i] * darknessFactor);
           pixels[i + 1] = Math.round(pixels[i + 1] * darknessFactor);
@@ -1546,7 +1349,7 @@ export struct ThemeSettingsPage {
         // 重新创建 PixelMap
         workingPixelMap.release();
         workingPixelMap = await image.createPixelMap(buffer, createOptions);
-        logger.info(TAG, '✅ 亮度降低完成');
+        logger.info(TAG, '�?亮度降低完成');
       }
       
       // 4. 应用模糊效果（使用effectKit硬件加速）
@@ -1554,46 +1357,42 @@ export struct ThemeSettingsPage {
         const filter = effectKit.createEffect(workingPixelMap);
         if (filter) {
           const blurRadius = Math.round(this.blurLevel * 0.3);
-          logger.info(TAG, `应用模糊效果，半径=${blurRadius}`);
+          logger.info(TAG, `应用模糊效果，半�?${blurRadius}`);
           filter.blur(blurRadius);
           const blurredPixelMap = await filter.getPixelMap();
           workingPixelMap.release();
           workingPixelMap = blurredPixelMap;
-          logger.info(TAG, '✅ 模糊效果应用完成');
+          logger.info(TAG, '�?模糊效果应用完成');
         }
       }
       
-      // 5. 应用亮度增加（使用 effectKit）
-      if (this.brightnessLevel > 50) {
+      // 5. 应用亮度增加（使�?effectKit�?      if (this.brightnessLevel > 50) {
         // 51-100%: 使用 effectKit.brightness 增亮
-        // effectKit.brightness: 0=原始, 1=最亮
-        // 映射: 51% → 0.02, 100% → 1.0
+        // effectKit.brightness: 0=原始, 1=最�?        // 映射: 51% �?0.02, 100% �?1.0
         const brightnessFactor = (this.brightnessLevel - 50) / 50;
-        logger.info(TAG, `应用亮度增加，因子=${brightnessFactor}`);
+        logger.info(TAG, `应用亮度增加，因�?${brightnessFactor}`);
         const filter = effectKit.createEffect(workingPixelMap);
         if (filter) {
           filter.brightness(brightnessFactor);
           const brighterPixelMap = await filter.getPixelMap();
           workingPixelMap.release();
           workingPixelMap = brighterPixelMap;
-          logger.info(TAG, '✅ 亮度增加完成');
+          logger.info(TAG, '�?亮度增加完成');
         }
       }
       
-      // 5. 释放旧的处理结果，保存新的处理结果
-      if (this.processedImagePixelMap) {
+      // 5. 释放旧的处理结果，保存新的处理结�?      if (this.processedImagePixelMap) {
         this.processedImagePixelMap.release();
       }
       
       this.processedImagePixelMap = workingPixelMap;
       
-      logger.info(TAG, '✅ 图片效果应用完成');
+      logger.info(TAG, '�?图片效果应用完成');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(TAG, `应用图片效果失败: ${errorMsg}`);
       
-      // 失败时直接复制原图
-      if (this.selectedImagePixelMap && !this.processedImagePixelMap) {
+      // 失败时直接复制原�?      if (this.selectedImagePixelMap && !this.processedImagePixelMap) {
         try {
           const imageInfo = await this.selectedImagePixelMap.getImageInfo();
           const buffer = new ArrayBuffer(imageInfo.size.width * imageInfo.size.height * 4);
@@ -1615,9 +1414,9 @@ export struct ThemeSettingsPage {
           };
           
           this.processedImagePixelMap = await image.createPixelMap(buffer, createOptions);
-          logger.info(TAG, '已使用原图作为备用处理结果');
+          logger.info(TAG, '已使用原图作为备用处理结�?);
         } catch (fallbackError) {
-          logger.error(TAG, `备用处理也失败: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+          logger.error(TAG, `备用处理也失�? ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
         }
       }
     }
@@ -1625,8 +1424,7 @@ export struct ThemeSettingsPage {
 
   /**
    * 计算亮度调整比例（保持色相）
-   * @param currentLuminance 当前像素的感知亮度
-   * @param brightnessFactor 亮度调整因子
+   * @param currentLuminance 当前像素的感知亮�?   * @param brightnessFactor 亮度调整因子
    * @returns 调整比例
    */
   private calculateBrightnessAdjustment(currentLuminance: number, brightnessFactor: number): number {
@@ -1643,9 +1441,7 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 保存并应用当前主题
-   * 保存两张图片：浅色模式（原亮度）和深色模式（降低亮度）
-   */
+   * 保存并应用当前主�?   * 保存两张图片：浅色模式（原亮度）和深色模式（降低亮度�?   */
   private async saveAndApplyTheme(): Promise<void> {
     if (!this.selectedImagePixelMap) {
       logger.error(TAG, '没有可保存的主题');
@@ -1670,21 +1466,19 @@ export struct ThemeSettingsPage {
       
       const themeId = `theme_${Date.now()}`;
       
-      // 1. 生成浅色模式图片（使用用户设置的亮度+模糊）
-      this.processingMessage = '正在生成浅色模式图片...';
+      // 1. 生成浅色模式图片（使用用户设置的亮度+模糊�?      this.processingMessage = '正在生成浅色模式图片...';
       this.processingProgress = 20;
       const lightImagePath = await this.generateThemeImage(themeId, 'light', this.blurLevel, this.brightnessLevel);
       
       // 2. 生成深色模式图片（在用户设置基础上降低亮度）
       this.processingMessage = '正在生成深色模式图片...';
       this.processingProgress = 60;
-      const darkBrightness = Math.max(10, Math.min(40, this.brightnessLevel - 20)); // 比当前亮度低20%，范围10-40
+      const darkBrightness = Math.max(10, Math.min(40, this.brightnessLevel - 20)); // 比当前亮度低20%，范�?0-40
       const darkImagePath = await this.generateThemeImage(themeId, 'dark', this.blurLevel, darkBrightness);
 
-      // 生成开屏图片（如果已选择）
-      let splashImagePath: string = '';
+      // 生成开屏图片（如果已选择�?      let splashImagePath: string = '';
       if (this.selectedSplashImagePixelMap) {
-        this.processingMessage = '正在生成开屏图片...';
+        this.processingMessage = '正在生成开屏图�?..';
         this.processingProgress = 80;
         splashImagePath = await this.generateSplashImage(themeId);
       }
@@ -1710,27 +1504,24 @@ export struct ThemeSettingsPage {
       
       await this.saveCustomTheme(customTheme);
       
-      logger.info(TAG, `主题已保存: ${customTheme.name}`);
+      logger.info(TAG, `主题已保�? ${customTheme.name}`);
       logger.info(TAG, `  浅色模式图片: ${lightImagePath}`);
       logger.info(TAG, `  深色模式图片: ${darkImagePath}`);
       
-      // 应用主题到应用
-      await this.applyCustomThemeToManager(customTheme, splashImagePath);
+      // 应用主题到应�?      await this.applyCustomThemeToManager(customTheme, splashImagePath);
       
-      this.processingMessage = '主题保存成功！';
+      this.processingMessage = '主题保存成功�?;
       this.processingProgress = 100;
-      logger.info(TAG, `✅ 自定义主题已应用，将在所有页面生效`);
+      logger.info(TAG, `�?自定义主题已应用，将在所有页面生效`);
       
-      // 显示Toast并自动返回
-      setTimeout(() => {
+      // 显示Toast并自动返�?      setTimeout(() => {
         this.isProcessing = false;
         // 显示成功提示
         promptAction.showToast({
           message: '主题已保存并应用',
           duration: 2000
         });
-        // 延迟返回上一页
-        setTimeout(() => {
+        // 延迟返回上一�?        setTimeout(() => {
           this.goBack();
         }, 500);
       }, 800);
@@ -1751,7 +1542,7 @@ export struct ThemeSettingsPage {
     }
     let index: number = 1;
     while (true) {
-      const candidate: string = '自定义主题 ' + index.toString();
+      const candidate: string = '自定义主�?' + index.toString();
       let exists: boolean = false;
       let i: number = 0;
       while (i < this.customThemes.length) {
@@ -1769,13 +1560,9 @@ export struct ThemeSettingsPage {
   }
 
   /**
-   * 生成主题图片（模糊+亮度调整）
-   * @param themeId 主题ID
-   * @param mode 模式（light/dark）
-   * @param blurLevel 模糊程度
-   * @param brightness 亮度（0-100）
-   * @returns 生成的图片路径
-   */
+   * 生成主题图片（模�?亮度调整�?   * @param themeId 主题ID
+   * @param mode 模式（light/dark�?   * @param blurLevel 模糊程度
+   * @param brightness 亮度�?-100�?   * @returns 生成的图片路�?   */
   private async generateThemeImage(themeId: string, mode: string, blurLevel: number, brightness: number): Promise<string> {
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
@@ -1793,12 +1580,10 @@ export struct ThemeSettingsPage {
     const width = imageInfo.size.width;
     const height = imageInfo.size.height;
     
-    // 1. 复制原图并转换格式
-    const buffer = new ArrayBuffer(width * height * 4);
+    // 1. 复制原图并转换格�?    const buffer = new ArrayBuffer(width * height * 4);
     await this.selectedImagePixelMap.readPixelsToBuffer(buffer);
     
-    // BGRA -> RGBA：交换 R 和 B 通道（readPixelsToBuffer 返回 BGRA 格式）
-    const pixelsConvert = new Uint8Array(buffer);
+    // BGRA -> RGBA：交�?R �?B 通道（readPixelsToBuffer 返回 BGRA 格式�?    const pixelsConvert = new Uint8Array(buffer);
     for (let idx = 0; idx < pixelsConvert.length; idx += 4) {
       const bVal = pixelsConvert[idx];
       const rVal = pixelsConvert[idx + 2];
@@ -1816,8 +1601,7 @@ export struct ThemeSettingsPage {
     
     let workingPixelMap = await image.createPixelMap(buffer, createOptions);
     
-    // 2. 应用亮度变暗（在 effectKit 处理之前）
-    if (brightness < 50) {
+    // 2. 应用亮度变暗（在 effectKit 处理之前�?    if (brightness < 50) {
       const darknessFactor = brightness / 50;
       const pixels = new Uint8Array(buffer);
       for (let i = 0; i < pixels.length; i += 4) {
@@ -1853,11 +1637,9 @@ export struct ThemeSettingsPage {
       }
     }
     
-    // 4. 保存为WebP格式（最优压缩和质量）
-    const packOpts: image.PackingOption = {
+    // 4. 保存为WebP格式（最优压缩和质量�?    const packOpts: image.PackingOption = {
       format: 'image/webp',
-      quality: 85 // WebP质量85可以获得极小的文件体积和优秀的视觉质量
-    };
+      quality: 85 // WebP质量85可以获得极小的文件体积和优秀的视觉质�?    };
     
     try {
       const imagePacker = image.createImagePacker();
@@ -1873,14 +1655,13 @@ export struct ThemeSettingsPage {
       workingPixelMap.release();
     }
     
-    logger.info(TAG, `✅ 生成${mode}模式图片: ${imagePath}`);
+    logger.info(TAG, `�?生成${mode}模式图片: ${imagePath}`);
     
     return imagePath;
   }
 
   /**
-   * 生成开屏图片（仅打包裁剪后的像素图）
-   */
+   * 生成开屏图片（仅打包裁剪后的像素图�?   */
   private async generateSplashImage(themeId: string): Promise<string> {
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
@@ -1906,11 +1687,11 @@ export struct ThemeSettingsPage {
       imagePacker.release();
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `保存开屏图片失败: ${errorMsg}`);
-      throw new Error(`保存开屏图片失败: ${errorMsg}`);
+      logger.error(TAG, `保存开屏图片失�? ${errorMsg}`);
+      throw new Error(`保存开屏图片失�? ${errorMsg}`);
     }
 
-    logger.info(TAG, `✅ 生成开屏图片: ${imagePath}`);
+    logger.info(TAG, `�?生成开屏图�? ${imagePath}`);
     return imagePath;
   }
 
@@ -1921,8 +1702,7 @@ export struct ThemeSettingsPage {
   private async applyCustomThemeToManager(theme: CustomTheme, splashImagePath: string): Promise<void> {
     try {
       logger.info(TAG, `开始应用自定义主题: ${theme.name}`);
-      // 不强制切换应用主题；保持当前主题设置（含AUTO），由ThemeManager按系统深浅切换背景
-      
+      // 不强制切换应用主题；保持当前主题设置（含AUTO），由ThemeManager按系统深浅切换背�?      
       // 调用ThemeManager统一应用（包含开屏背景路径）
       const themeData: CustomThemeData = {
         id: theme.id,
@@ -1938,24 +1718,23 @@ export struct ThemeSettingsPage {
       };
       await this.themeManager.applyCustomTheme(themeData);
       
-      logger.info(TAG, `✅ 自定义主题应用成功（含开屏图）: ${theme.name}`);
+      logger.info(TAG, `�?自定义主题应用成功（含开屏图�? ${theme.name}`);
       logger.info(TAG, `   背景图片: ${theme.backgroundImagePath}`);
       logger.info(TAG, `   深色背景: ${theme.backgroundImagePathDark}`);
       if (splashImagePath && splashImagePath.length > 0) {
-        logger.info(TAG, `   开屏图片: ${splashImagePath}`);
+        logger.info(TAG, `   开屏图�? ${splashImagePath}`);
       }
-      logger.info(TAG, `   主色调: ${theme.primaryColor}`);
+      logger.info(TAG, `   主色�? ${theme.primaryColor}`);
       logger.info(TAG, `   当前显示主题: ${this.themeManager.getActualThemeSync()}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error(TAG, `应用自定义主题失败: ${errorMsg}`);
-      throw new Error(`应用自定义主题失败: ${errorMsg}`);
+      logger.error(TAG, `应用自定义主题失�? ${errorMsg}`);
+      throw new Error(`应用自定义主题失�? ${errorMsg}`);
     }
   }
 
   /**
-   * 返回上一页
-   */
+   * 返回上一�?   */
   private goBack(): void {
     this.pathStack.pop();
   }
@@ -1963,8 +1742,7 @@ export struct ThemeSettingsPage {
   // ==================== 透明度和特效设置方法 ====================
   
   /**
-   * 更新透明度设置
-   */
+   * 更新透明度设�?   */
   private async updateTransparency(key: keyof TransparencyConfig, value: number): Promise<void> {
     try {
       let update: Partial<TransparencyConfig> = {};
@@ -1976,9 +1754,9 @@ export struct ThemeSettingsPage {
       else if (key === 'menu') { update = { menu: value }; }
       else if (key === 'sidebar') { update = { sidebar: value }; }
       await this.userThemeConfigManager.setTransparency(update);
-      logger.debug(TAG, `透明度更新: ${key} = ${value}`);
+      logger.debug(TAG, `透明度更�? ${key} = ${value}`);
     } catch (error) {
-      logger.error(TAG, '更新透明度失败', error);
+      logger.error(TAG, '更新透明度失�?, error);
     }
   }
   
@@ -1995,8 +1773,7 @@ export struct ThemeSettingsPage {
       else if (key === 'enableAnimation') { update = { enableAnimation: value as boolean }; }
       else if (key === 'animationSpeed') { update = { animationSpeed: value as number }; }
       else if (key === 'enableRoundedCorners') { update = { enableRoundedCorners: value as boolean }; }
-      else if (key === 'componentCornerRadius') { update = { componentCornerRadius: value as number }; }
-      else if (key === 'coverCornerRadius') { update = { coverCornerRadius: value as number }; }
+      else if (key === 'cornerRadius') { update = { cornerRadius: value as number }; }
       else if (key === 'enableGlassmorphism') { update = { enableGlassmorphism: value as boolean }; }
       await this.userThemeConfigManager.setEffects(update);
       logger.debug(TAG, `特效更新: ${key} = ${value}`);
@@ -2006,21 +1783,19 @@ export struct ThemeSettingsPage {
   }
   
   /**
-   * 重置透明度和特效为默认值
-   */
+   * 重置透明度和特效为默认�?   */
   private async resetEffectsToDefault(): Promise<void> {
     try {
       await this.userThemeConfigManager.resetToDefault();
       await this.initializeUserThemeConfig();
-      logger.info(TAG, '已重置透明度和特效设置为默认值');
+      logger.info(TAG, '已重置透明度和特效设置为默认�?);
     } catch (error) {
       logger.error(TAG, '重置设置失败', error);
     }
   }
 
   /**
-   * 显示删除确认对话框（使用系统组件）
-   */
+   * 显示删除确认对话框（使用系统组件�?   */
   private showDeleteConfirmDialogSystem(): void {
     if (!this.uiContext) {
       logger.warn(TAG, 'UIContext 未初始化，无法显示删除确认对话框');
@@ -2029,7 +1804,7 @@ export struct ThemeSettingsPage {
     
     this.uiContext.getPromptAction().showDialog({
       title: '确认删除',
-      message: `确定要删除选中的 ${this.selectedThemeIds.length} 个主题吗？\n此操作不可撤销，相关的背景图片文件也将被删除。`,
+      message: `确定要删除选中�?${this.selectedThemeIds.length} 个主题吗？\n此操作不可撤销，相关的背景图片文件也将被删除。`,
       buttons: [
         { text: '取消', color: '#999999' },
         { text: '删除', color: '#FF3B30' }
@@ -2039,7 +1814,7 @@ export struct ThemeSettingsPage {
         this.deleteSelectedThemes();
       }
     }).catch((err: Error) => {
-      logger.error(TAG, `显示删除确认对话框失败: ${err.message}`);
+      logger.error(TAG, `显示删除确认对话框失�? ${err.message}`);
     });
   }
 
@@ -2049,12 +1824,12 @@ export struct ThemeSettingsPage {
    */
   private showDisableCustomThemeConfirmDialog(): void {
     if (!this.uiContext) {
-      logger.warn(TAG, 'UIContext 未初始化，无法显示关闭自定义主题确认对话框');
+      logger.warn(TAG, 'UIContext 未初始化，无法显示关闭自定义主题确认对话�?);
       return;
     }
 
     this.uiContext.getPromptAction().showDialog({
-      title: '关闭自定义主题',
+      title: '关闭自定义主�?,
       message: '关闭后将不再使用任何自定义主题，并恢复到纯色主题。已保存的自定义主题不会被删除。是否继续？',
       buttons: [
         { text: '取消', color: '#999999' },
@@ -2072,7 +1847,7 @@ export struct ThemeSettingsPage {
         logger.info(TAG, '已关闭自定义主题，保留已保存主题列表');
       } catch (error) {
         const errorMsg: string = error instanceof Error ? error.message : String(error);
-        logger.error(TAG, `关闭自定义主题失败: ${errorMsg}`);
+        logger.error(TAG, `关闭自定义主题失�? ${errorMsg}`);
         promptAction.showToast({ message: '关闭失败，请稍后重试' });
       }
     }).catch((err: Error) => {
@@ -2083,18 +1858,14 @@ export struct ThemeSettingsPage {
   build() {
     HdsNavDestination() {
       Stack({ alignContent: Alignment.TopStart }) {
-        // 背景层
-        SharedPageBackgroundLayer({
-          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
-          mode: GlobalBackgroundLayerMode.IMMERSIVE
-        })
+        // 背景�?        Column()
           .width('100%')
           .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        // 内容层
-        Column() {
-          // 预留标题栏占位（与 HdsNavDestination 标题栏高度一致）
+        // 内容�?        Column() {
+          // 预留标题栏占位（�?HdsNavDestination 标题栏高度一致）
           // Blank().height(56)
 
           // 内容区域
@@ -2106,10 +1877,9 @@ export struct ThemeSettingsPage {
               Blank()
                 .height(56)
                 .width('100%')
-              // 主题商店（列表 + 创建入口）
-              if (!this.isCreatingCustomTheme) {
+              // 主题商店（列�?+ 创建入口�?              if (!this.isCreatingCustomTheme) {
                 Column({ space: 12 }) {
-                  Text('自定义主题')
+                  Text('自定义主�?)
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
@@ -2121,10 +1891,9 @@ export struct ThemeSettingsPage {
                       ForEach(this.customThemes, (theme: CustomTheme) => {
                         GridItem() {
                           Column() {
-                            // 主题背景图片预览 - 显示缩略图或占位符
-                            Stack() {
-                              if (this.resolveThemePreviewSource(theme)) {
-                                Image(this.resolveThemePreviewSource(theme))
+                            // 主题背景图片预览 - 显示缩略图或占位�?                            Stack() {
+                              if (theme.backgroundImagePath && theme.backgroundImagePath.length > 0) {
+                                Image('file://' + theme.backgroundImagePath)
                                   .width('100%')
                                   .height(120)
                                   .objectFit(ImageFit.Cover)
@@ -2157,16 +1926,14 @@ export struct ThemeSettingsPage {
                                   .border({ width: 3, color: $r('app.color.accent_primary') })
                               }
 
-                              // 多选模式下的选中指示器
-                              if (this.selectionModeEnabled) {
+                              // 多选模式下的选中指示�?                              if (this.selectionModeEnabled) {
                                 Column()
                                   .width(28)
                                   .height(28)
                                   .backgroundColor(this.isThemeSelected(theme.id) ? $r('app.color.accent_primary') : 'rgba(255,255,255,0.8)')
                                   .borderRadius(14)
                                   .border({ width: 2, color: $r('app.color.accent_primary') })
-                                  .align(Alignment.TopStart)
-                                  .margin({ left: 8, top: 8 })
+                                  .position({ x: 8, y: 8 })
                               }
                             }
                             .width('100%')
@@ -2196,7 +1963,7 @@ export struct ThemeSettingsPage {
                               .layoutWeight(1)
                               .alignItems(HorizontalAlign.Start)
 
-                              Button(this.currentCustomThemeId === theme.id ? '已激活' : '应用')
+                              Button(this.currentCustomThemeId === theme.id ? '已激�? : '应用')
                                 .fontSize(12)
                                 .height(32)
                                 .fontFamily(this.appFontFamily)
@@ -2235,7 +2002,7 @@ export struct ThemeSettingsPage {
                     .width('100%')
                   }
 
-                  Button('创建自定义主题')
+                  Button('创建自定义主�?)
                     .width('100%')
                     .height(48)
                     .fontSize(16)
@@ -2243,7 +2010,7 @@ export struct ThemeSettingsPage {
                     .backgroundColor($r('app.color.accent_primary'))
                     .onClick(() => { this.isCreatingCustomTheme = true; })
 
-                  Button('关闭自定义主题')
+                  Button('关闭自定义主�?)
                     .width('100%')
                     .height(48)
                     .fontSize(16)
@@ -2254,33 +2021,15 @@ export struct ThemeSettingsPage {
                     .opacity(this.currentCustomThemeId.length > 0 ? 1 : 0.55)
                     .onClick(() => { this.showDisableCustomThemeConfirmDialog(); })
                 }
-                .id('theme_custom')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_custom') ? 2 : 1,
-                  color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_custom')
-                    ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'theme_custom')
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_custom', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_custom', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_custom',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
                 .margin({ bottom: 16 })
                 
-                // 透明度设置面板（应用实时预览）
-                Column({ space: 12 }) {
-                  Text('透明度设置')
+                // 透明度设置面板（应用实时预览�?                Column({ space: 12 }) {
+                  Text('透明度设�?)
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
@@ -2293,10 +2042,7 @@ export struct ThemeSettingsPage {
                       .fontSize(12)
                       .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                    Flex({
-                      wrap: FlexWrap.Wrap,
-                      justifyContent: FlexAlign.SpaceAround
-                    }) {
+                    Row({ space: 12 }) {
                       // 卡片预览（使用StorageLink绑定的值实现实时预览）
                       Column() {
                         Text('卡片')
@@ -2307,13 +2053,12 @@ export struct ThemeSettingsPage {
                       .height(40)
                       .justifyContent(FlexAlign.Center)
                       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                      .borderRadius(this.componentCornerRadius)
+                      .borderRadius(this.cornerRadius)
                       .opacity(this.cardOpacity)
                       .shadow(this.shadowEnabled ? { radius: 4, color: 'rgba(0,0,0,0.2)', offsetY: 2 } : undefined)
                       
-                      // 悬浮球预览
-                      Column() {
-                        Text('悬浮球')
+                      // 悬浮球预�?                      Column() {
+                        Text('悬浮�?)
                           .fontSize(8)
                           .fontColor(Color.White)
                       }
@@ -2324,30 +2069,9 @@ export struct ThemeSettingsPage {
                       .borderRadius(25)
                       .opacity(this.floatingBallOpacity)
                       .shadow(this.shadowEnabled ? { radius: 6, color: 'rgba(0,0,0,0.3)', offsetY: 2 } : undefined)
-
-                      // 封面图片预览
-                      Stack({ alignContent: Alignment.Bottom }) {
-                        Column()
-                          .width(50)
-                          .height(68)
-                          .backgroundColor($r('app.color.accent_primary'))
-                          .opacity(0.9)
-                          .borderRadius(this.coverCornerRadius)
-
-                        Text('封面')
-                          .fontSize(10)
-                          .fontFamily(this.appFontFamily)
-                          .fontWeight(FontWeight.Medium)
-                          .fontColor(Color.White)
-                          .margin({ bottom: 6 })
-                      }
-                      .width(50)
-                      .height(68)
-                      .shadow(this.shadowEnabled ? { radius: 6, color: 'rgba(0,0,0,0.25)', offsetY: 3 } : undefined)
                       
-                      // 对话框预览
-                      Column() {
-                        Text('对话框')
+                      // 对话框预�?                      Column() {
+                        Text('对话�?)
                           .fontSize(10)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                       }
@@ -2355,21 +2079,21 @@ export struct ThemeSettingsPage {
                       .height(40)
                       .justifyContent(FlexAlign.Center)
                       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .borderRadius(this.componentCornerRadius)
+                      .borderRadius(this.cornerRadius)
                       .opacity(this.dialogOpacity)
                       .shadow(this.shadowEnabled ? { radius: 4, color: 'rgba(0,0,0,0.2)', offsetY: 2 } : undefined)
                     }
                     .width('100%')
+                    .justifyContent(FlexAlign.SpaceAround)
                   }
                   .width('100%')
                   .padding(12)
                   .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                   .borderRadius(8)
                   
-                  // 导航栏透明度
-                  Column({ space: 4 }) {
+                  // 导航栏透明�?                  Column({ space: 4 }) {
                     Row() {
-                      Text('导航栏')
+                      Text('导航�?)
                         .fontSize(14)
                         .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2389,8 +2113,7 @@ export struct ThemeSettingsPage {
                       })
                   }
                   
-                  // 卡片透明度
-                  Column({ space: 4 }) {
+                  // 卡片透明�?                  Column({ space: 4 }) {
                     Row() {
                       Text('卡片')
                         .fontSize(14)
@@ -2412,10 +2135,9 @@ export struct ThemeSettingsPage {
                       })
                   }
                   
-                  // 对话框透明度
-                  Column({ space: 4 }) {
+                  // 对话框透明�?                  Column({ space: 4 }) {
                     Row() {
-                      Text('对话框')
+                      Text('对话�?)
                         .fontSize(14)
                         .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2435,10 +2157,9 @@ export struct ThemeSettingsPage {
                       })
                   }
                   
-                  // 悬浮球透明度
-                  Column({ space: 4 }) {
+                  // 悬浮球透明�?                  Column({ space: 4 }) {
                     Row() {
-                      Text('悬浮球')
+                      Text('悬浮�?)
                         .fontSize(14)
                         .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2458,32 +2179,11 @@ export struct ThemeSettingsPage {
                       })
                   }
                 }
-                .id('theme_transparency')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_transparency') ? 2 : 1,
-                  color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_transparency')
-                    ? SettingsSearchSupport.getHighlightOverlayBorder(
-                      this.themeState.currentTheme,
-                      this.activeSearchAnchorId,
-                      'theme_transparency'
-                    )
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_transparency', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_transparency', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_transparency',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
                 .margin({ bottom: 16 })
                 
                 // 特效设置面板
@@ -2495,8 +2195,7 @@ export struct ThemeSettingsPage {
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
                     .width('100%')
                   
-                  // 模糊效果开关
-                  Row() {
+                  // 模糊效果开�?                  Row() {
                     Text('模糊效果')
                       .fontSize(14)
                       .fontFamily(this.appFontFamily)
@@ -2511,8 +2210,7 @@ export struct ThemeSettingsPage {
                   .width('100%')
                   .height(48)
                   
-                  // 模糊强度（仅在启用时显示）
-                  if (this.blurEnabled) {
+                  // 模糊强度（仅在启用时显示�?                  if (this.blurEnabled) {
                     Column({ space: 4 }) {
                       Row() {
                         Text('模糊强度')
@@ -2536,8 +2234,7 @@ export struct ThemeSettingsPage {
                     }
                   }
                   
-                  // 阴影效果开关
-                  Row() {
+                  // 阴影效果开�?                  Row() {
                     Text('阴影效果')
                       .fontSize(14)
                       .fontFamily(this.appFontFamily)
@@ -2552,8 +2249,7 @@ export struct ThemeSettingsPage {
                   .width('100%')
                   .height(48)
                   
-                  // 动画效果开关
-                  Row() {
+                  // 动画效果开�?                  Row() {
                     Text('动画效果')
                       .fontSize(14)
                       .fontFamily(this.appFontFamily)
@@ -2568,8 +2264,7 @@ export struct ThemeSettingsPage {
                   .width('100%')
                   .height(48)
                   
-                  // 动画速度（仅在启用时显示）
-                  if (this.animationEnabled) {
+                  // 动画速度（仅在启用时显示�?                  if (this.animationEnabled) {
                     Column({ space: 4 }) {
                       Row() {
                         Text('动画速度')
@@ -2593,55 +2288,31 @@ export struct ThemeSettingsPage {
                     }
                   }
                   
-                  // 组件圆角
+                  // 圆角大小
                   Column({ space: 4 }) {
                     Row() {
-                      Text('组件圆角')
+                      Text('圆角大小')
                         .fontSize(14)
                         .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
                       Blank()
-                      Text(`${this.effectComponentCornerRadius}`)
+                      Text(`${this.effectCornerRadius}`)
                         .fontSize(14)
                         .fontFamily(this.appFontFamily)
                         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
                     }
                     .width('100%')
-                    Slider({ value: $$this.effectComponentCornerRadius, min: 0, max: 32, step: 2 })
+                    Slider({ value: $$this.effectCornerRadius, min: 0, max: 32, step: 2 })
                       .width('100%')
                       .selectedColor($r('app.color.accent_primary'))
                       .trackColor($r('app.color.divider_primary'))
                       .onChange((value: number) => {
-                        this.updateEffect('componentCornerRadius', value);
-                      })
-                  }
-
-                  // 封面图片圆角
-                  Column({ space: 4 }) {
-                    Row() {
-                      Text('封面图片圆角')
-                        .fontSize(14)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-                      Blank()
-                      Text(`${this.effectCoverCornerRadius}`)
-                        .fontSize(14)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-                    }
-                    .width('100%')
-                    Slider({ value: $$this.effectCoverCornerRadius, min: 0, max: 32, step: 2 })
-                      .width('100%')
-                      .selectedColor($r('app.color.accent_primary'))
-                      .trackColor($r('app.color.divider_primary'))
-                      .onChange((value: number) => {
-                        this.updateEffect('coverCornerRadius', value);
+                        this.updateEffect('cornerRadius', value);
                       })
                   }
                   
-                  // 玻璃拟态效果开关
-                  Row() {
-                    Text('玻璃拟态效果')
+                  // 玻璃拟态效果开�?                  Row() {
+                    Text('玻璃拟态效�?)
                       .fontSize(14)
                       .fontFamily(this.appFontFamily)
                       .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2656,7 +2327,7 @@ export struct ThemeSettingsPage {
                   .height(48)
                   
                   // 重置按钮
-                  Button('重置为默认')
+                  Button('重置为默�?)
                     .width('100%')
                     .height(40)
                     .fontSize(14)
@@ -2665,28 +2336,11 @@ export struct ThemeSettingsPage {
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                     .onClick(() => { this.resetEffectsToDefault(); })
                 }
-                .id('theme_effects')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_effects') ? 2 : 1,
-                  color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_effects')
-                    ? SettingsSearchSupport.getHighlightOverlayBorder(this.themeState.currentTheme, this.activeSearchAnchorId, 'theme_effects')
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_effects', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_effects', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_effects',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
+                .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
                 .margin({ bottom: 16 })
               }
 
@@ -2708,10 +2362,9 @@ export struct ThemeSettingsPage {
                       .objectFit(ImageFit.Cover)
                       .borderRadius(12)
 
-                    // 主色调预览
-                    Row() {
+                    // 主色调预�?                    Row() {
                       Column() {
-                        Text('主色调')
+                        Text('主色�?)
                           .fontSize(12)
                           .fontFamily(this.appFontFamily)
                           .fontColor(Color.White)
@@ -2761,18 +2414,21 @@ export struct ThemeSettingsPage {
                 .margin({ bottom: 16 })
               }
 
-              // 选择图片按钮（背景）仅创建模式
+              // 选择图片按钮（背景）仅创建模�?              if (this.isCreatingCustomTheme) {
+                Button('选择背景图片')
+                .width(this.responsive_isLandscape ? '48%' : '100%')
+                .height(48)
+                .fontSize(16)
+                  .fontFamily(this.appFontFamily)
+                .backgroundColor($r('app.color.accent_primary'))
+                .onClick(() => this.selectImage())
+                .margin({ bottom: 16 })
+              }
+
+              // 选择开屏图片按钮（仅创建模式）
               if (this.isCreatingCustomTheme) {
                 Column({ space: 8 }) {
-                  Button('选择背景图片')
-                    .width('100%')
-                    .height(48)
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .backgroundColor($r('app.color.accent_primary'))
-                    .onClick(() => this.selectImage())
-
-                  Button('选择开屏背景图片')
+                  Button('选择开屏背景图�?)
                     .width('100%')
                     .height(48)
                     .fontSize(16)
@@ -2780,7 +2436,7 @@ export struct ThemeSettingsPage {
                     .backgroundColor($r('app.color.accent_primary'))
                     .onClick(() => this.selectSplashImage())
                   
-                  Text('提示：未设置开屏图片将使用背景图片作为开屏图片')
+                  Text('提示：未设置开屏图片将使用背景图片作为开屏图�?)
                     .fontSize(12)
                     .fontFamily(this.appFontFamily)
                     .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -2788,40 +2444,7 @@ export struct ThemeSettingsPage {
                     .width('100%')
                     .textAlign(TextAlign.Center)
                 }
-                .id('theme_create_background')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
-                .padding(16)
-                .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .borderRadius(12)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_background') ? 2 : 1,
-                  color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_background')
-                    ? SettingsSearchSupport.getHighlightOverlayBorder(
-                      this.themeState.currentTheme,
-                      this.activeSearchAnchorId,
-                      'theme_create_background'
-                    )
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(
-                    this.activeSearchAnchorId,
-                    'theme_create_background',
-                    this.searchHighlightPulse
-                  ),
-                  y: SettingsSearchSupport.getHighlightScale(
-                    this.activeSearchAnchorId,
-                    'theme_create_background',
-                    this.searchHighlightPulse
-                  )
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_create_background',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
 
@@ -2910,7 +2533,7 @@ export struct ThemeSettingsPage {
               // 开屏图片预览区域（仅创建模式）
               if (this.isCreatingCustomTheme && this.processedSplashImagePixelMap) {
                 Column() {
-                  Text('开屏图片预览')
+                  Text('开屏图片预�?)
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
@@ -2932,10 +2555,9 @@ export struct ThemeSettingsPage {
                 .margin({ bottom: 16 })
               }
 
-              // 主题色选择（仅创建模式）
-              if (this.isCreatingCustomTheme) {
+              // 主题色选择（仅创建模式�?              if (this.isCreatingCustomTheme) {
                 Column({ space: 12 }) {
-                  Text('选择主题色')
+                  Text('选择主题�?)
                     .fontSize(16)
                     .fontFamily(this.appFontFamily)
                     .fontWeight(FontWeight.Bold)
@@ -2954,7 +2576,7 @@ export struct ThemeSettingsPage {
                         .onClick(() => { this.selectedPrimaryColor = this.extractedColor; })
 
                       Column({ space: 4 }) {
-                        Text('从图片提取')
+                        Text('从图片提�?)
                           .fontSize(12)
                           .fontFamily(this.appFontFamily)
                           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -3007,146 +2629,43 @@ export struct ThemeSettingsPage {
                     }, (colorStr: string) => colorStr)
                   }
                   .width('100%')
-
-                  Column({ space: 16 }) {
-                    Column({ space: 8 }) {
-                      Text('主题名称（可选）')
-                        .fontSize(14)
-                        .fontFamily(this.appFontFamily)
-                        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                      TextInput({ text: this.newThemeName })
-                        .width('100%')
-                        .height(40)
-                        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                        .borderRadius(10)
-                        .onChange((value: string) => { this.newThemeName = value; })
-                    }
-
-                    Button('保存并应用主题')
-                      .width('100%')
-                      .height(48)
-                      .fontSize(16)
-                      .fontFamily(this.appFontFamily)
-                      .backgroundColor($r('app.color.color_success'))
-                      .borderRadius(10)
-                      .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
-                      .onClick(() => this.saveAndApplyTheme())
-                  }
-                  .id('theme_create_save')
-                  .width('100%')
-                  .padding({ top: 16 })
-                  .margin({ top: 4 })
-                  .border({
-                    width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_save') ? 2 : 0,
-                    color: SettingsSearchSupport.getHighlightOverlayBorder(
-                      this.themeState.currentTheme,
-                      this.activeSearchAnchorId,
-                      'theme_create_save'
-                    )
-                  })
-                  .borderRadius(10)
-                  .backgroundColor(SettingsSearchSupport.getHighlightOverlayBackground(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'theme_create_save'
-                  ))
-                  .scale({
-                    x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_save', this.searchHighlightPulse),
-                    y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_save', this.searchHighlightPulse)
-                  })
-                  .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                    this.themeState.currentTheme,
-                    this.activeSearchAnchorId,
-                    'theme_create_save',
-                    this.searchHighlightPulse
-                  ))
-                  .animation({ duration: 260, curve: Curve.EaseOut })
                 }
-                .id('theme_create_colors')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
                 .borderRadius(12)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_colors') ? 2 : 1,
-                  color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_colors')
-                    ? SettingsSearchSupport.getHighlightOverlayBorder(
-                      this.themeState.currentTheme,
-                      this.activeSearchAnchorId,
-                      'theme_create_colors'
-                    )
-                    : ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_colors', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_colors', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_create_colors',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
                 .margin({ bottom: 16 })
               }
 
-              // 主题名称输入（仅创建模式）
-              if (this.isCreatingCustomTheme) {
-                Column({ space: 16 }) {
-                  Column({ space: 8 }) {
-                    Text('主题名称（可选）')
-                      .fontSize(14)
-                      .fontFamily(this.appFontFamily)
-                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    TextInput({ text: this.newThemeName })
-                      .width('100%')
-                      .height(40)
-                      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-                      .borderRadius(10)
-                      .onChange((value: string) => { this.newThemeName = value; })
-                  }
-
-                  Button('保存并应用主题')
-                    .width('100%')
-                    .height(48)
-                    .fontSize(16)
+              // 主题名称输入（仅创建模式�?              if (this.isCreatingCustomTheme) {
+                Column({ space: 8 }) {
+                  Text('主题名称（可选）')
+                    .fontSize(14)
                     .fontFamily(this.appFontFamily)
-                    .backgroundColor($r('app.color.color_success'))
-                    .borderRadius(12)
-                    .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
-                    .onClick(() => this.saveAndApplyTheme())
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  TextInput({ text: this.newThemeName })
+                    .width('100%')
+                    .height(40)
+                    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                    .onChange((value: string) => { this.newThemeName = value; })
                 }
-                .id('theme_create_save_legacy')
-                .width(0)
-                .height(0)
-                .padding(0)
-                .clip(true)
-                .opacity(0)
-                .backgroundColor('rgba(0, 0, 0, 0)')
-                .borderRadius(0)
-                .border({
-                  width: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_save_legacy') ? 2 : 0,
-                  color: SettingsSearchSupport.isHighlightActive(this.activeSearchAnchorId, 'theme_create_save_legacy')
-                    ? SettingsSearchSupport.getHighlightOverlayBorder(
-                      this.themeState.currentTheme,
-                      this.activeSearchAnchorId,
-                      'theme_create_save_legacy'
-                    )
-                    : 'rgba(0, 0, 0, 0)'
-                })
-                .scale({
-                  x: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_save_legacy', this.searchHighlightPulse),
-                  y: SettingsSearchSupport.getHighlightScale(this.activeSearchAnchorId, 'theme_create_save_legacy', this.searchHighlightPulse)
-                })
-                .shadow(SettingsSearchSupport.getHighlightOverlayShadow(
-                  this.themeState.currentTheme,
-                  this.activeSearchAnchorId,
-                  'theme_create_save_legacy',
-                  this.searchHighlightPulse
-                ))
-                .animation({ duration: 260, curve: Curve.EaseOut })
-                .margin(0)
+                .width(this.responsive_isLandscape ? '48%' : '100%')
+                .padding(16)
+                .margin({ bottom: 16 })
+              }
+
+              // 已保存的主题列表，不再显�?
+
+              // 底部保存按钮（固定在页面底部，仅创建模式�?              if (this.isCreatingCustomTheme) {
+                Button('保存并应用主�?)
+                  .width(this.responsive_isLandscape ? '48%' : '100%')
+                  .height(48)
+                  .fontSize(16)
+                  .fontFamily(this.appFontFamily)
+                  .backgroundColor($r('app.color.color_success'))
+                  .enabled(!this.isProcessing && this.processedImagePixelMap !== null)
+                  .onClick(() => this.saveAndApplyTheme())
+                  .margin({ top: 12, bottom: 16 })
               }
 
               // 处理进度提示
@@ -3179,7 +2698,6 @@ export struct ThemeSettingsPage {
                 .margin({ bottom: 16 })
               }
             }
-            .enabled(this.settingsTapEnabled)
             .width('100%')
             .constraintSize({ maxWidth: this.responsive_isLandscape ? 100000 : this.responsive_maxContentWidth }) // 横屏放开最大宽度限制，避免右侧留白
             .padding({
@@ -3192,67 +2710,59 @@ export struct ThemeSettingsPage {
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .width('100%')
           .height('100%')
-          .id('guide_theme_settings_scroll')
           .align(Alignment.TopStart) // 响应式：大屏居中对齐
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
-          .onScroll((_xOffset: number, _yOffset: number) => {
-            this.markSettingsScrolling();
-          })
           .edgeEffect(EdgeEffect.Spring)
         }
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        }
-        .width('100%')
-        .height('100%')
-        .id('guide_theme_settings_root')
-
-        if (this.appGuideStep) {
-          AppGuideOverlay({
-            visible: this.appGuideStep !== null,
-            title: this.appGuideStep.title,
-            message: this.appGuideStep.message,
-            progressText: this.appGuideManager.getCurrentProgressText(),
-            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
-            cardPosition: this.appGuideStep.cardPosition,
-            highlightRect: this.appGuideHighlightRect,
-            showSkip: this.appGuideStep.showSkip !== false,
-            themeState: this.themeState,
-            onNext: () => {
-              this.handlePageGuideNext();
-            },
-            onSkip: () => {
-              this.handlePageGuideSkip();
-            }
-          })
-        }
       }
-      .titleBar({
-        padding: {
-          start: LengthMetrics.vp(16),
+      .width('100%')
+      .height('100%')
+    }
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
       },
+      // style: {
+      //   scrollEffectOpts: {
+      //     enableScrollEffect: true,
+      //     scrollEffectType: ScrollEffectType.COMMON_BLUR,
+      //     blurEffectiveStartOffset: LengthMetrics.vp(0),
+      //     blurEffectiveEndOffset: LengthMetrics.vp(56)
+      //   },
+      //   originalStyle: {
+      //     backgroundStyle: { backgroundColor: Color.Transparent },
+      //     contentStyle: {
+      //       titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+      //       backIconStyle: {
+      //         backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+      //         iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+      //       }
+      //     }
+      //   },
+      //   scrollEffectStyle: {
+      //     backgroundStyle: {
+      //       backgroundColor: this.themeState.currentTheme === ThemeType.DARK ? '#E61A1A1A' : '#E6F5F5F5'
+      //     },
+      //     contentStyle: {
+      //       titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+      //       backIconStyle: {
+      //         backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme),
+      //         iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme)
+      //       }
+      //     }
+      //   }
+      // },
       style: {
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.COMMON_BLUR,
-          blurEffectiveStartOffset: LengthMetrics.vp(0),
-          blurEffectiveEndOffset: LengthMetrics.vp(56)
-        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
+          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
-          }
-        },
-        scrollEffectStyle: {
-          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
-          contentStyle: {
-            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },
@@ -3262,7 +2772,7 @@ export struct ThemeSettingsPage {
           value: this.selectionModeEnabled ? [
             {
               content: {
-                label: '删除所选',
+                label: '删除所�?,
                 icon: $r('sys.symbol.trash'),
                 isEnabled: this.selectedThemeIds.length > 0,
                 action: () => { this.showDeleteConfirmDialogSystem(); }
@@ -3287,11 +2797,31 @@ export struct ThemeSettingsPage {
             }
           ]
         }
+        .id('guide_theme_settings_root')
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一�?,
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
     })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
-      this.applyPendingSearchTarget();
       setTimeout(() => {
         void this.refreshPageGuide('onReady');
       }, 80);

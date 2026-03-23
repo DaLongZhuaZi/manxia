@@ -6,11 +6,11 @@ import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from 
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { logger } from '../Utils/Logger';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
 
 const TAG = 'PrivacyPolicyPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
-
 /**
  * 隐私政策页面
  */
@@ -24,13 +24,15 @@ export struct PrivacyPolicyPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `PrivacyPolicyPage_${Date.now()}`;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 滚动控制器
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('PrivacyPolicyPage', this.getUIContext());
     
     ThemeAwareHelper.initializeThemeAware(
       this.componentId,
@@ -46,7 +48,7 @@ export struct PrivacyPolicyPage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
   }
 
@@ -122,7 +124,6 @@ export struct PrivacyPolicyPage {
 
           Scroll(this.scroller) {
             Column() {
-              // Blank().height(TITLE_BAR_HEIGHT_MINI)
               Text('漫匣隐私政策')
                 .fontSize(22)
                 .fontWeight(FontWeight.Bold)
@@ -192,11 +193,10 @@ export struct PrivacyPolicyPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .padding({ top: this.statusBarHeight })
       }
     }
     .backgroundColor(Color.Transparent)
-    .titleBar({
+    .titleBar(withSafeAreaTitleBar({
       style: {
         originalStyle: {
           backgroundStyle: {
@@ -216,6 +216,12 @@ export struct PrivacyPolicyPage {
       content: {
         title: { mainTitle: '隐私政策' }
       }
+    }))
+    .onWillAppear(() => {
+      PageWindowCoordinator.applyPagePolicy('PrivacyPolicyPage', this.getUIContext());
+    })
+    .onWillShow(() => {
+      PageWindowCoordinator.reapplyPagePolicy('PrivacyPolicyPage', this.getUIContext());
     })
   }
 }

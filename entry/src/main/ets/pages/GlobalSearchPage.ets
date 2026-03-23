@@ -5,6 +5,8 @@
 import { ComicInfo } from '../Framework/Data/DataManager';
 import { EBook } from '../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -32,10 +34,11 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { webview } from '@kit.ArkWeb';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
-import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
+import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
 
 const TAG = 'GlobalSearchPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 const SEARCH_PREFS_NAME = 'global_search_preferences';
 
 // 源选择列表分页常量
@@ -86,6 +89,7 @@ export struct GlobalSearchPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSearchPage';
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
@@ -147,8 +151,8 @@ export struct GlobalSearchPage {
   @State pageParams: GlobalSearchPageParams | null = null;
 
   aboutToAppear(): void {
-    this.previousDisplayMode = WindowManager.getCurrentMode();
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('GlobalSearchPage', this.getUIContext());
     this.initThemeAware();
     this.initFontAware();
     this.loadSearchHistory();
@@ -159,7 +163,7 @@ export struct GlobalSearchPage {
   }
 
   onPageShow(): void {
-    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+    PageWindowCoordinator.reapplyPagePolicy('GlobalSearchPage', this.getUIContext());
   }
   
   /**
@@ -319,7 +323,7 @@ export struct GlobalSearchPage {
   private lifecycle = new PageLifecycleManager('GlobalSearchPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题监听器
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -863,16 +867,17 @@ export struct GlobalSearchPage {
     HdsNavDestination() {
       Stack() {
         // 背景层（纯色，响应全局主题）
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
         Column() {
           // 标题栏占位
-          Blank().height(TITLE_BAR_HEIGHT_MINI)
 
           // 搜索栏
           Row({ space: 12 }) {
@@ -1135,7 +1140,7 @@ export struct GlobalSearchPage {
         this.handlePageParams();
       }
     })
-    .titleBar({
+    .titleBar(withSafeAreaTitleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -1152,8 +1157,14 @@ export struct GlobalSearchPage {
       content: {
         title: { mainTitle: '全局搜索' }
       }
-    })
+    }))
     .backgroundColor(Color.Transparent)
+    .onWillAppear(() => {
+      PageWindowCoordinator.applyPagePolicy('GlobalSearchPage', this.getUIContext());
+    })
+    .onWillShow(() => {
+      PageWindowCoordinator.reapplyPagePolicy('GlobalSearchPage', this.getUIContext());
+    })
   }
 
   /**

@@ -6,13 +6,14 @@
  */
 
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, UIContext } from '@kit.ArkUI';
+import { LengthMetrics, UIContext, promptAction } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { HELP_ITEMS_DATA, HELP_CATEGORIES, HelpItemData } from '../Data/HelpData';
+import { AppGuideFlowId, AppGuideFlowSummary, AppGuideManager } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'HelpCenterPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -66,6 +67,8 @@ export struct HelpCenterPage {
   @State searchKeyword: string = '';
   // 入场动画状态
   @State private pageReady: boolean = false;
+  @State private guideFlows: AppGuideFlowSummary[] = [];
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 
   aboutToAppear(): void {
     ThemeAwareHelper.initializeThemeAware(
@@ -83,6 +86,9 @@ export struct HelpCenterPage {
         this.fontState = newState;
       }
     );
+    void this.appGuideManager.initialize().then(() => {
+      this.guideFlows = this.appGuideManager.getHelpCenterFlowSummaries();
+    });
     // 延迟触发入场动画
     setTimeout(() => {
       animateTo({ duration: 400, curve: Curve.EaseOut }, () => {
@@ -127,6 +133,45 @@ export struct HelpCenterPage {
    */
   private getItemsForCategory(category: string): HelpItemData[] {
     return this.getFilteredItems().filter((item: HelpItemData) => item.category === category);
+  }
+
+  private getFilteredGuideFlows(): AppGuideFlowSummary[] {
+    const keyword = this.searchKeyword.trim().toLowerCase();
+    if (keyword.length === 0) {
+      return this.guideFlows;
+    }
+    return this.guideFlows.filter((item: AppGuideFlowSummary) => {
+      return item.title.toLowerCase().includes(keyword) ||
+        item.description.toLowerCase().includes(keyword);
+    });
+  }
+
+  private async replayGuideFlow(flow: AppGuideFlowSummary): Promise<void> {
+    try {
+      await this.appGuideManager.startFlow(flow.id, 'manual');
+      if (flow.id === AppGuideFlowId.MAIN_MENU_CORE) {
+        if (this.pathStack.size() > 0) {
+          this.pathStack.pop();
+        }
+        return;
+      }
+
+      const globalStack = AppStorage.get<NavPathStack>('GlobalNavStack');
+      if (!globalStack || !flow.helpCenterRouteName || flow.helpCenterRouteName.length <= 0) {
+        promptAction.showToast({
+          message: '当前引导需要在对应页面内重播',
+          duration: 1800
+        });
+        return;
+      }
+      globalStack.pushPathByName(flow.helpCenterRouteName, undefined);
+    } catch (error) {
+      logger.error(TAG, `重播引导失败: ${String(error)}`);
+      promptAction.showToast({
+        message: '重播引导失败',
+        duration: 1800
+      });
+    }
   }
 
   /**
@@ -254,6 +299,82 @@ export struct HelpCenterPage {
   }
 
   @Builder
+  buildGuideReplayItem(item: AppGuideFlowSummary) {
+    Column({ space: 10 }) {
+      Row({ space: 12 }) {
+        Column() {
+          SymbolGlyph($r('sys.symbol.play_circle'))
+            .fontSize(24)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        }
+        .width(48)
+        .height(48)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+        .borderRadius(12)
+
+        Column({ space: 4 }) {
+          Text(item.title)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+          Text(item.description)
+            .fontSize(13)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Button('重播引导')
+        .width('100%')
+        .height(34)
+        .fontSize(13)
+        .fontFamily(this.appFontFamily)
+        .fontColor(Color.White)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        .borderRadius(10)
+        .onClick(() => {
+          void this.replayGuideFlow(item);
+        })
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .borderRadius(12)
+    .opacity(this.pageReady ? 1 : 0)
+    .translate({ y: this.pageReady ? 0 : 12 })
+    .animation({ duration: 350, curve: Curve.EaseOut })
+  }
+
+  @Builder
+  buildGuideReplaySection() {
+    if (this.getFilteredGuideFlows().length > 0) {
+      Column({ space: 12 }) {
+        Text('引导回放')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+          .width('100%')
+          .padding({ left: 4 })
+
+        ForEach(this.getFilteredGuideFlows(), (item: AppGuideFlowSummary) => {
+          this.buildGuideReplayItem(item)
+        }, (item: AppGuideFlowSummary) => item.id)
+      }
+      .width('100%')
+      .transition(TransitionEffect.OPACITY.animation({ duration: 300, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ y: 8 })))
+    }
+  }
+
+  @Builder
   buildEmptySearchResult() {
     Column({ space: 16 }) {
       SymbolGlyph($r('sys.symbol.magnifyingglass'))
@@ -321,6 +442,8 @@ export struct HelpCenterPage {
               } else {
                 this.buildEmptySearchResult()
               }
+
+              this.buildGuideReplaySection()
 
               Blank().height(20)
             }

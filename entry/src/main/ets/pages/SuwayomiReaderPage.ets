@@ -412,7 +412,7 @@ export struct SuwayomiReaderPage {
     try {
       const uiContext = this.getUIContext();
       if (uiContext) {
-        WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, uiContext);
+        WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, uiContext);
         logger.info(TAG, '✅ 设置沉浸式阅读模式');
       }
     } catch (error) {
@@ -427,7 +427,9 @@ export struct SuwayomiReaderPage {
     try {
       const uiContext = this.getUIContext();
       if (uiContext) {
-        WindowManager.setDisplayMode(DisplayMode.DEFAULT, uiContext);
+        if (WindowManager.getCurrentMode() !== DisplayMode.DEFAULT) {
+          WindowManager.setDisplayMode(DisplayMode.DEFAULT, uiContext);
+        }
         logger.info(TAG, '✅ 恢复默认显示模式');
       }
     } catch (error) {

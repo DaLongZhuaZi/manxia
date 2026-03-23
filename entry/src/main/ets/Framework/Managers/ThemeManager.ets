@@ -93,6 +93,28 @@ export enum GlassEffectContext {
   MENU = 'menu'
 }
 
+export enum GlassLevel {
+  HERO = 'hero',
+  NAVIGATION = 'navigation',
+  CARD = 'card',
+  SHEET = 'sheet',
+  FLOATING = 'floating'
+}
+
+export interface GlassStyleToken {
+  level: GlassLevel;
+  backgroundColor: string;
+  backgroundColorResource: Resource;
+  blurStyle: BlurStyle;
+  blurOptions: BackgroundBlurStyleOptions;
+  radius: number;
+  shadowColor: string;
+  borderColor: string;
+  borderWidth: number;
+  opacity: number;
+  renderGroup: boolean;
+}
+
 /**
  * 玻璃效果参数接口（显式类型，避免未类型化对象字面量）
  */
@@ -100,6 +122,12 @@ export interface GlassEffectOptions {
   backgroundColorResource: Resource; // 背景颜色必须使用资源，避免硬编码
   blurStyle: BlurStyle;
   radius: number;
+  backgroundColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  blurOptions?: BackgroundBlurStyleOptions;
+  opacity?: number;
+  renderGroup?: boolean;
   shadowColor: string; // 阴影颜色暂用字符串，与现有shadow调用保持一致
 }
 
@@ -533,141 +561,344 @@ export class ThemeManager {
     return this.getThemeConfigSync();
   }
 
+  private clampNumber(value: number, min: number, max: number): number {
+    if (value < min) {
+      return min;
+    }
+    if (value > max) {
+      return max;
+    }
+    return value;
+  }
+
+  private isDarkLikeTheme(theme: ThemeType): boolean {
+    return theme === ThemeType.DARK || theme === ThemeType.PRIVACY;
+  }
+
+  private getGlassTransparencyForLevel(level: GlassLevel): number {
+    switch (level) {
+      case GlassLevel.NAVIGATION:
+        return this.getComponentTransparency('navigationBar');
+      case GlassLevel.CARD:
+        return this.getComponentTransparency('card');
+      case GlassLevel.SHEET:
+        return (this.getComponentTransparency('dialog') + this.getComponentTransparency('menu')) / 2;
+      case GlassLevel.FLOATING:
+        return this.getComponentTransparency('floatingBall');
+      case GlassLevel.HERO:
+      default:
+        return this.getComponentTransparency('card');
+    }
+  }
+
+  private getBaseGlassAlpha(level: GlassLevel): number {
+    const isDark: boolean = this.isDarkLikeTheme(this.getActualThemeSync());
+    switch (level) {
+      case GlassLevel.HERO:
+        return isDark ? 0.82 : 0.68;
+      case GlassLevel.NAVIGATION:
+        return isDark ? 0.76 : 0.58;
+      case GlassLevel.CARD:
+        return isDark ? 0.72 : 0.54;
+      case GlassLevel.SHEET:
+        return isDark ? 0.9 : 0.8;
+      case GlassLevel.FLOATING:
+      default:
+        return isDark ? 0.84 : 0.68;
+    }
+  }
+
+  private getGlassBackgroundColorForLevel(level: GlassLevel): string {
+    const theme: ThemeType = this.getActualThemeSync();
+    const alpha: number = this.clampNumber(
+      this.getBaseGlassAlpha(level) * (0.45 + this.getGlassTransparencyForLevel(level) * 0.55),
+      0.18,
+      0.96
+    );
+
+    if (this.isDarkLikeTheme(theme)) {
+      switch (level) {
+        case GlassLevel.HERO:
+          return `rgba(10, 16, 26, ${alpha})`;
+        case GlassLevel.NAVIGATION:
+          return `rgba(16, 22, 34, ${alpha})`;
+        case GlassLevel.SHEET:
+          return `rgba(18, 24, 36, ${alpha})`;
+        case GlassLevel.FLOATING:
+          return `rgba(20, 28, 40, ${alpha})`;
+        case GlassLevel.CARD:
+        default:
+          return `rgba(18, 24, 36, ${alpha})`;
+      }
+    }
+
+    switch (level) {
+      case GlassLevel.HERO:
+        return `rgba(255, 255, 255, ${alpha})`;
+      case GlassLevel.NAVIGATION:
+        return `rgba(248, 251, 255, ${alpha})`;
+      case GlassLevel.SHEET:
+        return `rgba(255, 255, 255, ${this.clampNumber(alpha + 0.08, 0.24, 0.98)})`;
+      case GlassLevel.FLOATING:
+        return `rgba(252, 253, 255, ${alpha})`;
+      case GlassLevel.CARD:
+      default:
+        return `rgba(255, 255, 255, ${alpha})`;
+    }
+  }
+
+  private getGlassBorderColorForLevel(level: GlassLevel): string {
+    const isDark: boolean = this.isDarkLikeTheme(this.getActualThemeSync());
+    switch (level) {
+      case GlassLevel.HERO:
+        return isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.52)';
+      case GlassLevel.NAVIGATION:
+        return isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(255, 255, 255, 0.62)';
+      case GlassLevel.SHEET:
+        return isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.74)';
+      case GlassLevel.FLOATING:
+        return isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.68)';
+      case GlassLevel.CARD:
+      default:
+        return isDark ? 'rgba(255, 255, 255, 0.09)' : 'rgba(255, 255, 255, 0.58)';
+    }
+  }
+
+  private getGlassShadowColorForLevel(level: GlassLevel): string {
+    if (!this.isShadowEffectEnabled()) {
+      return 'rgba(0, 0, 0, 0)';
+    }
+
+    const isDark: boolean = this.isDarkLikeTheme(this.getActualThemeSync());
+    const intensity: number = this.clampNumber(this.getUserThemeProfile().effects.shadowIntensity / 100, 0, 1);
+    let levelFactor: number = 0.7;
+
+    switch (level) {
+      case GlassLevel.HERO:
+        levelFactor = 1.0;
+        break;
+      case GlassLevel.NAVIGATION:
+        levelFactor = 0.45;
+        break;
+      case GlassLevel.SHEET:
+        levelFactor = 0.9;
+        break;
+      case GlassLevel.FLOATING:
+        levelFactor = 0.82;
+        break;
+      case GlassLevel.CARD:
+      default:
+        levelFactor = 0.7;
+        break;
+    }
+
+    const baseAlpha: number = isDark ? 0.28 : 0.12;
+    const alpha: number = this.clampNumber(baseAlpha * (0.4 + intensity * 0.9) * levelFactor, 0.0, 0.36);
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+
+  private getGlassBlurStyleForLevel(level: GlassLevel): BlurStyle {
+    if (!this.isBlurEffectEnabled() || !this.getUserThemeProfile().effects.enableGlassmorphism) {
+      return BlurStyle.NONE;
+    }
+
+    switch (level) {
+      case GlassLevel.HERO:
+      case GlassLevel.SHEET:
+        return BlurStyle.Thick;
+      case GlassLevel.NAVIGATION:
+      case GlassLevel.FLOATING:
+        return BlurStyle.Regular;
+      case GlassLevel.CARD:
+      default:
+        return BlurStyle.Thin;
+    }
+  }
+
+  private getGlassBlurOptionsForLevel(level: GlassLevel): BackgroundBlurStyleOptions {
+    const blurEnabled: boolean = this.isBlurEffectEnabled() && this.getUserThemeProfile().effects.enableGlassmorphism;
+    const intensity: number = blurEnabled ? this.clampNumber(this.getUserThemeProfile().effects.blurIntensity / 100, 0, 1) : 0;
+    let levelMultiplier: number = 0.82;
+
+    switch (level) {
+      case GlassLevel.HERO:
+        levelMultiplier = 1.08;
+        break;
+      case GlassLevel.NAVIGATION:
+        levelMultiplier = 0.92;
+        break;
+      case GlassLevel.SHEET:
+        levelMultiplier = 1.0;
+        break;
+      case GlassLevel.FLOATING:
+        levelMultiplier = 0.88;
+        break;
+      case GlassLevel.CARD:
+      default:
+        levelMultiplier = 0.82;
+        break;
+    }
+
+    return {
+      colorMode: ThemeColorMode.SYSTEM,
+      adaptiveColor: AdaptiveColor.DEFAULT,
+      scale: blurEnabled ? this.clampNumber((0.45 + intensity * 0.65) * levelMultiplier, 0.35, 1.15) : 0.0,
+      policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+    };
+  }
+
+  private getGlassRadiusForLevel(level: GlassLevel): number {
+    const baseRadius: number = Math.max(8, this.getUserCornerRadius());
+    switch (level) {
+      case GlassLevel.HERO:
+        return baseRadius + 10;
+      case GlassLevel.NAVIGATION:
+        return baseRadius + 6;
+      case GlassLevel.SHEET:
+        return baseRadius + 8;
+      case GlassLevel.FLOATING:
+        return baseRadius + 4;
+      case GlassLevel.CARD:
+      default:
+        return baseRadius + 2;
+    }
+  }
+
   /**
    * 获取浅色主题下玻璃背景颜色（带透明度），统一全局风格
    */
   public getLightModeGlassBackgroundColor(): string {
-    // 仅在浅色主题启用玻璃模糊时返回半透明白色
-    const isLight: boolean = this.getActualThemeSync() === ThemeType.LIGHT;
-    if (isLight && this.glassBlurEnabledInLightMode) {
-      return '#40FFFFFF';
-    }
-    // 非浅色或未启用时返回透明，交由具体组件决定
-    return 'transparent';
+    return this.getGlassBackgroundColorForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取浅色主题下的模糊样式
    */
   public getLightModeBlurStyle(): BlurStyle {
-    return BlurStyle.Thin;
+    return this.getGlassBlurStyleForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取深色主题下的模糊样式（与浅色保持一致）
    */
   public getDarkModeBlurStyle(): BlurStyle {
-    return BlurStyle.Thin;
+    return this.getGlassBlurStyleForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取浅色玻璃投影颜色
    */
   public getLightModeGlassShadowColor(): string {
-    return '#20000000';
+    return this.getGlassShadowColorForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取深色主题下玻璃投影颜色（与浅色保持一致）
    */
   public getDarkModeGlassShadowColor(): string {
-    return '#20000000';
+    return this.getGlassShadowColorForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取浅色玻璃圆角半径（与页面默认R角统一）
    */
   public getLightModeGlassRadius(): number {
-    return 12;
+    return this.getGlassRadiusForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取深色玻璃圆角半径（与浅色保持一致）
    */
   public getDarkModeGlassRadius(): number {
-    return 12;
+    return this.getGlassRadiusForLevel(GlassLevel.CARD);
+  }
+
+  private mapGlassContextToLevel(context: GlassEffectContext): GlassLevel {
+    switch (context) {
+      case GlassEffectContext.POPUP:
+        return GlassLevel.SHEET;
+      case GlassEffectContext.MENU:
+        return GlassLevel.FLOATING;
+      case GlassEffectContext.CONTAINER:
+      default:
+        return GlassLevel.CARD;
+    }
+  }
+
+  public getGlassToken(level: GlassLevel = GlassLevel.CARD): GlassStyleToken {
+    return {
+      level: level,
+      backgroundColor: this.getGlassBackgroundColorForLevel(level),
+      backgroundColorResource: this.getGlassBackgroundResource(),
+      blurStyle: this.getGlassBlurStyleForLevel(level),
+      blurOptions: this.getGlassBlurOptionsForLevel(level),
+      radius: this.getGlassRadiusForLevel(level),
+      shadowColor: this.getGlassShadowColorForLevel(level),
+      borderColor: this.getGlassBorderColorForLevel(level),
+      borderWidth: 1,
+      opacity: this.getGlassTransparencyForLevel(level),
+      renderGroup: level === GlassLevel.HERO || level === GlassLevel.SHEET || level === GlassLevel.FLOATING
+    };
+  }
+
+  public createGlassModifierForLevel(level: GlassLevel = GlassLevel.CARD): CommonModifier {
+    const token: GlassStyleToken = this.getGlassToken(level);
+    const modifier: CommonModifier = new CommonModifier();
+    modifier
+      .backgroundColor(token.backgroundColor)
+      .backgroundBlurStyle(token.blurStyle, token.blurOptions)
+      .border({
+        width: token.borderWidth,
+        color: token.borderColor
+      })
+      .borderRadius(token.radius)
+      .shadow({
+        radius: token.radius,
+        color: token.shadowColor
+      });
+    return modifier;
   }
 
   /**
    * 创建浅色主题玻璃模糊修饰符（不含边距与内边距，便于组件自行控制布局）
    */
   public createLightModeGlassModifier(): CommonModifier {
-    const modifier: CommonModifier = new CommonModifier();
-    const bg: string = this.getLightModeGlassBackgroundColor();
-    const radius: number = this.getLightModeGlassRadius();
-    const shadowColor: string = this.getLightModeGlassShadowColor();
-    if (bg !== 'transparent') {
-      modifier
-        .backgroundColor(bg)
-        .backgroundBlurStyle(this.getLightModeBlurStyle())
-        .borderRadius(radius)
-        .shadow({ radius: radius, color: shadowColor });
-    }
-    return modifier;
+    return this.createGlassModifierForLevel(GlassLevel.CARD);
   }
 
   /**
    * 获取通用玻璃背景颜色（不区分主题），与历史实现保持一致
    */
   public getGlassBackgroundColor(): string {
-    return '#40FFFFFF';
+    return this.getGlassToken(GlassLevel.CARD).backgroundColor;
   }
 
   /**
    * 获取通用玻璃模糊样式（不区分主题）
    */
   public getGlassBlurStyle(): BlurStyle {
-    const theme: ThemeType = this.getActualThemeSync();
-    if (theme === ThemeType.LIGHT) {
-      return this.getLightModeBlurStyle();
-    }
-    if (theme === ThemeType.DARK) {
-      return this.getDarkModeBlurStyle();
-    }
-    // AUTO 模式下按实际主题处理
-    return this.getLightModeBlurStyle();
+    return this.getGlassToken(GlassLevel.CARD).blurStyle;
   }
 
   /**
    * 获取通用玻璃阴影颜色（不区分主题）
    */
   public getGlassShadowColor(): string {
-    const theme: ThemeType = this.getActualThemeSync();
-    if (theme === ThemeType.LIGHT) {
-      return this.getLightModeGlassShadowColor();
-    }
-    if (theme === ThemeType.DARK) {
-      return this.getDarkModeGlassShadowColor();
-    }
-    return this.getLightModeGlassShadowColor();
+    return this.getGlassToken(GlassLevel.CARD).shadowColor;
   }
 
   /**
    * 获取通用玻璃圆角半径（不区分主题）
    */
   public getGlassRadius(): number {
-    const theme: ThemeType = this.getActualThemeSync();
-    if (theme === ThemeType.LIGHT) {
-      return this.getLightModeGlassRadius();
-    }
-    if (theme === ThemeType.DARK) {
-      return this.getDarkModeGlassRadius();
-    }
-    return this.getLightModeGlassRadius();
+    return this.getGlassToken(GlassLevel.CARD).radius;
   }
 
   /**
    * 创建通用玻璃模糊修饰符（不含边距与内边距），适用于任意主题
    */
   public createGlassModifier(): CommonModifier {
-    const modifier: CommonModifier = new CommonModifier();
-    const radius: number = this.getGlassRadius();
-    modifier
-      .backgroundColor(this.getGlassBackgroundResource())
-      .backgroundBlurStyle(this.getGlassBlurStyle())
-      .borderRadius(radius)
-      .shadow({ radius: radius, color: this.getGlassShadowColor() });
-    return modifier;
+    return this.createGlassModifierForLevel(GlassLevel.CARD);
   }
 
   /**
@@ -692,35 +923,19 @@ export class ThemeManager {
    * 根据上下文返回默认的玻璃效果参数配置
    */
   public getGlassEffectOptions(context: GlassEffectContext = GlassEffectContext.CONTAINER): GlassEffectOptions {
-    const radius: number = this.getGlassRadius();
-    const base: GlassEffectOptions = {
-      backgroundColorResource: this.getGlassBackgroundResource(),
-      blurStyle: this.getGlassBlurStyle(),
-      radius: radius,
-      shadowColor: this.getGlassShadowColor()
+    const token: GlassStyleToken = this.getGlassToken(this.mapGlassContextToLevel(context));
+    return {
+      backgroundColorResource: token.backgroundColorResource,
+      backgroundColor: token.backgroundColor,
+      blurStyle: token.blurStyle,
+      blurOptions: token.blurOptions,
+      radius: token.radius,
+      shadowColor: token.shadowColor,
+      borderColor: token.borderColor,
+      borderWidth: token.borderWidth,
+      opacity: token.opacity,
+      renderGroup: token.renderGroup
     };
-
-    if (context === GlassEffectContext.POPUP) {
-      // 弹窗更厚的模糊与稍大的圆角
-      return {
-        backgroundColorResource: colorMap['app.color.system_resource_background_overlay'] ?? base.backgroundColorResource,
-        blurStyle: BlurStyle.Thick,
-        radius: radius + 4,
-        shadowColor: base.shadowColor
-      } as GlassEffectOptions;
-    }
-
-    if (context === GlassEffectContext.MENU) {
-      // 菜单场景略微增厚的模糊
-      return {
-        backgroundColorResource: base.backgroundColorResource,
-        blurStyle: BlurStyle.Regular,
-        radius: radius,
-        shadowColor: base.shadowColor
-      } as GlassEffectOptions;
-    }
-
-    return base;
   }
 
   /**
@@ -729,8 +944,12 @@ export class ThemeManager {
   public createGlassModifierWithOptions(options: GlassEffectOptions): CommonModifier {
     const modifier: CommonModifier = new CommonModifier();
     modifier
-      .backgroundColor(options.backgroundColorResource)
-      .backgroundBlurStyle(options.blurStyle)
+      .backgroundColor(options.backgroundColor ?? options.backgroundColorResource)
+      .backgroundBlurStyle(options.blurStyle, options.blurOptions)
+      .border({
+        width: options.borderWidth ?? 1,
+        color: options.borderColor ?? 'rgba(255, 255, 255, 0)'
+      })
       .borderRadius(options.radius)
       .shadow({ radius: options.radius, color: options.shadowColor });
     return modifier;
@@ -970,11 +1189,22 @@ export class ThemeManager {
   }
   
   /**
-   * 获取用户配置的圆角大小
+   * 获取用户配置的组件圆角大小
    */
   public getUserCornerRadius(): number {
     try {
-      return UserThemeConfigManager.getInstance().cornerRadius;
+      return UserThemeConfigManager.getInstance().componentCornerRadius;
+    } catch {
+      return 12;
+    }
+  }
+
+  /**
+   * 获取用户配置的封面图片圆角大小
+   */
+  public getUserCoverCornerRadius(): number {
+    try {
+      return UserThemeConfigManager.getInstance().coverCornerRadius;
     } catch {
       return 12;
     }

@@ -5,24 +5,24 @@
  * 支持后续添加更多一级和二级内容
  */
 
-import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { LengthMetrics, promptAction } from '@kit.ArkUI';
+import { HdsNavDestination, ScrollEffectType } from '@kit.UIDesignKit';
+import { LengthMetrics } from '@kit.ArkUI';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
-import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
+import { ThemeManager, ThemeType, GlassLevel, GlassStyleToken } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsSearchSupport, SettingsSearchResult } from './SettingsSearchSupport';
+import { AppGuideOverlay, GuideHighlightRect } from '../../Framework/Components/AppGuideOverlay';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../../Framework/Managers/AppGuideManager';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 
 const TAG = 'GlobalSettingsPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
-
-// 导航参数接口
-interface GlobalSettingsPageParams {
-  fromPage?: string;
-}
 
 // 设置分组项接口
 interface SettingsGroupItem {
@@ -40,8 +40,12 @@ export struct GlobalSettingsPage {
   @State private searchKeyword: string = '';
   @State private searchResults: SettingsSearchResult[] = [];
   @State private settingsTapEnabled: boolean = true;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   private settingsTapUnlockTimer: number = -1;
   private readonly scrollTapGuardDurationMs: number = 140;
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
+  private lastGuideAnchorId: string = '';
 
   // 主题相关状态
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -175,6 +179,7 @@ export struct GlobalSettingsPage {
     } catch (err) {
       logger.error(TAG, 'AppStorage.get 异常', String(err));
     }
+    void this.refreshPageGuide('onPageShow');
   }
 
   onReady(): void {
@@ -191,6 +196,7 @@ export struct GlobalSettingsPage {
 
     // 初始化响应式布局
     this.initializeResponsiveLayout();
+    void this.refreshPageGuide('onReady');
   }
 
   private lifecycle = new PageLifecycleManager('GlobalSettingsPage', { enableDebug: true });
@@ -251,6 +257,92 @@ export struct GlobalSettingsPage {
     }
     
     logger.debug(TAG, `响应式参数更新: 内边距=${this.responsive_contentPadding}, 最大宽度=${this.responsive_maxContentWidth}`);
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_global_settings_root');
+    } catch (error) {
+      logger.warn(TAG, `获取全局设置引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.GLOBAL_SETTINGS);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.GLOBAL_SETTINGS) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      this.lastGuideAnchorId = '';
+      return;
+    }
+    if (this.normalizeGuidePresentation() && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 180);
+      return;
+    }
+    if (this.alignGuideViewport(step) && !trigger.endsWith('_after_scroll')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_scroll`);
+      }, 280);
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_retry_layout`);
+      }, 120);
+      return;
+    }
+    logger.debug(TAG, `全局设置引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private normalizeGuidePresentation(): boolean {
+    if (this.searchKeyword.length <= 0 && this.searchResults.length <= 0) {
+      return false;
+    }
+    this.searchKeyword = '';
+    this.searchResults = [];
+    return true;
+  }
+
+  private alignGuideViewport(step: AppGuideStep): boolean {
+    const anchorId = step.anchorId ?? '';
+    if (anchorId.length <= 0) {
+      return false;
+    }
+    const scrollResult = ensureGuideAnchorVisibleInScroller(
+      this.getUIContext(),
+      this.scroller,
+      anchorId,
+      'guide_global_settings_scroll'
+    );
+    if (!scrollResult.available) {
+      return false;
+    }
+    this.lastGuideAnchorId = anchorId;
+    return scrollResult.scrolled;
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   private goBack(): void {
@@ -321,6 +413,8 @@ export struct GlobalSettingsPage {
         return '主页面设置';
       case 'FontSettingsSubPage':
         return '字体设置';
+      case 'ThemeSettingsPage':
+        return '主题设置';
       case 'InteractionSettingsSubPage':
         return '交互设置';
       case 'AnimationSettingsSubPage':
@@ -340,6 +434,42 @@ export struct GlobalSettingsPage {
       default:
         return pageName;
     }
+  }
+
+  private getGlassToken(level: GlassLevel = GlassLevel.CARD): GlassStyleToken {
+    return this.themeManager.getGlassToken(level);
+  }
+
+  private getTitleBarIconBackground(): string {
+    return this.getGlassToken(GlassLevel.FLOATING).backgroundColor;
+  }
+
+  private getGlassBackground(level: GlassLevel = GlassLevel.CARD): string {
+    return this.getGlassToken(level).backgroundColor;
+  }
+
+  private getGlassBlurStyle(level: GlassLevel = GlassLevel.CARD): BlurStyle {
+    return this.getGlassToken(level).blurStyle;
+  }
+
+  private getGlassBlurOptions(level: GlassLevel = GlassLevel.CARD): BackgroundBlurStyleOptions {
+    return this.getGlassToken(level).blurOptions;
+  }
+
+  private getGlassRadius(level: GlassLevel = GlassLevel.CARD): number {
+    return this.getGlassToken(level).radius;
+  }
+
+  private getGlassBorderColor(level: GlassLevel = GlassLevel.CARD): string {
+    return this.getGlassToken(level).borderColor;
+  }
+
+  private getGlassBorderWidth(level: GlassLevel = GlassLevel.CARD): number {
+    return this.getGlassToken(level).borderWidth;
+  }
+
+  private getGlassShadowColor(level: GlassLevel = GlassLevel.CARD): string {
+    return this.getGlassToken(level).shadowColor;
   }
 
   @Builder
@@ -378,9 +508,11 @@ export struct GlobalSettingsPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(this.getGlassBackground(GlassLevel.CARD))
+    .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.CARD), this.getGlassBlurOptions(GlassLevel.CARD))
+    .borderRadius(this.getGlassRadius(GlassLevel.CARD))
+    .border({ width: this.getGlassBorderWidth(GlassLevel.CARD), color: this.getGlassBorderColor(GlassLevel.CARD) })
+    .shadow({ radius: this.getGlassRadius(GlassLevel.CARD), color: this.getGlassShadowColor(GlassLevel.CARD) })
     .transition(TransitionEffect.asymmetric(
       TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut, delay: Math.min(index, 6) * 28 })
         .combine(TransitionEffect.translate({ y: 10 }).animation({ duration: 220, curve: Curve.EaseOut, delay: Math.min(index, 6) * 28 })),
@@ -417,10 +549,12 @@ export struct GlobalSettingsPage {
             .fontSize(12)
             .fontFamily(this.appFontFamily)
             .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme))
+            .backgroundColor(this.getGlassBackground(GlassLevel.FLOATING))
+            .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.FLOATING), this.getGlassBlurOptions(GlassLevel.FLOATING))
             .height(28)
             .padding({ left: 10, right: 10 })
-            .borderRadius(8)
+            .borderRadius(this.getGlassRadius(GlassLevel.FLOATING))
+            .border({ width: this.getGlassBorderWidth(GlassLevel.FLOATING), color: this.getGlassBorderColor(GlassLevel.FLOATING) })
             .onClick(() => {
               this.clearSearch();
             })
@@ -431,6 +565,13 @@ export struct GlobalSettingsPage {
       }
     }
     .width('100%')
+    .padding(14)
+    .backgroundColor(this.getGlassBackground(GlassLevel.NAVIGATION))
+    .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.NAVIGATION), this.getGlassBlurOptions(GlassLevel.NAVIGATION))
+    .borderRadius(this.getGlassRadius(GlassLevel.NAVIGATION))
+    .border({ width: this.getGlassBorderWidth(GlassLevel.NAVIGATION), color: this.getGlassBorderColor(GlassLevel.NAVIGATION) })
+    .shadow({ radius: this.getGlassRadius(GlassLevel.NAVIGATION), color: this.getGlassShadowColor(GlassLevel.NAVIGATION) })
+    .id('guide_global_settings_search')
   }
 
   @Builder
@@ -451,9 +592,11 @@ export struct GlobalSettingsPage {
         }
         .width('100%')
         .padding(16)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-        .borderRadius(12)
-        .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+        .backgroundColor(this.getGlassBackground(GlassLevel.CARD))
+        .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.CARD), this.getGlassBlurOptions(GlassLevel.CARD))
+        .borderRadius(this.getGlassRadius(GlassLevel.CARD))
+        .border({ width: this.getGlassBorderWidth(GlassLevel.CARD), color: this.getGlassBorderColor(GlassLevel.CARD) })
+        .shadow({ radius: this.getGlassRadius(GlassLevel.CARD), color: this.getGlassShadowColor(GlassLevel.CARD) })
         .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut })
           .combine(TransitionEffect.translate({ y: 10 })))
       } else {
@@ -501,9 +644,11 @@ export struct GlobalSettingsPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-    .borderRadius(12)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .backgroundColor(this.getGlassBackground(GlassLevel.CARD))
+    .backgroundBlurStyle(this.getGlassBlurStyle(GlassLevel.CARD), this.getGlassBlurOptions(GlassLevel.CARD))
+    .borderRadius(this.getGlassRadius(GlassLevel.CARD))
+    .border({ width: this.getGlassBorderWidth(GlassLevel.CARD), color: this.getGlassBorderColor(GlassLevel.CARD) })
+    .shadow({ radius: this.getGlassRadius(GlassLevel.CARD), color: this.getGlassShadowColor(GlassLevel.CARD) })
     .onClick(() => {
       this.navigateToSubPage(item.targetPage);
     })
@@ -520,15 +665,18 @@ export struct GlobalSettingsPage {
       })
     }
     .width('100%')
+    .id('guide_global_settings_group_list')
   }
 
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           
         Scroll(this.scroller) {
@@ -548,6 +696,7 @@ export struct GlobalSettingsPage {
                     }
                   })
                 }
+                .id('guide_global_settings_group_list')
                 .columnsTemplate('1fr 1fr')
                 .columnsGap(12)
                 .rowsGap(12)
@@ -567,6 +716,7 @@ export struct GlobalSettingsPage {
         }
         .width('100%')
         .height('100%')
+        .id('guide_global_settings_scroll')
         .align(Alignment.TopStart)
         .edgeEffect(EdgeEffect.Spring)
         .scrollBar(BarState.Auto)
@@ -574,7 +724,28 @@ export struct GlobalSettingsPage {
           this.markSettingsScrolling();
         })
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
+      .id('guide_global_settings_root')
     }
     .titleBar({
       padding: {
@@ -582,11 +753,24 @@ export struct GlobalSettingsPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(TITLE_BAR_HEIGHT_MINI)
+        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          backgroundStyle: { backgroundColor: this.getGlassBackground(GlassLevel.NAVIGATION) },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            backIconStyle: { backgroundColor: this.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: this.getGlassBackground(GlassLevel.SHEET) },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: this.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

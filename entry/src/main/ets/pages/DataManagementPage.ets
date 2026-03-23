@@ -35,14 +35,15 @@ import { EBookParserFactory, EBookCoverExtractor } from '../Framework/Parsers/EB
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { EBookMetadataDialog, EBookMetadataDialogResult } from '../Framework/Components/EBookMetadataDialog';
-import { PdfToMangaImporter, PdfImportConfig, PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
+import { PdfImportResult, PdfContentType, PdfImportMode } from '../Framework/Parsers/PdfToMangaImporter';
+import { PdfImportService } from '../Framework/Services/PdfImportService';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { image } from '@kit.ImageKit';
 import { AvifTranscoder, AvifTranscodeResult } from '../Utils/AvifTranscoder';
 import { BackgroundTaskManager, TaskType, TaskStatus, BackgroundTask, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
-import { PdfImportDialog, PdfImportDialogResult, PdfImportMode as DialogImportMode } from '../Framework/Components/PdfImportDialog';
+import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
@@ -707,6 +708,7 @@ struct DataManagementPage {
   private compressionUtils: CompressionUtils = CompressionUtils.getInstance();
   private comicInfoParser: ComicInfoParser = new ComicInfoParser();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private pdfImportService: PdfImportService = PdfImportService.getInstance();
   private uiContext: UIContext | undefined = undefined;
   // 弹窗控制器每次使用时按需创建，避免持久状态泄漏
   private ebookMetadataDialogController: CustomDialogController | null = null;
@@ -1567,12 +1569,14 @@ struct DataManagementPage {
       fileUris.push(uri);
     }
     
-    // PDF文件需要逐个处理，使用现有的showPdfImportDialog方法
-    for (let i = 0; i < fileUris.length; i++) {
-      this.showPdfImportDialog(fileUris[i]);
-    }
-    promptAction.showToast({ message: `开始导入 ${fileUris.length} 个PDF文件` });
+    const pendingFiles: string[] = [...fileUris];
     this.pendingPdfFiles = [];
+
+    for (let i = 0; i < pendingFiles.length; i++) {
+      this.updateProgress(ImportStatus.IDLE, `配置PDF导入 (${i + 1}/${pendingFiles.length})`, 10);
+      await this.handlePdfImportWithCategorySelection(pendingFiles[i]);
+    }
+    promptAction.showToast({ message: `已处理 ${pendingFiles.length} 个PDF导入请求` });
   }
 
   /**
@@ -2297,9 +2301,7 @@ struct DataManagementPage {
     try {
       logger.info(TAG, `处理PDF文件导入，显示设置对话框: ${fileUri}`);
       
-      // 从文件路径提取默认标题
-      const fileName = fileUri.substring(fileUri.lastIndexOf('/') + 1);
-      const defaultTitle = decodeURIComponent(fileName.replace(/\.pdf$/i, ''));
+      const defaultTitle = this.pdfImportService.getDefaultTitle(fileUri);
       
       // 显示综合设置对话框
       const dialogResult = await this.showPdfImportDialog(defaultTitle);
@@ -2356,13 +2358,14 @@ struct DataManagementPage {
    */
   private async startPdfImportTask(fileUri: string, dialogResult: PdfImportDialogResult): Promise<void> {
     const taskManager = BackgroundTaskManager.getInstance();
+    const filesDir = getContext(this).filesDir;
     
     // 创建后台任务
     const taskId = taskManager.createTask(
       TaskType.PDF_IMPORT,
       `导入: ${dialogResult.title}`,
       async (onProgress, cancelSignal) => {
-        return await this.executePdfImportWithDialogResult(fileUri, dialogResult, onProgress, cancelSignal);
+        return await this.executePdfImportWithDialogResult(fileUri, dialogResult, filesDir, onProgress, cancelSignal);
       }
     );
     
@@ -2388,110 +2391,23 @@ struct DataManagementPage {
   private async executePdfImportWithDialogResult(
     fileUri: string,
     dialogResult: PdfImportDialogResult,
+    filesDir: string,
     onProgress: (current: number, total: number, message: string) => void,
     cancelSignal: TaskCancelSignal
   ): Promise<PdfImportResult> {
     try {
-      const contentType = dialogResult.contentType;
-      logger.info(TAG, `开始将PDF导入为${contentType === PdfContentType.MANGA ? '漫画' : '电子书'}: ${fileUri}`);
-      
-      // 检查是否已取消
-      if (cancelSignal.isCancelled) {
-        throw new Error('任务已取消');
-      }
-      
-      // 判断是否已经是沙箱路径（以 /data/storage 开头）
-      let sandboxPath: string;
-      if (fileUri.startsWith('/data/storage') || fileUri.startsWith(getContext(this).filesDir)) {
-        sandboxPath = fileUri;
-        logger.info(TAG, `使用已有沙箱路径: ${sandboxPath}`);
-      } else {
-        onProgress(0, 100, '正在复制文件...');
-        sandboxPath = await this.copyFileToSandbox(fileUri);
-        logger.info(TAG, `PDF文件已复制到沙箱: ${sandboxPath}`);
-      }
-      
-      // 获取输出目录
-      const context = getContext(this);
-      const outputDir = `${context.filesDir}/manga`;
-      
-      try {
-        fs.mkdirSync(outputDir, true);
-      } catch (e) {
-        // 目录可能已存在
-      }
-      
-      // 转换对话框导入模式到导入器模式
-      const importMode = dialogResult.importMode === DialogImportMode.SINGLE_CHAPTER 
-        ? PdfImportMode.SINGLE_CHAPTER 
-        : PdfImportMode.TANKOUBON;
-      const isSingleChapter = importMode === PdfImportMode.SINGLE_CHAPTER;
-      
-      // 单章节模式：查找同名漫画
-      let existingMangaId: string | undefined;
-      if (isSingleChapter) {
-        onProgress(0, 100, '正在检查是否存在同名漫画...');
-        existingMangaId = await this.findExistingMangaByTitle(dialogResult.title);
-        if (existingMangaId) {
-          logger.info(TAG, `找到同名漫画: ${dialogResult.title}, ID: ${existingMangaId}`);
-          // 检查是否有相同章节编号
-          const hasChapter = await this.checkChapterExists(existingMangaId, dialogResult.chapterNumber || 1);
-          if (hasChapter) {
-            throw new Error(`漫画"${dialogResult.title}"已存在第${dialogResult.chapterNumber || 1}话，请修改章节编号`);
-          }
-        } else {
-          logger.info(TAG, `未找到同名漫画，将创建新漫画: ${dialogResult.title}`);
+      const result = await this.pdfImportService.executeImport({
+        fileUri: fileUri,
+        dialogResult: dialogResult,
+        filesDir: filesDir,
+        cancelSignal: cancelSignal,
+        onProgress: (current: number, total: number, message: string) => {
+          onProgress(current, total, message);
+          this.updateProgress(ImportStatus.PROCESSING, message, total > 0 ? Math.floor((current / total) * 100) : 0);
         }
-      }
-      
-      // 创建PDF导入器并执行导入
-      const config: PdfImportConfig = {
-        pdfPath: sandboxPath,
-        outputDir: outputDir,
-        contentType: contentType,
-        importMode: importMode,
-        chapterNumber: dialogResult.chapterNumber,
-        chapterTitle: dialogResult.chapterTitle,
-        existingMangaId: existingMangaId
-      };
-      
-      const importer = new PdfToMangaImporter(config, (current, total, message) => {
-        // 检查是否已取消
-        if (cancelSignal.isCancelled) {
-          throw new Error('任务已取消');
-        }
-        onProgress(current, total, message);
-        this.updateProgress(ImportStatus.PROCESSING, message, Math.floor((current / total) * 100));
       });
-      
-      onProgress(0, 100, '正在转换PDF...');
-      this.updateProgress(ImportStatus.PROCESSING, '正在转换PDF...', 0);
-      const result = await importer.import();
-      
-      if (!result.success) {
-        throw new Error(result.errorMessage || 'PDF转换失败');
-      }
-      
-      logger.info(TAG, `PDF转换成功: ${result.comicInfo?.title}, 共 ${result.totalPages} 页`);
-      
-      // 使用用户编辑的信息覆盖默认信息
-      if (result.comicInfo) {
-        result.comicInfo.title = dialogResult.title;
-        result.comicInfo.writer = dialogResult.author;
-        result.comicInfo.summary = dialogResult.description || result.comicInfo.summary;
-        // 合并用户设置的标签
-        if (dialogResult.tags && dialogResult.tags.length > 0) {
-          result.comicInfo.tags = [...(result.comicInfo.tags || []), ...dialogResult.tags];
-        }
-      }
-      
-      // 保存到数据库
-      onProgress(95, 100, '正在保存到数据库...');
-      await this.savePdfImportToDatabase(result, contentType);
-      
-      onProgress(100, 100, '导入完成');
+
       this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${dialogResult.title}`, 100);
-      
       return result;
     } catch (error) {
       logger.error(TAG, 'PDF导入失败', String(error instanceof Error ? error.message : error));
@@ -2802,11 +2718,7 @@ struct DataManagementPage {
         }
 
         logger.info(TAG, `选择了 ${selectResult.length} 个PDF文件`);
-        
-        // 在回调中直接处理每个文件
-        for (const uri of selectResult) {
-          this.processPdfFileInCallback(uri, context);
-        }
+        void this.processPdfFilesSequentially(selectResult, context);
       }).catch((err: Error) => {
         logger.error(TAG, `选择PDF文件失败: ${err.message}`);
       });
@@ -2817,113 +2729,39 @@ struct DataManagementPage {
   }
 
   /**
+   * 顺序准备并处理多个PDF文件，避免大文件并发复制造成内存和IO峰值
+   */
+  private async processPdfFilesSequentially(
+    uris: string[],
+    context: common.UIAbilityContext
+  ): Promise<void> {
+    for (let i = 0; i < uris.length; i++) {
+      try {
+        this.updateProgress(ImportStatus.PROCESSING, `正在准备第 ${i + 1}/${uris.length} 个PDF文件...`, 5);
+        await this.processPdfFileInCallback(uris[i], context);
+      } catch (error) {
+        logger.error(TAG, `顺序处理PDF文件失败: ${String(error)}`);
+      }
+    }
+  }
+
+  /**
    * 在 picker 回调中处理PDF文件
    * 复制到沙箱后调用PDF分类选择对话框
    */
-  private processPdfFileInCallback(uri: string, context: common.UIAbilityContext): void {
+  private async processPdfFileInCallback(uri: string, context: common.UIAbilityContext): Promise<void> {
     try {
       logger.info(TAG, `开始处理PDF文件: ${uri}`);
-      
-      // 获取文件名
-      let fileName = 'unknown.pdf';
-      try {
-        const uriObj = new fileUri.FileUri(uri);
-        fileName = uriObj.name;
-        logger.info(TAG, `从 URI 获取文件名: ${fileName}`);
-      } catch (e) {
-        try {
-          fileName = decodeURIComponent(uri.slice(uri.lastIndexOf('/') + 1));
-        } catch {}
-      }
-      
-      // 目标路径
-      const timestamp = new Date().getTime();
-      const safeFileName = fileName.replace(/[<>:"/\\|?*]/g, '_');
-      const safeName = `${timestamp}_${safeFileName}`;
-      const targetDir = `${context.filesDir}/pdf_import`;
-      const targetPath = `${targetDir}/${safeName}`;
-      
-      // 确保目录存在
-      let dirExists = false;
-      try {
-        dirExists = fs.accessSync(targetDir);
-      } catch {
-        dirExists = false;
-      }
-      
-      if (!dirExists) {
-        try {
-          fs.mkdirSync(targetDir, true);
-          logger.info(TAG, `创建PDF导入目录成功: ${targetDir}`);
-        } catch (mkdirError) {
-          logger.error(TAG, `创建PDF导入目录失败: ${String(mkdirError)}`);
-          throw mkdirError as Error;
-        }
-      }
-      
-      // 显示进度
-      this.updateProgress(ImportStatus.PROCESSING, `正在复制PDF文件: ${fileName}`, 5);
-      
-      // 复制文件到沙箱
-      logger.info(TAG, `准备打开源PDF文件: ${uri}`);
-      const srcFile = fs.openSync(uri, fs.OpenMode.READ_ONLY);
-      logger.info(TAG, `源PDF文件打开成功，fd: ${srcFile.fd}`);
-      
-      try {
-        const destFile = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-        logger.info(TAG, `目标PDF文件创建成功，fd: ${destFile.fd}`);
-        
-        const BUFFER_SIZE = 4096;
-        const buffer = new ArrayBuffer(BUFFER_SIZE);
-        let totalBytes = 0;
-        let readLen: number;
-        
-        while ((readLen = fs.readSync(srcFile.fd, buffer)) > 0) {
-          if (readLen === BUFFER_SIZE) {
-            fs.writeSync(destFile.fd, buffer);
-          } else {
-            const lastChunk = buffer.slice(0, readLen);
-            fs.writeSync(destFile.fd, lastChunk);
-          }
-          totalBytes += readLen;
-        }
-        
-        fs.closeSync(srcFile);
-        fs.closeSync(destFile);
-        
-        logger.info(TAG, `PDF文件复制成功: ${targetPath}，大小: ${totalBytes} 字节`);
-        
-        if (totalBytes === 0) {
-          logger.error(TAG, 'PDF文件内容为空');
-          try {
-            fs.unlinkSync(targetPath);
-          } catch {}
-          this.showToast('PDF文件内容为空');
-          this.updateProgress(ImportStatus.ERROR, 'PDF文件内容为空', 0);
-          return;
-        }
-        
-        // 更新进度状态
-        this.updateProgress(ImportStatus.PROCESSING, `PDF文件已复制，等待选择分类...`, 10);
-        
-        // 调用PDF分类选择并导入（异步处理）
-        this.handlePdfImportWithCategorySelection(targetPath).catch((err: Error) => {
-          logger.error(TAG, `PDF导入失败: ${err.message}`);
-          this.updateProgress(ImportStatus.ERROR, `PDF导入失败: ${err.message}`, 0);
-        });
-        
-      } catch (destError) {
-        try {
-          fs.closeSync(srcFile);
-        } catch {}
-        logger.error(TAG, `复制PDF文件失败: ${String(destError)}`);
-        this.updateProgress(ImportStatus.ERROR, `复制PDF文件失败: ${String(destError)}`, 0);
-        throw destError as Error;
-      }
-      
+
+      const displayTitle = this.pdfImportService.getDefaultTitle(uri);
+      this.updateProgress(ImportStatus.PROCESSING, `正在准备PDF文件: ${displayTitle}.pdf`, 5);
+      const sandboxPath = await this.pdfImportService.copyPdfToSandbox(uri, context.filesDir);
+      this.updateProgress(ImportStatus.PROCESSING, 'PDF文件已准备完成，等待选择分类...', 10);
+      await this.handlePdfImportWithCategorySelection(sandboxPath);
     } catch (error) {
       logger.error(TAG, `处理PDF文件失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `处理PDF文件失败: ${String(error)}`, 0);
+      throw error as Error;
     }
   }
   

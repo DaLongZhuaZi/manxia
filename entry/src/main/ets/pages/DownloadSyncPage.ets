@@ -21,7 +21,7 @@ import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
 import { EBookDataManager } from '../Framework/Data/EBookDataManager';
 import { generateUUID } from '../Framework/Utils/UUIDGenerator';
-import { PdfImportDialog, PdfImportDialogResult, PdfImportMode as DialogImportMode } from '../Framework/Components/PdfImportDialog';
+import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
@@ -37,6 +37,12 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { componentSnapshot } from '@kit.ArkUI';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { BackgroundTaskManager, TaskType, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
+import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
+import { PdfImportService } from '../Framework/Services/PdfImportService';
 
 const TAG = 'DownloadSyncPage';
 const TITLE_BAR_HEIGHT_MINI: number = 56;
@@ -115,12 +121,14 @@ struct DownloadSyncPage {
   private dataManager: DataManager = DataManager.getInstance();
   private compressionUtils: CompressionUtils = CompressionUtils.getInstance();
   private ebookDataManager: EBookDataManager = EBookDataManager.getInstance();
+  private pdfImportService: PdfImportService = PdfImportService.getInstance();
   private uiContext: UIContext | undefined = undefined;
   private pdfImportDialogController: CustomDialogController | null = null;
   private mangaImportDialogController: CustomDialogController | null = null;
   private batchMangaImportDialogController: CustomDialogController | null = null;
   private novelImportDialogController: CustomDialogController | null = null;
   private ebookMetadataDialogController: CustomDialogController | null = null;
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
   
   // 电子书导入临时数据
   @State private pendingEbookData: EBook | null = null;
@@ -152,6 +160,8 @@ struct DownloadSyncPage {
 
   // 标签页状态
   @State private currentTabIndex: number = 0;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   
   // 横向滑动切换标签页相关状态
   private readonly tabCount: number = 2;
@@ -190,6 +200,52 @@ struct DownloadSyncPage {
     
     // 检查并自动初始化已存在的Download文件夹
     this.checkAndAutoInitDownloadDir();
+    void this.refreshPageGuide('aboutToAppear');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_download_sync_root');
+    } catch (error) {
+      logger.warn(TAG, `获取 Download 同步引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.DOWNLOAD_SYNC);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.DOWNLOAD_SYNC) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `Download 同步引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   aboutToDisappear(): void {
@@ -307,7 +363,7 @@ struct DownloadSyncPage {
       // 获取所有本地导入的漫画
       const allComics: ComicInfo[] = await this.dataManager.getAllComics();
       for (const comic of allComics) {
-        if (comic.sourceId === 'local_import' || comic.sourceId === 'download_import') {
+        if (comic.sourceId === 'local_import' || comic.sourceId === 'download_import' || comic.sourceId === 'local_pdf') {
           // 从coverUrl或其他字段提取原始文件名
           const originalFileName = this.extractOriginalFileName(comic.title);
           if (originalFileName) {
@@ -884,6 +940,7 @@ A: 不会，原文件保持不变。`;
         }
         .width('100%')
         .height('100%')
+        .id('guide_download_sync_root')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .constraintSize({ maxWidth: this.responsive_maxContentWidth })
         .padding({
@@ -891,6 +948,26 @@ A: 不会，原文件保持不变。`;
           left: this.responsive_contentPadding,
           right: this.responsive_contentPadding
         })
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
 
       }
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -925,6 +1002,9 @@ A: 不会，原文件保持不变。`;
     .onReady((context: NavDestinationContext) => {
       logger.info(TAG, 'HdsNavDestination.onReady 已触发');
       this.pathStack = context.pathStack;
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
     })
     .backgroundColor(Color.Transparent)
   }
@@ -999,6 +1079,7 @@ A: 不会，原文件保持不变。`;
     .width('100%')
     .height(36)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+    .id('guide_download_sync_tabs')
   }
 
   @Builder
@@ -2629,11 +2710,14 @@ A: 不会，原文件保持不变。`;
       fileUris.push(uri);
     }
     
-    for (let i = 0; i < fileUris.length; i++) {
-      this.showPdfImportDialog(fileUris[i]);
-    }
-    promptAction.showToast({ message: `开始导入 ${fileUris.length} 个PDF文件` });
+    const pendingFiles: string[] = [...fileUris];
     this.pendingPdfFiles = [];
+
+    for (let i = 0; i < pendingFiles.length; i++) {
+      this.updateProgress(ImportStatus.IDLE, `配置PDF导入 (${i + 1}/${pendingFiles.length})`, 10);
+      await this.handlePdfImportWithCategorySelection(pendingFiles[i]);
+    }
+    promptAction.showToast({ message: `已处理 ${pendingFiles.length} 个PDF导入请求` });
   }
 
   /**
@@ -3128,42 +3212,103 @@ A: 不会，原文件保持不变。`;
     }
   }
 
-  private showPdfImportDialog(fileUri: string): void {
-    const filename = fileUri.substring(fileUri.lastIndexOf('/') + 1);
-    const defaultTitle = filename.replace(/\.pdf$/i, '');
-    
-    this.pdfImportDialogController = new CustomDialogController({
-      builder: PdfImportDialog({
-        themeState: this.themeState,
-        defaultTitle: defaultTitle,
-        defaultAuthor: '',
-        onConfirm: (result: PdfImportDialogResult) => {
-          this.handlePdfImportResult(result, fileUri);
-        },
-        onCancel: () => {
-          this.updateProgress(ImportStatus.IDLE, '已取消PDF导入', 0);
-        }
-      }),
-      autoCancel: false,
-      customStyle: true,
-      alignment: DialogAlignment.Center
-    });
+  private async handlePdfImportWithCategorySelection(fileUri: string): Promise<void> {
+    try {
+      logger.info(TAG, `处理PDF文件导入，显示设置对话框: ${fileUri}`);
+      const defaultTitle = this.pdfImportService.getDefaultTitle(fileUri);
+      const dialogResult = await this.showPdfImportDialog(defaultTitle);
+      if (dialogResult === null) {
+        logger.info(TAG, 'PDF导入已取消');
+        this.updateProgress(ImportStatus.IDLE, '', 0);
+        return;
+      }
 
-    this.pdfImportDialogController.open();
+      logger.info(TAG, `用户确认PDF导入: 类型=${dialogResult.contentType}, 标题=${dialogResult.title}`);
+      await this.startPdfImportTask(fileUri, dialogResult);
+    } catch (e) {
+      const error = e as Error;
+      logger.error(TAG, `处理PDF文件导入失败: ${String(error)}`);
+      promptAction.showToast({ message: `PDF导入失败: ${String(error)}` });
+    }
   }
 
-  private async handlePdfImportResult(result: PdfImportDialogResult, fileUri: string): Promise<void> {
+  private async showPdfImportDialog(defaultTitle: string): Promise<PdfImportDialogResult | null> {
+    return new Promise<PdfImportDialogResult | null>((resolve) => {
+      this.pdfImportDialogController = new CustomDialogController({
+        builder: PdfImportDialog({
+          themeState: this.themeState,
+          defaultTitle: defaultTitle,
+          defaultAuthor: '',
+          onConfirm: (result: PdfImportDialogResult) => {
+            resolve(result);
+          },
+          onCancel: () => {
+            resolve(null);
+          }
+        }),
+        autoCancel: true,
+        customStyle: true,
+        alignment: DialogAlignment.Center
+      });
+
+      this.pdfImportDialogController.open();
+    });
+  }
+
+  private async startPdfImportTask(fileUri: string, dialogResult: PdfImportDialogResult): Promise<void> {
+    const taskManager = BackgroundTaskManager.getInstance();
+    const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
+    if (!context) {
+      throw new Error('无法获取应用上下文');
+    }
+    const filesDir = context.filesDir;
+    const taskId = taskManager.createTask(
+      TaskType.PDF_IMPORT,
+      `导入: ${dialogResult.title}`,
+      async (onProgress, cancelSignal) => {
+        return await this.executePdfImportWithDialogResult(fileUri, dialogResult, filesDir, onProgress, cancelSignal);
+      }
+    );
+
+    taskManager.startTask(taskId).then(() => {
+      logger.info(TAG, `PDF导入任务完成: ${taskId}`);
+      promptAction.showToast({ message: `导入成功: ${dialogResult.title}` });
+      eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
+      void this.loadImportedFilesStatus();
+    }).catch((error: Error) => {
+      logger.error(TAG, `PDF导入任务失败: ${taskId}`, error.message);
+      promptAction.showToast({ message: `导入失败: ${error.message}` });
+    });
+
+    promptAction.showToast({ message: 'PDF导入已开始，可以离开此页面' });
+  }
+
+  private async executePdfImportWithDialogResult(
+    fileUri: string,
+    dialogResult: PdfImportDialogResult,
+    filesDir: string,
+    onProgress: (current: number, total: number, message: string) => void,
+    cancelSignal: TaskCancelSignal
+  ): Promise<PdfImportResult> {
     try {
-      this.updateProgress(ImportStatus.IMPORTING, '正在导入PDF...', 30);
-      
-      promptAction.showToast({ message: `PDF导入: ${result.title}` });
-      logger.info(TAG, `PDF导入请求: ${result.title}, 文件: ${fileUri}`);
-      
-      this.updateProgress(ImportStatus.COMPLETED, 'PDF导入完成', 100);
+      const result = await this.pdfImportService.executeImport({
+        fileUri: fileUri,
+        dialogResult: dialogResult,
+        filesDir: filesDir,
+        cancelSignal: cancelSignal,
+        onProgress: (current: number, total: number, message: string) => {
+          onProgress(current, total, message);
+          this.updateProgress(ImportStatus.PROCESSING, message, total > 0 ? Math.floor((current / total) * 100) : 0);
+        }
+      });
+
+      this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${dialogResult.title}`, 100);
+      return result;
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `PDF导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `PDF导入失败: ${String(error)}`, 0);
+      throw error as Error;
     }
   }
 }

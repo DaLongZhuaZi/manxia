@@ -253,11 +253,12 @@ struct SplashPage {
       // 快捷入口冷启动：在 MainMenuPage 启动时使用“即时路由模式”，减少主页面闪现
       const startupRoutePending = !shouldShowGuide && this.hasWidgetTargetPage();
       AppStorage.setOrCreate('startupRoutePending', startupRoutePending);
+      AppStorage.setOrCreate('appGuideStartupPending', false);
       if (startupRoutePending) {
         this.loadingProgress = '正在准备快捷入口...';
       }
 
-      // 使用 pushUrl 跳转，让 SplashPage 在上层淡出，MainMenuPage 在下层显示
+      // 首次引导重新回到 WelcomeGuidePage，由它串联各页面 AppGuide 流程。
       const router = this.uiContext?.getRouter();
       if (router) {
         const targetUrl = shouldShowGuide ? 'pages/WelcomeGuidePage' : 'pages/MainMenuPage';
@@ -265,7 +266,7 @@ struct SplashPage {
         router.pushUrl({
           url: targetUrl
         }).then(() => {
-          logger.info('SplashPage', `✅ 成功跳转到${shouldShowGuide ? '引导' : '主'}页面`);
+          logger.info('SplashPage', `✅ 成功跳转到${shouldShowGuide ? 'WelcomeGuidePage' : 'MainMenuPage'}，首启引导=${shouldShowGuide}`);
           // 跳转成功后清除路由历史，防止用户返回 SplashPage
           router.clear();
         }).catch((error: Error) => {

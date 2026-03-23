@@ -116,7 +116,7 @@ export struct FileEditorPage {
   private themeChangeCallback: ((theme: ThemeType) => void) | null = null;
   
   aboutToAppear(): void {
-    WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.getUIContext());
+    WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, this.getUIContext());
     logger.info(TAG, '文件编辑器页面初始化');
     
     // 加载编辑器设置

@@ -10,12 +10,15 @@ import { common, Want } from '@kit.AbilityKit';
 import { logger } from '../../Utils/Logger';
 import { PageLifecycleManager } from '../../Framework/Lifecycle';
 import { ThemeAwareState, ThemeAwareHelper } from '../../Framework/Components/ThemeAware';
+import { GlobalBackgroundLayerMode } from '../../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../../Framework/Components/SharedPageBackgroundLayer';
 import { ThemeManager, ThemeType } from '../../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../../Framework/Components/FontAware';
 import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint } from '../../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../../Framework/Utils/ResponsiveLayout';
 import { SettingsManager, SettingKeys } from '../../Framework/Managers/SettingsManager';
 import { SettingsSearchSupport } from './SettingsSearchSupport';
+import { SettingsGlassStyleHelper } from './SettingsGlassStyleHelper';
 
 const TAG = 'PageSettingsSubPage';
 const TITLE_BAR_HEIGHT = 56;
@@ -115,6 +118,7 @@ export struct PageSettingsSubPage {
   @State novelDetailPageType: DetailPageType = DetailPageType.DEFAULT;
   @State recommendationEnabled: boolean = true;
   @State shelfContentEnabled: boolean = true;
+  @State nonMainPageGlobalBackgroundEnabled: boolean = false;
 
   // 设置管理器
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -241,6 +245,14 @@ export struct PageSettingsSubPage {
     this.novelDetailPageType = novelType as DetailPageType;
     this.recommendationEnabled = this.settingsManager.getBoolean(SettingKeys.RECOMMENDATION_ENABLED, true);
     this.shelfContentEnabled = this.settingsManager.getBoolean(SettingKeys.SHELF_CONTENT_ENABLED, true);
+    this.nonMainPageGlobalBackgroundEnabled = this.settingsManager.getBoolean(
+      SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
+      false
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
+      this.nonMainPageGlobalBackgroundEnabled
+    );
 
     logger.info(TAG, `加载设置: manga=${mangaType}, ebook=${ebookType}, novel=${novelType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
   }
@@ -376,6 +388,14 @@ export struct PageSettingsSubPage {
     this.settingsManager.setString(PageSettingKeys.NOVEL_DETAIL_PAGE_TYPE, this.novelDetailPageType);
     this.settingsManager.setBoolean(SettingKeys.RECOMMENDATION_ENABLED, this.recommendationEnabled);
     this.settingsManager.setBoolean(SettingKeys.SHELF_CONTENT_ENABLED, this.shelfContentEnabled);
+    this.settingsManager.setBoolean(
+      SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
+      this.nonMainPageGlobalBackgroundEnabled
+    );
+    AppStorage.setOrCreate(
+      SettingKeys.NON_MAIN_PAGE_GLOBAL_BACKGROUND_ENABLED,
+      this.nonMainPageGlobalBackgroundEnabled
+    );
 
     logger.info(TAG, `保存设置: manga=${this.mangaDetailPageType}, ebook=${this.ebookDetailPageType}, novel=${this.novelDetailPageType}, recommendation=${this.recommendationEnabled}, shelfContent=${this.shelfContentEnabled}`);
 
@@ -978,10 +998,12 @@ export struct PageSettingsSubPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         Scroll(this.scroller) {
@@ -1113,6 +1135,41 @@ export struct PageSettingsSubPage {
                 this.saveSettings();
               })
 
+              Row() {
+                Column({ space: 4 }) {
+                  Text('非主页面全局背景')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('为所有非 MainMenu 页面启用与主页面一致的自定义背景层，默认关闭')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.nonMainPageGlobalBackgroundEnabled })
+                  .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+                  .switchPointColor(Color.White)
+                  .onChange((isOn: boolean) => {
+                    this.nonMainPageGlobalBackgroundEnabled = isOn;
+                    this.saveSettings();
+                  })
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+              .borderRadius(12)
+              .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+              .onClick(() => {
+                this.nonMainPageGlobalBackgroundEnabled = !this.nonMainPageGlobalBackgroundEnabled;
+                this.saveSettings();
+              })
+
             }
             .width(this.responsive_isLandscape ? '48%' : '100%')
             .alignItems(HorizontalAlign.Start)
@@ -1204,11 +1261,24 @@ export struct PageSettingsSubPage {
         end: LengthMetrics.vp(16)
       },
       style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.COMMON_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(56)
+        },
         originalStyle: {
-          backgroundStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme) },
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getNavigationBackground() },
           contentStyle: {
             titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
-            backIconStyle: { backgroundColor: ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: SettingsGlassStyleHelper.getSheetBackground() },
+          contentStyle: {
+            titleStyle: { mainTitleColor: ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme) },
+            backIconStyle: { backgroundColor: SettingsGlassStyleHelper.getTitleBarIconBackground(), iconColor: ThemeAwareHelper.getTestManagementThemedColor('icon_primary', this.themeState.currentTheme) }
           }
         }
       },

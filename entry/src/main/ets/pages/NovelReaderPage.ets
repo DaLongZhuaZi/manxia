@@ -49,6 +49,7 @@ import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/Theme
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { curves, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { preferences } from '@kit.ArkData';
@@ -68,6 +69,9 @@ import {
   isLocalTxtNovelReaderSource,
   syncTextReaderSettingsToEBookSettings
 } from '../Framework/Adapters/LocalTextNovelAdapter';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'NovelReaderPage';
 const NOVEL_SETTINGS_STORE = 'novel_settings';
@@ -96,10 +100,13 @@ export struct NovelReaderPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private lifecycle = new PageLifecycleManager('NovelReaderPage', { enableDebug: true });
   private componentId: string = 'NovelReaderPage';
   private themeManager: ThemeManager = ThemeManager.getInstance();
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
 
   // 内容状态
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -261,6 +268,7 @@ export struct NovelReaderPage {
     this.syncReadAloudStateFromController();
     this.startReadAloudUiSyncTimer();
     this.readAloudController.refreshMediaSession();
+    void this.refreshPageGuide('aboutToAppear');
   }
 
   aboutToDisappear(): void {
@@ -306,6 +314,52 @@ export struct NovelReaderPage {
     this.refreshCurrentNovelBookmarkState('on_page_show');
     this.readAloudController.refreshMediaSession();
     this.scheduleToolbarAutoHide('page_show');
+    void this.refreshPageGuide('onPageShow');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_novel_reader_root');
+    } catch (error) {
+      logger.warn(TAG, `获取小说阅读器引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.NOVEL_READER);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.NOVEL_READER) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+      setTimeout(() => {
+        void this.refreshPageGuide('retry_layout');
+      }, 120);
+    }
+    logger.debug(TAG, `小说阅读器引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   onPageHide(): void {
@@ -344,7 +398,7 @@ export struct NovelReaderPage {
       if (currentMode !== DisplayMode.FULL_IMMERSIVE) {
         this.previousDisplayMode = currentMode;
       }
-      WindowManager.setDisplayMode(DisplayMode.FULL_IMMERSIVE, this.uiContext);
+      WindowManager.setDisplayModeWithTransition(DisplayMode.FULL_IMMERSIVE, this.uiContext);
       logger.info(TAG, 'Entered full immersive mode');
     } catch (error) {
       logger.error(TAG, `设置全屏模式失败: ${String(error)}`);
@@ -367,6 +421,9 @@ export struct NovelReaderPage {
       const targetMode = this.previousDisplayMode === DisplayMode.FULL_IMMERSIVE
         ? DisplayMode.DEFAULT
         : this.previousDisplayMode;
+      if (WindowManager.getCurrentMode() === targetMode) {
+        return;
+      }
       WindowManager.setDisplayMode(targetMode, this.uiContext);
       logger.info(TAG, `恢复显示模式: ${targetMode}`);
     } catch (error) {
@@ -2109,7 +2166,7 @@ export struct NovelReaderPage {
       return;
     }
     AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', 'NovelReaderPage');
-    AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', DisplayMode.FULL_IMMERSIVE);
+    AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
     AppStorage.setOrCreate('ReadAloudPlayerOpeningAt', Date.now());
     globalStack.pushPathByName('ReadAloudPlayerPage', undefined);
   }
@@ -2740,8 +2797,19 @@ export struct NovelReaderPage {
       }
     };
     try {
-      this.restoreNormalMode();
-      this.pathStack.pushPathByName('AnnotationCenterPage', params);
+      PageWindowCoordinator.navigateWithManagedTransition(
+        'NovelReaderPage',
+        'AnnotationCenterPage',
+        () => {
+          try {
+            this.pathStack.pushPathByName('AnnotationCenterPage', params);
+          } catch (error) {
+            logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
+            promptAction.showToast({ message: '打开灵感页面失败', duration: 1500 });
+          }
+        },
+        this.getUIContext()
+      );
     } catch (error) {
       logger.error(TAG, `打开灵感页面失败: ${String(error)}`);
       promptAction.showToast({ message: '打开灵感页面失败', duration: 1500 });
@@ -3166,6 +3234,7 @@ export struct NovelReaderPage {
           .width('100%')
           .height('100%')
           .backgroundColor(this.getBackgroundColor())
+          .id('guide_novel_reader_root')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层 - 占满全屏
@@ -3266,6 +3335,26 @@ export struct NovelReaderPage {
         if (this.showEncyclopediaDialog) {
           this.buildEncyclopediaDialog()
         }
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
       .width('100%')
       .height('100%')
@@ -3318,6 +3407,9 @@ export struct NovelReaderPage {
         // [修复] 确保书籍存在于数据库中，用于首页最近阅读显示
         this.ensureBookInDatabase(param);
       }
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
     })
     .hideTitleBar(true)
     .onBackPressed(() => {

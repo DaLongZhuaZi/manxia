@@ -40,7 +40,6 @@ export struct ZLibraryReaderPage {
     ThemeAwareHelper.initializeThemeAware(this.componentId, this.themeState, (theme: ThemeType) => {
       logger.debug(TAG, `主题切换: ${theme}`);
     });
-    this.enterFullScreen();
     
     promptAction.showToast({
       message: 'ZLibrary在线阅读不支持进度记录',
@@ -60,7 +59,7 @@ export struct ZLibraryReaderPage {
       if (currentMode !== DisplayMode.IMMERSIVE_WITH_BARS) {
         this.previousDisplayMode = currentMode;
       }
-      WindowManager.setDisplayMode(DisplayMode.IMMERSIVE_WITH_BARS, uiContext);
+      WindowManager.setDisplayModeWithTransition(DisplayMode.IMMERSIVE_WITH_BARS, uiContext);
     } catch (e) {
       logger.warn(TAG, `进入全屏失败: ${e}`);
     }
@@ -68,7 +67,9 @@ export struct ZLibraryReaderPage {
 
   private exitFullScreen(): void {
     try {
-      WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+      if (WindowManager.getCurrentMode() !== this.previousDisplayMode) {
+        WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
+      }
     } catch (e) {
       logger.warn(TAG, `退出全屏失败: ${e}`);
     }
@@ -240,6 +241,9 @@ export struct ZLibraryReaderPage {
         this.sourceId = params.sourceId || '';
         logger.info(TAG, `打开在线阅读器: ${this.bookTitle}, URL: ${this.readerUrl}`);
       }
+    })
+    .onShown(() => {
+      this.enterFullScreen();
     })
     .backgroundColor(Color.Black)
   }

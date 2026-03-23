@@ -28,6 +28,12 @@ const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
 const READ_ALOUD_UI_STATUS_PHASE_KEY = 'ReadAloudUiStatusPhase';
 const READ_ALOUD_UI_STATUS_UPDATED_AT_KEY = 'ReadAloudUiStatusUpdatedAt';
 
+export interface ReadAloudSleepTimerSnapshot {
+  active: boolean;
+  endAt: number;
+  remainingMs: number;
+}
+
 interface ReadAloudControllerErrorLike {
   code?: number | string;
   message?: string;
@@ -97,6 +103,8 @@ export class ReadAloudController {
   private totalDurationMs: number = -1;
   private mediaSession: ReadAloudMediaSession = new ReadAloudMediaSession();
   private backgroundKeepAliveTimer: number = -1;
+  private sleepTimerHandle: number = -1;
+  private sleepTimerEndAt: number = 0;
 
   private constructor() {
     this.bindBackendProgressListener();
@@ -324,6 +332,7 @@ export class ReadAloudController {
   release(): void {
     this.stop('release');
     this.clearBackgroundKeepAliveTimer();
+    this.cancelSleepTimer();
     this.runBackendTask(this.backend.release(), `release:${this.settings.engineType}`);
     this.context = null;
     this.backend.updateContext(null);
@@ -349,6 +358,49 @@ export class ReadAloudController {
 
   refreshMediaSession(): void {
     this.syncMediaSession();
+  }
+
+  scheduleSleepTimer(durationMs: number): ReadAloudSleepTimerSnapshot {
+    const safeDurationMs = Math.max(0, Math.floor(durationMs));
+    this.cancelSleepTimer();
+    if (safeDurationMs <= 0) {
+      logger.info(TAG, '听书定时关闭请求无效，已直接取消');
+      return this.getSleepTimerSnapshot();
+    }
+
+    this.sleepTimerEndAt = Date.now() + safeDurationMs;
+    this.sleepTimerHandle = setTimeout(() => {
+      this.handleSleepTimerElapsed();
+    }, safeDurationMs) as number;
+    logger.info(TAG, `已设置听书定时关闭: 时长毫秒=${safeDurationMs}, 结束时间戳=${this.sleepTimerEndAt}`);
+    eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload('sleep_timer_scheduled'));
+    return this.getSleepTimerSnapshot();
+  }
+
+  cancelSleepTimer(): void {
+    const hadSleepTimer = this.sleepTimerHandle >= 0 || this.sleepTimerEndAt > 0;
+    if (this.sleepTimerHandle >= 0) {
+      clearTimeout(this.sleepTimerHandle);
+      this.sleepTimerHandle = -1;
+    }
+    if (this.sleepTimerEndAt > 0) {
+      logger.info(TAG, '已取消听书定时关闭');
+    }
+    this.sleepTimerEndAt = 0;
+    if (hadSleepTimer) {
+      eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload('sleep_timer_canceled'));
+    }
+  }
+
+  getSleepTimerSnapshot(): ReadAloudSleepTimerSnapshot {
+    const remainingMs = this.sleepTimerEndAt > 0
+      ? Math.max(0, this.sleepTimerEndAt - Date.now())
+      : 0;
+    return {
+      active: remainingMs > 0,
+      endAt: this.sleepTimerEndAt,
+      remainingMs: remainingMs
+    };
   }
 
   async listVoices(engineType: ReadAloudEngineType): Promise<ReadAloudVoiceOption[]> {
@@ -590,6 +642,19 @@ export class ReadAloudController {
     this.syncMediaSession();
     eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload('background_keep_alive_tick'));
     logger.debug(TAG, `后台听书保活心跳: char=${this.currentCharIndex}`);
+  }
+
+  private handleSleepTimerElapsed(): void {
+    this.sleepTimerHandle = -1;
+    const snapshot = this.getSleepTimerSnapshot();
+    if (!snapshot.active && this.sleepTimerEndAt <= 0) {
+      return;
+    }
+    this.sleepTimerEndAt = 0;
+    logger.info(TAG, '听书定时关闭已到期，准备停止播放');
+    this.stop('sleep_timer_elapsed');
+    this.updateUiStatus('sleep_timer', '定时关闭已执行', '播放已停止');
+    eventBus.publish(GameEvent.READ_ALOUD_STATE_CHANGED, this.createStatePayload('sleep_timer_elapsed'));
   }
 
   private skipByChars(delta: number, reason: string): void {

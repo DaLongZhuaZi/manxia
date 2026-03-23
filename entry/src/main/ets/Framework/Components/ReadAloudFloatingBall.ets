@@ -3,7 +3,7 @@ import { logger } from '../../Utils/Logger';
 import { ReadAloudController } from '../ReadAloud/ReadAloudController';
 import { eventBus, GameEvent, IEventPayload } from '../EventBus';
 import { ReadAloudPlaybackState, ReadAloudSessionContext, ReadAloudStateSnapshot } from '../ReadAloud/ReadAloudTypes';
-import { DisplayMode } from '../../Utils/WindowManager';
+import { DisplayMode, WindowManager } from '../../Utils/WindowManager';
 
 const TAG = 'ReadAloudFloatingBall';
 const FLOATING_BALL_REFRESH_INTERVAL_MS: number = 400;
@@ -12,6 +12,7 @@ const FLOATING_BALL_MARQUEE_WINDOW_SIZE: number = 18;
 const READ_ALOUD_UI_STATUS_TEXT_KEY = 'ReadAloudUiStatusText';
 const READ_ALOUD_UI_STATUS_DETAIL_KEY = 'ReadAloudUiStatusDetail';
 const READ_ALOUD_UI_STATUS_PHASE_KEY = 'ReadAloudUiStatusPhase';
+const READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY = 'ReadAloudFloatingBallSuppressed';
 
 @Component
 export struct ReadAloudFloatingBall {
@@ -74,7 +75,8 @@ export struct ReadAloudFloatingBall {
     const hasValidContext = snapshot.hasContext && context !== null;
     const hasActivePlayback = snapshot.playbackState === ReadAloudPlaybackState.PLAYING ||
       snapshot.playbackState === ReadAloudPlaybackState.PAUSED;
-    this.isVisible = hasValidContext && hasActivePlayback;
+    const isSuppressed = AppStorage.get<boolean>(READ_ALOUD_FLOATING_BALL_SUPPRESSED_KEY) === true;
+    this.isVisible = !isSuppressed && hasValidContext && hasActivePlayback;
     this.isPlaying = snapshot.playbackState === ReadAloudPlaybackState.PLAYING;
     this.showBackRouteIcon = this.isPlayerHostPage();
     this.currentPhase = (AppStorage.get<string>(READ_ALOUD_UI_STATUS_PHASE_KEY) ?? '').trim();
@@ -204,7 +206,7 @@ export struct ReadAloudFloatingBall {
 
     if (isReaderHost) {
       AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', currentHostPage);
-      AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', DisplayMode.FULL_IMMERSIVE);
+      AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', WindowManager.getCurrentMode());
     } else {
       AppStorage.setOrCreate('ReadAloudPlayerReturnHostPage', '');
       AppStorage.setOrCreate('ReadAloudPlayerReturnDisplayMode', '');

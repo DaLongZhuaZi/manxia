@@ -52,6 +52,24 @@ interface ThemeSystemBarStyle {
   backgroundColor: string;
 }
 
+enum DisplayModeTransitionStrategy {
+  IMMEDIATE = 'immediate',
+  SWITCH_BEFORE_NAVIGATION = 'switch_before_navigation',
+  SWITCH_AFTER_PAGE_SHOW = 'switch_after_page_show'
+}
+
+interface DisplayModeTransitionProfile {
+  key: string;
+  strategy: DisplayModeTransitionStrategy;
+  useOverlay: boolean;
+  useBlurOverlay: boolean;
+  overlayPeakOpacity: number;
+  modeApplyDelayMs: number;
+  navigationDelayMs: number;
+  settleDurationMs: number;
+  overlayFadeOutDurationMs: number;
+}
+
 /**
  * 窗口管理器 - 基于HarmonyOS NEXT API 12最新规范
  * 提供完整的显示模式管理、沉浸式显示、系统栏设置等功能
@@ -63,6 +81,15 @@ export class WindowManager {
   private static windowStageRef: window.WindowStage | null = null;
   private static windowStageEventCallback: ((event: window.WindowStageEventType) => void) | null = null;
   private static themeChangeCallback: ((theme: ThemeType) => void) | null = null;
+  private static readonly TRANSITION_OVERLAY_VISIBLE_KEY = 'window_mode_transition_overlay_visible';
+  private static readonly TRANSITION_OVERLAY_OPACITY_KEY = 'window_mode_transition_overlay_opacity';
+  private static readonly TRANSITION_OVERLAY_USE_BLUR_KEY = 'window_mode_transition_overlay_use_blur';
+  private static readonly TRANSITION_OVERLAY_PREFERS_DARK_KEY = 'window_mode_transition_overlay_prefers_dark';
+  private static readonly TRANSITION_OVERLAY_CLEANUP_BUFFER_MS = 48;
+  private static transitionModeApplyTimer: number = -1;
+  private static transitionNavigationTimer: number = -1;
+  private static transitionOverlayCleanupTimer: number = -1;
+  private static transitionGeneration: number = 0;
 
   /**
    * 获取当前 Ability 的主窗口（已废弃，仅用于内部兼容）
@@ -720,8 +747,248 @@ export class WindowManager {
   /**
    * 获取当前显示模式
    */
+  static setDisplayModeWithTransition(mode: DisplayMode, uiContext?: UIContext): void {
+    const currentMode = WindowManager.getCurrentMode();
+    if (currentMode === mode) {
+      return;
+    }
+
+    const profile = WindowManager.resolvePageShowTransitionProfile(currentMode, mode);
+    if (profile.strategy !== DisplayModeTransitionStrategy.SWITCH_AFTER_PAGE_SHOW || !profile.useOverlay) {
+      WindowManager.setDisplayMode(mode, uiContext);
+      return;
+    }
+
+    const generation = WindowManager.beginManagedDisplayTransition(profile);
+    WindowManager.transitionModeApplyTimer = setTimeout(() => {
+      WindowManager.transitionModeApplyTimer = -1;
+      if (generation !== WindowManager.transitionGeneration) {
+        return;
+      }
+
+      WindowManager.setDisplayMode(mode, uiContext);
+      WindowManager.transitionOverlayCleanupTimer = setTimeout(() => {
+        WindowManager.transitionOverlayCleanupTimer = -1;
+        if (generation !== WindowManager.transitionGeneration) {
+          return;
+        }
+        WindowManager.hideTransitionOverlay(profile.overlayFadeOutDurationMs);
+      }, profile.settleDurationMs);
+    }, profile.modeApplyDelayMs);
+  }
+
+  static navigateWithManagedDisplayMode(
+    targetMode: DisplayMode,
+    navigate: () => void,
+    uiContext?: UIContext
+  ): void {
+    const currentMode = WindowManager.getCurrentMode();
+    const profile = WindowManager.resolveForwardNavigationTransitionProfile(currentMode, targetMode);
+    if (profile.strategy !== DisplayModeTransitionStrategy.SWITCH_BEFORE_NAVIGATION || !profile.useOverlay) {
+      const shouldApplyImmediately = currentMode !== targetMode
+        && WindowManager.isFullscreenDisplayMode(currentMode)
+        && !WindowManager.isFullscreenDisplayMode(targetMode);
+      if (shouldApplyImmediately && profile.strategy === DisplayModeTransitionStrategy.IMMEDIATE) {
+        WindowManager.setDisplayMode(targetMode, uiContext);
+      }
+      navigate();
+      return;
+    }
+
+    const generation = WindowManager.beginManagedDisplayTransition(profile);
+    WindowManager.transitionModeApplyTimer = setTimeout(() => {
+      WindowManager.transitionModeApplyTimer = -1;
+      if (generation !== WindowManager.transitionGeneration) {
+        return;
+      }
+      WindowManager.setDisplayMode(targetMode, uiContext);
+    }, profile.modeApplyDelayMs);
+
+    WindowManager.transitionNavigationTimer = setTimeout(() => {
+      WindowManager.transitionNavigationTimer = -1;
+      if (generation !== WindowManager.transitionGeneration) {
+        return;
+      }
+      navigate();
+      WindowManager.hideTransitionOverlay(profile.overlayFadeOutDurationMs);
+    }, profile.navigationDelayMs);
+  }
+
   static getCurrentMode(): DisplayMode {
     return WindowManager.currentMode;
+  }
+
+  private static isFullscreenDisplayMode(mode: DisplayMode): boolean {
+    return mode === DisplayMode.FULL_IMMERSIVE || mode === DisplayMode.IMMERSIVE_WITH_BARS;
+  }
+
+  private static isSystemFittedDisplayMode(mode: DisplayMode): boolean {
+    return mode === DisplayMode.DEFAULT
+      || mode === DisplayMode.HIDE_STATUS_BAR
+      || mode === DisplayMode.HIDE_NAVIGATION_BAR;
+  }
+
+  private static initializeTransitionOverlayState(): void {
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_VISIBLE_KEY, false);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_OPACITY_KEY, 0);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_USE_BLUR_KEY, true);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_PREFERS_DARK_KEY, true);
+  }
+
+  private static clearManagedDisplayTransitionTimers(): void {
+    if (WindowManager.transitionModeApplyTimer >= 0) {
+      clearTimeout(WindowManager.transitionModeApplyTimer);
+      WindowManager.transitionModeApplyTimer = -1;
+    }
+    if (WindowManager.transitionNavigationTimer >= 0) {
+      clearTimeout(WindowManager.transitionNavigationTimer);
+      WindowManager.transitionNavigationTimer = -1;
+    }
+    if (WindowManager.transitionOverlayCleanupTimer >= 0) {
+      clearTimeout(WindowManager.transitionOverlayCleanupTimer);
+      WindowManager.transitionOverlayCleanupTimer = -1;
+    }
+  }
+
+  private static beginManagedDisplayTransition(profile: DisplayModeTransitionProfile): number {
+    WindowManager.initializeTransitionOverlayState();
+    WindowManager.clearManagedDisplayTransitionTimers();
+    WindowManager.transitionGeneration += 1;
+    WindowManager.showTransitionOverlay(profile.overlayPeakOpacity, profile.useBlurOverlay);
+    logger.info(WindowManager.TAG, `开始托管窗口过渡: ${profile.key}`);
+    return WindowManager.transitionGeneration;
+  }
+
+  private static showTransitionOverlay(opacity: number, useBlur: boolean): void {
+    WindowManager.initializeTransitionOverlayState();
+    const prefersDark = WindowManager.resolveThemeSystemBarStyle().isDarkTheme;
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_PREFERS_DARK_KEY, prefersDark);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_USE_BLUR_KEY, useBlur);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_VISIBLE_KEY, true);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_OPACITY_KEY, opacity);
+  }
+
+  private static hideTransitionOverlay(fadeOutDurationMs: number): void {
+    WindowManager.initializeTransitionOverlayState();
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_OPACITY_KEY, 0);
+    if (WindowManager.transitionOverlayCleanupTimer >= 0) {
+      clearTimeout(WindowManager.transitionOverlayCleanupTimer);
+      WindowManager.transitionOverlayCleanupTimer = -1;
+    }
+    WindowManager.transitionOverlayCleanupTimer = setTimeout(() => {
+      WindowManager.transitionOverlayCleanupTimer = -1;
+      AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_VISIBLE_KEY, false);
+    }, fadeOutDurationMs + WindowManager.TRANSITION_OVERLAY_CLEANUP_BUFFER_MS);
+  }
+
+  private static resolveForwardNavigationTransitionProfile(
+    sourceMode: DisplayMode,
+    targetMode: DisplayMode
+  ): DisplayModeTransitionProfile {
+    if (sourceMode === targetMode) {
+      return WindowManager.buildImmediateTransitionProfile('same_mode');
+    }
+
+    const sourceIsFullscreen = WindowManager.isFullscreenDisplayMode(sourceMode);
+    const targetIsFullscreen = WindowManager.isFullscreenDisplayMode(targetMode);
+    if (!sourceIsFullscreen || targetIsFullscreen) {
+      return WindowManager.buildImmediateTransitionProfile(`forward_direct_${sourceMode}_to_${targetMode}`);
+    }
+
+    if (targetMode === DisplayMode.STATUS_SAFE_BOTTOM_IMMERSIVE) {
+      return {
+        key: 'fullscreen_to_safe_immersive',
+        strategy: DisplayModeTransitionStrategy.SWITCH_BEFORE_NAVIGATION,
+        useOverlay: true,
+        useBlurOverlay: true,
+        overlayPeakOpacity: 0.14,
+        modeApplyDelayMs: 18,
+        navigationDelayMs: 68,
+        settleDurationMs: 0,
+        overlayFadeOutDurationMs: 170
+      };
+    }
+
+    return {
+      key: 'fullscreen_to_system_fitted',
+      strategy: DisplayModeTransitionStrategy.SWITCH_BEFORE_NAVIGATION,
+      useOverlay: true,
+      useBlurOverlay: true,
+      overlayPeakOpacity: 0.2,
+      modeApplyDelayMs: 18,
+      navigationDelayMs: 84,
+      settleDurationMs: 0,
+      overlayFadeOutDurationMs: 190
+    };
+  }
+
+  private static resolvePageShowTransitionProfile(
+    sourceMode: DisplayMode,
+    targetMode: DisplayMode
+  ): DisplayModeTransitionProfile {
+    if (sourceMode === targetMode) {
+      return WindowManager.buildImmediateTransitionProfile('same_mode');
+    }
+
+    const sourceIsFullscreen = WindowManager.isFullscreenDisplayMode(sourceMode);
+    const targetIsFullscreen = WindowManager.isFullscreenDisplayMode(targetMode);
+    if (sourceIsFullscreen || !targetIsFullscreen) {
+      return WindowManager.buildImmediateTransitionProfile(`page_show_direct_${sourceMode}_to_${targetMode}`);
+    }
+
+    if (targetMode === DisplayMode.IMMERSIVE_WITH_BARS) {
+      return {
+        key: 'system_to_fullscreen_with_bars',
+        strategy: DisplayModeTransitionStrategy.SWITCH_AFTER_PAGE_SHOW,
+        useOverlay: true,
+        useBlurOverlay: true,
+        overlayPeakOpacity: 0.12,
+        modeApplyDelayMs: 28,
+        navigationDelayMs: 0,
+        settleDurationMs: 130,
+        overlayFadeOutDurationMs: 170
+      };
+    }
+
+    if (WindowManager.isSystemFittedDisplayMode(sourceMode)) {
+      return {
+        key: 'system_to_fullscreen_hidden_bars',
+        strategy: DisplayModeTransitionStrategy.SWITCH_AFTER_PAGE_SHOW,
+        useOverlay: true,
+        useBlurOverlay: true,
+        overlayPeakOpacity: 0.18,
+        modeApplyDelayMs: 42,
+        navigationDelayMs: 0,
+        settleDurationMs: 150,
+        overlayFadeOutDurationMs: 190
+      };
+    }
+
+    return {
+      key: 'safe_immersive_to_fullscreen_hidden_bars',
+      strategy: DisplayModeTransitionStrategy.SWITCH_AFTER_PAGE_SHOW,
+      useOverlay: true,
+      useBlurOverlay: true,
+      overlayPeakOpacity: 0.15,
+      modeApplyDelayMs: 36,
+      navigationDelayMs: 0,
+      settleDurationMs: 140,
+      overlayFadeOutDurationMs: 180
+    };
+  }
+
+  private static buildImmediateTransitionProfile(key: string): DisplayModeTransitionProfile {
+    return {
+      key,
+      strategy: DisplayModeTransitionStrategy.IMMEDIATE,
+      useOverlay: false,
+      useBlurOverlay: false,
+      overlayPeakOpacity: 0,
+      modeApplyDelayMs: 0,
+      navigationDelayMs: 0,
+      settleDurationMs: 0,
+      overlayFadeOutDurationMs: 0
+    };
   }
 
   /**
@@ -801,6 +1068,7 @@ export class WindowManager {
   static initialize(windowStage: window.WindowStage): void {
     try {
       const mainWindow = windowStage.getMainWindowSync();
+      WindowManager.initializeTransitionOverlayState();
       WindowManager.registerWindowStageStateMonitor(windowStage);
       
       // 存储系统栏高度信息（直接传递mainWindow实例）
@@ -902,6 +1170,10 @@ export class WindowManager {
   }
 
   static dispose(): void {
+    WindowManager.clearManagedDisplayTransitionTimers();
+    WindowManager.initializeTransitionOverlayState();
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_OPACITY_KEY, 0);
+    AppStorage.setOrCreate(WindowManager.TRANSITION_OVERLAY_VISIBLE_KEY, false);
     WindowManager.unregisterThemeChangeMonitor();
     WindowManager.unregisterWindowStageStateMonitor();
   }

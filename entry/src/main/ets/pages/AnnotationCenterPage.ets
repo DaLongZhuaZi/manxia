@@ -6,8 +6,11 @@ import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import fs from '@ohos.file.fs';
 import { logger } from '../Utils/Logger';
+import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
+import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { ThemeManager } from '../Framework/Managers/ThemeManager';
 import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 import { getUnifiedAnnotationManager, UnifiedAnnotationManager } from '../Framework/Annotations/UnifiedAnnotationManager';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 import { DataManager } from '../Framework/Data/DataManager';
@@ -17,9 +20,12 @@ import { buildNovelReaderParamsFromTxtEBook } from '../Framework/Adapters/LocalT
 import { UnifiedContentType } from '../Models/UnifiedContentModels';
 import { UnifiedAnnotationRecord, UnifiedAnnotationType, HighlightLineType, AnnotationAnchor } from '../Models/AnnotationModels';
 import { EBookFormat, EBookReadingProgress } from '../Models/EBookModels';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
 
 const TAG = 'AnnotationCenterPage';
-const TITLE_BAR_HEIGHT_MINI: number = 56;
 const MAX_CONTENT_WIDTH: number = 960;
 
 type AnnotationFilterType = 'all' | 'bookmark' | 'highlight' | 'thought';
@@ -121,6 +127,8 @@ interface ContentKeyParts {
 export struct AnnotationCenterPage {
   @State pathStack: NavPathStack = new NavPathStack();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  private scroller: Scroller = new Scroller();
 
   @State contentType: UnifiedContentType = UnifiedContentType.NOVEL;
   @State contentId: string = '';
@@ -147,6 +155,8 @@ export struct AnnotationCenterPage {
   @State pageEnterOffsetY: number = 16;
   @State listOpacity: number = 1;
   @State listOffsetY: number = 0;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
 
   @State showSharePreview: boolean = false;
   @State sharePreviewTitle: string = '';
@@ -169,17 +179,90 @@ export struct AnnotationCenterPage {
   private hasCapturedDisplayMode: boolean = false;
   private hasRestoredDisplayMode: boolean = false;
   private hasEnsuredNormalMode: boolean = false;
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
+  private lastGuideAnchorId: string = '';
 
   onPageShow(): void {
     this.captureCurrentDisplayMode('onPageShow');
     this.ensureNormalDisplayMode('onPageShow');
+    void this.refreshPageGuide('onPageShow');
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_inspiration_root');
+    } catch (error) {
+      logger.warn(TAG, `获取灵感引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.INSPIRATION);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.INSPIRATION) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      this.lastGuideAnchorId = '';
+      return;
+    }
+    if (this.alignGuideViewport(step) && !trigger.endsWith('_after_scroll')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_scroll`);
+      }, 220);
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_retry_layout`);
+      }, 120);
+    }
+    logger.debug(TAG, `灵感引导已刷新: trigger=${trigger}, step=${step.id}`);
+  }
+
+  private alignGuideViewport(step: AppGuideStep): boolean {
+    const anchorId = step.anchorId ?? '';
+    if (anchorId.length <= 0) {
+      return false;
+    }
+    const scrollResult = ensureGuideAnchorVisibleInScroller(
+      this.getUIContext(),
+      this.scroller,
+      anchorId,
+      'guide_inspiration_scroll'
+    );
+    if (!scrollResult.available) {
+      return false;
+    }
+    this.lastGuideAnchorId = anchorId;
+    return scrollResult.scrolled;
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
   }
 
   private captureCurrentDisplayMode(trigger: string): void {
     if (this.hasCapturedDisplayMode) {
       return;
     }
-    this.previousDisplayMode = WindowManager.getCurrentMode();
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
     this.hasCapturedDisplayMode = true;
     logger.info(TAG, `记录进入灵感页前的显示模式: trigger=${trigger}, mode=${this.previousDisplayMode}`);
   }
@@ -195,7 +278,7 @@ export struct AnnotationCenterPage {
       if (!this.uiContext) {
         return;
       }
-      WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.uiContext);
+      PageWindowCoordinator.applyPagePolicy('AnnotationCenterPage', this.uiContext);
       this.hasEnsuredNormalMode = true;
       logger.info(TAG, `已切换为非沉浸式显示: trigger=${trigger}，确保灵感页标题栏与状态栏避让正常`);
     } catch (error) {
@@ -214,7 +297,7 @@ export struct AnnotationCenterPage {
       if (!this.uiContext) {
         return;
       }
-      WindowManager.setDisplayMode(this.previousDisplayMode, this.uiContext);
+      PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.uiContext);
       this.hasRestoredDisplayMode = true;
       logger.info(TAG, `离开灵感页，恢复显示模式: trigger=${trigger}, mode=${this.previousDisplayMode}`);
     } catch (error) {
@@ -2127,15 +2210,16 @@ export struct AnnotationCenterPage {
   build() {
     HdsNavDestination() {
       Stack() {
-        Column()
+        SharedPageBackgroundLayer({
+          defaultBackgroundColor: $r('app.color.settings_panel_background'),
+          mode: GlobalBackgroundLayerMode.IMMERSIVE
+        })
           .width('100%')
           .height('100%')
-          .backgroundColor($r('app.color.settings_panel_background'))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-        Scroll() {
+        Scroll(this.scroller) {
           Column({ space: 12 }) {
-            Blank().height(TITLE_BAR_HEIGHT_MINI)
 
             this.buildContentSelectorSection()
 
@@ -2146,6 +2230,7 @@ export struct AnnotationCenterPage {
               this.buildFilterButton('想法', 'thought')
             }
             .width('100%')
+            .id('guide_inspiration_filters')
 
             Row() {
               Text(`已选${this.selectedRecordIds.length} 条`)
@@ -2257,15 +2342,36 @@ export struct AnnotationCenterPage {
         }
         .width('100%')
         .height('100%')
+        .id('guide_inspiration_scroll')
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         this.buildSharePreviewOverlay()
+
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
       }
       .width('100%')
       .height('100%')
+      .id('guide_inspiration_root')
       .expandSafeArea(
         [SafeAreaType.SYSTEM, SafeAreaType.CUTOUT],
         [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM, SafeAreaEdge.START, SafeAreaEdge.END]
@@ -2273,7 +2379,7 @@ export struct AnnotationCenterPage {
     }
     .hideTitleBar(false)
     .mode(NavDestinationMode.STANDARD)
-    .titleBar({
+    .titleBar(withSafeAreaTitleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -2302,8 +2408,15 @@ export struct AnnotationCenterPage {
           }]
         }
       }
-    })
+    }))
     .backgroundColor(Color.Transparent)
+    .onWillAppear(() => {
+      this.captureCurrentDisplayMode('onWillAppear');
+      this.ensureNormalDisplayMode('onWillAppear');
+    })
+    .onWillShow(() => {
+      this.ensureNormalDisplayMode('onWillShow');
+    })
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.captureCurrentDisplayMode('onReady');
@@ -2329,6 +2442,9 @@ export struct AnnotationCenterPage {
         this.selectedContentName = '全部内容';
         this.selectedContentCoverUri = '';
       }
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
       this.startPageEnterAnimation();
       void this.loadAnnotations();
     })

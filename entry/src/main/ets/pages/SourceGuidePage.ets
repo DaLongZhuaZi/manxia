@@ -8,6 +8,8 @@ import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { logger } from '../Utils/Logger';
 import { PageLifecycleManager } from '../Framework/Lifecycle';
+import { DisplayMode } from '../Utils/WindowManager';
+import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
 
 const TAG = 'SourceGuidePage';
 
@@ -26,12 +28,15 @@ export struct SourceGuidePage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = `SourceGuidePage_${Date.now()}`;
+  private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
 
   // 滚动控制器
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
     logger.lifecycle(TAG, 'aboutToAppear');
+    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
+    PageWindowCoordinator.applyPagePolicy('SourceGuidePage', this.getUIContext());
     
     // 初始化主题状态
     ThemeAwareHelper.initializeThemeAware(
@@ -57,6 +62,7 @@ export struct SourceGuidePage {
 
   aboutToDisappear(): void {
     logger.lifecycle(TAG, 'aboutToDisappear');
+    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
     FontAwareHelper.cleanupFontAware(this.componentId);

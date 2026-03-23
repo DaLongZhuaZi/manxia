@@ -18,7 +18,7 @@
  * ```
  */
 
-import { ThemeManager, ThemeType } from '../Managers/ThemeManager';
+import { ThemeManager, ThemeType, GlassLevel, GlassStyleToken } from '../Managers/ThemeManager';
 
 /**
  * 颜色角色枚举 - 定义所有语义化颜色角色
@@ -510,8 +510,37 @@ export class AppColors {
   static get divider(): string { return getColorForCurrentTheme(ColorRole.DIVIDER); }
   static get overlay(): string { return getColorForCurrentTheme(ColorRole.OVERLAY); }
   static get ripple(): string { return getColorForCurrentTheme(ColorRole.RIPPLE); }
+
+  // ==================== Glass Tokens ====================
+  static get glassHero(): string { return AppColors.getGlassToken(GlassLevel.HERO).backgroundColor; }
+  static get glassNavigation(): string { return AppColors.getGlassToken(GlassLevel.NAVIGATION).backgroundColor; }
+  static get glassCard(): string { return AppColors.getGlassToken(GlassLevel.CARD).backgroundColor; }
+  static get glassSheet(): string { return AppColors.getGlassToken(GlassLevel.SHEET).backgroundColor; }
+  static get glassFloating(): string { return AppColors.getGlassToken(GlassLevel.FLOATING).backgroundColor; }
+
+  static get glassHeroBorder(): string { return AppColors.getGlassToken(GlassLevel.HERO).borderColor; }
+  static get glassNavigationBorder(): string { return AppColors.getGlassToken(GlassLevel.NAVIGATION).borderColor; }
+  static get glassCardBorder(): string { return AppColors.getGlassToken(GlassLevel.CARD).borderColor; }
+  static get glassSheetBorder(): string { return AppColors.getGlassToken(GlassLevel.SHEET).borderColor; }
+  static get glassFloatingBorder(): string { return AppColors.getGlassToken(GlassLevel.FLOATING).borderColor; }
   
   // ==================== 工具方法 ====================
+
+  static getGlassToken(level: GlassLevel = GlassLevel.CARD): GlassStyleToken {
+    return ThemeManager.getInstance().getGlassToken(level);
+  }
+
+  static getGlassBackground(level: GlassLevel = GlassLevel.CARD): string {
+    return AppColors.getGlassToken(level).backgroundColor;
+  }
+
+  static getGlassBorder(level: GlassLevel = GlassLevel.CARD): string {
+    return AppColors.getGlassToken(level).borderColor;
+  }
+
+  static getGlassShadow(level: GlassLevel = GlassLevel.CARD): string {
+    return AppColors.getGlassToken(level).shadowColor;
+  }
   
   /**
    * 根据颜色角色获取颜色
@@ -648,12 +677,24 @@ export class AppColors {
   }
   
   /**
-   * 获取圆角大小
+   * 获取组件圆角大小
    */
   static get cornerRadius(): number {
     try {
       const themeManager = ThemeManager.getInstance();
       return themeManager.getUserCornerRadius();
+    } catch {
+      return 12;
+    }
+  }
+
+  /**
+   * 获取封面图片圆角大小
+   */
+  static get coverCornerRadius(): number {
+    try {
+      const themeManager = ThemeManager.getInstance();
+      return themeManager.getUserCoverCornerRadius();
     } catch {
       return 12;
     }

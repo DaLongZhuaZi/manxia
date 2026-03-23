@@ -83,6 +83,16 @@ export class SettingsSearchSupport {
     { id: 'font_ebook', title: '电子书字体设置', description: '电子书字体、字号和行高倍率', targetPage: 'FontSettingsSubPage', anchorId: 'font_ebook', scrollOffset: 1400, keywords: ['电子书字体', '字体大小', '行高倍率'] },
     { id: 'font_reset', title: '字体设置恢复默认', description: '恢复字体相关设置', targetPage: 'FontSettingsSubPage', anchorId: 'font_reset', scrollOffset: 1880, keywords: ['恢复默认', '重置字体设置'] },
 
+    // 主题设置
+    { id: 'theme_custom_manage', title: '自定义主题', description: '查看、应用、恢复和管理已保存的自定义主题', targetPage: 'ThemeSettingsPage', anchorId: 'theme_custom', scrollOffset: 0, keywords: ['主题设置', '自定义主题', '默认主题', '第一自定义主题', '第二自定义主题', '应用主题', '关闭自定义主题', '恢复默认主题'] },
+    { id: 'theme_custom_create', title: '创建自定义主题', description: '创建新的主题并进入主题制作流程', targetPage: 'ThemeSettingsPage', anchorId: 'theme_custom', scrollOffset: 0, keywords: ['创建自定义主题', '新增主题', '主题商店', '主题列表'] },
+    { id: 'theme_transparency_nav', title: '导航栏透明度', description: '调整导航栏、卡片、对话框和悬浮球透明度', targetPage: 'ThemeSettingsPage', anchorId: 'theme_transparency', scrollOffset: 280, keywords: ['透明度设置', '导航栏透明度', '卡片透明度', '对话框透明度', '悬浮球透明度', '预览效果'] },
+    { id: 'theme_effects_blur', title: '主题特效', description: '模糊、阴影、动画、玻璃拟态和圆角效果', targetPage: 'ThemeSettingsPage', anchorId: 'theme_effects', scrollOffset: 880, keywords: ['特效设置', '模糊效果', '模糊强度', '阴影效果', '动画效果', '动画速度', '玻璃拟态效果', '重置为默认'] },
+    { id: 'theme_effects_corner', title: '主题圆角', description: '分别调整组件圆角与封面图片圆角', targetPage: 'ThemeSettingsPage', anchorId: 'theme_effects', scrollOffset: 1040, keywords: ['组件圆角', '封面图片圆角', '封面圆角', '卡片圆角'] },
+    { id: 'theme_create_background', title: '主题背景图片', description: '选择背景图片和开屏背景图片', targetPage: 'ThemeSettingsPage', anchorId: 'theme_create_background', scrollOffset: 1260, keywords: ['背景图片', '选择背景图片', '开屏背景图片', '开屏图片', '主题背景', '图片处理', '模糊程度', '亮度'] },
+    { id: 'theme_create_colors', title: '主题色选择', description: '从图片提取主色调并选择主题色', targetPage: 'ThemeSettingsPage', anchorId: 'theme_create_colors', scrollOffset: 1900, keywords: ['选择主题色', '主题色', '主色调', '从图片提取', '可选主题色', '颜色提取'] },
+    { id: 'theme_create_save', title: '保存主题', description: '填写主题名称并保存应用当前主题', targetPage: 'ThemeSettingsPage', anchorId: 'theme_create_save', scrollOffset: 2320, keywords: ['保存并应用主题', '主题名称', '保存主题', '应用主题', '创建主题'] },
+
     // 交互设置
     { id: 'interaction_switch', title: '启用震动反馈', description: '全局震动反馈开关', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_basic', scrollOffset: 0, keywords: ['启用震动反馈', '震动反馈', '触觉反馈'] },
     { id: 'interaction_intensity', title: '震动强度', description: '设置震动强度等级', targetPage: 'InteractionSettingsSubPage', anchorId: 'interaction_intensity', scrollOffset: 380, keywords: ['震动强度', '强度等级'] },
