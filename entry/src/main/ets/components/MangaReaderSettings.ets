@@ -124,7 +124,10 @@ export struct MangaReaderSettings {
     
     // 复制阅读设置（确保所有字段都被复制）
     this.currentSettings.readingMode = this.readingSettings.readingMode;
-    this.currentSettings.readingDirection = this.readingSettings.readingDirection;
+    this.currentSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      this.readingSettings.readingMode,
+      this.readingSettings.readingDirection
+    );
     this.currentSettings.brightness = this.readingSettings.brightness;
     this.currentSettings.keepScreenOn = this.readingSettings.keepScreenOn;
     this.currentSettings.pageSpacing = this.readingSettings.pageSpacing;
@@ -305,6 +308,10 @@ export struct MangaReaderSettings {
    */
   private updateReadingMode(mode: ReadingMode): void {
     this.currentSettings.readingMode = mode;
+    this.currentSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      mode,
+      this.currentSettings.readingDirection
+    );
     // 立即通知父组件应用设置，但不关闭面板
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(this.currentSettings);
@@ -316,12 +323,77 @@ export struct MangaReaderSettings {
    * 更新阅读方向（立即应用）
    */
   private updateReadingDirection(direction: ReadingDirection): void {
-    this.currentSettings.readingDirection = direction;
+    this.currentSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      this.currentSettings.readingMode,
+      direction
+    );
     // 立即通知父组件应用设置，但不关闭面板
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(this.currentSettings);
     }
     logger.info(TAG, `阅读方向已更新: ${direction}`);
+  }
+
+  private isCurrentWebtoonReadingMode(): boolean {
+    return this.currentSettings.readingMode === ReadingMode.WEBTOON ||
+      this.currentSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
+      this.currentSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isContinuousScrollMode(): boolean {
+    return this.currentSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private normalizeReadingDirection(direction: ReadingDirection): ReadingDirection {
+    return direction === ReadingDirection.VERTICAL
+      ? ReadingDirection.TOP_TO_BOTTOM
+      : direction;
+  }
+
+  private normalizeReadingDirectionForMode(mode: ReadingMode, direction: ReadingDirection): ReadingDirection {
+    const normalizedDirection = this.normalizeReadingDirection(direction);
+    if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if ((mode === ReadingMode.WEBTOON ||
+      mode === ReadingMode.WEBTOON_WITH_GAP ||
+      mode === ReadingMode.CONTINUOUS_VERTICAL) &&
+      normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    if (mode === ReadingMode.CONTINUOUS_SCROLL && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    return normalizedDirection;
+  }
+
+  private getSelectedReadingDirection(): ReadingDirection {
+    return this.normalizeReadingDirectionForMode(
+      this.currentSettings.readingMode,
+      this.currentSettings.readingDirection
+    );
+  }
+
+  private isTTBDirectionDisabled(): boolean {
+    return this.currentSettings.readingMode === ReadingMode.DOUBLE_PAGE ||
+      this.isContinuousScrollMode();
+  }
+
+  private isHorizontalDirectionDisabled(): boolean {
+    return this.isCurrentWebtoonReadingMode();
+  }
+
+  private getReadingDirectionHint(): string {
+    if (this.isContinuousScrollMode()) {
+      return '连续滚动仅支持从左到右或从右到左';
+    }
+    if (this.isHorizontalDirectionDisabled()) {
+      return '条漫模式仅支持从上到下';
+    }
+    if (this.isTTBDirectionDisabled()) {
+      return '双页模式不支持从上到下';
+    }
+    return '';
   }
 
   /**
@@ -620,69 +692,92 @@ export struct MangaReaderSettings {
         .width('100%')
         .margin({ bottom: 12 })
 
+      if (this.getReadingDirectionHint().length > 0) {
+        Text(this.getReadingDirectionHint())
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .margin({ bottom: 12 })
+      }
+
       Row() {
         // 从左到右
         Column() {
           Image($r('app.media.ic_ltr'))
             .width(24)
             .height(24)
-            .fillColor(this.currentSettings.readingDirection === ReadingDirection.LEFT_TO_RIGHT ? 
+            .fillColor(this.getSelectedReadingDirection() === ReadingDirection.LEFT_TO_RIGHT ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('左→右')
             .fontSize(12)
-            .fontColor(this.currentSettings.readingDirection === ReadingDirection.LEFT_TO_RIGHT ? 
+            .fontColor(this.getSelectedReadingDirection() === ReadingDirection.LEFT_TO_RIGHT ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
             .margin({ top: 4 })
         }
         .layoutWeight(1)
         .padding(12)
-        .backgroundColor(this.currentSettings.readingDirection === ReadingDirection.LEFT_TO_RIGHT ? 
+        .backgroundColor(this.getSelectedReadingDirection() === ReadingDirection.LEFT_TO_RIGHT ? 
           $r('app.color.accent_background') : Color.Transparent)
         .borderRadius(8)
-        .onClick(() => this.updateReadingDirection(ReadingDirection.LEFT_TO_RIGHT))
+        .opacity(this.isHorizontalDirectionDisabled() ? 0.4 : 1.0)
+        .onClick(() => {
+          if (!this.isHorizontalDirectionDisabled()) {
+            this.updateReadingDirection(ReadingDirection.LEFT_TO_RIGHT);
+          }
+        })
 
         // 从右到左
         Column() {
           Image($r('app.media.ic_rtl'))
             .width(24)
             .height(24)
-            .fillColor(this.currentSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT ? 
+            .fillColor(this.getSelectedReadingDirection() === ReadingDirection.RIGHT_TO_LEFT ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
           Text('右→左')
             .fontSize(12)
-            .fontColor(this.currentSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT ? 
+            .fontColor(this.getSelectedReadingDirection() === ReadingDirection.RIGHT_TO_LEFT ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
             .margin({ top: 4 })
         }
         .layoutWeight(1)
         .padding(12)
-        .backgroundColor(this.currentSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT ? 
+        .backgroundColor(this.getSelectedReadingDirection() === ReadingDirection.RIGHT_TO_LEFT ? 
           $r('app.color.accent_background') : Color.Transparent)
         .borderRadius(8)
-        .onClick(() => this.updateReadingDirection(ReadingDirection.RIGHT_TO_LEFT))
+        .opacity(this.isHorizontalDirectionDisabled() ? 0.4 : 1.0)
+        .onClick(() => {
+          if (!this.isHorizontalDirectionDisabled()) {
+            this.updateReadingDirection(ReadingDirection.RIGHT_TO_LEFT);
+          }
+        })
 
         // 垂直
         Column() {
           Image($r('app.media.ic_vertical'))
             .width(24)
             .height(24)
-            .fillColor(this.currentSettings.readingDirection === ReadingDirection.VERTICAL ? 
+            .fillColor(this.getSelectedReadingDirection() === ReadingDirection.TOP_TO_BOTTOM ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
 
-          Text('垂直')
+          Text('从上到下')
             .fontSize(12)
-            .fontColor(this.currentSettings.readingDirection === ReadingDirection.VERTICAL ? 
+            .fontColor(this.getSelectedReadingDirection() === ReadingDirection.TOP_TO_BOTTOM ? 
               $r('app.color.accent') : $r('app.color.text_secondary'))
             .margin({ top: 4 })
         }
         .layoutWeight(1)
         .padding(12)
-        .backgroundColor(this.currentSettings.readingDirection === ReadingDirection.VERTICAL ? 
+        .backgroundColor(this.getSelectedReadingDirection() === ReadingDirection.TOP_TO_BOTTOM ? 
           $r('app.color.accent_background') : Color.Transparent)
         .borderRadius(8)
-        .onClick(() => this.updateReadingDirection(ReadingDirection.VERTICAL))
+        .opacity(this.isTTBDirectionDisabled() ? 0.4 : 1.0)
+        .onClick(() => {
+          if (!this.isTTBDirectionDisabled()) {
+            this.updateReadingDirection(ReadingDirection.TOP_TO_BOTTOM);
+          }
+        })
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween)

@@ -617,6 +617,83 @@ export struct MangaReaderPage {
     }
   }
 
+  private async waitForGuideLayout(delayMs: number = 140): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, delayMs);
+    });
+  }
+
+  private async prepareGuidePresentation(anchorId?: string): Promise<void> {
+    if (!anchorId || anchorId.length <= 0) {
+      return;
+    }
+    let changed: boolean = false;
+    if (this.autoHideTimer !== -1) {
+      clearTimeout(this.autoHideTimer);
+      this.autoHideTimer = -1;
+    }
+    switch (anchorId) {
+      case 'guide_manga_reader_top_toolbar':
+      case 'guide_manga_reader_bottom_toolbar':
+        changed = !this.showTopToolbar || !this.showBottomToolbar || this.showSettingsPanel ||
+          this.showQuickSettings || this.showMoreMenu || this.showChapterList ||
+          this.showAutoPageTurnSettings || this.showPageTurnAnimationSettings || this.showJumpToPageDialog ||
+          this.toolbarOpacity < 0.99;
+        this.showSettingsPanel = false;
+        this.showQuickSettings = false;
+        this.showMoreMenu = false;
+        this.showChapterList = false;
+        this.showAutoPageTurnSettings = false;
+        this.showPageTurnAnimationSettings = false;
+        this.showJumpToPageDialog = false;
+        this.showTopToolbar = true;
+        this.showBottomToolbar = true;
+        this.toolbarOpacity = 1;
+        this.toolbarTranslateY = 0;
+        break;
+      case 'guide_manga_reader_chapter_list':
+        changed = this.showTopToolbar || this.showBottomToolbar || !this.showChapterList ||
+          this.showSettingsPanel || this.showQuickSettings || this.showMoreMenu ||
+          this.showAutoPageTurnSettings || this.showPageTurnAnimationSettings || this.showJumpToPageDialog ||
+          this.toolbarOpacity > 0.01;
+        this.showTopToolbar = false;
+        this.showBottomToolbar = false;
+        this.toolbarOpacity = 0;
+        this.toolbarTranslateY = 0;
+        this.showSettingsPanel = false;
+        this.showQuickSettings = false;
+        this.showMoreMenu = false;
+        this.showAutoPageTurnSettings = false;
+        this.showPageTurnAnimationSettings = false;
+        this.showJumpToPageDialog = false;
+        this.showChapterList = true;
+        break;
+      default:
+        changed = this.showTopToolbar || this.showBottomToolbar || this.showSettingsPanel ||
+          this.showQuickSettings || this.showMoreMenu || this.showChapterList ||
+          this.showAutoPageTurnSettings || this.showPageTurnAnimationSettings || this.showJumpToPageDialog ||
+          this.toolbarOpacity > 0.01;
+        this.showTopToolbar = false;
+        this.showBottomToolbar = false;
+        this.toolbarOpacity = 0;
+        this.toolbarTranslateY = 0;
+        this.showSettingsPanel = false;
+        this.showQuickSettings = false;
+        this.showMoreMenu = false;
+        this.showChapterList = false;
+        this.showAutoPageTurnSettings = false;
+        this.showPageTurnAnimationSettings = false;
+        this.showJumpToPageDialog = false;
+        break;
+    }
+    this.handleMenusVisibilityChange();
+    if (changed) {
+      await this.waitForGuideLayout();
+    }
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -628,6 +705,7 @@ export struct MangaReaderPage {
       this.appGuideHighlightRect = null;
       return;
     }
+    await this.prepareGuidePresentation(step.anchorId);
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
@@ -990,7 +1068,7 @@ export struct MangaReaderPage {
           // 条漫模式：使用异步翻页，等待滚动完成
     this.autoPageTurnController.setCallbacks(
       () => {
-        if (this.isWebtoonMode()) {
+        if (this.isScrollableReaderMode()) {
             // 翻页完成后，通知控制器继续下一次翻页
             logger.debug(TAG, '条漫模式自动翻页完成，准备下一次翻页');
           this.goToNextPage(() => {
@@ -3793,6 +3871,9 @@ export struct MangaReaderPage {
       const targetIndex = pageNumber - 1;
       logger.info(TAG, `跳转到页面: ${pageNumber}/${totalPages}`);
       this.readerState.currentPageIndex = targetIndex;
+      if (this.isScrollableReaderMode() && this.mangaViewerComponent?.smoothScrollToPage) {
+        this.mangaViewerComponent.smoothScrollToPage(targetIndex, 1.0);
+      }
       this.hideJumpToPageDialogWithAnimation();
       // 保存进度
       this.saveReadingProgressInternal('jumpToPage').catch((error: Error) => {
@@ -5349,6 +5430,14 @@ export struct MangaReaderPage {
            this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
   }
 
+  private isContinuousScrollMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private isScrollableReaderMode(): boolean {
+    return this.isWebtoonMode() || this.isContinuousScrollMode();
+  }
+
   /**
    * 滚动到条漫模式的指定页面
    * 滚动到条漫模式的指定页面
@@ -5413,7 +5502,7 @@ export struct MangaReaderPage {
       logger.debug(TAG, `翻到上一页: ${this.readerState.currentPageIndex} -> ${newPageIndex}`);
       
       // 根据阅读模式处理不同的翻页逻辑
-      if (this.isWebtoonMode()) {
+      if (this.isScrollableReaderMode()) {
       // 根据阅读模式处理不同的翻页逻辑
         if (this.mangaViewerComponent && this.mangaViewerComponent.smoothScrollToPreviousPage) {
           const scrollSpeed = Math.max(0.5, Math.min(2.0, this.readingSettings.autoPageTurnInterval / 5000));
@@ -5466,7 +5555,7 @@ export struct MangaReaderPage {
       logger.debug(TAG, `翻到下一页: ${this.readerState.currentPageIndex} -> ${newPageIndex}${isAutoScroll ? ' (自动翻页)' : ''}`);
       
       // 根据阅读模式处理不同的翻页逻辑
-      if (this.isWebtoonMode()) {
+      if (this.isScrollableReaderMode()) {
       // 根据阅读模式处理不同的翻页逻辑
         if (this.mangaViewerComponent) {
           const scrollSpeed = Math.max(0.5, Math.min(2.0, this.readingSettings.autoPageTurnInterval / 5000));
@@ -6112,6 +6201,7 @@ export struct MangaReaderPage {
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     .opacity(this.toolbarOpacity)
+    .id('guide_manga_reader_top_toolbar')
   }
 
   /**
@@ -6144,7 +6234,7 @@ export struct MangaReaderPage {
             this.refreshCurrentMangaBookmarkState('toolbar_slider_change');
             
         // 自动翻页设置按钮（最右侧）
-            if (this.isWebtoonMode() && this.mangaViewerComponent) {
+            if (this.isScrollableReaderMode() && this.mangaViewerComponent) {
               this.mangaViewerComponent.smoothScrollToPage(targetPage, 1.5);
             }
             
@@ -6243,6 +6333,7 @@ export struct MangaReaderPage {
     .backgroundBlurStyle(ThemeManager.getInstance().getGlassBlurStyle())
     .shadow({ radius: ThemeManager.getInstance().getGlassRadius(), color: ThemeManager.getInstance().getGlassShadowColor(), offsetX: 0, offsetY: -2 })
     .opacity(this.toolbarOpacity)
+    .id('guide_manga_reader_bottom_toolbar')
   }
 
 
@@ -6524,7 +6615,7 @@ export struct MangaReaderPage {
               }
               
         // 每日限额提示横幅（顶部悬浮）
-              if (chapter && this.isWebtoonMode() && expectedIndex > 0) {
+              if (chapter && this.isScrollableReaderMode() && (expectedIndex > 0 || this.isContinuousScrollMode())) {
                 setTimeout(() => {
                   if (component.jumpToPageImmediate) {
                     const success = component.jumpToPageImmediate(expectedIndex);
@@ -6930,6 +7021,7 @@ export struct MangaReaderPage {
               }
             }
           })
+          .id('guide_manga_reader_chapter_list')
           .zIndex(1000)
         }
 
@@ -7647,6 +7739,7 @@ export struct MangaReaderPage {
             nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
             cardPosition: this.appGuideStep.cardPosition,
             highlightRect: this.appGuideHighlightRect,
+            immersiveMode: true,
             showSkip: this.appGuideStep.showSkip !== false,
             themeState: this.themeState,
             onNext: () => {
@@ -7668,6 +7761,7 @@ export struct MangaReaderPage {
       .width('100%')
       .height('100%')
       .opacity(this.contentOpacity)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .focusable(true)
       .defaultFocus(true)
       .id('manga_reader_root')

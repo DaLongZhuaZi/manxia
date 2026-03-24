@@ -62,6 +62,22 @@ export class WelcomeGuideManager {
     // 私有构造函数，防止外部实例化
   }
 
+  private isSourceFeaturesEnabled(): boolean {
+    const rawValue = AppStorage.get('source_features_enabled') as boolean | number | string | null | undefined;
+    return rawValue === true || rawValue === 1 || rawValue === 'true' || rawValue === '1';
+  }
+
+  private isSourceFeatureStep(step: GuideStep): boolean {
+    return step === GuideStep.IMAGE_SOURCE_GUIDE || step === GuideStep.BOOK_SOURCE_GUIDE;
+  }
+
+  private normalizeStep(step: GuideStep): GuideStep {
+    if (!this.isSourceFeaturesEnabled() && this.isSourceFeatureStep(step)) {
+      return GuideStep.CUSTOM_EXPERIENCE;
+    }
+    return step;
+  }
+
   /**
    * 获取单例实例
    */
@@ -136,7 +152,7 @@ export class WelcomeGuideManager {
         
         // 读取当前步骤
         const savedStep = await this.preferencesStore.get(this.KEY_CURRENT_STEP, GuideStep.WELCOME) as number;
-        this.currentStep = savedStep as GuideStep;
+        this.currentStep = this.normalizeStep(savedStep as GuideStep);
         
         logger.info(TAG, `引导状态加载完成: 首次=${this.isFirstLaunch}, 完成=${this.guideCompleted}, 跳过=${this.guideSkipped}, 步骤=${this.currentStep}`);
       }
@@ -188,6 +204,9 @@ export class WelcomeGuideManager {
    */
   public async markNotFirstLaunch(): Promise<void> {
     try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
       this.isFirstLaunch = false;
       await this.saveGuideState();
       logger.info(TAG, '已标记为非首次启动');
@@ -201,6 +220,9 @@ export class WelcomeGuideManager {
    */
   public async markGuideCompleted(): Promise<void> {
     try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
       this.guideCompleted = true;
       this.isFirstLaunch = false;
       this.currentStep = GuideStep.COMPLETED;
@@ -216,6 +238,9 @@ export class WelcomeGuideManager {
    */
   public async skipGuide(): Promise<void> {
     try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
       this.guideSkipped = true;
       this.isFirstLaunch = false;
       await this.saveGuideState();
@@ -230,6 +255,9 @@ export class WelcomeGuideManager {
    */
   public async resetGuide(): Promise<void> {
     try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
       this.isFirstLaunch = true;
       this.guideCompleted = false;
       this.guideSkipped = false;
@@ -245,7 +273,7 @@ export class WelcomeGuideManager {
    * 获取当前步骤
    */
   public getCurrentStep(): GuideStep {
-    return this.currentStep;
+    return this.normalizeStep(this.currentStep);
   }
 
   /**
@@ -253,9 +281,12 @@ export class WelcomeGuideManager {
    */
   public async setCurrentStep(step: GuideStep): Promise<void> {
     try {
-      this.currentStep = step;
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
+      this.currentStep = this.normalizeStep(step);
       await this.saveGuideState();
-      logger.info(TAG, `引导步骤更新为: ${step}`);
+      logger.info(TAG, `引导步骤更新为: ${this.currentStep}`);
     } catch (error) {
       logger.error(TAG, '设置引导步骤失败', String(error));
     }
@@ -266,8 +297,11 @@ export class WelcomeGuideManager {
    */
   public async nextStep(): Promise<GuideStep> {
     try {
+      if (!this.isInitialized) {
+        await this.initialize();
+      }
       if (this.currentStep < GuideStep.COMPLETED) {
-        this.currentStep = this.currentStep + 1;
+        this.currentStep = this.normalizeStep((this.currentStep + 1) as GuideStep);
         await this.saveGuideState();
         logger.info(TAG, `进入下一步: ${this.currentStep}`);
       }

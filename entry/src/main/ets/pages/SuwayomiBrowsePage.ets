@@ -120,6 +120,12 @@ export struct SuwayomiBrowsePage {
       this.appGuideHighlightRect = null;
       return;
     }
+    if (await this.prepareGuidePresentation(step.anchorId) && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 220);
+      return;
+    }
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
@@ -140,6 +146,33 @@ export struct SuwayomiBrowsePage {
     void this.appGuideManager.skipCurrentFlow().then(() => {
       void this.refreshPageGuide('skip');
     });
+  }
+
+  private async prepareGuidePresentation(anchorId?: string): Promise<boolean> {
+    let targetMode: BrowseMode | null = null;
+    switch (anchorId) {
+      case 'guide_suwayomi_root':
+      case 'guide_suwayomi_bottom_tabs':
+      case 'guide_suwayomi_top_bar':
+      case 'guide_suwayomi_library_filters':
+      case 'guide_suwayomi_library_content':
+        targetMode = 'library';
+        break;
+      case 'guide_suwayomi_source_content':
+        targetMode = 'sources';
+        break;
+      default:
+        break;
+    }
+    if (!targetMode || this.browseMode === targetMode) {
+      return false;
+    }
+    if (targetMode === 'library') {
+      await this.loadLibraryPaginated(true);
+    } else {
+      await this.loadSources();
+    }
+    return true;
   }
 
   private async initialize(): Promise<void> {
@@ -915,6 +948,7 @@ export struct SuwayomiBrowsePage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .position({ x: 0, y: '100%' })
     .translate({ y: -28 - 8 })
+    .id('guide_suwayomi_bottom_tabs')
   }
 
   @Builder
@@ -960,6 +994,7 @@ export struct SuwayomiBrowsePage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .id('guide_suwayomi_top_bar')
   }
 
   @Builder
@@ -1100,6 +1135,7 @@ export struct SuwayomiBrowsePage {
       .scrollBar(BarState.Off)
       .width('100%')
       .height(44)
+      .id('guide_suwayomi_library_filters')
     }
   }
 
@@ -1189,6 +1225,7 @@ export struct SuwayomiBrowsePage {
               .width('100%')
               .layoutWeight(1)
               .justifyContent(FlexAlign.Center)
+              .id('guide_suwayomi_source_content')
             } else if (this.displayMode === 'grid') {
               // Grid模式
               Refresh({ refreshing: this.isRefreshing }) {
@@ -1219,6 +1256,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
+              .id('guide_suwayomi_source_content')
             } else {
               // List模式
               Refresh({ refreshing: this.isRefreshing }) {
@@ -1240,6 +1278,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
+              .id('guide_suwayomi_source_content')
             }
           } else {
             // 漫画列表
@@ -1253,6 +1292,7 @@ export struct SuwayomiBrowsePage {
               .width('100%')
               .layoutWeight(1)
               .justifyContent(FlexAlign.Center)
+              .id('guide_suwayomi_library_content')
             } else if (this.displayMode === 'grid') {
               // Grid模式
               Refresh({ refreshing: this.isRefreshing }) {
@@ -1298,6 +1338,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
+              .id('guide_suwayomi_library_content')
               .gesture(
                 PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
                   .onActionStart((event: GestureEvent) => {
@@ -1353,6 +1394,7 @@ export struct SuwayomiBrowsePage {
               })
               .width('100%')
               .layoutWeight(1)
+              .id('guide_suwayomi_library_content')
               .gesture(
                 PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
                   .onActionStart((event: GestureEvent) => {

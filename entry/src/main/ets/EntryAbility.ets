@@ -544,7 +544,18 @@ export default class EntryAbility extends UIAbility {
     }
     
     // 漫画压缩包
-    if (lowerUri.endsWith('.cbz') || lowerUri.endsWith('.cbr')) {
+    if (lowerUri.endsWith('.cbz') || lowerUri.endsWith('.cbr') ||
+      lowerUri.endsWith('.zip') || lowerUri.endsWith('.rar') ||
+      lowerUri.endsWith('.7z') || lowerUri.endsWith('.tar') ||
+      lowerUri.endsWith('.gz') || lowerUri.endsWith('.tgz') ||
+      lowerUri.endsWith('.bz2') || lowerUri.endsWith('.xz') ||
+      lowerUri.endsWith('.lzma') ||
+      lowerUri.includes('.cbz?') || lowerUri.includes('.cbr?') ||
+      lowerUri.includes('.zip?') || lowerUri.includes('.rar?') ||
+      lowerUri.includes('.7z?') || lowerUri.includes('.tar?') ||
+      lowerUri.includes('.gz?') || lowerUri.includes('.tgz?') ||
+      lowerUri.includes('.bz2?') || lowerUri.includes('.xz?') ||
+      lowerUri.includes('.lzma?')) {
       return EntryAbility.FILE_TYPE_COMIC;
     }
     

@@ -51,6 +51,7 @@ export struct GlobalSettingsPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageLink('source_settings_visible') sourceSettingsVisible: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSettingsPage';
 
@@ -83,6 +84,13 @@ export struct GlobalSettingsPage {
       subtitle: '主页面入口交互、底栏标签与平板顶栏布局',
       icon: $r('sys.symbol.doc_text'),
       targetPage: 'MainMenuSettingsSubPage'
+    },
+    {
+      id: 'source_features',
+      title: '源功能设置',
+      subtitle: '控制图源/书源相关入口、标签、按钮与信息展示',
+      icon: $r('sys.symbol.gearshape'),
+      targetPage: 'SourceFeatureSettingsSubPage'
     },
     {
       id: 'font',
@@ -271,6 +279,26 @@ export struct GlobalSettingsPage {
     }
   }
 
+  private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
+    if (!rect || !anchorId) {
+      return rect;
+    }
+    switch (anchorId) {
+      case 'guide_global_settings_search':
+      case 'guide_global_settings_reading_group':
+      case 'guide_global_settings_backup_group':
+        return {
+          x: rect.x,
+          y: Math.max(0, rect.y - 32),
+          width: rect.width,
+          height: rect.height,
+          borderRadius: rect.borderRadius
+        };
+      default:
+        return rect;
+    }
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -296,7 +324,10 @@ export struct GlobalSettingsPage {
       return;
     }
     this.appGuideStep = step;
-    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    this.appGuideHighlightRect = this.adjustGuideHighlightRect(
+      step.anchorId,
+      this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18)
+    );
     if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
       setTimeout(() => {
         void this.refreshPageGuide(`${trigger}_retry_layout`);
@@ -324,7 +355,10 @@ export struct GlobalSettingsPage {
       this.getUIContext(),
       this.scroller,
       anchorId,
-      'guide_global_settings_scroll'
+      'guide_global_settings_scroll',
+      TITLE_BAR_HEIGHT_MINI + 16,
+      32,
+      280
     );
     if (!scrollResult.available) {
       return false;
@@ -403,6 +437,15 @@ export struct GlobalSettingsPage {
     return this.searchKeyword.trim().length > 0;
   }
 
+  private getSettingsGroups(): SettingsGroupItem[] {
+    if (this.sourceSettingsVisible) {
+      return this.settingsGroups;
+    }
+    return this.settingsGroups.filter((item: SettingsGroupItem) =>
+      item.targetPage !== 'SourceFeatureSettingsSubPage'
+    );
+  }
+
   private resolvePageLabel(pageName: string): string {
     switch (pageName) {
       case 'ReadingSettingsSubPage':
@@ -411,6 +454,8 @@ export struct GlobalSettingsPage {
         return '页面设置';
       case 'MainMenuSettingsSubPage':
         return '主页面设置';
+      case 'SourceFeatureSettingsSubPage':
+        return '源功能设置';
       case 'FontSettingsSubPage':
         return '字体设置';
       case 'ThemeSettingsPage':
@@ -608,6 +653,16 @@ export struct GlobalSettingsPage {
     .width('100%')
   }
 
+  private getGuideAnchorIdForGroup(item: SettingsGroupItem): string {
+    if (item.targetPage === 'ReadingSettingsSubPage') {
+      return 'guide_global_settings_reading_group';
+    }
+    if (item.targetPage === 'BackupPage') {
+      return 'guide_global_settings_backup_group';
+    }
+    return `guide_global_settings_group_${item.id}`;
+  }
+
   /**
    * 构建设置分组项
    */
@@ -652,6 +707,7 @@ export struct GlobalSettingsPage {
     .onClick(() => {
       this.navigateToSubPage(item.targetPage);
     })
+    .id(this.getGuideAnchorIdForGroup(item))
   }
 
   /**
@@ -660,7 +716,7 @@ export struct GlobalSettingsPage {
   @Builder
   buildSettingsGroupList() {
     Column({ space: 12 }) {
-      ForEach(this.settingsGroups, (item: SettingsGroupItem) => {
+      ForEach(this.getSettingsGroups(), (item: SettingsGroupItem) => {
         this.buildSettingsGroupItem(item)
       })
     }
@@ -690,7 +746,7 @@ export struct GlobalSettingsPage {
               if (this.responsive_isLandscape) {
                 // 横屏：使用Grid布局，每行2个
                 Grid() {
-                  ForEach(this.settingsGroups, (item: SettingsGroupItem) => {
+                  ForEach(this.getSettingsGroups(), (item: SettingsGroupItem) => {
                     GridItem() {
                       this.buildSettingsGroupItem(item)
                     }

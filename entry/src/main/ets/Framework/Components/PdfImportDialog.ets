@@ -6,11 +6,18 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { logger } from '../../Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { PdfContentType } from '../Parsers/PdfToMangaImporter';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
 import { ScraperContentType } from '../Scraper/ScraperTypes';
+import { ImportFilenameSuggestionPanel } from './ImportFilenameSuggestionPanel';
+import {
+  ImportFilenameIntelligenceService,
+  ImportFilenameParseResult,
+  ImportFilenameMetadataCandidate
+} from '../Services/ImportFilenameIntelligenceService';
 
 const TAG = 'PdfImportDialog';
 
@@ -54,6 +61,7 @@ export struct PdfImportDialog {
   @Prop themeState: ThemeAwareState;
   @Prop defaultTitle: string = '';
   @Prop defaultAuthor: string = '';
+  @Prop sourceFileName: string = '';
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   // 回调函数
   onConfirm: (result: PdfImportDialogResult) => void = () => {};
@@ -72,22 +80,89 @@ export struct PdfImportDialog {
   // 单章节模式字段
   @State chapterNumber: number = 1;
   @State chapterTitle: string = '';
+  @State filenameParseResult: ImportFilenameParseResult | null = null;
 
   // 刮削对话框控制器
   private scraperDialogController: CustomDialogController | null = null;
+  private filenameIntelligenceService: ImportFilenameIntelligenceService = ImportFilenameIntelligenceService.getInstance();
 
   aboutToAppear(): void {
     this.title = this.defaultTitle || '';
     this.author = this.defaultAuthor || '';
-    // 从文件名推测章节编号
+    this.filenameParseResult = this.filenameIntelligenceService.parseFileName(this.sourceFileName || this.defaultTitle || '');
+    this.applyBestFilenameCandidateIfNeeded();
     this.guessChapterNumberFromTitle();
+  }
+
+  private applyBestFilenameCandidateIfNeeded(): void {
+    if (!this.filenameParseResult) {
+      return;
+    }
+    const candidate = this.filenameParseResult.bestCandidate;
+    if (candidate.title.length > 0) {
+      this.title = candidate.title;
+    }
+    if (this.author.trim().length === 0 && candidate.author.length > 0) {
+      this.author = candidate.author;
+    }
+    if (this.tagsText.trim().length === 0 && candidate.tags.length > 0) {
+      this.tagsText = candidate.tags.join(', ');
+    }
+    if (this.publisher.trim().length === 0 && candidate.publisher.length > 0) {
+      this.publisher = candidate.publisher;
+    }
+    if (this.isbn.trim().length === 0 && candidate.isbn.length > 0) {
+      this.isbn = candidate.isbn;
+    }
+    if (candidate.recommendedContentKind === 'ebook') {
+      this.selectedType = PdfContentType.EBOOK;
+    }
+    if (candidate.chapterNumber !== undefined && candidate.chapterNumber > 0 && candidate.recommendedContentKind !== 'ebook') {
+      this.importMode = PdfImportMode.SINGLE_CHAPTER;
+      this.chapterNumber = candidate.chapterNumber;
+      this.chapterTitle = candidate.chapterTitle || `第${candidate.chapterNumber}话`;
+    }
+  }
+
+  private applyFilenameCandidate(candidate: ImportFilenameMetadataCandidate): void {
+    if (candidate.title.length > 0) {
+      this.title = candidate.title;
+    }
+    if (candidate.author.length > 0) {
+      this.author = candidate.author;
+    }
+    if (candidate.publisher.length > 0) {
+      this.publisher = candidate.publisher;
+    }
+    if (candidate.isbn.length > 0) {
+      this.isbn = candidate.isbn;
+    }
+    if (candidate.tags.length > 0) {
+      this.tagsText = candidate.tags.join(', ');
+    }
+    if (candidate.recommendedContentKind === 'ebook') {
+      this.selectedType = PdfContentType.EBOOK;
+    }
+    if (candidate.chapterNumber !== undefined && candidate.chapterNumber > 0 && candidate.recommendedContentKind !== 'ebook') {
+      this.importMode = PdfImportMode.SINGLE_CHAPTER;
+      this.chapterNumber = candidate.chapterNumber;
+      this.chapterTitle = candidate.chapterTitle || `第${candidate.chapterNumber}话`;
+    }
   }
 
   /**
    * 从文件名推测章节编号
    */
   private guessChapterNumberFromTitle(): void {
-    const fileName = this.defaultTitle || '';
+    if (this.filenameParseResult && this.filenameParseResult.bestCandidate.chapterNumber !== undefined) {
+      const chapterNumber = this.filenameParseResult.bestCandidate.chapterNumber;
+      if (chapterNumber && chapterNumber > 0) {
+        this.chapterNumber = chapterNumber;
+        this.chapterTitle = this.filenameParseResult.bestCandidate.chapterTitle || `第${chapterNumber}话`;
+        return;
+      }
+    }
+    const fileName = this.sourceFileName || this.defaultTitle || '';
     if (!fileName) return;
 
     // 常见的章节编号模式
@@ -170,6 +245,24 @@ export struct PdfImportDialog {
 
       Scroll() {
         Column({ space: 12 }) {
+          if (this.filenameParseResult) {
+            ImportFilenameSuggestionPanel({
+              themeState: this.themeState,
+              parseResult: this.filenameParseResult,
+              currentTitle: this.title,
+              currentAuthor: this.author,
+              onApplyCandidate: (candidate: ImportFilenameMetadataCandidate) => {
+                this.applyFilenameCandidate(candidate);
+              },
+              onApplyTitle: (value: string) => {
+                this.title = value;
+              },
+              onApplyAuthor: (value: string) => {
+                this.author = value;
+              }
+            })
+          }
+
           // 单章节模式：章节信息输入
           if (this.selectedType === PdfContentType.MANGA && this.importMode === PdfImportMode.SINGLE_CHAPTER) {
             this.buildChapterInputFields()
@@ -372,11 +465,20 @@ export struct PdfImportDialog {
     }
     .width('90%')
     .padding(20)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .borderRadius(12)
     .border({
       width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
+    })
+    .shadow({
+      radius: 18,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
+      offsetY: 8
     })
   }
 

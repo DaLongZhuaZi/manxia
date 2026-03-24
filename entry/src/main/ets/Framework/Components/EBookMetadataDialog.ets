@@ -8,6 +8,8 @@
 import { EBookMetadata, EBookChapter } from '../../Models/EBookModels';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
+import { ImportFilenameSuggestionPanel } from './ImportFilenameSuggestionPanel';
 import { logger } from '../../Utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 import { ScraperDialog, ScraperDialogConfig, ScraperDialogResult } from './ScraperDialog';
@@ -15,6 +17,11 @@ import { ScraperContentType } from '../Scraper/ScraperTypes';
 import { picker } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
+import {
+  ImportFilenameIntelligenceService,
+  ImportFilenameParseResult,
+  ImportFilenameMetadataCandidate
+} from '../Services/ImportFilenameIntelligenceService';
 
 const TAG = 'EBookMetadataDialog';
 
@@ -34,6 +41,7 @@ export struct EBookMetadataDialog {
   controller: CustomDialogController;
   @Prop themeState: ThemeAwareState;
   @Prop initialMetadata: EBookMetadata;
+  @Prop sourceFileName: string = '';
   @Prop chapters: EBookChapter[] = [];  // 章节列表
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   // 回调函数不能使用@Prop装饰器，应使用普通属性
@@ -48,7 +56,9 @@ export struct EBookMetadataDialog {
   @State publisher: string = '';
   @State publishDate: string = '';
   @State isbn: string = '';
+  @State language: string = '';
   @State tagsText: string = '';
+  @State filenameParseResult: ImportFilenameParseResult | null = null;
   
   // 封面相关
   @State coverPath: string = '';
@@ -64,20 +74,117 @@ export struct EBookMetadataDialog {
 
   // 刮削对话框控制器
   private scraperDialogController: CustomDialogController | null = null;
+  private filenameIntelligenceService: ImportFilenameIntelligenceService = ImportFilenameIntelligenceService.getInstance();
 
   aboutToAppear(): void {
-    // 初始化表单字段
+    // Initialize fields
     this.title = this.initialMetadata.title || '';
     this.author = this.initialMetadata.author || '';
     this.description = this.initialMetadata.description || '';
     this.publisher = this.initialMetadata.publisher || '';
     this.publishDate = this.initialMetadata.publishDate || '';
     this.isbn = this.initialMetadata.isbn || '';
-    this.tagsText = this.initialMetadata.tags.join(', ');
+    this.language = this.initialMetadata.language || '';
+    this.tagsText = (this.initialMetadata.tags || []).join(', ');
     this.coverPath = this.initialMetadata.coverImagePath || '';
-    
-    logger.info(TAG, `对话框初始化: 标题=${this.title}, 作者=${this.author}, 章节数=${this.chapters.length}`);
-    logger.info(TAG, `[封面诊断] aboutToAppear: initialMetadata.coverImagePath='${this.initialMetadata.coverImagePath}', coverPath='${this.coverPath}'`);
+
+    const parseInput = this.sourceFileName || this.initialMetadata.title || '';
+    if (parseInput.length > 0) {
+      this.filenameParseResult = this.filenameIntelligenceService.parseFileName(parseInput);
+      this.applyBestFilenameCandidateIfNeeded();
+    }
+
+    logger.info(TAG, `\u5bf9\u8bdd\u6846\u521d\u59cb\u5316: \u6807\u9898=${this.title}, \u4f5c\u8005=${this.author}, \u7ae0\u8282\u6570=${this.chapters.length}`);
+    logger.info(TAG, `[\u5c01\u9762\u8bca\u65ad] aboutToAppear: initialMetadata.coverImagePath='${this.initialMetadata.coverImagePath}', coverPath='${this.coverPath}'`);
+  }
+
+  private applyBestFilenameCandidateIfNeeded(): void {
+    if (!this.filenameParseResult) {
+      return;
+    }
+    const candidate = this.filenameParseResult.bestCandidate;
+    if (this.shouldAutoFillTitle(this.title) && candidate.title.length > 0) {
+      this.title = candidate.title;
+    }
+    if (this.shouldAutoFillAuthor(this.author) && candidate.author.length > 0) {
+      this.author = candidate.author;
+    }
+    if (this.publisher.trim().length === 0 && candidate.publisher.length > 0) {
+      this.publisher = candidate.publisher;
+    }
+    if (this.publishDate.trim().length === 0 && candidate.publishDate.length > 0) {
+      this.publishDate = candidate.publishDate;
+    }
+    if (this.isbn.trim().length === 0 && candidate.isbn.length > 0) {
+      this.isbn = candidate.isbn;
+    }
+    if (this.language.trim().length === 0 && candidate.language.length > 0) {
+      this.language = candidate.language;
+    }
+    if (this.tagsText.trim().length === 0 && candidate.tags.length > 0) {
+      this.tagsText = candidate.tags.join(', ');
+    }
+  }
+
+  private applyFilenameCandidate(candidate: ImportFilenameMetadataCandidate): void {
+    if (candidate.title.length > 0) {
+      this.title = candidate.title;
+    }
+    if (candidate.author.length > 0) {
+      this.author = candidate.author;
+    }
+    if (candidate.publisher.length > 0) {
+      this.publisher = candidate.publisher;
+    }
+    if (candidate.publishDate.length > 0) {
+      this.publishDate = candidate.publishDate;
+    }
+    if (candidate.isbn.length > 0) {
+      this.isbn = candidate.isbn;
+    }
+    if (candidate.language.length > 0) {
+      this.language = candidate.language;
+    }
+    if (candidate.tags.length > 0) {
+      this.tagsText = candidate.tags.join(', ');
+    }
+  }
+
+  private shouldAutoFillTitle(currentValue: string): boolean {
+    const normalizedCurrent = this.normalizeComparisonValue(currentValue);
+    if (normalizedCurrent.length === 0) {
+      return true;
+    }
+    if (/^(?:unknown|untitled|\u672a\u547d\u540d|\u672a\u77e5\u6807\u9898)$/i.test(currentValue.trim())) {
+      return true;
+    }
+    const comparisons = [
+      this.sourceFileName,
+      this.filenameParseResult ? this.filenameParseResult.fileName : '',
+      this.filenameParseResult ? this.filenameParseResult.fileStem : '',
+      this.filenameParseResult ? this.filenameParseResult.cleanedStem : ''
+    ];
+    for (const item of comparisons) {
+      if (this.normalizeComparisonValue(item) === normalizedCurrent) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private shouldAutoFillAuthor(currentValue: string): boolean {
+    if (currentValue.trim().length === 0) {
+      return true;
+    }
+    return /^(?:unknown|n\/a|na|\u672a\u77e5\u4f5c\u8005)$/i.test(currentValue.trim());
+  }
+
+  private normalizeComparisonValue(value: string): string {
+    return value
+      .replace(/^.*[\/]/, '')
+      .replace(/\.[^.]+$/i, '')
+      .toLowerCase()
+      .replace(/[\s_\-|\uFF5C\u3010\u3011\[\]\(\)\uFF08\uFF09{}\u300C\u300D\u300E\u300F\u300A\u300B<>\u3008\u3009'\"`.:\uFF1A]+/g, '');
   }
 
   build() {
@@ -163,7 +270,7 @@ export struct EBookMetadataDialog {
                 publisher: this.publisher.trim(),
                 publishDate: this.publishDate.trim(),
                 isbn: this.isbn.trim(),
-                language: this.initialMetadata.language,
+                language: this.language.trim() || this.initialMetadata.language || '',
                 coverImagePath: resolvedCoverPath,
                 tags: this.parseTags(this.tagsText),
                 rating: this.initialMetadata.rating
@@ -181,11 +288,20 @@ export struct EBookMetadataDialog {
     }
     .width('90%')
     .padding(20)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .borderRadius(12)
     .border({
       width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
+    })
+    .shadow({
+      radius: 18,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
+      offsetY: 8
     })
   }
 
@@ -272,9 +388,27 @@ export struct EBookMetadataDialog {
   buildInfoTab() {
     Scroll() {
       Column({ space: 12 }) {
-        // 封面区域
+        if (this.filenameParseResult) {
+          ImportFilenameSuggestionPanel({
+            themeState: this.themeState,
+            parseResult: this.filenameParseResult,
+            currentTitle: this.title,
+            currentAuthor: this.author,
+            onApplyCandidate: (candidate: ImportFilenameMetadataCandidate) => {
+              this.applyFilenameCandidate(candidate);
+            },
+            onApplyTitle: (value: string) => {
+              this.title = value;
+            },
+            onApplyAuthor: (value: string) => {
+              this.author = value;
+            }
+          })
+        }
+
+        // Cover section
         Row({ space: 16 }) {
-          // 封面预览
+          // Cover section
           Column() {
             if (this.customCoverPath || this.coverPath) {
               Image(this.normalizeCoverPath(this.customCoverPath || this.coverPath) + `?refresh=${this.coverRefreshKey}`)
@@ -283,7 +417,7 @@ export struct EBookMetadataDialog {
                 .objectFit(ImageFit.Cover)
                 .borderRadius(4)
             } else {
-              // 无封面时使用默认电子书图标
+              // Fallback ebook icon when no cover is available
               Image($r('app.media.ebook'))
                 .width(80)
                 .height(110)
@@ -291,11 +425,11 @@ export struct EBookMetadataDialog {
                 .borderRadius(4)
             }
           }
-          
-          // 封面操作按钮
+
+          // Cover actions
           Column({ space: 8 }) {
             Row({ space: 8 }) {
-              Button('选择封面')
+              Button('\u9009\u62e9\u5c01\u9762')
                 .fontSize(12)
                 .height(32)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
@@ -305,8 +439,8 @@ export struct EBookMetadataDialog {
                 .onClick(() => {
                   this.selectCustomCover();
                 })
-              
-              Button(this.isRegeneratingCover ? '生成中...' : '重新生成')
+
+              Button(this.isRegeneratingCover ? '\u751f\u6210\u4e2d...' : '\u91cd\u65b0\u751f\u6210')
                 .fontSize(12)
                 .height(32)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_secondary', this.themeState.currentTheme))
@@ -318,9 +452,9 @@ export struct EBookMetadataDialog {
                   await this.regenerateCover();
                 })
             }
-            
+
             if (this.customCoverPath) {
-              Button('清除')
+              Button('\u6e05\u9664')
                 .fontSize(12)
                 .height(32)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_background', this.themeState.currentTheme))
@@ -336,111 +470,47 @@ export struct EBookMetadataDialog {
         }
         .width('100%')
         .padding({ bottom: 8 })
-        
-        // 书名
-        Column({ space: 4 }) {
-          Text('书名 *')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .width('100%')
 
-          TextInput({ text: this.title, placeholder: '请输入书名' })
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(6)
-            .padding({ left: 12, right: 12 })
-            .height(40)
-            .width('100%')
-            .onChange((value: string) => {
-              this.title = value;
-            })
-        }
-        .width('100%')
+        this.buildInputField('\u4e66\u540d *', this.title, (value: string) => {
+          this.title = value;
+        }, '\u8bf7\u8f93\u5165\u4e66\u540d')
 
-        // 作者
-        Column({ space: 4 }) {
-          Text('作者 *')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .width('100%')
+        this.buildInputField('\u4f5c\u8005 *', this.author, (value: string) => {
+          this.author = value;
+        }, '\u8bf7\u8f93\u5165\u4f5c\u8005')
 
-          TextInput({ text: this.author, placeholder: '请输入作者' })
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(6)
-            .padding({ left: 12, right: 12 })
-            .height(40)
-            .width('100%')
-            .onChange((value: string) => {
-              this.author = value;
-            })
-        }
-        .width('100%')
+        this.buildInputField('\u51fa\u7248\u793e', this.publisher, (value: string) => {
+          this.publisher = value;
+        }, '\u8bf7\u8f93\u5165\u51fa\u7248\u793e')
 
-        // 简介
-        Column({ space: 4 }) {
-          Text('简介')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .width('100%')
+        this.buildInputField('\u51fa\u7248\u65e5\u671f', this.publishDate, (value: string) => {
+          this.publishDate = value;
+        }, '\u4f8b\u5982\uff1a2024-03 \u6216 2024\u5e743\u6708')
 
-          TextArea({ text: this.description, placeholder: '请输入简介...' })
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(6)
-            .padding(12)
-            .height(80)
-            .width('100%')
-            .onChange((value: string) => {
-              this.description = value;
-            })
-        }
-        .width('100%')
+        this.buildInputField('ISBN', this.isbn, (value: string) => {
+          this.isbn = value;
+        }, '\u8bf7\u8f93\u5165ISBN')
 
-        // 标签
-        Column({ space: 4 }) {
-          Text('标签（逗号分隔）')
-            .fontSize(14)
-            .fontFamily(this.appFontFamily)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .width('100%')
+        this.buildInputField('\u8bed\u8a00', this.language, (value: string) => {
+          this.language = value;
+        }, '\u4f8b\u5982\uff1azh-CN\u3001zh-TW\u3001en\u3001ja\u3001ko')
 
-          TextInput({ text: this.tagsText, placeholder: '例如: 科幻, 悬疑, 推理' })
-            .fontSize(14)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .placeholderColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-            .borderRadius(6)
-            .padding({ left: 12, right: 12 })
-            .height(40)
-            .width('100%')
-            .onChange((value: string) => {
-              this.tagsText = value;
-            })
-        }
-        .width('100%')
+        this.buildTextAreaField('\u7b80\u4ecb', this.description, (value: string) => {
+          this.description = value;
+        })
+
+        this.buildInputField('\u6807\u7b7e\uff08\u9017\u53f7\u5206\u9694\uff09', this.tagsText, (value: string) => {
+          this.tagsText = value;
+        }, '\u4f8b\u5982\uff1a\u79d1\u5e7b, \u60ac\u7591, \u63a8\u7406')
       }
       .width('100%')
     }
     .height(350)
     .width('100%')
   }
-  
+
   /**
-   * 构建章节列表标签页
+   * Build chapters tab
    */
   @Builder
   buildChaptersTab() {

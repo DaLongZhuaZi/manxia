@@ -1,6 +1,7 @@
 import { logger } from '../../Utils/Logger';
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { UIContext, curves } from '@kit.ArkUI';
 
 const TAG = 'UniversalDialog';
@@ -151,8 +152,17 @@ struct UniversalDialog {
     .padding(20)
     .opacity(this.animOpacity)
     .scale({ x: this.animScale, y: this.animScale })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.options.themeState.currentTheme))
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.options.themeState.currentTheme), radius: 12 })
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.options.themeState))
+    .border({ width: 1, color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.options.themeState), radius: 12 })
+    .shadow({
+      radius: 18,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.options.themeState),
+      offsetY: 8
+    })
   }
 
   aboutToAppear(): void {

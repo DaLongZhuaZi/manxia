@@ -475,6 +475,7 @@ export struct MangaViewer {
   private webtoonStopCleanupTimer: number = -1; // 条漫滚动停止后延迟清理，减少闪烁
   private lastUpdateTime: number = 0;
   private scrollPositionKey: string = ''; // 滚动位置存储键
+  private continuousHorizontalBoundarySuppressUntil: number = 0;
   private lastHeavyUpdateTime: number = 0; // [性能优化] 重型操作的上次执行时间
   private readonly WEBTOON_HEAVY_UPDATE_THROTTLE_LOCAL_MS: number = 160;
   private readonly WEBTOON_HEAVY_UPDATE_THROTTLE_ONLINE_MS: number = 260;
@@ -899,6 +900,14 @@ export struct MangaViewer {
     if (pageIndex >= 0 && this.chapter && this.chapter.pages && pageIndex < this.chapter.pages.length) {
       logger.info(TAG, `[修复] 强制设置页面索引: ${this.viewCurrentPageIndex + 1} -> ${pageIndex + 1}`);
       this.viewCurrentPageIndex = pageIndex;
+      this.currentWebtoonPage = pageIndex;
+      this.visiblePageIndices = [pageIndex];
+      if (this.isContinuousScrollMode()) {
+        this.suppressContinuousHorizontalBoundary();
+        this.jumpToPageImmediate(pageIndex);
+        this.triggerUnifiedPreload();
+        return;
+      }
       this.updateSinglePageDisplay();
       this.updateSinglePagePreview();
       this.loadCurrentAndNeighborPages();
@@ -3653,6 +3662,15 @@ export struct MangaViewer {
   private onReadingSettingsChange(): void {
     if (this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE) {
       this.updateDoublePageIndices();
+    } else if (this.isContinuousScrollMode()) {
+      this.leftPageIndex = -1;
+      this.rightPageIndex = -1;
+      this.currentWebtoonPage = this.viewCurrentPageIndex;
+      this.visiblePageIndices = [this.viewCurrentPageIndex];
+      this.triggerUnifiedPreload();
+      setTimeout(() => {
+        this.jumpToPageImmediate(this.viewCurrentPageIndex);
+      }, 0);
     } else if (this.isWebtoonMode()) {
       // [修复] 切换到条漫模式时，初始化多章节数据
       // 这是解决从单页模式切换到条漫模式后无法触发章节切换的关键
@@ -4716,9 +4734,9 @@ export struct MangaViewer {
       // 水平连续滚动
       Scroll(this.scroller) {
         Row() {
-          ForEach(this.chapter.pages, (page: MangaPage, index: number) => {
-            this.buildContinuousPageImage(page, index, true)
-          }, (page: MangaPage) => page.id)
+          ForEach(this.getContinuousHorizontalPageOrder(), (pageIndex: number) => {
+            this.buildContinuousPageImage(this.chapter.pages[pageIndex], pageIndex, true)
+          }, (pageIndex: number) => this.chapter.pages[pageIndex].id)
         }
         .height('100%')
         .scale({ x: this.webtoonZoomScale, y: this.webtoonZoomScale, centerX: this.webtoonScaleCenterX, centerY: this.webtoonScaleCenterY })
@@ -4737,7 +4755,9 @@ export struct MangaViewer {
       .onScrollStop(() => {
         this.isScrolling = false;
         this.updateContinuousHorizontalVisiblePages();
-        this.triggerWebtoonPreload();
+        this.triggerUnifiedPreload();
+        this.checkContinuousHorizontalChapterBoundary();
+        this.saveScrollPosition();
       })
       .gesture(
         GestureGroup(GestureMode.Exclusive,
@@ -5449,15 +5469,199 @@ export struct MangaViewer {
    * 水平平滑滚动到指定位置（连续滚动模式）
    */
   private smoothScrollToHorizontal(targetX: number): void {
+    this.smoothScrollToHorizontalWithDuration(targetX, 500);
+  }
+
+  private smoothScrollToHorizontalWithDuration(targetX: number, duration: number): void {
     if (!this.scroller) { return; }
     try {
+      const maxScrollX = this.getContinuousHorizontalMaxScroll();
+      const clampedTargetX = Math.max(0, Math.min(targetX, maxScrollX));
+      this.suppressContinuousHorizontalBoundary(duration + 240);
       this.scroller.scrollTo({
-        xOffset: targetX,
+        xOffset: clampedTargetX,
         yOffset: 0,
-        animation: { duration: 500, curve: curves.initCurve(Curve.EaseInOut) }
+        animation: { duration: duration, curve: curves.initCurve(Curve.EaseInOut) }
       });
     } catch (error) {
       logger.error(TAG, `水平平滑滚动失败`);
+    }
+  }
+
+  private isContinuousScrollMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private isContinuousHorizontalRTL(): boolean {
+    return this.isContinuousScrollMode() &&
+      this.readingSettings.readingDirection === ReadingDirection.RIGHT_TO_LEFT;
+  }
+
+  private getContinuousHorizontalViewportWidth(): number {
+    return (this.screenWidth && this.screenWidth > 0) ? this.screenWidth : 360;
+  }
+
+  private getContinuousHorizontalScaleFactor(): number {
+    return this.webtoonZoomScale > 1.0 ? this.webtoonZoomScale : 1.0;
+  }
+
+  private getContinuousHorizontalPageOrder(): number[] {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return [];
+    }
+
+    const pageOrder: number[] = [];
+    if (this.isContinuousHorizontalRTL()) {
+      for (let index = this.chapter.pages.length - 1; index >= 0; index--) {
+        pageOrder.push(index);
+      }
+    } else {
+      for (let index = 0; index < this.chapter.pages.length; index++) {
+        pageOrder.push(index);
+      }
+    }
+    return pageOrder;
+  }
+
+  private getContinuousHorizontalVisualIndex(pageIndex: number): number {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return 0;
+    }
+    if (!this.isContinuousHorizontalRTL()) {
+      return pageIndex;
+    }
+    return this.chapter.pages.length - 1 - pageIndex;
+  }
+
+  private getContinuousHorizontalRawContentWidth(): number {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return 0;
+    }
+
+    const spacing = this.readingSettings.pageSpacing || 16;
+    let totalWidth = 0;
+    for (let index = 0; index < this.chapter.pages.length; index++) {
+      totalWidth += this.getEstimatedImageWidthForHorizontal(this.chapter.pages[index]);
+      if (index < this.chapter.pages.length - 1) {
+        totalWidth += spacing;
+      }
+    }
+    return totalWidth;
+  }
+
+  private getContinuousHorizontalContentWidth(): number {
+    return this.getContinuousHorizontalRawContentWidth() * this.getContinuousHorizontalScaleFactor();
+  }
+
+  private getContinuousHorizontalMaxScroll(): number {
+    const viewportWidth = this.getContinuousHorizontalViewportWidth();
+    return Math.max(0, this.getContinuousHorizontalContentWidth() - viewportWidth);
+  }
+
+  private getContinuousHorizontalPageTargetX(pageIndex: number): number {
+    if (!this.chapter || !this.chapter.pages || pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
+      return Math.max(0, Math.min(this.scrollPosition, this.getContinuousHorizontalMaxScroll()));
+    }
+
+    const spacing = this.readingSettings.pageSpacing || 16;
+    const scaleFactor = this.getContinuousHorizontalScaleFactor();
+    const visualIndex = this.getContinuousHorizontalVisualIndex(pageIndex);
+    const viewportWidth = this.getContinuousHorizontalViewportWidth();
+    let currentLeft = 0;
+
+    for (let index = 0; index < visualIndex; index++) {
+      const logicalIndex = this.isContinuousHorizontalRTL()
+        ? this.chapter.pages.length - 1 - index
+        : index;
+      currentLeft += this.getEstimatedImageWidthForHorizontal(this.chapter.pages[logicalIndex]) + spacing;
+    }
+
+    const pageWidth = this.getEstimatedImageWidthForHorizontal(this.chapter.pages[pageIndex]);
+    const scaledLeft = currentLeft * scaleFactor;
+    const scaledRight = (currentLeft + pageWidth) * scaleFactor;
+    const targetX = this.isContinuousHorizontalRTL()
+      ? scaledRight - viewportWidth
+      : scaledLeft;
+    return Math.max(0, Math.min(targetX, this.getContinuousHorizontalMaxScroll()));
+  }
+
+  private calculateContinuousHorizontalPageIndexFromScroll(scrollX: number): number {
+    if (!this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return 0;
+    }
+
+    const spacing = this.readingSettings.pageSpacing || 16;
+    const scaleFactor = this.getContinuousHorizontalScaleFactor();
+    const viewportWidth = this.getContinuousHorizontalViewportWidth();
+    const clampedScrollX = Math.max(0, Math.min(scrollX, this.getContinuousHorizontalMaxScroll()));
+    const viewportCenter = clampedScrollX + viewportWidth / 2;
+    let currentLeft = 0;
+    let fallbackPageIndex = this.chapter.pages.length - 1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const pageIndex of this.getContinuousHorizontalPageOrder()) {
+      const pageWidth = this.getEstimatedImageWidthForHorizontal(this.chapter.pages[pageIndex]);
+      const itemLeft = currentLeft * scaleFactor;
+      const itemRight = (currentLeft + pageWidth) * scaleFactor;
+      const itemCenter = (itemLeft + itemRight) / 2;
+      const distance = Math.abs(viewportCenter - itemCenter);
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        fallbackPageIndex = pageIndex;
+      }
+
+      if (viewportCenter >= itemLeft && viewportCenter <= itemRight) {
+        return pageIndex;
+      }
+
+      currentLeft += pageWidth + spacing;
+    }
+
+    return fallbackPageIndex;
+  }
+
+  private suppressContinuousHorizontalBoundary(duration: number = 500): void {
+    this.continuousHorizontalBoundarySuppressUntil = Date.now() + duration;
+  }
+
+  private checkContinuousHorizontalChapterBoundary(): void {
+    if (!this.isContinuousScrollMode() || !this.chapter || !this.callbacks.onChapterChange) {
+      return;
+    }
+    if (Date.now() < this.continuousHorizontalBoundarySuppressUntil) {
+      return;
+    }
+
+    const viewportWidth = this.getContinuousHorizontalViewportWidth();
+    const maxScrollX = this.getContinuousHorizontalMaxScroll();
+    const threshold = viewportWidth * (this.isOnlineWebtoonContent() ? 1.5 : 1.0);
+    const nearLeftEdge = this.scrollPosition <= threshold;
+    const nearRightEdge = this.scrollPosition >= maxScrollX - threshold;
+    const atFirstPage = this.viewCurrentPageIndex <= 0;
+    const atLastPage = this.viewCurrentPageIndex >= this.chapter.pages.length - 1;
+    const scrollingTowardLargerOffset = this.lastScrollDirection === 'down';
+    const scrollingTowardSmallerOffset = this.lastScrollDirection === 'up';
+
+    const shouldGoNext = this.isContinuousHorizontalRTL()
+      ? nearLeftEdge && scrollingTowardSmallerOffset && atLastPage
+      : nearRightEdge && scrollingTowardLargerOffset && atLastPage;
+    if (shouldGoNext) {
+      if (this.isLastChapter || !this.canRequestAdjacentChapter('next')) {
+        return;
+      }
+      this.callbacks.onChapterChange('next');
+      return;
+    }
+
+    const shouldGoPrev = this.isContinuousHorizontalRTL()
+      ? nearRightEdge && scrollingTowardLargerOffset && atFirstPage
+      : nearLeftEdge && scrollingTowardSmallerOffset && atFirstPage;
+    if (shouldGoPrev) {
+      if (this.isFirstChapter || !this.canRequestAdjacentChapter('prev')) {
+        return;
+      }
+      this.callbacks.onChapterChange('prev');
     }
   }
 
@@ -6515,9 +6719,16 @@ export struct MangaViewer {
       try {
         // [性能优化] 使用ImageCacheManager加载本地图片，利用内存缓存
         const cacheManager: ImageCacheManager = ImageCacheManager.getInstance();
-        const pm: image.PixelMap | null = await cacheManager.loadImage(fsPath, {
+        let pm: image.PixelMap | null = await cacheManager.loadImage(fsPath, {
           contentType: this.contentType
         });
+
+        if (!pm) {
+          logger.warn(TAG, `[本地] 统一缓存为空，回退到LocalImageCacheManager: id=${page.id}`);
+          pm = await this.localImageCache.loadImage(page.id, fsPath, {
+            maxWidth: this.screenWidth > 0 ? this.screenWidth : 1080
+          });
+        }
         
         if (pm) {
           this.commitPagePixelMap(page.id, pm);
@@ -7415,7 +7626,8 @@ export struct MangaViewer {
     this.scrollTimer = setTimeout(() => {
       this.isScrolling = false;
       this.updateContinuousHorizontalVisiblePages();
-      this.triggerWebtoonPreload();
+      this.triggerUnifiedPreload();
+      this.checkContinuousHorizontalChapterBoundary();
       this.saveScrollPosition();
     }, 150);
 
@@ -7434,6 +7646,8 @@ export struct MangaViewer {
     const now = Date.now();
     if (!this.lastUpdateTime || now - this.lastUpdateTime > 100) {
       this.updateContinuousHorizontalVisiblePages();
+      this.triggerUnifiedPreload();
+      this.checkContinuousHorizontalChapterBoundary();
       this.lastUpdateTime = now;
     }
   }
@@ -7442,23 +7656,26 @@ export struct MangaViewer {
    * 更新水平连续滚动模式的可见页面
    */
   private updateContinuousHorizontalVisiblePages(): void {
-    if (!this.scroller) return;
-    const containerWidth: number = (this.screenWidth && this.screenWidth > 0) ? this.screenWidth : 360;
+    if (!this.scroller || !this.chapter || !this.chapter.pages || this.chapter.pages.length === 0) {
+      return;
+    }
+    const containerWidth = this.getContinuousHorizontalViewportWidth();
     const spacing = this.readingSettings.pageSpacing || 16;
+    const scaleFactor = this.getContinuousHorizontalScaleFactor();
 
     const visibleIndices: number[] = [];
     const scrollLeft = this.scrollPosition;
     const scrollRight = scrollLeft + containerWidth;
 
     let currentLeft = 0;
-    for (let i = 0; i < this.chapter.pages.length; i++) {
-      const page: MangaPage = this.chapter.pages[i];
+    for (const pageIndex of this.getContinuousHorizontalPageOrder()) {
+      const page: MangaPage = this.chapter.pages[pageIndex];
       const pw: number = this.getEstimatedImageWidthForHorizontal(page);
-      const itemLeft = currentLeft;
-      const itemRight = itemLeft + pw;
+      const itemLeft = currentLeft * scaleFactor;
+      const itemRight = (currentLeft + pw) * scaleFactor;
 
       if (itemRight >= scrollLeft - containerWidth && itemLeft <= scrollRight + containerWidth) {
-        visibleIndices.push(i);
+        visibleIndices.push(pageIndex);
       }
 
       currentLeft += pw + spacing;
@@ -7472,9 +7689,8 @@ export struct MangaViewer {
    * 更新水平连续滚动进度
    */
   private updateContinuousHorizontalProgress(): void {
-    if (this.visiblePageIndices.length > 0) {
-      const middleIndex = Math.floor(this.visiblePageIndices.length / 2);
-      const newPage = this.visiblePageIndices[middleIndex];
+    if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
+      const newPage = this.calculateContinuousHorizontalPageIndexFromScroll(this.scrollPosition);
 
       if (newPage !== this.currentWebtoonPage) {
         this.currentWebtoonPage = newPage;
@@ -7484,21 +7700,10 @@ export struct MangaViewer {
           this.callbacks.onPageChange(newPage);
         }
       }
-    }
 
-    // 计算滚动进度
-    if (this.chapter && this.chapter.pages && this.chapter.pages.length > 0) {
-      const totalPages: number = this.chapter.pages.length;
-      const spacing: number = this.readingSettings.pageSpacing || 16;
-      const containerWidth: number = (this.screenWidth && this.screenWidth > 0) ? this.screenWidth : 360;
-      let totalWidth: number = 0;
-      for (let i = 0; i < totalPages; i++) {
-        const page: MangaPage = this.chapter.pages[i];
-        totalWidth += this.getEstimatedImageWidthForHorizontal(page);
-        if (i < totalPages - 1) { totalWidth += spacing; }
-      }
-      const maxScrollable = Math.max(1, totalWidth - containerWidth);
-      this.webtoonScrollProgress = Math.min(1, Math.max(0, this.scrollPosition / maxScrollable));
+      const maxScrollable = Math.max(1, this.getContinuousHorizontalMaxScroll());
+      const rawProgress = Math.min(1, Math.max(0, this.scrollPosition / maxScrollable));
+      this.webtoonScrollProgress = this.isContinuousHorizontalRTL() ? 1 - rawProgress : rawProgress;
     }
   }
 
@@ -8230,7 +8435,17 @@ export struct MangaViewer {
 
       // 2. 【核心】从统一缓存系统加载PixelMap
       const cacheManager = ImageCacheManager.getInstance();
-      const cachedPixelMap = await cacheManager.loadImage(requestUrl, loadOptions);
+      let cachedPixelMap = await cacheManager.loadImage(requestUrl, loadOptions);
+
+      if (!cachedPixelMap && page.sourceType === ImageSourceType.LOCAL) {
+        const fsPath = this.getFsPathFromPage(page);
+        if (fsPath) {
+          logger.warn(TAG, `[架构] 统一缓存为空，回退到LocalImageCacheManager: P${pageIndex + 1}`);
+          cachedPixelMap = await this.localImageCache.loadImage(pageId, fsPath, {
+            maxWidth: this.screenWidth > 0 ? this.screenWidth : 1080
+          });
+        }
+      }
       
       if (cachedPixelMap) {
         logger.info(TAG, `[架构] 统一缓存加载成功: P${pageIndex + 1}`);
@@ -8395,11 +8610,12 @@ export struct MangaViewer {
    * 保存滚动位置
    */
   private saveScrollPosition(): void {
-    if (this.scrollPositionKey && this.scrollPosition > 0) {
+    if (this.scrollPositionKey) {
       try {
+        const normalizedPosition = Math.max(0, this.scrollPosition);
         // 使用AppStorage保存滚动位置
-        AppStorage.setOrCreate(this.scrollPositionKey, this.scrollPosition);
-        logger.debug(TAG, `保存滚动位置: ${this.scrollPosition}`);
+        AppStorage.setOrCreate(this.scrollPositionKey, normalizedPosition);
+        logger.debug(TAG, `保存滚动位置: ${normalizedPosition}`);
       } catch (error) {
         logger.error(TAG, `保存滚动位置失败: ${error}`);
       }
@@ -8417,7 +8633,11 @@ export struct MangaViewer {
           this.savedScrollPosition = savedPosition;
           // 延迟恢复滚动位置，确保组件已完全渲染
           setTimeout(() => {
-            this.smoothScrollTo(savedPosition);
+            if (this.isContinuousScrollMode()) {
+              this.smoothScrollToHorizontal(savedPosition);
+            } else {
+              this.smoothScrollTo(savedPosition);
+            }
           }, 100);
           logger.debug(TAG, `恢复滚动位置: ${savedPosition}`);
         }
@@ -8492,11 +8712,26 @@ export struct MangaViewer {
    * @param targetPageIndex 目标页面索引
    */
   public jumpToPageImmediate(targetPageIndex: number): boolean {
-    if (!this.isWebtoonMode() || !this.scroller) {
+    if ((!this.isWebtoonMode() && !this.isContinuousScrollMode()) || !this.scroller) {
       return false;
     }
     
     try {
+      if (this.isContinuousScrollMode()) {
+        const targetScrollX = this.getContinuousHorizontalPageTargetX(targetPageIndex);
+        this.suppressContinuousHorizontalBoundary();
+        this.scroller.scrollTo({
+          xOffset: targetScrollX,
+          yOffset: 0
+        });
+        this.scrollPosition = targetScrollX;
+        this.currentWebtoonPage = targetPageIndex;
+        this.viewCurrentPageIndex = targetPageIndex;
+        this.visiblePageIndices = [targetPageIndex];
+        this.triggerUnifiedPreload();
+        return true;
+      }
+
       const targetScrollY = this.calculatePageScrollPosition(targetPageIndex);
       
       // 直接设置滚动位置，无动画
@@ -8525,11 +8760,30 @@ export struct MangaViewer {
    * @param onComplete 滚动完成回调
    */
   public smoothScrollToPage(targetPageIndex: number, scrollSpeed: number = 1.0, onComplete?: () => void): boolean {
-    if (!this.isWebtoonMode() || !this.scroller) {
+    if ((!this.isWebtoonMode() && !this.isContinuousScrollMode()) || !this.scroller) {
       return false;
     }
 
     try {
+      if (this.isContinuousScrollMode()) {
+        const targetScrollX = this.getContinuousHorizontalPageTargetX(targetPageIndex);
+        const normalizedSpeed = Math.max(0.5, Math.min(2.0, scrollSpeed));
+        const distance = Math.abs(this.scrollPosition - targetScrollX);
+        const baseDuration = Math.min(1000, Math.max(300, distance / 2));
+        const duration = Math.max(300, Math.min(1200, baseDuration / normalizedSpeed));
+        this.smoothScrollToHorizontalWithDuration(targetScrollX, duration);
+
+        setTimeout(() => {
+          if (targetPageIndex !== this.currentPageIndex && this.callbacks.onPageChange) {
+            this.callbacks.onPageChange(targetPageIndex);
+          }
+          if (onComplete) {
+            onComplete();
+          }
+        }, duration);
+        return true;
+      }
+
       const targetScrollY = this.calculatePageScrollPosition(targetPageIndex);
 
       // 计算动画时长，根据滚动距离和速度调整
@@ -8571,11 +8825,55 @@ export struct MangaViewer {
    * @param onComplete 滚动完成回调
    */
   public smoothScrollToNextPage(scrollSpeed: number = 1.0, scrollDistance: 'page' | 'screen' = 'page', onComplete?: () => void): boolean {
-    if (!this.isWebtoonMode() || !this.scroller) {
+    if ((!this.isWebtoonMode() && !this.isContinuousScrollMode()) || !this.scroller) {
       return false;
     }
 
     try {
+      if (this.isContinuousScrollMode()) {
+        const currentScrollX = this.scrollPosition;
+        const normalizedSpeed = Math.max(0.5, Math.min(2.0, scrollSpeed));
+        const currentPageIndex = this.viewCurrentPageIndex;
+        let targetScrollX: number;
+        let nextPageIndex: number;
+
+        if (scrollDistance === 'screen') {
+          const screenWidth = this.getContinuousHorizontalViewportWidth();
+          const proposedTarget = this.isContinuousHorizontalRTL()
+            ? Math.max(0, currentScrollX - screenWidth * 0.8)
+            : Math.min(this.getContinuousHorizontalMaxScroll(), currentScrollX + screenWidth * 0.8);
+          const candidateIndex = this.calculateContinuousHorizontalPageIndexFromScroll(proposedTarget);
+          if (candidateIndex <= currentPageIndex) {
+            nextPageIndex = Math.min(currentPageIndex + 1, this.chapter.pages.length - 1);
+            targetScrollX = this.getContinuousHorizontalPageTargetX(nextPageIndex);
+          } else {
+            nextPageIndex = candidateIndex;
+            targetScrollX = proposedTarget;
+          }
+        } else {
+          nextPageIndex = Math.min(currentPageIndex + 1, this.chapter.pages.length - 1);
+          targetScrollX = this.getContinuousHorizontalPageTargetX(nextPageIndex);
+        }
+
+        if (Math.abs(currentScrollX - targetScrollX) < 1 && nextPageIndex === currentPageIndex) {
+          return false;
+        }
+
+        const baseDuration = scrollDistance === 'screen' ? 800 : 600;
+        const duration = Math.max(300, Math.min(1200, baseDuration / normalizedSpeed));
+        this.smoothScrollToHorizontalWithDuration(targetScrollX, duration);
+
+        setTimeout(() => {
+          if (nextPageIndex !== this.currentPageIndex && this.callbacks.onPageChange) {
+            this.callbacks.onPageChange(nextPageIndex);
+          }
+          if (onComplete) {
+            onComplete();
+          }
+        }, duration);
+        return true;
+      }
+
       const currentScrollY = this.scrollPosition;
       let targetScrollY: number;
       let nextPageIndex: number;
@@ -8666,11 +8964,55 @@ export struct MangaViewer {
    * @param onComplete 滚动完成回调
    */
   public smoothScrollToPreviousPage(scrollSpeed: number = 1.0, scrollDistance: 'page' | 'screen' = 'page', onComplete?: () => void): boolean {
-    if (!this.isWebtoonMode() || !this.scroller) {
+    if ((!this.isWebtoonMode() && !this.isContinuousScrollMode()) || !this.scroller) {
       return false;
     }
 
     try {
+      if (this.isContinuousScrollMode()) {
+        const currentScrollX = this.scrollPosition;
+        const normalizedSpeed = Math.max(0.5, Math.min(2.0, scrollSpeed));
+        const currentPageIndex = this.viewCurrentPageIndex;
+        let targetScrollX: number;
+        let prevPageIndex: number;
+
+        if (scrollDistance === 'screen') {
+          const screenWidth = this.getContinuousHorizontalViewportWidth();
+          const proposedTarget = this.isContinuousHorizontalRTL()
+            ? Math.min(this.getContinuousHorizontalMaxScroll(), currentScrollX + screenWidth * 0.8)
+            : Math.max(0, currentScrollX - screenWidth * 0.8);
+          const candidateIndex = this.calculateContinuousHorizontalPageIndexFromScroll(proposedTarget);
+          if (candidateIndex >= currentPageIndex) {
+            prevPageIndex = Math.max(0, currentPageIndex - 1);
+            targetScrollX = this.getContinuousHorizontalPageTargetX(prevPageIndex);
+          } else {
+            prevPageIndex = candidateIndex;
+            targetScrollX = proposedTarget;
+          }
+        } else {
+          prevPageIndex = Math.max(0, currentPageIndex - 1);
+          targetScrollX = this.getContinuousHorizontalPageTargetX(prevPageIndex);
+        }
+
+        if (Math.abs(currentScrollX - targetScrollX) < 1 && prevPageIndex === currentPageIndex) {
+          return false;
+        }
+
+        const baseDuration = scrollDistance === 'screen' ? 800 : 600;
+        const duration = Math.max(300, Math.min(1200, baseDuration / normalizedSpeed));
+        this.smoothScrollToHorizontalWithDuration(targetScrollX, duration);
+
+        setTimeout(() => {
+          if (this.callbacks.onPageChange) {
+            this.callbacks.onPageChange(prevPageIndex);
+          }
+          if (onComplete) {
+            onComplete();
+          }
+        }, duration);
+        return true;
+      }
+
       const currentScrollY = this.scrollPosition;
       let targetScrollY: number;
       let prevPageIndex: number;
@@ -10044,19 +10386,14 @@ export struct MangaViewer {
             .blockColor(colorMap.accent)
             .onChange((value: number) => {
               const targetProgress = value / 100;
-              const totalPages: number = this.chapter.pages.length;
-              const spacing: number = this.readingSettings.pageSpacing || 16;
               if (this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL) {
-                // 水平模式：计算总宽度并水平滚动
-                let totalWidth: number = 0;
-                for (let i = 0; i < totalPages; i++) {
-                  const pg: MangaPage = this.chapter.pages[i];
-                  totalWidth += this.getEstimatedImageWidthForHorizontal(pg);
-                  if (i < totalPages - 1) { totalWidth += spacing; }
-                }
-                const targetPosition: number = targetProgress * totalWidth;
+                const maxScroll = this.getContinuousHorizontalMaxScroll();
+                const effectiveProgress = this.isContinuousHorizontalRTL() ? 1 - targetProgress : targetProgress;
+                const targetPosition: number = effectiveProgress * maxScroll;
                 this.smoothScrollToHorizontal(targetPosition);
               } else {
+                const totalPages: number = this.chapter.pages.length;
+                const spacing: number = this.readingSettings.pageSpacing || 16;
                 // 垂直模式：计算总高度并垂直滚动
                 let totalHeight: number = 0;
                 for (let i = 0; i < totalPages; i++) {
@@ -10098,6 +10435,12 @@ export struct MangaViewer {
     if (pageIndex < 0 || pageIndex >= this.chapter.pages.length) {
       logger.warn(TAG, `页面索引超出范围: ${pageIndex}`);
       return;
+    }
+
+    if (this.isContinuousScrollMode() || this.isWebtoonMode()) {
+      if (this.smoothScrollToPage(pageIndex, 1.0)) {
+        return;
+      }
     }
 
     // 计算目标位置（简化计算，实际应该根据图片高度精确计算）

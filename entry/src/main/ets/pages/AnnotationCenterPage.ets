@@ -23,7 +23,6 @@ import { EBookFormat, EBookReadingProgress } from '../Models/EBookModels';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
 import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
-import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
 
 const TAG = 'AnnotationCenterPage';
 const MAX_CONTENT_WIDTH: number = 960;
@@ -200,6 +199,25 @@ export struct AnnotationCenterPage {
     }
   }
 
+  private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
+    if (!rect || !anchorId) {
+      return rect;
+    }
+    let yOffset = this.statusBarHeight > 0 ? this.statusBarHeight : 24;
+    if (anchorId === 'guide_inspiration_filters' ||
+      anchorId === 'guide_inspiration_actions' ||
+      anchorId === 'guide_inspiration_record_list') {
+      yOffset += 12;
+    }
+    return {
+      x: rect.x,
+      y: rect.y + yOffset,
+      width: rect.width,
+      height: rect.height,
+      borderRadius: rect.borderRadius
+    };
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -219,7 +237,10 @@ export struct AnnotationCenterPage {
       return;
     }
     this.appGuideStep = step;
-    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    this.appGuideHighlightRect = this.adjustGuideHighlightRect(
+      step.anchorId,
+      this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18)
+    );
     if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
       setTimeout(() => {
         void this.refreshPageGuide(`${trigger}_retry_layout`);
@@ -1227,11 +1248,10 @@ export struct AnnotationCenterPage {
     promptAction.showActionMenu({
       title: `分享已选${selected.length} 条灵感`,
       buttons: [
-        { text: '预览文本', color: '#2563EB' },
-        { text: '预览Markdown', color: '#2563EB' },
-        { text: '直接复制文本', color: '#333333' },
-        { text: '直接复制Markdown', color: '#333333' },
-        { text: '取消', color: '#666666' }
+        { text: '预览文本', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '预览Markdown', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '直接复制文本', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '直接复制Markdown', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
       if (result.index === 0) {
@@ -1250,11 +1270,10 @@ export struct AnnotationCenterPage {
     promptAction.showActionMenu({
       title: '分享这条灵感',
       buttons: [
-        { text: '预览文本', color: '#2563EB' },
-        { text: '预览Markdown', color: '#2563EB' },
-        { text: '直接复制文本', color: '#333333' },
-        { text: '直接复制Markdown', color: '#333333' },
-        { text: '取消', color: '#666666' }
+        { text: '预览文本', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '预览Markdown', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '直接复制文本', color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: '直接复制Markdown', color: $r('sys.color.ohos_id_color_text_primary') }
       ]
     }).then(async (result: promptAction.ActionMenuSuccessResponse) => {
       if (result.index === 0) {
@@ -1768,6 +1787,7 @@ export struct AnnotationCenterPage {
     .borderRadius(12)
     .backgroundColor(this.themeManager.getGlassBackgroundResource())
     .border({ width: 1, color: 'rgba(120,120,120,0.16)' })
+    .id('guide_inspiration_content_selector')
   }
 
   @Builder
@@ -2293,6 +2313,7 @@ export struct AnnotationCenterPage {
                 })
             }
             .width('100%')
+            .id('guide_inspiration_actions')
 
             Column() {
               if (this.isLoading) {
@@ -2331,6 +2352,7 @@ export struct AnnotationCenterPage {
             .width('100%')
             .opacity(this.listOpacity)
             .translate({ y: this.listOffsetY })
+            .id('guide_inspiration_record_list')
 
             Blank().height(32)
           }
@@ -2379,7 +2401,7 @@ export struct AnnotationCenterPage {
     }
     .hideTitleBar(false)
     .mode(NavDestinationMode.STANDARD)
-    .titleBar(withSafeAreaTitleBar({
+    .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -2408,7 +2430,7 @@ export struct AnnotationCenterPage {
           }]
         }
       }
-    }))
+    })
     .backgroundColor(Color.Transparent)
     .onWillAppear(() => {
       this.captureCurrentDisplayMode('onWillAppear');

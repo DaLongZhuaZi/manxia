@@ -252,35 +252,13 @@ export struct InteractionSettingsSubPage {
       {
         title: '通用交互',
         scenes: [
-          VibrationScene.BUTTON_CLICK,
-          VibrationScene.TOGGLE_SWITCH,
-          VibrationScene.LIST_ITEM_SELECT,
-          VibrationScene.LONG_PRESS,
-          VibrationScene.SWIPE_ACTION,
-        ]
-      },
-      {
-        title: '阅读器',
-        scenes: [
-          VibrationScene.PAGE_TURN,
-          VibrationScene.CHAPTER_CHANGE,
-          VibrationScene.BOOKMARK_ADD,
-        ]
-      },
-      {
-        title: '下载',
-        scenes: [
-          VibrationScene.DOWNLOAD_COMPLETE,
-          VibrationScene.DOWNLOAD_ERROR,
+          VibrationScene.BUTTON_CLICK
         ]
       },
       {
         title: '系统提示',
         scenes: [
-          VibrationScene.SUCCESS,
-          VibrationScene.ERROR,
-          VibrationScene.WARNING,
-          VibrationScene.NOTIFICATION,
+          VibrationScene.WARNING
         ]
       }
     ];

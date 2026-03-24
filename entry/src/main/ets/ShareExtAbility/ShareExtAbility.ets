@@ -188,9 +188,18 @@ export default class ShareExtAbility extends UIExtensionAbility {
     const lowerUri = uri.toLowerCase();
     
     // 漫画压缩包
-    if (lowerUri.endsWith('.zip') || lowerUri.endsWith('.cbz') || 
+    if (lowerUri.endsWith('.zip') || lowerUri.endsWith('.cbz') ||
         lowerUri.endsWith('.cbr') || lowerUri.endsWith('.rar') ||
-        lowerUri.includes('.zip?') || lowerUri.includes('.cbz?')) {
+        lowerUri.endsWith('.7z') || lowerUri.endsWith('.tar') ||
+        lowerUri.endsWith('.gz') || lowerUri.endsWith('.tgz') ||
+        lowerUri.endsWith('.bz2') || lowerUri.endsWith('.xz') ||
+        lowerUri.endsWith('.lzma') ||
+        lowerUri.includes('.zip?') || lowerUri.includes('.cbz?') ||
+        lowerUri.includes('.cbr?') || lowerUri.includes('.rar?') ||
+        lowerUri.includes('.7z?') || lowerUri.includes('.tar?') ||
+        lowerUri.includes('.gz?') || lowerUri.includes('.tgz?') ||
+        lowerUri.includes('.bz2?') || lowerUri.includes('.xz?') ||
+        lowerUri.includes('.lzma?')) {
       return 'comic';
     }
     

@@ -133,7 +133,7 @@ import { NovelReaderPageParams } from './NovelBookshelfPage';
 
 import { startBookOpenTransitionWithComponentId, EBookBackgroundSettings } from '../components/BookTransitionOverlay';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
-import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'UnifiedDetailPage';
@@ -413,6 +413,7 @@ export struct UnifiedDetailPage {
   @State shelfContentItems: ShelfContentItem[] = [];    // 同书架的其他内容
   @State isLoadingShelfContent: boolean = false;        // 是否正在加载同书架内容
   @State shelfContentFilter: ShelfContentFilterType = 'all';  // 内容类型筛选
+  @State isChapterListExpanded: boolean = true;         // 章节列表区域是否展开
   @State isShelfContentExpanded: boolean = true;        // 同书架内容是否展开
   @State isRecommendationsExpanded: boolean = true;     // 相关推荐是否展开
 
@@ -527,6 +528,22 @@ export struct UnifiedDetailPage {
     }
   }
 
+  private alignGuideViewport(anchorId?: string): boolean {
+    if (this.responsive_isLandscape || !anchorId || anchorId === 'guide_unified_detail_header') {
+      return false;
+    }
+    const scrollResult = ensureGuideAnchorVisibleInScroller(
+      this.getUIContext(),
+      this.scroller,
+      anchorId,
+      'guide_unified_detail_root',
+      TITLE_BAR_HEIGHT + 24,
+      280,
+      280
+    );
+    return scrollResult.scrolled;
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -538,11 +555,19 @@ export struct UnifiedDetailPage {
       this.appGuideHighlightRect = null;
       return;
     }
+    if (this.alignGuideViewport(step.anchorId) && !trigger.endsWith('_retry_scroll')) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_retry_scroll`);
+      }, 320);
+      return;
+    }
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
-    if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
+    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
       setTimeout(() => {
-        void this.refreshPageGuide('retry_layout');
+        void this.refreshPageGuide(`${trigger}_retry_layout`);
       }, 120);
     }
     logger.debug(TAG, `统一详情页引导已刷新: trigger=${trigger}, step=${step.id}`);
@@ -3292,6 +3317,19 @@ export struct UnifiedDetailPage {
     return TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: offsetY }));
   }
 
+  private shouldShowChapterListExpandToggle(): boolean {
+    return !(this.content?.contentType === UnifiedContentType.EBOOK && this.content.chapters.length === 0);
+  }
+
+  private toggleChapterListExpanded(): void {
+    if (!this.shouldShowChapterListExpandToggle()) {
+      return;
+    }
+    animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+      this.isChapterListExpanded = !this.isChapterListExpanded;
+    });
+  }
+
   private getReadAloudCacheSegmentPreviewText(
     chapter: RemoteReadAloudCacheChapterSummary,
     maxSegments: number = 3
@@ -4236,6 +4274,7 @@ export struct UnifiedDetailPage {
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
             .height(36)
             .width('100%')
+            .id('guide_unified_detail_primary_action')
             .onClick(() => this.continueReading())
 
           if (this.canShowReadAloudButton()) {
@@ -4270,6 +4309,7 @@ export struct UnifiedDetailPage {
       .height(COVER_HEIGHT)
     }
     .width('100%')
+    .id('guide_unified_detail_header')
     .padding(16)
   }
 
@@ -4424,6 +4464,7 @@ export struct UnifiedDetailPage {
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .id('guide_unified_detail_description')
   }
 
   @Builder
@@ -4654,6 +4695,7 @@ export struct UnifiedDetailPage {
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .id('guide_unified_detail_action_bar')
   }
   
   /**
@@ -7371,59 +7413,92 @@ export struct UnifiedDetailPage {
 
           Blank()
 
-          // 排序按钮（章节加载中时隐藏）
-          if (!this.isChaptersLoading) {
-            Button() {
-              SymbolGlyph(this.chapterSortOrder === ChapterSortOrder.ASCENDING 
-                ? $r('sys.symbol.arrow_up') 
-                : $r('sys.symbol.arrow_down'))
-                .fontSize(16)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+          Row({ space: 8 }) {
+            // 排序按钮（章节加载中时隐藏）
+            if (!this.isChaptersLoading) {
+              Button() {
+                SymbolGlyph(this.chapterSortOrder === ChapterSortOrder.ASCENDING 
+                  ? $r('sys.symbol.arrow_up') 
+                  : $r('sys.symbol.arrow_down'))
+                  .fontSize(16)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+              }
+              .width(32)
+              .height(32)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.chapterSortOrder = this.chapterSortOrder === ChapterSortOrder.ASCENDING 
+                  ? ChapterSortOrder.DESCENDING 
+                  : ChapterSortOrder.ASCENDING;
+              })
             }
-            .width(32)
+
+            Button() {
+              Row({ space: 4 }) {
+                Text(this.isChapterListExpanded ? '收起' : '展开')
+                  .fontSize(12)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+                SymbolGlyph($r('sys.symbol.chevron_down'))
+                  .fontSize(14)
+                  .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme)])
+                  .rotate({ angle: this.isChapterListExpanded ? 0 : -90 })
+                  .animation({ duration: 250, curve: Curve.EaseInOut })
+              }
+            }
             .height(32)
-            .backgroundColor(Color.Transparent)
+            .padding({ left: 10, right: 10 })
+            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
+            .borderRadius(14)
             .onClick(() => {
-              this.chapterSortOrder = this.chapterSortOrder === ChapterSortOrder.ASCENDING 
-                ? ChapterSortOrder.DESCENDING 
-                : ChapterSortOrder.ASCENDING;
+              this.toggleChapterListExpanded();
             })
           }
         }
         .width('100%')
 
-        // 章节加载中显示加载动画
-        if (this.isChaptersLoading) {
-          Column({ space: 12 }) {
-            LoadingProgress()
-              .width(36)
-              .height(36)
-              .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-            
-            Text(this.chaptersLoadProgress || '正在加载章节列表...')
-              .fontSize(13)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        if (this.isChapterListExpanded) {
+          Column() {
+            // 章节加载中显示加载动画
+            if (this.isChaptersLoading) {
+              Column({ space: 12 }) {
+                LoadingProgress()
+                  .width(36)
+                  .height(36)
+                  .color(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+              
+                Text(this.chaptersLoadProgress || '正在加载章节列表...')
+                  .fontSize(13)
+                  .fontFamily(this.appFontFamily)
+                  .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+              }
+              .width('100%')
+              .height(120)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+            } else {
+              // 根据内容类型显示不同的章节列表
+              if (this.content?.contentType === UnifiedContentType.MANGA) {
+                this.buildMangaChapterList()
+              } else if (this.content?.contentType === UnifiedContentType.NOVEL) {
+                this.buildNovelChapterList()
+              } else if (this.content?.contentType === UnifiedContentType.EBOOK) {
+                this.buildEBookChapterList()
+              }
+            }
           }
           .width('100%')
-          .height(120)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          // 根据内容类型显示不同的章节列表
-          if (this.content?.contentType === UnifiedContentType.MANGA) {
-            this.buildMangaChapterList()
-          } else if (this.content?.contentType === UnifiedContentType.NOVEL) {
-            this.buildNovelChapterList()
-          } else if (this.content?.contentType === UnifiedContentType.EBOOK) {
-            this.buildEBookChapterList()
-          }
+          .transition(this.getReadAloudCacheFadeSlideTransition(8))
         }
       }
       .width('100%')
       .padding(16)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
       .borderRadius(12)
+      .clip(true)
+      .animation({ duration: 300, curve: Curve.EaseInOut })
+      .id('guide_unified_detail_chapter_section')
     }
   }
   
@@ -7498,6 +7573,7 @@ export struct UnifiedDetailPage {
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .id('guide_unified_detail_chapter_section')
   }
   
   /**
@@ -8509,7 +8585,8 @@ export struct UnifiedDetailPage {
         Column() {
           this.buildChapterList()
         }
-        .layoutWeight(1)
+        .layoutWeight(this.isChapterListExpanded ? 1 : 0)
+        .animation({ duration: 300, curve: Curve.EaseInOut })
       }
       .width('100%')
       .height('100%')

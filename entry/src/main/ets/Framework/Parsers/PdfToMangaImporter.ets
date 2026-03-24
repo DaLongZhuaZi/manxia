@@ -42,10 +42,6 @@ const PAGE_DELAY_MS = 100;
  * 更长的延时确保系统有足够时间响应
  */
 const BATCH_DELAY_MS = 300;
-const MANGA_RENDER_BASE_SCALE = 2.2;
-const EBOOK_RENDER_BASE_SCALE = 2.0;
-const MANGA_MAX_RENDER_LONG_EDGE = 2400;
-const EBOOK_MAX_RENDER_LONG_EDGE = 2200;
 
 /**
  * PDF内容类型枚举
@@ -156,12 +152,6 @@ export interface PdfPageImage {
 /**
  * PDF导入进度回调
  */
-export interface PdfRenderSize {
-  bitmapWidth: number;
-  bitmapHeight: number;
-  rotation: number;
-}
-
 export type PdfImportProgressCallback = (current: number, total: number, message: string) => void;
 
 /**
@@ -442,34 +432,32 @@ export class PdfToMangaImporter {
 
       const pageWidth = Math.max(1, Math.floor(pdfPage.getWidth()));
       const pageHeight = Math.max(1, Math.floor(pdfPage.getHeight()));
-      const renderSize = this.resolveRenderSize(pdfPage, pageWidth, pageHeight);
-      const matrix = new pdfService.PdfMatrix();
-      matrix.x = 0;
-      matrix.y = 0;
-      matrix.width = pageWidth;
-      matrix.height = pageHeight;
-      matrix.rotate = renderSize.rotation;
-
-      logger.info(
-        TAG,
-        `页面 ${pageIndex} 使用受控渲染尺寸: ${renderSize.bitmapWidth}x${renderSize.bitmapHeight}, 原始=${pageWidth}x${pageHeight}, rotation=${renderSize.rotation}`
-      );
 
       let pixelMap: image.PixelMap | null = null;
       try {
-        pixelMap = pdfPage.getAreaPixelMap(
-          matrix,
-          renderSize.bitmapWidth,
-          renderSize.bitmapHeight,
-          false,
-          true
-        );
+        pixelMap = pdfPage.getPagePixelMap();
         if (!pixelMap) {
           logger.warn(TAG, `页面 ${pageIndex} 获取PixelMap失败`);
           return null;
         }
 
-        // 使用受控渲染尺寸降低超大扫描PDF的内存峰值
+        let outputWidth = pageWidth;
+        let outputHeight = pageHeight;
+        try {
+          const pixelMapInfo = pixelMap.getImageInfoSync();
+          if (pixelMapInfo && pixelMapInfo.size) {
+            outputWidth = pixelMapInfo.size.width;
+            outputHeight = pixelMapInfo.size.height;
+          }
+        } catch (infoError) {
+          logger.warn(TAG, `获取页面 ${pageIndex} PixelMap尺寸失败: ${String(infoError)}`);
+        }
+
+        logger.info(
+          TAG,
+          `页面 ${pageIndex} 使用整页渲染尺寸: ${outputWidth}x${outputHeight}, 原始=${pageWidth}x${pageHeight}`
+        );
+
         const imgBuffer = await this.pixelMapToBuffer(pixelMap, 'image/webp', 70);
 
         // 生成输出文件路径
@@ -515,8 +503,8 @@ export class PdfToMangaImporter {
         return {
           pageIndex,
           imagePath: finalPath,
-          width: renderSize.bitmapWidth,
-          height: renderSize.bitmapHeight,
+          width: outputWidth,
+          height: outputHeight,
           fileSize
         };
       } finally {
@@ -533,42 +521,6 @@ export class PdfToMangaImporter {
       logger.error(TAG, `转换页面 ${pageIndex} 异常: ${error}`);
       return null;
     }
-  }
-
-  private resolveRenderSize(
-    pdfPage: pdfService.PdfPage,
-    pageWidth: number,
-    pageHeight: number
-  ): PdfRenderSize {
-    const baseScale = this.config.contentType === PdfContentType.MANGA
-      ? MANGA_RENDER_BASE_SCALE
-      : EBOOK_RENDER_BASE_SCALE;
-    const maxLongEdge = this.config.contentType === PdfContentType.MANGA
-      ? MANGA_MAX_RENDER_LONG_EDGE
-      : EBOOK_MAX_RENDER_LONG_EDGE;
-    const rotation = Number(pdfPage.getRotation());
-
-    let bitmapWidth = Math.max(1, Math.floor(pageWidth * baseScale));
-    let bitmapHeight = Math.max(1, Math.floor(pageHeight * baseScale));
-    const currentLongEdge = Math.max(bitmapWidth, bitmapHeight);
-    if (currentLongEdge > maxLongEdge) {
-      const downscale = maxLongEdge / currentLongEdge;
-      bitmapWidth = Math.max(1, Math.floor(bitmapWidth * downscale));
-      bitmapHeight = Math.max(1, Math.floor(bitmapHeight * downscale));
-    }
-
-    if (rotation === 90 || rotation === 270) {
-      const swappedWidth = bitmapHeight;
-      bitmapHeight = bitmapWidth;
-      bitmapWidth = swappedWidth;
-    }
-
-    const renderSize: PdfRenderSize = {
-      bitmapWidth,
-      bitmapHeight,
-      rotation
-    };
-    return renderSize;
   }
 
   /**
@@ -686,7 +638,7 @@ export class PdfToMangaImporter {
       // 使用第一页作为封面
       const firstPage = imageFiles[0];
       const coverDir = `${this.config.outputDir}/${mangaId}`;
-      const coverPath = `${coverDir}/cover.png`;
+      const coverPath = `${coverDir}/cover${this.getImageExtension(firstPage.imagePath)}`;
 
       // 复制第一页图片作为封面
       fileIo.copyFileSync(firstPage.imagePath, coverPath);
@@ -698,6 +650,11 @@ export class PdfToMangaImporter {
       logger.warn(TAG, `生成封面失败: ${error}`);
       return null;
     }
+  }
+
+  private getImageExtension(filePath: string): string {
+    const match = filePath.match(/(\.[^./\\]+)$/);
+    return match ? match[1] : '.webp';
   }
 
   /**

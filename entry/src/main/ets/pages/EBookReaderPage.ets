@@ -96,6 +96,7 @@ interface ReaderKitPositionSnapshot {
 @Component
 struct EBookReaderPage {
   private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
+  private static readonly GUIDE_LAYOUT_STABILIZE_DELAY_MS: number = 140;
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
@@ -371,6 +372,91 @@ struct EBookReaderPage {
     }
   }
 
+  private async waitForGuideLayout(delayMs: number = EBookReaderPage.GUIDE_LAYOUT_STABILIZE_DELAY_MS): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, delayMs);
+    });
+  }
+
+  private async prepareGuidePresentation(anchorId?: string): Promise<void> {
+    if (!anchorId || anchorId.length <= 0) {
+      return;
+    }
+    let changed: boolean = false;
+    this.clearToolbarAutoHideTimer();
+    switch (anchorId) {
+      case 'guide_ebook_reader_top_toolbar':
+      case 'guide_ebook_reader_bottom_toolbar':
+        changed = !this.showTopToolbar || !this.showBottomToolbar || this.showSettingsPanel ||
+          this.showChapterList || this.showMoreMenu || this.showBookInfoDialog ||
+          this.showFontSettingsPanel || this.showReadingOptionsPanel || this.showTextReaderSettings ||
+          this.showReadAloudPanel || this.toolbarOpacity < 0.99;
+        this.showSettingsPanel = false;
+        this.showChapterList = false;
+        this.chapterListOpacity = 0;
+        this.showMoreMenu = false;
+        this.showBookInfoDialog = false;
+        this.showFontSettingsPanel = false;
+        this.showReadingOptionsPanel = false;
+        this.showTextReaderSettings = false;
+        this.showReadAloudPanel = false;
+        this.showTopToolbar = true;
+        this.showBottomToolbar = true;
+        this.toolbarOpacity = 1;
+        break;
+      case 'guide_ebook_reader_chapter_list':
+        changed = this.showTopToolbar || this.showBottomToolbar || !this.showChapterList ||
+          this.showSettingsPanel || this.showMoreMenu || this.showBookInfoDialog ||
+          this.showFontSettingsPanel || this.showReadingOptionsPanel || this.showTextReaderSettings ||
+          this.showReadAloudPanel || this.toolbarOpacity > 0.01 || this.chapterListOpacity < 0.99;
+        this.showTopToolbar = false;
+        this.showBottomToolbar = false;
+        this.toolbarOpacity = 0;
+        this.showSettingsPanel = false;
+        this.showMoreMenu = false;
+        this.showBookInfoDialog = false;
+        this.showFontSettingsPanel = false;
+        this.showReadingOptionsPanel = false;
+        this.showTextReaderSettings = false;
+        this.showReadAloudPanel = false;
+        this.showChapterList = true;
+        this.chapterListOpacity = 1;
+        setTimeout(() => {
+          try {
+            const maxIndex = Math.max(0, (this.ebook?.chapters.length || 1) - 1);
+            const safeIndex = Math.max(0, Math.min(this.currentChapterIndex, maxIndex));
+            this.chapterListScroller.scrollToIndex(safeIndex, true, ScrollAlign.CENTER);
+          } catch (error) {
+            logger.warn(TAG, `引导滚动电子书目录失败: ${String(error)}`);
+          }
+        }, 60);
+        break;
+      default:
+        changed = this.showTopToolbar || this.showBottomToolbar || this.showSettingsPanel ||
+          this.showChapterList || this.showMoreMenu || this.showBookInfoDialog ||
+          this.showFontSettingsPanel || this.showReadingOptionsPanel || this.showTextReaderSettings ||
+          this.showReadAloudPanel || this.toolbarOpacity > 0.01 || this.chapterListOpacity > 0.01;
+        this.showTopToolbar = false;
+        this.showBottomToolbar = false;
+        this.toolbarOpacity = 0;
+        this.showSettingsPanel = false;
+        this.showChapterList = false;
+        this.chapterListOpacity = 0;
+        this.showMoreMenu = false;
+        this.showBookInfoDialog = false;
+        this.showFontSettingsPanel = false;
+        this.showReadingOptionsPanel = false;
+        this.showTextReaderSettings = false;
+        this.showReadAloudPanel = false;
+        break;
+    }
+    if (changed) {
+      await this.waitForGuideLayout();
+    }
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -382,6 +468,7 @@ struct EBookReaderPage {
       this.appGuideHighlightRect = null;
       return;
     }
+    await this.prepareGuidePresentation(step.anchorId);
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
@@ -2535,6 +2622,7 @@ struct EBookReaderPage {
             nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
             cardPosition: this.appGuideStep.cardPosition,
             highlightRect: this.appGuideHighlightRect,
+            immersiveMode: true,
             showSkip: this.appGuideStep.showSkip !== false,
             themeState: this.themeState,
             onNext: () => {
@@ -3648,6 +3736,7 @@ struct EBookReaderPage {
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     .opacity(this.toolbarOpacity)
+    .id('guide_ebook_reader_top_toolbar')
   }
 
   /**
@@ -3818,6 +3907,7 @@ struct EBookReaderPage {
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: -2 })
     .opacity(this.toolbarOpacity)
+    .id('guide_ebook_reader_bottom_toolbar')
   }
 
   /**
@@ -4005,6 +4095,7 @@ struct EBookReaderPage {
       .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
       .borderRadius(this.isLandscape ? 0 : 16)
       .opacity(this.chapterListOpacity)
+      .id('guide_ebook_reader_chapter_list')
     }
     .width('100%')
     .height('100%')

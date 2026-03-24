@@ -343,6 +343,51 @@ export struct ReadingSettingsSubPage {
   /**
    * 加载全局阅读设置
    */
+  private normalizeMangaReadingDirection(mode: ReadingMode, direction: ReadingDirection): ReadingDirection {
+    const normalizedDirection = direction === ReadingDirection.VERTICAL
+      ? ReadingDirection.TOP_TO_BOTTOM
+      : direction;
+    if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if (mode === ReadingMode.WEBTOON && normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    if (mode === ReadingMode.CONTINUOUS_SCROLL && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    return normalizedDirection;
+  }
+
+  private isTopToBottomMangaDirectionDisabled(): boolean {
+    return this.defaultReadingMode === ReadingMode.CONTINUOUS_SCROLL ||
+      this.defaultReadingMode === ReadingMode.DOUBLE_PAGE;
+  }
+
+  private isHorizontalMangaDirectionDisabled(): boolean {
+    return this.defaultReadingMode === ReadingMode.WEBTOON;
+  }
+
+  private getSelectedMangaReadingDirection(): ReadingDirection {
+    return this.normalizeMangaReadingDirection(
+      this.defaultReadingMode,
+      this.defaultReadingDirection
+    );
+  }
+
+  private getMangaDirectionHint(): string {
+    if (this.defaultReadingMode === ReadingMode.CONTINUOUS_SCROLL) {
+      return '连续滚动仅支持从左到右或从右到左';
+    }
+    if (this.isHorizontalMangaDirectionDisabled()) {
+      return '条漫模式仅支持从上到下';
+    }
+    if (this.defaultReadingMode === ReadingMode.DOUBLE_PAGE) {
+      return '双页模式不支持从上到下';
+    }
+    return '';
+  }
+
   private loadGlobalSettings(): void {
     try {
       // 漫画全局设置
@@ -355,6 +400,14 @@ export struct ReadingSettingsSubPage {
         SettingKeys.GLOBAL_READING_DIRECTION,
         DEFAULT_READING_SETTINGS.readingDirection
       ) as ReadingDirection;
+      const normalizedMangaDirection = this.normalizeMangaReadingDirection(
+        this.defaultReadingMode,
+        this.defaultReadingDirection
+      );
+      if (normalizedMangaDirection !== this.defaultReadingDirection) {
+        this.defaultReadingDirection = normalizedMangaDirection;
+        this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+      }
 
       this.defaultBrightness = this.settingsManager.getNumber(
         SettingKeys.GLOBAL_BRIGHTNESS,
@@ -943,15 +996,16 @@ export struct ReadingSettingsSubPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
         
-        Row({ space: 8 }) {
+        Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
           Button({ stateEffect: true }) {
-        Text('单页')
+            Text('单页')
               .fontSize(12)
               .fontFamily(this.appFontFamily)
               .fontColor(ThemeAwareHelper.getTestManagementThemedColor('button_text_secondary', this.themeState.currentTheme))
           }
             .width(70)
             .height(36)
+            .margin({ right: 8, bottom: 8 })
             .backgroundColor(
               this.defaultReadingMode === ReadingMode.SINGLE_PAGE
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -961,6 +1015,11 @@ export struct ReadingSettingsSubPage {
             .onClick(async () => {
               this.defaultReadingMode = ReadingMode.SINGLE_PAGE;
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_MODE, this.defaultReadingMode);
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                this.defaultReadingDirection
+              );
+              await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
               this.settingsManager.syncToAppStorage();
             })
 
@@ -972,6 +1031,7 @@ export struct ReadingSettingsSubPage {
           }
             .width(70)
             .height(36)
+            .margin({ right: 8, bottom: 8 })
             .backgroundColor(
               this.defaultReadingMode === ReadingMode.DOUBLE_PAGE
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -981,6 +1041,11 @@ export struct ReadingSettingsSubPage {
             .onClick(async () => {
               this.defaultReadingMode = ReadingMode.DOUBLE_PAGE;
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_MODE, this.defaultReadingMode);
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                this.defaultReadingDirection
+              );
+              await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
               this.settingsManager.syncToAppStorage();
             })
 
@@ -992,6 +1057,7 @@ export struct ReadingSettingsSubPage {
           }
             .width(80)
             .height(36)
+            .margin({ right: 8, bottom: 8 })
             .backgroundColor(
               this.defaultReadingMode === ReadingMode.CONTINUOUS_SCROLL
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -1001,6 +1067,14 @@ export struct ReadingSettingsSubPage {
             .onClick(async () => {
               this.defaultReadingMode = ReadingMode.CONTINUOUS_SCROLL;
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_MODE, this.defaultReadingMode);
+              const normalizedDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                this.defaultReadingDirection
+              );
+              if (normalizedDirection !== this.defaultReadingDirection) {
+                this.defaultReadingDirection = normalizedDirection;
+                await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
+              }
               this.settingsManager.syncToAppStorage();
             })
 
@@ -1012,6 +1086,7 @@ export struct ReadingSettingsSubPage {
           }
             .width(70)
             .height(36)
+            .margin({ right: 8, bottom: 8 })
             .backgroundColor(
               this.defaultReadingMode === ReadingMode.WEBTOON
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
@@ -1021,7 +1096,10 @@ export struct ReadingSettingsSubPage {
             .onClick(async () => {
               this.defaultReadingMode = ReadingMode.WEBTOON;
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_MODE, this.defaultReadingMode);
-              this.defaultReadingDirection = ReadingDirection.TOP_TO_BOTTOM;
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                this.defaultReadingDirection
+              );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
               this.settingsManager.syncToAppStorage();
             })
@@ -1035,6 +1113,13 @@ export struct ReadingSettingsSubPage {
           .fontSize(14)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+
+        if (this.getMangaDirectionHint().length > 0) {
+          Text(this.getMangaDirectionHint())
+            .fontSize(12)
+            .fontFamily(this.appFontFamily)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        }
         
         Row({ space: 8 }) {
           Button({ stateEffect: true }) {
@@ -1046,13 +1131,20 @@ export struct ReadingSettingsSubPage {
             .layoutWeight(1)
             .height(36)
             .backgroundColor(
-              this.defaultReadingDirection === ReadingDirection.LEFT_TO_RIGHT
+              this.getSelectedMangaReadingDirection() === ReadingDirection.LEFT_TO_RIGHT
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(6)
+            .opacity(this.isHorizontalMangaDirectionDisabled() ? 0.4 : 1.0)
             .onClick(async () => {
-              this.defaultReadingDirection = ReadingDirection.LEFT_TO_RIGHT;
+              if (this.isHorizontalMangaDirectionDisabled()) {
+                return;
+              }
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                ReadingDirection.LEFT_TO_RIGHT
+              );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
               this.settingsManager.syncToAppStorage();
             })
@@ -1066,13 +1158,20 @@ export struct ReadingSettingsSubPage {
             .layoutWeight(1)
             .height(36)
             .backgroundColor(
-              this.defaultReadingDirection === ReadingDirection.RIGHT_TO_LEFT
+              this.getSelectedMangaReadingDirection() === ReadingDirection.RIGHT_TO_LEFT
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(6)
+            .opacity(this.isHorizontalMangaDirectionDisabled() ? 0.4 : 1.0)
             .onClick(async () => {
-              this.defaultReadingDirection = ReadingDirection.RIGHT_TO_LEFT;
+              if (this.isHorizontalMangaDirectionDisabled()) {
+                return;
+              }
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                ReadingDirection.RIGHT_TO_LEFT
+              );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
               this.settingsManager.syncToAppStorage();
             })
@@ -1086,13 +1185,20 @@ export struct ReadingSettingsSubPage {
             .layoutWeight(1)
             .height(36)
             .backgroundColor(
-              this.defaultReadingDirection === ReadingDirection.TOP_TO_BOTTOM
+              this.getSelectedMangaReadingDirection() === ReadingDirection.TOP_TO_BOTTOM
                 ? ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)
                 : ThemeAwareHelper.getTestManagementThemedColor('button_inactive', this.themeState.currentTheme)
             )
             .borderRadius(6)
+            .opacity(this.isTopToBottomMangaDirectionDisabled() ? 0.4 : 1.0)
             .onClick(async () => {
-              this.defaultReadingDirection = ReadingDirection.TOP_TO_BOTTOM;
+              if (this.isTopToBottomMangaDirectionDisabled()) {
+                return;
+              }
+              this.defaultReadingDirection = this.normalizeMangaReadingDirection(
+                this.defaultReadingMode,
+                ReadingDirection.TOP_TO_BOTTOM
+              );
               await this.settingsManager.setString(SettingKeys.GLOBAL_READING_DIRECTION, this.defaultReadingDirection);
               this.settingsManager.syncToAppStorage();
             })

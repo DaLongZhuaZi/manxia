@@ -161,18 +161,7 @@ export struct MangaQuickSettings {
   private updateReadingMode(mode: ReadingMode): void {
     const newSettings = this.createNewSettings();
     newSettings.readingMode = mode;
-    
-    // 如果切换到双页模式且当前方向是TTB，则自动切换到LTR
-    if (mode === ReadingMode.DOUBLE_PAGE && newSettings.readingDirection === ReadingDirection.TOP_TO_BOTTOM) {
-      logger.info(TAG, `切换到双页模式，自动将阅读方向从TTB改为LTR`);
-      newSettings.readingDirection = ReadingDirection.LEFT_TO_RIGHT;
-    }
-    
-    // 如果切换到条漫模式，自动切换到TTB
-    if (mode === ReadingMode.WEBTOON && newSettings.readingDirection !== ReadingDirection.TOP_TO_BOTTOM) {
-      logger.info(TAG, `切换到条漫模式，自动将阅读方向调整为TTB`);
-      newSettings.readingDirection = ReadingDirection.TOP_TO_BOTTOM;
-    }
+    newSettings.readingDirection = this.normalizeReadingDirectionForMode(mode, newSettings.readingDirection);
     
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
@@ -184,7 +173,10 @@ export struct MangaQuickSettings {
    */
   private updateReadingDirection(direction: ReadingDirection): void {
     const newSettings = this.createNewSettings();
-    newSettings.readingDirection = direction;
+    newSettings.readingDirection = this.normalizeReadingDirectionForMode(
+      newSettings.readingMode,
+      direction
+    );
     
     if (this.callbacks.onSettingsChange) {
       this.callbacks.onSettingsChange(newSettings);
@@ -222,6 +214,40 @@ export struct MangaQuickSettings {
     return this.readingSettings.readingMode === ReadingMode.WEBTOON ||
       this.readingSettings.readingMode === ReadingMode.WEBTOON_WITH_GAP ||
       this.readingSettings.readingMode === ReadingMode.CONTINUOUS_VERTICAL;
+  }
+
+  private isContinuousScrollReadingMode(): boolean {
+    return this.readingSettings.readingMode === ReadingMode.CONTINUOUS_SCROLL;
+  }
+
+  private normalizeReadingDirection(direction: ReadingDirection): ReadingDirection {
+    return direction === ReadingDirection.VERTICAL
+      ? ReadingDirection.TOP_TO_BOTTOM
+      : direction;
+  }
+
+  private normalizeReadingDirectionForMode(mode: ReadingMode, direction: ReadingDirection): ReadingDirection {
+    const normalizedDirection = this.normalizeReadingDirection(direction);
+    if (mode === ReadingMode.DOUBLE_PAGE && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    if ((mode === ReadingMode.WEBTOON ||
+      mode === ReadingMode.WEBTOON_WITH_GAP ||
+      mode === ReadingMode.CONTINUOUS_VERTICAL) &&
+      normalizedDirection !== ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.TOP_TO_BOTTOM;
+    }
+    if (mode === ReadingMode.CONTINUOUS_SCROLL && normalizedDirection === ReadingDirection.TOP_TO_BOTTOM) {
+      return ReadingDirection.LEFT_TO_RIGHT;
+    }
+    return normalizedDirection;
+  }
+
+  private getSelectedReadingDirection(): ReadingDirection {
+    return this.normalizeReadingDirectionForMode(
+      this.readingSettings.readingMode,
+      this.readingSettings.readingDirection
+    );
   }
 
   /**
@@ -285,7 +311,8 @@ export struct MangaQuickSettings {
    * 判断是否禁用从上到下阅读方向（双页模式下不支持）
    */
   private isTTBDisabled(): boolean {
-    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE;
+    return this.readingSettings.readingMode === ReadingMode.DOUBLE_PAGE ||
+      this.isContinuousScrollReadingMode();
   }
 
   /**
@@ -293,6 +320,19 @@ export struct MangaQuickSettings {
    */
   private isHorizontalDirectionDisabled(): boolean {
     return this.isWebtoonReadingMode();
+  }
+
+  private getReadingDirectionHint(): string {
+    if (this.isContinuousScrollReadingMode()) {
+      return '连续滚动仅支持从左到右或从右到左';
+    }
+    if (this.isHorizontalDirectionDisabled()) {
+      return '条漫模式仅支持从上到下';
+    }
+    if (this.isTTBDisabled()) {
+      return '双页模式不支持从上到下';
+    }
+    return '';
   }
 
   /**
@@ -348,14 +388,9 @@ export struct MangaQuickSettings {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
-        
-        if (this.isTTBDisabled()) {
-          Text('双页模式不支持从上到下')
-            .fontSize(10)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        if (this.isHorizontalDirectionDisabled()) {
-          Text('条漫模式仅支持从上到下')
+
+        if (this.getReadingDirectionHint().length > 0) {
+          Text(this.getReadingDirectionHint())
             .fontSize(10)
             .fontColor($r('app.color.text_secondary'))
         }
@@ -572,13 +607,13 @@ export struct MangaQuickSettings {
         .fontSize(12)
         .fontColor(disabled ?
           $r('app.color.text_secondary') :
-          (this.readingSettings.readingDirection === direction ? 
+          (this.getSelectedReadingDirection() === direction ?
             $r('app.color.accent') : 
             $r('app.color.text_secondary')))
     }
     .layoutWeight(1)
     .padding(10)
-    .backgroundColor(this.readingSettings.readingDirection === direction && !disabled ? 
+    .backgroundColor(this.getSelectedReadingDirection() === direction && !disabled ?
       $r('app.color.accent_background') : 
       Color.Transparent)
     .borderRadius(8)
@@ -796,6 +831,14 @@ export struct MangaQuickSettings {
         .width('100%')
         .margin({ bottom: 6 })
 
+      if (this.getReadingDirectionHint().length > 0) {
+        Text(this.getReadingDirectionHint())
+          .fontSize(10)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .margin({ bottom: 6 })
+      }
+
       Row({ space: 4 }) {
         this.buildCompactDirectionButton('上→下', ReadingDirection.TOP_TO_BOTTOM, this.isTTBDisabled())
         this.buildCompactDirectionButton('左→右', ReadingDirection.LEFT_TO_RIGHT, this.isHorizontalDirectionDisabled())
@@ -1003,13 +1046,13 @@ export struct MangaQuickSettings {
         .fontSize(10)
         .fontColor(disabled ?
           $r('app.color.text_secondary') :
-          (this.readingSettings.readingDirection === direction ? 
+          (this.getSelectedReadingDirection() === direction ?
             $r('app.color.accent') : 
             $r('app.color.text_secondary')))
     }
     .layoutWeight(1)
     .padding(8)
-    .backgroundColor(this.readingSettings.readingDirection === direction && !disabled ? 
+    .backgroundColor(this.getSelectedReadingDirection() === direction && !disabled ?
       $r('app.color.accent_background') : 
       Color.Transparent)
     .borderRadius(6)
