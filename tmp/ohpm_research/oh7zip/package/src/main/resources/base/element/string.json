@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "Library_desc",
+      "value": "description"
+    },
+    {
+      "name": "Library_label",
+      "value": "label"
+    }
+  ]
+}

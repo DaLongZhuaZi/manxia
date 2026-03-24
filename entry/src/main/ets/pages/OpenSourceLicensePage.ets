@@ -299,7 +299,28 @@ export struct OpenSourceLicensePage {
                 '@ohos/commons-compress',
                 '^2.0.6',
                 'Apache-2.0',
-                '支持7Z/TAR/GZ/BZ2/XZ等多种压缩格式的解压缩功能'
+                '支持TAR/GZ/BZ2/XZ等流式压缩格式的解压缩功能'
+              )
+
+              this.buildLibraryItem(
+                '@ohos/oh7zip',
+                '1.0.3',
+                'Apache-2.0',
+                '提供7Z/LZMA等复杂压缩包的解压能力，并支持密码压缩包'
+              )
+
+              this.buildLibraryItem(
+                '@ohos/minizip',
+                '1.0.4',
+                'Apache-2.0',
+                '为ZIP/CBZ提供密码解压与文件名编码兼容能力'
+              )
+
+              this.buildLibraryItem(
+                '@ohos/unrar',
+                '2.0.4',
+                'Apache-2.0',
+                '提供RAR/CBR压缩包解压能力，并支持加密压缩包'
               )
 
               this.buildLibraryItem(

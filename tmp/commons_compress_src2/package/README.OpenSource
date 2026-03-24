@@ -1,0 +1,47 @@
+[
+    {
+        "Name": "commons-compress",
+        "License": "Apache License 2.0",
+        "License File": "LICENSE",
+        "Version Number": "1.21",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/apache/commons-compress",
+        "Description": "Apache Commons Compress software defines an API for working with compression and archive formats."
+    },
+    {
+        "Name": "zstd",
+        "License": "BSD",
+        "License File": "LICENSE",
+        "Version Number": "v1.5.4",
+        "Owner": "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/facebook/zstd",
+        "Description": "Zstandard, or zstd as short version, is a fast lossless compression algorithm, targeting real-time compression scenarios at zlib-level and better compression ratios. "
+    },
+    {
+        "Name": "7z",
+        "License": "LGPL-3.0",
+        "License File": "LICENSE",
+        "Version Number": "24.08",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://www.7-zip.org/sdk.html",
+        "Description": "7-Zip Offcial Chinese Simplified Repository(Homepage and 7z Extar package)"
+    },
+    {
+        "Name": "long.js",
+        "License": "Apache License 2.0",
+        "License File": "LICENSE",
+        "Version Number": "5.2.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/dcodeIO/long.js",
+        "Description": "A Long class for representing a 64-bit two's-complement integer value."
+    },
+    {
+        "Name": "xz",
+        "License": "BSD",
+        "License File": "COPYING",
+        "Version Number": "v1.9",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/tukaani-project/xz-java",
+        "Description": "This aims to be a complete implementation of XZ data compression in pure Java. Single-threaded streamed compression and decompression and random access decompression have been fully implemented."
+    }
+]

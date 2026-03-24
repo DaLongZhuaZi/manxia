@@ -21,9 +21,6 @@ import { DeviceAdaptationManager, DeviceInfo, DeviceChangeListener, Breakpoint, 
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType } from '@kit.UIDesignKit';
-import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
-import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
-import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 import { SettingsGlassStyleHelper } from './settings/SettingsGlassStyleHelper';
 import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
@@ -90,13 +87,9 @@ export struct ThemeSettingsPage {
   private searchHighlightClearTimer: number = -1;
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
-  @State private appGuideStep: AppGuideStep | null = null;
-  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private uiContext: UIContext | undefined = undefined;
-  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
-  private lastGuideAnchorId: string = '';
 
   // 状态栏和导航栏高度
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -220,96 +213,6 @@ export struct ThemeSettingsPage {
     
     // 初始化用户主题配置并加载当前设置
     this.initializeUserThemeConfig();
-    void this.refreshPageGuide('aboutToAppear');
-  }
-
-  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
-    if (!anchorId || anchorId.length <= 0) {
-      return null;
-    }
-    try {
-      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_theme_settings_root');
-    } catch (error) {
-      logger.warn(TAG, `获取主题设置引导锚点失败: ${String(error)}`);
-      return null;
-    }
-  }
-
-  private async refreshPageGuide(trigger: string): Promise<void> {
-    await this.appGuideManager.initialize();
-    if (!this.appGuideManager.getCurrentStep()) {
-      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.THEME_SETTINGS);
-    }
-    const step = this.appGuideManager.getCurrentStep();
-    if (!step || step.pageId !== AppGuidePageId.THEME_SETTINGS) {
-      this.appGuideStep = null;
-      this.appGuideHighlightRect = null;
-      this.lastGuideAnchorId = '';
-      return;
-    }
-    if (this.normalizeGuidePresentation(step) && !trigger.endsWith('_after_prepare')) {
-      setTimeout(() => {
-        void this.refreshPageGuide(`${trigger}_after_prepare`);
-      }, 120);
-      return;
-    }
-    if (this.alignGuideViewport(step) && !trigger.endsWith('_after_scroll')) {
-      setTimeout(() => {
-        void this.refreshPageGuide(`${trigger}_after_scroll`);
-      }, 320);
-      return;
-    }
-    this.appGuideStep = step;
-    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
-    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
-      setTimeout(() => {
-        void this.refreshPageGuide(`${trigger}_retry_layout`);
-      }, 120);
-    }
-    logger.debug(TAG, `主题设置引导已刷新: trigger=${trigger}, step=${step.id}`);
-  }
-
-  private normalizeGuidePresentation(step: AppGuideStep): boolean {
-    let changed: boolean = false;
-    if (this.selectionModeEnabled) {
-      this.exitSelectionMode();
-      changed = true;
-    }
-    if ((step.anchorId === 'theme_custom' || step.anchorId === 'theme_effects') && this.isCreatingCustomTheme) {
-      this.isCreatingCustomTheme = false;
-      changed = true;
-    }
-    return changed;
-  }
-
-  private alignGuideViewport(step: AppGuideStep): boolean {
-    const anchorId = step.anchorId ?? '';
-    if (anchorId.length <= 0) {
-      return false;
-    }
-    const scrollResult = ensureGuideAnchorVisibleInScroller(
-      this.getUIContext(),
-      this.scroller,
-      anchorId,
-      'guide_theme_settings_scroll'
-    );
-    if (!scrollResult.available) {
-      return false;
-    }
-    this.lastGuideAnchorId = anchorId;
-    return scrollResult.scrolled;
-  }
-
-  private handlePageGuideNext(): void {
-    void this.appGuideManager.nextStep().then(() => {
-      void this.refreshPageGuide('next');
-    });
-  }
-
-  private handlePageGuideSkip(): void {
-    void this.appGuideManager.skipCurrentFlow().then(() => {
-      void this.refreshPageGuide('skip');
-    });
   }
 
   private markSettingsScrolling(): void {
@@ -2109,12 +2012,20 @@ export struct ThemeSettingsPage {
               // 主题商店（列表 + 创建入口）
               if (!this.isCreatingCustomTheme) {
                 Column({ space: 12 }) {
-                  Text('自定义主题')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
+                  Row() {
+                    Text('自定义主题')
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    Blank()
+                    Text(`${this.customThemes.length} 个`)
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+                  .id('theme_custom')
 
                   if (this.customThemes.length > 0) {
                     Grid() {
@@ -2254,7 +2165,6 @@ export struct ThemeSettingsPage {
                     .opacity(this.currentCustomThemeId.length > 0 ? 1 : 0.55)
                     .onClick(() => { this.showDisableCustomThemeConfirmDialog(); })
                 }
-                .id('theme_custom')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
@@ -2280,12 +2190,20 @@ export struct ThemeSettingsPage {
                 
                 // 透明度设置面板（应用实时预览）
                 Column({ space: 12 }) {
-                  Text('透明度设置')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
+                  Row() {
+                    Text('透明度设置')
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    Blank()
+                    Text('实时预览')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+                  .id('theme_transparency')
                   
                   // 预览卡片
                   Column({ space: 8 }) {
@@ -2458,7 +2376,6 @@ export struct ThemeSettingsPage {
                       })
                   }
                 }
-                .id('theme_transparency')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
@@ -2488,12 +2405,20 @@ export struct ThemeSettingsPage {
                 
                 // 特效设置面板
                 Column({ space: 12 }) {
-                  Text('特效设置')
-                    .fontSize(16)
-                    .fontFamily(this.appFontFamily)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-                    .width('100%')
+                  Row() {
+                    Text('特效设置')
+                      .fontSize(16)
+                      .fontFamily(this.appFontFamily)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                    Blank()
+                    Text('视觉层次')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                  }
+                  .width('100%')
+                  .id('theme_effects')
                   
                   // 模糊效果开关
                   Row() {
@@ -2665,7 +2590,6 @@ export struct ThemeSettingsPage {
                     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
                     .onClick(() => { this.resetEffectsToDefault(); })
                 }
-                .id('theme_effects')
                 .width(this.responsive_isLandscape ? '48%' : '100%')
                 .padding(16)
                 .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
@@ -3208,26 +3132,6 @@ export struct ThemeSettingsPage {
         .width('100%')
         .height('100%')
         .id('guide_theme_settings_root')
-
-        if (this.appGuideStep) {
-          AppGuideOverlay({
-            visible: this.appGuideStep !== null,
-            title: this.appGuideStep.title,
-            message: this.appGuideStep.message,
-            progressText: this.appGuideManager.getCurrentProgressText(),
-            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
-            cardPosition: this.appGuideStep.cardPosition,
-            highlightRect: this.appGuideHighlightRect,
-            showSkip: this.appGuideStep.showSkip !== false,
-            themeState: this.themeState,
-            onNext: () => {
-              this.handlePageGuideNext();
-            },
-            onSkip: () => {
-              this.handlePageGuideSkip();
-            }
-          })
-        }
       }
       .titleBar({
         padding: {
@@ -3292,9 +3196,6 @@ export struct ThemeSettingsPage {
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
       this.applyPendingSearchTarget();
-      setTimeout(() => {
-        void this.refreshPageGuide('onReady');
-      }, 80);
     })
     .backgroundColor(Color.Transparent)
   }

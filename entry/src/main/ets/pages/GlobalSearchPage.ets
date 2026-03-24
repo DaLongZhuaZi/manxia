@@ -5,8 +5,6 @@
 import { ComicInfo } from '../Framework/Data/DataManager';
 import { EBook } from '../Models/EBookModels';
 import { NovelBook, NovelSearchResult, NovelSourceInfo } from '../Models/NovelModels';
-import { GlobalBackgroundLayerMode } from '../Framework/Components/GlobalBackgroundLayer';
-import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { ThemeAwareState, ThemeAwareHelper } from '../Framework/Components/ThemeAware';
 import { ThemeManager, ThemeType } from '../Framework/Managers/ThemeManager';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
@@ -34,11 +32,13 @@ import { LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { webview } from '@kit.ArkWeb';
 import { WebViewSourceManager } from '../Framework/WebView/WebViewSourceManager';
-import { DisplayMode } from '../Utils/WindowManager';
-import { PageWindowCoordinator } from '../Utils/PageWindowCoordinator';
-import { withSafeAreaTitleBar } from '../Utils/HdsTitleBarSafeAreaHelper';
+import { WindowManager, DisplayMode } from '../Utils/WindowManager';
+import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'GlobalSearchPage';
+const TITLE_BAR_HEIGHT_MINI: number = 56;
 const SEARCH_PREFS_NAME = 'global_search_preferences';
 
 // 源选择列表分页常量
@@ -89,7 +89,7 @@ export struct GlobalSearchPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
-  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageLink('source_features_enabled') @Watch('onSourceFeaturesEnabledChanged') sourceFeaturesEnabled: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'GlobalSearchPage';
   private previousDisplayMode: DisplayMode = DisplayMode.DEFAULT;
@@ -149,10 +149,35 @@ export struct GlobalSearchPage {
   
   // 页面参数
   @State pageParams: GlobalSearchPageParams | null = null;
+  @State private appGuideStep: AppGuideStep | null = null;
+  @State private appGuideHighlightRect: GuideHighlightRect | null = null;
+  private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
+
+  private isSourceGuideAnchor(anchorId?: string): boolean {
+    return anchorId === 'guide_global_search_source_types' ||
+      anchorId === 'guide_global_search_online_sources';
+  }
+
+  private applySourceFeatureVisibility(): void {
+    if (!this.sourceFeaturesEnabled) {
+      this.sourceTypeFilter = SearchSourceType.LOCAL;
+      this.showSourceExpanded = false;
+    }
+  }
+
+  private getEffectiveSourceTypeFilter(): SearchSourceType {
+    return this.sourceFeaturesEnabled ? this.sourceTypeFilter : SearchSourceType.LOCAL;
+  }
+
+  private onSourceFeaturesEnabledChanged(): void {
+    this.applySourceFeatureVisibility();
+    this.updateFilteredGroups();
+    void this.refreshPageGuide('source_features_changed');
+  }
 
   aboutToAppear(): void {
-    this.previousDisplayMode = PageWindowCoordinator.captureCurrentDisplayMode();
-    PageWindowCoordinator.applyPagePolicy('GlobalSearchPage', this.getUIContext());
+    this.previousDisplayMode = WindowManager.getCurrentMode();
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
     this.initThemeAware();
     this.initFontAware();
     this.loadSearchHistory();
@@ -160,10 +185,133 @@ export struct GlobalSearchPage {
     this.loadSearchPreferences();
     this.loadAvailableSources();
     this.initWebView();
+    void this.refreshPageGuide('aboutToAppear');
   }
 
   onPageShow(): void {
-    PageWindowCoordinator.reapplyPagePolicy('GlobalSearchPage', this.getUIContext());
+    WindowManager.setDisplayMode(DisplayMode.DEFAULT, this.getUIContext());
+  }
+
+  private resolveGuideHighlightRect(anchorId?: string, borderRadius: number = 18): GuideHighlightRect | null {
+    if (!anchorId || anchorId.length <= 0) {
+      return null;
+    }
+    try {
+      return resolveGuideHighlightRectInRoot(this.getUIContext(), anchorId, borderRadius, 'guide_global_search_root');
+    } catch (error) {
+      logger.warn(TAG, `获取全局搜索引导锚点失败: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
+    if (!rect || !anchorId) {
+      return rect;
+    }
+    let yOffset = 0;
+    switch (anchorId) {
+      case 'guide_global_search_input':
+        yOffset = TITLE_BAR_HEIGHT_MINI;
+        break;
+      case 'guide_global_search_content_types':
+      case 'guide_global_search_source_types':
+      case 'guide_global_search_online_sources':
+      case 'guide_global_search_content_area':
+        yOffset = 6;
+        break;
+      default:
+        yOffset = 0;
+        break;
+    }
+    if (yOffset === 0) {
+      return rect;
+    }
+    return {
+      x: rect.x,
+      y: rect.y + yOffset,
+      width: rect.width,
+      height: rect.height,
+      borderRadius: rect.borderRadius
+    };
+  }
+
+  private async refreshPageGuide(trigger: string): Promise<void> {
+    await this.appGuideManager.initialize();
+    if (!this.appGuideManager.getCurrentStep()) {
+      await this.appGuideManager.tryAutoStartFlowByPage(AppGuidePageId.GLOBAL_SEARCH);
+    }
+    const step = this.appGuideManager.getCurrentStep();
+    if (!step || step.pageId !== AppGuidePageId.GLOBAL_SEARCH) {
+      this.appGuideStep = null;
+      this.appGuideHighlightRect = null;
+      return;
+    }
+    if (!this.sourceFeaturesEnabled && this.isSourceGuideAnchor(step.anchorId)) {
+      await this.appGuideManager.nextStep();
+      void this.refreshPageGuide(`${trigger}_skip_hidden_source_features`);
+      return;
+    }
+    if (this.prepareGuidePresentation(step.anchorId) && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 160);
+      return;
+    }
+    this.appGuideStep = step;
+    this.appGuideHighlightRect = this.adjustGuideHighlightRect(
+      step.anchorId,
+      this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18)
+    );
+    if (!this.appGuideHighlightRect && !trigger.endsWith('_retry_layout')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_retry_layout`);
+      }, 120);
+    }
+  }
+
+  private handlePageGuideNext(): void {
+    void this.appGuideManager.nextStep().then(() => {
+      void this.refreshPageGuide('next');
+    });
+  }
+
+  private handlePageGuideSkip(): void {
+    void this.appGuideManager.skipCurrentFlow().then(() => {
+      void this.refreshPageGuide('skip');
+    });
+  }
+
+  private prepareGuidePresentation(anchorId?: string): boolean {
+    if (!this.sourceFeaturesEnabled) {
+      if (this.showSourceExpanded) {
+        this.showSourceExpanded = false;
+        return true;
+      }
+      return false;
+    }
+
+    if (anchorId === 'guide_global_search_online_sources') {
+      let changed = false;
+      if (this.sourceTypeFilter === SearchSourceType.LOCAL) {
+        this.sourceTypeFilter = SearchSourceType.ONLINE;
+        changed = true;
+      }
+      if (this.contentTypeFilter === SearchContentType.EBOOK) {
+        this.contentTypeFilter = SearchContentType.ALL;
+        changed = true;
+      }
+      if (!this.showSourceExpanded) {
+        this.showSourceExpanded = true;
+        changed = true;
+      }
+      return changed;
+    }
+
+    if (this.showSourceExpanded) {
+      this.showSourceExpanded = false;
+      return true;
+    }
+    return false;
   }
   
   /**
@@ -225,6 +373,7 @@ export struct GlobalSearchPage {
       this.selectedNovelSources = JSON.parse(novelSources) as string[];
       this.enableSuwayomi = suwayomi;
       this.showSourceExpanded = expanded;
+      this.applySourceFeatureVisibility();
       
       logger.info(TAG, `加载搜索偏好: 内容=${contentType}, 来源=${sourceType}`);
     } catch (error) {
@@ -239,13 +388,16 @@ export struct GlobalSearchPage {
     try {
       const context = getContext(this);
       const store = await preferences.getPreferences(context, SEARCH_PREFS_NAME);
+      const effectiveSourceType = this.getEffectiveSourceTypeFilter();
+      const shouldShowSourceExpanded = this.sourceFeaturesEnabled ? this.showSourceExpanded : false;
+      const shouldEnableSuwayomi = this.sourceFeaturesEnabled ? this.enableSuwayomi : false;
       
       await store.put('contentType', this.contentTypeFilter);
-      await store.put('sourceType', this.sourceTypeFilter);
+      await store.put('sourceType', effectiveSourceType);
       await store.put('selectedMangaSources', JSON.stringify(this.selectedMangaSources));
       await store.put('selectedNovelSources', JSON.stringify(this.selectedNovelSources));
-      await store.put('enableSuwayomi', this.enableSuwayomi);
-      await store.put('showSourceExpanded', this.showSourceExpanded);
+      await store.put('enableSuwayomi', shouldEnableSuwayomi);
+      await store.put('showSourceExpanded', shouldShowSourceExpanded);
       
       await store.flush();
       logger.debug(TAG, '搜索偏好已保存');
@@ -287,16 +439,18 @@ export struct GlobalSearchPage {
       if (this.pageParams.initialContentType) {
         this.contentTypeFilter = this.pageParams.initialContentType as SearchContentType;
       }
-      if (this.pageParams.initialSourceType) {
+      if (this.pageParams.initialSourceType && this.sourceFeaturesEnabled) {
         this.sourceTypeFilter = this.pageParams.initialSourceType as SearchSourceType;
       }
       
       // 自动选中所有已开启的源
-      if (this.pageParams.autoSelectAllSources) {
+      if (this.pageParams.autoSelectAllSources && this.sourceFeaturesEnabled) {
         // 确保源列表已加载
         await this.loadAvailableSources();
         this.autoSelectSourcesForContentType();
       }
+
+      this.applySourceFeatureVisibility();
       
       logger.info(TAG, `收到初始搜索关键词: ${this.searchKeyword}, contentType=${this.contentTypeFilter}, sourceType=${this.sourceTypeFilter}`);
       this.performSearch();
@@ -323,7 +477,7 @@ export struct GlobalSearchPage {
   private lifecycle = new PageLifecycleManager('GlobalSearchPage', { enableDebug: true });
 
   aboutToDisappear(): void {
-    PageWindowCoordinator.restoreDisplayMode(this.previousDisplayMode, this.getUIContext());
+    WindowManager.setDisplayMode(this.previousDisplayMode, this.getUIContext());
     this.lifecycle.destroy();
     // 清理主题监听器
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -421,7 +575,16 @@ export struct GlobalSearchPage {
     }
     
     // 返回有结果、正在搜索或有错误的分组（全部显示，让用户看到搜索进度）
-    this.filteredGroups = this.sourceGroups.filter(g => g.items.length > 0 || g.isSearching || g.hasError);
+    let groups = this.sourceGroups.filter(g => g.items.length > 0 || g.isSearching || g.hasError);
+    const effectiveSourceType = this.getEffectiveSourceTypeFilter();
+
+    if (effectiveSourceType === SearchSourceType.LOCAL) {
+      groups = groups.filter((group: SearchSourceGroup) => group.sourceType === SearchSourceType.LOCAL);
+    } else if (effectiveSourceType === SearchSourceType.ONLINE) {
+      groups = groups.filter((group: SearchSourceGroup) => group.sourceType === SearchSourceType.ONLINE);
+    }
+
+    this.filteredGroups = groups;
   }
 
   private applyProgressSnapshot(completed: number, total: number, groups: SearchSourceGroup[]): void {
@@ -507,9 +670,10 @@ export struct GlobalSearchPage {
       
       // 自动收起在线源列表
       this.showSourceExpanded = false;
+      const effectiveSourceType = this.getEffectiveSourceTypeFilter();
       
       // 【关键】如果需要在线搜索图源，等待 WebView 就绪
-      const needOnlineMangaSearch = this.sourceTypeFilter !== SearchSourceType.LOCAL && 
+      const needOnlineMangaSearch = effectiveSourceType !== SearchSourceType.LOCAL && 
                                      this.selectedMangaSources.length > 0 &&
                                      (this.contentTypeFilter === SearchContentType.ALL || 
                                       this.contentTypeFilter === SearchContentType.MANGA);
@@ -517,16 +681,16 @@ export struct GlobalSearchPage {
         await this.waitForWebViewReady();
       }
       
-      logger.info(TAG, `开始搜索: "${this.searchKeyword}", 内容类型=${this.contentTypeFilter}, 来源=${this.sourceTypeFilter}`);
+      logger.info(TAG, `开始搜索: "${this.searchKeyword}", 内容类型=${this.contentTypeFilter}, 来源=${effectiveSourceType}`);
       this.saveSearchHistory(this.searchKeyword);
 
       // 构建筛选配置
       const filterConfig: SearchFilterConfig = {
         contentType: this.contentTypeFilter,
-        sourceType: this.sourceTypeFilter,
+        sourceType: effectiveSourceType,
         selectedMangaSources: this.selectedMangaSources,
         selectedNovelSources: this.selectedNovelSources,
-        enableSuwayomi: this.enableSuwayomi,
+        enableSuwayomi: this.sourceFeaturesEnabled ? this.enableSuwayomi : false,
         maxConcurrent: this.maxConcurrent
       };
 
@@ -867,17 +1031,16 @@ export struct GlobalSearchPage {
     HdsNavDestination() {
       Stack() {
         // 背景层（纯色，响应全局主题）
-        SharedPageBackgroundLayer({
-          defaultBackgroundColor: ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme),
-          mode: GlobalBackgroundLayerMode.IMMERSIVE
-        })
+        Column()
           .width('100%')
           .height('100%')
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_dark', this.themeState.currentTheme))
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
         // 内容层
         Column() {
           // 标题栏占位
+          Blank().height(TITLE_BAR_HEIGHT_MINI)
 
           // 搜索栏
           Row({ space: 12 }) {
@@ -907,6 +1070,7 @@ export struct GlobalSearchPage {
               })
           }
           .width('100%')
+          .id('guide_global_search_input')
           .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
           .padding(this.responsive_contentPadding)
 
@@ -920,56 +1084,60 @@ export struct GlobalSearchPage {
                 this.buildContentTypeChip('小说', SearchContentType.NOVEL)
                 this.buildContentTypeChip('电子书', SearchContentType.EBOOK)
               }
+              .id('guide_global_search_content_types')
               
               // 分隔符
-              Divider()
-                .vertical(true)
-                .height(20)
-                .color(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-              
-              // 来源类型筛选
-              Row({ space: 6 }) {
-                this.buildSourceTypeIconChip($r('sys.symbol.folder'), SearchSourceType.LOCAL)
-                this.buildSourceTypeIconChip($r('sys.symbol.worldclock_fill_1'), SearchSourceType.ONLINE)
-                this.buildSourceTypeIconChip($r('sys.symbol.square_grid_2x2'), SearchSourceType.ALL)
-              }
-              
-              // Suwayomi 独立开关（仅当可用时显示）
-              if (this.isSuwayomiAvailable && this.sourceTypeFilter !== SearchSourceType.LOCAL) {
+              if (this.sourceFeaturesEnabled) {
                 Divider()
                   .vertical(true)
                   .height(20)
                   .color(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
-                
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.computer_host_fill'))
-                    .fontSize(14)
-                    .fontColor([this.enableSuwayomi ? 
-                      Color.White : 
-                      ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
-                  Text('Suwayomi')
-                    .fontSize(12)
-                    .fontFamily(this.appFontFamily)
-                    .fontColor(this.enableSuwayomi ? 
-                      Color.White : 
-                      ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+
+                // 来源类型筛选
+                Row({ space: 6 }) {
+                  this.buildSourceTypeIconChip($r('sys.symbol.folder'), SearchSourceType.LOCAL)
+                  this.buildSourceTypeIconChip($r('sys.symbol.worldclock_fill_1'), SearchSourceType.ONLINE)
+                  this.buildSourceTypeIconChip($r('sys.symbol.square_grid_2x2'), SearchSourceType.ALL)
                 }
-                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                .borderRadius(16)
-                .backgroundColor(this.enableSuwayomi ? 
-                  ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) : 
-                  ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
-                .border({
-                  width: 1,
-                  color: this.enableSuwayomi ? 
-                    Color.Transparent : 
-                    ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
-                })
-                .animation({ duration: 200, curve: Curve.EaseInOut })
-                .onClick(() => {
-                  this.enableSuwayomi = !this.enableSuwayomi;
-                  this.saveSearchPreferences();
-                })
+                .id('guide_global_search_source_types')
+
+                // Suwayomi 独立开关（仅当可用时显示）
+                if (this.isSuwayomiAvailable && this.sourceTypeFilter !== SearchSourceType.LOCAL) {
+                  Divider()
+                    .vertical(true)
+                    .height(20)
+                    .color(ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme))
+
+                  Row({ space: 4 }) {
+                    SymbolGlyph($r('sys.symbol.computer_host_fill'))
+                      .fontSize(14)
+                      .fontColor([this.enableSuwayomi ?
+                        Color.White :
+                        ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme)])
+                    Text('Suwayomi')
+                      .fontSize(12)
+                      .fontFamily(this.appFontFamily)
+                      .fontColor(this.enableSuwayomi ?
+                        Color.White :
+                        ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  }
+                  .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                  .borderRadius(16)
+                  .backgroundColor(this.enableSuwayomi ?
+                    ThemeAwareHelper.getTestManagementThemedColor('accent_green', this.themeState.currentTheme) :
+                    ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+                  .border({
+                    width: 1,
+                    color: this.enableSuwayomi ?
+                      Color.Transparent :
+                      ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+                  })
+                  .animation({ duration: 200, curve: Curve.EaseInOut })
+                  .onClick(() => {
+                    this.enableSuwayomi = !this.enableSuwayomi;
+                    this.saveSearchPreferences();
+                  })
+                }
               }
             }
             .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
@@ -978,11 +1146,12 @@ export struct GlobalSearchPage {
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .width('100%')
+          .id('guide_global_search_filters')
           .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
           .padding({ bottom: 8 })
 
           // 在线源选择器（仅当选择在线或全部时显示）
-          if (this.sourceTypeFilter !== SearchSourceType.LOCAL) {
+          if (this.sourceFeaturesEnabled && this.sourceTypeFilter !== SearchSourceType.LOCAL) {
             this.buildInlineSourceSelector()
           }
 
@@ -991,7 +1160,12 @@ export struct GlobalSearchPage {
             // 按图源分组显示搜索结果
             if (this.responsive_isLandscape) {
               // 横屏模式：使用网格布局
-              this.buildLandscapeResults()
+              Column() {
+                this.buildLandscapeResults()
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .id('guide_global_search_content_area')
             } else {
               // 竖屏模式：使用列表布局
               Scroll() {
@@ -1008,6 +1182,7 @@ export struct GlobalSearchPage {
               .layoutWeight(1)
               .scrollBar(BarState.Auto)
               .edgeEffect(EdgeEffect.Spring)
+              .id('guide_global_search_content_area')
               .onScrollStart(() => {
                 this.onResultsScrollStart();
               })
@@ -1034,6 +1209,7 @@ export struct GlobalSearchPage {
             .width('100%')
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
+            .id('guide_global_search_content_area')
           } else if (this.searchKeyword && this.sourceGroups.some(g => g.isSearching)) {
             // 正在搜索
             Column() {
@@ -1049,6 +1225,7 @@ export struct GlobalSearchPage {
             .width('100%')
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
+            .id('guide_global_search_content_area')
           } else {
             // 搜索历史
             Column() {
@@ -1089,19 +1266,64 @@ export struct GlobalSearchPage {
                 }
                 .width('100%')
                 .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding })
+              } else {
+                Column({ space: 8 }) {
+                  SymbolGlyph($r('sys.symbol.clock'))
+                    .fontSize(28)
+                    .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme)])
+                  Text('暂无搜索历史')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+                  Text('完成一次搜索后，这里会保留最近使用过的关键词，方便你快速重复搜索或切换筛选后重新查询。')
+                    .fontSize(12)
+                    .fontFamily(this.appFontFamily)
+                    .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+                    .textAlign(TextAlign.Center)
+                }
+                .width('100%')
+                .padding({
+                  left: this.responsive_contentPadding,
+                  right: this.responsive_contentPadding,
+                  top: 24,
+                  bottom: 24
+                })
               }
             }
             .width('100%')
             .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
             .alignItems(HorizontalAlign.Start)
+            .id('guide_global_search_content_area')
           }
         }
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .alignItems(this.responsive_isLandscape ? HorizontalAlign.Center : HorizontalAlign.Start)
+        .id('guide_global_search_root')
         
         // 隐藏的 WebView 组件（用于后台搜索 WebView 格式图源）
+        if (this.appGuideStep) {
+          AppGuideOverlay({
+            visible: this.appGuideStep !== null,
+            title: this.appGuideStep.title,
+            message: this.appGuideStep.message,
+            progressText: this.appGuideManager.getCurrentProgressText(),
+            nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
+            cardPosition: this.appGuideStep.cardPosition,
+            highlightRect: this.appGuideHighlightRect,
+            showSkip: this.appGuideStep.showSkip !== false,
+            themeState: this.themeState,
+            onNext: () => {
+              this.handlePageGuideNext();
+            },
+            onSkip: () => {
+              this.handlePageGuideSkip();
+            }
+          })
+        }
+
         Web({
           src: 'about:blank',
           controller: this.webViewController
@@ -1133,6 +1355,9 @@ export struct GlobalSearchPage {
     }
     .onReady((context: NavDestinationContext) => {
       this.pathStack = context.pathStack;
+      setTimeout(() => {
+        void this.refreshPageGuide('onReady');
+      }, 80);
       // 获取页面参数
       const params: GlobalSearchPageParams | undefined = context.pathInfo?.param as GlobalSearchPageParams | undefined;
       if (params) {
@@ -1140,7 +1365,7 @@ export struct GlobalSearchPage {
         this.handlePageParams();
       }
     })
-    .titleBar(withSafeAreaTitleBar({
+    .titleBar({
       padding: {
         start: LengthMetrics.vp(16),
         end: LengthMetrics.vp(16)
@@ -1157,14 +1382,8 @@ export struct GlobalSearchPage {
       content: {
         title: { mainTitle: '全局搜索' }
       }
-    }))
+    })
     .backgroundColor(Color.Transparent)
-    .onWillAppear(() => {
-      PageWindowCoordinator.applyPagePolicy('GlobalSearchPage', this.getUIContext());
-    })
-    .onWillShow(() => {
-      PageWindowCoordinator.reapplyPagePolicy('GlobalSearchPage', this.getUIContext());
-    })
   }
 
   /**
@@ -1690,6 +1909,7 @@ export struct GlobalSearchPage {
     .width('100%')
     .constraintSize({ maxWidth: this.responsive_isLandscape ? this.responsive_maxContentWidth : '100%' })
     .padding({ left: this.responsive_contentPadding, right: this.responsive_contentPadding, bottom: 8 })
+    .id('guide_global_search_online_sources')
   }
 
   /**

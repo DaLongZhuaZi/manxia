@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "模块描述"
+    },
+    {
+      "name": "LibraryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "LibraryAbility_label",
+      "value": "label"
+    }
+  ]
+}

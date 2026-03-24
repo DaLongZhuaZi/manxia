@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "minizip-ng",
+        "License": "ZLIB LICENSE",
+        "License File": "Licenses/LICENSE",
+        "Version Number": "4.0.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/zlib-ng/minizip-ng",
+        "Description": "Fork of the popular zip manipulation library found in the zlib distribution."
+    }
+]

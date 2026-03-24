@@ -48,6 +48,7 @@ export struct AdvancedSettingsSubPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageLink('source_settings_visible') sourceSettingsVisible: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'AdvancedSettingsSubPage';
   private settingsManager: SettingsManager = SettingsManager.getInstance();
@@ -85,6 +86,9 @@ export struct AdvancedSettingsSubPage {
   
   // 日志等级设置
   @State logOutputLevelIndex: number = 0; // 默认关闭 (0=关闭, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=FATAL)
+  private otherActionsSecretTapCount: number = 0;
+  private otherActionsSecretTapTimer: number = -1;
+  private ignoreNextOtherActionsSecretTap: boolean = false;
 
   private markSettingsScrolling(): void {
     if (this.settingsTapEnabled) {
@@ -105,6 +109,55 @@ export struct AdvancedSettingsSubPage {
       this.settingsTapUnlockTimer = -1;
     }
     this.settingsTapEnabled = true;
+  }
+
+  private clearOtherActionsSecretTapTimer(): void {
+    if (this.otherActionsSecretTapTimer >= 0) {
+      clearTimeout(this.otherActionsSecretTapTimer);
+      this.otherActionsSecretTapTimer = -1;
+    }
+  }
+
+  private resetOtherActionsSecretTap(): void {
+    this.otherActionsSecretTapCount = 0;
+    this.clearOtherActionsSecretTapTimer();
+  }
+
+  private async handleOtherActionsSecretTap(): Promise<void> {
+    if (this.ignoreNextOtherActionsSecretTap) {
+      this.ignoreNextOtherActionsSecretTap = false;
+      return;
+    }
+
+    this.otherActionsSecretTapCount += 1;
+    this.clearOtherActionsSecretTapTimer();
+    this.otherActionsSecretTapTimer = setTimeout(() => {
+      this.otherActionsSecretTapCount = 0;
+      this.otherActionsSecretTapTimer = -1;
+    }, 1500);
+
+    if (this.otherActionsSecretTapCount < 5) {
+      return;
+    }
+
+    this.resetOtherActionsSecretTap();
+
+    if (this.sourceSettingsVisible) {
+      promptAction.showToast({
+        message: '源功能设置已显示',
+        duration: 1500
+      });
+      return;
+    }
+
+    this.sourceSettingsVisible = true;
+    await this.settingsManager.setBoolean(SettingKeys.SOURCE_SETTINGS_VISIBLE, true);
+    this.settingsManager.syncToAppStorage();
+    AppStorage.setOrCreate('source_settings_visible', true);
+    promptAction.showToast({
+      message: '已显示源功能设置',
+      duration: 1500
+    });
   }
   onPageShow(): void {
     try {
@@ -159,6 +212,7 @@ export struct AdvancedSettingsSubPage {
 
   aboutToDisappear(): void {
     this.cleanupSettingsTapGuard();
+    this.resetOtherActionsSecretTap();
     SettingsSearchSupport.clearHighlight(this);
     this.lifecycle.destroy();
     ThemeAwareHelper.cleanupThemeAware(this.componentId);
@@ -788,7 +842,19 @@ export struct AdvancedSettingsSubPage {
         .height(44)
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
         .borderRadius(12)
+        .onTouch((event: TouchEvent) => {
+          if (event.type === TouchType.Down) {
+            this.ignoreNextOtherActionsSecretTap = true;
+            setTimeout(() => {
+              this.ignoreNextOtherActionsSecretTap = false;
+            }, 200);
+          }
+        })
         .onClick(() => {
+          this.ignoreNextOtherActionsSecretTap = true;
+          setTimeout(() => {
+            this.ignoreNextOtherActionsSecretTap = false;
+          }, 0);
           this.resetGuideAndRestart();
         })
     }
@@ -797,6 +863,9 @@ export struct AdvancedSettingsSubPage {
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
     .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .onClick(() => {
+      void this.handleOtherActionsSecretTap();
+    })
   }
 
   /**

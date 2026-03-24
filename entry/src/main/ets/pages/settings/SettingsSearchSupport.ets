@@ -78,10 +78,10 @@ export class SettingsSearchSupport {
 
     // 字体设置
     { id: 'font_custom_manage', title: '自定义字体管理', description: '导入、预览与管理自定义字体', targetPage: 'FontSettingsSubPage', anchorId: 'font_custom', scrollOffset: 0, keywords: ['自定义字体管理', '导入字体', '系统字体', '自定义字体'] },
-    { id: 'font_app', title: '界面字体设置', description: 'APP界面字体样式和大小倍率', targetPage: 'FontSettingsSubPage', anchorId: 'font_app', scrollOffset: 450, keywords: ['界面字体', '字体大小倍率'] },
-    { id: 'font_novel', title: '小说字体设置', description: '小说字体、字号和行高倍率', targetPage: 'FontSettingsSubPage', anchorId: 'font_novel', scrollOffset: 920, keywords: ['小说字体', '字体大小', '行高倍率'] },
-    { id: 'font_ebook', title: '电子书字体设置', description: '电子书字体、字号和行高倍率', targetPage: 'FontSettingsSubPage', anchorId: 'font_ebook', scrollOffset: 1400, keywords: ['电子书字体', '字体大小', '行高倍率'] },
-    { id: 'font_reset', title: '字体设置恢复默认', description: '恢复字体相关设置', targetPage: 'FontSettingsSubPage', anchorId: 'font_reset', scrollOffset: 1880, keywords: ['恢复默认', '重置字体设置'] },
+    { id: 'font_app', title: '界面字体设置', description: '切换APP界面字体样式', targetPage: 'FontSettingsSubPage', anchorId: 'font_app', scrollOffset: 320, keywords: ['界面字体', '界面字体样式'] },
+    { id: 'font_novel', title: '小说字体设置', description: '切换小说阅读器字体样式', targetPage: 'FontSettingsSubPage', anchorId: 'font_novel', scrollOffset: 760, keywords: ['小说字体', '小说字体样式'] },
+    { id: 'font_ebook', title: '电子书字体设置', description: '切换电子书阅读器字体样式', targetPage: 'FontSettingsSubPage', anchorId: 'font_ebook', scrollOffset: 1120, keywords: ['电子书字体', '电子书字体样式'] },
+    { id: 'font_reset', title: '字体设置恢复默认', description: '恢复字体相关设置', targetPage: 'FontSettingsSubPage', anchorId: 'font_reset', scrollOffset: 1520, keywords: ['恢复默认', '重置字体设置'] },
 
     // 主题设置
     { id: 'theme_custom_manage', title: '自定义主题', description: '查看、应用、恢复和管理已保存的自定义主题', targetPage: 'ThemeSettingsPage', anchorId: 'theme_custom', scrollOffset: 0, keywords: ['主题设置', '自定义主题', '默认主题', '第一自定义主题', '第二自定义主题', '应用主题', '关闭自定义主题', '恢复默认主题'] },

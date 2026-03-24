@@ -213,7 +213,7 @@ export struct LogFloatingWindow {
     .width(72)
     .height(72)
     .borderRadius(36)
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(ThemeManager.getInstance().getPopupBlurOptions().backgroundColorResource)
     .backgroundBlurStyle(ThemeManager.getInstance().getPopupBlurOptions().blurStyle)
     .shadow({ radius: ThemeManager.getInstance().getPopupBlurOptions().radius, color: ThemeManager.getInstance().getPopupBlurOptions().shadowColor, offsetX: 0, offsetY: 2 } as ShadowStyle)
     .position({ x: this.offsetX, y: this.offsetY })

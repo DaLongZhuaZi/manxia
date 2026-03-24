@@ -1,0 +1,32 @@
+{
+	"app": {
+		"bundleName": "com.mysoft.archive",
+		"debug": true,
+		"versionCode": 1000000,
+		"versionName": "1.0.0",
+		"minAPIVersion": 50000012,
+		"targetAPIVersion": 50005017,
+		"apiReleaseType": "Release",
+		"targetMinorAPIVersion": 0,
+		"targetPatchAPIVersion": 0,
+		"compileSdkVersion": "6.0.1.112",
+		"compileSdkType": "HarmonyOS",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "debug"
+	},
+	"module": {
+		"name": "archive",
+		"type": "har",
+		"deviceTypes": [
+			"default",
+			"tablet",
+			"2in1"
+		],
+		"packageName": "@mysoft/archive",
+		"installationFree": false,
+		"virtualMachine": "ark12.0.2.0",
+		"compileMode": "esmodule",
+		"dependencies": []
+	}
+}

@@ -18,6 +18,7 @@ import { GlobalBackgroundLayer, GlobalBackgroundLayerMode } from '../Framework/C
 import { SharedPageBackgroundLayer } from '../Framework/Components/SharedPageBackgroundLayer';
 import { AppNotificationManager } from '../Framework/Managers/NotificationManager';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 
 // 导入页面组件
 // 测试页面导入已移除，测试功能仍保留在代码中但不再从主菜单导航
@@ -115,6 +116,7 @@ import { HelpCenterPage } from './HelpCenterPage';
 import { FontSettingsSubPage } from './settings/FontSettingsSubPage';
 import { PageSettingsSubPage, PageSettingsHelper, SceneType, DetailPageType } from './settings/PageSettingsSubPage';
 import { MainMenuSettingsSubPage } from './settings/MainMenuSettingsSubPage';
+import { SourceFeatureSettingsSubPage } from './settings/SourceFeatureSettingsSubPage';
 import { UnifiedDetailPageParams, UnifiedContentType } from '../Models/UnifiedContentModels';
 import { FontAwareHelper, FontAwareState } from '../Framework/Components/FontAware';
 import { UnifiedDetailPage } from './UnifiedDetailPage';
@@ -171,7 +173,7 @@ import { getNovelInitializer } from '../Framework/Novel/NovelInitializer';
 import { FontManager } from '../Framework/Managers/FontManager';
 import { ReadAloudController } from '../Framework/ReadAloud/ReadAloudController';
 import { ReadAloudPlaybackState } from '../Framework/ReadAloud/ReadAloudTypes';
-import { AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
+import { AppGuideFlowDefinition, AppGuideFlowId, AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 // 导入Suwayomi相关
 import { getSuwayomiSourceExecutor, SuwayomiSourceExecutor, SuwayomiExtensionSource } from '../Framework/Source/SuwayomiSourceExecutor';
@@ -205,6 +207,8 @@ import { util } from '@kit.ArkTS';
 
 
 const TAG = 'MainMenuPage';
+const MAIN_MENU_GUIDE_ROOT_ID = 'guide_main_root';
+const MAIN_MENU_GUIDE_HIGHLIGHT_Y_COMPENSATION_VP = 6;
 
 /**
  * 代理测试网站接口
@@ -400,6 +404,13 @@ interface TabConfig {
   required: boolean; // 是否必须显示
 }
 
+interface MainMenuSettingGuideItem {
+  anchorId: string;
+  title: string;
+  guideTitle: string;
+  guideMessage: string;
+}
+
 /**
  * Toast配置接口
  */
@@ -450,6 +461,7 @@ interface ShelfMixedItem {
  * 动态筛选标签页配置接口
  */
 interface DynamicFilterTabConfig {
+  key: 'author' | 'tag' | 'keyword' | 'image_source' | 'book_source' | 'nsfw' | 'custom';
   label: string;
   count: number;
 }
@@ -517,6 +529,7 @@ struct MainMenuPage {
   @State private fromGuide: boolean = false;
   @State private targetPage: string = '';
   @State private targetTab: number = -1;
+  @State private guideTargetPageOpened: boolean = false;
   @State private appGuideStep: AppGuideStep | null = null;
   @State private appGuideHighlightRect: GuideHighlightRect | null = null;
 
@@ -764,6 +777,7 @@ struct MainMenuPage {
   @State bookSourceRefreshHintVisible: boolean = false; // 书源刷新提示是否可见
   private bookSourceRefreshHintTimer: number = -1; // 刷新提示自动隐藏定时器
   private bookSourceListScroller: Scroller = new Scroller();
+  private settingsScroller: Scroller = new Scroller();
   private sideTabListScroller: Scroller = new Scroller();
   private sideTabCenterTimer: number = -1;
 
@@ -1160,7 +1174,7 @@ struct MainMenuPage {
   @State private initializationProgress: string = '正在初始化...';
 
   // 版本信息
-  @State public appVersion: string = '26.0.0.7';
+  @State public appVersion: string = '26.0.0.8';
   @State public systemVersion: string = '';
 
   @StorageProp('enable_log_floating_window') private enableLogFloatingWindow: boolean = false;
@@ -1169,6 +1183,7 @@ struct MainMenuPage {
   @StorageProp('force_landscape_mode') private forceLandscapeMode: boolean = false;
   @StorageProp('main_menu_tablet_top_bar_position') @Watch('onTabletTopBarPositionChanged') private tabletTopBarPosition: string = 'left';
   @StorageProp('startupRoutePending') private startupRoutePending: boolean = false;
+  @StorageLink('source_features_enabled') @Watch('onSourceFeaturesEnabledChanged') private sourceFeaturesEnabled: boolean = false;
   private startupRouteHandling: boolean = false;
   // Bug 1 fix: onNewWant通知机制——解决app在前台时onPageShow不触发的问题
   @StorageProp('fileOpenNewWantTrigger') @Watch('onFileOpenNewWantTrigger') private fileOpenTrigger: number = 0;
@@ -1248,6 +1263,20 @@ struct MainMenuPage {
   // 标签自定义对话框
   @State private showTabCustomDialog: boolean = false;
   @State private tempVisibleTabIndices: number[] = [];
+
+  private isSourceFeatureTab(index: number): boolean {
+    return index === TabIndex.SOURCE || index === TabIndex.BOOK_SOURCE;
+  }
+
+  private shouldDisplayTabConfig(config: TabConfig): boolean {
+    if (this.isSourceFeatureTab(config.index) && !this.sourceFeaturesEnabled) {
+      return false;
+    }
+    if (config.index === TabIndex.SOURCE && !this.advancedModeEnabled) {
+      return false;
+    }
+    return true;
+  }
 
   aboutToAppear() {
     this.startNavStackReturnWatch();
@@ -2394,11 +2423,13 @@ struct MainMenuPage {
   }
 
   private shouldAttachLibraryFloatingBar(): boolean {
-    return this.currentTabIndex === TabIndex.LIBRARY && this.libraryViewMode !== LibraryViewMode.CATEGORY;
+    return this.currentTabIndex === TabIndex.LIBRARY
+      && this.libraryViewMode !== LibraryViewMode.CATEGORY
+      && !this.hasActiveLibraryMultiSelectMode();
   }
 
   private showLibraryRefreshFloatingBarTemporarily(): void {
-    if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
+    if (this.libraryViewMode === LibraryViewMode.CATEGORY || this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     // 工具栏已显示时不重复刷新计时，避免每次交互都把倒计时重置
@@ -3636,6 +3667,9 @@ struct MainMenuPage {
    * 显示漫画操作菜单（长按触发）
    */
   private showMangaActionMenu(manga: Manga, anchorKey: string = `library_manga_${manga.id}`): void {
+    if (this.hasActiveLibraryMultiSelectMode()) {
+      return;
+    }
     logger.info(TAG, `显示漫画操作菜单: ${manga.title}`);
     this.hideEBookContextMenu();
     this.hideNovelContextMenu();
@@ -3658,6 +3692,9 @@ struct MainMenuPage {
    * 显示电子书操作菜单（长按触发）
    */
   private showEBookActionMenu(ebook: EBook, anchorKey: string = `library_ebook_${ebook.id}`): void {
+    if (this.hasActiveLibraryMultiSelectMode()) {
+      return;
+    }
     logger.info(TAG, `显示电子书操作菜单: ${ebook.metadata.title}`);
     this.hideMangaContextMenu();
     this.hideNovelContextMenu();
@@ -3680,6 +3717,9 @@ struct MainMenuPage {
    * 显示小说操作菜单（长按触发）
    */
   private showNovelActionMenu(novel: NovelBook, anchorKey: string = `library_novel_${novel.id}`): void {
+    if (this.hasActiveLibraryMultiSelectMode()) {
+      return;
+    }
     logger.info(TAG, `显示小说操作菜单: ${novel.name}`);
     this.hideMangaContextMenu();
     this.hideEBookContextMenu();
@@ -4377,12 +4417,14 @@ struct MainMenuPage {
 
       // 2. 加载PDF电子书（contentType='ebook'的漫画）
       await this.normalizeEBookCoversForDisplay(ebookList);
-      const pdfEbooks = this.mangaList.filter((manga: Manga) => manga.contentType === 'ebook');
-      logger.info(TAG, `从漫画列表获取到 ${pdfEbooks.length} 本PDF电子书`);
+      const favoriteEbooks = this.filterFavoriteEBookItems(ebookList);
+      const favoritePdfEbooks = this.mangaList.filter((manga: Manga) => manga.contentType === 'ebook');
+      logger.info(TAG, `从数据库获取到 ${ebookList.length} 本电子书，其中收藏 ${favoriteEbooks.length} 本`);
+      logger.info(TAG, `从漫画收藏列表获取到 ${favoritePdfEbooks.length} 本PDF电子书`);
 
-      // 保留完整列表，交由 applyEBookFilter 根据当前筛选类型统一处理
-      this.ebookList = ebookList;
-      this.pdfEbookList = pdfEbooks;
+      // 书库仅展示已收藏内容
+      this.ebookList = favoriteEbooks;
+      this.pdfEbookList = favoritePdfEbooks;
       logger.info(TAG, `电子书列表加载完成: 普通电子书 ${this.ebookList.length} 本，PDF电子书 ${this.pdfEbookList.length} 本`);
 
       this.applyEBookFilter(); // 应用筛选
@@ -4521,10 +4563,10 @@ struct MainMenuPage {
         logger.info(TAG, `普通模式：从数据库获取到 ${novels.length} 本非隐私小说`);
       }
 
-      // 保留完整列表，交由 applyNovelFilter 根据当前筛选类型统一处理
+      // 书库仅展示已收藏内容
       await this.normalizeNovelCoversForDisplay(novels);
-      this.novelList = novels;
-      logger.info(TAG, `小说列表加载完成: ${this.novelList.length} 本`);
+      this.novelList = this.filterFavoriteNovelItems(novels);
+      logger.info(TAG, `小说列表加载完成: 收藏 ${this.novelList.length} 本 / 全部 ${novels.length} 本`);
       this.applyNovelFilter(); // 应用筛选
 
     } catch (error) {
@@ -4628,6 +4670,42 @@ struct MainMenuPage {
 
   private getLibraryDefaultContentTransitionKey(): string {
     return `${this.libraryViewMode}_${this.libraryFilterType}`;
+  }
+
+  private getLibraryContentSelectionRenderToken(
+    contentType: 'manga' | 'ebook' | 'pdfebook' | 'novel',
+    contentId: string
+  ): string {
+    switch (contentType) {
+      case 'manga':
+      case 'pdfebook':
+        return `m_${this.isMultiSelectMode ? 1 : 0}_${this.selectedMangaIds.has(contentId) ? 1 : 0}`;
+      case 'ebook':
+        return `e_${this.isEBookMultiSelectMode ? 1 : 0}_${this.selectedEBookIds.has(contentId) ? 1 : 0}`;
+      case 'novel':
+      default:
+        return `n_${this.isNovelMultiSelectMode ? 1 : 0}_${this.selectedNovelIds.has(contentId) ? 1 : 0}`;
+    }
+  }
+
+  private getLibraryContentRenderKey(
+    prefix: string,
+    contentType: 'manga' | 'ebook' | 'pdfebook' | 'novel',
+    contentId: string
+  ): string {
+    return `${prefix}_${contentType}_${contentId}_${this.getLibraryContentSelectionRenderToken(contentType, contentId)}`;
+  }
+
+  private getMangaSelectionHitTestMode(): HitTestMode {
+    return this.isMultiSelectMode ? HitTestMode.None : HitTestMode.Default;
+  }
+
+  private getEBookSelectionHitTestMode(): HitTestMode {
+    return this.isEBookMultiSelectMode ? HitTestMode.None : HitTestMode.Default;
+  }
+
+  private getNovelSelectionHitTestMode(): HitTestMode {
+    return this.isNovelMultiSelectMode ? HitTestMode.None : HitTestMode.Default;
   }
 
   private applyLibraryFilterSelection(filterType: LibraryFilterType): void {
@@ -4837,13 +4915,22 @@ struct MainMenuPage {
   private async cleanupOrphanedShelfMappings(): Promise<void> {
     try {
       // 收集所有有效的内容ID（包括隐私和非隐私）
-      const validMangaIds = this.mangaList.map((m: Manga) => m.id);
-      const validEbookIds = this.ebookList.map((e: EBook) => e.id);
-      
-      // 对于小说，需要获取所有收藏的小说（包括隐私的），而不只是当前模式下的
+      const allManga = await this.loadAllMangaFromDatabase();
+      const validMangaIds = allManga.map((m: Manga) => m.id);
+
+      let allEbooks: EBook[] = [];
+      if (this.isPrivacyMode) {
+        allEbooks = await this.ebookDataManager.getPrivateEBooks();
+      } else {
+        allEbooks = await this.ebookDataManager.getNonPrivateEBooks();
+      }
+      const validEbookIds = allEbooks.map((e: EBook) => e.id);
+
       let allNovelIds: string[] = [];
       if (this.novelDataManager) {
-        const allNovels = await this.novelDataManager.getFavoriteBooks();
+        const allNovels = this.isPrivacyMode
+          ? await this.novelDataManager.getPrivateBooks()
+          : await this.novelDataManager.getNonPrivateBooks();
         allNovelIds = allNovels.map((n: NovelBook) => n.id);
       }
       
@@ -5392,7 +5479,7 @@ struct MainMenuPage {
       logger.debug(TAG, '静默刷新书库（增量更新，不加载章节）');
 
       // 加载新的漫画列表（不加载章节信息，大幅提升速度）
-      const newMangaList = await this.loadAllMangaFromDatabase();
+      const newMangaList = this.filterFavoriteMangaItems(await this.loadAllMangaFromDatabase());
 
       // 增量更新漫画列表（不替换整个列表，避免封面闪烁）
       this.incrementalUpdateMangaList(this.mangaList, newMangaList);
@@ -5409,7 +5496,7 @@ struct MainMenuPage {
         await this.normalizeEBookCoversForDisplay(newEbookList);
         const newPdfEbooks = newMangaList.filter((manga: Manga) => manga.contentType === 'ebook');
 
-        this.incrementalUpdateEBookList(this.ebookList, newEbookList);
+        this.incrementalUpdateEBookList(this.ebookList, this.filterFavoriteEBookItems(newEbookList));
         this.incrementalUpdateMangaList(this.pdfEbookList, newPdfEbooks);
         this.applyEBookFilter();
       } catch (ebookErr) {
@@ -5433,9 +5520,9 @@ struct MainMenuPage {
           newNovelList = await this.novelDataManager.getNonPrivateBooks();
         }
         await this.normalizeNovelCoversForDisplay(newNovelList);
-        this.incrementalUpdateNovelList(this.novelList, newNovelList);
+        this.incrementalUpdateNovelList(this.novelList, this.filterFavoriteNovelItems(newNovelList));
         this.applyNovelFilter();
-        logger.debug(TAG, `静默刷新小说列表完成: ${newNovelList.length} 本`);
+        logger.debug(TAG, `静默刷新小说列表完成: 收藏 ${this.novelList.length} 本 / 全部 ${newNovelList.length} 本`);
       } catch (novelErr) {
         logger.warn(TAG, `静默刷新小说列表失败: ${novelErr instanceof Error ? novelErr.message : String(novelErr)}`);
       }
@@ -5651,26 +5738,36 @@ struct MainMenuPage {
       const fileName = decodedUri.substring(decodedUri.lastIndexOf('/') + 1);
       
       logger.info(TAG, `显示JSON导入对话框: ${fileName}`);
-      
+      if (this.sourceFeaturesEnabled) {
+        promptAction.showActionMenu({
+          title: `导入JSON文件\n${fileName}`,
+          buttons: [
+            { text: '导入为书源', color: $r('sys.color.ohos_id_color_text_primary') },
+            { text: '导入为图源', color: $r('sys.color.ohos_id_color_text_primary') },
+            { text: '使用文件编辑器打开', color: $r('sys.color.ohos_id_color_text_primary') }
+          ]
+        }).then((result: promptAction.ActionMenuSuccessResponse) => {
+          if (result.index === 0) {
+            this.importJsonAsNovelSource(jsonUri);
+          } else if (result.index === 1) {
+            this.importJsonAsMangaSource(jsonUri);
+          } else {
+            this.openJsonInEditor(jsonUri);
+          }
+        }).catch(() => {
+          logger.info(TAG, '用户取消JSON导入选择');
+        });
+        return;
+      }
+
       promptAction.showActionMenu({
         title: `导入JSON文件\n${fileName}`,
         buttons: [
-          { text: '导入为书源', color: $r('sys.color.ohos_id_color_text_primary') },
-          { text: '导入为图源', color: $r('sys.color.ohos_id_color_text_primary') },
           { text: '使用文件编辑器打开', color: $r('sys.color.ohos_id_color_text_primary') }
         ]
-      }).then((result: promptAction.ActionMenuSuccessResponse) => {
-        if (result.index === 0) {
-          // 导入为书源
-          this.importJsonAsNovelSource(jsonUri);
-        } else if (result.index === 1) {
-          // 导入为图源
-          this.importJsonAsMangaSource(jsonUri);
-        } else if (result.index === 2) {
-          // 使用文件编辑器打开
-          this.openJsonInEditor(jsonUri);
-        }
-      }).catch((err: Error) => {
+      }).then(() => {
+        this.openJsonInEditor(jsonUri);
+      }).catch(() => {
         logger.info(TAG, '用户取消JSON导入选择');
       });
     } catch (error) {
@@ -6002,6 +6099,7 @@ struct MainMenuPage {
         if (this.targetPage.length > 0) {
           logger.info(TAG, `导航到目标页面: ${this.targetPage}`);
           this.pathStack.pushPath({ name: this.targetPage });
+          this.guideTargetPageOpened = true;
 
           // 监听页面返回事件，当用户从目标页面返回时，返回到引导页面
           this.setupGuideReturnListener();
@@ -6037,6 +6135,8 @@ struct MainMenuPage {
             // 清理引导标记
             this.fromGuide = false;
             this.targetPage = '';
+            this.targetTab = -1;
+            this.guideTargetPageOpened = false;
           }
         }
       } catch (error) {
@@ -6066,6 +6166,8 @@ struct MainMenuPage {
           // 清理引导标记
           this.fromGuide = false;
           this.targetPage = '';
+          this.targetTab = -1;
+          this.guideTargetPageOpened = false;
         }).catch((error: Error) => {
           logger.error(TAG, '返回引导页面失败', error.message);
         });
@@ -6079,14 +6181,18 @@ struct MainMenuPage {
     void this.refreshMainMenuGuide('tab_changed');
   }
 
-  private getCurrentMainGuidePageId(): AppGuidePageId {
-    switch (this.currentTabIndex) {
+  private mapTabIndexToGuidePageId(tabIndex: number): AppGuidePageId {
+    switch (tabIndex) {
       case TabIndex.HOME:
         return AppGuidePageId.MAIN_HOME;
+      case TabIndex.DISCOVER:
+        return AppGuidePageId.MAIN_DISCOVER;
       case TabIndex.SOURCE:
         return AppGuidePageId.MAIN_SOURCE;
       case TabIndex.BOOK_SOURCE:
         return AppGuidePageId.MAIN_BOOK_SOURCE;
+      case TabIndex.SUWAYOMI:
+        return AppGuidePageId.MAIN_SUWAYOMI;
       case TabIndex.SETTINGS:
         return AppGuidePageId.MAIN_SETTINGS;
       case TabIndex.LIBRARY:
@@ -6095,11 +6201,17 @@ struct MainMenuPage {
     }
   }
 
+  private getCurrentMainGuidePageId(): AppGuidePageId {
+    return this.mapTabIndexToGuidePageId(this.currentTabIndex);
+  }
+
   private isMainGuidePage(pageId: AppGuidePageId): boolean {
     return pageId === AppGuidePageId.MAIN_HOME ||
       pageId === AppGuidePageId.MAIN_LIBRARY ||
+      pageId === AppGuidePageId.MAIN_DISCOVER ||
       pageId === AppGuidePageId.MAIN_SOURCE ||
       pageId === AppGuidePageId.MAIN_BOOK_SOURCE ||
+      pageId === AppGuidePageId.MAIN_SUWAYOMI ||
       pageId === AppGuidePageId.MAIN_SETTINGS;
   }
 
@@ -6107,16 +6219,259 @@ struct MainMenuPage {
     switch (pageId) {
       case AppGuidePageId.MAIN_HOME:
         return TabIndex.HOME;
+      case AppGuidePageId.MAIN_DISCOVER:
+        return TabIndex.DISCOVER;
       case AppGuidePageId.MAIN_SOURCE:
         return TabIndex.SOURCE;
       case AppGuidePageId.MAIN_BOOK_SOURCE:
         return TabIndex.BOOK_SOURCE;
+      case AppGuidePageId.MAIN_SUWAYOMI:
+        return TabIndex.SUWAYOMI;
       case AppGuidePageId.MAIN_SETTINGS:
         return TabIndex.SETTINGS;
       case AppGuidePageId.MAIN_LIBRARY:
       default:
         return TabIndex.LIBRARY;
     }
+  }
+
+  private getCurrentBottomBarGuideAnchorId(): string {
+    if (!this.useTopTabsNavigation) {
+      return 'guide_main_bottom_bar_horizontal';
+    }
+    const effectivePosition = this.getEffectiveTabletTopBarPosition();
+    if (effectivePosition === 'left' || effectivePosition === 'right') {
+      return 'guide_main_bottom_bar_side';
+    }
+    return 'guide_main_bottom_bar_top';
+  }
+
+  private getVisibleTabsForGuide(): TabConfig[] {
+    if (this.cachedVisibleTabConfigs.length > 0) {
+      return this.cachedVisibleTabConfigs.slice();
+    }
+
+    const fallbackIndices = this.visibleTabIndices.length > 0
+      ? this.visibleTabIndices
+      : this.getDefaultVisibleTabIndices();
+    const fallbackConfigs: TabConfig[] = [];
+    for (const tabIndex of fallbackIndices) {
+      const config = this.tabConfigs.find((item: TabConfig) => item.index === tabIndex);
+      if (!config) {
+        continue;
+      }
+      if (!this.shouldDisplayTabConfig(config)) {
+        continue;
+      }
+      fallbackConfigs.push(config);
+    }
+
+    for (const config of this.tabConfigs) {
+      if (config.required &&
+        this.shouldDisplayTabConfig(config) &&
+        !fallbackConfigs.some((item: TabConfig) => item.index === config.index)) {
+        fallbackConfigs.push(config);
+      }
+    }
+
+    return fallbackConfigs;
+  }
+
+  private getMainMenuTabGuideTitle(config: TabConfig): string {
+    switch (config.index) {
+      case TabIndex.LIBRARY:
+        return '书库标签负责承接你的本地内容';
+      case TabIndex.DISCOVER:
+        return '历史标签会保存你的阅读轨迹';
+      case TabIndex.SOURCE:
+        return '图源标签用于浏览在线漫画内容';
+      case TabIndex.BOOK_SOURCE:
+        return '书源标签用于发现和搜索小说内容';
+      case TabIndex.SUWAYOMI:
+        return 'Suwayomi 标签用于连接漫画服务器';
+      case TabIndex.SETTINGS:
+        return '管理标签汇总主题、导入、备份与帮助';
+      case TabIndex.HOME:
+        return '首页标签负责承接最近阅读与快捷入口';
+      default:
+        return `${config.title} 标签是当前底栏里的一个入口`;
+    }
+  }
+
+  private getMainMenuTabGuideMessage(config: TabConfig): string {
+    switch (config.index) {
+      case TabIndex.LIBRARY:
+        return '这里会集中展示漫画、电子书和小说书库，也是继续阅读、筛选内容、进入详情页和阅读器的主入口。';
+      case TabIndex.DISCOVER:
+        return '这里主要用来回看阅读历史，快速找回最近读过的作品、章节和阅读进度。';
+      case TabIndex.SOURCE:
+        return '这里负责漫画图源浏览、分类探索和在线搜索，适合从源站发现新内容并进入详情页。';
+      case TabIndex.BOOK_SOURCE:
+        return '这里负责小说书源的发现与搜索，后续进入书源管理页时还会继续介绍导入、启用和排查流程。';
+      case TabIndex.SUWAYOMI:
+        return '这里用于接入 Suwayomi 服务器内容，适合浏览服务器书库、分类和在线阅读资源。';
+      case TabIndex.SETTINGS:
+        return '这里集中放置主题设置、全局设置、导入、备份、帮助中心等管理项。接下来我会按当前页面里真实显示的顺序继续介绍。';
+      case TabIndex.HOME:
+        return '这里会优先展示最近阅读、推荐内容和快捷入口，适合作为每次回到应用后的起点。';
+      default:
+        return `这里是「${config.title}」标签，对应当前底栏里真实启用的一个功能入口。`;
+    }
+  }
+
+  private getMainMenuSettingGuideItems(): MainMenuSettingGuideItem[] {
+    const items: MainMenuSettingGuideItem[] = [
+      {
+        anchorId: 'guide_main_setting_analytics',
+        title: '阅读报告',
+        guideTitle: '阅读报告会汇总你的阅读统计',
+        guideMessage: '这里可以查看阅读时长、阅读偏好和趋势分析，用来快速回顾最近的阅读状态。'
+      },
+      {
+        anchorId: 'guide_main_setting_theme',
+        title: '主题设置',
+        guideTitle: '主题设置负责整个应用的视觉风格',
+        guideMessage: '这里可以继续调整背景、强调色、透明度和视觉效果，适合先把应用外观调到自己喜欢的状态。'
+      },
+      {
+        anchorId: 'guide_main_setting_global',
+        title: '全局设置',
+        guideTitle: '全局设置负责默认行为和基础偏好',
+        guideMessage: '这里集中管理阅读默认值、下载选项、通知、网络和高级功能，是最核心的通用配置入口。'
+      },
+      {
+        anchorId: 'guide_main_setting_inspiration',
+        title: '灵感',
+        guideTitle: '灵感入口会集中管理全部批注内容',
+        guideMessage: '这里可以查看和管理所有内容产生的书签、划线和想法，适合后续统一回顾阅读记录。'
+      }
+    ];
+
+    if (this.advancedModeEnabled) {
+      items.push({
+        anchorId: 'guide_main_setting_download_manager',
+        title: '下载管理',
+        guideTitle: '下载管理负责查看和整理离线任务',
+        guideMessage: '这里可以查看下载中的任务、失败项和完成项，适合排查卡住的任务或统一整理缓存。'
+      });
+    }
+
+    items.push({
+      anchorId: 'guide_main_setting_backup',
+      title: '备份与恢复',
+      guideTitle: '备份与恢复负责保护你的本地数据',
+      guideMessage: '这里可以备份当前书库和设置，也可以从已有备份恢复，适合迁移设备或做大改动前留存快照。'
+    });
+
+    if (this.advancedModeEnabled) {
+      items.push({
+        anchorId: 'guide_main_setting_storage',
+        title: '存储管理',
+        guideTitle: '存储管理负责查看空间占用和清理缓存',
+        guideMessage: '这里适合检查图片缓存、章节缓存和其它本地占用，帮助你在空间紧张时快速清理。'
+      });
+    }
+
+    items.push(
+      {
+        anchorId: 'guide_main_setting_data_management',
+        title: '文件导入',
+        guideTitle: '文件导入负责手动导入本地内容',
+        guideMessage: '这里可以单独导入本地漫画、电子书和小说文件，适合不走 Download 同步时直接把内容加入书库。'
+      },
+      {
+        anchorId: 'guide_main_setting_download_sync',
+        title: 'Download 导入',
+        guideTitle: 'Download 导入负责扫描系统 Download 目录',
+        guideMessage: '这里会扫描 Download 目录下的文件并按类型导入，适合批量整理外部下载进来的漫画和电子书。'
+      }
+    );
+
+    if (this.advancedModeEnabled) {
+      items.push({
+        anchorId: 'guide_main_setting_file_editor',
+        title: '文件编辑器',
+        guideTitle: '文件编辑器提供内置文件与配置编辑能力',
+        guideMessage: '这里适合直接查看或编辑配置文件、脚本和 Markdown 内容，更偏向进阶用户的维护入口。'
+      });
+    }
+
+    items.push(
+      {
+        anchorId: 'guide_main_setting_avif',
+        title: 'AVIF 图片查看器',
+        guideTitle: 'AVIF 图片查看器用于测试和预览 AVIF 功能',
+        guideMessage: '这里主要用于查看 AVIF 图片相关能力和导出效果，属于工具型入口。'
+      },
+      {
+        anchorId: 'guide_main_setting_help',
+        title: '帮助中心',
+        guideTitle: '帮助中心负责查看说明并重播引导',
+        guideMessage: '如果忘记某个系统怎么用，直接来这里查说明或重播对应的分页面引导。'
+      },
+      {
+        anchorId: 'guide_main_setting_about',
+        title: '关于应用',
+        guideTitle: '关于应用负责查看版本和项目信息',
+        guideMessage: '这里可以查看版本号、开源信息和项目说明，适合确认当前安装版本或了解项目背景。'
+      }
+    );
+
+    return items;
+  }
+
+  private buildDynamicMainMenuGuideFlow(): AppGuideFlowDefinition {
+    const visibleTabs = this.getVisibleTabsForGuide();
+    const steps: AppGuideStep[] = [];
+    const orderedTabTitles = visibleTabs.map((config: TabConfig) => config.title).join('、');
+    const introPageId = this.getCurrentMainGuidePageId();
+
+    steps.push({
+      id: 'main_bottom_bar_intro',
+      pageId: introPageId,
+      anchorId: this.getCurrentBottomBarGuideAnchorId(),
+      title: '这是你当前实际启用的底栏标签',
+      message: orderedTabTitles.length > 0
+        ? `我会严格按照你现在的底栏配置顺序介绍：${orderedTabTitles}。先定位整个底栏，再逐个说明每个标签页的作用。`
+        : '我会先定位当前底栏，再逐个说明每个标签页的作用。',
+      cardPosition: 'top',
+      nextButtonText: '继续查看'
+    });
+
+    for (const config of visibleTabs) {
+      steps.push({
+        id: `main_tab_${config.index}`,
+        pageId: this.mapTabIndexToGuidePageId(config.index),
+        anchorId: this.getGuideTabAnchorId(config.index),
+        title: this.getMainMenuTabGuideTitle(config),
+        message: this.getMainMenuTabGuideMessage(config),
+        cardPosition: 'top'
+      });
+    }
+
+    for (const item of this.getMainMenuSettingGuideItems()) {
+      steps.push({
+        id: `main_settings_${item.anchorId}`,
+        pageId: AppGuidePageId.MAIN_SETTINGS,
+        anchorId: item.anchorId,
+        title: item.guideTitle,
+        message: item.guideMessage,
+        cardPosition: 'top'
+      });
+    }
+
+    if (steps.length > 0) {
+      steps[steps.length - 1].nextButtonText = '完成';
+    }
+
+    return {
+      id: AppGuideFlowId.MAIN_MENU_CORE,
+      title: '主页面与入口引导',
+      description: '按当前真实底栏顺序介绍主页面标签，并继续介绍管理标签页里当前显示的核心入口。',
+      autoStartPageId: AppGuidePageId.MAIN_LIBRARY,
+      helpCenterReplayEnabled: true,
+      steps: steps
+    };
   }
 
   private ensureGuideTabVisible(pageId: AppGuidePageId): boolean {
@@ -6147,21 +6502,84 @@ struct MainMenuPage {
       return null;
     }
     try {
-      const componentUtils = this.uiContext.getComponentUtils();
-      const rectInfo = componentUtils.getRectangleById(anchorId);
-      if (!rectInfo || Number(rectInfo.size.width) <= 0 || Number(rectInfo.size.height) <= 0) {
-        return null;
+      const candidateIds: string[] = anchorId === 'guide_main_bottom_bar'
+        ? ['guide_main_bottom_bar_horizontal', 'guide_main_bottom_bar_top', 'guide_main_bottom_bar_side']
+        : [anchorId];
+      for (const candidateId of candidateIds) {
+        const rect = resolveGuideHighlightRectInRoot(
+          this.uiContext,
+          candidateId,
+          borderRadius,
+          MAIN_MENU_GUIDE_ROOT_ID
+        );
+        if (rect) {
+          return {
+            x: rect.x,
+            y: rect.y + MAIN_MENU_GUIDE_HIGHLIGHT_Y_COMPENSATION_VP,
+            width: rect.width,
+            height: rect.height,
+            borderRadius: rect.borderRadius
+          };
+        }
       }
-      return {
-        x: px2vp(Number(rectInfo.windowOffset.x)),
-        y: px2vp(Number(rectInfo.windowOffset.y)),
-        width: px2vp(Number(rectInfo.size.width)),
-        height: px2vp(Number(rectInfo.size.height)),
-        borderRadius: borderRadius
-      };
+      return null;
     } catch (error) {
       logger.warn(TAG, `获取引导锚点位置失败: 锚点=${anchorId}, 错误=${String(error)}`);
       return null;
+    }
+  }
+
+  private alignSettingsGuideViewport(anchorId?: string): boolean {
+    if (!anchorId || !anchorId.startsWith('guide_main_setting_')) {
+      return false;
+    }
+    try {
+      const componentUtils = this.uiContext.getComponentUtils();
+      const anchorRect = componentUtils.getRectangleById(anchorId);
+      const viewportRect = componentUtils.getRectangleById('guide_main_settings_scroll');
+      if (!anchorRect || !viewportRect ||
+        Number(anchorRect.size.width) <= 0 || Number(anchorRect.size.height) <= 0 ||
+        Number(viewportRect.size.width) <= 0 || Number(viewportRect.size.height) <= 0) {
+        return false;
+      }
+
+      const viewportTop = px2vp(Number(viewportRect.windowOffset.y));
+      const viewportHeight = px2vp(Number(viewportRect.size.height));
+      const anchorTop = px2vp(Number(anchorRect.windowOffset.y));
+      const desiredAnchorTop = viewportTop + Math.max(104, Math.min(156, viewportHeight * 0.28));
+      const currentOffsetY = Number(this.settingsScroller.currentOffset()?.yOffset ?? 0);
+      const targetOffsetY = Math.max(0, currentOffsetY + (anchorTop - desiredAnchorTop));
+
+      if (Math.abs(targetOffsetY - currentOffsetY) < 12) {
+        return false;
+      }
+
+      this.settingsScroller.scrollTo({
+        xOffset: 0,
+        yOffset: targetOffsetY,
+        animation: { duration: 320 }
+      });
+      return true;
+    } catch (_error) {
+      const topPaddingVp: number = this.useTopTabsNavigation && this.getEffectiveTabletTopBarPosition() === 'top'
+        ? this.BOTTOM_BAR_HEIGHT + this.TABLET_TOP_BAR_VERTICAL_MARGIN + 20
+        : 16;
+      const bottomPaddingVp: number = this.useTopTabsNavigation
+        ? this.navigationBarHeight + 28
+        : this.BOTTOM_BAR_HEIGHT + this.BOTTOM_BAR_MARGIN_BOTTOM + 20;
+      const scrollResult = ensureGuideAnchorVisibleInScroller(
+        this.uiContext,
+        this.settingsScroller,
+        anchorId,
+        'guide_main_settings_scroll',
+        topPaddingVp,
+        bottomPaddingVp,
+        280
+      );
+      if (!scrollResult.available) {
+        return false;
+      }
+      return scrollResult.scrolled;
     }
   }
 
@@ -6172,6 +6590,7 @@ struct MainMenuPage {
       return;
     }
     await this.appGuideManager.initialize();
+    this.appGuideManager.setFlowOverride(this.buildDynamicMainMenuGuideFlow());
 
     if (!this.appGuideManager.getCurrentStep()) {
       const startupPending = AppStorage.get<boolean>('appGuideStartupPending') === true;
@@ -6215,6 +6634,13 @@ struct MainMenuPage {
         }, 80);
         return;
       }
+    }
+
+    if (this.alignSettingsGuideViewport(step.anchorId) && !trigger.endsWith('_settings_scroll_ready')) {
+      setTimeout(() => {
+        void this.refreshMainMenuGuide(`${trigger}_settings_scroll_ready`);
+      }, 320);
+      return;
     }
 
     this.appGuideStep = step;
@@ -6446,6 +6872,17 @@ struct MainMenuPage {
     this.updateMainMenuGlobalBackgroundVisibility();
     this.applyMainMenuWindowModeWithTransition();
     void this.loadLibraryViewMode();
+    if (this.fromGuide && this.guideTargetPageOpened && this.targetPage.length > 0) {
+      try {
+        if (this.pathStack.size() === 0 && !this.welcomeGuideManager.isGuideCompleted()) {
+          logger.info(TAG, '页面重新显示时检测到引导目标页已返回，回到欢迎引导继续流程');
+          this.returnToGuide();
+          return;
+        }
+      } catch (error) {
+        logger.error(TAG, '页面显示时检测引导返回失败', String(error));
+      }
+    }
 
     // 检查是否有待处理的文件打开请求（来自onNewWant）
     this.checkPendingFileImport();
@@ -6606,7 +7043,11 @@ struct MainMenuPage {
   }
   
   private getDefaultVisibleTabIndices(): number[] {
-    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SETTINGS];
+    return [TabIndex.LIBRARY, TabIndex.SOURCE, TabIndex.BOOK_SOURCE, TabIndex.SETTINGS]
+      .filter((index: number) => {
+        const config = this.tabConfigs.find((item: TabConfig) => item.index === index);
+        return config ? this.shouldDisplayTabConfig(config) : false;
+      });
   }
 
   private async loadVisibleTabs(): Promise<void> {
@@ -6630,6 +7071,7 @@ struct MainMenuPage {
       this.updateCachedVisibleTabConfigs();
       this.ensureCurrentTabIsVisible(this.isFirstTabLoad);
       this.isFirstTabLoad = false;
+      void this.refreshMainMenuGuide('tabs_config_ready');
     } catch (error) {
       logger.error(TAG, '加载可见标签配置失败', String(error));
       const allowedIndices = this.tabConfigs.map(cfg => cfg.index);
@@ -6637,6 +7079,7 @@ struct MainMenuPage {
       this.updateCachedVisibleTabConfigs();
       this.ensureCurrentTabIsVisible(this.isFirstTabLoad);
       this.isFirstTabLoad = false;
+      void this.refreshMainMenuGuide('tabs_config_failed');
     }
   }
 
@@ -6677,18 +7120,16 @@ struct MainMenuPage {
     // 按 visibleTabIndices 的顺序添加标签
     for (const tabIndex of this.visibleTabIndices) {
       const cfg = this.tabConfigs.find((c: TabConfig) => c.index === tabIndex);
-      if (cfg) {
-        // 图源标签仅在高级模式下显示
-        if (cfg.index === TabIndex.SOURCE && !this.advancedModeEnabled) {
-          continue;
-        }
+      if (cfg && this.shouldDisplayTabConfig(cfg)) {
         orderedConfigs.push(cfg);
       }
     }
     
     // 确保必须显示的标签存在（如果不在列表中则追加到末尾）
     for (const cfg of this.tabConfigs) {
-      if (cfg.required && !orderedConfigs.some((c: TabConfig) => c.index === cfg.index)) {
+      if (cfg.required &&
+        this.shouldDisplayTabConfig(cfg) &&
+        !orderedConfigs.some((c: TabConfig) => c.index === cfg.index)) {
         orderedConfigs.push(cfg);
       }
     }
@@ -6705,6 +7146,13 @@ struct MainMenuPage {
     logger.info(TAG, `高级模式变化: ${this.advancedModeEnabled}`);
     this.updateCachedVisibleTabConfigs();
     this.ensureCurrentTabIsVisible(false);
+  }
+
+  private onSourceFeaturesEnabledChanged(): void {
+    logger.info(TAG, `源功能展示变化: ${this.sourceFeaturesEnabled}`);
+    this.updateCachedVisibleTabConfigs();
+    this.ensureCurrentTabIsVisible(false);
+    void this.refreshMainMenuGuide('source_features_changed');
   }
 
   /**
@@ -6888,6 +7336,18 @@ struct MainMenuPage {
     return mangaList;
   }
 
+  private filterFavoriteMangaItems(items: Manga[]): Manga[] {
+    return items.filter((manga: Manga) => manga.isFavorite);
+  }
+
+  private filterFavoriteEBookItems(items: EBook[]): EBook[] {
+    return items.filter((ebook: EBook) => ebook.isFavorite);
+  }
+
+  private filterFavoriteNovelItems(items: NovelBook[]): NovelBook[] {
+    return items.filter((novel: NovelBook) => novel.isFavorite);
+  }
+
   /**
    * 加载漫画列表
    * 优化：不加载章节信息，书库只需要基本信息即可
@@ -6900,7 +7360,8 @@ struct MainMenuPage {
 
       // 同时加载本地和在线漫画（不加载章节，大幅提升速度）
       const mangaList = await this.loadAllMangaFromDatabase();
-      logger.info(TAG, `从数据库获取到 ${mangaList.length} 条漫画记录`);
+      const favoriteMangaList = this.filterFavoriteMangaItems(mangaList);
+      logger.info(TAG, `从数据库获取到 ${mangaList.length} 条漫画记录，其中收藏 ${favoriteMangaList.length} 条`);
 
       // 不加载章节信息 - 书库列表不需要章节数据
       // 章节信息将在进入详情页或阅读器时加载
@@ -6909,7 +7370,7 @@ struct MainMenuPage {
       }
 
       // 保留完整列表，交由 applyLibraryFilter 根据当前筛选类型统一处理
-      this.mangaList = mangaList;
+      this.mangaList = favoriteMangaList;
       logger.info(TAG, `成功加载 ${this.mangaList.length} 部漫画（未加载章节）`);
 
       // 预加载网络封面图片（支持AVIF格式）
@@ -7005,11 +7466,139 @@ struct MainMenuPage {
   // ==================== 多选模式相关方法 ====================
 
   /**
+   * 是否存在任意一种书库多选模式
+   */
+  private hasActiveLibraryMultiSelectMode(): boolean {
+    return this.isMultiSelectMode || this.isEBookMultiSelectMode || this.isNovelMultiSelectMode;
+  }
+
+  private shouldUseUnifiedLibraryMixedMultiSelect(): boolean {
+    return this.currentTabIndex === TabIndex.LIBRARY
+      && this.libraryViewMode !== LibraryViewMode.CATEGORY
+      && !this.showCategoryDetail;
+  }
+
+  private isUnifiedLibraryMixedMultiSelectActive(): boolean {
+    return this.shouldUseUnifiedLibraryMixedMultiSelect()
+      && this.isMultiSelectMode
+      && this.isEBookMultiSelectMode
+      && this.isNovelMultiSelectMode;
+  }
+
+  private getLibraryTotalSelectedCount(): number {
+    return this.selectedMangaIds.size + this.selectedEBookIds.size + this.selectedNovelIds.size;
+  }
+
+  private animateLibraryMultiSelectState(update: () => void): void {
+    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.hideLibraryRefreshFloatingBarImmediately();
+      this.hideMangaContextMenu();
+      this.hideEBookContextMenu();
+      this.hideNovelContextMenu();
+      update();
+    });
+  }
+
+  private runAfterLibraryContextMenuDismissed(action: () => void): void {
+    setTimeout(() => {
+      action();
+    }, 80);
+  }
+
+  /**
+   * 退出所有书库多选模式，避免在切换书架/退出详情后残留状态
+   */
+  private exitAllLibraryMultiSelectModes(): void {
+    if (!this.hasActiveLibraryMultiSelectMode()) {
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isMultiSelectMode = false;
+      this.isEBookMultiSelectMode = false;
+      this.isNovelMultiSelectMode = false;
+      this.selectedMangaIds = new Set();
+      this.selectedEBookIds = new Set();
+      this.selectedNovelIds = new Set();
+    });
+    logger.info(TAG, '退出全部书库多选模式');
+  }
+
+  /**
+   * 获取当前上下文可见的漫画/PDF 选择池
+   */
+  private getVisibleMangaMultiSelectItems(): Manga[] {
+    if (this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail) {
+      if (this.selectedShelf !== null) {
+        return this.getCustomShelfMixedItems()
+          .filter((item: ShelfMixedItem) => item.type === 'manga' || item.type === 'pdfebook')
+          .map((item: ShelfMixedItem) => item.data as Manga);
+      }
+      if (this.selectedShelfType === LibraryContentType.EBOOK) {
+        return this.getShelfFilteredPdfEBookList();
+      }
+      return this.getShelfFilteredMangaList();
+    }
+    return [...this.filteredMangaList, ...this.filteredPdfEbookList];
+  }
+
+  /**
+   * 获取当前上下文可见的电子书选择池
+   */
+  private getVisibleEBookMultiSelectItems(): EBook[] {
+    if (this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail) {
+      if (this.selectedShelf !== null) {
+        return this.getCustomShelfMixedItems()
+          .filter((item: ShelfMixedItem) => item.type === 'ebook')
+          .map((item: ShelfMixedItem) => item.data as EBook);
+      }
+      return this.getShelfFilteredEBookList();
+    }
+    return this.filteredEbookList.slice();
+  }
+
+  /**
+   * 获取当前上下文可见的小说选择池
+   */
+  private getVisibleNovelMultiSelectItems(): NovelBook[] {
+    if (this.libraryViewMode === LibraryViewMode.CATEGORY && this.showCategoryDetail) {
+      if (this.selectedShelf !== null) {
+        return this.getCustomShelfMixedItems()
+          .filter((item: ShelfMixedItem) => item.type === 'novel')
+          .map((item: ShelfMixedItem) => item.data as NovelBook);
+      }
+      return this.getShelfFilteredNovelList();
+    }
+    return this.filteredNovelList.slice();
+  }
+
+  /**
    * 进入多选模式
    */
-  private enterMultiSelectMode(): void {
-    this.isMultiSelectMode = true;
-    this.selectedMangaIds.clear();
+  private enterMultiSelectMode(initialSelectedMangaId?: string): void {
+    if (this.shouldUseUnifiedLibraryMixedMultiSelect()) {
+      this.animateLibraryMultiSelectState(() => {
+        this.isMultiSelectMode = true;
+        this.isEBookMultiSelectMode = true;
+        this.isNovelMultiSelectMode = true;
+        const nextSelectedMangaIds = new Set<string>();
+        if (initialSelectedMangaId) {
+          nextSelectedMangaIds.add(initialSelectedMangaId);
+        }
+        this.selectedMangaIds = nextSelectedMangaIds;
+        this.selectedEBookIds = new Set();
+        this.selectedNovelIds = new Set();
+      });
+      logger.info(TAG, '进入书库混合多选模式');
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isMultiSelectMode = true;
+      const nextSelectedMangaIds = new Set<string>();
+      if (initialSelectedMangaId) {
+        nextSelectedMangaIds.add(initialSelectedMangaId);
+      }
+      this.selectedMangaIds = nextSelectedMangaIds;
+    });
     logger.info(TAG, '进入多选模式');
   }
 
@@ -7017,8 +7606,14 @@ struct MainMenuPage {
    * 退出多选模式
    */
   private exitMultiSelectMode(): void {
-    this.isMultiSelectMode = false;
-    this.selectedMangaIds.clear();
+    if (this.isUnifiedLibraryMixedMultiSelectActive()) {
+      this.exitAllLibraryMultiSelectModes();
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isMultiSelectMode = false;
+      this.selectedMangaIds = new Set();
+    });
     logger.info(TAG, '退出多选模式');
   }
 
@@ -7040,7 +7635,7 @@ struct MainMenuPage {
    * 全选漫画
    */
   private selectAllManga(): void {
-    for (const manga of this.filteredMangaList) {
+    for (const manga of this.getVisibleMangaMultiSelectItems()) {
       this.selectedMangaIds.add(manga.id);
     }
     this.selectedMangaIds = new Set(this.selectedMangaIds);
@@ -7056,6 +7651,100 @@ struct MainMenuPage {
       return;
     }
     this.showBatchDeleteConfirmDialog();
+  }
+
+  private selectAllLibraryMixedItems(): void {
+    this.selectAllManga();
+    this.selectAllEBooks();
+    this.selectAllNovels();
+    logger.info(TAG, `全选书库内容: ${this.getLibraryTotalSelectedCount()}项`);
+  }
+
+  private showLibraryMixedBatchDeleteConfirm(): void {
+    const selectedCount = this.getLibraryTotalSelectedCount();
+    if (selectedCount === 0) {
+      this.showToast('请选择要删除的内容');
+      return;
+    }
+    AlertDialog.show({
+      title: '确认删除',
+      message: `确定要删除选中的 ${selectedCount} 项内容吗？\n\n此操作将删除这些内容的所有数据和文件，且不可恢复。`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+          logger.info(TAG, '用户取消书库混合批量删除');
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: Color.Red,
+        action: () => {
+          void this.batchDeleteLibraryMixedItems();
+        }
+      }
+    });
+  }
+
+  private async batchDeleteLibraryMixedItems(): Promise<void> {
+    const totalSelectedCount = this.getLibraryTotalSelectedCount();
+    if (totalSelectedCount === 0) {
+      return;
+    }
+
+    this.isDeletingManga = true;
+    this.isDeletingEBook = true;
+    this.isDeletingNovel = true;
+    try {
+      let successCount = 0;
+      let failedCount = 0;
+
+      const mangaIds = Array.from(this.selectedMangaIds);
+      if (mangaIds.length > 0) {
+        const result = await this.dataManager.deleteComics(mangaIds);
+        successCount += result.successCount;
+        failedCount += result.failedCount;
+      }
+
+      for (const ebookId of Array.from(this.selectedEBookIds)) {
+        try {
+          await this.ebookDataManager.deleteEBook(ebookId);
+          successCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error(TAG, `删除电子书失败: ${ebookId}, ${String(error)}`);
+        }
+      }
+
+      for (const novelId of Array.from(this.selectedNovelIds)) {
+        try {
+          await this.novelDataManager?.deleteBook(novelId);
+          successCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error(TAG, `删除小说失败: ${novelId}, ${String(error)}`);
+        }
+      }
+
+      logger.info(TAG, `书库混合批量删除完成: 成功=${successCount}, 失败=${failedCount}`);
+      if (failedCount > 0) {
+        this.showToast(`删除完成，成功${successCount}项，失败${failedCount}项`);
+      } else {
+        this.showToast(`成功删除${successCount}项内容`);
+      }
+
+      this.exitAllLibraryMultiSelectModes();
+      await this.silentRefreshLibrary();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(TAG, `书库混合批量删除失败: ${errorMessage}`);
+      this.showToast('删除失败，请稍后重试');
+    } finally {
+      this.isDeletingManga = false;
+      this.isDeletingEBook = false;
+      this.isDeletingNovel = false;
+    }
   }
 
   /**
@@ -7101,9 +7790,31 @@ struct MainMenuPage {
   /**
    * 进入电子书多选模式
    */
-  private enterEBookMultiSelectMode(): void {
-    this.isEBookMultiSelectMode = true;
-    this.selectedEBookIds.clear();
+  private enterEBookMultiSelectMode(initialSelectedEBookId?: string): void {
+    if (this.shouldUseUnifiedLibraryMixedMultiSelect()) {
+      this.animateLibraryMultiSelectState(() => {
+        this.isMultiSelectMode = true;
+        this.isEBookMultiSelectMode = true;
+        this.isNovelMultiSelectMode = true;
+        this.selectedMangaIds = new Set();
+        const nextSelectedEBookIds = new Set<string>();
+        if (initialSelectedEBookId) {
+          nextSelectedEBookIds.add(initialSelectedEBookId);
+        }
+        this.selectedEBookIds = nextSelectedEBookIds;
+        this.selectedNovelIds = new Set();
+      });
+      logger.info(TAG, '进入书库混合多选模式');
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isEBookMultiSelectMode = true;
+      const nextSelectedEBookIds = new Set<string>();
+      if (initialSelectedEBookId) {
+        nextSelectedEBookIds.add(initialSelectedEBookId);
+      }
+      this.selectedEBookIds = nextSelectedEBookIds;
+    });
     logger.info(TAG, '进入电子书多选模式');
   }
 
@@ -7111,8 +7822,14 @@ struct MainMenuPage {
    * 退出电子书多选模式
    */
   private exitEBookMultiSelectMode(): void {
-    this.isEBookMultiSelectMode = false;
-    this.selectedEBookIds.clear();
+    if (this.isUnifiedLibraryMixedMultiSelectActive()) {
+      this.exitAllLibraryMultiSelectModes();
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isEBookMultiSelectMode = false;
+      this.selectedEBookIds = new Set();
+    });
     logger.info(TAG, '退出电子书多选模式');
   }
 
@@ -7133,9 +7850,31 @@ struct MainMenuPage {
   /**
    * 进入小说多选模式
    */
-  private enterNovelMultiSelectMode(): void {
-    this.isNovelMultiSelectMode = true;
-    this.selectedNovelIds.clear();
+  private enterNovelMultiSelectMode(initialSelectedNovelId?: string): void {
+    if (this.shouldUseUnifiedLibraryMixedMultiSelect()) {
+      this.animateLibraryMultiSelectState(() => {
+        this.isMultiSelectMode = true;
+        this.isEBookMultiSelectMode = true;
+        this.isNovelMultiSelectMode = true;
+        this.selectedMangaIds = new Set();
+        this.selectedEBookIds = new Set();
+        const nextSelectedNovelIds = new Set<string>();
+        if (initialSelectedNovelId) {
+          nextSelectedNovelIds.add(initialSelectedNovelId);
+        }
+        this.selectedNovelIds = nextSelectedNovelIds;
+      });
+      logger.info(TAG, '进入书库混合多选模式');
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isNovelMultiSelectMode = true;
+      const nextSelectedNovelIds = new Set<string>();
+      if (initialSelectedNovelId) {
+        nextSelectedNovelIds.add(initialSelectedNovelId);
+      }
+      this.selectedNovelIds = nextSelectedNovelIds;
+    });
     logger.info(TAG, '进入小说多选模式');
   }
 
@@ -7143,8 +7882,14 @@ struct MainMenuPage {
    * 退出小说多选模式
    */
   private exitNovelMultiSelectMode(): void {
-    this.isNovelMultiSelectMode = false;
-    this.selectedNovelIds.clear();
+    if (this.isUnifiedLibraryMixedMultiSelectActive()) {
+      this.exitAllLibraryMultiSelectModes();
+      return;
+    }
+    this.animateLibraryMultiSelectState(() => {
+      this.isNovelMultiSelectMode = false;
+      this.selectedNovelIds = new Set();
+    });
     logger.info(TAG, '退出小说多选模式');
   }
 
@@ -7166,7 +7911,7 @@ struct MainMenuPage {
    * 全选电子书
    */
   private selectAllEBooks(): void {
-    for (const ebook of this.filteredEbookList) {
+    for (const ebook of this.getVisibleEBookMultiSelectItems()) {
       this.selectedEBookIds.add(ebook.id);
     }
     this.selectedEBookIds = new Set(this.selectedEBookIds);
@@ -7256,7 +8001,7 @@ struct MainMenuPage {
    * 全选小说
    */
   private selectAllNovels(): void {
-    for (const novel of this.filteredNovelList) {
+    for (const novel of this.getVisibleNovelMultiSelectItems()) {
       this.selectedNovelIds.add(novel.id);
     }
     this.selectedNovelIds = new Set(this.selectedNovelIds);
@@ -8535,10 +9280,16 @@ struct MainMenuPage {
   buildNovelEntryCard() {
     Row() {
       Column() {
-        Image($r('app.media.legado'))
-          .width(50)
-          .height(50)
-          .backgroundColor(Color.Transparent)
+        if (this.sourceFeaturesEnabled) {
+          Image($r('app.media.legado'))
+            .width(50)
+            .height(50)
+            .backgroundColor(Color.Transparent)
+        } else {
+          SymbolGlyph($r('sys.symbol.book'))
+            .fontSize(34)
+            .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+        }
       }
       .width(50)
       .height(50)
@@ -8552,7 +9303,7 @@ struct MainMenuPage {
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
         
-        Text('支持Legado书源，海量小说资源')
+        Text(this.sourceFeaturesEnabled ? '支持Legado书源，海量小说资源' : '本地小说阅读与管理入口')
           .fontSize(12)
           .fontFamily(this.appFontFamily)
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -8583,10 +9334,16 @@ struct MainMenuPage {
   @Builder
   buildNovelEntryCardCompact() {
     Column({ space: 8 }) {
-      Image($r('app.media.legado'))
-        .width(40)
-        .height(40)
-        .backgroundColor(Color.Transparent)
+      if (this.sourceFeaturesEnabled) {
+        Image($r('app.media.legado'))
+          .width(40)
+          .height(40)
+          .backgroundColor(Color.Transparent)
+      } else {
+        SymbolGlyph($r('sys.symbol.book'))
+          .fontSize(28)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+      }
       
       Text('小说阅读')
         .fontSize(14)
@@ -8594,7 +9351,7 @@ struct MainMenuPage {
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
       
-      Text('Legado书源')
+      Text(this.sourceFeaturesEnabled ? 'Legado书源' : '本地小说')
         .fontSize(11)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
@@ -8818,53 +9575,166 @@ struct MainMenuPage {
   }
 
   /**
-   * 构建多选工具栏
+   * 多选工具栏边框颜色
    */
+  private getLibrarySelectionToolbarBorderColor(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.14)'
+      : 'rgba(255, 255, 255, 0.72)';
+  }
+
   @Builder
-  buildMultiSelectToolbar() {
-    Row({ space: 12 }) {
-      // 退出多选模式按钮
+  buildActiveLibraryMultiSelectToolbar() {
+    Column() {
+      if (this.isUnifiedLibraryMixedMultiSelectActive()) {
+        this.buildLibraryMixedMultiSelectToolbar()
+      } else if (this.isMultiSelectMode) {
+        this.buildMultiSelectToolbar()
+      } else if (this.isEBookMultiSelectMode) {
+        this.buildEBookMultiSelectToolbar()
+      } else if (this.isNovelMultiSelectMode) {
+        this.buildNovelMultiSelectToolbar()
+      }
+    }
+    .width('100%')
+    .zIndex(2)
+    .hitTestBehavior(HitTestMode.Default)
+    .transition(
+      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+        .combine(TransitionEffect.translate({ y: -8 }))
+    )
+  }
+
+  @Builder
+  buildLibraryMixedMultiSelectToolbar() {
+    Row({ space: 10 }) {
       Button() {
         SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(20)
+          .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
       }
       .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
+      .width(38)
+      .height(38)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
       .onClick(() => {
-        this.exitMultiSelectMode();
+        this.exitAllLibraryMultiSelectModes();
       })
 
-      // 选中数量显示
-      Text(`已选择 ${this.selectedMangaIds.size} 项`)
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Column({ space: 2 }) {
+        Text('书库多选')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Text(`已选择 ${this.getLibraryTotalSelectedCount()} 项`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        /*
+        Text(`已选择 ${selectedCount} 项`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        */
+      }
         .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
 
-      // 全选按钮
       Button('全选')
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .padding({ left: 12, right: 12 })
         .onClick(() => {
-          this.selectAllManga();
+          this.selectAllLibraryMixedItems();
         })
 
-      // 删除按钮
       Button() {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
       }
       .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
+      .width(38)
+      .height(38)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
+      .onClick(() => {
+        this.showLibraryMixedBatchDeleteConfirm();
+      })
+      .enabled(this.getLibraryTotalSelectedCount() > 0)
+      .opacity(this.getLibraryTotalSelectedCount() > 0 ? 1.0 : 0.5)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius() + 4)
+    .opacity(this.getCardOpacity())
+    .border({ width: 1, color: this.getLibrarySelectionToolbarBorderColor() })
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getGlassShadowColor(), offsetY: 4 })
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.Default)
+    .animation({ duration: 220, curve: Curve.EaseOut })
+  }
+
+  /**
+   * 构建多选工具栏
+   */
+  @Builder
+  buildMultiSelectToolbar() {
+    Row({ space: 10 }) {
+      Button() {
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(38)
+      .height(38)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
+      .onClick(() => {
+        this.exitMultiSelectMode();
+      })
+
+      Column({ space: 2 }) {
+        Text('漫画多选')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Text(`已选择 ${this.selectedMangaIds.size} 项`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+      Button('全选')
+        .fontSize(14)
+        .height(36)
+        .fontFamily(this.appFontFamily)
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .padding({ left: 12, right: 12 })
+        .onClick(() => {
+          this.selectAllManga();
+        })
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
+      }
+      .type(ButtonType.Circle)
+      .width(38)
+      .height(38)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .onClick(() => {
         this.showBatchDeleteConfirm();
@@ -8873,9 +9743,16 @@ struct MainMenuPage {
       .opacity(this.selectedMangaIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius() + 4)
+    .opacity(this.getCardOpacity())
+    .border({ width: 1, color: this.getLibrarySelectionToolbarBorderColor() })
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getGlassShadowColor(), offsetY: 4 })
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.Default)
+    .animation({ duration: 220, curve: Curve.EaseOut })
   }
 
   /**
@@ -8883,49 +9760,54 @@ struct MainMenuPage {
    */
   @Builder
   buildEBookMultiSelectToolbar() {
-    Row({ space: 12 }) {
-      // 退出多选模式按钮
+    Row({ space: 10 }) {
       Button() {
         SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(20)
+          .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
       }
       .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
+      .width(38)
+      .height(38)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
       .onClick(() => {
         this.exitEBookMultiSelectMode();
       })
 
-      // 选中数量显示
-      Text(`已选择 ${this.selectedEBookIds.size} 项`)
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Column({ space: 2 }) {
+        Text('电子书多选')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Text(`已选择 ${this.selectedEBookIds.size} 项`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
         .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
 
-      // 全选按钮
       Button('全选')
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .padding({ left: 12, right: 12 })
         .onClick(() => {
           this.selectAllEBooks();
         })
 
-      // 删除按钮
       Button() {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
       }
       .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
+      .width(38)
+      .height(38)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .onClick(() => {
         this.showEBookBatchDeleteConfirm();
@@ -8934,9 +9816,16 @@ struct MainMenuPage {
       .opacity(this.selectedEBookIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius() + 4)
+    .opacity(this.getCardOpacity())
+    .border({ width: 1, color: this.getLibrarySelectionToolbarBorderColor() })
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getGlassShadowColor(), offsetY: 4 })
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.Default)
+    .animation({ duration: 220, curve: Curve.EaseOut })
   }
 
   /**
@@ -8944,49 +9833,54 @@ struct MainMenuPage {
    */
   @Builder
   buildNovelMultiSelectToolbar() {
-    Row({ space: 12 }) {
-      // 退出多选模式按钮
+    Row({ space: 10 }) {
       Button() {
         SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(20)
+          .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
       }
       .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
-      .backgroundColor(Color.Transparent)
+      .width(38)
+      .height(38)
+      .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary_dimmed', this.themeState.currentTheme))
       .onClick(() => {
         this.exitNovelMultiSelectMode();
       })
 
-      // 选中数量显示
-      Text(`已选择 ${this.selectedNovelIds.size} 项`)
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontFamily(this.appFontFamily)
-        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      Column({ space: 2 }) {
+        Text('小说多选')
+          .fontSize(12)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        Text(`已选择 ${this.selectedNovelIds.size} 项`)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(this.appFontFamily)
+          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+      }
         .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
 
-      // 全选按钮
       Button('全选')
         .fontSize(14)
         .height(36)
         .fontFamily(this.appFontFamily)
-        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_secondary', this.themeState.currentTheme))
+        .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .borderRadius(18)
+        .padding({ left: 12, right: 12 })
         .onClick(() => {
           this.selectAllNovels();
         })
 
-      // 删除按钮
       Button() {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(18)
           .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme)])
       }
       .type(ButtonType.Circle)
-      .width(40)
-      .height(40)
+      .width(38)
+      .height(38)
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('button_danger', this.themeState.currentTheme))
       .onClick(() => {
         this.showNovelBatchDeleteConfirm();
@@ -8995,9 +9889,16 @@ struct MainMenuPage {
       .opacity(this.selectedNovelIds.size > 0 ? 1.0 : 0.5)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
-    .borderRadius(12)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.getGlassBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .borderRadius(this.getGlassRadius() + 4)
+    .opacity(this.getCardOpacity())
+    .border({ width: 1, color: this.getLibrarySelectionToolbarBorderColor() })
+    .shadow({ radius: this.getGlassRadius() + 4, color: this.getGlassShadowColor(), offsetY: 4 })
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.Default)
+    .animation({ duration: 220, curve: Curve.EaseOut })
   }
 
   /**
@@ -9038,45 +9939,9 @@ struct MainMenuPage {
     // 分类视图模式
     if (this.libraryViewMode === LibraryViewMode.CATEGORY) {
       Column() {
-        if (this.showCategoryDetail) {
-          // 详情模式：显示返回按钮和书架类型名称
-          Row() {
-            Button() {
-              SymbolGlyph($r('sys.symbol.arrow_left'))
-                .fontSize(24)
-                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
-            }
-            .width(44)
-            .height(44)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              // 线性缩放动画关闭详情
-              this.beginShelfDetailExitAnimation();
-              // 关闭动画结束后清除筛选状态，避免标题跳变
-              setTimeout(() => {
-                this.selectedShelf = null;
-                this.customShelfSelectedTags.clear();
-                this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
-                this.customShelfSelectedAuthors.clear();
-                this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
-                this.customShelfSortType = 'add_desc';
-              }, 200);
-            })
-
-            // 显示书架名称：自定义书架显示其名称，系统书架显示类型名称
-            Text(this.selectedShelf !== null ? this.selectedShelf.name : this.getShelfTypeName(this.selectedShelfType))
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontFamily(this.appFontFamily)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-              .layoutWeight(1)
-          }
-          .width('100%')
-          .padding({ top: 8, bottom: 8, left: 16, right: 16 })
-        }
         // 内容区域：卡片视图或详情视图
         if (this.showCategoryDetail) {
-          Stack() {
+          Stack({ alignContent: Alignment.TopStart }) {
             if (this.shelfDetailContentDeferred) {
               Column() {
                 Blank()
@@ -9088,6 +9953,13 @@ struct MainMenuPage {
               // 分类详情视图（在同一Column内显示）
               this.buildCategoryDetailContent()
             }
+
+            Column() {
+              this.buildShelfDetailHeader()
+            }
+            .width('100%')
+            .align(Alignment.TopStart)
+            .zIndex(1)
           }
           .width('100%')
           .layoutWeight(1)
@@ -9140,12 +10012,8 @@ struct MainMenuPage {
   @Builder
   buildLibraryDefaultExpandedViewContainer() {
     Column({ space: 16 }) {
-      if (this.isMultiSelectMode) {
-        this.buildMultiSelectToolbar()
-      } else if (this.isEBookMultiSelectMode) {
-        this.buildEBookMultiSelectToolbar()
-      } else if (this.isNovelMultiSelectMode) {
-        this.buildNovelMultiSelectToolbar()
+      if (this.hasActiveLibraryMultiSelectMode()) {
+        this.buildActiveLibraryMultiSelectToolbar()
       }
 
       Column() {
@@ -9188,7 +10056,7 @@ struct MainMenuPage {
       Column({ space: 12 }) {
         ForEach(this.getLibraryDefaultMixedItems(), (item: ShelfMixedItem) => {
           this.buildLibraryDefaultMixedListCard(item)
-        }, (item: ShelfMixedItem) => `default_mix_list_${item.type}_${item.id}`)
+        }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('default_mix_list', item.type, item.id))
         Blank().height(this.getLibraryDefaultBottomSpacerHeight())
       }
       .width('100%')
@@ -9200,7 +10068,7 @@ struct MainMenuPage {
             GridItem() {
               this.buildLibraryDefaultMixedGridCard(item)
             }
-          }, (item: ShelfMixedItem) => `default_mix_grid_${item.type}_${item.id}`)
+          }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('default_mix_grid', item.type, item.id))
         }
         .columnsTemplate(this.getLibraryGridColumnsTemplate())
         .columnsGap(this.responsive_gridGap)
@@ -9522,22 +10390,35 @@ struct MainMenuPage {
       // 卡片内容层
       Row({ space: 12 }) {
         // 封面图片
-        Column() {
-          if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
-            AvifImage({
-              src: manga.coverImagePath,
-              imageWidth: '100%',
-              imageHeight: '100%',
-              objectFit: ImageFit.Cover,
-            })
-          } else {
-            Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
-              .onError(() => {
-                logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
+        Stack() {
+          Column() {
+            if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+              AvifImage({
+                src: manga.coverImagePath,
+                imageWidth: '100%',
+                imageHeight: '100%',
+                objectFit: ImageFit.Cover,
               })
+            } else {
+              Image(this.getCoverImageSource(manga) || $r('app.media.mangabook'))
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .onError(() => {
+                  logger.warn('MainMenuPage', `书库列表封面加载失败: raw='${manga.coverImagePath}', display='${this.normalizeDisplayPathForManga(manga)}', source=${manga.coverSourceType}`);
+                })
+            }
+          }
+          .width('100%')
+          .height('100%')
+
+          if (this.isMultiSelectMode) {
+            this.buildLibraryListSelectionOverlay(
+              this.selectedMangaIds.has(manga.id),
+              this.getCoverImageRadius(),
+              true,
+              6
+            )
           }
         }
         .width(80)
@@ -9545,7 +10426,7 @@ struct MainMenuPage {
         .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getCoverImageRadius())
         .clip(true)
-        .justifyContent(FlexAlign.Center)
+        .alignContent(Alignment.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
         .id(`cover_manga_lib_${manga.id}`)
         .onClick(() => {
@@ -9607,8 +10488,13 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .border({
+        width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.isMultiSelectMode, this.selectedMangaIds.has(manga.id))
+      })
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
+      .animation({ duration: 220, curve: Curve.EaseOut })
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
@@ -9617,6 +10503,9 @@ struct MainMenuPage {
             }
           })
       )
+      if (this.isMultiSelectMode) {
+        this.buildLibraryListSelectionOverlay(this.selectedMangaIds.has(manga.id), this.getGlassRadius(), false)
+      }
     }
     .width('100%')
     .height(140)
@@ -10169,6 +11058,24 @@ struct MainMenuPage {
     return this.isShelfToolbarAtBottom() ? 0 : this.getMainTabBottomSpacerHeight();
   }
 
+  private getShelfDetailHeaderHeight(): number {
+    return 60;
+  }
+
+  private getShelfDetailToolbarTopPadding(): number {
+    return this.getShelfDetailHeaderHeight() + 8;
+  }
+
+  private getShelfDetailScrollContentTopPadding(): number {
+    return this.isShelfToolbarAtBottom() ? this.getShelfDetailHeaderHeight() + 8 : 0;
+  }
+
+  private getShelfDetailHeaderBackground(): ResourceColor {
+    return this.themeState.currentTheme === ThemeType.LIGHT
+      ? 'rgba(255, 255, 255, 0.46)'
+      : 'rgba(16, 22, 32, 0.52)';
+  }
+
   private shouldShowShelfPreviewSlider(): boolean {
     return this.currentTabIndex === TabIndex.LIBRARY
       && this.libraryViewMode === LibraryViewMode.CATEGORY
@@ -10361,6 +11268,7 @@ struct MainMenuPage {
   }
 
   private beginShelfDetailExitAnimation(): void {
+    this.exitAllLibraryMultiSelectModes();
     this.shelfDetailContentDeferred = false;
     animateTo({ duration: 200, curve: Curve.Linear }, () => {
       this.shelfDetailTransitionScale = 1.06;
@@ -10373,6 +11281,49 @@ struct MainMenuPage {
       this.shelfDetailTransitionOpacity = 1;
       this.shelfDetailContentDeferred = false;
     }, 200);
+  }
+
+  @Builder
+  private buildShelfDetailHeader() {
+    Row({ space: 12 }) {
+      Button() {
+        SymbolGlyph($r('sys.symbol.arrow_left'))
+          .fontSize(24)
+          .fontColor([ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme)])
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.beginShelfDetailExitAnimation();
+        setTimeout(() => {
+          this.selectedShelf = null;
+          this.customShelfSelectedTags.clear();
+          this.customShelfSelectedTags = new Set(this.customShelfSelectedTags);
+          this.customShelfSelectedAuthors.clear();
+          this.customShelfSelectedAuthors = new Set(this.customShelfSelectedAuthors);
+          this.customShelfSortType = 'add_desc';
+        }, 200);
+      })
+
+      Text(this.selectedShelf !== null ? this.selectedShelf.name : this.getShelfTypeName(this.selectedShelfType))
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontFamily(this.appFontFamily)
+        .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(this.getShelfDetailHeaderHeight())
+    .padding({ left: 16, right: 16 })
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(this.getShelfDetailHeaderBackground())
+    .backgroundBlurStyle(this.getGlassBlur())
+    .opacity(0.98)
+    .border({ width: 1, color: this.getLibrarySelectionToolbarBorderColor() })
+    .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 3 })
+    .hitTestBehavior(HitTestMode.Default)
+    .zIndex(2)
   }
 
   @Builder
@@ -12346,12 +13297,24 @@ struct MainMenuPage {
    * 获取动态书架当前已选筛选条件总数
    */
   private getDynamicFilterSelectedCount(): number {
+    const selectedSourceCount = this.sourceFeaturesEnabled ? this.dynamicFilterSelectedSources.size : 0;
     return this.dynamicFilterSelectedAuthors.size +
       this.dynamicFilterSelectedTags.size +
       this.dynamicFilterSelectedKeywords.size +
-      this.dynamicFilterSelectedSources.size +
+      selectedSourceCount +
       this.dynamicFilterCustomKeywords.length +
       (this.dynamicFilterNsfwSelection !== 'all' ? 1 : 0);
+  }
+
+  private getCurrentDynamicFilterTabKey(): 'author' | 'tag' | 'keyword' | 'image_source' | 'book_source' | 'nsfw' | 'custom' {
+    const tabConfigs = this.getDynamicFilterTabConfigs();
+    if (tabConfigs.length <= 0) {
+      return 'author';
+    }
+    const safeIndex = this.dynamicFilterTabIndex >= 0 && this.dynamicFilterTabIndex < tabConfigs.length
+      ? this.dynamicFilterTabIndex
+      : 0;
+    return tabConfigs[safeIndex].key;
   }
 
   /**
@@ -12402,7 +13365,7 @@ struct MainMenuPage {
       .width('100%')
 
       // 搜索框（自定义关键词标签页和NSFW分级标签页不显示搜索框）
-      if (this.dynamicFilterTabIndex !== 5 && this.dynamicFilterTabIndex !== 6) {
+      if (this.getCurrentDynamicFilterTabKey() !== 'nsfw' && this.getCurrentDynamicFilterTabKey() !== 'custom') {
         Row() {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(16)
@@ -12434,22 +13397,22 @@ struct MainMenuPage {
 
       // 标签页内容区域
       Column() {
-        if (this.dynamicFilterTabIndex === 0) {
+        if (this.getCurrentDynamicFilterTabKey() === 'author') {
           // 作者标签页
           this.buildDynamicFilterChipList(this.allAuthors, 'author')
-        } else if (this.dynamicFilterTabIndex === 1) {
+        } else if (this.getCurrentDynamicFilterTabKey() === 'tag') {
           // 标签标签页
           this.buildDynamicFilterChipList(this.allTags, 'tag')
-        } else if (this.dynamicFilterTabIndex === 2) {
+        } else if (this.getCurrentDynamicFilterTabKey() === 'keyword') {
           // 关键词标签页
           this.buildDynamicFilterChipList(this.dynamicFilterAllTitleKeywords, 'keyword')
-        } else if (this.dynamicFilterTabIndex === 3) {
+        } else if (this.getCurrentDynamicFilterTabKey() === 'image_source') {
           // 图源标签页
           this.buildDynamicFilterChipList(this.dynamicFilterAllImageSourceNames, 'source')
-        } else if (this.dynamicFilterTabIndex === 4) {
+        } else if (this.getCurrentDynamicFilterTabKey() === 'book_source') {
           // 书源标签页
           this.buildDynamicFilterChipList(this.dynamicFilterAllBookSourceNames, 'source')
-        } else if (this.dynamicFilterTabIndex === 5) {
+        } else if (this.getCurrentDynamicFilterTabKey() === 'nsfw') {
           // NSFW/SFW内容分级标签页
           this.buildDynamicFilterNsfwTab()
         } else {
@@ -12739,21 +13702,39 @@ struct MainMenuPage {
    * 获取动态筛选标签页配置列表
    */
   private getDynamicFilterTabConfigs(): DynamicFilterTabConfig[] {
-    return [
-      { label: '作者', count: this.dynamicFilterSelectedAuthors.size },
-      { label: '标签', count: this.dynamicFilterSelectedTags.size },
-      { label: '关键词', count: this.dynamicFilterSelectedKeywords.size },
-      { label: '图源', count: this.dynamicFilterSelectedSources.size > 0
-        ? Array.from(this.dynamicFilterSelectedSources).filter((name: string) =>
-            this.dynamicFilterAllImageSourceNames.includes(name)).length
-        : 0 },
-      { label: '书源', count: this.dynamicFilterSelectedSources.size > 0
-        ? Array.from(this.dynamicFilterSelectedSources).filter((name: string) =>
-            this.dynamicFilterAllBookSourceNames.includes(name)).length
-        : 0 },
-      { label: '内容分级', count: this.dynamicFilterNsfwSelection !== 'all' ? 1 : 0 },
-      { label: '自定义', count: this.dynamicFilterCustomKeywords.length }
+    const configs: DynamicFilterTabConfig[] = [
+      { key: 'author', label: '作者', count: this.dynamicFilterSelectedAuthors.size },
+      { key: 'tag', label: '标签', count: this.dynamicFilterSelectedTags.size },
+      { key: 'keyword', label: '关键词', count: this.dynamicFilterSelectedKeywords.size }
     ];
+
+    if (this.sourceFeaturesEnabled) {
+      configs.push(
+        {
+          key: 'image_source',
+          label: '图源',
+          count: this.dynamicFilterSelectedSources.size > 0
+            ? Array.from(this.dynamicFilterSelectedSources).filter((name: string) =>
+                this.dynamicFilterAllImageSourceNames.includes(name)).length
+            : 0
+        },
+        {
+          key: 'book_source',
+          label: '书源',
+          count: this.dynamicFilterSelectedSources.size > 0
+            ? Array.from(this.dynamicFilterSelectedSources).filter((name: string) =>
+                this.dynamicFilterAllBookSourceNames.includes(name)).length
+            : 0
+        }
+      );
+    }
+
+    configs.push(
+      { key: 'nsfw', label: '内容分级', count: this.dynamicFilterNsfwSelection !== 'all' ? 1 : 0 },
+      { key: 'custom', label: '自定义', count: this.dynamicFilterCustomKeywords.length }
+    );
+
+    return configs;
   }
 
   /**
@@ -13254,9 +14235,16 @@ struct MainMenuPage {
   @Builder
   buildCategoryDetailContent() {
     Column() {
-      // 显示排序和筛选工具栏（自定义书架和系统书架都使用）
       if (!this.isShelfToolbarAtBottom()) {
-        this.buildShelfToolbar()
+        Column() {
+          if (this.hasActiveLibraryMultiSelectMode()) {
+            this.buildActiveLibraryMultiSelectToolbar()
+          } else {
+            this.buildShelfToolbar()
+          }
+        }
+        .width('100%')
+        .padding({ top: this.getShelfDetailToolbarTopPadding() })
       }
 
       // 内容列表
@@ -13277,6 +14265,7 @@ struct MainMenuPage {
           }
         }
         .width('100%')
+        .padding({ top: this.getShelfDetailScrollContentTopPadding() })
       }
       .width('100%')
       .layoutWeight(1)
@@ -13286,7 +14275,11 @@ struct MainMenuPage {
 
       if (this.isShelfToolbarAtBottom()) {
         Column() {
-          this.buildShelfToolbar()
+          if (this.hasActiveLibraryMultiSelectMode()) {
+            this.buildActiveLibraryMultiSelectToolbar()
+          } else {
+            this.buildShelfToolbar()
+          }
         }
         .width('100%')
         .padding({ bottom: this.getMainTabBottomSpacerHeight() })
@@ -13307,7 +14300,7 @@ struct MainMenuPage {
           GridItem() {
             this.buildMangaGridCard(manga, 'shelf_detail')
           }
-        }, (manga: Manga) => manga.id)
+        }, (manga: Manga) => this.getLibraryContentRenderKey('shelf_manga_grid', 'manga', manga.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
@@ -13332,12 +14325,12 @@ struct MainMenuPage {
           GridItem() {
             this.buildEBookGridCard(ebook, 'shelf_detail')
           }
-        }, (ebook: EBook) => ebook.id)
+        }, (ebook: EBook) => this.getLibraryContentRenderKey('shelf_ebook_grid', 'ebook', ebook.id))
         ForEach(this.getShelfFilteredPdfEBookList(), (pdfEbook: Manga) => {
           GridItem() {
             this.buildPdfEBookGridCard(pdfEbook, 'shelf_detail')
           }
-        }, (pdfEbook: Manga) => pdfEbook.id)
+        }, (pdfEbook: Manga) => this.getLibraryContentRenderKey('shelf_pdfebook_grid', 'pdfebook', pdfEbook.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
@@ -13362,7 +14355,7 @@ struct MainMenuPage {
           GridItem() {
             this.buildNovelGridCard(novel, 'shelf_detail')
           }
-        }, (novel: NovelBook) => novel.id)
+        }, (novel: NovelBook) => this.getLibraryContentRenderKey('shelf_novel_grid', 'novel', novel.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
@@ -13688,7 +14681,7 @@ struct MainMenuPage {
               this.buildNovelGridCard(item.data as NovelBook, 'shelf_detail')
             }
           }
-        }, (item: ShelfMixedItem) => `${item.type}_${item.id}`)
+        }, (item: ShelfMixedItem) => this.getLibraryContentRenderKey('custom_shelf_grid', item.type, item.id))
       }
       .columnsTemplate(this.getLibraryGridColumnsTemplate())
       .rowsGap(this.responsive_gridGap)
@@ -14774,6 +15767,65 @@ struct MainMenuPage {
     }
   }
 
+  private getLibraryListSelectionBorderColor(active: boolean, selected: boolean): ResourceColor {
+    if (!active) {
+      return Color.Transparent;
+    }
+    if (selected) {
+      return ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme);
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(255, 255, 255, 0.14)'
+      : 'rgba(0, 0, 0, 0.08)';
+  }
+
+  private getLibraryListSelectionOverlayColor(selected: boolean): ResourceColor {
+    if (selected) {
+      return this.themeState.currentTheme === ThemeType.DARK
+        ? 'rgba(78, 148, 255, 0.18)'
+        : 'rgba(46, 118, 255, 0.10)';
+    }
+    return this.themeState.currentTheme === ThemeType.DARK
+      ? 'rgba(12, 16, 22, 0.12)'
+      : 'rgba(0, 0, 0, 0.04)';
+  }
+
+  @Builder
+  buildLibraryListSelectionOverlay(
+    selected: boolean,
+    borderRadius: number = this.getGlassRadius(),
+    showBadge: boolean = true,
+    badgePadding: number = 10
+  ) {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.getLibraryListSelectionOverlayColor(selected))
+        .borderRadius(borderRadius)
+        .hitTestBehavior(HitTestMode.None)
+
+      if (showBadge) {
+        Column() {
+          this.buildLibraryDirectCoverSelectionBadge(selected)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Start)
+        .alignItems(HorizontalAlign.End)
+        .padding(badgePadding)
+        .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+    .transition(
+      TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+        .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
+    )
+  }
+
   @Builder
   buildLibraryDirectCoverSurface(
     asset: LibraryResolvedCoverAsset,
@@ -14838,9 +15890,13 @@ struct MainMenuPage {
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Start)
-        .alignItems(HorizontalAlign.Start)
+        .alignItems(HorizontalAlign.End)
         .padding(8)
         .hitTestBehavior(HitTestMode.None)
+        .transition(
+          TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+            .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+        )
       }
     }
     .width('100%')
@@ -14857,6 +15913,7 @@ struct MainMenuPage {
       offsetY: this.userThemeShadowEnabled ? 4 : 0
     })
     .clip(true)
+    .animation({ duration: 220, curve: Curve.EaseOut })
   }
 
   @Builder
@@ -14870,6 +15927,7 @@ struct MainMenuPage {
         )
       }
       .width('100%')
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .id(`library_manga_${manga.id}`)
       .onClick(() => {
         this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
@@ -14908,10 +15966,12 @@ struct MainMenuPage {
       .width('100%')
       .padding({ left: 2, right: 2 })
       .alignItems(HorizontalAlign.Start)
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryMangaTitleClick(manga);
       })
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_direct_card`, 'manga', manga.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .onClick(() => {
@@ -14954,6 +16014,7 @@ struct MainMenuPage {
         )
       }
       .width('100%')
+      .hitTestBehavior(this.getEBookSelectionHitTestMode())
       .id(`cover_ebook_grid_${ebook.id}`)
       .onClick(() => {
         this.handleLibraryEBookCoverClick(ebook, `cover_ebook_grid_${ebook.id}`);
@@ -14992,10 +16053,12 @@ struct MainMenuPage {
       .width('100%')
       .padding({ left: 2, right: 2 })
       .alignItems(HorizontalAlign.Start)
+      .hitTestBehavior(this.getEBookSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryEBookTitleClick(ebook);
       })
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_ebook_direct_card`, 'ebook', ebook.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .onClick(() => {
@@ -15038,6 +16101,7 @@ struct MainMenuPage {
         )
       }
       .width('100%')
+      .hitTestBehavior(this.getNovelSelectionHitTestMode())
       .id(`library_novel_${novel.id}`)
       .onClick(() => {
         this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
@@ -15076,10 +16140,12 @@ struct MainMenuPage {
       .width('100%')
       .padding({ left: 2, right: 2 })
       .alignItems(HorizontalAlign.Start)
+      .hitTestBehavior(this.getNovelSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryNovelTitleClick(novel);
       })
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_novel_direct_card`, 'novel', novel.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .onClick(() => {
@@ -15124,6 +16190,7 @@ struct MainMenuPage {
         )
       }
       .width('100%')
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .id(`cover_pdf_ebook_grid_${manga.id}`)
       .onClick(() => {
         this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_grid_${manga.id}`);
@@ -15162,10 +16229,12 @@ struct MainMenuPage {
       .width('100%')
       .padding({ left: 2, right: 2 })
       .alignItems(HorizontalAlign.Start)
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryMangaTitleClick(manga);
       })
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_pdfebook_direct_card`, 'pdfebook', manga.id))
     .width('100%')
     .padding({ left: 2, right: 2, top: 4, bottom: 6 })
     .onClick(() => {
@@ -15252,6 +16321,11 @@ struct MainMenuPage {
               : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
             .borderRadius(this.getCoverImageRadius())
             .animation({ duration: 200, curve: Curve.EaseOut })
+            .hitTestBehavior(HitTestMode.None)
+            .transition(
+              TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
+            )
           
           // 选中/未选中指示器（右上角圆形勾选框）
           Column() {
@@ -15284,10 +16358,16 @@ struct MainMenuPage {
           .justifyContent(FlexAlign.Start)
           .alignItems(HorizontalAlign.End)
           .padding(6)
+          .hitTestBehavior(HitTestMode.None)
+          .transition(
+            TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+              .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+          )
         }
       }
       .width('100%')
       .aspectRatio(0.7)
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryMangaCoverClick(manga, `library_manga_${manga.id}`);
       })
@@ -15327,10 +16407,12 @@ struct MainMenuPage {
         }
       }
       .width('100%')
+      .hitTestBehavior(this.getMangaSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryMangaTitleClick(manga);
       })
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_manga_grid_card`, 'manga', manga.id))
     .width('100%')
     .padding(8)
     .backgroundColor(this.getGlassBackground())
@@ -15453,8 +16535,9 @@ struct MainMenuPage {
         const mangaToSelect = this.contextMenuManga;
         this.hideMangaContextMenu();
         if (mangaToSelect && !this.isMultiSelectMode) {
-          this.enterMultiSelectMode();
-          this.toggleMangaSelection(mangaToSelect.id);
+          this.runAfterLibraryContextMenuDismissed(() => {
+            this.enterMultiSelectMode(mangaToSelect.id);
+          });
         }
       })
 
@@ -15516,8 +16599,7 @@ struct MainMenuPage {
       MenuItem({ content: '进入多选模式' })
         .onClick(() => {
           if (!this.isMultiSelectMode) {
-            this.enterMultiSelectMode();
-            this.toggleMangaSelection(manga.id);
+            this.enterMultiSelectMode(manga.id);
           }
         })
       MenuItem({ content: '删除' })
@@ -15555,8 +16637,7 @@ struct MainMenuPage {
       MenuItem({ content: '进入多选模式' })
         .onClick(() => {
           if (!this.isEBookMultiSelectMode) {
-            this.enterEBookMultiSelectMode();
-            this.toggleEBookSelection(ebook.id);
+            this.enterEBookMultiSelectMode(ebook.id);
           }
         })
       MenuItem({ content: '删除' })
@@ -15594,8 +16675,7 @@ struct MainMenuPage {
       MenuItem({ content: '进入多选模式' })
         .onClick(() => {
           if (!this.isNovelMultiSelectMode) {
-            this.enterNovelMultiSelectMode();
-            this.toggleNovelSelection(novel.id);
+            this.enterNovelMultiSelectMode(novel.id);
           }
         })
       MenuItem({ content: '删除' })
@@ -15691,8 +16771,9 @@ struct MainMenuPage {
         const ebookToSelect = this.contextMenuEBook;
         this.hideEBookContextMenu();
         if (ebookToSelect && !this.isEBookMultiSelectMode) {
-          this.enterEBookMultiSelectMode();
-          this.toggleEBookSelection(ebookToSelect.id);
+          this.runAfterLibraryContextMenuDismissed(() => {
+            this.enterEBookMultiSelectMode(ebookToSelect.id);
+          });
         }
       })
 
@@ -15815,8 +16896,9 @@ struct MainMenuPage {
         const novelToSelect = this.contextMenuNovel;
         this.hideNovelContextMenu();
         if (novelToSelect && !this.isNovelMultiSelectMode) {
-          this.enterNovelMultiSelectMode();
-          this.toggleNovelSelection(novelToSelect.id);
+          this.runAfterLibraryContextMenuDismissed(() => {
+            this.enterNovelMultiSelectMode(novelToSelect.id);
+          });
         }
       })
 
@@ -16079,29 +17161,42 @@ struct MainMenuPage {
       // 卡片内容层
       Row({ space: 12 }) {
         // 封面图片
-        Column() {
-          if (this.isNetworkUrl(ebook.metadata?.coverImagePath)) {
-            AvifImage({
-              src: this.normalizeDisplayPathForEBook(ebook),
-              imageWidth: '100%',
-              imageHeight: '100%',
-              objectFit: ImageFit.Cover,
-            })
-          } else if (this.hasValidEBookCover(ebook)) {
-            Image(this.getDisplayEBookCoverSource(ebook))
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
-              .onError((event) => {
-                const errMsg = event ? JSON.stringify(event) : 'unknown';
-                logger.warn(TAG, `[封面诊断] 列表卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getDisplayEBookCoverSource(ebook)}', error=${errMsg}`);
+        Stack() {
+          Column() {
+            if (this.isNetworkUrl(ebook.metadata?.coverImagePath)) {
+              AvifImage({
+                src: this.normalizeDisplayPathForEBook(ebook),
+                imageWidth: '100%',
+                imageHeight: '100%',
+                objectFit: ImageFit.Cover,
               })
-          } else {
-            Image(this.getDisplayEBookCoverSource(ebook))
-              .width(50)
-              .height(50)
-              .objectFit(ImageFit.Cover)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            } else if (this.hasValidEBookCover(ebook)) {
+              Image(this.getDisplayEBookCoverSource(ebook))
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .onError((event) => {
+                  const errMsg = event ? JSON.stringify(event) : 'unknown';
+                  logger.warn(TAG, `[封面诊断] 列表卡片封面加载失败: id=${ebook.id}, raw='${ebook.metadata?.coverImagePath}', source='${this.getDisplayEBookCoverSource(ebook)}', error=${errMsg}`);
+                })
+            } else {
+              Image(this.getDisplayEBookCoverSource(ebook))
+                .width(50)
+                .height(50)
+                .objectFit(ImageFit.Cover)
+                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+          }
+          .width('100%')
+          .height('100%')
+
+          if (this.isEBookMultiSelectMode) {
+            this.buildLibraryListSelectionOverlay(
+              this.selectedEBookIds.has(ebook.id),
+              this.getCoverImageRadius(),
+              true,
+              6
+            )
           }
         }
         .width(80)
@@ -16109,7 +17204,7 @@ struct MainMenuPage {
         .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getCoverImageRadius())
         .clip(true)
-        .justifyContent(FlexAlign.Center)
+        .alignContent(Alignment.Center)
         .shadow({
           radius: 8,
           color: AppColors.getShadowColor(4),
@@ -16183,8 +17278,13 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .border({
+        width: this.isEBookMultiSelectMode ? (this.selectedEBookIds.has(ebook.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.isEBookMultiSelectMode, this.selectedEBookIds.has(ebook.id))
+      })
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
+      .animation({ duration: 220, curve: Curve.EaseOut })
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
@@ -16193,6 +17293,9 @@ struct MainMenuPage {
             }
           })
       )
+      if (this.isEBookMultiSelectMode) {
+        this.buildLibraryListSelectionOverlay(this.selectedEBookIds.has(ebook.id), this.getGlassRadius(), false)
+      }
     }
     .width('100%')
     .height(140)
@@ -16652,7 +17755,9 @@ struct MainMenuPage {
 
   private handleLibraryMangaCoverClick(manga: Manga, coverComponentId: string): void {
     if (this.isMultiSelectMode) {
-      this.toggleMangaSelection(manga.id);
+      return;
+    }
+    if (this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     if (this.canStartReadingFromLibraryCover()) {
@@ -16664,7 +17769,9 @@ struct MainMenuPage {
 
   private handleLibraryMangaTitleClick(manga: Manga): void {
     if (this.isMultiSelectMode) {
-      this.toggleMangaSelection(manga.id);
+      return;
+    }
+    if (this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     this.openMangaDetail(manga);
@@ -16672,7 +17779,9 @@ struct MainMenuPage {
 
   private handleLibraryEBookCoverClick(ebook: EBook, coverComponentId: string): void {
     if (this.isEBookMultiSelectMode) {
-      this.toggleEBookSelection(ebook.id);
+      return;
+    }
+    if (this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     if (this.canStartReadingFromLibraryCover()) {
@@ -16684,7 +17793,9 @@ struct MainMenuPage {
 
   private handleLibraryEBookTitleClick(ebook: EBook): void {
     if (this.isEBookMultiSelectMode) {
-      this.toggleEBookSelection(ebook.id);
+      return;
+    }
+    if (this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     this.openEBookDetail(ebook);
@@ -16692,7 +17803,9 @@ struct MainMenuPage {
 
   private handleLibraryNovelCoverClick(novel: NovelBook, coverComponentId: string): void {
     if (this.isNovelMultiSelectMode) {
-      this.toggleNovelSelection(novel.id);
+      return;
+    }
+    if (this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     if (!this.canStartReadingFromLibraryCover()) {
@@ -16704,7 +17817,9 @@ struct MainMenuPage {
 
   private handleLibraryNovelTitleClick(novel: NovelBook): void {
     if (this.isNovelMultiSelectMode) {
-      this.toggleNovelSelection(novel.id);
+      return;
+    }
+    if (this.hasActiveLibraryMultiSelectMode()) {
       return;
     }
     this.openNovelDetail(novel);
@@ -17259,6 +18374,10 @@ struct MainMenuPage {
               .borderRadius(this.getCoverImageRadius())
               .animation({ duration: 200, curve: Curve.EaseOut })
               .hitTestBehavior(HitTestMode.None)
+              .transition(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
+              )
             
             // 选中/未选中指示器（右上角圆形勾选框）
             Column() {
@@ -17292,11 +18411,16 @@ struct MainMenuPage {
             .alignItems(HorizontalAlign.End)
             .padding(6)
             .hitTestBehavior(HitTestMode.None)
+            .transition(
+              TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+            )
           }
         }
         .width('100%')
         .aspectRatio(0.7)
         .id(`cover_ebook_grid_${ebook.id}`)
+        .hitTestBehavior(this.getEBookSelectionHitTestMode())
         .onClick(() => {
           this.handleLibraryEBookCoverClick(ebook, `cover_ebook_grid_${ebook.id}`);
         })
@@ -17337,6 +18461,7 @@ struct MainMenuPage {
         }
         .width('100%')
         .padding({ left: 8, right: 8 })
+        .hitTestBehavior(this.getEBookSelectionHitTestMode())
         .onClick(() => {
           this.handleLibraryEBookTitleClick(ebook);
         })
@@ -17348,6 +18473,7 @@ struct MainMenuPage {
       .borderRadius(this.getGlassRadius())
       .opacity(this.getCardOpacity())
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_ebook_grid_card`, 'ebook', ebook.id))
     .onClick(() => {
       if (!this.isEBookMultiSelectMode) {
         return;
@@ -17393,24 +18519,37 @@ struct MainMenuPage {
     Stack({ alignContent: Alignment.End }) {
       Row({ space: 12 }) {
         // 封面图片
-        Column() {
-          if (this.isNetworkUrl(this.getNovelCoverPath(novel))) {
-            AvifImage({
-              src: this.getNovelDisplayCoverPath(novel),
-              imageWidth: '100%',
-              imageHeight: '100%',
-              objectFit: ImageFit.Cover,
-            })
-          } else if (this.getNovelDisplayCoverPath(novel)) {
-            Image(this.getNovelCoverSource(novel))
-              .width('100%')
-              .height('100%')
-              .objectFit(ImageFit.Cover)
-          } else {
-            Image($r('app.media.ic_source_novel'))
-              .width(50)
-              .height(50)
-              .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+        Stack() {
+          Column() {
+            if (this.isNetworkUrl(this.getNovelCoverPath(novel))) {
+              AvifImage({
+                src: this.getNovelDisplayCoverPath(novel),
+                imageWidth: '100%',
+                imageHeight: '100%',
+                objectFit: ImageFit.Cover,
+              })
+            } else if (this.getNovelDisplayCoverPath(novel)) {
+              Image(this.getNovelCoverSource(novel))
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+            } else {
+              Image($r('app.media.ic_source_novel'))
+                .width(50)
+                .height(50)
+                .fillColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            }
+          }
+          .width('100%')
+          .height('100%')
+
+          if (this.isNovelMultiSelectMode) {
+            this.buildLibraryListSelectionOverlay(
+              this.selectedNovelIds.has(novel.id),
+              this.getCoverImageRadius(),
+              true,
+              6
+            )
           }
         }
         .width(80)
@@ -17418,7 +18557,7 @@ struct MainMenuPage {
         .backgroundColor(this.getLibraryCoverBackgroundColor())
         .borderRadius(this.getCoverImageRadius())
         .clip(true)
-        .justifyContent(FlexAlign.Center)
+        .alignContent(Alignment.Center)
         .shadow({ radius: 8, color: AppColors.getShadowColor(4), offsetY: 4 })
         .id(`cover_novel_lib_${novel.id}`)
         .onClick(() => {
@@ -17487,8 +18626,13 @@ struct MainMenuPage {
       .backgroundColor(this.getGlassBackground())
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
+      .border({
+        width: this.isNovelMultiSelectMode ? (this.selectedNovelIds.has(novel.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.isNovelMultiSelectMode, this.selectedNovelIds.has(novel.id))
+      })
       .opacity(this.getCardOpacity())
       .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetY: 2 })
+      .animation({ duration: 220, curve: Curve.EaseOut })
       .gesture(
         LongPressGesture({ repeat: false, duration: 500 })
           .onAction(() => {
@@ -17497,6 +18641,9 @@ struct MainMenuPage {
             }
           })
       )
+      if (this.isNovelMultiSelectMode) {
+        this.buildLibraryListSelectionOverlay(this.selectedNovelIds.has(novel.id), this.getGlassRadius(), false)
+      }
     }
     .width('100%')
     .height(144)
@@ -17580,6 +18727,10 @@ struct MainMenuPage {
             .borderRadius(this.getCoverImageRadius())
             .animation({ duration: 200, curve: Curve.EaseOut })
             .hitTestBehavior(HitTestMode.None)
+            .transition(
+              TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
+            )
           
           // 选中/未选中指示器（右上角圆形勾选框）
           Column() {
@@ -17613,6 +18764,10 @@ struct MainMenuPage {
           .alignItems(HorizontalAlign.End)
           .padding(6)
           .hitTestBehavior(HitTestMode.None)
+          .transition(
+            TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+              .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+          )
         }
       }
       .width('100%')
@@ -17620,6 +18775,7 @@ struct MainMenuPage {
       .borderRadius(this.getCoverImageRadius())
       .clip(true)
       .id(`library_novel_${novel.id}`)
+      .hitTestBehavior(this.getNovelSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryNovelCoverClick(novel, `library_novel_${novel.id}`);
       })
@@ -17656,10 +18812,12 @@ struct MainMenuPage {
         }
       }
       .width('100%')
+      .hitTestBehavior(this.getNovelSelectionHitTestMode())
       .onClick(() => {
         this.handleLibraryNovelTitleClick(novel);
       })
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_novel_grid_card`, 'novel', novel.id))
     .width('100%')
     .padding(8)
     .backgroundColor(this.getGlassBackground())
@@ -17775,114 +18933,139 @@ struct MainMenuPage {
    */
   @Builder
   buildPdfEBookCard(manga: Manga, anchorScope: string = 'library_pdf_list') {
-    Row({ space: 12 }) {
-      // 封面图片
-      Column() {
-        if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
-          AvifImage({
-            src: manga.coverImagePath,
-            imageWidth: '100%',
-            imageHeight: '100%',
-            objectFit: ImageFit.Cover,
-          })
-        } else {
-          Image(this.resolvePdfEBookCoverAsset(manga).source)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
+    Stack() {
+      Row({ space: 12 }) {
+        // 封面图片
+        Stack() {
+          Column() {
+            if (this.isMangaNetworkCover(manga) && !getCoverImageManager().getCachedPixelMap(manga.coverImagePath)) {
+              AvifImage({
+                src: manga.coverImagePath,
+                imageWidth: '100%',
+                imageHeight: '100%',
+                objectFit: ImageFit.Cover,
+              })
+            } else {
+              Image(this.resolvePdfEBookCoverAsset(manga).source)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+            }
+          }
+          .width('100%')
+          .height('100%')
+
+          if (this.isMultiSelectMode) {
+            this.buildLibraryListSelectionOverlay(
+              this.selectedMangaIds.has(manga.id),
+              this.getCoverImageRadius(),
+              true,
+              6
+            )
+          }
         }
-      }
-      .width(80)
-      .height(120)
-      .backgroundColor(this.getLibraryCoverBackgroundColor())
-      .borderRadius(this.getCoverImageRadius())
-      .clip(true)
-      .justifyContent(FlexAlign.Center)
-      .shadow({
-        radius: 8,
-        color: AppColors.getShadowColor(4),
-        offsetY: 4
-      })
-      .id(`cover_pdf_ebook_lib_${manga.id}`)
-      .onClick(() => {
-        this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_lib_${manga.id}`);
-      })
+        .width(80)
+        .height(120)
+        .backgroundColor(this.getLibraryCoverBackgroundColor())
+        .borderRadius(this.getCoverImageRadius())
+        .clip(true)
+        .alignContent(Alignment.Center)
+        .shadow({
+          radius: 8,
+          color: AppColors.getShadowColor(4),
+          offsetY: 4
+        })
+        .id(`cover_pdf_ebook_lib_${manga.id}`)
+        .onClick(() => {
+          this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_lib_${manga.id}`);
+        })
 
-      // 电子书信息
-      Column({ space: 8 }) {
-        Row({ space: 8 }) {
-          Text(manga.title)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
+        // 电子书信息
+        Column({ space: 8 }) {
+          Row({ space: 8 }) {
+            Text(manga.title)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+
+            // PDF标识
+            Text('PDF')
+              .fontSize(10)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
+              .backgroundColor(AppColors.error)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .borderRadius(4)
+          }
+          .width('100%')
+
+          Text(`${manga.metadata.authors.length > 0 ? manga.metadata.authors[0] : '未知作者'} · PDF电子书`)
+            .fontSize(14)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
-          // PDF标识
-          Text('PDF')
-            .fontSize(10)
-            .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_white', this.themeState.currentTheme))
-            .backgroundColor(AppColors.error)
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(4)
-        }
-        .width('100%')
-
-        Text(`${manga.metadata.authors.length > 0 ? manga.metadata.authors[0] : '未知作者'} · PDF电子书`)
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
-
-        Text(manga.description || '暂无简介')
-          .fontSize(12)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        if (manga.readingProgress && manga.readingProgress.currentPageIndex > 0) {
-          Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
+          Text(manga.description || '暂无简介')
             .fontSize(12)
             .fontFamily(this.appFontFamily)
-            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+            .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_muted', this.themeState.currentTheme))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          if (manga.readingProgress && manga.readingProgress.currentPageIndex > 0) {
+            Text(`已读 ${manga.readingProgress.currentPageIndex + 1} 页`)
+              .fontSize(12)
+              .fontFamily(this.appFontFamily)
+              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
+          }
         }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.SpaceBetween)
+        .onClick(() => {
+          this.handleLibraryMangaTitleClick(manga);
+        })
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .justifyContent(FlexAlign.SpaceBetween)
-      .onClick(() => {
-        this.handleLibraryMangaTitleClick(manga);
+      .width('100%')
+      .height(140)
+      .padding(12)
+      .backgroundColor(this.getGlassBackground())
+      .backgroundBlurStyle(this.getGlassBlur())
+      .borderRadius(this.getGlassRadius())
+      .border({
+        width: this.isMultiSelectMode ? (this.selectedMangaIds.has(manga.id) ? 1.5 : 1) : 0,
+        color: this.getLibraryListSelectionBorderColor(this.isMultiSelectMode, this.selectedMangaIds.has(manga.id))
       })
+      .shadow({
+        radius: this.getGlassRadius(),
+        color: this.getGlassShadowColor(),
+        offsetY: 2
+      })
+      .animation({ duration: 220, curve: Curve.EaseOut })
+      .onClick(() => {
+        if (!this.isMultiSelectMode) {
+          return;
+        }
+        this.toggleMangaSelection(manga.id);
+      })
+      .gesture(
+        LongPressGesture({ repeat: false, duration: 500 })
+          .onAction(() => {
+            if (!this.isMultiSelectMode) {
+              this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
+            }
+          })
+      )
+
+      if (this.isMultiSelectMode) {
+        this.buildLibraryListSelectionOverlay(this.selectedMangaIds.has(manga.id), this.getGlassRadius(), false)
+      }
     }
     .width('100%')
     .height(140)
-    .padding(12)
-    .backgroundColor(this.getGlassBackground())
-    .backgroundBlurStyle(this.getGlassBlur())
-    .borderRadius(this.getGlassRadius())
-    .shadow({
-      radius: this.getGlassRadius(),
-      color: this.getGlassShadowColor(),
-      offsetY: 2
-    })
-    .onClick(() => {
-      // 点击卡片打开漫画详情页
-      if (!this.isMultiSelectMode) {
-        return;
-      }
-      this.toggleMangaSelection(manga.id);
-    })
-    .gesture(
-      LongPressGesture({ repeat: false, duration: 500 })
-        .onAction(() => {
-          if (!this.isMultiSelectMode) {
-            this.showMangaActionMenu(manga, this.getPopupAnchorKey(anchorScope, 'manga', manga.id));
-          }
-        })
-    )
     .bindPopup(this.showMangaContextMenu
       && this.contextMenuManga?.id === manga.id
       && this.mangaContextMenuAnchorKey === this.getPopupAnchorKey(anchorScope, 'manga', manga.id), {
@@ -17954,8 +19137,38 @@ struct MainMenuPage {
           .alignItems(HorizontalAlign.End)
           .padding(8)
           .hitTestBehavior(HitTestMode.None)
+
+          if (this.isMultiSelectMode) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.selectedMangaIds.has(manga.id)
+                ? AppColors.withAlpha(ColorRole.PRIMARY, 0.4)
+                : AppColors.withAlpha(ColorRole.SHADOW, 0.2))
+              .borderRadius(this.getCoverImageRadius())
+              .hitTestBehavior(HitTestMode.None)
+              .transition(
+                TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                  .combine(TransitionEffect.scale({ x: 0.94, y: 0.94 }))
+              )
+
+            Column() {
+              this.buildLibraryDirectCoverSelectionBadge(this.selectedMangaIds.has(manga.id))
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Start)
+            .alignItems(HorizontalAlign.End)
+            .padding(6)
+            .hitTestBehavior(HitTestMode.None)
+            .transition(
+              TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+                .combine(TransitionEffect.scale({ x: 0.9, y: 0.9 }))
+            )
+          }
         }
         .id(`cover_pdf_ebook_grid_${manga.id}`)
+        .hitTestBehavior(this.getMangaSelectionHitTestMode())
         .onClick(() => {
           this.handleLibraryMangaCoverClick(manga, `cover_pdf_ebook_grid_${manga.id}`);
         })
@@ -17996,6 +19209,7 @@ struct MainMenuPage {
         }
         .width('100%')
         .padding({ left: 8, right: 8 })
+        .hitTestBehavior(this.getMangaSelectionHitTestMode())
         .onClick(() => {
           this.handleLibraryMangaTitleClick(manga);
         })
@@ -18006,6 +19220,7 @@ struct MainMenuPage {
       .backgroundBlurStyle(this.getGlassBlur())
       .borderRadius(this.getGlassRadius())
     }
+    .key(this.getLibraryContentRenderKey(`${anchorScope}_pdfebook_grid_card`, 'pdfebook', manga.id))
     .onClick(() => {
       // 点击打开漫画详情页
       if (!this.isMultiSelectMode) {
@@ -19133,7 +20348,7 @@ struct MainMenuPage {
           .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
 
         Column({ space: 12 }) {
-          ForEach(this.tabConfigs, (cfg: TabConfig) => {
+          ForEach(this.tabConfigs.filter((cfg: TabConfig) => this.shouldDisplayTabConfig(cfg)), (cfg: TabConfig) => {
             Row({ space: 12 }) {
               Checkbox()
                 .select(this.tempVisibleTabIndices.includes(cfg.index))
@@ -22976,16 +24191,20 @@ struct MainMenuPage {
    */
   @Builder
   buildSettingsContent() {
-    Scroll() {
+    Scroll(this.settingsScroller) {
       Column({ space: 0 }) {
         Blank().height(this.getInitialTopOverlaySpacerHeight())
         // 用户信息区域
         Row() {
-          Image($r('app.media.avatar_256'))
-            .width(60)
-            .height(60)
-            .borderRadius(30)
-            .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
+          Stack({ alignContent: Alignment.Center }) {
+            SymbolGlyph($r('sys.symbol.histogram_fill'))
+              .fontSize(56)
+              .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme)])
+          }
+          .width(60)
+          .height(60)
+          .borderRadius(30)
+          .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('background_secondary', this.themeState.currentTheme))
 
           Column({ space: 4 }) {
             Text('阅读报告')
@@ -23014,6 +24233,7 @@ struct MainMenuPage {
         .borderRadius(this.getGlassRadius())
         .shadow({ radius: this.getGlassRadius(), color: this.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
         .margin({ bottom: 16 })
+        .id('guide_main_setting_analytics')
         .onClick(() => {
           try {
             const navigationPath: NavigationPath = {
@@ -23076,7 +24296,7 @@ struct MainMenuPage {
               logger.error(TAG, '导航到灵感页面失败', String(error));
               this.showToast('打开灵感页面失败');
             }
-          })
+          }, 'guide_main_setting_inspiration')
           // 下载管理仅在高级模式下显示
           if (this.advancedModeEnabled) {
             this.buildSettingItem('下载管理', '离线下载管理', $r('sys.symbol.arrow_down_circle'), () => {
@@ -23094,7 +24314,7 @@ struct MainMenuPage {
                 logger.error(TAG, '导航到下载管理页面失败', String(error));
                 this.showToast('打开下载管理页面失败');
               }
-            })
+            }, 'guide_main_setting_download_manager')
           }
 
           this.buildSettingItem('备份与恢复', '备份所有数据或从备份恢复', $r('sys.symbol.mobiledata_and_cloud'), () => {
@@ -23112,7 +24332,7 @@ struct MainMenuPage {
               logger.error(TAG, '导航到备份页面失败', String(error));
               this.showToast('打开备份页面失败');
             }
-          })
+          }, 'guide_main_setting_backup')
           
           // 存储管理仅在高级模式下显示
           if (this.advancedModeEnabled) {
@@ -23131,7 +24351,7 @@ struct MainMenuPage {
                 logger.error(TAG, '导航到存储管理页面失败', String(error));
                 this.showToast('打开存储管理页面失败');
               }
-            })
+            }, 'guide_main_setting_storage')
           }
           this.buildSettingItem('文件导入', '单独导入Mihon/Komikku本地漫画、电子书、小说', $r('sys.symbol.folder'), () => {
             try {
@@ -23148,7 +24368,7 @@ struct MainMenuPage {
               logger.error(TAG, '导航到数据管理页面失败', String(error));
               this.showToast('打开数据管理页面失败');
             }
-          })
+          }, 'guide_main_setting_data_management')
           this.buildSettingItem('Download导入', '从Download目录扫描并导入文件', $r('sys.symbol.folder_fill'), () => {
             try {
               const navigationPath: NavigationPath = {
@@ -23164,7 +24384,7 @@ struct MainMenuPage {
               logger.error(TAG, '导航到Download导入页面失败', String(error));
               this.showToast('打开Download导入页面失败');
             }
-          })
+          }, 'guide_main_setting_download_sync')
           // 文件编辑器仅在高级模式下显示
           if (this.advancedModeEnabled) {
             this.buildSettingItem('文件编辑器', '编辑代码、配置文件、Markdown', $r('sys.symbol.case_fill'), () => {
@@ -23182,7 +24402,7 @@ struct MainMenuPage {
                 logger.error(TAG, '导航到文件编辑器页面失败', String(error));
                 this.showToast('打开文件编辑器页面失败');
               }
-            })
+            }, 'guide_main_setting_file_editor')
           //   this.buildSettingItem('系统资源预览', '浏览系统图标和颜色资源', $r('sys.symbol.paintpalette'), () => {
           //     try {
           //       const navigationPath: NavigationPath = {
@@ -23244,7 +24464,7 @@ struct MainMenuPage {
               }
             };
             this.pathStack.pushPath(navigationPath);
-          })
+          }, 'guide_main_setting_avif')
           this.buildSettingItem('帮助中心', '查看功能说明和常见问题', $r('sys.symbol.questionmark_circle'), () => {
             try {
               const navigationPath: NavigationPath = {
@@ -23276,7 +24496,7 @@ struct MainMenuPage {
               logger.error(TAG, '导航到关于应用页面失败', String(error));
               this.showToast('打开关于应用页面失败');
             }
-          })
+          }, 'guide_main_setting_about')
           // NGF测试入口已移除，测试页面仍保留在代码中但不再从主菜单导航
           // this.buildSettingItem('Reader Kit 测试', '测试 EPUB/MOBI 等格式解析', $r('app.media.ic_settings'), () => {
           //   // 导航到ReaderKitTestPage
@@ -23316,6 +24536,7 @@ struct MainMenuPage {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Transparent)
+    .id('guide_main_settings_scroll')
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
     .onScrollFrameBegin((offset: number, _state: ScrollState) => {
@@ -23541,6 +24762,8 @@ struct MainMenuPage {
         PageSettingsSubPage()
       } else if (name === 'MainMenuSettingsSubPage') {
         MainMenuSettingsSubPage()
+      } else if (name === 'SourceFeatureSettingsSubPage') {
+        SourceFeatureSettingsSubPage()
       } else if (name === 'UnifiedDetailPage') {
         UnifiedDetailPage()
       } else if (name === 'AnnotationCenterPage') {
@@ -23578,8 +24801,7 @@ struct MainMenuPage {
         return true;
       }
       
-      // 图源标签仅在高级模式下显示
-      if (cfg.index === TabIndex.SOURCE && !this.advancedModeEnabled) {
+      if (!this.shouldDisplayTabConfig(cfg)) {
         return false;
       }
       
@@ -23729,7 +24951,6 @@ struct MainMenuPage {
         this.buildHorizontalTabButton(cfg)
       })
     }
-    .id('guide_main_bottom_bar')
     .width('100%')
     .height(this.BOTTOM_BAR_HEIGHT)
     .padding({ left: 16, right: 16 })
@@ -23803,7 +25024,6 @@ struct MainMenuPage {
       })
     }
     .width(this.getBottomBarWidth())
-    .id('guide_main_bottom_bar')
     .height(this.BOTTOM_BAR_HEIGHT)
     .padding({ left: 8, right: 8 })
     .borderRadius(this.getGlassRadius())
@@ -23836,7 +25056,6 @@ struct MainMenuPage {
       })
     }
     .width(this.TABLET_SIDE_BAR_WIDTH)
-    .id('guide_main_bottom_bar')
     .height(this.getAdaptiveSideOperationBarHeight())
     .padding({ top: 8, bottom: 8, left: 8, right: 8 })
     .borderRadius(this.getGlassRadius())
@@ -24367,6 +25586,7 @@ struct MainMenuPage {
           Column() {
             this.buildHorizontalTabBar()
           }
+          .id('guide_main_bottom_bar_horizontal')
           .width(this.getBottomBarWidth())
           .height(this.BOTTOM_BAR_HEIGHT)
           .borderRadius(this.getGlassRadius())
@@ -24387,6 +25607,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveTopOperationBar()
           }
+          .id('guide_main_bottom_bar_top')
           .position({ x: this.getBottomBarX(), y: this.getAdaptiveTopOperationBarY() })
           .zIndex(15)
           .key(`adaptiveTopOperationBar_${this.barRenderKey}`)
@@ -24396,6 +25617,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveTopOperationBar()
           }
+          .id('guide_main_bottom_bar_top')
           .position({ x: this.getBottomBarX(), y: this.getBottomBarY() })
           .zIndex(15)
           .key(`adaptiveBottomOperationBar_${this.barRenderKey}`)
@@ -24405,6 +25627,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveSideOperationBar()
           }
+          .id('guide_main_bottom_bar_side')
           .position({ x: this.getAdaptiveLeftOperationBarX(), y: this.getAdaptiveSideOperationBarY() })
           .zIndex(15)
           .key(`adaptiveLeftOperationBar_${this.barRenderKey}`)
@@ -24414,6 +25637,7 @@ struct MainMenuPage {
           Column() {
             this.buildAdaptiveSideOperationBar()
           }
+          .id('guide_main_bottom_bar_side')
           .position({ x: this.getAdaptiveRightOperationBarX(), y: this.getAdaptiveSideOperationBarY() })
           .zIndex(15)
           .key(`adaptiveRightOperationBar_${this.barRenderKey}`)
@@ -24524,7 +25748,7 @@ struct MainMenuPage {
     .width('100%')
     .height('100%')
     .hideTitleBar(true)
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
     .onAppear(() => {
       // 注册全局WebView容器
@@ -24572,6 +25796,7 @@ struct MainMenuPage {
         nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
         cardPosition: this.appGuideStep.cardPosition,
         highlightRect: this.appGuideHighlightRect,
+        highlightVerticalOffsetRatio: 0,
         showSkip: this.appGuideStep.showSkip !== false,
         themeState: this.themeState,
         onNext: () => {
@@ -24621,9 +25846,10 @@ struct MainMenuPage {
       .zIndex(99999)
     }
     }
+    .id(MAIN_MENU_GUIDE_ROOT_ID)
     .width('100%')
     .height('100%')
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
   }
 

@@ -60,6 +60,7 @@ export struct HelpCenterPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageLink('source_features_enabled') sourceFeaturesEnabled: boolean = false;
   private uiContext: UIContext | null = null;
   private scroller: Scroller = new Scroller();
 
@@ -105,12 +106,20 @@ export struct HelpCenterPage {
   /**
    * 获取过滤后的帮助项列表
    */
-  private getFilteredItems(): HelpItemData[] {
-    const keyword = this.searchKeyword.trim().toLowerCase();
-    if (keyword.length === 0) {
+  private getAvailableHelpItems(): HelpItemData[] {
+    if (this.sourceFeaturesEnabled) {
       return HELP_ITEMS_DATA;
     }
-    return HELP_ITEMS_DATA.filter((item: HelpItemData) => {
+    return HELP_ITEMS_DATA.filter((item: HelpItemData) => item.category !== '图源');
+  }
+
+  private getFilteredItems(): HelpItemData[] {
+    const keyword = this.searchKeyword.trim().toLowerCase();
+    const availableItems = this.getAvailableHelpItems();
+    if (keyword.length === 0) {
+      return availableItems;
+    }
+    return availableItems.filter((item: HelpItemData) => {
       return item.title.toLowerCase().includes(keyword) ||
         item.description.toLowerCase().includes(keyword) ||
         item.category.toLowerCase().includes(keyword) ||
@@ -123,7 +132,10 @@ export struct HelpCenterPage {
    */
   private getVisibleCategories(): string[] {
     const filteredItems = this.getFilteredItems();
-    return HELP_CATEGORIES.filter((category: string) => {
+    const categories = this.sourceFeaturesEnabled
+      ? HELP_CATEGORIES
+      : HELP_CATEGORIES.filter((category: string) => category !== '图源');
+    return categories.filter((category: string) => {
       return filteredItems.some((item: HelpItemData) => item.category === category);
     });
   }
@@ -137,10 +149,18 @@ export struct HelpCenterPage {
 
   private getFilteredGuideFlows(): AppGuideFlowSummary[] {
     const keyword = this.searchKeyword.trim().toLowerCase();
+    const visibleGuideFlows = this.sourceFeaturesEnabled
+      ? this.guideFlows
+      : this.guideFlows.filter((item: AppGuideFlowSummary) =>
+          !item.title.includes('图源') &&
+          !item.title.includes('书源') &&
+          !item.description.includes('图源') &&
+          !item.description.includes('书源')
+        );
     if (keyword.length === 0) {
-      return this.guideFlows;
+      return visibleGuideFlows;
     }
-    return this.guideFlows.filter((item: AppGuideFlowSummary) => {
+    return visibleGuideFlows.filter((item: AppGuideFlowSummary) => {
       return item.title.toLowerCase().includes(keyword) ||
         item.description.toLowerCase().includes(keyword);
     });

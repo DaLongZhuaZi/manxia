@@ -20,6 +20,7 @@ import {
   PdfImportMode as DialogImportMode
 } from '../Components/PdfImportDialog';
 import { TaskCancelSignal } from '../Task/BackgroundTaskManager';
+import { ImportFilenameIntelligenceService } from './ImportFilenameIntelligenceService';
 
 const TAG = 'PdfImportService';
 const PDF_IMPORT_DIR_NAME = 'pdf_import';
@@ -37,6 +38,7 @@ export interface ExecutePdfImportOptions {
 export class PdfImportService {
   private static instance: PdfImportService | null = null;
   private dataManager: DataManager = DataManager.getInstance();
+  private filenameIntelligenceService: ImportFilenameIntelligenceService = ImportFilenameIntelligenceService.getInstance();
 
   public static getInstance(): PdfImportService {
     if (!PdfImportService.instance) {
@@ -47,7 +49,11 @@ export class PdfImportService {
 
   public getDefaultTitle(fileUri: string): string {
     const fileName = this.resolveFileName(fileUri);
-    return fileName.replace(/\.pdf$/i, '').replace(/^\d{13,}_/, '');
+    const parseResult = this.filenameIntelligenceService.parseFileName(fileName);
+    if (parseResult.bestCandidate.title.trim().length > 0) {
+      return parseResult.bestCandidate.title;
+    }
+    return fileName.replace(/\.[^.]+$/i, '').replace(/^\d{13,}_/, '');
   }
 
   public isSandboxPdfPath(fileUri: string, filesDir: string): boolean {

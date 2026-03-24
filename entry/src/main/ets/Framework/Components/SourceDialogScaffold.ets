@@ -1,4 +1,5 @@
 import { ThemeAwareHelper, ThemeAwareState } from './ThemeAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 
 export enum SourceDialogLayoutMode {
   CENTER = 0,
@@ -65,13 +66,17 @@ export struct SourceDialogScaffold {
     .width(this.dialogWidth)
     .constraintSize({ minWidth: this.minWidth, maxWidth: this.maxWidth, maxHeight: this.maxHeight })
     .padding(this.contentPadding)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .borderRadius(this.dialogRadius)
-    .border({ width: 1, color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme) })
+    .border({ width: 1, color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState) })
     .shadow({
-      radius: this.dialogRadius + 2,
-      color: ThemeAwareHelper.getTestManagementThemedColor('shadow_black', this.themeState.currentTheme),
-      offsetY: 6
+      radius: this.dialogRadius + 4,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
+      offsetY: 8
     })
     .zIndex(1)
     .transition(

@@ -360,53 +360,13 @@ export struct FontSettingsSubPage {
   }
 
   @Builder
-  buildFontSizeSlider(label: string, value: number, min: number, max: number, step: number, unit: string, onChange: (value: number) => void) {
-    Column({ space: 8 }) {
-      Row() {
-        Text(label)
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_primary', this.themeState.currentTheme))
-        Blank()
-        Text(`${value.toFixed(1)}${unit}`)
-          .fontSize(14)
-          .fontFamily(this.appFontFamily)
-          .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-      }
-      .width('100%')
-
-      Slider({
-        value: value,
-        min: min,
-        max: max,
-        step: step,
-        style: SliderStyle.InSet
-      })
-        .width('100%')
-        .blockColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .trackColor(ThemeAwareHelper.getTestManagementThemedColor('comp_background_tertiary', this.themeState.currentTheme))
-        .selectedColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
-        .onChange((newValue: number) => {
-          onChange(newValue);
-        })
-    }
-    .width('100%')
-    .padding({ left: 16, right: 16, bottom: 12 })
-  }
-
-  @Builder
   buildAppFontSection() {
     Column({ space: 0 }) {
-      this.buildSectionHeader('界面字体', '设置APP界面的字体样式和大小', 'app')
+      this.buildSectionHeader('界面字体', '设置APP界面的字体样式', 'app')
 
       if (this.expandedSection === 'app' && this.settings) {
         Column({ space: 12 }) {
           this.buildFontSelector(FontScene.APP_UI, this.settings.appFontType, this.settings.appSystemFontId, this.settings.appCustomFontId)
-          
-          this.buildFontSizeSlider('字体大小倍率', this.settings.appFontSize, 0.8, 1.5, 0.1, 'x', async (value: number) => {
-            await this.fontManager.setAppFontSize(value);
-            this.settings = this.fontManager.getSettings();
-          })
         }
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
@@ -429,16 +389,6 @@ export struct FontSettingsSubPage {
       if (this.expandedSection === 'novel' && this.settings) {
         Column({ space: 12 }) {
           this.buildFontSelector(FontScene.NOVEL, this.settings.novelFontType, this.settings.novelSystemFontId, this.settings.novelCustomFontId)
-          
-          this.buildFontSizeSlider('字体大小', this.settings.novelFontSize, 12, 32, 1, 'px', async (value: number) => {
-            await this.fontManager.setNovelFontSize(value);
-            this.settings = this.fontManager.getSettings();
-          })
-          
-          this.buildFontSizeSlider('行高倍率', this.settings.novelLineHeight, 1.0, 2.5, 0.1, 'x', async (value: number) => {
-            await this.fontManager.setNovelLineHeight(value);
-            this.settings = this.fontManager.getSettings();
-          })
         }
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })
@@ -461,16 +411,6 @@ export struct FontSettingsSubPage {
       if (this.expandedSection === 'ebook' && this.settings) {
         Column({ space: 12 }) {
           this.buildFontSelector(FontScene.EBOOK, this.settings.ebookFontType, this.settings.ebookSystemFontId, this.settings.ebookCustomFontId)
-          
-          this.buildFontSizeSlider('字体大小', this.settings.ebookFontSize, 12, 32, 1, 'px', async (value: number) => {
-            await this.fontManager.setEbookFontSize(value);
-            this.settings = this.fontManager.getSettings();
-          })
-          
-          this.buildFontSizeSlider('行高倍率', this.settings.ebookLineHeight, 1.0, 2.5, 0.1, 'x', async (value: number) => {
-            await this.fontManager.setEbookLineHeight(value);
-            this.settings = this.fontManager.getSettings();
-          })
         }
         .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
         .borderRadius({ bottomLeft: 12, bottomRight: 12 })

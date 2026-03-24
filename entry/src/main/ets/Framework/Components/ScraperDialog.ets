@@ -6,6 +6,7 @@
 
 import { ThemeAwareState, ThemeAwareHelper } from './ThemeAware';
 import { FontAwareHelper, FontAwareState } from './FontAware';
+import { DialogSurfaceStyleHelper } from './DialogSurfaceStyleHelper';
 import { logger } from '../../Utils/Logger';
 import { AppColors, ColorRole } from '../Theme/AppColors';
 import { ScraperManager } from '../Scraper/ScraperManager';
@@ -147,11 +148,20 @@ export struct ScraperDialog {
     .width('95%')
     .constraintSize({ maxWidth: 500 })
     .padding(16)
-    .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
+    .backgroundBlurStyle(
+      DialogSurfaceStyleHelper.getPopupCardBlurStyle(),
+      DialogSurfaceStyleHelper.getPopupCardBlurOptions()
+    )
+    .backgroundColor(DialogSurfaceStyleHelper.getPopupCardBackground(this.themeState))
     .borderRadius(16)
     .border({
       width: 1,
-      color: ThemeAwareHelper.getTestManagementThemedColor('panel_border', this.themeState.currentTheme)
+      color: DialogSurfaceStyleHelper.getPopupCardBorderColor(this.themeState)
+    })
+    .shadow({
+      radius: 20,
+      color: DialogSurfaceStyleHelper.getPopupCardShadowColor(this.themeState),
+      offsetY: 8
     })
   }
 

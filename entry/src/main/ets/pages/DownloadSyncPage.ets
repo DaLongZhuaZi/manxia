@@ -24,6 +24,7 @@ import { generateUUID } from '../Framework/Utils/UUIDGenerator';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
+import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
 import { DeviceAdaptationManager, DeviceChangeListener, DeviceInfo, Breakpoint } from '../Framework/Managers/DeviceAdaptationManager';
 import { ResponsiveLayoutHelper } from '../Framework/Utils/ResponsiveLayout';
@@ -38,7 +39,7 @@ import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { componentSnapshot } from '@kit.ArkUI';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
-import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 import { BackgroundTaskManager, TaskType, TaskCancelSignal } from '../Framework/Task/BackgroundTaskManager';
 import { PdfImportResult } from '../Framework/Parsers/PdfToMangaImporter';
@@ -69,6 +70,13 @@ interface ImportProgress {
   currentFile?: string;
   totalFiles?: number;
   processedFiles?: number;
+}
+
+class UserSkipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserSkipError';
+  }
 }
 
 // 文件树节点
@@ -129,6 +137,8 @@ struct DownloadSyncPage {
   private novelImportDialogController: CustomDialogController | null = null;
   private ebookMetadataDialogController: CustomDialogController | null = null;
   private appGuideManager: AppGuideManager = AppGuideManager.getInstance();
+  private archivePasswordCache: Map<string, string> = new Map();
+  private lastArchivePassword: string = '';
   
   // 电子书导入临时数据
   @State private pendingEbookData: EBook | null = null;
@@ -177,7 +187,7 @@ struct DownloadSyncPage {
   @State private coverFontScale: number = 1.0;
 
   private static readonly APP_FOLDER_NAME: string = '漫匹';
-  private static readonly MANGA_EXTENSIONS: string[] = ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz'];
+  private static readonly MANGA_EXTENSIONS: string[] = ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma'];
   private static readonly EBOOK_EXTENSIONS: string[] = ['epub', 'mobi', 'azw', 'azw3'];
   private static readonly PDF_EXTENSIONS: string[] = ['pdf'];
   private static readonly NOVEL_EXTENSIONS: string[] = ['txt'];
@@ -226,6 +236,18 @@ struct DownloadSyncPage {
       this.appGuideHighlightRect = null;
       return;
     }
+    if (this.prepareGuidePresentation(step.anchorId) && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 220);
+      return;
+    }
+    if (this.alignGuideViewport(step.anchorId) && !trigger.endsWith('_after_scroll')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_scroll`);
+      }, 280);
+      return;
+    }
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
@@ -246,6 +268,50 @@ struct DownloadSyncPage {
     void this.appGuideManager.skipCurrentFlow().then(() => {
       void this.refreshPageGuide('skip');
     });
+  }
+
+  private prepareGuidePresentation(anchorId?: string): boolean {
+    let targetTabIndex: number | null = null;
+    switch (anchorId) {
+      case 'guide_download_sync_root':
+      case 'guide_download_sync_tabs':
+      case 'guide_download_sync_folder_status':
+      case 'guide_download_sync_quick_import':
+        targetTabIndex = 0;
+        break;
+      case 'guide_download_sync_imported_status':
+        targetTabIndex = 1;
+        break;
+      default:
+        break;
+    }
+    if (targetTabIndex === null || this.currentTabIndex === targetTabIndex) {
+      return false;
+    }
+    this.currentTabIndex = targetTabIndex;
+    if (targetTabIndex === 1) {
+      void this.reloadDownloadImportState();
+    }
+    return true;
+  }
+
+  private alignGuideViewport(anchorId?: string): boolean {
+    if (!anchorId || anchorId.length <= 0) {
+      return false;
+    }
+    if (anchorId === 'guide_download_sync_root' || anchorId === 'guide_download_sync_tabs') {
+      return false;
+    }
+    const scrollResult = ensureGuideAnchorVisibleInScroller(
+      this.getUIContext(),
+      this.scroller,
+      anchorId,
+      'guide_download_sync_scroll',
+      TITLE_BAR_HEIGHT_MINI + 18,
+      this.navigationBarHeight + 24,
+      280
+    );
+    return scrollResult.available && scrollResult.scrolled;
   }
 
   aboutToDisappear(): void {
@@ -279,7 +345,7 @@ struct DownloadSyncPage {
   private switchToNextTab(): void {
     this.currentTabIndex = (this.currentTabIndex + 1) % this.tabCount;
     if (this.currentTabIndex === 1) {
-      this.loadImportedFilesStatus();
+      void this.reloadDownloadImportState();
     }
   }
   
@@ -289,7 +355,7 @@ struct DownloadSyncPage {
   private switchToPrevTab(): void {
     this.currentTabIndex = (this.currentTabIndex - 1 + this.tabCount) % this.tabCount;
     if (this.currentTabIndex === 1) {
-      this.loadImportedFilesStatus();
+      void this.reloadDownloadImportState();
     }
   }
 
@@ -337,10 +403,7 @@ struct DownloadSyncPage {
           logger.info(TAG, `检测到已初始化的Download目录: ${savedPath}`);
           this.downloadDirPath = savedPath;
           this.downloadDirUri = savedUri;
-          // 自动扫描
-          await this.scanDownloadDir();
-          // 加载已导入状态
-          await this.loadImportedFilesStatus();
+          await this.reloadDownloadImportState();
         } catch (accessError) {
           logger.info(TAG, '已保存的路径无效，需要重新连接');
           AppStorage.delete('downloadSyncDirPath');
@@ -390,6 +453,13 @@ struct DownloadSyncPage {
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `加载已导入状态失败: ${String(error)}`);
+    }
+  }
+
+  private async reloadDownloadImportState(showScanToast: boolean = false): Promise<void> {
+    await this.loadImportedFilesStatus();
+    if (this.downloadDirPath) {
+      await this.scanDownloadDir(showScanToast);
     }
   }
 
@@ -536,8 +606,7 @@ A: 不会，原文件保持不变。`;
           this.saveDownloadSyncSettings();
           
           // 自动扫描文件
-          this.scanDownloadDir().then(() => {
-            this.loadImportedFilesStatus();
+          this.reloadDownloadImportState().then(() => {
             promptAction.showToast({ message: `目录连接成功，已扫描 ${this.downloadDirFileCount} 个文件` });
           });
         }
@@ -549,6 +618,7 @@ A: 不会，原文件保持不变。`;
       const error = e as Error;
       logger.error(TAG, `访问Download目录失败: ${String(error)}`);
       promptAction.showToast({ message: `访问失败: ${String(error)}` });
+      await this.reloadDownloadImportState();
     }
   }
 
@@ -660,9 +730,11 @@ A: 不会，原文件保持不变。`;
     }
   }
 
-  private async scanDownloadDir(): Promise<void> {
+  private async scanDownloadDir(showToast: boolean = true): Promise<void> {
     if (!this.downloadDirPath) {
-      promptAction.showToast({ message: '请先访问Download目录' });
+      if (showToast) {
+        promptAction.showToast({ message: '\u8bf7\u5148\u8bbf\u95eeDownload\u76ee\u5f55' });
+      }
       return;
     }
     
@@ -675,24 +747,23 @@ A: 不会，原文件保持不变。`;
     this.fileTree = [];
     
     try {
-      // 递归扫描整个目录树
       this.fileTree = this.scanDirectoryRecursive(this.downloadDirPath, '');
-      
-      // 统计文件数量
       this.downloadDirFileCount = this.countFilesInTree(this.fileTree);
-      
-      // 收集所有可导入文件的相对路径
       this.collectImportableFiles(this.fileTree, '');
       
       const totalPending = this.pendingMangaFiles.length + this.pendingEbookFiles.length + 
                           this.pendingPdfFiles.length + this.pendingNovelFiles.length;
       
-      logger.info(TAG, `扫描完成: 漫画=${this.pendingMangaFiles.length}, 电子书=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, 小说=${this.pendingNovelFiles.length}`);
-      promptAction.showToast({ message: `扫描完成，发现 ${totalPending} 个可导入文件` });
+      logger.info(TAG, `\u626b\u63cf\u5b8c\u6210: \u6f2b\u753b=${this.pendingMangaFiles.length}, \u7535\u5b50\u4e66=${this.pendingEbookFiles.length}, PDF=${this.pendingPdfFiles.length}, \u5c0f\u8bf4=${this.pendingNovelFiles.length}`);
+      if (showToast) {
+        promptAction.showToast({ message: `\u626b\u63cf\u5b8c\u6210\uff0c\u53d1\u73b0 ${totalPending} \u4e2a\u53ef\u5bfc\u5165\u6587\u4ef6` });
+      }
     } catch (e) {
       const error = e as Error;
-      logger.error(TAG, `扫描目录失败: ${String(error)}`);
-      promptAction.showToast({ message: `扫描失败: ${String(error)}` });
+      logger.error(TAG, `\u626b\u63cf\u76ee\u5f55\u5931\u8d25: ${String(error)}`);
+      if (showToast) {
+        promptAction.showToast({ message: `\u626b\u63cf\u5931\u8d25: ${String(error)}` });
+      }
     } finally {
       this.isScanning = false;
     }
@@ -881,6 +952,7 @@ A: 不会，原文件保持不变。`;
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
+            .id('guide_download_sync_scroll')
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -913,6 +985,7 @@ A: 不会，原文件保持不变。`;
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: this.navigationBarHeight + 8 })
             }
+            .id('guide_download_sync_scroll')
             .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
@@ -1068,7 +1141,7 @@ A: 不会，原文件保持不变。`;
         })
         .onClick(() => { 
           this.currentTabIndex = 1; 
-          this.loadImportedFilesStatus();
+          void this.reloadDownloadImportState();
         })
         .animation({ duration: 150 })
       }
@@ -1161,10 +1234,13 @@ A: 不会，原文件保持不变。`;
       .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_primary', this.themeState.currentTheme))
       .borderRadius(10)
       .onClick(() => {
-        this.loadImportedFilesStatus();
-        promptAction.showToast({ message: '已刷新导入状态' });
+        void this.reloadDownloadImportState().then(() => {
+          promptAction.showToast({ message: '\u5df2\u5237\u65b0\u5bfc\u5165\u72b6\u6001' });
+        });
       })
     }
+    .width('100%')
+    .id('guide_download_sync_imported_status')
   }
 
   private getImportedCount(): number {
@@ -1397,7 +1473,7 @@ A: 不会，原文件保持不变。`;
             .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
             .borderRadius(10)
             .enabled(!this.isScanning)
-            .onClick(() => { this.scanDownloadDir(); })
+            .onClick(() => { void this.reloadDownloadImportState(true); })
           }
         }
         .width('100%')
@@ -1451,6 +1527,7 @@ A: 不会，原文件保持不变。`;
       }
     }
     .width('100%')
+    .id('guide_download_sync_folder_status')
   }
 
   @Builder
@@ -1656,6 +1733,7 @@ A: 不会，原文件保持不变。`;
     .padding(16)
     .backgroundColor(ThemeAwareHelper.getTestManagementThemedColor('panel_background', this.themeState.currentTheme))
     .borderRadius(12)
+    .id('guide_download_sync_quick_import')
   }
 
   private async importMangaFromDownloadDir(): Promise<void> {
@@ -1709,7 +1787,7 @@ A: 不会，原文件保持不变。`;
             return this.convertToDialogStructure(parsed);
           }
           // 压缩包类型
-          const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+          const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
           return this.convertToDialogStructure(parsed);
         },
         parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
@@ -1720,7 +1798,7 @@ A: 不会，原文件保持不变。`;
         },
         onCancel: () => {
           this.updateProgress(ImportStatus.IDLE, '已取消批量导入', 0);
-          this.pendingMangaFiles = [];
+          void this.reloadDownloadImportState();
         }
       }),
       autoCancel: false,
@@ -1729,6 +1807,81 @@ A: 不会，原文件保持不变。`;
 
     this.batchMangaImportDialogController.open();
     this.updateProgress(ImportStatus.IDLE, '请配置批量导入选项', 10);
+  }
+
+  private getFileNameFromUri(uri: string): string {
+    try {
+      if (uri.startsWith('folder:')) {
+        const folderPath = uri.substring(7);
+        const normalized = folderPath.replace(/\/+$/, '');
+        return normalized.substring(normalized.lastIndexOf('/') + 1) || normalized;
+      }
+      const fileName = uri.substring(uri.lastIndexOf('/') + 1);
+      return decodeURIComponent(fileName);
+    } catch (_error) {
+      return uri;
+    }
+  }
+
+  private async parseArchiveStructureWithPasswordRetry(fileUri: string): Promise<CompressionParsedStructure> {
+    const cachedPassword = this.archivePasswordCache.get(fileUri);
+    if (cachedPassword) {
+      try {
+        return await this.compressionUtils.parseArchiveStructure(fileUri, { password: cachedPassword });
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        this.archivePasswordCache.delete(fileUri);
+      }
+    }
+
+    if (this.lastArchivePassword) {
+      try {
+        const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: this.lastArchivePassword });
+        this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
+        return parsed;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+      }
+    }
+
+    try {
+      return await this.compressionUtils.parseArchiveStructure(fileUri);
+    } catch (error) {
+      if (!this.compressionUtils.isPasswordRequiredError(error)) {
+        throw error as Error;
+      }
+    }
+
+    let errorMessage = '该压缩包需要密码才能继续导入';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const password = await showArchivePasswordDialog(
+        this.themeState,
+        this.getFileNameFromUri(fileUri),
+        this.lastArchivePassword,
+        errorMessage
+      );
+      if (!password) {
+        throw new UserSkipError('用户取消输入压缩包密码');
+      }
+
+      try {
+        const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: password });
+        this.lastArchivePassword = password;
+        this.archivePasswordCache.set(fileUri, password);
+        return parsed;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        errorMessage = '密码不正确，请重试';
+      }
+    }
+
+    throw new Error('压缩包密码错误');
   }
 
   private async handleDownloadBatchImportResult(result: BatchMangaImportDialogResult): Promise<void> {
@@ -1751,7 +1904,7 @@ A: 不会，原文件保持不变。`;
     
     this.updateProgress(ImportStatus.COMPLETED, `完成: 成功 ${successCount}/${total}`, 100);
     promptAction.showToast({ message: `导入完成: 成功 ${successCount}` });
-    this.pendingMangaFiles = [];
+    await this.reloadDownloadImportState();
     
     if (successCount > 0) {
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(successCount, total));
@@ -1814,12 +1967,12 @@ A: 不会，原文件保持不变。`;
           sourcePath = matchedChapter ? matchedChapter.path : '';
           if (!sourcePath) {
             // 回退：重新解压整个压缩包
-            const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
+            const parsed = await this.parseArchiveStructureWithPasswordRetry(chapter.fileUri);
             sourcePath = parsed.extractedPath;
           }
         } else {
           // 单章节压缩包：解压后获取路径
-          const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
+          const parsed = await this.parseArchiveStructureWithPasswordRetry(chapter.fileUri);
           sourcePath = parsed.extractedPath;
         }
       }
@@ -1932,7 +2085,7 @@ A: 不会，原文件保持不变。`;
           },
           onCancel: () => {
             this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
-            this.pendingMangaFiles = [];
+            void this.reloadDownloadImportState();
           }
         }),
         autoCancel: false,
@@ -1946,7 +2099,7 @@ A: 不会，原文件保持不变。`;
       const error = e as Error;
       logger.error(TAG, `解析文件夹失败: ${displayName}`, String(error));
       promptAction.showToast({ message: `解析失败: ${String(error)}` });
-      this.pendingMangaFiles = [];
+      void this.reloadDownloadImportState();
     }
   }
 
@@ -1954,10 +2107,10 @@ A: 不会，原文件保持不变。`;
     try {
       this.updateProgress(ImportStatus.PARSING, `正在解析: ${filename}`, 10);
       
-      const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+      const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
       const dialogStructure: ParsedArchiveStructure = this.convertToDialogStructure(parsed);
       
-      const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z)$/i);
+      const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z|tar|gz|tgz|bz2|xz|lzma)$/i);
       const title = titleMatch ? titleMatch[1] : filename.replace(/\.[^.]+$/, '');
       await this.findExistingMangaCandidates(title);
       
@@ -1976,7 +2129,7 @@ A: 不会，原文件保持不变。`;
           },
           onCancel: () => {
             this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
-            this.pendingMangaFiles = [];
+            void this.reloadDownloadImportState();
           }
         }),
         autoCancel: false,
@@ -1988,9 +2141,14 @@ A: 不会，原文件保持不变。`;
       this.updateProgress(ImportStatus.IDLE, '请配置导入选项', 20);
     } catch (e) {
       const error = e as Error;
+      if (error instanceof UserSkipError) {
+        this.updateProgress(ImportStatus.IDLE, '已取消导入', 0);
+        void this.reloadDownloadImportState();
+        return;
+      }
       logger.error(TAG, `解析失败: ${filename}`, String(error));
       promptAction.showToast({ message: `解析失败: ${String(error)}` });
-      this.pendingMangaFiles = [];
+      void this.reloadDownloadImportState();
     }
   }
 
@@ -2076,8 +2234,7 @@ A: 不会，原文件保持不变。`;
       
       this.updateProgress(ImportStatus.COMPLETED, '导入完成', 100);
       promptAction.showToast({ message: '导入成功' });
-      this.pendingMangaFiles = [];
-      
+      await this.reloadDownloadImportState();
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
       
       if (result.sourceFileUri) {
@@ -2088,6 +2245,7 @@ A: 不会，原文件保持不变。`;
       logger.error(TAG, `导入失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
       promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      await this.reloadDownloadImportState();
     }
   }
 
@@ -2123,6 +2281,7 @@ A: 不会，原文件保持不变。`;
       fs.unlinkSync(filePath);
       logger.info(TAG, `原文件已删除: ${filePath}`);
       promptAction.showToast({ message: '原文件已删除' });
+      void this.reloadDownloadImportState();
     } catch (e) {
       const error = e as Error;
       logger.error(TAG, `删除原文件失败: ${String(error)}`);
@@ -2282,7 +2441,6 @@ A: 不会，原文件保持不变。`;
     
     // 逐个处理电子书，每本都显示确认窗口
     const sourceFiles: string[] = [...this.pendingEbookFiles];
-    this.pendingEbookFiles = [];
     this.batchImportTotalCount = sourceFiles.length;
     
     promptAction.showToast({ message: `开始导入 ${sourceFiles.length} 个电子书/小说文件` });
@@ -2455,6 +2613,7 @@ A: 不会，原文件保持不变。`;
         builder: EBookMetadataDialog({
           themeState: this.themeState,
           initialMetadata: ebook.metadata,
+          sourceFileName: this.pendingEbookFilename || this.pendingEbookSourceUri || ebook.metadata.title || '',
           chapters: ebook.chapters,
           onConfirm: (result: EBookMetadataDialogResult) => {
             this.handleEbookMetadataConfirmAsync(result).then((success: boolean) => {
@@ -2468,6 +2627,7 @@ A: 不会，原文件保持不变。`;
             logger.info(TAG, '用户取消电子书导入');
             this.pendingEbookData = null;
             this.updateProgress(ImportStatus.IDLE, '已取消', 0);
+            void this.reloadDownloadImportState();
             if (this.batchImportResolve) {
               this.batchImportResolve(false);
               this.batchImportResolve = null;
@@ -2566,6 +2726,7 @@ A: 不会，原文件保持不变。`;
       await this.ebookDataManager.saveEBook(this.pendingEbookData);
       
       logger.info(TAG, `电子书导入成功: ${result.metadata.title}`);
+      await this.reloadDownloadImportState();
       this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${result.metadata.title}`, 100);
       promptAction.showToast({ message: `导入成功: ${result.metadata.title}` });
       
@@ -2580,6 +2741,7 @@ A: 不会，原文件保持不变。`;
       logger.error(TAG, `保存电子书失败: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
       promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      await this.reloadDownloadImportState();
       return false;
     } finally {
       this.pendingEbookData = null;
@@ -2711,7 +2873,6 @@ A: 不会，原文件保持不变。`;
     }
     
     const pendingFiles: string[] = [...fileUris];
-    this.pendingPdfFiles = [];
 
     for (let i = 0; i < pendingFiles.length; i++) {
       this.updateProgress(ImportStatus.IDLE, `配置PDF导入 (${i + 1}/${pendingFiles.length})`, 10);
@@ -2732,7 +2893,6 @@ A: 不会，原文件保持不变。`;
     
     // 逐个显示导入对话框
     const sourceFiles: string[] = [...this.pendingNovelFiles];
-    this.pendingNovelFiles = [];
     
     // 处理第一个文件，后续文件在对话框关闭后继续处理
     await this.showNovelImportDialogForFile(sourceFiles, 0);
@@ -2772,6 +2932,7 @@ A: 不会，原文件保持不变。`;
         },
         onCancel: () => {
           this.updateProgress(ImportStatus.IDLE, '已取消小说导入', 0);
+          void this.reloadDownloadImportState();
           // 询问是否继续处理剩余文件
           if (index < files.length - 1) {
             AlertDialog.show({
@@ -2839,6 +3000,7 @@ A: 不会，原文件保持不变。`;
       );
       
       if (importSuccess) {
+        await this.reloadDownloadImportState();
         this.updateProgress(ImportStatus.COMPLETED, `导入成功: ${result.title}`, 100);
         promptAction.showToast({ message: `小说导入成功: ${result.title}` });
         this.askDeleteSourceFile(sourceUri, filename);
@@ -2850,6 +3012,7 @@ A: 不会，原文件保持不变。`;
       logger.error(TAG, `导入小说失败 ${filename}: ${String(error)}`);
       this.updateProgress(ImportStatus.ERROR, `导入失败: ${String(error)}`, 0);
       promptAction.showToast({ message: `导入失败: ${String(error)}` });
+      await this.reloadDownloadImportState();
     }
   }
 
@@ -3214,31 +3377,34 @@ A: 不会，原文件保持不变。`;
 
   private async handlePdfImportWithCategorySelection(fileUri: string): Promise<void> {
     try {
-      logger.info(TAG, `处理PDF文件导入，显示设置对话框: ${fileUri}`);
+      logger.info(TAG, `\u5904\u7406PDF\u6587\u4ef6\u5bfc\u5165\uff0c\u663e\u793a\u8bbe\u7f6e\u5bf9\u8bdd\u6846: ${fileUri}`);
       const defaultTitle = this.pdfImportService.getDefaultTitle(fileUri);
-      const dialogResult = await this.showPdfImportDialog(defaultTitle);
+      const dialogResult = await this.showPdfImportDialog(defaultTitle, fileUri);
       if (dialogResult === null) {
-        logger.info(TAG, 'PDF导入已取消');
+        logger.info(TAG, 'PDF\u5bfc\u5165\u5df2\u53d6\u6d88');
         this.updateProgress(ImportStatus.IDLE, '', 0);
+        await this.reloadDownloadImportState();
         return;
       }
 
-      logger.info(TAG, `用户确认PDF导入: 类型=${dialogResult.contentType}, 标题=${dialogResult.title}`);
+      logger.info(TAG, `\u7528\u6237\u786e\u8ba4PDF\u5bfc\u5165: \u7c7b\u578b=${dialogResult.contentType}, \u6807\u9898=${dialogResult.title}`);
       await this.startPdfImportTask(fileUri, dialogResult);
     } catch (e) {
       const error = e as Error;
-      logger.error(TAG, `处理PDF文件导入失败: ${String(error)}`);
-      promptAction.showToast({ message: `PDF导入失败: ${String(error)}` });
+      logger.error(TAG, `\u5904\u7406PDF\u6587\u4ef6\u5bfc\u5165\u5931\u8d25: ${String(error)}`);
+      promptAction.showToast({ message: `PDF\u5bfc\u5165\u5931\u8d25: ${String(error)}` });
+      await this.reloadDownloadImportState();
     }
   }
 
-  private async showPdfImportDialog(defaultTitle: string): Promise<PdfImportDialogResult | null> {
+  private async showPdfImportDialog(defaultTitle: string, sourceFileName: string): Promise<PdfImportDialogResult | null> {
     return new Promise<PdfImportDialogResult | null>((resolve) => {
       this.pdfImportDialogController = new CustomDialogController({
         builder: PdfImportDialog({
           themeState: this.themeState,
           defaultTitle: defaultTitle,
           defaultAuthor: '',
+          sourceFileName: sourceFileName,
           onConfirm: (result: PdfImportDialogResult) => {
             resolve(result);
           },
@@ -3259,28 +3425,29 @@ A: 不会，原文件保持不变。`;
     const taskManager = BackgroundTaskManager.getInstance();
     const context = this.uiContext?.getHostContext() as common.UIAbilityContext;
     if (!context) {
-      throw new Error('无法获取应用上下文');
+      throw new Error('\u65e0\u6cd5\u83b7\u53d6\u5e94\u7528\u4e0a\u4e0b\u6587');
     }
     const filesDir = context.filesDir;
     const taskId = taskManager.createTask(
       TaskType.PDF_IMPORT,
-      `导入: ${dialogResult.title}`,
+      `\u5bfc\u5165: ${dialogResult.title}`,
       async (onProgress, cancelSignal) => {
         return await this.executePdfImportWithDialogResult(fileUri, dialogResult, filesDir, onProgress, cancelSignal);
       }
     );
 
     taskManager.startTask(taskId).then(() => {
-      logger.info(TAG, `PDF导入任务完成: ${taskId}`);
-      promptAction.showToast({ message: `导入成功: ${dialogResult.title}` });
+      logger.info(TAG, `PDF\u5bfc\u5165\u4efb\u52a1\u5b8c\u6210: ${taskId}`);
+      promptAction.showToast({ message: `\u5bfc\u5165\u6210\u529f: ${dialogResult.title}` });
       eventBus.publish(GameEvent.MANGA_IMPORT_COMPLETED, new MangaImportCompletedPayload(1, 1));
-      void this.loadImportedFilesStatus();
+      void this.reloadDownloadImportState();
     }).catch((error: Error) => {
-      logger.error(TAG, `PDF导入任务失败: ${taskId}`, error.message);
-      promptAction.showToast({ message: `导入失败: ${error.message}` });
+      logger.error(TAG, `PDF\u5bfc\u5165\u4efb\u52a1\u5931\u8d25: ${taskId}`, error.message);
+      promptAction.showToast({ message: `\u5bfc\u5165\u5931\u8d25: ${error.message}` });
+      void this.reloadDownloadImportState();
     });
 
-    promptAction.showToast({ message: 'PDF导入已开始，可以离开此页面' });
+    promptAction.showToast({ message: 'PDF\u5bfc\u5165\u5df2\u5f00\u59cb\uff0c\u53ef\u4ee5\u79bb\u5f00\u6b64\u9875\u9762' });
   }
 
   private async executePdfImportWithDialogResult(

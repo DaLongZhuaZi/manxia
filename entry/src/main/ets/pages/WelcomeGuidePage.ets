@@ -40,6 +40,7 @@ struct WelcomeGuidePage {
   @State private themeState: ThemeAwareState = new ThemeAwareState();
   @State private fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageLink('source_features_enabled') sourceFeaturesEnabled: boolean = false;
   private themeManager: ThemeManager = ThemeManager.getInstance();
   private componentId: string = 'WelcomeGuidePage';
 
@@ -55,9 +56,6 @@ struct WelcomeGuidePage {
 
   private uiContext: UIContext | undefined = undefined;
 
-  // 引导步骤内容 - 使用set方法逐个添加以符合ArkTS规范
-  private readonly guideSteps: Map<GuideStep, GuideStepContent> = this.initGuideSteps();
-
   /**
    * 初始化引导步骤内容
    */
@@ -67,8 +65,10 @@ struct WelcomeGuidePage {
     const welcomeContent: GuideStepContent = {
       title: '欢迎您使用漫匣',
       subtitle: '感谢您的支持',
-      description: '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入与图源、书源。接下来将引导您快速了解应用的核心功能。',
-      icon: $r('app.media.icon'),
+      description: this.sourceFeaturesEnabled
+        ? '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入与图源、书源。接下来将引导您快速了解应用的核心功能。'
+        : '漫匣是一款专注于漫画、电子书管理和阅读的开源免费应用，支持本地导入。接下来将引导您快速了解应用的核心功能。',
+      icon: $r('sys.symbol.books_vertical_fill'),
       buttonText: '开始引导流程',
       showSkip: false
     };
@@ -77,8 +77,8 @@ struct WelcomeGuidePage {
     const themeSelectionContent: GuideStepContent = {
       title: '主题选择',
       subtitle: '选择一个您喜欢的风格',
-      description: '您可以在下方选择默认的两套自定义主题之一进行应用，或点击按钮前往自定义主题页面进行更细致的主题与APP视效个性化设置。',
-      icon: $r('app.media.icon'),
+      description: '您可以先在这里直接选择默认提供的两套主题预设之一，快速完成初始风格设置。后续如果需要更细致地调整透明度、背景或视觉效果，也可以再从设置页进入对应页面慢慢微调。',
+      icon: $r('sys.symbol.paintbrush'),
       buttonText: '继续下一步',
       showSkip: false
     };
@@ -88,40 +88,40 @@ struct WelcomeGuidePage {
       title: '从Download同步',
       subtitle: '导入您的漫画与电子书',
       description: '您可以将漫画文件（支持CBZ等格式压缩包）和电子书（TXT、EPUB、MOBI、AZW3、PDF等）放置到Download文件夹下的“漫匣”文件夹当中，然后通过Download同步功能导入到书库。点击下方按钮前往Download同步页面。',
-      icon: $r('app.media.ic_guide_import'),
+      icon: $r('sys.symbol.folder_fill'),
       buttonText: '前往Download同步',
       showSkip: false
     };
     steps.set(GuideStep.DATA_IMPORT, dataImportContent);
 
-    // 图源引导步骤
-    const imageSourceGuideContent: GuideStepContent = {
-      title: '图源说明',
-      subtitle: '了解图源支持情况',
-      description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库（需要科学网络）。',
-      icon: $r('app.media.ic_guide_library'),
-      buttonText: '下一步',
-      showSkip: false
-    };
-    steps.set(GuideStep.IMAGE_SOURCE_GUIDE, imageSourceGuideContent);
+    if (this.sourceFeaturesEnabled) {
+      const imageSourceGuideContent: GuideStepContent = {
+        title: '图源说明',
+        subtitle: '了解图源支持情况',
+        description: '漫匣仅支持使用自有图源。图源用于获取在线漫画内容，不同图源提供不同源站的漫画资源。点击主页面底栏中的「图源」，然后点击“图源导入”，输入下面的仓库地址即可同步仓库（需要科学网络）。',
+        icon: $r('sys.symbol.rectangle_stack'),
+        buttonText: '下一步',
+        showSkip: false
+      };
+      steps.set(GuideStep.IMAGE_SOURCE_GUIDE, imageSourceGuideContent);
 
-    // 书源引导步骤
-    const bookSourceGuideContent: GuideStepContent = {
-      title: '书源说明',
-      subtitle: '了解书源支持情况',
-      description: '漫匣支持开源阅读（Legado）的大部分书源（聚合书源除外），您可以导入已有的Legado书源来获取在线小说内容。点击下方按钮前往小说书源管理页面。',
-      icon: $r('app.media.ic_guide_library'),
-      buttonText: '前往书源管理',
-      showSkip: false
-    };
-    steps.set(GuideStep.BOOK_SOURCE_GUIDE, bookSourceGuideContent);
+      const bookSourceGuideContent: GuideStepContent = {
+        title: '书源说明',
+        subtitle: '了解书源支持情况',
+        description: '漫匣支持开源阅读（Legado）的大部分书源（聚合书源除外），您可以在后续需要在线小说时，再从对应功能页进入书源相关设置与使用流程。这里先帮助您建立整体认知，避免欢迎引导阶段跳转过多页面。',
+        icon: $r('sys.symbol.text_book_closed'),
+        buttonText: '继续下一步',
+        showSkip: false
+      };
+      steps.set(GuideStep.BOOK_SOURCE_GUIDE, bookSourceGuideContent);
+    }
 
     // 自定义体验引导步骤
     const customExperienceContent: GuideStepContent = {
       title: '自定义体验',
       subtitle: '打造专属于您的阅读体验',
       description: '漫匣支持丰富的自定义设置，包括自定义字体、自定义页面布局、自定义底栏标签、主题颜色等。您可以在设置页面中根据个人喜好进行调整。点击下方按钮前往全局设置页面。',
-      icon: $r('app.media.ic_guide_library'),
+      icon: $r('sys.symbol.gearshape'),
       buttonText: '前往全局设置',
       showSkip: false
     };
@@ -131,7 +131,7 @@ struct WelcomeGuidePage {
       title: '阅读报告',
       subtitle: '了解您的阅读习惯',
       description: '开启阅读报告功能后，应用将收集您的阅读时长、阅读偏好等数据，在本地分析处理后为您生成个性化的阅读分析报告。此功能默认关闭，您可以随时进入报告页面中更改。',
-      icon: $r('app.media.ic_guide_library'),
+      icon: $r('sys.symbol.book'),
       buttonText: '继续',
       showSkip: false
     };
@@ -140,14 +140,20 @@ struct WelcomeGuidePage {
     const libraryIntroContent: GuideStepContent = {
       title: '开始阅读',
       subtitle: '探索您的书库',
-      description: '现在，您可以在书库页面查看已导入的漫画与电子书，或者从图源/书源当中获取，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
-      icon: $r('app.media.ic_guide_library'),
+      description: this.sourceFeaturesEnabled
+        ? '现在，您可以在书库页面查看已导入的漫画与电子书，或者从图源/书源当中获取，点击封面即可前往详情页开始阅读。祝您阅读愉快！'
+        : '现在，您可以在书库页面查看已导入的漫画与电子书，点击封面即可前往详情页开始阅读。祝您阅读愉快！',
+      icon: $r('sys.symbol.book'),
       buttonText: '进入书库',
       showSkip: false
     };
     steps.set(GuideStep.LIBRARY_INTRO, libraryIntroContent);
 
     return steps;
+  }
+
+  private getGuideSteps(): Map<GuideStep, GuideStepContent> {
+    return this.initGuideSteps();
   }
 
   aboutToAppear(): void {
@@ -171,6 +177,7 @@ struct WelcomeGuidePage {
     // 加载当前步骤（从WelcomeGuideManager获取最新状态）
     this.currentStep = this.welcomeGuideManager.getCurrentStep();
     logger.info(TAG, `欢迎引导页面加载，当前引导步骤: ${this.currentStep}`);
+    void this.syncCurrentStepFromManager('aboutToAppear');
 
     // 启动入场动画
     this.startEntranceAnimation();
@@ -178,19 +185,29 @@ struct WelcomeGuidePage {
 
   onPageShow(): void {
     logger.lifecycle(TAG, '欢迎引导页面显示');
+    void this.syncCurrentStepFromManager('onPageShow', true);
+  }
 
-    // 每次页面显示时重新加载当前步骤（用于从其他页面返回后恢复状态）
-    const latestStep = this.welcomeGuideManager.getCurrentStep();
-    if (latestStep !== this.currentStep) {
-      logger.info(TAG, `引导步骤已更新: ${this.currentStep} -> ${latestStep}`);
+  private async syncCurrentStepFromManager(trigger: string, withAnimation: boolean = false): Promise<void> {
+    try {
+      await this.welcomeGuideManager.initialize();
+      const latestStep = this.welcomeGuideManager.getCurrentStep();
+      if (latestStep === this.currentStep) {
+        return;
+      }
+      logger.info(TAG, `欢迎引导步骤同步: trigger=${trigger}, ${this.currentStep} -> ${latestStep}`);
+      if (withAnimation && !this.isAnimating) {
+        this.contentOpacity = 0;
+        this.contentTranslateY = 30;
+        this.currentStep = latestStep;
+        setTimeout(() => {
+          this.startEntranceAnimation();
+        }, 100);
+        return;
+      }
       this.currentStep = latestStep;
-
-      // 重新启动入场动画
-      this.contentOpacity = 0;
-      this.contentTranslateY = 30;
-      setTimeout(() => {
-        this.startEntranceAnimation();
-      }, 100);
+    } catch (error) {
+      logger.error(TAG, `同步欢迎引导步骤失败: trigger=${trigger}, error=${String(error)}`);
     }
   }
 
@@ -298,7 +315,7 @@ struct WelcomeGuidePage {
   private handleNextStep(): void {
     logger.info(TAG, `🔘 handleNextStep 被调用，当前步骤: ${this.currentStep}`);
 
-    const stepContent = this.guideSteps.get(this.currentStep);
+    const stepContent = this.getGuideSteps().get(this.currentStep);
     if (!stepContent) {
       logger.error(TAG, `❌ 无法获取步骤内容，当前步骤: ${this.currentStep}`);
       return;
@@ -336,29 +353,34 @@ struct WelcomeGuidePage {
       case GuideStep.DATA_IMPORT:
         // 导航到Download同步页面
         logger.debug(TAG, '执行 DATA_IMPORT 步骤处理，准备导航到Download同步页面');
-        this.navigateToDownloadSync();
+        void this.navigateToDownloadSync();
         break;
 
       case GuideStep.IMAGE_SOURCE_GUIDE:
         // 直接进入下一步（书源引导）
         logger.debug(TAG, '执行 IMAGE_SOURCE_GUIDE 步骤处理，进入书源引导');
         this.animateStepChange(() => {
-          this.currentStep = GuideStep.BOOK_SOURCE_GUIDE;
-          this.welcomeGuideManager.setCurrentStep(GuideStep.BOOK_SOURCE_GUIDE);
+          const nextStep = this.sourceFeaturesEnabled ? GuideStep.BOOK_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
+          this.currentStep = nextStep;
+          this.welcomeGuideManager.setCurrentStep(nextStep);
           logger.info(TAG, `步骤已更新到: ${this.currentStep}`);
         });
         break;
 
       case GuideStep.BOOK_SOURCE_GUIDE:
-        // 导航到小说书源管理页面
-        logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，准备导航到小说书源管理页面');
-        this.navigateToNovelSourceManagement();
+        // 直接进入下一步，避免欢迎引导阶段额外跳转页面
+        logger.debug(TAG, '执行 BOOK_SOURCE_GUIDE 步骤处理，直接进入自定义体验步骤');
+        this.animateStepChange(() => {
+          this.currentStep = GuideStep.CUSTOM_EXPERIENCE;
+          this.welcomeGuideManager.setCurrentStep(GuideStep.CUSTOM_EXPERIENCE);
+          logger.info(TAG, `步骤已更新到: ${this.currentStep}`);
+        });
         break;
 
       case GuideStep.CUSTOM_EXPERIENCE:
         // 导航到全局设置页面
         logger.debug(TAG, '执行 CUSTOM_EXPERIENCE 步骤处理，准备导航到全局设置页面');
-        this.navigateToGlobalSettings();
+        void this.navigateToGlobalSettings();
         break;
 
       case GuideStep.ANALYTICS_PERMISSION:
@@ -373,7 +395,7 @@ struct WelcomeGuidePage {
       case GuideStep.LIBRARY_INTRO:
         // 完成引导，进入主页面的书库标签
         logger.debug(TAG, '执行 LIBRARY_INTRO 步骤处理，准备完成引导');
-        this.completeGuide();
+        void this.completeGuide();
         break;
 
       default:
@@ -391,7 +413,7 @@ struct WelcomeGuidePage {
     let nextStep: GuideStep = this.currentStep;
     switch (this.currentStep) {
       case GuideStep.DATA_IMPORT:
-        nextStep = GuideStep.IMAGE_SOURCE_GUIDE;
+        nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
         break;
       case GuideStep.BOOK_SOURCE_GUIDE:
         nextStep = GuideStep.CUSTOM_EXPERIENCE;
@@ -413,19 +435,19 @@ struct WelcomeGuidePage {
   /**
    * 完成引导
    */
-  private completeGuide(): void {
+  private async completeGuide(): Promise<void> {
     logger.info(TAG, '引导流程完成');
-    this.welcomeGuideManager.markGuideCompleted();
+    await this.welcomeGuideManager.markGuideCompleted();
     this.navigateToMainMenu();
   }
 
   /**
    * 导航到Download同步页面
    */
-  private navigateToDownloadSync(): void {
+  private async navigateToDownloadSync(): Promise<void> {
     try {
-      // 更新步骤到图源引导
-      this.welcomeGuideManager.setCurrentStep(GuideStep.IMAGE_SOURCE_GUIDE);
+      const nextStep = this.sourceFeaturesEnabled ? GuideStep.IMAGE_SOURCE_GUIDE : GuideStep.CUSTOM_EXPERIENCE;
+      await this.welcomeGuideManager.setCurrentStep(nextStep);
 
       const router = this.uiContext?.getRouter();
       if (router) {
@@ -474,39 +496,12 @@ struct WelcomeGuidePage {
   }
 
   /**
-   * 导航到小说书源管理页面
-   */
-  private navigateToNovelSourceManagement(): void {
-    try {
-      // 更新步骤到自定义体验引导
-      this.welcomeGuideManager.setCurrentStep(GuideStep.CUSTOM_EXPERIENCE);
-
-      const router = this.uiContext?.getRouter();
-      if (router) {
-        router.pushUrl({
-          url: 'pages/MainMenuPage',
-          params: {
-            targetPage: 'NovelSourceManagementPage',
-            fromGuide: true
-          }
-        }).then(() => {
-          logger.info(TAG, '导航到小说书源管理页面成功');
-        }).catch((error: Error) => {
-          logger.error(TAG, '导航到小说书源管理页面失败', error.message);
-        });
-      }
-    } catch (error) {
-      logger.error(TAG, '导航到小说书源管理页面异常', String(error));
-    }
-  }
-
-  /**
    * 导航到全局设置页面
    */
-  private navigateToGlobalSettings(): void {
+  private async navigateToGlobalSettings(): Promise<void> {
     try {
       // 更新步骤到书库介绍
-      this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
+      await this.welcomeGuideManager.setCurrentStep(GuideStep.LIBRARY_INTRO);
 
       const router = this.uiContext?.getRouter();
       if (router) {
@@ -524,30 +519,6 @@ struct WelcomeGuidePage {
       }
     } catch (error) {
       logger.error(TAG, '导航到全局设置页面异常', String(error));
-    }
-  }
-
-  /**
-   * 导航到自定义主题设置页面
-   */
-  private navigateToThemeSettings(): void {
-    try {
-      const router = this.uiContext?.getRouter();
-      if (router) {
-        router.pushUrl({
-          url: 'pages/MainMenuPage',
-          params: {
-            targetPage: 'ThemeSettingsPage',
-            fromGuide: true
-          }
-        }).then(() => {
-          logger.info(TAG, '导航到自定义主题设置页面成功');
-        }).catch((error: Error) => {
-          logger.error(TAG, '导航到自定义主题设置页面失败', error.message);
-        });
-      }
-    } catch (error) {
-      logger.error(TAG, '导航到自定义主题设置页面异常', String(error));
     }
   }
 
@@ -682,7 +653,7 @@ struct WelcomeGuidePage {
    * 获取当前步骤内容
    */
   private getCurrentStepContent(): GuideStepContent {
-    return this.guideSteps.get(this.currentStep) ?? {
+    return this.getGuideSteps().get(this.currentStep) ?? {
       title: '欢迎',
       subtitle: '',
       description: '',
@@ -783,21 +754,37 @@ struct WelcomeGuidePage {
             }
             .margin({ bottom: 16 })
 
-            // 前往自定义主题设置
-            Text('前往自定义主题页面')
-              .fontSize(14)
-              .fontColor(ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme))
-              .textAlign(TextAlign.Center)
-              .margin({ top: 8, bottom: 24 })
-              .onClick(() => {
-                this.navigateToThemeSettings();
-              })
           } else {
             // 默认步骤布局
-            Image(this.getCurrentStepContent().icon)
-              .width(120)
-              .height(120)
-              .objectFit(ImageFit.Contain)
+            Stack() {
+              Column()
+                .width(120)
+                .height(120)
+                .borderRadius(60)
+                .backgroundColor(this.themeState.currentTheme === ThemeType.DARK
+                  ? 'rgba(255, 255, 255, 0.08)'
+                  : 'rgba(15, 23, 42, 0.06)')
+                .border({
+                  width: 1,
+                  color: this.themeState.currentTheme === ThemeType.DARK
+                    ? 'rgba(255, 255, 255, 0.10)'
+                    : 'rgba(15, 23, 42, 0.08)'
+                })
+                .shadow({
+                  radius: 20,
+                  color: this.themeState.currentTheme === ThemeType.DARK
+                    ? 'rgba(0, 0, 0, 0.28)'
+                    : 'rgba(15, 23, 42, 0.10)',
+                  offsetX: 0,
+                  offsetY: 10
+                })
+
+              SymbolGlyph(this.getCurrentStepContent().icon as Resource)
+                .fontSize(54)
+                .fontColor([ThemeAwareHelper.getTestManagementThemedColor('accent_blue', this.themeState.currentTheme)])
+            }
+            .width(120)
+            .height(120)
               .margin({ bottom: 32 })
 
             Text(this.getCurrentStepContent().title)
@@ -817,10 +804,10 @@ struct WelcomeGuidePage {
               .textAlign(TextAlign.Center)
               .lineHeight(24)
               .padding({ left: 32, right: 32 })
-              .margin({ bottom: this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE ? 16 : 48 })
+              .margin({ bottom: this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled ? 16 : 48 })
 
             // 图源说明页面的可复制URL文本框
-            if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE) {
+            if (this.currentStep === GuideStep.IMAGE_SOURCE_GUIDE && this.sourceFeaturesEnabled) {
               Column() {
                 Text('图源仓库地址')
                   .fontSize(12)

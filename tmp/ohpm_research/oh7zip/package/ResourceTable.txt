@@ -1,0 +1,10 @@
+string Library_desc 0x02000000
+string Library_label 0x02000001
+string module_desc 0x02000002
+color start_window_background 0x02000003
+float page_text_font_size 0x02000004
+media background 0x02000005
+media foreground 0x02000006
+media layered_image 0x02000007
+media startIcon 0x02000008
+profile main_pages 0x02000009

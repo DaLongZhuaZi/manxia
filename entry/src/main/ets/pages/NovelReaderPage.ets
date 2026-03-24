@@ -96,6 +96,7 @@ interface LocalTextDomPosition {
 export struct NovelReaderPage {
   private static readonly READ_ALOUD_RESUME_KEY_PREFIX: string = 'novel_read_aloud_resume_char_';
   private static readonly TOOLBAR_AUTO_HIDE_DELAY_MS: number = 2200;
+  private static readonly GUIDE_LAYOUT_STABILIZE_DELAY_MS: number = 140;
 
   @State pathStack: NavPathStack = new NavPathStack();
   @State themeState: ThemeAwareState = new ThemeAwareState();
@@ -329,6 +330,78 @@ export struct NovelReaderPage {
     }
   }
 
+  private async waitForGuideLayout(delayMs: number = NovelReaderPage.GUIDE_LAYOUT_STABILIZE_DELAY_MS): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, delayMs);
+    });
+  }
+
+  private async prepareGuidePresentation(anchorId?: string): Promise<void> {
+    if (!anchorId || anchorId.length <= 0) {
+      return;
+    }
+    let changed: boolean = false;
+    this.clearToolbarAutoHideTimer();
+    switch (anchorId) {
+      case 'guide_novel_reader_top_toolbar':
+      case 'guide_novel_reader_bottom_toolbar':
+        changed = !this.showTopToolbar || !this.showBottomToolbar || this.showChapterList ||
+          this.showFontSettings || this.showBackgroundSettings || this.showReadingSettings ||
+          this.showEncyclopediaDialog || this.toolbarOpacity < 0.99;
+        this.showChapterList = false;
+        this.chapterListOpacity = 0;
+        this.showFontSettings = false;
+        this.showBackgroundSettings = false;
+        this.showReadingSettings = false;
+        this.showEncyclopediaDialog = false;
+        this.showTopToolbar = true;
+        this.showBottomToolbar = true;
+        this.toolbarOpacity = 1;
+        break;
+      case 'guide_novel_reader_chapter_list':
+        changed = this.showTopToolbar || this.showBottomToolbar || !this.showChapterList ||
+          this.showFontSettings || this.showBackgroundSettings || this.showReadingSettings ||
+          this.showEncyclopediaDialog || this.toolbarOpacity > 0.01 || this.chapterListOpacity < 0.99;
+        this.showTopToolbar = false;
+        this.showBottomToolbar = false;
+        this.toolbarOpacity = 0;
+        this.showFontSettings = false;
+        this.showBackgroundSettings = false;
+        this.showReadingSettings = false;
+        this.showEncyclopediaDialog = false;
+        this.showChapterList = true;
+        this.chapterListOpacity = 1;
+        setTimeout(() => {
+          try {
+            const safeIndex = Math.max(0, Math.min(this.currentChapterIndex, Math.max(0, this.chapterList.length - 1)));
+            this.chapterListScroller.scrollToIndex(safeIndex, true, ScrollAlign.CENTER);
+          } catch (error) {
+            logger.warn(TAG, `引导滚动小说目录失败: ${String(error)}`);
+          }
+        }, 60);
+        break;
+      default:
+        changed = this.showTopToolbar || this.showBottomToolbar || this.showChapterList ||
+          this.showFontSettings || this.showBackgroundSettings || this.showReadingSettings ||
+          this.showEncyclopediaDialog || this.toolbarOpacity > 0.01 || this.chapterListOpacity > 0.01;
+        this.showTopToolbar = false;
+        this.showBottomToolbar = false;
+        this.toolbarOpacity = 0;
+        this.showChapterList = false;
+        this.chapterListOpacity = 0;
+        this.showFontSettings = false;
+        this.showBackgroundSettings = false;
+        this.showReadingSettings = false;
+        this.showEncyclopediaDialog = false;
+        break;
+    }
+    if (changed) {
+      await this.waitForGuideLayout();
+    }
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -340,6 +413,7 @@ export struct NovelReaderPage {
       this.appGuideHighlightRect = null;
       return;
     }
+    await this.prepareGuidePresentation(step.anchorId);
     this.appGuideStep = step;
     this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
@@ -3345,6 +3419,7 @@ export struct NovelReaderPage {
             nextButtonText: this.appGuideStep.nextButtonText ?? '下一步',
             cardPosition: this.appGuideStep.cardPosition,
             highlightRect: this.appGuideHighlightRect,
+            immersiveMode: true,
             showSkip: this.appGuideStep.showSkip !== false,
             themeState: this.themeState,
             onNext: () => {
@@ -3553,6 +3628,7 @@ export struct NovelReaderPage {
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: 4 })
     .opacity(this.toolbarOpacity)
+    .id('guide_novel_reader_top_toolbar')
   }
 
   /**
@@ -3703,6 +3779,7 @@ export struct NovelReaderPage {
     .backgroundBlurStyle(this.themeManager.getGlassBlurStyle())
     .shadow({ radius: this.themeManager.getGlassRadius(), color: this.themeManager.getGlassShadowColor(), offsetX: 0, offsetY: -2 })
     .opacity(this.toolbarOpacity)
+    .id('guide_novel_reader_bottom_toolbar')
   }
 
   /**
@@ -3772,6 +3849,7 @@ export struct NovelReaderPage {
       .backgroundColor(this.themeState.currentTheme === ThemeType.DARK ? '#1E1E1E' : '#FFFFFF')
       .opacity(this.chapterListOpacity)
       .position({ x: 0, y: 0 })
+      .id('guide_novel_reader_chapter_list')
     }
     .width('100%')
     .height('100%')

@@ -1,0 +1,32 @@
+{
+	"app": {
+		"bundleName": "com.example.myapplication",
+		"debug": false,
+		"versionCode": 1000000,
+		"versionName": "1.0.0",
+		"minAPIVersion": 12,
+		"targetAPIVersion": 12,
+		"apiReleaseType": "Release",
+		"targetMinorAPIVersion": 0,
+		"targetPatchAPIVersion": 0,
+		"compileSdkVersion": "5.0.0.71",
+		"compileSdkType": "OpenHarmony",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "release"
+	},
+	"module": {
+		"name": "library",
+		"type": "har",
+		"deviceTypes": [
+			"default",
+			"tablet"
+		],
+		"uiSyntax": "ets",
+		"packageName": "@ohos/commons-compress",
+		"installationFree": false,
+		"virtualMachine": "ark12.0.2.0",
+		"compileMode": "esmodule",
+		"dependencies": []
+	}
+}

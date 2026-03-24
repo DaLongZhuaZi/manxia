@@ -15,6 +15,8 @@ const TAG = 'SettingsManager';
 export class SettingKeys {
   // 高级功能
   static readonly ADVANCED_MODE_ENABLED = 'advanced_mode_enabled';
+  static readonly SOURCE_FEATURES_ENABLED = 'source_features_enabled';
+  static readonly SOURCE_SETTINGS_VISIBLE = 'source_settings_visible';
   static readonly ENABLE_LOG_FLOATING_WINDOW = 'enable_log_floating_window';
   static readonly PRELOAD_DEBUG_MODE = 'preload_debug_mode'; // 预加载调试模式：off/on/always
   

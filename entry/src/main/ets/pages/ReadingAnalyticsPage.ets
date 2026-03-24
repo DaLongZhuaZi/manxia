@@ -3150,6 +3150,10 @@ struct ReadingAnalyticsPage {
         .fontSize(12)
         .fontFamily(this.appFontFamily)
         .fontColor(ThemeAwareHelper.getTestManagementThemedColor('text_secondary', this.themeState.currentTheme))
+        .width('100%')
+        .maxLines(2)
+        .lineHeight(16)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .alignSelf(ItemAlign.Start)
     }
     .width('100%')

@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "unrar",
+        "License": "Apache License 2.0",
+        "License File": "LICENSE",
+        "Version Number": "1.0.0",
+        "Owner" : "xiafeng@huawei.com",
+        "Upstream URL": "https://github.com/maoabc/unrar-android",
+        "Description": "Libunrar library ported to JavaScript"
+    }
+]

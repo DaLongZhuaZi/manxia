@@ -37,7 +37,7 @@ import { preferences } from '@kit.ArkData';
 import { promptAction } from '@kit.ArkUI';
 import { SettingsSearchSupport } from './settings/SettingsSearchSupport';
 import { AppGuideOverlay, GuideHighlightRect } from '../Framework/Components/AppGuideOverlay';
-import { resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
+import { ensureGuideAnchorVisibleInScroller, resolveGuideHighlightRectInRoot } from '../Framework/Components/AppGuideSupport';
 import { AppGuideManager, AppGuidePageId, AppGuideStep } from '../Framework/Managers/AppGuideManager';
 
 const TAG = 'BackupPage';
@@ -88,6 +88,7 @@ struct BackupPage {
   private readonly tabOrder: ('local' | 'cloud' | 'native_test' | 'ftp')[] = ['local', 'cloud', 'native_test', 'ftp'];
   @Local private swipeStartX: number = 0;
   @Local private swipeOffsetX: number = 0;
+  private scroller: Scroller = new Scroller();
   
   // 本地备份状态
   @Local isCreatingBackup: boolean = false;
@@ -338,6 +339,22 @@ struct BackupPage {
     }
   }
 
+  private adjustGuideHighlightRect(anchorId: string | undefined, rect: GuideHighlightRect | null): GuideHighlightRect | null {
+    if (!rect || !anchorId) {
+      return rect;
+    }
+    if (anchorId === 'guide_backup_tabs') {
+      return {
+        x: rect.x,
+        y: rect.y + TITLE_BAR_HEIGHT_MINI,
+        width: rect.width,
+        height: rect.height,
+        borderRadius: rect.borderRadius
+      };
+    }
+    return rect;
+  }
+
   private async refreshPageGuide(trigger: string): Promise<void> {
     await this.appGuideManager.initialize();
     if (!this.appGuideManager.getCurrentStep()) {
@@ -349,8 +366,23 @@ struct BackupPage {
       this.appGuideHighlightRect = null;
       return;
     }
+    if (this.prepareGuidePresentation(step.anchorId) && !trigger.endsWith('_after_prepare')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_prepare`);
+      }, 220);
+      return;
+    }
+    if (this.alignGuideViewport(step.anchorId) && !trigger.endsWith('_after_scroll')) {
+      setTimeout(() => {
+        void this.refreshPageGuide(`${trigger}_after_scroll`);
+      }, 280);
+      return;
+    }
     this.appGuideStep = step;
-    this.appGuideHighlightRect = this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18);
+    this.appGuideHighlightRect = this.adjustGuideHighlightRect(
+      step.anchorId,
+      this.resolveGuideHighlightRect(step.anchorId, step.borderRadius ?? 18)
+    );
     if (!this.appGuideHighlightRect && trigger !== 'retry_layout') {
       setTimeout(() => {
         void this.refreshPageGuide('retry_layout');
@@ -369,6 +401,53 @@ struct BackupPage {
     void this.appGuideManager.skipCurrentFlow().then(() => {
       void this.refreshPageGuide('skip');
     });
+  }
+
+  private prepareGuidePresentation(anchorId?: string): boolean {
+    let targetTab: 'local' | 'cloud' | 'native_test' | 'ftp' | null = null;
+    switch (anchorId) {
+      case 'guide_backup_root':
+      case 'guide_backup_tabs':
+      case 'guide_backup_local_panel':
+        targetTab = 'local';
+        break;
+      case 'guide_backup_cloud_panel':
+        targetTab = 'cloud';
+        break;
+      case 'guide_backup_native_panel':
+        targetTab = 'native_test';
+        break;
+      case 'guide_backup_ftp_panel':
+        targetTab = 'ftp';
+        break;
+      default:
+        break;
+    }
+    if (!targetTab || this.currentTab === targetTab) {
+      return false;
+    }
+    this.currentTab = targetTab;
+    this.onTabChanged();
+    return true;
+  }
+
+  private alignGuideViewport(anchorId?: string): boolean {
+    if (!anchorId || anchorId.length <= 0) {
+      return false;
+    }
+    if (anchorId === 'guide_backup_root' || anchorId === 'guide_backup_tabs') {
+      return false;
+    }
+    const scrollResult = ensureGuideAnchorVisibleInScroller(
+      this.getUIContext(),
+      this.scroller,
+      anchorId,
+      'guide_backup_scroll',
+      TITLE_BAR_HEIGHT_MINI + 18,
+      32,
+      280
+    );
+    return scrollResult.available && scrollResult.scrolled;
   }
   
   /**
@@ -1688,7 +1767,7 @@ struct BackupPage {
             .padding({ top: 20, bottom: 16 })
           
           // 内容
-          Scroll() {
+          Scroll(this.scroller) {
             Column() {
               if (this.restoreSuccess) {
                 Text('✅ 备份数据已成功恢复')
@@ -1826,6 +1905,7 @@ struct BackupPage {
           .layoutWeight(1)
           .scrollBar(BarState.Auto)
           .edgeEffect(EdgeEffect.Spring)
+          .id('guide_backup_scroll')
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .gesture(
             PanGesture({ fingers: 1, direction: PanDirection.Horizontal, distance: 5 })
@@ -2250,6 +2330,7 @@ struct BackupPage {
       }
     }
     .width('100%')
+    .id('guide_backup_native_panel')
   }
 
   @Builder
@@ -2752,6 +2833,7 @@ struct BackupPage {
       }
     }
     .width('100%')
+    .id('guide_backup_local_panel')
   }
 
   @Builder
@@ -2826,6 +2908,7 @@ struct BackupPage {
       }
     }
     .width('100%')
+    .id('guide_backup_cloud_panel')
   }
 
   @Builder
@@ -3093,6 +3176,7 @@ struct BackupPage {
       }
     }
     .width('100%')
+    .id('guide_backup_ftp_panel')
   }
   
   @Builder

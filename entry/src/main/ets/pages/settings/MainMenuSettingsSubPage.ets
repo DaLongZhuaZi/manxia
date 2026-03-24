@@ -101,6 +101,7 @@ export struct MainMenuSettingsSubPage {
   @State themeState: ThemeAwareState = new ThemeAwareState();
   @State fontState: FontAwareState = new FontAwareState();
   @StorageLink('appFontFamily') appFontFamily: string = 'HarmonyOS Sans';
+  @StorageLink('source_features_enabled') @Watch('onSourceFeaturesEnabledChanged') sourceFeaturesEnabled: boolean = false;
   private componentId: string = 'MainMenuSettingsSubPage';
   private scroller: Scroller = new Scroller();
   @State private settingsTapEnabled: boolean = true;
@@ -143,7 +144,6 @@ export struct MainMenuSettingsSubPage {
 
   // 底栏标签配置列表
   private tabConfigs: TabConfig[] = [
-    { title: '首页', index: TabIndex.HOME, required: false },
     { title: '书库', index: TabIndex.LIBRARY, required: true },
     { title: '历史', index: TabIndex.DISCOVER, required: false },
     { title: '图源', index: TabIndex.SOURCE, required: false },
@@ -157,6 +157,53 @@ export struct MainMenuSettingsSubPage {
   @State tempVisibleTabIndices: number[] = [];
   @State tabletTopBarPosition: TabletTopBarPosition = 'top';
   private tabletTopBarPositions: TabletTopBarPosition[] = ['top', 'bottom', 'left', 'right'];
+
+  private isSourceFeatureTab(index: number): boolean {
+    return index === TabIndex.SOURCE || index === TabIndex.BOOK_SOURCE;
+  }
+
+  private getAvailableTabConfigs(): TabConfig[] {
+    return this.tabConfigs.filter((cfg: TabConfig) =>
+      this.sourceFeaturesEnabled || !this.isSourceFeatureTab(cfg.index)
+    );
+  }
+
+  private getDefaultTabIndices(): number[] {
+    return this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
+  }
+
+  private sanitizeVisibleTabIndices(indices: number[]): number[] {
+    const allowedIndices = this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
+    const requiredIndices = this.getAvailableTabConfigs()
+      .filter((cfg: TabConfig) => cfg.required)
+      .map((cfg: TabConfig) => cfg.index);
+    const sanitized: number[] = [];
+
+    for (const idx of indices) {
+      if (!allowedIndices.includes(idx) || sanitized.includes(idx)) {
+        continue;
+      }
+      sanitized.push(idx);
+    }
+    for (const idx of requiredIndices) {
+      if (!sanitized.includes(idx)) {
+        sanitized.push(idx);
+      }
+    }
+
+    return sanitized;
+  }
+
+  private getEnabledTabIndicesForCustomization(): number[] {
+    return this.sanitizeVisibleTabIndices(this.tempVisibleTabIndices);
+  }
+
+  private getDisabledTabConfigsForCustomization(): TabConfig[] {
+    const enabledTabIndices = this.getEnabledTabIndicesForCustomization();
+    return this.getAvailableTabConfigs().filter((cfg: TabConfig) =>
+      !enabledTabIndices.includes(cfg.index) && !cfg.required
+    );
+  }
 
   private markSettingsScrolling(): void {
     if (this.settingsTapEnabled) {
@@ -516,14 +563,14 @@ export struct MainMenuSettingsSubPage {
    */
   private async loadVisibleTabs(): Promise<void> {
     try {
+      const defaultTabs = this.getDefaultTabIndices();
       // 从持久化存储读取
       const savedTabs = await this.settingsManager.getVisibleTabs();
       if (savedTabs && savedTabs.length > 0) {
-        this.visibleTabIndices = savedTabs;
+        this.visibleTabIndices = this.sanitizeVisibleTabIndices(savedTabs);
         logger.info(TAG, `已加载自定义标签配置: ${JSON.stringify(savedTabs)}`);
       } else {
-        // 默认显示所有标签
-        this.visibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+        this.visibleTabIndices = defaultTabs;
         logger.info(TAG, '使用默认标签配置');
       }
       // 同步到临时状态
@@ -532,29 +579,42 @@ export struct MainMenuSettingsSubPage {
       AppStorage.setOrCreate('visible_tabs', this.visibleTabIndices);
     } catch (error) {
       logger.error(TAG, '加载可见标签配置失败', String(error));
-      this.visibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+      this.visibleTabIndices = this.getDefaultTabIndices();
       this.tempVisibleTabIndices = [...this.visibleTabIndices];
     }
+  }
+
+  private onSourceFeaturesEnabledChanged(): void {
+    void this.loadVisibleTabs();
   }
 
   /**
    * 保存可见标签配置
    */
-  private async saveVisibleTabs(): Promise<void> {
+  private async saveVisibleTabs(preserveHiddenSourceTabs: boolean = true): Promise<void> {
     try {
       // 确保必须显示的标签（书库、管理）始终存在
-      const requiredIndices = this.tabConfigs
+      const requiredIndices = this.getAvailableTabConfigs()
         .filter(cfg => cfg.required)
         .map(cfg => cfg.index);
+      const allowedIndices = this.getAvailableTabConfigs().map((cfg: TabConfig) => cfg.index);
+      const hiddenSourceIndices = !this.sourceFeaturesEnabled && preserveHiddenSourceTabs
+        ? (await this.settingsManager.getVisibleTabs()).filter((idx: number) => this.isSourceFeatureTab(idx))
+        : [];
 
       // 合并索引并去重
       const combined: number[] = [];
       for (const idx of this.tempVisibleTabIndices) {
-        if (!combined.includes(idx)) {
+        if (allowedIndices.includes(idx) && !combined.includes(idx)) {
           combined.push(idx);
         }
       }
       for (const idx of requiredIndices) {
+        if (!combined.includes(idx)) {
+          combined.push(idx);
+        }
+      }
+      for (const idx of hiddenSourceIndices) {
         if (!combined.includes(idx)) {
           combined.push(idx);
         }
@@ -596,6 +656,10 @@ export struct MainMenuSettingsSubPage {
    * 切换标签可见性
    */
   private toggleTabVisibility(index: number): void {
+    if (!this.getAvailableTabConfigs().some((cfg: TabConfig) => cfg.index === index)) {
+      return;
+    }
+
     const newIndices: number[] = [];
     const idx = this.tempVisibleTabIndices.indexOf(index);
 
@@ -636,8 +700,8 @@ export struct MainMenuSettingsSubPage {
    * 重置底栏配置为默认
    */
   private async resetTabsToDefault(): Promise<void> {
-    this.tempVisibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
-    await this.saveVisibleTabs();
+    this.tempVisibleTabIndices = this.getDefaultTabIndices();
+    await this.saveVisibleTabs(false);
   }
 
   /**
@@ -886,7 +950,7 @@ export struct MainMenuSettingsSubPage {
    * 获取标签配置
    */
   private getTabConfig(tabIndex: number): TabConfig | undefined {
-    return this.tabConfigs.find(cfg => cfg.index === tabIndex);
+    return this.getAvailableTabConfigs().find((cfg: TabConfig) => cfg.index === tabIndex);
   }
 
   @Builder
@@ -978,7 +1042,7 @@ export struct MainMenuSettingsSubPage {
         .padding({ left: 4, bottom: 4 })
 
       // 已启用的标签（按顺序显示，可拖抽排序）
-      if (this.tempVisibleTabIndices.length > 0) {
+      if (this.getEnabledTabIndicesForCustomization().length > 0) {
         Column({ space: 4 }) {
           Text('已启用')
             .fontSize(12)
@@ -988,9 +1052,9 @@ export struct MainMenuSettingsSubPage {
             .padding({ left: 4, bottom: 4 })
 
           Column({ space: 2 }) {
-            ForEach(this.tempVisibleTabIndices, (tabIndex: number, index: number) => {
+            ForEach(this.getEnabledTabIndicesForCustomization(), (tabIndex: number, index: number) => {
               this.buildTabItem(tabIndex, index, true)
-            }, (tabIndex: number) => `enabled_${tabIndex}_${this.tempVisibleTabIndices.indexOf(tabIndex)}`)
+            }, (tabIndex: number) => `enabled_${tabIndex}_${this.getEnabledTabIndicesForCustomization().indexOf(tabIndex)}`)
           }
           .width('100%')
           .padding(8)
@@ -1003,7 +1067,7 @@ export struct MainMenuSettingsSubPage {
       // 未启用的标签
       Column({ space: 4 }) {
         // 筛选未启用的标签
-        if (this.tabConfigs.filter(cfg => !this.tempVisibleTabIndices.includes(cfg.index) && !cfg.required).length > 0) {
+        if (this.getDisabledTabConfigsForCustomization().length > 0) {
           Text('未启用')
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
@@ -1012,7 +1076,7 @@ export struct MainMenuSettingsSubPage {
             .padding({ left: 4, bottom: 4 })
 
           Column({ space: 2 }) {
-            ForEach(this.tabConfigs.filter(cfg => !this.tempVisibleTabIndices.includes(cfg.index) && !cfg.required),
+            ForEach(this.getDisabledTabConfigsForCustomization(),
               (cfg: TabConfig) => {
                 this.buildTabItem(cfg.index, -1, false)
               }, (cfg: TabConfig) => `disabled_${cfg.index}`)
@@ -1037,7 +1101,7 @@ export struct MainMenuSettingsSubPage {
           .height(44)
           .layoutWeight(1)
           .onClick(() => {
-            this.tempVisibleTabIndices = this.tabConfigs.map(cfg => cfg.index);
+            this.tempVisibleTabIndices = this.getDefaultTabIndices();
           })
 
         // 保存按钮

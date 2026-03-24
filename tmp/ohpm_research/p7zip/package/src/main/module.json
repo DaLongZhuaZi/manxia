@@ -1,0 +1,31 @@
+{
+	"app": {
+		"bundleName": "com.michael.rtf_parser",
+		"debug": false,
+		"versionCode": 1000000,
+		"versionName": "1.0.0",
+		"minAPIVersion": 16,
+		"targetAPIVersion": 20,
+		"apiReleaseType": "Release",
+		"targetMinorAPIVersion": 0,
+		"targetPatchAPIVersion": 0,
+		"compileSdkVersion": "6.0.0.47",
+		"compileSdkType": "OpenHarmony",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "release"
+	},
+	"module": {
+		"name": "p7zip",
+		"type": "har",
+		"deviceTypes": [
+			"default",
+			"tablet"
+		],
+		"packageName": "@dove/p7zip",
+		"installationFree": false,
+		"virtualMachine": "ark12.0.6.0",
+		"compileMode": "esmodule",
+		"dependencies": []
+	}
+}

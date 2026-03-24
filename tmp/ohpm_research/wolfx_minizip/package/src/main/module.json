@@ -1,0 +1,31 @@
+{
+	"app": {
+		"bundleName": "com.example.ohos_minizip",
+		"debug": true,
+		"versionCode": 1000000,
+		"versionName": "1.0.0",
+		"minAPIVersion": 50005017,
+		"targetAPIVersion": 50005017,
+		"apiReleaseType": "Release",
+		"targetMinorAPIVersion": 0,
+		"targetPatchAPIVersion": 0,
+		"compileSdkVersion": "6.0.0.47",
+		"compileSdkType": "HarmonyOS",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "debug"
+	},
+	"module": {
+		"name": "library",
+		"type": "har",
+		"deviceTypes": [
+			"default",
+			"tablet"
+		],
+		"packageName": "@wolfx/minizip",
+		"installationFree": false,
+		"virtualMachine": "ark12.0.6.0",
+		"compileMode": "esmodule",
+		"dependencies": []
+	}
+}

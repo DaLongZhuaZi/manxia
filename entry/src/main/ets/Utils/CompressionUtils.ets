@@ -3,10 +3,10 @@
  * 用于数据管理功能中的文件解压缩操作
  * 
  * 支持的格式：
- * - ZIP/CBZ: 使用系统@ohos.zlib（性能最佳）
- * - 7Z/LZMA: 使用@ohos/commons-compress
+ * - ZIP/CBZ: 优先使用系统@ohos.zlib，密码包/编码异常时回退到@ohos/minizip
+ * - RAR/CBR: 使用@ohos/unrar
+ * - 7Z/LZMA: 使用@ohos/oh7zip
  * - TAR/GZ/BZ2/XZ: 使用@ohos/commons-compress
- * - RAR/CBR: 暂不支持（需要专有解码器）
  */
 
 import { zlib } from '@kit.BasicServicesKit';
@@ -14,8 +14,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { logger } from './Logger';
 import { SandboxManager } from '../Framework/Storage/SandboxManager';
 import { BusinessError } from '@kit.BasicServicesKit';
-// 导入commons-compress库用于支持更多压缩格式
-// 注意：7z归档格式暂不支持（OpenHarmony版本未实现SevenZFile）
+// commons-compress用于处理tar/gz/bz2/xz等流式格式
 import {
   InputStream,
   OutputStream,
@@ -25,6 +24,9 @@ import {
   CompressorInputStream,
   IOUtils
 } from '@ohos/commons-compress';
+import { Uncompress, Config7z } from '@ohos/oh7zip';
+import { MinizipNative } from '@ohos/minizip';
+import { UnrarApi } from '@ohos/unrar';
 import fs from '@ohos.file.fs';
 
 const TAG = 'CompressionUtils';
@@ -45,6 +47,7 @@ export interface ExtractionOptions {
   maxFiles?: number;
   /** 最大提取文件大小限制（字节） */
   maxTotalSize?: number;
+  password?: string;
 }
 
 /**
@@ -135,29 +138,12 @@ export class CompressionUtils {
   private sandboxManager: SandboxManager;
 
   // 支持的压缩文件格式
-  // ZIP格式使用系统zlib，其他格式使用commons-compress
-  // 注意：7z归档格式暂不支持（commons-compress的OpenHarmony版本未实现SevenZFile）
-  private readonly supportedArchiveFormats = [
-    '.zip',      // 标准ZIP格式 - 系统zlib
-    '.cbz',      // Comic Book ZIP - 系统zlib
-    '.tar',      // TAR归档 - commons-compress
-    '.gz',       // GZip压缩 - commons-compress
-    '.tgz',      // TAR+GZip - commons-compress
-    '.bz2',      // BZip2压缩 - commons-compress
-    '.xz',       // XZ压缩 - commons-compress
-  ];
-  
-  // 使用系统zlib解压的格式（性能最佳）
+  private readonly supportedArchiveFormats = ['.zip', '.cbz', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.rar', '.cbr', '.7z', '.lzma'];
   private readonly zlibFormats = ['.zip', '.cbz'];
-  
-  // 使用commons-compress解压的格式
   private readonly commonsCompressFormats = ['.tar', '.gz', '.tgz', '.bz2', '.xz'];
-  
-  // 暂不支持的格式（需要专有解码器或未实现）
-  // 7z: commons-compress的OpenHarmony版本未实现SevenZFile归档解析
-  // rar/cbr: 需要专有RAR解码器
-  // lzma: 单文件压缩格式，不适合漫画导入
-  private readonly unsupportedFormats = ['.rar', '.cbr', '.7z', '.lzma'];
+  private readonly unrarFormats = ['.rar', '.cbr'];
+  private readonly sevenZipFormats = ['.7z', '.lzma'];
+  private readonly zipEncodingCandidates: Array<number | undefined> = [undefined, 65001, 936, 950, 932, 437];
 
   // 支持的图片格式
   private readonly supportedImageFormats = [
@@ -208,7 +194,8 @@ export class CompressionUtils {
       createSubDirectory: options?.createSubDirectory !== undefined ? options.createSubDirectory : this.defaultOptions.createSubDirectory!,
       fileFilter: options?.fileFilter || this.defaultOptions.fileFilter,
       maxFiles: options?.maxFiles || this.defaultOptions.maxFiles!,
-      maxTotalSize: options?.maxTotalSize || this.defaultOptions.maxTotalSize!
+      maxTotalSize: options?.maxTotalSize || this.defaultOptions.maxTotalSize!,
+      password: options?.password
     };
 
     const result: ExtractionResult = {
@@ -231,7 +218,7 @@ export class CompressionUtils {
       result.extractedPath = targetDir;
 
       // 执行解压缩
-      await this.performExtraction(actualFilePath, targetDir, mergedOptions, result);
+      await this.performExtractionEnhanced(actualFilePath, targetDir, mergedOptions, result);
 
       // 扫描解压缩后的文件
       const fileInfos = await this.scanExtractedFiles(targetDir, mergedOptions);
@@ -280,6 +267,7 @@ export class CompressionUtils {
         createSubDirectory: options?.createSubDirectory,
         maxFiles: options?.maxFiles,
         maxTotalSize: options?.maxTotalSize,
+        password: options?.password,
         fileFilter: (fileName: string) => {
           const lowerName = fileName.toLowerCase();
           return lowerName.endsWith('.xml') || 
@@ -579,38 +567,46 @@ export class CompressionUtils {
     options: ExtractionOptions,
     result: ExtractionResult
   ): Promise<void> {
-    const extension = this.getFileExtension(archivePath);
-    
-    try {
-      // 根据文件格式选择解压方法
-      if (this.zlibFormats.includes(extension)) {
-        // ZIP/CBZ格式使用系统zlib（性能最佳）
-        await this.extractWithZlib(archivePath, targetDir);
-      } else if (this.commonsCompressFormats.includes(extension)) {
-        // 其他格式使用commons-compress
-        await this.extractWithCommonsCompress(archivePath, targetDir, extension);
-      } else if (this.unsupportedFormats.includes(extension)) {
-        throw new Error(`暂不支持${extension}格式，请将文件转换为ZIP或7Z格式后重试`);
-      } else {
-        throw new Error(`不支持的压缩格式: ${extension}`);
-      }
-      
-      logger.debug(TAG, `解压缩完成: ${archivePath} -> ${targetDir}`);
+    await this.performExtractionEnhanced(archivePath, targetDir, options, result);
+  }
 
+  private async performExtractionEnhanced(
+    archivePath: string,
+    targetDir: string,
+    options: ExtractionOptions,
+    result: ExtractionResult
+  ): Promise<void> {
+    const extension = this.getFileExtension(archivePath);
+
+    try {
+      if (this.zlibFormats.includes(extension)) {
+        await this.extractZipArchive(archivePath, targetDir, options.password);
+      } else if (this.commonsCompressFormats.includes(extension)) {
+        await this.extractWithCommonsCompress(archivePath, targetDir, extension);
+      } else if (this.unrarFormats.includes(extension)) {
+        await this.extractWithUnrar(archivePath, targetDir, options.password);
+      } else if (this.sevenZipFormats.includes(extension)) {
+        await this.extractWithOh7zip(archivePath, targetDir, options.password);
+      } else {
+        throw new Error(`涓嶆敮鎸佺殑鍘嬬缉鏍煎紡: ${extension}`);
+      }
+
+      logger.debug(TAG, `解压完成: ${archivePath} -> ${targetDir}`);
     } catch (error) {
       const errorStr = String(error);
-      logger.error(TAG, `解压缩失败: ${errorStr}`);
-      
-      // 提供更友好的错误信息
+      logger.error(TAG, `解压失败: ${errorStr}`);
+
+      if (this.isPasswordRequiredError(error)) {
+        throw this.createPasswordRequiredError(archivePath);
+      }
+
       if (errorStr.includes('900003') || errorStr.includes('not in ZIP format')) {
         throw new Error('压缩文件格式不正确或已损坏');
       } else if (errorStr.includes('13900002') || errorStr.includes('IO')) {
-        throw new Error('解压缩过程中发生IO错误');
-      } else if (errorStr.includes('暂不支持')) {
-        throw error as Error;
-      } else {
-        throw new Error(`解压缩失败: ${errorStr}`);
+        throw new Error('解压过程中发生 IO 错误');
       }
+
+      throw new Error(`解压失败: ${errorStr}`);
     }
   }
   
@@ -620,6 +616,219 @@ export class CompressionUtils {
   private async extractWithZlib(archivePath: string, targetDir: string): Promise<void> {
     logger.info(TAG, `使用系统zlib解压: ${archivePath}`);
     await zlib.decompressFile(archivePath, targetDir);
+  }
+
+  public isPasswordRequiredError(error: Error | BusinessError | Object | string | number | boolean | null | undefined): boolean {
+    const errorStr = String(error).toLowerCase();
+    return errorStr.includes('压缩包需要正确的密码') ||
+      errorStr.includes('missing_password') ||
+      errorStr.includes('wrong password') ||
+      errorStr.includes('password required') ||
+      errorStr.includes('encrypted') ||
+      errorStr.includes('密码错误') ||
+      errorStr.includes('需要密码') ||
+      errorStr.includes('密码') && errorStr.includes('正确');
+  }
+
+  private createPasswordRequiredError(archivePath: string): Error {
+    const fileName = this.getFileNameFromUri(archivePath);
+    return new Error(`压缩包需要正确的密码后才能继续导入: ${fileName}`);
+  }
+
+  private async extractZipArchive(
+    archivePath: string,
+    targetDir: string,
+    password?: string
+  ): Promise<void> {
+    const finalPassword = password?.trim();
+    if (!finalPassword) {
+      try {
+        await this.extractWithZlib(archivePath, targetDir);
+        return;
+      } catch (error) {
+        logger.warn(TAG, `zlib 解压失败，尝试使用 minizip 兜底: ${archivePath}`, String(error));
+      }
+    }
+
+    await this.extractZipWithMinizip(archivePath, targetDir, finalPassword);
+  }
+
+  private async extractZipWithMinizip(
+    archivePath: string,
+    targetDir: string,
+    password?: string
+  ): Promise<void> {
+    const charEncoding = this.pickZipCharEncoding(archivePath);
+    const minizip = this.createMinizipReader(archivePath, charEncoding);
+    const entryNames = minizip.GetEntryNames();
+    const finalPassword = password || '';
+
+    if (!finalPassword && this.zipHasEncryptedEntries(minizip, entryNames)) {
+      throw this.createPasswordRequiredError(archivePath);
+    }
+
+    for (const entryName of entryNames) {
+      const isDirectoryEntry = entryName.endsWith('/');
+      const safeEntryPath = this.normalizeArchiveEntryPath(entryName);
+      if (!safeEntryPath) {
+        continue;
+      }
+
+      const outputPath = `${targetDir}/${safeEntryPath}`;
+      if (isDirectoryEntry) {
+        await this.sandboxManager.createDirectory(outputPath);
+        continue;
+      }
+
+      const parentDir = outputPath.substring(0, outputPath.lastIndexOf('/'));
+      if (parentDir.length > 0) {
+        await this.sandboxManager.createDirectory(parentDir);
+      }
+
+      const content = minizip.ExtractFileToJS(entryName, finalPassword);
+      if (content === undefined) {
+        if (minizip.IsEncrypto(entryName)) {
+          throw this.createPasswordRequiredError(archivePath);
+        }
+        throw new Error(`ZIP 条目解压失败: ${entryName}`);
+      }
+
+      const file = fs.openSync(outputPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+      try {
+        fs.writeSync(file.fd, content);
+      } finally {
+        fs.closeSync(file);
+      }
+    }
+  }
+
+  private createMinizipReader(archivePath: string, charEncoding?: number): MinizipNative {
+    const minizip = new MinizipNative(archivePath);
+    if (charEncoding !== undefined) {
+      minizip.SetCharEncoding(charEncoding);
+    }
+
+    const openCode = minizip.Open();
+    if (openCode !== 0) {
+      throw new Error(`打开 ZIP 文件失败: code=${openCode}`);
+    }
+
+    return minizip;
+  }
+
+  private zipHasEncryptedEntries(minizip: MinizipNative, entryNames: string[]): boolean {
+    for (const entryName of entryNames) {
+      if (!entryName.endsWith('/') && minizip.IsEncrypto(entryName)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private pickZipCharEncoding(archivePath: string): number | undefined {
+    let bestEncoding: number | undefined = undefined;
+    let bestScore = Number.MIN_SAFE_INTEGER;
+
+    for (const encoding of this.zipEncodingCandidates) {
+      try {
+        const minizip = this.createMinizipReader(archivePath, encoding);
+        const score = this.scoreArchiveEntryNames(minizip.GetEntryNames());
+        if (score > bestScore) {
+          bestScore = score;
+          bestEncoding = encoding;
+        }
+      } catch (_error) {
+        continue;
+      }
+    }
+
+    return bestEncoding;
+  }
+
+  private scoreArchiveEntryNames(entryNames: string[]): number {
+    let score = 0;
+    for (const entryName of entryNames) {
+      score += entryName.length;
+      for (let i = 0; i < entryName.length; i++) {
+        const char = entryName.charAt(i);
+        if (char === '\uFFFD' || char === '?') {
+          score -= 10;
+        } else if (char === '锟') {
+          score -= 20;
+        } else if (/[A-Za-z0-9/_\\.()\[\]\u4e00-\u9fa5-]/.test(char)) {
+          score += 2;
+        }
+      }
+    }
+    return score;
+  }
+
+  private normalizeArchiveEntryPath(entryName: string): string {
+    const normalized = entryName.replace(/\\/g, '/').replace(/^\/+/, '');
+    const parts = normalized.split('/');
+    const safeParts: string[] = [];
+
+    for (const part of parts) {
+      if (!part || part === '.') {
+        continue;
+      }
+      if (part === '..') {
+        throw new Error(`压缩包包含非法路径: ${entryName}`);
+      }
+      safeParts.push(part);
+    }
+
+    return safeParts.join('/');
+  }
+
+  private async extractWithUnrar(
+    archivePath: string,
+    targetDir: string,
+    password?: string
+  ): Promise<void> {
+    const encrypted = UnrarApi.isEncrypted(archivePath) === 1;
+    const finalPassword = password?.trim();
+    if (encrypted && !finalPassword) {
+      throw this.createPasswordRequiredError(archivePath);
+    }
+
+    const resultStr = String(UnrarApi.extract(archivePath, targetDir, finalPassword)).toLowerCase();
+    if (resultStr.includes('success') || resultStr.includes('succeeded') || resultStr.includes('成功')) {
+      return;
+    }
+
+    if (encrypted) {
+      throw this.createPasswordRequiredError(archivePath);
+    }
+
+    throw new Error(`RAR 解压失败: ${resultStr}`);
+  }
+
+  private async extractWithOh7zip(
+    archivePath: string,
+    targetDir: string,
+    password?: string
+  ): Promise<void> {
+    const uncompress = new Uncompress();
+    const config: Config7z = {
+      src: archivePath,
+      dst: targetDir
+    };
+
+    const finalPassword = password?.trim();
+    if (finalPassword) {
+      config.pwd = finalPassword;
+    }
+
+    const code = await uncompress.extractAsync(config);
+    if (code === 0) {
+      return;
+    }
+    if (code === 10) {
+      throw this.createPasswordRequiredError(archivePath);
+    }
+
+    throw new Error(`7z 解压失败: code=${code}`);
   }
   
   /**
@@ -697,7 +906,12 @@ export class CompressionUtils {
     let entry = archiveInputStream.getNextEntry();
     while (entry !== null) {
       const entryName: string = entry.getName();
-      const outputPath = `${targetDir}/${entryName}`;
+      const safeEntryPath = this.normalizeArchiveEntryPath(entryName);
+      if (!safeEntryPath) {
+        entry = archiveInputStream.getNextEntry();
+        continue;
+      }
+      const outputPath = `${targetDir}/${safeEntryPath}`;
       
       if (entry.isDirectory()) {
         // 创建目录
@@ -1016,7 +1230,8 @@ export class CompressionUtils {
    */
   public async extractRecursivelyAndFindComicInfo(
     archivePath: string,
-    maxRecursionDepth: number = 3
+    maxRecursionDepth: number = 3,
+    options?: Partial<ExtractionOptions>
   ): Promise<RecursiveExtractionResult> {
     const tempDirectories: string[] = [];
     const warnings: string[] = [];
@@ -1030,7 +1245,8 @@ export class CompressionUtils {
         0,
         maxRecursionDepth,
         tempDirectories,
-        warnings
+        warnings,
+        options
       );
 
       totalFiles = result.totalFiles;
@@ -1091,7 +1307,8 @@ export class CompressionUtils {
     currentDepth: number,
     maxDepth: number,
     tempDirectories: string[],
-    warnings: string[]
+    warnings: string[],
+    options?: Partial<ExtractionOptions>
   ): Promise<RecursiveExtractionInternalResult> {
     if (currentDepth > maxDepth) {
       logger.warn(TAG, `达到最大递归深度 ${maxDepth}`);
@@ -1108,7 +1325,7 @@ export class CompressionUtils {
     if (this.isSupportedArchive(path)) {
       logger.info(TAG, `解压层级 ${currentDepth}: ${path}`);
       
-      const extractResult = await this.extractArchive(path);
+      const extractResult = await this.extractArchive(path, options);
       
       if (!extractResult.success) {
         throw new Error(`解压失败: ${extractResult.error}`);
@@ -1140,7 +1357,8 @@ export class CompressionUtils {
           currentDepth + 1,
           maxDepth,
           tempDirectories,
-          warnings
+          warnings,
+          options
         );
         
         totalFiles += nestedResult.totalFiles;
@@ -1285,7 +1503,10 @@ export class CompressionUtils {
    * @param archivePath 压缩包路径
    * @returns 解析后的结构信息
    */
-  public async parseArchiveStructure(archivePath: string): Promise<ParsedArchiveStructure> {
+  public async parseArchiveStructure(
+    archivePath: string,
+    options?: Partial<ExtractionOptions>
+  ): Promise<ParsedArchiveStructure> {
     const tempDirectories: string[] = [];
     const warnings: string[] = [];
     const detectedChapters: DetectedChapterInfo[] = [];
@@ -1298,7 +1519,7 @@ export class CompressionUtils {
       logger.info(TAG, `开始解析压缩包结构: ${archivePath}`);
 
       // 1. 递归解压所有嵌套的压缩包
-      const extractResult = await this.extractAllNestedArchives(archivePath, tempDirectories, warnings);
+      const extractResult = await this.extractAllNestedArchives(archivePath, tempDirectories, warnings, options);
       const extractedPath = extractResult.finalPath;
 
       // 2. 查找ComicInfo.xml
@@ -1363,6 +1584,7 @@ export class CompressionUtils {
     archivePath: string,
     tempDirectories: string[],
     warnings: string[],
+    options?: Partial<ExtractionOptions>,
     maxDepth: number = 5,
     currentDepth: number = 0
   ): Promise<NestedExtractionResult> {
@@ -1376,7 +1598,7 @@ export class CompressionUtils {
     }
 
     // 解压当前压缩包
-    const extractResult = await this.extractArchive(archivePath);
+    const extractResult = await this.extractArchive(archivePath, options);
     if (!extractResult.success) {
       throw new Error(`解压失败: ${extractResult.error}`);
     }
@@ -1403,6 +1625,7 @@ export class CompressionUtils {
           nestedArchive,
           tempDirectories,
           warnings,
+          options,
           maxDepth,
           currentDepth + 1
         );

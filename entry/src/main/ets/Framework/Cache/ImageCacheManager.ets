@@ -522,9 +522,36 @@ export class ImageCacheManager {
    */
   private async loadImageFromFile(filePath: string, maxWidth: number = 0): Promise<image.PixelMap | null> {
     try {
-      const imageSourceApi = image.createImageSource(filePath);
+      const directSource = image.createImageSource(filePath);
+      const directPixelMap = await this.decodePixelMapFromSource(directSource, maxWidth, filePath);
+      if (directPixelMap) {
+        return directPixelMap;
+      }
 
-      // 如果指定了 maxWidth，则进行降采样
+      logger.warn(TAG, `[本地] 文件路径解码失败，尝试Buffer兜底: ${filePath}`);
+
+      const file = await fs.open(filePath, fs.OpenMode.READ_ONLY);
+      try {
+        const stat = await fs.stat(filePath);
+        const buffer = new ArrayBuffer(stat.size);
+        await fs.read(file.fd, buffer);
+        const bufferSource = image.createImageSource(buffer);
+        return await this.decodePixelMapFromSource(bufferSource, maxWidth, filePath);
+      } finally {
+        await fs.close(file);
+      }
+    } catch (error) {
+      logger.error(TAG, `从文件加载图片失败: ${filePath}`, String(error));
+      return null;
+    }
+  }
+
+  private async decodePixelMapFromSource(
+    imageSourceApi: image.ImageSource,
+    maxWidth: number,
+    filePath: string
+  ): Promise<image.PixelMap | null> {
+    try {
       if (maxWidth > 0) {
         try {
           const imgInfo = await imageSourceApi.getImageInfo();
@@ -532,9 +559,8 @@ export class ImageCacheManager {
           const originalHeight = imgInfo.size.height;
 
           if (originalWidth > maxWidth) {
-            let sampleSize = 1;
             const ratio = Math.ceil(originalWidth / maxWidth);
-            // sampleSize 取2的幂次
+            let sampleSize = 1;
             let powerOf2 = 1;
             while (powerOf2 * 2 <= ratio) {
               powerOf2 *= 2;
@@ -546,7 +572,10 @@ export class ImageCacheManager {
               editable: false
             };
             const pixelMap = await imageSourceApi.createPixelMap(decodingOpts);
-            logger.debug(TAG, `[本地] 降采样加载: ${filePath.substring(filePath.length - 30)}, 原始=${originalWidth}x${originalHeight}, sample=${sampleSize}`);
+            logger.debug(
+              TAG,
+              `[本地] 降采样加载: ${filePath.substring(Math.max(0, filePath.length - 30))}, 原始=${originalWidth}x${originalHeight}, sample=${sampleSize}`
+            );
             return pixelMap;
           }
         } catch (infoErr) {
@@ -554,12 +583,12 @@ export class ImageCacheManager {
         }
       }
 
-      // 不需要降采样或降采样失败时，使用默认解码
-      const pixelMap = await imageSourceApi.createPixelMap();
-      return pixelMap;
-    } catch (error) {
-      logger.error(TAG, `从文件加载图片失败: ${filePath}`, String(error));
-      return null;
+      return await imageSourceApi.createPixelMap();
+    } finally {
+      try {
+        imageSourceApi.release();
+      } catch (_error) {
+      }
     }
   }
 

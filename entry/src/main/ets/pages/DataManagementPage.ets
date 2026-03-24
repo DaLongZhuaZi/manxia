@@ -46,6 +46,7 @@ import { TaskFloatingBall } from '../Framework/Components/TaskFloatingBall';
 import { PdfImportDialog, PdfImportDialogResult } from '../Framework/Components/PdfImportDialog';
 import { MangaImportDialog, MangaImportDialogResult, MangaImportMode, ChapterInfo, ParsedArchiveStructure, ExistingMangaCandidate, PrefilledComicInfo } from '../Framework/Components/MangaImportDialog';
 import { BatchMangaImportDialog, BatchMangaImportDialogResult, MangaGroupResult, BatchChapterResult } from '../Framework/Components/BatchMangaImportDialog';
+import { showArchivePasswordDialog } from '../Framework/Components/ArchivePasswordDialog';
 import { ParsedArchiveStructure as CompressionParsedStructure } from '../Utils/CompressionUtils';
 import { getHelpPanelManagerV2 } from '../Framework/Components/HelpPanelV2';
 
@@ -720,6 +721,8 @@ struct DataManagementPage {
   @State private currentParsedStructure: ParsedArchiveStructure | null = null;
   @State private currentFileUri: string = '';
   @State private existingMangaCandidates: ExistingMangaCandidate[] = [];
+  private archivePasswordCache: Map<string, string> = new Map();
+  private lastArchivePassword: string = '';
   
   // 公共目录权限状态
   @State private hasDownloadPermission: boolean = false;
@@ -756,7 +759,7 @@ struct DataManagementPage {
   private static readonly APP_FOLDER_NAME: string = '漫匣';
 
   // 支持的文件扩展名
-  private static readonly MANGA_EXTENSIONS: string[] = ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz'];
+  private static readonly MANGA_EXTENSIONS: string[] = ['zip', 'cbz', 'rar', 'cbr', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'lzma'];
   private static readonly EBOOK_EXTENSIONS: string[] = ['epub', 'mobi', 'azw', 'azw3'];
   private static readonly PDF_EXTENSIONS: string[] = ['pdf'];
   private static readonly NOVEL_EXTENSIONS: string[] = ['txt'];
@@ -980,7 +983,7 @@ struct DataManagementPage {
         fileUris: fileUris,
         existingMangaCandidates: this.existingMangaCandidates,
         parseFileStructure: async (fileUri: string): Promise<ParsedArchiveStructure | null> => {
-          const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+          const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
           return this.convertToDialogStructure(parsed);
         },
         parseComicInfoXml: (xmlContent: string): PrefilledComicInfo | null => {
@@ -1067,7 +1070,7 @@ struct DataManagementPage {
       try { fs.mkdirSync(chapterPath); } catch (e) { /* 已存在 */ }
       
       // 解析并复制文件
-      const parsed = await this.compressionUtils.parseArchiveStructure(chapter.fileUri);
+      const parsed = await this.parseArchiveStructureWithPasswordRetry(chapter.fileUri);
       const imageFiles: string[] = [];
       
       if (parsed.extractedPath) {
@@ -1133,13 +1136,13 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.PARSING, `正在解析: ${filename}`, 10);
       
       // 解析压缩包结构
-      const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+      const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
       
       // 转换为对话框需要的格式
       const dialogStructure: ParsedArchiveStructure = this.convertToDialogStructure(parsed);
       
       // 查找可能的重复漫画
-      const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z)$/i);
+      const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z|tar|gz|tgz|bz2|xz|lzma)$/i);
       const title = titleMatch ? titleMatch[1] : filename.replace(/\.[^.]+$/, '');
       await this.findExistingMangaCandidates(title);
       
@@ -1346,10 +1349,10 @@ struct DataManagementPage {
    */
   private async importMangaInPlaceFromDownload(fileUri: string, filename: string): Promise<void> {
     // 解析压缩包（会解压到临时目录）
-    const parsed = await this.compressionUtils.parseArchiveStructure(fileUri);
+    const parsed = await this.parseArchiveStructureWithPasswordRetry(fileUri);
     
     // 提取标题
-    const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z)$/i);
+    const titleMatch = filename.match(/^(.+?)(?:_[a-f0-9]+)?\.(?:zip|cbz|rar|cbr|7z|tar|gz|tgz|bz2|xz|lzma)$/i);
     const title = titleMatch ? titleMatch[1] : filename.replace(/\.[^.]+$/, '');
     
     // 解析ComicInfo
@@ -2223,8 +2226,10 @@ struct DataManagementPage {
       
       // 根据文件类型处理
       const lowerType = actualFileType.toLowerCase();
-      if (lowerType.includes('cbz') || lowerType.includes('.cbz') || 
-          lowerType.includes('zip') || lowerType.includes('.zip')) {
+      const isComicArchive = DataManagementPage.MANGA_EXTENSIONS.some((ext: string) =>
+        lowerType.includes(ext) || lowerType.includes(`.${ext}`)
+      );
+      if (isComicArchive) {
         // 漫画文件
         await this.handleExternalComicImport(fileUri);
       } else if (lowerType.includes('pdf') || lowerType.includes('.pdf')) {
@@ -2304,7 +2309,7 @@ struct DataManagementPage {
       const defaultTitle = this.pdfImportService.getDefaultTitle(fileUri);
       
       // 显示综合设置对话框
-      const dialogResult = await this.showPdfImportDialog(defaultTitle);
+      const dialogResult = await this.showPdfImportDialog(defaultTitle, fileUri);
       
       if (dialogResult === null) {
         logger.info(TAG, 'PDF导入已取消');
@@ -2327,13 +2332,14 @@ struct DataManagementPage {
   /**
    * 显示PDF导入综合设置对话框
    */
-  private async showPdfImportDialog(defaultTitle: string): Promise<PdfImportDialogResult | null> {
+  private async showPdfImportDialog(defaultTitle: string, sourceFileName: string): Promise<PdfImportDialogResult | null> {
     return new Promise<PdfImportDialogResult | null>((resolve) => {
       this.pdfImportDialogController = new CustomDialogController({
         builder: PdfImportDialog({
           themeState: this.themeState,
           defaultTitle: defaultTitle,
           defaultAuthor: '',
+          sourceFileName: sourceFileName,
           onConfirm: (result: PdfImportDialogResult) => {
             logger.info(TAG, `PDF导入对话框确认: ${result.title}`);
             resolve(result);
@@ -3075,7 +3081,7 @@ struct DataManagementPage {
       // 显示确认对话框，让用户查看和编辑解析到的信息
       logger.info(TAG, `显示电子书确认对话框: ${ebook.metadata.title}, 章节数: ${ebook.chapters.length}`);
       this.updateProgress(ImportStatus.IDLE, '', 0); // 隐藏进度，显示对话框
-      const confirmed = await this.showEBookMetadataDialog(ebook);
+      const confirmed = await this.showEBookMetadataDialog(ebook, sandboxPath);
       return confirmed;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3320,7 +3326,7 @@ struct DataManagementPage {
       // 3. 显示确认对话框，让用户查看和编辑解析到的信息
       logger.info(TAG, `显示电子书确认对话框: ${ebook.metadata.title}, 章节数: ${ebook.chapters.length}`);
       this.updateProgress(ImportStatus.IDLE, '', 0);
-      await this.showEBookMetadataDialog(ebook);
+      await this.showEBookMetadataDialog(ebook, sandboxPath);
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3474,12 +3480,13 @@ struct DataManagementPage {
    * 显示电子书元数据补充对话框
    * @returns true 表示用户确认导入，false 表示用户取消
    */
-  private async showEBookMetadataDialog(ebook: EBook): Promise<boolean> {
+  private async showEBookMetadataDialog(ebook: EBook, sourceFileName: string = ''): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       this.ebookMetadataDialogController = new CustomDialogController({
         builder: EBookMetadataDialog({
           themeState: this.themeState,
           initialMetadata: ebook.metadata,
+          sourceFileName: sourceFileName,
           chapters: ebook.chapters,  // 传递章节信息
           onConfirm: async (result: EBookMetadataDialogResult) => {
             logger.info(TAG, '用户确认导入电子书');
@@ -3627,14 +3634,15 @@ struct DataManagementPage {
       const documentPicker = new picker.DocumentViewPicker(context);
       
       // 设置选择选项
-      // 支持的压缩包格式：ZIP/CBZ使用系统zlib，TAR/GZ等使用commons-compress
-      // 注意：7Z/RAR/CBR格式暂不支持（7z归档解析未实现，RAR需要专有解码器）
+      // 漫画压缩包导入已覆盖ZIP/CBZ、RAR/CBR、7Z/LZMA及常见Unix压缩格式
       const selectOptions: picker.DocumentSelectOptions = {
         maxSelectNumber: 50, // 最多选择50个文件（优化性能，避免卡死）
         fileSuffixFilters: [
-          '.zip', '.cbz',           // 漫画压缩格式 - 系统zlib
-          '.tar', '.gz', '.tgz',    // Unix压缩格式 - commons-compress
-          '.bz2', '.xz'             // 其他压缩格式 - commons-compress
+          '.zip', '.cbz',
+          '.rar', '.cbr',
+          '.7z', '.lzma',
+          '.tar', '.gz', '.tgz',
+          '.bz2', '.xz'
         ],
       };
 
@@ -3713,6 +3721,198 @@ struct DataManagementPage {
   /**
    * 为批量导入查找可能的重复漫画
    */
+  private async parseArchiveStructureWithPasswordRetry(fileUri: string): Promise<CompressionParsedStructure> {
+    const cachedPassword = this.archivePasswordCache.get(fileUri);
+    if (cachedPassword) {
+      try {
+        return await this.compressionUtils.parseArchiveStructure(fileUri, { password: cachedPassword });
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        this.archivePasswordCache.delete(fileUri);
+      }
+    }
+
+    if (this.lastArchivePassword) {
+      try {
+        const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: this.lastArchivePassword });
+        this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
+        return parsed;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+      }
+    }
+
+    try {
+      return await this.compressionUtils.parseArchiveStructure(fileUri);
+    } catch (error) {
+      if (!this.compressionUtils.isPasswordRequiredError(error)) {
+        throw error as Error;
+      }
+    }
+
+    let errorMessage = '该压缩包需要密码才能继续导入';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const password = await showArchivePasswordDialog(
+        this.themeState,
+        this.getFileNameFromUri(fileUri),
+        this.lastArchivePassword,
+        errorMessage
+      );
+      if (!password) {
+        throw new UserSkipError('用户取消输入压缩包密码');
+      }
+
+      try {
+        const parsed = await this.compressionUtils.parseArchiveStructure(fileUri, { password: password });
+        this.lastArchivePassword = password;
+        this.archivePasswordCache.set(fileUri, password);
+        return parsed;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        errorMessage = '密码不正确，请重试';
+      }
+    }
+
+    throw new Error('压缩包密码错误');
+  }
+
+  private async extractRecursivelyAndFindComicInfoWithPasswordRetry(
+    fileUri: string,
+    maxRecursionDepth: number = 3
+  ): Promise<RecursiveExtractionResult> {
+    const cachedPassword = this.archivePasswordCache.get(fileUri);
+    if (cachedPassword) {
+      try {
+        return await this.compressionUtils.extractRecursivelyAndFindComicInfo(fileUri, maxRecursionDepth, {
+          password: cachedPassword
+        });
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        this.archivePasswordCache.delete(fileUri);
+      }
+    }
+
+    if (this.lastArchivePassword) {
+      try {
+        const result = await this.compressionUtils.extractRecursivelyAndFindComicInfo(fileUri, maxRecursionDepth, {
+          password: this.lastArchivePassword
+        });
+        this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
+        return result;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+      }
+    }
+
+    try {
+      return await this.compressionUtils.extractRecursivelyAndFindComicInfo(fileUri, maxRecursionDepth);
+    } catch (error) {
+      if (!this.compressionUtils.isPasswordRequiredError(error)) {
+        throw error as Error;
+      }
+    }
+
+    let errorMessage = '该压缩包需要密码才能继续导入';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const password = await showArchivePasswordDialog(
+        this.themeState,
+        this.getFileNameFromUri(fileUri),
+        this.lastArchivePassword,
+        errorMessage
+      );
+      if (!password) {
+        throw new UserSkipError('用户取消输入压缩包密码');
+      }
+
+      try {
+        const result = await this.compressionUtils.extractRecursivelyAndFindComicInfo(fileUri, maxRecursionDepth, {
+          password: password
+        });
+        this.lastArchivePassword = password;
+        this.archivePasswordCache.set(fileUri, password);
+        return result;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        errorMessage = '密码不正确，请重试';
+      }
+    }
+
+    throw new Error('压缩包密码错误');
+  }
+
+  private async extractAndFindComicInfoWithPasswordRetry(fileUri: string) {
+    const cachedPassword = this.archivePasswordCache.get(fileUri);
+    if (cachedPassword) {
+      try {
+        return await this.compressionUtils.extractAndFindComicInfo(fileUri, { password: cachedPassword });
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        this.archivePasswordCache.delete(fileUri);
+      }
+    }
+
+    if (this.lastArchivePassword) {
+      try {
+        const result = await this.compressionUtils.extractAndFindComicInfo(fileUri, { password: this.lastArchivePassword });
+        this.archivePasswordCache.set(fileUri, this.lastArchivePassword);
+        return result;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+      }
+    }
+
+    try {
+      return await this.compressionUtils.extractAndFindComicInfo(fileUri);
+    } catch (error) {
+      if (!this.compressionUtils.isPasswordRequiredError(error)) {
+        throw error as Error;
+      }
+    }
+
+    let errorMessage = '该压缩包需要密码才能继续导入';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const password = await showArchivePasswordDialog(
+        this.themeState,
+        this.getFileNameFromUri(fileUri),
+        this.lastArchivePassword,
+        errorMessage
+      );
+      if (!password) {
+        throw new UserSkipError('用户取消输入压缩包密码');
+      }
+
+      try {
+        const result = await this.compressionUtils.extractAndFindComicInfo(fileUri, { password: password });
+        this.lastArchivePassword = password;
+        this.archivePasswordCache.set(fileUri, password);
+        return result;
+      } catch (error) {
+        if (!this.compressionUtils.isPasswordRequiredError(error)) {
+          throw error as Error;
+        }
+        errorMessage = '密码不正确，请重试';
+      }
+    }
+
+    throw new Error('压缩包密码错误');
+  }
+
   private async findExistingMangaCandidatesForBatch(): Promise<void> {
     try {
       // 获取所有漫画记录
@@ -3756,7 +3956,7 @@ struct DataManagementPage {
       
       // 尝试作为压缩包解析
       try {
-        const parsedStructure = await this.compressionUtils.parseArchiveStructure(fileUri);
+        const parsedStructure = await this.parseArchiveStructureWithPasswordRetry(fileUri);
         return this.convertParsedStructure(parsedStructure);
       } catch (archiveError) {
         // 解压失败，尝试将路径当作文件夹扫描
@@ -3974,7 +4174,7 @@ struct DataManagementPage {
       this.updateProgress(ImportStatus.EXTRACTING, `正在解析压缩包结构: ${fileName}`, 10);
       
       // 解析压缩包结构
-      const parsedStructure = await this.compressionUtils.parseArchiveStructure(fileUri);
+      const parsedStructure = await this.parseArchiveStructureWithPasswordRetry(fileUri);
       
       // 转换为对话框需要的格式
       const convertedChapters: ChapterInfo[] = [];
@@ -4776,7 +4976,7 @@ struct DataManagementPage {
 
       // 1. 递归解压缩文件并查找ComicInfo.xml（支持嵌套压缩包和多层文件夹）
       this.updateProgress(ImportStatus.EXTRACTING, `正在递归解压缩: ${fileName}`, 0);
-      recursiveResult = await this.compressionUtils.extractRecursivelyAndFindComicInfo(fileUri);
+      recursiveResult = await this.extractRecursivelyAndFindComicInfoWithPasswordRetry(fileUri);
 
       resultDetail.extractedFileCount = recursiveResult.totalFiles;
       extractedPath = recursiveResult.finalPath;
@@ -5087,7 +5287,7 @@ struct DataManagementPage {
       logger.info(TAG, `开始处理单个文件: ${fileUri}`);
 
       // 1. 解压缩文件并查找ComicInfo.xml
-      const extractionData = await this.compressionUtils.extractAndFindComicInfo(fileUri);
+      const extractionData = await this.extractAndFindComicInfoWithPasswordRetry(fileUri);
       const result = extractionData.result;
       const comicInfoContent = extractionData.comicInfoContent;
 

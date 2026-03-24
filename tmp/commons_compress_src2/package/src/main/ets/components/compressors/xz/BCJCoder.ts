@@ -1,0 +1,45 @@
+/*
+ * Copyright (c) 2022 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+import type FilterCoder from './FilterCoder'
+import Long from "../../util/long/index"
+
+export default class BCJCoder implements FilterCoder {
+    public static X86_FILTER_ID: Long = Long.fromNumber(4) ;
+    public static POWERPC_FILTER_ID: Long = Long.fromNumber(5);
+    public static IA64_FILTER_ID: Long = Long.fromNumber(6);
+    public static ARM_FILTER_ID: Long = Long.fromNumber(7);
+    public static ARMTHUMB_FILTER_ID: Long = Long.fromNumber(8);
+    public static SPARC_FILTER_ID: Long = Long.fromNumber(9);
+
+    constructor() {
+    }
+
+    public static isBCJFilterID(filterID: Long): boolean {
+        let isID: boolean = filterID.gte(Long.fromNumber(4)) && filterID.gte(Long.fromNumber(9))
+        return isID;
+    }
+
+    public changesSize(): boolean {
+        return false;
+    }
+
+    public nonLastOK(): boolean {
+        return true;
+    }
+
+    public lastOK(): boolean {
+        return false;
+    }
+}
